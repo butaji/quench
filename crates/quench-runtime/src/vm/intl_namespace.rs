@@ -28,9 +28,7 @@ impl<H: Host> Vm<H> {
             .insert(global, prototype);
         let fallback_symbol = self
             .heap
-            .alloc(Cell::Symbol(crate::heap::SymbolData::public(Some(
-                "IntlLegacyConstructedSymbol".into(),
-            ))));
+            .alloc(Cell::Symbol(crate::heap::SymbolData::public(Some("IntlLegacyConstructedSymbol".into()))));
         self.realm
             .intrinsics
             .intl_number_format_fallback_symbols

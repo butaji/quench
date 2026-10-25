@@ -267,7 +267,8 @@ impl<H: Host> Vm<H> {
                 let constructor_key = self.intern_atom("ZonedDateTime");
                 let constructor = self.get_property(p, temporal, constructor_key)?;
                 let args = [
-                    self.heap.alloc(Cell::bigint(epoch_nanoseconds.into())),
+                    self.heap
+                        .alloc(Cell::bigint(epoch_nanoseconds.into())),
                     self.heap.alloc_string(timezone.into()),
                 ];
                 self.temporal_zoned_date_time_construct(p, &args, constructor)
@@ -964,7 +965,7 @@ impl<H: Host> Vm<H> {
         let fields = self.duration_fields(p, this)?;
         let options = args.first().copied().unwrap_or(Value::UNDEFINED);
         let (unit, relative_date) = match self.heap.get(options) {
-            _ if let Some(text) = self.heap.string(options) => (text.to_string(), None),
+            _ if let Some(text) = self.heap.string(options)  => (text.to_string(), None),
             _ if self.is_object_like(options) => {
                 let relative_to_atom = self.intern_atom("relativeTo");
                 let relative_to = self.get_property(p, options, relative_to_atom)?;

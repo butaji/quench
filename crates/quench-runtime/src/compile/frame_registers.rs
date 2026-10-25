@@ -11,9 +11,8 @@ const ARGUMENTS_NAME: &str = "arguments";
 
 use crate::bytecode::initialization;
 use crate::bytecode::{
-    EvalBindingLocation, FieldLayout, Function, ImmediateRole, Instr, InstructionField, Op,
-    Operand, OperandKind, REGISTER_MASK, Register, Superinstruction, ThrownValueSlot,
-    WITH_ENTER_BINDING, WideInstruction,
+    WITH_ENTER_BINDING, EvalBindingLocation, FieldLayout, Function, ImmediateRole, Instr, InstructionField, Op,
+    Operand, OperandKind, REGISTER_MASK, Register, Superinstruction, ThrownValueSlot, WideInstruction,
 };
 
 /// `plain_slots` are `function`'s plain local slots (`Function::plain_local_slots`);
@@ -80,12 +79,10 @@ pub(super) fn promote<'a>(
                 .flat_map(|plan| plan.fresh.iter().chain(&plan.reset).copied()),
         )
         .chain(function.binding_sites.iter().flat_map(|site| {
-            site.bindings
-                .iter()
-                .filter_map(|binding| match binding.location {
-                    EvalBindingLocation::Local(slot) => Some(slot),
-                    EvalBindingLocation::Capture { .. } => None,
-                })
+            site.bindings.iter().filter_map(|binding| match binding.location {
+                EvalBindingLocation::Local(slot) => Some(slot),
+                EvalBindingLocation::Capture { .. } => None,
+            })
         }));
     for slot in named {
         if let Some(eligible) = eligible.get_mut(usize::from(slot)) {
@@ -172,8 +169,12 @@ pub(super) fn promote<'a>(
     // A frame slot starts undefined, a register only once written (`prepare_registers_for`):
     // a promoted slot some read can reach before any store gets `undefined` on entry.
     let promoted: Vec<bool> = registers.iter().map(Option::is_some).collect();
-    let written_first =
-        initialization::initialized_before_reads(function, superinstructions, &promoted, &promoted);
+    let written_first = initialization::initialized_before_reads(
+        function,
+        superinstructions,
+        &promoted,
+        &promoted,
+    );
     let old = function.code.clone();
     let mut code = Vec::with_capacity(old.len());
     for (slot, target) in registers.iter().enumerate() {
@@ -181,11 +182,7 @@ pub(super) fn promote<'a>(
             && !written_first[slot]
         {
             let load = WideInstruction::new(Op::LoadConst, target, 0, 0, undefined_constant);
-            code.push(encode(
-                load,
-                Instr::new(Op::Nop, 0, 0, 0, 0),
-                &mut function.wide,
-            ));
+            code.push(encode(load, Instr::new(Op::Nop, 0, 0, 0, 0), &mut function.wide));
         }
     }
     let mut map = vec![0; old.len() + 1];
@@ -205,11 +202,7 @@ pub(super) fn promote<'a>(
                 // A store that also keeps its value in a register becomes two moves.
                 if let Some(copy) = instruction.optional_register_b() {
                     let store = WideInstruction::new(Op::Move, target, source, 0, 0);
-                    code.push(encode(
-                        store,
-                        Instr::new(Op::Nop, 0, 0, 0, 0),
-                        &mut function.wide,
-                    ));
+                    code.push(encode(store, Instr::new(Op::Nop, 0, 0, 0, 0), &mut function.wide));
                     instruction = WideInstruction::new(Op::Move, copy, source, 0, 0);
                 } else {
                     instruction = WideInstruction::new(Op::Move, target, source, 0, 0);
@@ -219,10 +212,7 @@ pub(super) fn promote<'a>(
                 let mut changed = false;
                 // A field read fused onto a local (`rewrite::LocalField`) reads the register
                 // the local now lives in, as the load it absorbed would have.
-                if let Some(target) = instruction
-                    .local_field_base()
-                    .and_then(|local| register(usize::from(local)))
-                {
+                if let Some(target) = instruction.local_field_base().and_then(|local| register(usize::from(local))) {
                     instruction.set_b(crate::bytecode::FieldBase::register(target).0);
                     changed = true;
                 }

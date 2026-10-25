@@ -4,9 +4,7 @@
 //! rebuilt on first use, as for a program just inserted.
 
 use super::*;
-use crate::snapshot::{
-    Reader, Snap, SnapshotError, SnapshotResult, Writer, read_list, snapshot_enum,
-};
+use crate::snapshot::{read_list, snapshot_enum, Reader, Snap, SnapshotError, SnapshotResult, Writer};
 
 snapshot_enum!(program_scope: ProgramScope { Own, Global, GlobalVariables, Caller });
 
@@ -34,9 +32,7 @@ impl ProgramStore {
             js_jit_dataview_float64_set_entries: _,
         } = self;
         if !owned_scripts.is_empty() {
-            return Err(SnapshotError::unsupported(
-                "scripts an embedder compiled and holds",
-            ));
+            return Err(SnapshotError::unsupported("scripts an embedder compiled and holds"));
         }
         writer.len(programs.len());
         for (index, entry) in programs.iter().enumerate() {
@@ -68,17 +64,10 @@ impl ProgramStore {
         let count = reader.len()?;
         let mut programs = Vec::with_capacity(count);
         for _ in 0..count {
-            programs.push(if reader.bool()? {
-                Some(ProgramEntry::read_snapshot(reader, bytes, atoms)?)
-            } else {
-                None
-            });
+            programs.push(if reader.bool()? { Some(ProgramEntry::read_snapshot(reader, bytes, atoms)?) } else { None });
         }
         let global_eval_programs = read_list(reader, |reader| {
-            Ok((
-                JsString::read_snapshot(reader)?,
-                ProgramId::from_raw(reader.u32()?),
-            ))
+            Ok((JsString::read_snapshot(reader)?, ProgramId::from_raw(reader.u32()?)))
         })?
         .into_iter()
         .collect();
@@ -190,40 +179,19 @@ impl ProgramEntry {
         bytes: &crate::KeptBytes,
         atoms: &Rc<crate::bytecode::AtomSequence>,
     ) -> SnapshotResult<Self> {
-        let text = if reader.bool()? {
-            Some(crate::bytecode::SourceText::read_snapshot(reader)?)
-        } else {
-            None
-        };
+        let text = if reader.bool()? { Some(crate::bytecode::SourceText::read_snapshot(reader)?) } else { None };
         let regexp_literal_sites = reader.len()?;
         let functions = reader.len()?;
-        let sites = crate::bytecode::CacheSiteCounts {
-            fields: reader.u16()?,
-            methods: reader.len()?,
-            objects: reader.len()?,
-        };
+        let sites = crate::bytecode::CacheSiteCounts { fields: reader.u16()?, methods: reader.len()?, objects: reader.len()? };
         let encoded_len = reader.len()?;
         let encoded_start = reader.position();
         reader.skip(encoded_len)?;
         let window = crate::snapshot::Window::new(bytes.clone(), encoded_start, encoded_len)?;
         ResidualProgram::verify_snapshot(window.as_ref().as_ref())
             .map_err(|error| SnapshotError(format!("snapshot program: {error}")))?;
-        let residual = Residual::encoded(
-            sites,
-            EncodedResidual {
-                bytes: Rc::new(window),
-                text,
-                atoms: atoms.clone(),
-            },
-        );
+        let residual = Residual::encoded(sites, EncodedResidual { bytes: Rc::new(window), text, atoms: atoms.clone() });
         let constants = reader.values()?;
-        let const_arrays = read_list(reader, |reader| {
-            Ok(if reader.bool()? {
-                Some(crate::heap::ArrayElements::from(reader.values()?))
-            } else {
-                None
-            })
-        })?;
+        let const_arrays = read_list(reader, |reader| Ok(if reader.bool()? { Some(crate::heap::ArrayElements::from(reader.values()?)) } else { None }))?;
         let function_sources = Snap::unsnap(reader)?;
         let module_environment = Snap::unsnap(reader)?;
         let import_meta = Snap::unsnap(reader)?;
@@ -231,11 +199,7 @@ impl ProgramEntry {
             let slot = reader.u16()?;
             let import = match reader.u8()? {
                 0 => ModuleImport::Value(reader.value()?),
-                1 => ModuleImport::Binding(
-                    ProgramId::from_raw(reader.u32()?),
-                    reader.u16()?,
-                    reader.value()?,
-                ),
+                1 => ModuleImport::Binding(ProgramId::from_raw(reader.u32()?), reader.u16()?, reader.value()?),
                 _ => return Err(SnapshotError("invalid snapshot module import".into())),
             };
             Ok((slot, import))
@@ -244,19 +208,9 @@ impl ProgramEntry {
         let scope = program_scope::read(reader)?;
         let origin = match reader.u8()? {
             0 => CompilationOrigin::Source,
-            1 => CompilationOrigin::SharedScript {
-                source: ProgramId::from_raw(reader.u32()?),
-            },
-            2 => CompilationOrigin::Eval {
-                caller: if reader.bool()? {
-                    Some(JsString::read_snapshot(reader)?)
-                } else {
-                    None
-                },
-            },
-            3 => CompilationOrigin::FunctionConstructor {
-                caller: JsString::read_snapshot(reader)?,
-            },
+            1 => CompilationOrigin::SharedScript { source: ProgramId::from_raw(reader.u32()?) },
+            2 => CompilationOrigin::Eval { caller: if reader.bool()? { Some(JsString::read_snapshot(reader)?) } else { None } },
+            3 => CompilationOrigin::FunctionConstructor { caller: JsString::read_snapshot(reader)? },
             _ => return Err(SnapshotError("invalid snapshot program origin".into())),
         };
         let script_or_module = Snap::unsnap(reader)?;

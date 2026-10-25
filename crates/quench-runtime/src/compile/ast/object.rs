@@ -331,9 +331,7 @@ impl FunctionCompiler<'_, '_> {
             with_depth: self.with_depth,
             inherited_strict: self.strict,
         };
-        let id = self
-            .owner
-            .compile_replayable_object_method(function, context);
+        let id = self.owner.compile_replayable_object_method(function, context);
         let dst = self.reg();
         self.emit(Op::MakeClosure, dst, 0, 0, id);
         dst

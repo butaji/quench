@@ -3,14 +3,8 @@
 
 use std::{path::Path, process::Command, time::Duration};
 
-const CONTRACT_SOURCE: &str = concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/node-tests/napi/napi_contract.c"
-);
-const CONTRACT_DRIVER: &str = concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/node-tests/napi/napi_contract.cjs"
-);
+const CONTRACT_SOURCE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/node-tests/napi/napi_contract.c");
+const CONTRACT_DRIVER: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/node-tests/napi/napi_contract.cjs");
 const NODE_HEADERS: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../tests/node/src");
 const CONTRACT_TIMEOUT: Duration = Duration::from_secs(30);
 
@@ -42,17 +36,8 @@ fn native_addon_contract_matches_node() {
     });
     for observation in &observations {
         assert!(!observation.timed_out);
-        assert_eq!(
-            observation.exit_code,
-            Some(0),
-            "{}",
-            String::from_utf8_lossy(&observation.stderr)
-        );
-        assert!(
-            observation.stderr.is_empty(),
-            "{}",
-            String::from_utf8_lossy(&observation.stderr)
-        );
+        assert_eq!(observation.exit_code, Some(0), "{}", String::from_utf8_lossy(&observation.stderr));
+        assert!(observation.stderr.is_empty(), "{}", String::from_utf8_lossy(&observation.stderr));
     }
     assert_eq!(
         String::from_utf8_lossy(&observations[0].stdout),

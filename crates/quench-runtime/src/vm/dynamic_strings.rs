@@ -31,10 +31,7 @@ impl<H: Host> Vm<H> {
             .as_ref()
             .and_then(|strings| strings.get(&hash))
             .copied()
-            && self
-                .heap
-                .string(value)
-                .is_some_and(|candidate| candidate == &text)
+            && self.heap.string(value).is_some_and(|candidate| candidate == &text)
         {
             #[cfg(feature = "profile-aggregate")]
             self.profile.dynamic_string(true);

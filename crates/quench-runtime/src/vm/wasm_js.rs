@@ -643,13 +643,7 @@ impl<H: Host> Vm<H> {
                 let mut values = Vec::with_capacity(sections.len());
                 for bytes in sections {
                     let length = bytes.len();
-                    values.push(self.new_array_buffer_cell(
-                        bytes.into(),
-                        false,
-                        length,
-                        false,
-                        false,
-                    ));
+                    values.push(self.new_array_buffer_cell(bytes.into(), false, length, false, false));
                 }
                 Ok(self.new_array(values))
             }
@@ -1301,7 +1295,9 @@ impl<H: Host> Vm<H> {
                     ExternalKind::Tag => self.wasm_tag(instance, export.index)?,
                 };
                 let exports = self.heap.root_value(exports_root).expect("rooted exports");
-                let key = self.heap.alloc_string(JsString::from_str(&export.name));
+                let key = self
+                    .heap
+                    .alloc_string(JsString::from_str(&export.name));
                 let key = self.to_property_key(p, key)?;
                 let record = super::object_descriptors::PropertyDescriptorRecord::data(value);
                 self.define_own_property_record(p, exports, key, record)?;
@@ -1530,7 +1526,10 @@ impl<H: Host> Vm<H> {
                     .map(|value| self.encode_wasm_value(value))
                     .collect::<Vec<_>>();
                 Ok(self.heap.alloc(Cell::Array {
-                    object: crate::heap::ArrayObject::new(Self::empty_object(Value::NULL), encoded),
+                    object: crate::heap::ArrayObject::new(
+                        Self::empty_object(Value::NULL),
+                        encoded,
+                    ),
                 }))
             }
         }

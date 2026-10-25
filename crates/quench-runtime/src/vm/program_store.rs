@@ -1,10 +1,10 @@
-use super::wtf16::JsString;
 use crate::Value;
+use super::wtf16::JsString;
 use crate::bytecode::ResidualProgram;
+use std::rc::{Rc, Weak};
 use crate::heap::WeakHandle;
 use rustc_hash::FxHashMap;
 use std::io::Write as _;
-use std::rc::{Rc, Weak};
 
 mod snapshot;
 
@@ -92,9 +92,7 @@ fn general_promotion_due(entries: u32, instructions: usize) -> bool {
     let (_, of) = JS_JIT_GENERAL_SAVED_SHARE;
     u64::from(entries).saturating_mul(saved_per_entry)
         >= JS_JIT_GENERAL_COMPILE_FIXED_COST
-            .saturating_add(
-                JS_JIT_GENERAL_COMPILE_COST_PER_INSTRUCTION.saturating_mul(instructions),
-            )
+            .saturating_add(JS_JIT_GENERAL_COMPILE_COST_PER_INSTRUCTION.saturating_mul(instructions))
             .saturating_mul(of)
 }
 
@@ -109,14 +107,13 @@ fn general_dispatch_work_due(work: u64, instructions: u64, priced: bool) -> bool
     let (saved, of) = JS_JIT_GENERAL_SAVED_SHARE;
     work.saturating_mul(saved)
         >= JS_JIT_GENERAL_COMPILE_FIXED_COST
-            .saturating_add(
-                JS_JIT_GENERAL_COMPILE_COST_PER_INSTRUCTION.saturating_mul(instructions),
-            )
+            .saturating_add(JS_JIT_GENERAL_COMPILE_COST_PER_INSTRUCTION.saturating_mul(instructions))
             .saturating_mul(of)
 }
 
 fn accumulate_general_dispatch_work(accumulated_work: &mut u64, work: usize) {
-    *accumulated_work = accumulated_work.saturating_add(u64::try_from(work).unwrap_or(u64::MAX));
+    *accumulated_work = accumulated_work
+        .saturating_add(u64::try_from(work).unwrap_or(u64::MAX));
 }
 
 /// Promote an eligible state once accumulated work reaches the selected
@@ -281,8 +278,9 @@ impl JitCodeCacheBudget {
             }
             JitArtifactKind::WasmTierRoot => {
                 self.wasm_tier_roots = self.wasm_tier_roots.saturating_sub(artifacts);
-                self.wasm_tier_mapped_bytes =
-                    self.wasm_tier_mapped_bytes.saturating_sub(mapped_bytes);
+                self.wasm_tier_mapped_bytes = self
+                    .wasm_tier_mapped_bytes
+                    .saturating_sub(mapped_bytes);
             }
         }
     }
@@ -290,18 +288,13 @@ impl JitCodeCacheBudget {
 
 #[derive(Clone)]
 pub(super) enum JsTierState {
-    Hot {
-        observations: u8,
-        numeric: u8,
-    },
+    Hot { observations: u8, numeric: u8 },
     /// The numeric profile passed its look, so wait for a numeric entry before
     /// compiling the specialized artifact.
     PromotionPending,
     /// The function is hot but not numeric: count its `entries` until they pay for the
     /// tagged semantics baseline (`general_promotion_due`). Its calls stay as they were.
-    GeneralPromotionPending {
-        entries: u32,
-    },
+    GeneralPromotionPending { entries: u32 },
     /// The entries paid for the baseline: its calls take a VM frame
     /// (`Vm::js_tier_needs_general_entry`), whose next entry compiles it.
     GeneralCompileDue,
@@ -409,9 +402,7 @@ impl JitTierManager {
                     }
                 } else if promotion == Some(false) && general_candidate {
                     decision.promoted = true;
-                    *state = JsTierState::GeneralPromotionPending {
-                        entries: u32::from(*observations),
-                    };
+                    *state = JsTierState::GeneralPromotionPending { entries: u32::from(*observations) };
                     false
                 } else {
                     if promotion == Some(false) && *observations == u8::MAX {
@@ -429,9 +420,9 @@ impl JitTierManager {
                 }
             }
             JsTierState::GeneralPromotionPending { .. } | JsTierState::GeneralCompileDue => false,
-            JsTierState::Rejected { .. } | JsTierState::Unsupported | JsTierState::Compiled(_) => {
-                false
-            }
+            JsTierState::Rejected { .. }
+            | JsTierState::Unsupported
+            | JsTierState::Compiled(_) => false,
         };
         decision
     }
@@ -495,9 +486,7 @@ impl JitTierManager {
             Self::JavaScript(functions) => Some(functions),
             Self::Empty | Self::Wasm(_) => None,
         };
-        functions
-            .into_iter()
-            .flat_map(|functions| functions.values())
+        functions.into_iter().flat_map(|functions| functions.values())
     }
 
     fn wasm(&self, function: u32) -> Option<&WasmTierState> {
@@ -522,9 +511,7 @@ impl JitTierManager {
             Self::Wasm(functions) => Some(functions),
             Self::Empty | Self::JavaScript(_) => None,
         };
-        functions
-            .into_iter()
-            .flat_map(|functions| functions.values())
+        functions.into_iter().flat_map(|functions| functions.values())
     }
 
     fn is_javascript(&self) -> bool {
@@ -563,11 +550,7 @@ impl Residual {
     }
 
     fn encoded(sites: crate::bytecode::CacheSiteCounts, encoded: EncodedResidual) -> Self {
-        Self {
-            sites,
-            decoded: std::cell::OnceCell::new(),
-            encoded: std::cell::Cell::new(Some(Box::new(encoded))),
-        }
+        Self { sites, decoded: std::cell::OnceCell::new(), encoded: std::cell::Cell::new(Some(Box::new(encoded))) }
     }
 }
 
@@ -576,10 +559,8 @@ impl std::ops::Deref for Residual {
 
     fn deref(&self) -> &Rc<ResidualProgram> {
         self.decoded.get_or_init(|| {
-            let EncodedResidual { bytes, text, atoms } = *self
-                .encoded
-                .take()
-                .expect("a residual is decoded or holds its encoding");
+            let EncodedResidual { bytes, text, atoms } =
+                *self.encoded.take().expect("a residual is decoded or holds its encoding");
             let program = ResidualProgram::decode_snapshot(bytes, text, &atoms)
                 .expect("a snapshot program whose checksum held decodes");
             debug_assert_eq!(program.cache_site_counts(), self.sites);
@@ -641,15 +622,9 @@ pub(super) const ANONYMOUS_EVAL_ORIGIN: &str = "eval at <anonymous>";
 pub(super) enum CompilationOrigin {
     Source,
     /// Execution state in another realm of one logical host Script.
-    SharedScript {
-        source: ProgramId,
-    },
-    Eval {
-        caller: Option<JsString>,
-    },
-    FunctionConstructor {
-        caller: JsString,
-    },
+    SharedScript { source: ProgramId },
+    Eval { caller: Option<JsString> },
+    FunctionConstructor { caller: JsString },
 }
 
 /// Where a stored program's root body evaluates, which decides whether its
@@ -759,8 +734,9 @@ impl Default for ProgramStore {
             js_jit_general_dispatch_enabled: std::env::var_os("QUENCH_JS_JIT_GENERAL_DISPATCH")
                 .is_some_and(|value| value == "1"),
             js_general_dispatch_work: None,
-            js_jit_dataview_float64_enabled: std::env::var_os("QUENCH_JS_JIT_DATAVIEW_FLOAT64")
-                .is_none_or(|value| value != "0"),
+            js_jit_dataview_float64_enabled:
+                std::env::var_os("QUENCH_JS_JIT_DATAVIEW_FLOAT64")
+                    .is_none_or(|value| value != "0"),
             js_jit_dataview_float64_get_entries: 0,
             js_jit_dataview_float64_set_entries: 0,
         }
@@ -770,20 +746,11 @@ impl Default for ProgramStore {
 impl ProgramStore {
     /// What the JavaScript tier finds at the entries of `function` (`JsEntryFacts`), derived on
     /// its first entry.
-    pub(super) fn js_entry_facts(
-        &self,
-        id: ProgramId,
-        function: u32,
-    ) -> Option<Rc<super::js_compiled::JsEntryFacts>> {
+    pub(super) fn js_entry_facts(&self, id: ProgramId, function: u32) -> Option<Rc<super::js_compiled::JsEntryFacts>> {
         let entry = self.entry(id)?;
         let body = entry.residual.function_get(function as usize)?;
         let cells = entry.js_entry_facts.0.get_or_init(|| {
-            entry
-                .residual
-                .functions
-                .iter()
-                .map(|_| std::cell::OnceCell::new())
-                .collect()
+            entry.residual.functions.iter().map(|_| std::cell::OnceCell::new()).collect()
         });
         Some(Rc::clone(cells.get(function as usize)?.get_or_init(|| {
             Rc::new(super::js_compiled::JsEntryFacts::of(&entry.residual, body))
@@ -815,10 +782,7 @@ impl ProgramStore {
     }
 
     /// Inserts dynamic code that `reclaim_unreferenced` may later drop.
-    pub(crate) fn insert_reclaimable_shared(
-        &mut self,
-        program: Rc<ResidualProgram>,
-    ) -> Option<ProgramId> {
+    pub(crate) fn insert_reclaimable_shared(&mut self, program: Rc<ResidualProgram>) -> Option<ProgramId> {
         let id = self.insert_shared(program)?;
         if let Some(entry) = self.entry_mut(id) {
             entry.reclaimable = true;
@@ -835,10 +799,7 @@ impl ProgramStore {
     /// Whether dynamic code may be reclaimable, including dropped host owners.
     pub(crate) fn has_unchecked_reclaimable(&self) -> bool {
         self.unchecked_reclaimable > 0
-            || self
-                .owned_scripts
-                .values()
-                .any(|script| script.owner.strong_count() == 0)
+            || self.owned_scripts.values().any(|script| script.owner.strong_count() == 0)
     }
 
     /// Drops every reclaimable program that `referenced` does not mark and that
@@ -850,20 +811,13 @@ impl ProgramStore {
         // escaped function retains its source record even after the owner drops.
         for (&source, script) in &self.owned_scripts {
             let owned = script.owner.strong_count() != 0;
-            let live_instance = script
-                .instances
-                .iter()
-                .any(|(_, id)| referenced.get(id.index()).copied().unwrap_or(false));
-            if (owned || live_instance)
-                && let Some(mark) = referenced.get_mut(source.index())
-            {
-                *mark = true;
-            }
+            let live_instance = script.instances.iter().any(|(_, id)| {
+                referenced.get(id.index()).copied().unwrap_or(false)
+            });
+            if (owned || live_instance) && let Some(mark) = referenced.get_mut(source.index()) { *mark = true; }
             if owned {
                 for (_, id) in &script.instances {
-                    if let Some(mark) = referenced.get_mut(id.index()) {
-                        *mark = true;
-                    }
+                    if let Some(mark) = referenced.get_mut(id.index()) { *mark = true; }
                 }
             }
         }
@@ -951,10 +905,8 @@ impl ProgramStore {
                 self.js_general_dispatch_work = None;
             }
             let programs = &self.programs;
-            self.global_eval_programs
-                .retain(|_, id| programs.get(id.index()).is_some_and(Option::is_some));
-            self.owned_scripts
-                .retain(|source, _| programs.get(source.index()).is_some_and(Option::is_some));
+            self.global_eval_programs.retain(|_, id| programs.get(id.index()).is_some_and(Option::is_some));
+            self.owned_scripts.retain(|source, _| programs.get(source.index()).is_some_and(Option::is_some));
         }
         reclaimed
     }
@@ -997,45 +949,24 @@ impl ProgramStore {
     }
 
     pub(super) fn register_owned_script(&mut self, script: &Rc<crate::api::CompiledScriptState>) {
-        self.owned_scripts.insert(
-            script.source,
-            OwnedScript {
-                owner: Rc::downgrade(script),
-                instances: Vec::new(),
-            },
-        );
+        self.owned_scripts.insert(script.source, OwnedScript { owner: Rc::downgrade(script), instances: Vec::new() });
     }
 
     pub(super) fn owns_script(&self, script: &Rc<crate::api::CompiledScriptState>) -> bool {
-        self.owned_scripts
-            .get(&script.source)
-            .is_some_and(|entry| std::ptr::eq(entry.owner.as_ptr(), Rc::as_ptr(script)))
+        self.owned_scripts.get(&script.source).is_some_and(|entry| {
+            std::ptr::eq(entry.owner.as_ptr(), Rc::as_ptr(script))
+        })
     }
 
-    pub(super) fn owned_script_instance(
-        &self,
-        source: ProgramId,
-        realm: WeakHandle,
-    ) -> Option<ProgramId> {
-        self.owned_scripts
-            .get(&source)?
-            .instances
-            .iter()
+    pub(super) fn owned_script_instance(&self, source: ProgramId, realm: WeakHandle) -> Option<ProgramId> {
+        self.owned_scripts.get(&source)?.instances.iter()
             .find_map(|(owner, id)| (*owner == realm).then_some(*id))
     }
 
-    pub(super) fn bind_script_instance(
-        &mut self,
-        source: ProgramId,
-        realm: WeakHandle,
-        id: ProgramId,
-    ) {
+    pub(super) fn bind_script_instance(&mut self, source: ProgramId, realm: WeakHandle, id: ProgramId) {
         self.set_origin(id, CompilationOrigin::SharedScript { source });
-        self.owned_scripts
-            .get_mut(&source)
-            .expect("registered Script source")
-            .instances
-            .push((realm, id));
+        self.owned_scripts.get_mut(&source).expect("registered Script source")
+            .instances.push((realm, id));
     }
 
     pub(super) fn source_identity(&self, id: ProgramId) -> ProgramId {
@@ -1071,19 +1002,14 @@ impl ProgramStore {
     }
 
     pub(super) fn set_origin(&mut self, id: ProgramId, origin: CompilationOrigin) {
-        if let Some(entry) = self.entry_mut(id) {
-            entry.origin = origin;
-        }
+        if let Some(entry) = self.entry_mut(id) { entry.origin = origin; }
     }
 
     pub(super) fn eval_origin(&self, id: ProgramId) -> Option<JsString> {
         match &self.entry(id)?.origin {
             CompilationOrigin::Source | CompilationOrigin::SharedScript { .. } => None,
-            CompilationOrigin::Eval { caller } => Some(
-                caller
-                    .clone()
-                    .unwrap_or_else(|| JsString::from_str(ANONYMOUS_EVAL_ORIGIN)),
-            ),
+            CompilationOrigin::Eval { caller } => Some(caller.clone()
+                .unwrap_or_else(|| JsString::from_str(ANONYMOUS_EVAL_ORIGIN))),
             CompilationOrigin::FunctionConstructor { caller } => Some(caller.clone()),
         }
     }
@@ -1091,13 +1017,8 @@ impl ProgramStore {
     pub(super) fn is_function_constructor_body(&self, id: ProgramId, function: u32) -> bool {
         self.entry(id).is_some_and(|entry| {
             matches!(entry.origin, CompilationOrigin::FunctionConstructor { .. })
-                && entry
-                    .residual
-                    .functions
-                    .get(function as usize)
-                    .is_some_and(|function| {
-                        function.header().parent == Some(super::ROOT_FUNCTION_ID)
-                    })
+                && entry.residual.functions.get(function as usize)
+                    .is_some_and(|function| function.header().parent == Some(super::ROOT_FUNCTION_ID))
         })
     }
 
@@ -1185,11 +1106,7 @@ impl ProgramStore {
         let function_sources = vec![None; program.functions.len()];
         let lane_views = LaneViews::default();
         let lane_deferred = vec![std::cell::Cell::new(0); program.functions.len()];
-        let origin = if program.kind == crate::bytecode::ProgramKind::Eval {
-            CompilationOrigin::Eval { caller: None }
-        } else {
-            CompilationOrigin::Source
-        };
+        let origin = if program.kind == crate::bytecode::ProgramKind::Eval { CompilationOrigin::Eval { caller: None } } else { CompilationOrigin::Source };
         self.programs.push(Some(ProgramEntry {
             residual: Residual::decoded(program),
             wasm_signatures: None,
@@ -1391,22 +1308,11 @@ impl ProgramStore {
             return false;
         };
         let rules = entry.root_slots.get_or_init(|| {
-            let locals = entry
-                .residual
-                .functions
-                .first()
-                .map_or(0, |root| root.local_atoms.len());
+            let locals = entry.residual.functions.first().map_or(0, |root| root.local_atoms.len());
             (0..locals)
                 .map(|slot| {
-                    let import = entry
-                        .module_imports
-                        .iter()
-                        .any(|(local, _)| usize::from(*local) == slot);
-                    if import {
-                        RootSlotRule::Projection
-                    } else {
-                        entry.residual.root_slot_rule(slot)
-                    }
+                    let import = entry.module_imports.iter().any(|(local, _)| usize::from(*local) == slot);
+                    if import { RootSlotRule::Projection } else { entry.residual.root_slot_rule(slot) }
                 })
                 .collect()
         });
@@ -1434,10 +1340,7 @@ impl ProgramStore {
     /// Every live program's compiled form.
     #[cfg(feature = "profile-memory")]
     pub(crate) fn residuals(&self) -> impl Iterator<Item = &ResidualProgram> {
-        self.programs
-            .iter()
-            .flatten()
-            .map(|entry| &**entry.residual)
+        self.programs.iter().flatten().map(|entry| &**entry.residual)
     }
 
     pub(crate) fn module_environment(&self, id: ProgramId) -> Option<Value> {
@@ -1481,10 +1384,7 @@ impl ProgramStore {
     }
 
     /// The cache site counts of program `id`, which a restored program knows undecoded.
-    pub(crate) fn cache_site_counts(
-        &self,
-        id: ProgramId,
-    ) -> Option<crate::bytecode::CacheSiteCounts> {
+    pub(crate) fn cache_site_counts(&self, id: ProgramId) -> Option<crate::bytecode::CacheSiteCounts> {
         Some(self.entry(id)?.residual.sites)
     }
 
@@ -1601,7 +1501,11 @@ impl ProgramStore {
         id: ProgramId,
         function: u32,
     ) -> Option<Rc<super::compiled::CompiledProgram>> {
-        self.entry(id)?.jit_tiers.wasm(function)?.compiled.clone()
+        self.entry(id)?
+            .jit_tiers
+            .wasm(function)?
+            .compiled
+            .clone()
     }
 
     /// Find a root artifact whose static closure includes this function.
@@ -1647,8 +1551,7 @@ impl ProgramStore {
     /// keep is work thrown away (sqlite3-wasm `--jit`: hundreds of root compiles after the
     /// tier budget filled, 15 s of its first iteration).
     pub(super) fn wasm_tier_has_room(&self) -> bool {
-        self.jit_code_cache
-            .can_retain(JitArtifactKind::WasmTierRoot, JIT_MIN_ARTIFACT_BYTES)
+        self.jit_code_cache.can_retain(JitArtifactKind::WasmTierRoot, JIT_MIN_ARTIFACT_BYTES)
     }
 
     /// Retain one compiled root closure if the VM-wide tier budget permits
@@ -1734,8 +1637,7 @@ impl ProgramStore {
     /// Records the counters `QUENCH_JS_JIT_STATS` enables, for a test to read.
     #[cfg(all(test, not(quench_profiled)))]
     pub(super) fn enable_js_jit_diagnostics(&mut self) {
-        self.js_jit_diagnostics
-            .get_or_insert_with(FxHashMap::default);
+        self.js_jit_diagnostics.get_or_insert_with(FxHashMap::default);
     }
 
     pub(super) fn js_jit_dataview_float64_enabled(&self) -> bool {
@@ -1780,7 +1682,8 @@ impl ProgramStore {
         if decision.tracked {
             self.js_jit_tracked_functions += 1;
         } else if !can_track && !already_tracked {
-            self.js_jit_tracking_exhaustions = self.js_jit_tracking_exhaustions.saturating_add(1);
+            self.js_jit_tracking_exhaustions =
+                self.js_jit_tracking_exhaustions.saturating_add(1);
         }
         if decision.promoted {
             self.record_js_jit_promotion(id, function);
@@ -1830,9 +1733,7 @@ impl ProgramStore {
         policy: crate::MemoryPolicy,
     ) -> bool {
         // Admission: the tier's switch, and the memory policy's (`JS_FUNCTION_TIERS`).
-        if !self.js_jit_general_dispatch_enabled
-            || !super::compiled::js_function_tiers_compile(policy)
-        {
+        if !self.js_jit_general_dispatch_enabled || !super::compiled::js_function_tiers_compile(policy) {
             return false;
         }
         let priced = self.general_baseline_priced;
@@ -1867,9 +1768,7 @@ impl ProgramStore {
             JsTierState::Hot { observations, .. } => {
                 *observations = observations.saturating_add(1);
                 if *observations >= JS_JIT_GENERAL_PROMOTION_ENTRIES {
-                    *state = JsTierState::GeneralPromotionPending {
-                        entries: u32::from(*observations),
-                    };
+                    *state = JsTierState::GeneralPromotionPending { entries: u32::from(*observations) };
                     promoted = true;
                 }
             }
@@ -1916,9 +1815,7 @@ impl ProgramStore {
         // A zero-byte admission probe checks count and aggregate artifact
         // ceilings before this accounting path can request compilation.
         if self.jit_code_cache.js_functions >= JS_JIT_MAX_FUNCTIONS
-            || !self
-                .jit_code_cache
-                .can_retain(JitArtifactKind::JsFunction, 0)
+            || !self.jit_code_cache.can_retain(JitArtifactKind::JsFunction, 0)
         {
             return false;
         }
@@ -1937,9 +1834,7 @@ impl ProgramStore {
         }) {
             return false;
         }
-        let work_by_program = self
-            .js_general_dispatch_work
-            .get_or_insert_with(FxHashMap::default);
+        let work_by_program = self.js_general_dispatch_work.get_or_insert_with(FxHashMap::default);
         let accumulated_work = work_by_program
             .entry(id.raw())
             .or_default()
@@ -1985,8 +1880,9 @@ impl ProgramStore {
         };
         let (misses, mapped_bytes) = match state {
             JsTierState::Compiled(compiled) if !compiled.is_general_dispatch() => {
-                let misses =
-                    compiled.note_specialized_guard_miss(JS_JIT_SPECIALIZED_GUARD_MISS_THRESHOLD);
+                let misses = compiled.note_specialized_guard_miss(
+                    JS_JIT_SPECIALIZED_GUARD_MISS_THRESHOLD,
+                );
                 if misses < JS_JIT_SPECIALIZED_GUARD_MISS_THRESHOLD {
                     return false;
                 }
@@ -2020,22 +1916,23 @@ impl ProgramStore {
         let can_reject = self.js_jit_rejected_functions < JS_JIT_MAX_REJECTED_FUNCTIONS;
         let entry = self.entry_mut(id)?;
         let mut inserted = false;
-        let count =
-            if let Some(JsTierState::Rejected { entries, .. }) = entry.jit_tiers.js_mut(function) {
-                *entries = entries.saturating_add(1);
-                *entries
-            } else {
-                if !can_reject {
-                    return None;
-                }
-                inserted = entry
-                    .jit_tiers
-                    .js_insert(function, JsTierState::Rejected { entries: 1, reason });
-                if !inserted {
-                    return None;
-                }
-                1
-            };
+        let count = if let Some(JsTierState::Rejected { entries, .. }) =
+            entry.jit_tiers.js_mut(function)
+        {
+            *entries = entries.saturating_add(1);
+            *entries
+        } else {
+            if !can_reject {
+                return None;
+            }
+            inserted = entry
+                .jit_tiers
+                .js_insert(function, JsTierState::Rejected { entries: 1, reason });
+            if !inserted {
+                return None;
+            }
+            1
+        };
         if inserted {
             self.js_jit_rejected_functions += 1;
         }
@@ -2047,8 +1944,10 @@ impl ProgramStore {
         id: ProgramId,
         function: u32,
     ) -> Option<(u64, &'static str)> {
-        let JsTierState::Rejected { entries, reason } =
-            self.entry_mut(id)?.jit_tiers.js_mut(function)?
+        let JsTierState::Rejected { entries, reason } = self
+            .entry_mut(id)?
+            .jit_tiers
+            .js_mut(function)?
         else {
             return None;
         };
@@ -2094,8 +1993,9 @@ impl ProgramStore {
                 counters.parameter_count = parameter_count;
                 if let Some(numeric) = numeric {
                     counters.entries = counters.entries.saturating_add(1);
-                    counters.numeric_entries =
-                        counters.numeric_entries.saturating_add(u64::from(numeric));
+                    counters.numeric_entries = counters
+                        .numeric_entries
+                        .saturating_add(u64::from(numeric));
                 } else {
                     counters.lane_entries = counters.lane_entries.saturating_add(1);
                 }
@@ -2150,20 +2050,15 @@ impl ProgramStore {
                                 if instruction.op() == crate::bytecode::Op::JumpBinaryFalse {
                                     match instruction.binary_operator_field() {
                                         x if x
-                                            == oxc_ast::ast::BinaryOperator::StrictEquality
-                                                as u32
-                                            || x == oxc_ast::ast::BinaryOperator::StrictInequality
-                                                as u32 =>
+                                            == oxc_ast::ast::BinaryOperator::StrictEquality as u32
+                                            || x == oxc_ast::ast::BinaryOperator::StrictInequality as u32 =>
                                         {
                                             guard_census.2 = guard_census.2.saturating_add(1);
                                         }
                                         x if x == oxc_ast::ast::BinaryOperator::LessThan as u32
-                                            || x == oxc_ast::ast::BinaryOperator::LessEqualThan
-                                                as u32
-                                            || x == oxc_ast::ast::BinaryOperator::GreaterThan
-                                                as u32
-                                            || x == oxc_ast::ast::BinaryOperator::GreaterEqualThan
-                                                as u32 =>
+                                            || x == oxc_ast::ast::BinaryOperator::LessEqualThan as u32
+                                            || x == oxc_ast::ast::BinaryOperator::GreaterThan as u32
+                                            || x == oxc_ast::ast::BinaryOperator::GreaterEqualThan as u32 =>
                                         {
                                             guard_census.3 = guard_census.3.saturating_add(1);
                                         }
@@ -2177,23 +2072,23 @@ impl ProgramStore {
                             {
                                 guard_census.1 = guard_census.1.saturating_add(1);
                             }
-                            crate::bytecode::Op::Binary => match instruction.binary_operator() {
-                                x if x == oxc_ast::ast::BinaryOperator::StrictEquality as u32
-                                    || x == oxc_ast::ast::BinaryOperator::StrictInequality
-                                        as u32 =>
-                                {
-                                    guard_census.2 = guard_census.2.saturating_add(1);
+                            crate::bytecode::Op::Binary => {
+                                match instruction.binary_operator() {
+                                    x if x == oxc_ast::ast::BinaryOperator::StrictEquality as u32
+                                        || x == oxc_ast::ast::BinaryOperator::StrictInequality as u32 =>
+                                    {
+                                        guard_census.2 = guard_census.2.saturating_add(1);
+                                    }
+                                    x if x == oxc_ast::ast::BinaryOperator::LessThan as u32
+                                        || x == oxc_ast::ast::BinaryOperator::LessEqualThan as u32
+                                        || x == oxc_ast::ast::BinaryOperator::GreaterThan as u32
+                                        || x == oxc_ast::ast::BinaryOperator::GreaterEqualThan as u32 =>
+                                    {
+                                        guard_census.3 = guard_census.3.saturating_add(1);
+                                    }
+                                    _ => {}
                                 }
-                                x if x == oxc_ast::ast::BinaryOperator::LessThan as u32
-                                    || x == oxc_ast::ast::BinaryOperator::LessEqualThan as u32
-                                    || x == oxc_ast::ast::BinaryOperator::GreaterThan as u32
-                                    || x == oxc_ast::ast::BinaryOperator::GreaterEqualThan
-                                        as u32 =>
-                                {
-                                    guard_census.3 = guard_census.3.saturating_add(1);
-                                }
-                                _ => {}
-                            },
+                            }
                             _ => {}
                         }
                     }
@@ -2220,8 +2115,9 @@ impl ProgramStore {
             counters.guard_relational_comparisons = guard_census.3;
             if let Some(numeric) = numeric {
                 counters.entries = counters.entries.saturating_add(1);
-                counters.numeric_entries =
-                    counters.numeric_entries.saturating_add(u64::from(numeric));
+                counters.numeric_entries = counters
+                    .numeric_entries
+                    .saturating_add(u64::from(numeric));
             } else {
                 counters.lane_entries = counters.lane_entries.saturating_add(1);
             }
@@ -2303,7 +2199,9 @@ impl ProgramStore {
             .and_then(|diagnostics| diagnostics.get_mut(&(id.raw(), function)))
         {
             counters.field_cache_probes = counters.field_cache_probes.saturating_add(1);
-            counters.field_cache_hits = counters.field_cache_hits.saturating_add(u64::from(hit));
+            counters.field_cache_hits = counters
+                .field_cache_hits
+                .saturating_add(u64::from(hit));
         }
     }
 
@@ -2318,7 +2216,8 @@ impl ProgramStore {
             .as_mut()
             .and_then(|diagnostics| diagnostics.get_mut(&(id.raw(), function)))
         {
-            counters.field_store_cache_probes = counters.field_store_cache_probes.saturating_add(1);
+            counters.field_store_cache_probes =
+                counters.field_store_cache_probes.saturating_add(1);
             counters.field_store_cache_hits = counters
                 .field_store_cache_hits
                 .saturating_add(u64::from(hit));
@@ -2391,8 +2290,9 @@ impl ProgramStore {
             .as_mut()
             .and_then(|diagnostics| diagnostics.get_mut(&(id.raw(), function)))
         {
-            counters.numeric_find_fast_entries =
-                counters.numeric_find_fast_entries.saturating_add(1);
+            counters.numeric_find_fast_entries = counters
+                .numeric_find_fast_entries
+                .saturating_add(1);
         }
     }
 
@@ -2530,10 +2430,7 @@ impl ProgramStore {
         ) -> super::dispatch_fast::LaneView,
     ) -> Option<*const super::dispatch_fast::LaneView> {
         let entry = self.entry(id)?;
-        let view = entry
-            .lane_views
-            .of(&entry.residual)
-            .get(function as usize)?;
+        let view = entry.lane_views.of(&entry.residual).get(function as usize)?;
         if let Some(view) = view.get() {
             return Some(view);
         }
@@ -2547,14 +2444,7 @@ impl ProgramStore {
             #[cfg(feature = "profile-lane-exits")]
             {
                 let (start, end) = view.record_range();
-                super::lane_exits::register_view(
-                    start,
-                    end,
-                    census_label(entry, function),
-                    code.instructions()
-                        .map(|instruction| instruction.op())
-                        .collect(),
-                );
+                super::lane_exits::register_view(start, end, census_label(entry, function), code.instructions().map(|instruction| instruction.op()).collect());
             }
             view
         }))
@@ -2589,24 +2479,14 @@ impl ProgramStore {
     ) -> Option<*const super::dispatch_fast::LaneView> {
         let entry = self.entry(id)?;
         let code = entry.residual.function_get(function as usize)?;
-        let view = entry
-            .lane_views
-            .of(&entry.residual)
-            .get(function as usize)?;
+        let view = entry.lane_views.of(&entry.residual).get(function as usize)?;
         Some(view.get_or_init(|| {
             let live = entry.residual.register_root_masks(function);
             let view = derive(code, &entry.constants, entry.residual.kind, live);
             #[cfg(feature = "profile-lane-exits")]
             {
                 let (start, end) = view.record_range();
-                super::lane_exits::register_view(
-                    start,
-                    end,
-                    census_label(entry, function),
-                    code.instructions()
-                        .map(|instruction| instruction.op())
-                        .collect(),
-                );
+                super::lane_exits::register_view(start, end, census_label(entry, function), code.instructions().map(|instruction| instruction.op()).collect());
             }
             view
         }))
@@ -2631,9 +2511,7 @@ impl ProgramStore {
         let end = start.checked_add(count)?;
         let cached = entry.const_arrays.get_mut(start)?;
         if cached.is_none() {
-            *cached = Some(crate::heap::ArrayElements::from_slice(
-                entry.constants.get(start..end)?,
-            ));
+            *cached = Some(crate::heap::ArrayElements::from_slice(entry.constants.get(start..end)?));
         }
         cached.clone()
     }
@@ -2755,13 +2633,7 @@ impl Drop for ProgramStore {
                     "reclaimed"
                 });
             let function_name = entry
-                .and_then(|entry| {
-                    entry
-                        .residual
-                        .functions
-                        .get(*function as usize)
-                        .map(|f| (entry, f))
-                })
+                .and_then(|entry| entry.residual.functions.get(*function as usize).map(|f| (entry, f)))
                 .and_then(|(entry, function)| {
                     let header = function.header();
                     let atom = header.name.or(header.inferred_name)? as usize;
@@ -2776,15 +2648,17 @@ impl Drop for ProgramStore {
             let native_entry_coverage_ppm = if counters.entries == 0 {
                 0
             } else {
-                (u128::from(counters.native_entries) * 1_000_000 / u128::from(counters.entries))
+                (u128::from(counters.native_entries) * 1_000_000
+                    / u128::from(counters.entries))
                     .min(1_000_000) as u64
             };
             let total_entries = counters.entries.saturating_add(counters.lane_entries);
             let all_entry_native_coverage_ppm = if total_entries == 0 {
                 0
             } else {
-                (u128::from(counters.native_entries) * 1_000_000 / u128::from(total_entries))
-                    .min(1_000_000) as u64
+                (u128::from(counters.native_entries) * 1_000_000
+                    / u128::from(total_entries))
+                .min(1_000_000) as u64
             };
             let osr = entry
                 .and_then(|entry| entry.lane_views.derived(*function))
@@ -2860,8 +2734,10 @@ impl Drop for ProgramStore {
                 let _ = write!(stderr, ",{count}]");
             }
             let _ = write!(stderr, "],\"general_dispatch_opcodes\":[");
-            for (index, (opcode, count)) in
-                counters.general_dispatch_opcode_counts.iter().enumerate()
+            for (index, (opcode, count)) in counters
+                .general_dispatch_opcode_counts
+                .iter()
+                .enumerate()
             {
                 if index != 0 {
                     let _ = write!(stderr, ",");
@@ -2929,7 +2805,9 @@ fn write_json_string(output: &mut impl std::io::Write, value: &str) -> std::io::
             '\n' => write!(output, "\\n")?,
             '\r' => write!(output, "\\r")?,
             '\t' => write!(output, "\\t")?,
-            character if character <= '\u{1f}' => write!(output, "\\u{:04x}", character as u32)?,
+            character if character <= '\u{1f}' => {
+                write!(output, "\\u{:04x}", character as u32)?
+            }
             character => write!(output, "{character}")?,
         }
     }
@@ -2951,11 +2829,8 @@ fn census_label(entry: &ProgramEntry, function: u32) -> String {
     format!(
         "{} f{function} {} @{:?}",
         code.source_name,
-        body.and_then(|body| body.name)
-            .map(|atom| code.atoms[atom as usize].to_string())
-            .unwrap_or_default(),
-        body.and_then(|body| body.source_span)
-            .map(|span| span.start),
+        body.and_then(|body| body.name).map(|atom| code.atoms[atom as usize].to_string()).unwrap_or_default(),
+        body.and_then(|body| body.source_span).map(|span| span.start),
     )
 }
 
@@ -2981,24 +2856,13 @@ fn deferred_run_completes(runs: &std::cell::Cell<u8>) -> bool {
 /// or loads never enter the lane, and a table zeroed for each of their functions cost a
 /// restored process about 54 fresh pages (2,493 functions at 88 bytes).
 #[derive(Default)]
-pub(super) struct LaneViews(
-    std::cell::OnceCell<Box<[std::cell::OnceCell<super::dispatch_fast::LaneView>]>>,
-);
+pub(super) struct LaneViews(std::cell::OnceCell<Box<[std::cell::OnceCell<super::dispatch_fast::LaneView>]>>);
 
 impl LaneViews {
     /// The table, one cell per function of `residual`. Its address is fixed once made, as
     /// the lane context's pointer to it requires.
-    fn of(
-        &self,
-        residual: &ResidualProgram,
-    ) -> &[std::cell::OnceCell<super::dispatch_fast::LaneView>] {
-        self.0.get_or_init(|| {
-            residual
-                .functions
-                .iter()
-                .map(|_| std::cell::OnceCell::new())
-                .collect()
-        })
+    fn of(&self, residual: &ResidualProgram) -> &[std::cell::OnceCell<super::dispatch_fast::LaneView>] {
+        self.0.get_or_init(|| residual.functions.iter().map(|_| std::cell::OnceCell::new()).collect())
     }
 
     /// `function`'s view if it has one, without making the table.
@@ -3026,51 +2890,37 @@ mod general_promotion_tests {
 #[cfg(test)]
 mod jit_code_cache_tests {
     use super::{
-        JIT_MAX_ARTIFACTS, JIT_MAX_MAPPED_BYTES, JS_JIT_MAX_FUNCTIONS, JS_JIT_MAX_MAPPED_BYTES,
-        JitArtifactKind, JitCodeCacheBudget, JsTierState, WASM_JIT_MAX_BASELINE_MAPPED_BYTES,
+        JIT_MAX_ARTIFACTS, JIT_MAX_MAPPED_BYTES, JS_JIT_MAX_FUNCTIONS, WASM_JIT_MAX_BASELINE_MAPPED_BYTES,
+        JS_JIT_MAX_MAPPED_BYTES, JitArtifactKind, JitCodeCacheBudget,
+        JsTierState,
         WASM_JIT_MAX_TIER_MAPPED_BYTES, WASM_JIT_MAX_TIER_ROOTS,
     };
 
     #[test]
     fn general_dispatch_backedge_unpriced_mode_waits_for_work_floor() {
-        let mut state = JsTierState::Hot {
-            observations: 1,
-            numeric: 0,
-        };
+        let mut state = JsTierState::Hot { observations: 1, numeric: 0 };
         let mut work = 0;
         super::accumulate_general_dispatch_work(&mut work, 31 * 64);
-        assert!(!super::promote_general_dispatch_if_paid(
-            &mut state, work, 64, false
-        ));
+        assert!(!super::promote_general_dispatch_if_paid(&mut state, work, 64, false));
         assert!(matches!(state, JsTierState::Hot { .. }));
         super::accumulate_general_dispatch_work(&mut work, 64);
-        assert!(super::promote_general_dispatch_if_paid(
-            &mut state, work, 64, false
-        ));
+        assert!(super::promote_general_dispatch_if_paid(&mut state, work, 64, false));
         assert!(matches!(state, JsTierState::GeneralCompileDue));
     }
 
     #[test]
     fn general_dispatch_backedge_priced_mode_uses_existing_compile_cost() {
-        let mut state = JsTierState::Rejected {
-            entries: 8,
-            reason: "test",
-        };
+        let mut state = JsTierState::Rejected { entries: 8, reason: "test" };
         let mut work = 0;
         // 100 instructions cost the fixed and per-instruction compile cost, which the
         // saved share of observed bytecode work must cover.
         let (saved, of) = super::JS_JIT_GENERAL_SAVED_SHARE;
-        let cost = super::JS_JIT_GENERAL_COMPILE_FIXED_COST
-            + super::JS_JIT_GENERAL_COMPILE_COST_PER_INSTRUCTION * 100;
+        let cost = super::JS_JIT_GENERAL_COMPILE_FIXED_COST + super::JS_JIT_GENERAL_COMPILE_COST_PER_INSTRUCTION * 100;
         let paid = usize::try_from(cost * of / saved).unwrap();
         super::accumulate_general_dispatch_work(&mut work, paid - 1);
-        assert!(!super::promote_general_dispatch_if_paid(
-            &mut state, work, 100, true
-        ));
+        assert!(!super::promote_general_dispatch_if_paid(&mut state, work, 100, true));
         super::accumulate_general_dispatch_work(&mut work, 1);
-        assert!(super::promote_general_dispatch_if_paid(
-            &mut state, work, 100, true
-        ));
+        assert!(super::promote_general_dispatch_if_paid(&mut state, work, 100, true));
         assert!(matches!(state, JsTierState::GeneralCompileDue));
     }
 
@@ -3080,14 +2930,10 @@ mod jit_code_cache_tests {
         let mut work = u64::MAX - 3;
         super::accumulate_general_dispatch_work(&mut work, 10);
         assert_eq!(work, u64::MAX);
-        assert!(super::promote_general_dispatch_if_paid(
-            &mut state, work, 1, false
-        ));
+        assert!(super::promote_general_dispatch_if_paid(&mut state, work, 1, false));
         super::accumulate_general_dispatch_work(&mut work, usize::MAX);
         assert_eq!(work, u64::MAX);
-        assert!(!super::promote_general_dispatch_if_paid(
-            &mut state, work, 1, false
-        ));
+        assert!(!super::promote_general_dispatch_if_paid(&mut state, work, 1, false));
         assert!(matches!(state, JsTierState::GeneralCompileDue));
     }
 
@@ -3127,10 +2973,7 @@ mod jit_code_cache_tests {
             WASM_JIT_MAX_BASELINE_MAPPED_BYTES - JIT_MAX_MAPPED_BYTES
         ));
         cache.release(JitArtifactKind::BaselineWasm, 1, JIT_MAX_MAPPED_BYTES + 1);
-        assert!(cache.can_retain(
-            JitArtifactKind::BaselineWasm,
-            WASM_JIT_MAX_BASELINE_MAPPED_BYTES
-        ));
+        assert!(cache.can_retain(JitArtifactKind::BaselineWasm, WASM_JIT_MAX_BASELINE_MAPPED_BYTES));
     }
 
     #[test]

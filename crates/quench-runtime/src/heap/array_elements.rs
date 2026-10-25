@@ -36,7 +36,8 @@ pub(crate) struct ArrayElements {
 
 /// Offsets for the native read-only array view. These are derived beside the fields they
 /// describe so native code does not maintain a second copy of the storage layout.
-pub(super) const NATIVE_HEADER_POINTER_OFFSET: usize = std::mem::offset_of!(ArrayElements, header);
+pub(super) const NATIVE_HEADER_POINTER_OFFSET: usize =
+    std::mem::offset_of!(ArrayElements, header);
 pub(super) const NATIVE_HEADER_LENGTH_OFFSET: usize = std::mem::offset_of!(Header, len);
 pub(super) const NATIVE_HEADER_VALUES_OFFSET: usize = VALUES_OFFSET;
 
@@ -86,10 +87,7 @@ impl ArrayElements {
 
     fn layout(capacity: usize) -> Layout {
         Layout::from_size_align(
-            VALUES_OFFSET
-                + capacity
-                    .checked_mul(size_of::<Value>())
-                    .expect("array backing overflow"),
+            VALUES_OFFSET + capacity.checked_mul(size_of::<Value>()).expect("array backing overflow"),
             align_of::<Header>(),
         )
         .expect("array backing overflow")
@@ -126,13 +124,7 @@ impl ArrayElements {
     fn values(&self) -> *mut Value {
         // SAFETY: the values start right after the header in the same allocation; for the
         // shared empty header the pointer is aligned and never dereferenced.
-        unsafe {
-            self.header
-                .as_ptr()
-                .cast::<u8>()
-                .add(VALUES_OFFSET)
-                .cast::<Value>()
-        }
+        unsafe { self.header.as_ptr().cast::<u8>().add(VALUES_OFFSET).cast::<Value>() }
     }
 
     #[inline(always)]
@@ -205,11 +197,7 @@ impl From<Vec<Value>> for ArrayElements {
 impl Clone for ArrayElements {
     fn clone(&self) -> Self {
         if self.capacity() != 0 {
-            let owners = self
-                .header()
-                .owners
-                .checked_add(1)
-                .expect("array backing owners overflow");
+            let owners = self.header().owners.checked_add(1).expect("array backing owners overflow");
             // SAFETY: arrays are single-threaded; the header is live and only owners write it.
             unsafe { (*self.header.as_ptr()).owners = owners };
         }
@@ -270,11 +258,7 @@ impl UniqueElements {
 
     /// Room for `additional` more values, growing as `Vec` does.
     pub(crate) fn reserve(&mut self, additional: usize) {
-        let required = self
-            .0
-            .len()
-            .checked_add(additional)
-            .expect("array backing overflow");
+        let required = self.0.len().checked_add(additional).expect("array backing overflow");
         let capacity = self.0.capacity();
         if required <= capacity {
             return;
@@ -294,11 +278,7 @@ impl UniqueElements {
         let layout = ArrayElements::layout(capacity);
         // SAFETY: this unique backing was allocated with the layout of its old capacity.
         let pointer = unsafe {
-            realloc(
-                self.0.header.as_ptr().cast(),
-                ArrayElements::layout(old),
-                layout.size(),
-            )
+            realloc(self.0.header.as_ptr().cast(), ArrayElements::layout(old), layout.size())
         }
         .cast::<Header>();
         let Some(header) = NonNull::new(pointer) else {
@@ -350,9 +330,7 @@ impl UniqueElements {
         let len = self.0.len();
         self.reserve(values.len());
         // SAFETY: `reserve` made room; `values` cannot alias this unique backing's spare room.
-        unsafe {
-            std::ptr::copy_nonoverlapping(values.as_ptr(), self.0.values().add(len), values.len())
-        };
+        unsafe { std::ptr::copy_nonoverlapping(values.as_ptr(), self.0.values().add(len), values.len()) };
         self.set_len(len + values.len());
     }
 
@@ -372,10 +350,7 @@ impl UniqueElements {
     /// Replaces the values in `range` with `values`, as `Vec::splice` does.
     pub(crate) fn splice(&mut self, range: std::ops::Range<usize>, values: &[Value]) {
         let len = self.0.len();
-        assert!(
-            range.start <= range.end && range.end <= len,
-            "array splice out of bounds"
-        );
+        assert!(range.start <= range.end && range.end <= len, "array splice out of bounds");
         let removed = range.end - range.start;
         if values.len() > removed {
             self.reserve(values.len() - removed);
@@ -384,11 +359,7 @@ impl UniqueElements {
         // SAFETY: the tail moves within the reserved allocation, then `values` fills the gap.
         unsafe {
             let base = self.0.values();
-            std::ptr::copy(
-                base.add(range.end),
-                base.add(range.start + values.len()),
-                len - range.end,
-            );
+            std::ptr::copy(base.add(range.end), base.add(range.start + values.len()), len - range.end);
             std::ptr::copy_nonoverlapping(values.as_ptr(), base.add(range.start), values.len());
         }
         self.set_len(new_len);
@@ -447,7 +418,8 @@ mod tests {
             0
         );
         assert!(
-            NATIVE_HEADER_LENGTH_OFFSET + std::mem::size_of::<u32>() <= NATIVE_HEADER_VALUES_OFFSET
+            NATIVE_HEADER_LENGTH_OFFSET + std::mem::size_of::<u32>()
+                <= NATIVE_HEADER_VALUES_OFFSET
         );
 
         let empty = ArrayElements::new();
@@ -503,10 +475,7 @@ mod tests {
         second.make_mut().push(Value::integer(3));
         assert_ne!(first.as_ptr(), second.as_ptr());
         assert_eq!(&*first, &[Value::integer(1), Value::integer(2)]);
-        assert_eq!(
-            &*second,
-            &[Value::integer(1), Value::integer(2), Value::integer(3)]
-        );
+        assert_eq!(&*second, &[Value::integer(1), Value::integer(2), Value::integer(3)]);
         first.make_mut()[0] = Value::integer(9);
         assert_eq!(first[0], Value::integer(9));
 
@@ -516,15 +485,7 @@ mod tests {
         assert_eq!(unique.remove(0), Value::integer(0));
         unique.splice(1..3, &[Value::TRUE]);
         unique.truncate(4);
-        assert_eq!(
-            &*grown,
-            &[
-                Value::integer(1),
-                Value::TRUE,
-                Value::integer(4),
-                Value::integer(5)
-            ]
-        );
+        assert_eq!(&*grown, &[Value::integer(1), Value::TRUE, Value::integer(4), Value::integer(5)]);
         let unique = grown.make_mut();
         assert_eq!(unique.pop(), Some(Value::integer(5)));
         unique.resize(6, Value::NULL);

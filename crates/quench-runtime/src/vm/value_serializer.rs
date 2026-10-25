@@ -7,11 +7,11 @@
 
 use super::object_descriptors::PropertyDescriptorRecord;
 use super::*;
-use crate::shared_backing::SharedBacking;
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 use std::sync::Arc;
+use crate::shared_backing::SharedBacking;
 
 /// The format version this serializer writes (`kLatestVersion`).
 pub const WIRE_FORMAT_VERSION: u32 = 15;
@@ -83,11 +83,7 @@ mod error_tag {
 const ERROR_PROTOTYPES: [(&str, Native, u8); 6] = [
     ("EvalError", Native::EvalError, error_tag::EVAL_ERROR),
     ("RangeError", Native::RangeError, error_tag::RANGE_ERROR),
-    (
-        "ReferenceError",
-        Native::ReferenceError,
-        error_tag::REFERENCE_ERROR,
-    ),
+    ("ReferenceError", Native::ReferenceError, error_tag::REFERENCE_ERROR),
     ("SyntaxError", Native::SyntaxError, error_tag::SYNTAX_ERROR),
     ("TypeError", Native::TypeError, error_tag::TYPE_ERROR),
     ("URIError", Native::URIError, error_tag::URI_ERROR),
@@ -139,8 +135,7 @@ const VARINT_PAYLOAD_MASK: u8 = 0x7F;
 const VARINT_CONTINUATION: u8 = 0x80;
 
 const DESERIALIZATION_ERROR: &str = "Unable to deserialize cloned data.";
-const VERSION_ERROR: &str =
-    "Unable to deserialize cloned data due to invalid or unsupported version.";
+const VERSION_ERROR: &str = "Unable to deserialize cloned data due to invalid or unsupported version.";
 const DETACHED_MESSAGE: &str = "An ArrayBuffer is detached and could not be cloned.";
 
 /// Bytes a serializer appends to. Embedder host-object hooks write to the same output.
@@ -173,10 +168,7 @@ fn put_tag(output: &WireOutput, tag: u8) {
 }
 
 fn put_zigzag(output: &WireOutput, value: i32) {
-    put_varint(
-        output,
-        u64::from(((value as u32) << 1) ^ ((value >> 31) as u32)),
-    );
+    put_varint(output, u64::from(((value as u32) << 1) ^ ((value >> 31) as u32)));
 }
 
 /// Doubles use host byte order, as V8 writes them.
@@ -227,9 +219,7 @@ fn put_string(output: &WireOutput, units: crate::vm::wtf16::Units<'_>) {
     if units.iter().all(|unit| unit <= u16::from(u8::MAX)) {
         put_tag(output, tag::ONE_BYTE_STRING);
         put_varint(output, units.len() as u64);
-        output
-            .borrow_mut()
-            .extend(units.iter().map(|unit| unit as u8));
+        output.borrow_mut().extend(units.iter().map(|unit| unit as u8));
         return;
     }
     let byte_length = units.len() * std::mem::size_of::<u16>();
@@ -253,10 +243,7 @@ fn put_bigint_contents(output: &WireOutput, value: &num_bigint::BigInt) {
     let digits = magnitude.len().div_ceil(BIGINT_DIGIT_BYTES);
     magnitude.resize(digits * BIGINT_DIGIT_BYTES, 0);
     let negative = u32::from(sign == num_bigint::Sign::Minus);
-    put_varint(
-        output,
-        u64::from(negative | ((magnitude.len() as u32) << BIGINT_LENGTH_SHIFT)),
-    );
+    put_varint(output, u64::from(negative | ((magnitude.len() as u32) << BIGINT_LENGTH_SHIFT)));
     output.borrow_mut().extend_from_slice(&magnitude);
 }
 
@@ -271,11 +258,7 @@ pub type SharedWireInput = Rc<RefCell<WireInput>>;
 
 impl WireInput {
     pub fn new(bytes: Vec<u8>) -> Self {
-        Self {
-            bytes,
-            position: 0,
-            version: 0,
-        }
+        Self { bytes, position: 0, version: 0 }
     }
 
     /// The header's format version (0 before `readHeader`).
@@ -284,10 +267,7 @@ impl WireInput {
     }
 
     fn peek_tag(&self) -> Option<u8> {
-        self.bytes[self.position..]
-            .iter()
-            .copied()
-            .find(|byte| *byte != tag::PADDING)
+        self.bytes[self.position..].iter().copied().find(|byte| *byte != tag::PADDING)
     }
 
     fn read_tag(&mut self) -> Option<u8> {
@@ -337,9 +317,7 @@ impl WireInput {
     }
 
     pub fn read_double(&mut self) -> Option<f64> {
-        let bytes = self
-            .bytes
-            .get(self.position..self.position + std::mem::size_of::<f64>())?;
+        let bytes = self.bytes.get(self.position..self.position + std::mem::size_of::<f64>())?;
         let value = f64::from_ne_bytes(bytes.try_into().ok()?);
         self.position += std::mem::size_of::<f64>();
         Some(if value.is_nan() { f64::NAN } else { value })
@@ -411,12 +389,7 @@ pub struct ValueDeserializer {
 
 impl ValueDeserializer {
     pub fn new(input: SharedWireInput) -> Self {
-        Self {
-            input,
-            objects: Vec::new(),
-            transfers: HashMap::new(),
-            roots: Vec::new(),
-        }
+        Self { input, objects: Vec::new(), transfers: HashMap::new(), roots: Vec::new() }
     }
 
     pub fn input(&self) -> &SharedWireInput {
@@ -428,26 +401,10 @@ impl ValueDeserializer {
 pub(crate) trait WriteHooks<H: Host> {
     /// Write a host object's contents after its tag; a returned value is written next,
     /// through this serializer.
-    fn write_host_object(
-        &mut self,
-        vm: &mut Vm<H>,
-        program: &ResidualProgram,
-        output: &WireOutput,
-        object: Value,
-    ) -> Result<Option<Value>, JsError>;
-    fn shared_array_buffer_id(
-        &mut self,
-        vm: &mut Vm<H>,
-        program: &ResidualProgram,
-        buffer: Value,
-    ) -> Result<u32, JsError>;
+    fn write_host_object(&mut self, vm: &mut Vm<H>, program: &ResidualProgram, output: &WireOutput, object: Value) -> Result<Option<Value>, JsError>;
+    fn shared_array_buffer_id(&mut self, vm: &mut Vm<H>, program: &ResidualProgram, buffer: Value) -> Result<u32, JsError>;
     /// The exception for a value that cannot be cloned.
-    fn data_clone_error(
-        &mut self,
-        vm: &mut Vm<H>,
-        program: &ResidualProgram,
-        message: &str,
-    ) -> JsError;
+    fn data_clone_error(&mut self, vm: &mut Vm<H>, program: &ResidualProgram, message: &str) -> JsError;
 }
 
 /// The deserializer's embedder hooks (V8's `ValueDeserializer::Delegate`).
@@ -459,18 +416,8 @@ pub enum HostObjectRead<T> {
 }
 
 pub(crate) trait ReadHooks<H: Host> {
-    fn read_host_object(
-        &mut self,
-        vm: &mut Vm<H>,
-        program: &ResidualProgram,
-        input: &SharedWireInput,
-    ) -> Result<HostObjectRead<Value>, JsError>;
-    fn shared_array_buffer(
-        &mut self,
-        vm: &mut Vm<H>,
-        program: &ResidualProgram,
-        id: u32,
-    ) -> Result<Value, JsError>;
+    fn read_host_object(&mut self, vm: &mut Vm<H>, program: &ResidualProgram, input: &SharedWireInput) -> Result<HostObjectRead<Value>, JsError>;
+    fn shared_array_buffer(&mut self, vm: &mut Vm<H>, program: &ResidualProgram, id: u32) -> Result<Value, JsError>;
 }
 
 /// Why a read stopped: malformed input, or an exception already thrown.
@@ -525,20 +472,13 @@ struct MessageHooks {
 }
 
 impl<H: Host> WriteHooks<H> for MessageHooks {
-    fn write_host_object(
-        &mut self,
-        vm: &mut Vm<H>,
-        program: &ResidualProgram,
-        output: &WireOutput,
-        object: Value,
-    ) -> Result<Option<Value>, JsError> {
+    fn write_host_object(&mut self, vm: &mut Vm<H>, program: &ResidualProgram, output: &WireOutput, object: Value) -> Result<Option<Value>, JsError> {
         if let Some(index) = self.host_objects.iter().position(|host| *host == object) {
             write_uint32(output, index as u32);
             return Ok(None);
         }
         let transfer_required = vm.heap.object_record(object).is_some_and(|object| {
-            object.structured_serialization()
-                == crate::heap::StructuredSerialization::TransferRequired
+            object.structured_serialization() == crate::heap::StructuredSerialization::TransferRequired
         });
         Err(vm.data_clone_error(
             program,
@@ -550,59 +490,31 @@ impl<H: Host> WriteHooks<H> for MessageHooks {
         ))
     }
 
-    fn shared_array_buffer_id(
-        &mut self,
-        vm: &mut Vm<H>,
-        _: &ResidualProgram,
-        buffer: Value,
-    ) -> Result<u32, JsError> {
+    fn shared_array_buffer_id(&mut self, vm: &mut Vm<H>, _: &ResidualProgram, buffer: Value) -> Result<u32, JsError> {
         let Some(Cell::ArrayBuffer { bytes, .. }) = vm.heap.get(buffer) else {
             unreachable!("a shared buffer remains an ArrayBuffer");
         };
-        let backing = bytes
-            .shared_backing()
-            .expect("shared buffers own a shared backing");
-        if let Some(index) = self
-            .shared
-            .iter()
-            .position(|shared| Arc::ptr_eq(shared, &backing))
-        {
+        let backing = bytes.shared_backing().expect("shared buffers own a shared backing");
+        if let Some(index) = self.shared.iter().position(|shared| Arc::ptr_eq(shared, &backing)) {
             return Ok(index as u32);
         }
         self.shared.push(backing);
         Ok(self.shared.len() as u32 - 1)
     }
 
-    fn data_clone_error(
-        &mut self,
-        vm: &mut Vm<H>,
-        program: &ResidualProgram,
-        message: &str,
-    ) -> JsError {
+    fn data_clone_error(&mut self, vm: &mut Vm<H>, program: &ResidualProgram, message: &str) -> JsError {
         vm.data_clone_error(program, message)
     }
 }
 
 impl<H: Host> ReadHooks<H> for MessageHooks {
-    fn read_host_object(
-        &mut self,
-        _: &mut Vm<H>,
-        _: &ResidualProgram,
-        input: &SharedWireInput,
-    ) -> Result<HostObjectRead<Value>, JsError> {
+    fn read_host_object(&mut self, _: &mut Vm<H>, _: &ResidualProgram, input: &SharedWireInput) -> Result<HostObjectRead<Value>, JsError> {
         let index = input.borrow_mut().read_uint32();
-        let object = index
-            .and_then(|index| self.host_objects.get(index as usize).copied())
-            .unwrap_or(Value::UNDEFINED);
+        let object = index.and_then(|index| self.host_objects.get(index as usize).copied()).unwrap_or(Value::UNDEFINED);
         Ok(HostObjectRead::Object(object))
     }
 
-    fn shared_array_buffer(
-        &mut self,
-        vm: &mut Vm<H>,
-        _: &ResidualProgram,
-        id: u32,
-    ) -> Result<Value, JsError> {
+    fn shared_array_buffer(&mut self, vm: &mut Vm<H>, _: &ResidualProgram, id: u32) -> Result<Value, JsError> {
         Ok(match self.shared.get(id as usize) {
             Some(backing) => {
                 let (maximum, growable) = (backing.maximum(), backing.growable());
@@ -623,14 +535,9 @@ impl<H: Host> Vm<H> {
         Ok(())
     }
 
-    pub(crate) fn embedding_is_marked_untransferable(
-        &self,
-        source: RootId,
-    ) -> Result<bool, JsError> {
+    pub(crate) fn embedding_is_marked_untransferable(&self, source: RootId) -> Result<bool, JsError> {
         let source = self.embedding_value(source)?;
-        Ok(self
-            .object_data(source)
-            .is_some_and(Object::is_structured_transfer_forbidden))
+        Ok(self.object_data(source).is_some_and(Object::is_structured_transfer_forbidden))
     }
 
     pub(crate) fn embedding_mark_uncloneable(&mut self, source: RootId) -> Result<(), JsError> {
@@ -650,34 +557,23 @@ impl<H: Host> Vm<H> {
     pub(crate) fn embedding_require_transfer(&mut self, source: RootId) -> Result<(), JsError> {
         let source = self.embedding_value(source)?;
         if let Some(object) = self.heap.object_mut(source) {
-            object.set_structured_serialization(
-                crate::heap::StructuredSerialization::TransferRequired,
-            );
+            object.set_structured_serialization(crate::heap::StructuredSerialization::TransferRequired);
         }
         Ok(())
     }
 
-    pub(crate) fn embedding_structured_clone(
-        &mut self,
-        source: RootId,
-        options: Option<RootId>,
-    ) -> Result<Value, JsError> {
+    pub(crate) fn embedding_structured_clone(&mut self, source: RootId, options: Option<RootId>) -> Result<Value, JsError> {
         let program = self.embedding_program()?;
         let mut roots = Vec::new();
         let transfers = self.structured_clone_transfers(&program, options, &mut roots);
-        let serialized =
-            transfers.and_then(|transfers| self.embedding_serialize(source, &transfers, &[]));
+        let serialized = transfers.and_then(|transfers| self.embedding_serialize(source, &transfers, &[]));
         for root in roots {
             self.heap.release_root(root);
         }
         self.deserialize_message(&program, serialized?, &[])
     }
 
-    pub(crate) fn embedding_structured_clone_with_transfers(
-        &mut self,
-        source: RootId,
-        transfers: &[RootId],
-    ) -> Result<Value, JsError> {
+    pub(crate) fn embedding_structured_clone_with_transfers(&mut self, source: RootId, transfers: &[RootId]) -> Result<Value, JsError> {
         let program = self.embedding_program()?;
         let serialized = self.embedding_serialize(source, transfers, &[])?;
         self.deserialize_message(&program, serialized, &[])
@@ -717,37 +613,22 @@ impl<H: Host> Vm<H> {
             let buffer = self.heap.root_value(*transfer).unwrap();
             let (bytes, max_byte_length, resizable) = match self.heap.get(buffer) {
                 Some(Cell::ArrayBuffer { detached: true, .. }) => (Default::default(), 0, false),
-                Some(Cell::ArrayBuffer {
-                    bytes,
-                    max_byte_length,
-                    resizable,
-                    ..
-                }) => (bytes.clone(), *max_byte_length, *resizable),
+                Some(Cell::ArrayBuffer { bytes, max_byte_length, resizable, .. }) => {
+                    (bytes.clone(), *max_byte_length, *resizable)
+                }
                 _ => unreachable!("validated transfer remains an ArrayBuffer"),
             };
             // Detaching drops the source's handle, so the bytes move without a copy.
             self.detach_array_buffer_native(&program, &[buffer])?;
             let bytes: crate::heap::BufferBytes = bytes;
-            transferred.push(TransferredBuffer {
-                bytes: bytes.into_vec(),
-                max_byte_length,
-                resizable,
-            });
+            transferred.push(TransferredBuffer { bytes: bytes.into_vec(), max_byte_length, resizable });
         }
         let bytes = std::mem::take(&mut *serializer.output.borrow_mut());
-        Ok(SerializedValue {
-            bytes,
-            transferred,
-            shared: hooks.shared,
-        })
+        Ok(SerializedValue { bytes, transferred, shared: hooks.shared })
     }
 
     /// Deserialize a message into this heap; `host_objects` replace the sender's in order.
-    pub(crate) fn embedding_deserialize(
-        &mut self,
-        serialized: SerializedValue,
-        host_objects: &[RootId],
-    ) -> Result<Value, JsError> {
+    pub(crate) fn embedding_deserialize(&mut self, serialized: SerializedValue, host_objects: &[RootId]) -> Result<Value, JsError> {
         let program = self.embedding_program()?;
         let host_objects = host_objects
             .iter()
@@ -756,32 +637,14 @@ impl<H: Host> Vm<H> {
         self.deserialize_message(&program, serialized, &host_objects)
     }
 
-    fn deserialize_message(
-        &mut self,
-        program: &ResidualProgram,
-        serialized: SerializedValue,
-        host_objects: &[Value],
-    ) -> Result<Value, JsError> {
-        let SerializedValue {
-            bytes,
-            transferred,
-            shared,
-        } = serialized;
+    fn deserialize_message(&mut self, program: &ResidualProgram, serialized: SerializedValue, host_objects: &[Value]) -> Result<Value, JsError> {
+        let SerializedValue { bytes, transferred, shared } = serialized;
         let mut deserializer = ValueDeserializer::new(Rc::new(RefCell::new(WireInput::new(bytes))));
         for (index, contents) in transferred.into_iter().enumerate() {
-            let buffer = self.new_array_buffer_cell(
-                contents.bytes.into(),
-                false,
-                contents.max_byte_length,
-                contents.resizable,
-                false,
-            );
+            let buffer = self.new_array_buffer_cell(contents.bytes.into(), false, contents.max_byte_length, contents.resizable, false);
             self.wire_receive_array_buffer(&mut deserializer, index as u32, buffer);
         }
-        let mut hooks = MessageHooks {
-            host_objects: host_objects.to_vec(),
-            shared,
-        };
+        let mut hooks = MessageHooks { host_objects: host_objects.to_vec(), shared };
         let result = self
             .wire_read_header(program, &mut deserializer)
             .and_then(|()| self.wire_read_value(program, &mut deserializer, &mut hooks));
@@ -820,41 +683,23 @@ impl<H: Host> Vm<H> {
     }
 
     pub(crate) fn is_unshared_array_buffer(&self, value: Value) -> bool {
-        matches!(
-            self.heap.get(value),
-            Some(Cell::ArrayBuffer { shared: false, .. })
-        )
+        matches!(self.heap.get(value), Some(Cell::ArrayBuffer { shared: false, .. }))
     }
 
     /// `ValueSerializer::TransferArrayBuffer`.
-    pub(crate) fn wire_transfer_array_buffer(
-        &mut self,
-        serializer: &mut ValueSerializer,
-        id: u32,
-        buffer: Value,
-    ) {
+    pub(crate) fn wire_transfer_array_buffer(&mut self, serializer: &mut ValueSerializer, id: u32, buffer: Value) {
         serializer.roots.push(self.heap.root(buffer));
         serializer.transfers.insert(buffer, id);
     }
 
     /// `ValueDeserializer::TransferArrayBuffer`.
-    pub(crate) fn wire_receive_array_buffer(
-        &mut self,
-        deserializer: &mut ValueDeserializer,
-        id: u32,
-        buffer: Value,
-    ) {
+    pub(crate) fn wire_receive_array_buffer(&mut self, deserializer: &mut ValueDeserializer, id: u32, buffer: Value) {
         let root = self.heap.root(buffer);
         deserializer.roots.push(root);
         deserializer.transfers.insert(id, root);
     }
 
-    fn uncloneable_with<D: WriteHooks<H> + ?Sized>(
-        &mut self,
-        program: &ResidualProgram,
-        hooks: &mut D,
-        value: Value,
-    ) -> JsError {
+    fn uncloneable_with<D: WriteHooks<H> + ?Sized>(&mut self, program: &ResidualProgram, hooks: &mut D, value: Value) -> JsError {
         let message = format!("{} could not be cloned.", self.clone_description(value));
         hooks.data_clone_error(self, program, &message)
     }
@@ -905,9 +750,7 @@ impl<H: Host> Vm<H> {
                 }
                 self.wire_receiver(program, serializer, hooks, value)
             }
-            _ if self.is_object_like(value) => {
-                self.wire_receiver(program, serializer, hooks, value)
-            }
+            _ if self.is_object_like(value) => self.wire_receiver(program, serializer, hooks, value),
             _ => Err(self.uncloneable_with(program, hooks, value)),
         }
     }
@@ -933,10 +776,7 @@ impl<H: Host> Vm<H> {
             return Err(self.uncloneable_with(program, hooks, value));
         }
         let _stack = self.enter_stack()?;
-        if self
-            .object_data(value)
-            .is_some_and(Object::is_arguments_object)
-        {
+        if self.object_data(value).is_some_and(Object::is_arguments_object) {
             return Err(self.uncloneable_with(program, hooks, value));
         }
         if let Some(object) = self.heap.object_record(value) {
@@ -975,12 +815,7 @@ impl<H: Host> Vm<H> {
             Some(Cell::Date { milliseconds, .. }) => Kind::Date(*milliseconds),
             Some(Cell::RegExp { meta, .. }) => Kind::RegExp(meta.source.clone(), meta.flags.text()),
             // Copy the entries first: serializing them can run guest code.
-            Some(Cell::Map { entries, .. }) => Kind::Map(
-                entries
-                    .iter()
-                    .flat_map(|(key, value)| [key, value])
-                    .collect(),
-            ),
+            Some(Cell::Map { entries, .. }) => Kind::Map(entries.iter().flat_map(|(key, value)| [key, value]).collect()),
             Some(Cell::Set { entries, .. }) => Kind::Set(entries.iter().collect()),
             Some(Cell::ArrayBuffer { .. }) => Kind::ArrayBuffer,
             Some(Cell::TypedArray { .. } | Cell::DataView { .. }) => Kind::View,
@@ -1004,34 +839,15 @@ impl<H: Host> Vm<H> {
             }
             Kind::Map(entries) | Kind::Set(entries) => {
                 let map = matches!(self.heap.get(value), Some(Cell::Map { .. }));
-                let roots: Vec<RootId> = entries
-                    .into_iter()
-                    .map(|entry| self.heap.root(entry))
-                    .collect();
-                put_tag(
-                    &output,
-                    if map {
-                        tag::BEGIN_JS_MAP
-                    } else {
-                        tag::BEGIN_JS_SET
-                    },
-                );
+                let roots: Vec<RootId> = entries.into_iter().map(|entry| self.heap.root(entry)).collect();
+                put_tag(&output, if map { tag::BEGIN_JS_MAP } else { tag::BEGIN_JS_SET });
                 let written = self.wire_rooted_sequence(program, serializer, hooks, &roots);
-                put_tag(
-                    &output,
-                    if map {
-                        tag::END_JS_MAP
-                    } else {
-                        tag::END_JS_SET
-                    },
-                );
+                put_tag(&output, if map { tag::END_JS_MAP } else { tag::END_JS_SET });
                 put_varint(&output, roots.len() as u64);
                 written
             }
             Kind::ArrayBuffer => self.wire_array_buffer(program, serializer, hooks, value),
-            Kind::View if serializer.views_as_host_objects => {
-                self.wire_host_object(program, serializer, hooks, value)
-            }
+            Kind::View if serializer.views_as_host_objects => self.wire_host_object(program, serializer, hooks, value),
             Kind::View => self.wire_view(program, &output, hooks, value),
             Kind::Other => Err(self.uncloneable_with(program, hooks, value)),
         }
@@ -1086,14 +902,7 @@ impl<H: Host> Vm<H> {
         inner: Value,
     ) -> Result<(), JsError> {
         if let Some(boolean) = inner.as_bool() {
-            put_tag(
-                output,
-                if boolean {
-                    tag::TRUE_OBJECT
-                } else {
-                    tag::FALSE_OBJECT
-                },
-            );
+            put_tag(output, if boolean { tag::TRUE_OBJECT } else { tag::FALSE_OBJECT });
         } else if let Some(number) = inner.as_number() {
             put_tag(output, tag::NUMBER_OBJECT);
             put_double(output, number);
@@ -1115,12 +924,7 @@ impl<H: Host> Vm<H> {
 
     /// Own enumerable string keys, with array indices as numbers (`GetKeys` with
     /// `kKeepNumbers`); `skip_indices` drops the indices a dense array writes itself.
-    fn wire_enumerable_keys(
-        &mut self,
-        program: &ResidualProgram,
-        object: Value,
-        skip_indices: bool,
-    ) -> Result<Vec<RootId>, JsError> {
+    fn wire_enumerable_keys(&mut self, program: &ResidualProgram, object: Value, skip_indices: bool) -> Result<Vec<RootId>, JsError> {
         let object_root = self.heap.root(object);
         let keys = self.object_own_key_values(program, object);
         let mut selected = Vec::new();
@@ -1129,22 +933,14 @@ impl<H: Host> Vm<H> {
             let mut outcome = Ok(());
             for key_root in &keys {
                 let key = self.heap.root_value(*key_root).unwrap();
-                let Some(name) = self.heap.string(key).cloned() else {
-                    continue;
-                };
+                let Some(name) = self.heap.string(key).cloned() else { continue };
                 let atom = self.intern_js_atom(&name);
-                if outcome.is_err()
-                    || self.is_private_name(atom)
-                    || (skip_indices
-                        && super::object_static::array_index(&name.to_string()).is_some())
-                {
+                if outcome.is_err() || self.is_private_name(atom) || (skip_indices && super::object_static::array_index(&name.to_string()).is_some()) {
                     continue;
                 }
                 let object = self.heap.root_value(object_root).unwrap();
                 match self.ordinary_own_property(program, object, key) {
-                    Ok(Some((_, attributes))) if attributes.enumerable => {
-                        selected.push(self.heap.root(key))
-                    }
+                    Ok(Some((_, attributes))) if attributes.enumerable => selected.push(self.heap.root(key)),
                     Ok(_) => {}
                     Err(error) => outcome = Err(error),
                 }
@@ -1251,16 +1047,10 @@ impl<H: Host> Vm<H> {
         }
         put_tag(&output, tag::BEGIN_DENSE_JS_ARRAY);
         put_varint(&output, length as u64);
-        let elements = self
-            .heap
-            .array_elements(array)
-            .map(|elements| elements.to_vec())
-            .unwrap_or_default();
+        let elements = self.heap.array_elements(array).map(|elements| elements.to_vec()).unwrap_or_default();
         // A numeric array holding any non-Smi has double elements: all write as doubles.
         let doubles = elements.iter().all(|element| element.as_number().is_some())
-            && elements
-                .iter()
-                .any(|element| element.as_number().and_then(smi).is_none());
+            && elements.iter().any(|element| element.as_number().and_then(smi).is_none());
         let array_root = self.heap.root(array);
         let mut result = Ok(());
         for index in 0..length {
@@ -1311,27 +1101,11 @@ impl<H: Host> Vm<H> {
         buffer: Value,
     ) -> Result<(), JsError> {
         let output = serializer.output.clone();
-        let Some(Cell::ArrayBuffer {
-            bytes,
-            shared,
-            detached,
-            max_byte_length,
-            resizable,
-            immutable,
-            ..
-        }) = self.heap.get(buffer)
-        else {
+        let Some(Cell::ArrayBuffer { bytes, shared, detached, max_byte_length, resizable, immutable, .. }) = self.heap.get(buffer) else {
             unreachable!("dispatched as an ArrayBuffer");
         };
-        let (shareable, shared, detached, length, max_byte_length, resizable, immutable) = (
-            bytes.shared_backing().is_some(),
-            *shared,
-            *detached,
-            bytes.len(),
-            *max_byte_length,
-            *resizable,
-            *immutable,
-        );
+        let (shareable, shared, detached, length, max_byte_length, resizable, immutable) =
+            (bytes.shared_backing().is_some(), *shared, *detached, bytes.len(), *max_byte_length, *resizable, *immutable);
         if shared {
             if !shareable {
                 return Err(self.uncloneable_with(program, hooks, buffer));
@@ -1349,20 +1123,16 @@ impl<H: Host> Vm<H> {
         if detached {
             return Err(hooks.data_clone_error(self, program, DETACHED_MESSAGE));
         }
-        if u32::try_from(length).is_err() || (resizable && u32::try_from(max_byte_length).is_err())
-        {
+        if u32::try_from(length).is_err() || (resizable && u32::try_from(max_byte_length).is_err()) {
             return Err(self.uncloneable_with(program, hooks, buffer));
         }
-        put_tag(
-            &output,
-            if resizable {
-                tag::RESIZABLE_ARRAY_BUFFER
-            } else if immutable {
-                tag::IMMUTABLE_ARRAY_BUFFER
-            } else {
-                tag::ARRAY_BUFFER
-            },
-        );
+        put_tag(&output, if resizable {
+            tag::RESIZABLE_ARRAY_BUFFER
+        } else if immutable {
+            tag::IMMUTABLE_ARRAY_BUFFER
+        } else {
+            tag::ARRAY_BUFFER
+        });
         put_varint(&output, length as u64);
         if resizable {
             put_varint(&output, max_byte_length as u64);
@@ -1382,76 +1152,39 @@ impl<H: Host> Vm<H> {
         view: Value,
     ) -> Result<(), JsError> {
         let (subtag, offset, byte_length, length_tracking, buffer) = match self.heap.get(view) {
-            Some(Cell::TypedArray {
-                kind,
-                object,
-                buffer,
-                length,
-                length_tracking,
-            }) => {
-                let (kind, offset, length, length_tracking, buffer) =
-                    (*kind, object.offset, *length, *length_tracking, *buffer);
+            Some(Cell::TypedArray { kind, object, buffer, length, length_tracking }) => {
+                let (kind, offset, length, length_tracking, buffer) = (*kind, object.offset, *length, *length_tracking, *buffer);
                 // Only views on live resizable buffers can be out of bounds (V8's
                 // `IsOutOfBounds`).
                 let out_of_bounds = !self.array_buffer_detached(buffer)
                     && self.array_buffer_resizable(buffer)
-                    && !matches!(
-                        self.heap.get(buffer),
-                        Some(Cell::ArrayBuffer { shared: true, .. })
-                    )
+                    && !matches!(self.heap.get(buffer), Some(Cell::ArrayBuffer { shared: true, .. }))
                     && self.typed_array_out_of_bounds(view);
                 if out_of_bounds {
                     return Err(self.uncloneable_with(program, hooks, view));
                 }
-                let subtag = VIEW_TAGS
-                    .iter()
-                    .find(|(candidate, _)| *candidate == kind)
-                    .map(|(_, tag)| *tag)
-                    .unwrap();
+                let subtag = VIEW_TAGS.iter().find(|(candidate, _)| *candidate == kind).map(|(_, tag)| *tag).unwrap();
                 // Length-tracking views carry no fixed length.
-                let byte_length = if length_tracking {
-                    0
-                } else {
-                    length * kind.width()
-                };
+                let byte_length = if length_tracking { 0 } else { length * kind.width() };
                 (subtag, offset, byte_length, length_tracking, buffer)
             }
-            Some(Cell::DataView {
-                object,
-                buffer,
-                length,
-                length_tracking,
-            }) => {
-                let (offset, length, length_tracking, buffer) =
-                    (object.offset, *length, *length_tracking, *buffer);
+            Some(Cell::DataView { object, buffer, length, length_tracking }) => {
+                let (offset, length, length_tracking, buffer) = (object.offset, *length, *length_tracking, *buffer);
                 let required = if length_tracking { 0 } else { length };
-                if self.array_buffer_resizable(buffer)
-                    && self.array_buffer_out_of_bounds(buffer, offset, required)
-                {
+                if self.array_buffer_resizable(buffer) && self.array_buffer_out_of_bounds(buffer, offset, required) {
                     return Err(self.uncloneable_with(program, hooks, view));
                 }
                 (DATA_VIEW_TAG, offset, required, length_tracking, buffer)
             }
             _ => unreachable!("dispatched as a view"),
         };
-        let backed_by_resizable = self.array_buffer_resizable(buffer)
-            && !matches!(
-                self.heap.get(buffer),
-                Some(Cell::ArrayBuffer { shared: true, .. })
-            );
+        let backed_by_resizable = self.array_buffer_resizable(buffer) && !matches!(self.heap.get(buffer), Some(Cell::ArrayBuffer { shared: true, .. }));
         put_tag(output, tag::ARRAY_BUFFER_VIEW);
         put_varint(output, u64::from(subtag));
         put_varint(output, offset as u64);
         put_varint(output, byte_length as u64);
-        let flags = (if length_tracking {
-            VIEW_LENGTH_TRACKING
-        } else {
-            0
-        }) | (if backed_by_resizable {
-            VIEW_BACKED_BY_RESIZABLE
-        } else {
-            0
-        });
+        let flags = (if length_tracking { VIEW_LENGTH_TRACKING } else { 0 })
+            | (if backed_by_resizable { VIEW_BACKED_BY_RESIZABLE } else { 0 });
         put_varint(output, u64::from(flags));
         Ok(())
     }
@@ -1482,10 +1215,7 @@ impl<H: Host> Vm<H> {
             let error = self.heap.root_value(error_root).unwrap();
             let name = self.get_property(program, error, name_atom)?;
             let name = self.to_string(program, name)?;
-            if let Some((_, _, prototype)) = ERROR_PROTOTYPES
-                .iter()
-                .find(|(candidate, _, _)| *candidate == name)
-            {
+            if let Some((_, _, prototype)) = ERROR_PROTOTYPES.iter().find(|(candidate, _, _)| *candidate == name) {
                 put_varint(&output, u64::from(*prototype));
             }
             if let Some(message) = fields[0] {
@@ -1516,11 +1246,7 @@ impl<H: Host> Vm<H> {
     }
 
     /// `ReadHeader`, rejecting the header-less and pre-13 legacy formats.
-    pub(crate) fn wire_read_header(
-        &mut self,
-        program: &ResidualProgram,
-        deserializer: &mut ValueDeserializer,
-    ) -> Result<(), JsError> {
+    pub(crate) fn wire_read_header(&mut self, program: &ResidualProgram, deserializer: &mut ValueDeserializer) -> Result<(), JsError> {
         let mut input = deserializer.input.borrow_mut();
         let version = if input.bytes.get(input.position) == Some(&tag::VERSION) {
             input.position += 1;
@@ -1529,9 +1255,7 @@ impl<H: Host> Vm<H> {
             Some(0)
         };
         match version {
-            Some(version)
-                if (MINIMUM_NON_LEGACY_VERSION..=WIRE_FORMAT_VERSION).contains(&version) =>
-            {
+            Some(version) if (MINIMUM_NON_LEGACY_VERSION..=WIRE_FORMAT_VERSION).contains(&version) => {
                 input.version = version;
                 Ok(())
             }
@@ -1565,12 +1289,7 @@ impl<H: Host> Vm<H> {
     }
 
     /// `ReadObject`: a value; an ArrayBuffer followed by a view tag yields the view.
-    fn wire_read<D: ReadHooks<H> + ?Sized>(
-        &mut self,
-        program: &ResidualProgram,
-        deserializer: &mut ValueDeserializer,
-        hooks: &mut D,
-    ) -> Read<Value> {
+    fn wire_read<D: ReadHooks<H> + ?Sized>(&mut self, program: &ResidualProgram, deserializer: &mut ValueDeserializer, hooks: &mut D) -> Read<Value> {
         let _stack = self.enter_stack()?;
         let value = self.wire_read_internal(program, deserializer, hooks)?;
         let view_follows = matches!(self.heap.get(value), Some(Cell::ArrayBuffer { .. }))
@@ -1582,12 +1301,7 @@ impl<H: Host> Vm<H> {
         Ok(value)
     }
 
-    fn wire_add_object(
-        &mut self,
-        deserializer: &mut ValueDeserializer,
-        id: u32,
-        value: Value,
-    ) -> RootId {
+    fn wire_add_object(&mut self, deserializer: &mut ValueDeserializer, id: u32, value: Value) -> RootId {
         let root = self.heap.root(value);
         deserializer.roots.push(root);
         let index = id as usize;
@@ -1623,10 +1337,7 @@ impl<H: Host> Vm<H> {
                 if length % std::mem::size_of::<u16>() != 0 {
                     return Err(ReadFailure::Invalid);
                 }
-                let units: Vec<u16> = bytes
-                    .chunks_exact(2)
-                    .map(|pair| u16::from_ne_bytes([pair[0], pair[1]]))
-                    .collect();
+                let units: Vec<u16> = bytes.chunks_exact(2).map(|pair| u16::from_ne_bytes([pair[0], pair[1]])).collect();
                 JsString::from_units(&units)
             }
         };
@@ -1635,12 +1346,7 @@ impl<H: Host> Vm<H> {
     }
 
     /// `ReadString`: a string record.
-    fn wire_read_tagged_string<D: ReadHooks<H> + ?Sized>(
-        &mut self,
-        program: &ResidualProgram,
-        deserializer: &mut ValueDeserializer,
-        hooks: &mut D,
-    ) -> Read<JsString> {
+    fn wire_read_tagged_string<D: ReadHooks<H> + ?Sized>(&mut self, program: &ResidualProgram, deserializer: &mut ValueDeserializer, hooks: &mut D) -> Read<JsString> {
         let value = self.wire_read(program, deserializer, hooks)?;
         self.heap.string(value).cloned().ok_or(ReadFailure::Invalid)
     }
@@ -1651,22 +1357,13 @@ impl<H: Host> Vm<H> {
         let length = (bitfield >> BIGINT_LENGTH_SHIFT) as usize;
         let digits = valid(input.raw(length))?;
         let magnitude = num_bigint::BigUint::from_bytes_le(digits);
-        let sign = if bitfield & BIGINT_SIGN_BIT != 0 {
-            num_bigint::Sign::Minus
-        } else {
-            num_bigint::Sign::Plus
-        };
+        let sign = if bitfield & BIGINT_SIGN_BIT != 0 { num_bigint::Sign::Minus } else { num_bigint::Sign::Plus };
         let value = num_bigint::BigInt::from_biguint(sign, magnitude);
         drop(input);
         Ok(self.heap.alloc(Cell::bigint(value)))
     }
 
-    fn wire_read_internal<D: ReadHooks<H> + ?Sized>(
-        &mut self,
-        program: &ResidualProgram,
-        deserializer: &mut ValueDeserializer,
-        hooks: &mut D,
-    ) -> Read<Value> {
+    fn wire_read_internal<D: ReadHooks<H> + ?Sized>(&mut self, program: &ResidualProgram, deserializer: &mut ValueDeserializer, hooks: &mut D) -> Read<Value> {
         let tag = valid(deserializer.input.borrow_mut().read_tag())?;
         match tag {
             tag::VERIFY_OBJECT_COUNT => {
@@ -1677,19 +1374,11 @@ impl<H: Host> Vm<H> {
             tag::NULL => Ok(Value::NULL),
             tag::TRUE => Ok(Value::TRUE),
             tag::FALSE => Ok(Value::FALSE),
-            tag::INT32 => Ok(Value::number(f64::from(valid(
-                deserializer.input.borrow_mut().read_zigzag(),
-            )?))),
-            tag::UINT32 => Ok(Value::number(f64::from(valid(
-                deserializer.input.borrow_mut().read_uint32(),
-            )?))),
-            tag::DOUBLE => Ok(Value::number(valid(
-                deserializer.input.borrow_mut().read_double(),
-            )?)),
+            tag::INT32 => Ok(Value::number(f64::from(valid(deserializer.input.borrow_mut().read_zigzag())?))),
+            tag::UINT32 => Ok(Value::number(f64::from(valid(deserializer.input.borrow_mut().read_uint32())?))),
+            tag::DOUBLE => Ok(Value::number(valid(deserializer.input.borrow_mut().read_double())?)),
             tag::BIGINT => self.wire_read_bigint(deserializer),
-            tag::UTF8_STRING | tag::ONE_BYTE_STRING | tag::TWO_BYTE_STRING => {
-                self.wire_read_string(deserializer, tag)
-            }
+            tag::UTF8_STRING | tag::ONE_BYTE_STRING | tag::TWO_BYTE_STRING => self.wire_read_string(deserializer, tag),
             tag::OBJECT_REFERENCE => {
                 let id = valid(deserializer.input.borrow_mut().read_uint32())? as usize;
                 let root = valid(deserializer.objects.get(id).copied().flatten())?;
@@ -1697,17 +1386,9 @@ impl<H: Host> Vm<H> {
             }
             tag::BEGIN_JS_OBJECT => {
                 let id = Self::wire_reserve_id(deserializer);
-                let object = self
-                    .heap
-                    .alloc(Cell::Object(Self::empty_object(self.object_proto)));
+                let object = self.heap.alloc(Cell::Object(Self::empty_object(self.object_proto)));
                 let root = self.wire_add_object(deserializer, id, object);
-                let count = self.wire_read_properties(
-                    program,
-                    deserializer,
-                    hooks,
-                    root,
-                    tag::END_JS_OBJECT,
-                )?;
+                let count = self.wire_read_properties(program, deserializer, hooks, root, tag::END_JS_OBJECT)?;
                 let expected = valid(deserializer.input.borrow_mut().read_uint32())?;
                 if count != expected {
                     return Err(ReadFailure::Invalid);
@@ -1720,13 +1401,7 @@ impl<H: Host> Vm<H> {
                 let array = self.new_wire_array();
                 let root = self.wire_add_object(deserializer, id, array);
                 self.set_array_length(program, array, Value::number(f64::from(length)))?;
-                let count = self.wire_read_properties(
-                    program,
-                    deserializer,
-                    hooks,
-                    root,
-                    tag::END_SPARSE_JS_ARRAY,
-                )?;
+                let count = self.wire_read_properties(program, deserializer, hooks, root, tag::END_SPARSE_JS_ARRAY)?;
                 self.wire_read_array_trailer(deserializer, count, length)?;
                 Ok(self.heap.root_value(root).unwrap())
             }
@@ -1747,22 +1422,11 @@ impl<H: Host> Vm<H> {
                     let element = self.wire_read(program, deserializer, hooks)?;
                     let key = self.heap.alloc_string(index.to_string().as_str().into());
                     let array = self.heap.root_value(root).unwrap();
-                    if !self.define_own_property_record(
-                        program,
-                        array,
-                        key,
-                        PropertyDescriptorRecord::data(element),
-                    )? {
+                    if !self.define_own_property_record(program, array, key, PropertyDescriptorRecord::data(element))? {
                         return Err(ReadFailure::Invalid);
                     }
                 }
-                let count = self.wire_read_properties(
-                    program,
-                    deserializer,
-                    hooks,
-                    root,
-                    tag::END_DENSE_JS_ARRAY,
-                )?;
+                let count = self.wire_read_properties(program, deserializer, hooks, root, tag::END_DENSE_JS_ARRAY)?;
                 self.wire_read_array_trailer(deserializer, count, length)?;
                 Ok(self.heap.root_value(root).unwrap())
             }
@@ -1770,25 +1434,16 @@ impl<H: Host> Vm<H> {
                 let milliseconds = valid(deserializer.input.borrow_mut().read_double())?;
                 let id = Self::wire_reserve_id(deserializer);
                 let prototype = self.intrinsic_builtin_prototype(Native::Date);
-                let date = self.heap.alloc(Cell::Date {
-                    milliseconds,
-                    object: Box::new(Self::empty_object(prototype)),
-                });
+                let date = self.heap.alloc(Cell::Date { milliseconds, object: Box::new(Self::empty_object(prototype)) });
                 self.wire_add_object(deserializer, id, date);
                 Ok(date)
             }
-            tag::TRUE_OBJECT
-            | tag::FALSE_OBJECT
-            | tag::NUMBER_OBJECT
-            | tag::BIGINT_OBJECT
-            | tag::STRING_OBJECT => {
+            tag::TRUE_OBJECT | tag::FALSE_OBJECT | tag::NUMBER_OBJECT | tag::BIGINT_OBJECT | tag::STRING_OBJECT => {
                 let id = Self::wire_reserve_id(deserializer);
                 let inner = match tag {
                     tag::TRUE_OBJECT => Value::TRUE,
                     tag::FALSE_OBJECT => Value::FALSE,
-                    tag::NUMBER_OBJECT => {
-                        Value::number(valid(deserializer.input.borrow_mut().read_double())?)
-                    }
+                    tag::NUMBER_OBJECT => Value::number(valid(deserializer.input.borrow_mut().read_double())?),
                     tag::BIGINT_OBJECT => self.wire_read_bigint(deserializer)?,
                     _ => {
                         let text = self.wire_read_tagged_string(program, deserializer, hooks)?;
@@ -1803,17 +1458,11 @@ impl<H: Host> Vm<H> {
                 let id = Self::wire_reserve_id(deserializer);
                 let source = self.wire_read_tagged_string(program, deserializer, hooks)?;
                 let bits = valid(deserializer.input.borrow_mut().read_uint32())?;
-                let known = REGEXP_FLAG_BITS
-                    .iter()
-                    .fold(0u32, |mask, (_, bit)| mask | (1 << bit));
+                let known = REGEXP_FLAG_BITS.iter().fold(0u32, |mask, (_, bit)| mask | (1 << bit));
                 if bits & !known != 0 || bits & (1 << REGEXP_LINEAR_BIT) != 0 {
                     return Err(ReadFailure::Invalid);
                 }
-                let mut flags: Vec<char> = REGEXP_FLAG_BITS
-                    .iter()
-                    .filter(|(_, bit)| bits & (1 << bit) != 0)
-                    .map(|(flag, _)| *flag)
-                    .collect();
+                let mut flags: Vec<char> = REGEXP_FLAG_BITS.iter().filter(|(_, bit)| bits & (1 << bit) != 0).map(|(flag, _)| *flag).collect();
                 flags.sort_unstable();
                 let intrinsics = &self.realm.intrinsics.regexp_intrinsics[&self.realm.globals];
                 let (prototype, constructor) = (intrinsics.prototype, intrinsics.constructor);
@@ -1831,23 +1480,13 @@ impl<H: Host> Vm<H> {
                 let id = Self::wire_reserve_id(deserializer);
                 let collection = if map {
                     let prototype = self.intrinsic_builtin_prototype(Native::Map);
-                    self.heap.alloc(Cell::Map {
-                        object: Box::new(Self::empty_object(prototype)),
-                        entries: Box::default(),
-                    })
+                    self.heap.alloc(Cell::Map { object: Box::new(Self::empty_object(prototype)), entries: Box::default() })
                 } else {
                     let prototype = self.intrinsic_builtin_prototype(Native::Set);
-                    self.heap.alloc(Cell::Set {
-                        object: Box::new(Self::empty_object(prototype)),
-                        entries: Box::default(),
-                    })
+                    self.heap.alloc(Cell::Set { object: Box::new(Self::empty_object(prototype)), entries: Box::default() })
                 };
                 let root = self.wire_add_object(deserializer, id, collection);
-                let end = if map {
-                    tag::END_JS_MAP
-                } else {
-                    tag::END_JS_SET
-                };
+                let end = if map { tag::END_JS_MAP } else { tag::END_JS_SET };
                 let mut length = 0u32;
                 loop {
                     if valid(deserializer.input.borrow().peek_tag())? == end {
@@ -1862,12 +1501,7 @@ impl<H: Host> Vm<H> {
                         self.heap.release_root(key);
                         let value = value?;
                         let collection = self.heap.root_value(root).unwrap();
-                        self.call_collection_native(
-                            program,
-                            Native::MapSet,
-                            collection,
-                            &[key_value, value],
-                        )?;
+                        self.call_collection_native(program, Native::MapSet, collection, &[key_value, value])?;
                         length += 2;
                     } else {
                         let value = self.wire_read(program, deserializer, hooks)?;
@@ -1886,23 +1520,13 @@ impl<H: Host> Vm<H> {
                 let mut input = deserializer.input.borrow_mut();
                 let byte_length = valid(input.read_uint32())? as usize;
                 let resizable = tag == tag::RESIZABLE_ARRAY_BUFFER;
-                let max_byte_length = if resizable {
-                    valid(input.read_uint32())? as usize
-                } else {
-                    byte_length
-                };
+                let max_byte_length = if resizable { valid(input.read_uint32())? as usize } else { byte_length };
                 if byte_length > max_byte_length {
                     return Err(ReadFailure::Invalid);
                 }
                 let bytes = valid(input.raw(byte_length))?.to_vec();
                 drop(input);
-                let buffer = self.new_array_buffer_cell(
-                    bytes.into(),
-                    false,
-                    max_byte_length,
-                    resizable,
-                    tag == tag::IMMUTABLE_ARRAY_BUFFER,
-                );
+                let buffer = self.new_array_buffer_cell(bytes.into(), false, max_byte_length, resizable, tag == tag::IMMUTABLE_ARRAY_BUFFER);
                 self.wire_add_object(deserializer, id, buffer);
                 Ok(buffer)
             }
@@ -1918,10 +1542,7 @@ impl<H: Host> Vm<H> {
                 let id = Self::wire_reserve_id(deserializer);
                 let clone_id = valid(deserializer.input.borrow_mut().read_uint32())?;
                 let buffer = hooks.shared_array_buffer(self, program, clone_id)?;
-                if !matches!(
-                    self.heap.get(buffer),
-                    Some(Cell::ArrayBuffer { shared: true, .. })
-                ) {
+                if !matches!(self.heap.get(buffer), Some(Cell::ArrayBuffer { shared: true, .. })) {
                     return Err(ReadFailure::Invalid);
                 }
                 self.wire_add_object(deserializer, id, buffer);
@@ -1933,12 +1554,7 @@ impl<H: Host> Vm<H> {
         }
     }
 
-    fn wire_read_host_object<D: ReadHooks<H> + ?Sized>(
-        &mut self,
-        program: &ResidualProgram,
-        deserializer: &mut ValueDeserializer,
-        hooks: &mut D,
-    ) -> Read<Value> {
+    fn wire_read_host_object<D: ReadHooks<H> + ?Sized>(&mut self, program: &ResidualProgram, deserializer: &mut ValueDeserializer, hooks: &mut D) -> Read<Value> {
         let id = Self::wire_reserve_id(deserializer);
         let input = deserializer.input.clone();
         let object = match hooks.read_host_object(self, program, &input)? {
@@ -1959,12 +1575,7 @@ impl<H: Host> Vm<H> {
         })
     }
 
-    fn wire_read_array_trailer(
-        &mut self,
-        deserializer: &mut ValueDeserializer,
-        count: u32,
-        length: u32,
-    ) -> Read<()> {
+    fn wire_read_array_trailer(&mut self, deserializer: &mut ValueDeserializer, count: u32, length: u32) -> Read<()> {
         let mut input = deserializer.input.borrow_mut();
         let expected_count = valid(input.read_uint32())?;
         let expected_length = valid(input.read_uint32())?;
@@ -2001,15 +1612,8 @@ impl<H: Host> Vm<H> {
             self.heap.release_root(key);
             let value = value?;
             let object = self.heap.root_value(target).unwrap();
-            if self
-                .ordinary_own_property(program, object, key_value)?
-                .is_some()
-                || !self.define_own_property_record(
-                    program,
-                    object,
-                    key_value,
-                    PropertyDescriptorRecord::data(value),
-                )?
+            if self.ordinary_own_property(program, object, key_value)?.is_some()
+                || !self.define_own_property_record(program, object, key_value, PropertyDescriptorRecord::data(value))?
             {
                 return Err(ReadFailure::Invalid);
             }
@@ -2018,18 +1622,8 @@ impl<H: Host> Vm<H> {
     }
 
     /// `ReadJSArrayBufferView` over the buffer just read.
-    fn wire_read_view(
-        &mut self,
-        deserializer: &mut ValueDeserializer,
-        buffer: Value,
-    ) -> Read<Value> {
-        let Some(Cell::ArrayBuffer {
-            bytes,
-            shared,
-            resizable,
-            ..
-        }) = self.heap.get(buffer)
-        else {
+    fn wire_read_view(&mut self, deserializer: &mut ValueDeserializer, buffer: Value) -> Read<Value> {
+        let Some(Cell::ArrayBuffer { bytes, shared, resizable, .. }) = self.heap.get(buffer) else {
             return Err(ReadFailure::Invalid);
         };
         let (buffer_length, shared, resizable) = (bytes.len(), *shared, *resizable);
@@ -2040,11 +1634,7 @@ impl<H: Host> Vm<H> {
         if offset > buffer_length || byte_length > buffer_length - offset {
             return Err(ReadFailure::Invalid);
         }
-        let flags = if input.version >= VERSION_VIEW_FLAGS {
-            valid(input.read_uint32())?
-        } else {
-            0
-        };
+        let flags = if input.version >= VERSION_VIEW_FLAGS { valid(input.read_uint32())? } else { 0 };
         drop(input);
         let id = Self::wire_reserve_id(deserializer);
         let length_tracking = flags & VIEW_LENGTH_TRACKING != 0;
@@ -2058,31 +1648,20 @@ impl<H: Host> Vm<H> {
         let view = if subtag == DATA_VIEW_TAG {
             let prototype = self.intrinsic_builtin_prototype(Native::DataView);
             self.heap.alloc(Cell::DataView {
-                object: Box::new(crate::heap::BufferViewObject {
-                    object: Self::empty_object(prototype),
-                    offset,
-                }),
+                object: Box::new(crate::heap::BufferViewObject { object: Self::empty_object(prototype), offset }),
                 buffer,
                 length: byte_length,
                 length_tracking,
             })
         } else {
-            let kind = valid(
-                VIEW_TAGS
-                    .iter()
-                    .find(|(_, tag)| *tag == subtag)
-                    .map(|(kind, _)| *kind),
-            )?;
+            let kind = valid(VIEW_TAGS.iter().find(|(_, tag)| *tag == subtag).map(|(kind, _)| *kind))?;
             if offset % kind.width() != 0 || byte_length % kind.width() != 0 {
                 return Err(ReadFailure::Invalid);
             }
             let prototype = self.typed_array_proto(kind);
             self.heap.alloc(Cell::TypedArray {
                 kind,
-                object: Box::new(crate::heap::BufferViewObject {
-                    object: Self::empty_object(prototype),
-                    offset,
-                }),
+                object: Box::new(crate::heap::BufferViewObject { object: Self::empty_object(prototype), offset }),
                 buffer,
                 length: byte_length / kind.width(),
                 length_tracking,
@@ -2093,22 +1672,12 @@ impl<H: Host> Vm<H> {
     }
 
     /// `ReadJSError`.
-    fn wire_read_error<D: ReadHooks<H> + ?Sized>(
-        &mut self,
-        program: &ResidualProgram,
-        deserializer: &mut ValueDeserializer,
-        hooks: &mut D,
-    ) -> Read<Value> {
+    fn wire_read_error<D: ReadHooks<H> + ?Sized>(&mut self, program: &ResidualProgram, deserializer: &mut ValueDeserializer, hooks: &mut D) -> Read<Value> {
         let id = Self::wire_reserve_id(deserializer);
-        let next = |deserializer: &mut ValueDeserializer| {
-            valid(deserializer.input.borrow_mut().read_byte_varint())
-        };
+        let next = |deserializer: &mut ValueDeserializer| valid(deserializer.input.borrow_mut().read_byte_varint());
         let mut tag = next(deserializer)?;
         let mut native = Native::Error;
-        if let Some((_, constructor, _)) = ERROR_PROTOTYPES
-            .iter()
-            .find(|(_, _, prototype)| *prototype == tag)
-        {
+        if let Some((_, constructor, _)) = ERROR_PROTOTYPES.iter().find(|(_, _, prototype)| *prototype == tag) {
             native = *constructor;
             tag = next(deserializer)?;
         }
@@ -2152,11 +1721,7 @@ impl<H: Host> Vm<H> {
         resizable: bool,
         immutable: bool,
     ) -> Value {
-        let native = if shared {
-            Native::SharedArrayBuffer
-        } else {
-            Native::ArrayBuffer
-        };
+        let native = if shared { Native::SharedArrayBuffer } else { Native::ArrayBuffer };
         let prototype = self.intrinsic_builtin_prototype(native);
         self.heap.alloc(Cell::ArrayBuffer {
             object: Box::new(Self::empty_object(prototype)),
@@ -2183,9 +1748,7 @@ impl<H: Host> Vm<H> {
             return Ok(Vec::new());
         }
         if !self.is_object_like(options) {
-            return Err(
-                self.type_error(program, "structuredClone options must be an object".into())
-            );
+            return Err(self.type_error(program, "structuredClone options must be an object".into()));
         }
         let transfer_atom = self.intern_atom("transfer");
         let transfer = self.get_property(program, options, transfer_atom)?;
@@ -2193,10 +1756,7 @@ impl<H: Host> Vm<H> {
             return Ok(Vec::new());
         }
         if !self.is_object_like(transfer) {
-            return Err(self.type_error(
-                program,
-                "structuredClone transfer must be an iterable object".into(),
-            ));
+            return Err(self.type_error(program, "structuredClone transfer must be an iterable object".into()));
         }
         let transfer_root = self.heap.root(transfer);
         roots.push(transfer_root);
@@ -2206,23 +1766,15 @@ impl<H: Host> Vm<H> {
         Ok(transfer_roots)
     }
 
-    fn validate_transfer_roots(
-        &mut self,
-        program: &ResidualProgram,
-        transfers: &[RootId],
-    ) -> Result<(), JsError> {
+    fn validate_transfer_roots(&mut self, program: &ResidualProgram, transfers: &[RootId]) -> Result<(), JsError> {
         let mut seen = HashSet::new();
         for root in transfers.iter().copied() {
             let value = self.heap.root_value(root).unwrap();
-            if self
-                .object_data(value)
-                .is_some_and(Object::is_structured_transfer_forbidden)
+            if self.object_data(value).is_some_and(Object::is_structured_transfer_forbidden)
                 || matches!(self.heap.get(value), Some(Cell::ArrayBuffer { detached, immutable, bytes, .. })
                     if *detached || *immutable || bytes.is_wasm_view())
             {
-                return Err(
-                    self.data_clone_error(program, "Cannot transfer object of unsupported type.")
-                );
+                return Err(self.data_clone_error(program, "Cannot transfer object of unsupported type."));
             }
             let valid = matches!(
                 self.heap.get(value),
@@ -2232,9 +1784,7 @@ impl<H: Host> Vm<H> {
                 return Err(self.data_clone_error(program, "Found invalid value in transferList."));
             }
             if !seen.insert(value) {
-                return Err(
-                    self.data_clone_error(program, "Transfer list contains duplicate ArrayBuffer")
-                );
+                return Err(self.data_clone_error(program, "Transfer list contains duplicate ArrayBuffer"));
             }
         }
         Ok(())
@@ -2263,20 +1813,13 @@ impl<H: Host> Vm<H> {
             value = target;
         }
         if let Some(Cell::Symbol(description)) = self.heap.get(value) {
-            let description = description
-                .as_deref()
-                .map(|text| shorten(text.to_string(), DESCRIPTION_END, DESCRIPTION_END));
+            let description = description.as_deref().map(|text| shorten(text.to_string(), DESCRIPTION_END, DESCRIPTION_END));
             return format!("Symbol({})", description.unwrap_or_default());
         }
         if self.is_function(value) {
-            let source = self
-                .function_source_value(value)
-                .and_then(|source| self.heap.string(source).map(ToString::to_string));
+            let source = self.function_source_value(value).and_then(|source| self.heap.string(source).map(ToString::to_string));
             let source = source.unwrap_or_else(|| {
-                let name = self
-                    .debug_function_name(value)
-                    .map(|name| name.to_string())
-                    .unwrap_or_default();
+                let name = self.debug_function_name(value).map(|name| name.to_string()).unwrap_or_default();
                 format!("function {name}() {{ [native code] }}")
             });
             return shorten(source, SOURCE_HEAD, SOURCE_TAIL);
@@ -2287,13 +1830,8 @@ impl<H: Host> Vm<H> {
             })
         };
         let to_string = self.data_property(value, "toString");
-        if self.object_data(value).is_some_and(Object::has_error_data)
-            || native_function(self, to_string, Native::ErrorToString)
-        {
-            let text = |vm: &mut Self, name: &str| {
-                vm.data_property(value, name)
-                    .and_then(|value| vm.heap.string(value).map(ToString::to_string))
-            };
+        if self.object_data(value).is_some_and(Object::has_error_data) || native_function(self, to_string, Native::ErrorToString) {
+            let text = |vm: &mut Self, name: &str| vm.data_property(value, name).and_then(|value| vm.heap.string(value).map(ToString::to_string));
             let name = text(self, "name").unwrap_or_else(|| "Error".to_owned());
             let message = text(self, "message").unwrap_or_default();
             return match (name.is_empty(), message.is_empty()) {
@@ -2303,12 +1841,9 @@ impl<H: Host> Vm<H> {
             };
         }
         if native_function(self, to_string, Native::ObjectPrototypeToString) {
-            let constructor = self
-                .data_property(value, "constructor")
-                .filter(|constructor| self.is_function(*constructor));
+            let constructor = self.data_property(value, "constructor").filter(|constructor| self.is_function(*constructor));
             let name = constructor.and_then(|constructor| {
-                self.original_debug_name(constructor)
-                    .or_else(|| self.debug_function_name(constructor))
+                self.original_debug_name(constructor).or_else(|| self.debug_function_name(constructor))
             });
             if let Some(name) = name {
                 if !name.units().is_empty() {
@@ -2321,10 +1856,7 @@ impl<H: Host> Vm<H> {
             .get(WellKnownSymbol::ToStringTag)
             .and_then(|symbol| self.diagnostic_data_property(value, PropertyKey::symbol(symbol)))
             .and_then(|tag| self.heap.string(tag).map(ToString::to_string));
-        format!(
-            "[object {}]",
-            tag.unwrap_or_else(|| self.class_name(value).to_owned())
-        )
+        format!("[object {}]", tag.unwrap_or_else(|| self.class_name(value).to_owned()))
     }
 
     /// `JSReceiver::GetDataProperty`: the first property along the prototype chain when
@@ -2337,10 +1869,7 @@ impl<H: Host> Vm<H> {
     /// `JSReceiver::class_name`: the receiver's built-in kind. Typed arrays on resizable
     /// buffers have no per-type name.
     fn class_name(&self, value: Value) -> &'static str {
-        if self
-            .object_data(value)
-            .is_some_and(Object::is_arguments_object)
-        {
+        if self.object_data(value).is_some_and(Object::is_arguments_object) {
             return "Arguments";
         }
         if let Some((brand, _)) = self.boxed_primitive_data(value) {
@@ -2402,10 +1931,7 @@ impl<H: Host> Vm<H> {
         let message_value = self.heap.alloc_string(message.into());
         let error = self
             .construct_error_native(program, Native::Error, &[message_value])
-            .unwrap_or_else(|_| {
-                self.heap
-                    .alloc(Cell::Object(Object::error(self.object_proto)))
-            });
+            .unwrap_or_else(|_| self.heap.alloc(Cell::Object(Object::error(self.object_proto))));
         let name = self.heap.alloc_string("DataCloneError".into());
         let _ = self.set_builtin_value_named(error, "name", name);
         JsError::data_clone(error, message)
@@ -2424,10 +1950,7 @@ mod tests {
 
     #[test]
     fn numbers_match_v8_encodings() {
-        assert_eq!(
-            bytes(|out| put_number(out, f64::from(1 << 30))),
-            [b'I', 0x80, 0x80, 0x80, 0x80, 0x08]
-        );
+        assert_eq!(bytes(|out| put_number(out, f64::from(1 << 30))), [b'I', 0x80, 0x80, 0x80, 0x80, 0x08]);
         assert_eq!(bytes(|out| put_number(out, -1.0)), [b'I', 0x01]);
         assert_eq!(bytes(|out| put_number(out, 2f64.powi(31)))[0], b'N');
         assert_eq!(bytes(|out| put_number(out, -0.0))[0], b'N');
@@ -2436,10 +1959,7 @@ mod tests {
     #[test]
     fn bigints_carry_sign_and_byte_length() {
         assert_eq!(bytes(|out| put_bigint_contents(out, &0.into())), [0]);
-        assert_eq!(
-            bytes(|out| put_bigint_contents(out, &(-1).into())),
-            [0x11, 1, 0, 0, 0, 0, 0, 0, 0]
-        );
+        assert_eq!(bytes(|out| put_bigint_contents(out, &(-1).into())), [0x11, 1, 0, 0, 0, 0, 0, 0, 0]);
     }
 
     #[test]

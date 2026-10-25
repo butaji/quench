@@ -38,18 +38,14 @@ pub(super) struct NameAtomMemo {
 
 impl Default for NameAtomMemo {
     fn default() -> Self {
-        Self {
-            entries: Default::default(),
-            strings: Default::default(),
-        }
+        Self { entries: Default::default(), strings: Default::default() }
     }
 }
 
 impl NameAtomMemo {
     fn index(name: &str) -> usize {
         let address = name.as_ptr() as usize;
-        (address ^ (address >> NAME_ATOM_MEMO_ENTRIES.trailing_zeros()))
-            & (NAME_ATOM_MEMO_ENTRIES - 1)
+        (address ^ (address >> NAME_ATOM_MEMO_ENTRIES.trailing_zeros())) & (NAME_ATOM_MEMO_ENTRIES - 1)
     }
 
     /// The atom last recorded for text at `name`'s address and length, to be confirmed.
@@ -60,14 +56,7 @@ impl NameAtomMemo {
     }
 
     pub(super) fn record(&self, name: &str, atom: Atom) {
-        self.entries.set(
-            Self::index(name),
-            Entry {
-                address: name.as_ptr() as usize,
-                len: name.len(),
-                atom,
-            },
-        );
+        self.entries.set(Self::index(name), Entry { address: name.as_ptr() as usize, len: name.len(), atom });
     }
 
     fn string_index(string: Value) -> usize {
@@ -82,14 +71,7 @@ impl NameAtomMemo {
     }
 
     pub(super) fn record_string(&self, string: Value, epoch: u64, atom: Atom) {
-        self.strings.set(
-            Self::string_index(string),
-            StringEntry {
-                string,
-                epoch,
-                atom,
-            },
-        );
+        self.strings.set(Self::string_index(string), StringEntry { string, epoch, atom });
     }
 
     pub(super) fn clear(&self) {

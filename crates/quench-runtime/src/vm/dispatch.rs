@@ -115,12 +115,8 @@ impl<H: Host> Vm<H> {
             .as_deref()
             .unwrap_or_else(|| unsafe { &*register_arguments });
         if i.op() == Op::Call
-            && let Some(value) = self.js_jit_compiled_call(
-                p,
-                (target.0, target.1),
-                i.returns_from_frame(),
-                arguments,
-            )
+            && let Some(value) =
+                self.js_jit_compiled_call(p, (target.0, target.1), i.returns_from_frame(), arguments)
         {
             self.write(f, i.result_register(), value);
             return Some(Ok(StepResult::Continue));
@@ -145,16 +141,7 @@ impl<H: Host> Vm<H> {
                 )
             })
         } else {
-            self.push_in_loop_call(
-                p,
-                f,
-                pc,
-                target,
-                callee,
-                this,
-                arguments,
-                i.result_register(),
-            )
+            self.push_in_loop_call(p, f, pc, target, callee, this, arguments, i.result_register())
         }
     }
 
@@ -244,11 +231,7 @@ impl<H: Host> Vm<H> {
 
     /// The cached in-loop push of `callee`, of either kind (`InLoopPush`).
     #[inline(always)]
-    fn in_loop_call_entry(
-        &mut self,
-        p: &ResidualProgram,
-        callee: Value,
-    ) -> Option<super::InLoopCallTarget> {
+    fn in_loop_call_entry(&mut self, p: &ResidualProgram, callee: Value) -> Option<super::InLoopCallTarget> {
         let Some(heap_index) = callee.heap_index() else {
             #[cfg(feature = "profile-lane-exits")]
             super::lane_exits::call_eligibility(2);
@@ -383,11 +366,7 @@ impl<H: Host> Vm<H> {
         // `f.call(...)`, a bound function without bound arguments, or an uncurried builtin
         // (`Vm::forwarded_call`). A forwarded `arguments` reaches here unmaterialized, which
         // only `apply` takes as its list.
-        let forwarded = if i.op() == Op::Call {
-            self.forwarded_call(callee, target, window)
-        } else {
-            None
-        };
+        let forwarded = if i.op() == Op::Call { self.forwarded_call(callee, target, window) } else { None };
         let arguments = match forwarded {
             Some((forwarded_target, forwarded_this, forwarded_arguments)) => {
                 (target, this) = (forwarded_target, forwarded_this);
@@ -448,16 +427,7 @@ impl<H: Host> Vm<H> {
         let resolved = self.in_loop_call_target(p, target)?;
         self.profile.call_source(0);
         self.profile.call_target(1, arguments.len());
-        self.push_in_loop_call(
-            p,
-            f,
-            pc,
-            resolved,
-            target,
-            this,
-            arguments,
-            i.result_register(),
-        )
+        self.push_in_loop_call(p, f, pc, resolved, target, this, arguments, i.result_register())
     }
 
     /// `CallForwardingArguments` whose argument is the caller's unmaterialized `arguments`:
@@ -529,9 +499,8 @@ impl<H: Host> Vm<H> {
         match i.op() {
             Op::Nop => {}
             Op::CloneEnv => {
-                let plan = &p
-                    .function(self.frames[f].function as usize)
-                    .environment_clones[i.environment_clone_index()];
+                let plan = &p.function(self.frames[f].function as usize).environment_clones
+                    [i.environment_clone_index()];
                 self.clone_frame_environment(f, &plan.fresh, &plan.reset)?;
             }
             Op::Wide => unreachable!("validated dispatch cannot contain nested wide instruction"),
@@ -861,9 +830,7 @@ impl<H: Host> Vm<H> {
             Op::MakeConstArray => {
                 let v = self
                     .const_array_value(self.frames[f].program, i)
-                    .ok_or_else(|| {
-                        JsError::validation("constant array is outside program".into())
-                    })?;
+                    .ok_or_else(|| JsError::validation("constant array is outside program".into()))?;
                 self.write(f, i.result_register(), v);
             }
             Op::MakeLiteralTemplate => {
@@ -887,11 +854,8 @@ impl<H: Host> Vm<H> {
                         // a getter is no tail call, so a strict frame pushes it too.
                         if allow_inline_calls
                             && !i.writes_current_this()
-                            && let Some(getter) = self.cached_field_getter(
-                                base,
-                                atom,
-                                self.field_cache_index(cache_site),
-                            )
+                            && let Some(getter) =
+                                self.cached_field_getter(base, atom, self.field_cache_index(cache_site))
                             && let Some(result) =
                                 self.try_inline_getter(p, f, *pc, getter, base, i.result_register())
                         {
@@ -899,11 +863,7 @@ impl<H: Host> Vm<H> {
                         }
                         // A private field reads straight from the object's private elements;
                         // methods, accessors and a missing brand take the ordinary [[Get]].
-                        match self
-                            .is_private_name(atom)
-                            .then(|| self.private_field_value(p, base, atom))
-                            .flatten()
-                        {
+                        match self.is_private_name(atom).then(|| self.private_field_value(p, base, atom)).flatten() {
                             Some(value) => value,
                             None => self.get_field_cached(p, base, atom, cache_site)?,
                         }
@@ -914,16 +874,10 @@ impl<H: Host> Vm<H> {
                         unreachable!("field sink is only attached to nested field lookup")
                     };
                     let sink = p.field_sites[site].sink.expect("fused field sink");
-                    self.with_field_source(f, site, crate::bytecode::FieldPart::Sink, |vm| {
-                        vm.set_field_cached(
-                            p,
-                            vm.frames[f].this,
-                            sink.0,
-                            v,
-                            sink.1,
-                            p.function(vm.frames[f].function as usize).strict,
-                        )
-                    })?;
+                    self.with_field_source(f, site, crate::bytecode::FieldPart::Sink, |vm| vm.set_field_cached(
+                        p, vm.frames[f].this, sink.0, v, sink.1,
+                        p.function(vm.frames[f].function as usize).strict,
+                    ))?;
                 }
                 if i.returns_from_frame() {
                     return Ok(StepResult::Return(v));
@@ -1053,8 +1007,7 @@ impl<H: Host> Vm<H> {
                 self.read(f, i.register_c()),
             )?,
             Op::ToPropertyKey | Op::GetIterator | Op::AppendArray => {
-                let [a, b] = value_step_operands(i)
-                    .map(|register| register.map(|register| self.read(f, register)));
+                let [a, b] = value_step_operands(i).map(|register| register.map(|register| self.read(f, register)));
                 if let Some(value) = self.value_step(p, i, a, b)? {
                     self.write(f, i.result_register(), value);
                 }
@@ -1248,13 +1201,7 @@ impl<H: Host> Vm<H> {
                 self.define_property_or_throw(p, target, key, descriptor)?;
             }
             Op::DefinePrivateField => {
-                self.initialize_private_field(
-                    p,
-                    self.read(f, i.register_b()),
-                    self.read(f, i.register_c()),
-                    i.atom_index(),
-                    self.read(f, i.register_a()),
-                )?;
+                self.initialize_private_field(p, self.read(f, i.register_b()), self.read(f, i.register_c()), i.atom_index(), self.read(f, i.register_a()))?;
             }
             Op::DefineField => {
                 let object = self.read(f, i.register_b());
@@ -1296,11 +1243,8 @@ impl<H: Host> Vm<H> {
                 )?
             }
             Op::DefineArrayElement => {
-                let (array, index, value) = (
-                    self.read(f, i.register_b()),
-                    i.array_index() as usize,
-                    self.read(f, i.register_a()),
-                );
+                let (array, index, value) =
+                    (self.read(f, i.register_b()), i.array_index() as usize, self.read(f, i.register_a()));
                 if !self.define_literal_element(array, index, value) {
                     self.define_array_literal_element(p, array, index, value)?;
                 }
@@ -1740,16 +1684,11 @@ impl<H: Host> Vm<H> {
                         i.construct_arguments()
                 {
                     let callee = self.read(f, i.register_b());
-                    if let Some((program, id, env, this)) =
-                        self.inline_construct_target(p, f, callee)
-                    {
+                    if let Some((program, id, env, this)) = self.inline_construct_target(p, f, callee) {
                         let arguments: *const [Value] = self.register_window(f, window);
                         self.frames[f].pc = *pc;
                         self.frames[f].pc_is_resume = true;
-                        self.construct_target = Some(ConstructionTarget {
-                            callee,
-                            new_target: callee,
-                        });
+                        self.construct_target = Some(ConstructionTarget { callee, new_target: callee });
                         // A constructor of another program is pushed in its own, as
                         // `push_in_loop_call` pushes a call; the loop's `PushFrame` saves and
                         // restores the caller's.
@@ -1787,7 +1726,9 @@ impl<H: Host> Vm<H> {
                     crate::bytecode::ConstructArguments::Array(register) => {
                         let array = self.read(f, register);
                         if !self.heap.array(array).is_some() {
-                            return Err(JsError("constructor arguments are not an array".into()));
+                            return Err(JsError(
+                                "constructor arguments are not an array".into(),
+                            ));
                         }
                         self.call_argument_list(p, array, false)?
                     }
@@ -1845,9 +1786,7 @@ impl<H: Host> Vm<H> {
             Some(crate::bytecode::OperandKind::Local) => {
                 let slot = operand.payload() as usize;
                 // A plain slot is exactly what `LoadLocalPlain` reads.
-                if p.function(self.frames[frame].function as usize)
-                    .plain_local(p, slot)
-                {
+                if p.function(self.frames[frame].function as usize).plain_local(p, slot) {
                     return Ok(self.frames[frame].locals[slot]);
                 }
                 self.load_local_binding(p, frame, slot, None)
@@ -1856,13 +1795,8 @@ impl<H: Host> Vm<H> {
         }
     }
     #[inline(always)]
-    fn with_field_source<T>(
-        &mut self,
-        frame: usize,
-        site: usize,
-        part: crate::bytecode::FieldPart,
-        run: impl FnOnce(&mut Self) -> Result<T, JsError>,
-    ) -> Result<T, JsError> {
+    fn with_field_source<T>(&mut self, frame: usize, site: usize, part: crate::bytecode::FieldPart,
+        run: impl FnOnce(&mut Self) -> Result<T, JsError>) -> Result<T, JsError> {
         let previous = self.frames[frame].source_field.replace((site, part));
         let result = run(self);
         self.frames[frame].source_field = previous;
@@ -1878,16 +1812,11 @@ impl<H: Host> Vm<H> {
         let site_id = site;
         let site = p.field_sites[site_id];
         let base = self.resolve_field_base(p, frame, site.base)?;
-        let value =
-            self.with_field_source(frame, site_id, crate::bytecode::FieldPart::First, |vm| {
-                vm.get_field_cached(p, base, site.first.0, site.first.1)
-            })?;
+        let value = self.with_field_source(frame, site_id, crate::bytecode::FieldPart::First,
+            |vm| vm.get_field_cached(p, base, site.first.0, site.first.1))?;
         match site.second {
-            Some((atom, cache)) => {
-                self.with_field_source(frame, site_id, crate::bytecode::FieldPart::Second, |vm| {
-                    vm.get_field_cached(p, value, atom, cache)
-                })
-            }
+            Some((atom, cache)) => self.with_field_source(frame, site_id, crate::bytecode::FieldPart::Second,
+                |vm| vm.get_field_cached(p, value, atom, cache)),
             None => Ok(value),
         }
     }
@@ -1965,16 +1894,8 @@ impl<H: Host> Vm<H> {
 impl<H: Host> Vm<H> {
     /// The new array `MakeConstArray` record `i` of `program` makes from its constant
     /// elements; `None` for a range outside the program's constants.
-    pub(super) fn const_array_value(
-        &mut self,
-        program: ProgramId,
-        i: WideInstruction,
-    ) -> Option<Value> {
-        let elements = self.programs.const_array(
-            program,
-            i.constant_index(),
-            usize::from(i.element_count()),
-        )?;
+    pub(super) fn const_array_value(&mut self, program: ProgramId, i: WideInstruction) -> Option<Value> {
+        let elements = self.programs.const_array(program, i.constant_index(), usize::from(i.element_count()))?;
         Some(self.heap.alloc(Cell::Array {
             object: crate::heap::ArrayObject::new(
                 Self::empty_object(self.array_prototype_for_realm(self.realm.globals)),

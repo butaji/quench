@@ -16,15 +16,10 @@ impl<H: Host> Vm<H> {
     /// `length`, and a typed array's or DataView's `byteLength` and `byteOffset`), wherever a
     /// prototype holds it, as primordials copy it. `None` leaves the read to the general path.
     pub(super) fn pure_virtual_field(&self, object: Value, atom: Atom) -> Option<Value> {
-        if !self
-            .atom_class(atom)
-            .contains(object::AtomClass::VIRTUAL_FIELD)
+        if !self.atom_class(atom).contains(object::AtomClass::VIRTUAL_FIELD)
             || !matches!(
                 self.heap.get(object)?,
-                Cell::Map { .. }
-                    | Cell::Set { .. }
-                    | Cell::TypedArray { .. }
-                    | Cell::DataView { .. }
+                Cell::Map { .. } | Cell::Set { .. } | Cell::TypedArray { .. } | Cell::DataView { .. }
             )
         {
             return None;
@@ -1046,9 +1041,9 @@ impl<H: Host> Vm<H> {
                 self.iterator_static_method(p, native, args)
             }
             Native::IteratorPrototypeConstructorGetter => self.iterator_prototype_getter(p),
-            Native::IteratorPrototypeToStringTagGetter => {
-                Ok(self.heap.alloc_string(JsString::from_str("Iterator")))
-            }
+            Native::IteratorPrototypeToStringTagGetter => Ok(self
+                .heap
+                .alloc_string(JsString::from_str("Iterator"))),
             Native::IteratorPrototypeConstructorSetter => {
                 self.iterator_prototype_setter(p, this, "constructor", args)
             }
@@ -1277,13 +1272,8 @@ impl<H: Host> Vm<H> {
     ) -> Option<Value> {
         let owns = matches!(
             (native, self.heap.get(receiver)?),
-            (
-                Native::MapSet | Native::MapDelete | Native::MapClear,
-                Cell::Map { .. }
-            ) | (
-                Native::SetAdd | Native::SetDelete | Native::SetClear,
-                Cell::Set { .. }
-            )
+            (Native::MapSet | Native::MapDelete | Native::MapClear, Cell::Map { .. })
+                | (Native::SetAdd | Native::SetDelete | Native::SetClear, Cell::Set { .. })
         );
         owns.then(|| self.call_collection_native(p, native, receiver, args).ok())
             .flatten()
@@ -1308,16 +1298,14 @@ impl<H: Host> Vm<H> {
                 Some(boolean(self.set_entry_index(receiver, key).is_some()))
             }
             // A value that cannot be held weakly is never a key.
-            (Native::WeakMapGet, Cell::WeakMap { entries, .. }) => {
-                Some(if self.is_weak_key_value(key) {
-                    entries.get(key).unwrap_or(Value::UNDEFINED)
-                } else {
-                    Value::UNDEFINED
-                })
+            (Native::WeakMapGet, Cell::WeakMap { entries, .. }) => Some(if self.is_weak_key_value(key) {
+                entries.get(key).unwrap_or(Value::UNDEFINED)
+            } else {
+                Value::UNDEFINED
+            }),
+            (Native::WeakMapHas, Cell::WeakMap { entries, .. }) => {
+                Some(boolean(self.is_weak_key_value(key) && entries.get(key).is_some()))
             }
-            (Native::WeakMapHas, Cell::WeakMap { entries, .. }) => Some(boolean(
-                self.is_weak_key_value(key) && entries.get(key).is_some(),
-            )),
             (Native::WeakSetHas, Cell::WeakSet { .. }) => Some(boolean(
                 self.is_weak_key_value(key) && self.weak_set_entry_index(receiver, key).is_some(),
             )),
@@ -1335,9 +1323,7 @@ impl<H: Host> Vm<H> {
         }
         let value = canonical_collection_key(value);
         let value_hash = self.same_value_zero_hash(value);
-        let exists = self
-            .set_entry_index_hashed(set, value, value_hash)
-            .is_some();
+        let exists = self.set_entry_index_hashed(set, value, value_hash).is_some();
         let Some(Cell::Set { entries, .. }) = self.heap.get_mut(set) else {
             unreachable!("a Set was checked above")
         };
@@ -1352,22 +1338,13 @@ impl<H: Host> Vm<H> {
     /// (`intact_iteration_values`), and for a Map every entry is an array whose indices 0 and
     /// 1 are present own data elements, so each Get reads an element. `false` (nothing added)
     /// leaves every other case to the protocol.
-    fn add_intact_entries(
-        &mut self,
-        native: Native,
-        collection: Value,
-        adder: Value,
-        iterable: Value,
-    ) -> bool {
+    fn add_intact_entries(&mut self, native: Native, collection: Value, adder: Value, iterable: Value) -> bool {
         let adds = match native {
             Native::Set => self.is_current_realm_native(adder, Native::SetAdd),
             Native::Map => self.is_current_realm_native(adder, Native::MapSet),
             _ => false,
         };
-        let Some(values) = adds
-            .then(|| self.intact_iteration_values(iterable))
-            .flatten()
-        else {
+        let Some(values) = adds.then(|| self.intact_iteration_values(iterable)).flatten() else {
             return false;
         };
         if native == Native::Set {
@@ -1390,10 +1367,7 @@ impl<H: Host> Vm<H> {
         let Some(pairs) = values
             .iter()
             .map(|&entry| {
-                let pair = self.present_dense_elements(
-                    entry,
-                    MAP_ENTRY_KEY_INDEX..MAP_ENTRY_VALUE_INDEX + 1,
-                )?;
+                let pair = self.present_dense_elements(entry, MAP_ENTRY_KEY_INDEX..MAP_ENTRY_VALUE_INDEX + 1)?;
                 Some([pair[MAP_ENTRY_KEY_INDEX], pair[MAP_ENTRY_VALUE_INDEX]])
             })
             .collect::<Option<Vec<_>>>()
@@ -1547,9 +1521,5 @@ pub(super) fn canonicalize_keyed_collection_key(key: Value) -> Value {
 
 /// CanonicalizeKeyedCollectionKey: a Map key or Set value of -0 is stored as +0.
 fn canonical_collection_key(key: Value) -> Value {
-    if key.as_number() == Some(0.0) {
-        Value::integer(0)
-    } else {
-        key
-    }
+    if key.as_number() == Some(0.0) { Value::integer(0) } else { key }
 }

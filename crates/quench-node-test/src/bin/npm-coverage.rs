@@ -1,5 +1,5 @@
 //! Derive callable obligations from oracle discovery and successful contract reports.
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::{collections::BTreeMap, fs};
 
 fn stdout(observation: &Value) -> Result<Value, Box<dyn std::error::Error>> {

@@ -1,14 +1,9 @@
 use super::*;
 
 impl<H: Host> Vm<H> {
-    pub(crate) fn new(host: H) -> Self {
-        Self::new_with_execution_interrupt(host, crate::ExecutionInterrupt::default())
-    }
+    pub(crate) fn new(host: H) -> Self { Self::new_with_execution_interrupt(host,crate::ExecutionInterrupt::default()) }
 
-    pub(crate) fn new_with_execution_interrupt(
-        host: H,
-        execution_interrupt: crate::ExecutionInterrupt,
-    ) -> Self {
+    pub(crate) fn new_with_execution_interrupt(host:H, execution_interrupt:crate::ExecutionInterrupt)->Self {
         Self {
             host,
             native_microtask_running: false,
@@ -88,7 +83,7 @@ impl<H: Host> Vm<H> {
             with_stack: vec![],
             with_scope_entered: false,
             test262_agent: Default::default(),
-            shared_async_waiters: Vec::new(),
+            shared_async_waiters:Vec::new(),
             programs: ProgramStore::default(),
             program_cache_layouts: Vec::new(),
             active_registers: std::ptr::null_mut(),
@@ -168,8 +163,7 @@ impl<H: Host> Vm<H> {
             to_fixed_atom: u32::MAX,
             to_precision_atom: u32::MAX,
             runtime_atoms: RuntimeAtoms::default(),
-            constructed_shapes: [provenance::ConstructedShape::EMPTY;
-                provenance::CONSTRUCTED_SHAPE_ENTRIES],
+            constructed_shapes: [provenance::ConstructedShape::EMPTY; provenance::CONSTRUCTED_SHAPE_ENTRIES],
             method_caches: vec![],
             megamorphic_methods: vec![],
             method_cache_atoms: Default::default(),

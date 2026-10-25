@@ -300,8 +300,7 @@ impl Value {
     /// The owner environment of a `shared_environment_slot`.
     #[inline(always)]
     pub(crate) fn shared_environment_owner(self) -> Option<Self> {
-        (self.0 & (TAG_MASK | SHARED_ENVIRONMENT_SLOT_BIT)
-            == TAG_DELETED | SHARED_ENVIRONMENT_SLOT_BIT)
+        (self.0 & (TAG_MASK | SHARED_ENVIRONMENT_SLOT_BIT) == TAG_DELETED | SHARED_ENVIRONMENT_SLOT_BIT)
             .then(|| Self(TAG_HEAP | (self.0 & PAYLOAD_MASK & !SHARED_ENVIRONMENT_SLOT_BIT)))
     }
 
@@ -478,18 +477,20 @@ impl Value {
             return None;
         }
         let index = self.0 as u32;
-        Some(match self.0 & HEAP_REFERENCE_BITS {
-            0 => HeapReference::LegacySlot(index),
-            DIRECT_OBJECT_HANDLE_BIT => HeapReference::ObjectRecord(index),
-            DIRECT_ARRAY_HANDLE_BIT => HeapReference::ArrayRecord(index),
-            DIRECT_FUNCTION_HANDLE_BITS => HeapReference::FunctionRecord(index),
-            DIRECT_PROMISE_HANDLE_BIT => HeapReference::PromiseRecord(index),
-            DIRECT_AWAIT_HANDLE_BITS => HeapReference::AwaitRecord(index),
-            DIRECT_ITERATOR_HANDLE_BITS => HeapReference::IteratorRecord(index),
-            DIRECT_STRING_HANDLE_BITS => HeapReference::StringRecord(index),
-            DIRECT_V128_HANDLE_BIT => HeapReference::V128Record(index),
-            _ => return None,
-        })
+        Some(
+            match self.0 & HEAP_REFERENCE_BITS {
+                0 => HeapReference::LegacySlot(index),
+                DIRECT_OBJECT_HANDLE_BIT => HeapReference::ObjectRecord(index),
+                DIRECT_ARRAY_HANDLE_BIT => HeapReference::ArrayRecord(index),
+                DIRECT_FUNCTION_HANDLE_BITS => HeapReference::FunctionRecord(index),
+                DIRECT_PROMISE_HANDLE_BIT => HeapReference::PromiseRecord(index),
+                DIRECT_AWAIT_HANDLE_BITS => HeapReference::AwaitRecord(index),
+                DIRECT_ITERATOR_HANDLE_BITS => HeapReference::IteratorRecord(index),
+                DIRECT_STRING_HANDLE_BITS => HeapReference::StringRecord(index),
+                DIRECT_V128_HANDLE_BIT => HeapReference::V128Record(index),
+                _ => return None,
+            },
+        )
     }
 
     #[inline(always)]
@@ -525,8 +526,7 @@ impl Value {
 
     #[inline(always)]
     pub(crate) fn direct_iterator_index(self) -> Option<u32> {
-        (self.0 & HEAP_FAMILY_MASK == TAG_HEAP | DIRECT_ITERATOR_HANDLE_BITS)
-            .then_some(self.0 as u32)
+        (self.0 & HEAP_FAMILY_MASK == TAG_HEAP | DIRECT_ITERATOR_HANDLE_BITS).then_some(self.0 as u32)
     }
 
     #[inline(always)]
@@ -546,8 +546,7 @@ impl Value {
 
     #[inline(always)]
     pub(crate) fn direct_function_index(self) -> Option<u32> {
-        (self.0 & HEAP_FAMILY_MASK == TAG_HEAP | DIRECT_FUNCTION_HANDLE_BITS)
-            .then_some(self.0 as u32)
+        (self.0 & HEAP_FAMILY_MASK == TAG_HEAP | DIRECT_FUNCTION_HANDLE_BITS).then_some(self.0 as u32)
     }
 
     /// Whether the value names a direct record of an object family: an ordinary object,
@@ -678,16 +677,8 @@ pub(crate) fn number_to_u32(value: f64) -> u32 {
         - i64::from(F64_EXPONENT_BIAS)
         - i64::from(F64_FRACTION_BITS);
     let significand = (bits & F64_FRACTION_MASK) | (1 << F64_FRACTION_BITS);
-    let low = if exponent >= i64::from(u32::BITS) {
-        0
-    } else {
-        (significand << exponent) as u32
-    };
-    if value.is_sign_negative() {
-        low.wrapping_neg()
-    } else {
-        low
-    }
+    let low = if exponent >= i64::from(u32::BITS) { 0 } else { (significand << exponent) as u32 };
+    if value.is_sign_negative() { low.wrapping_neg() } else { low }
 }
 
 /// The explicit fraction bits of a binary64.
@@ -732,15 +723,7 @@ mod tests {
                 assert_eq!(super::number_to_u32(value), reference(value), "{value:e}");
             }
         }
-        for value in [
-            9.223372036854776e18,
-            -9.223372036854776e18,
-            1.8446744073709552e19,
-            3e19,
-            -3e19,
-            f64::MAX,
-            -f64::MAX,
-        ] {
+        for value in [9.223372036854776e18, -9.223372036854776e18, 1.8446744073709552e19, 3e19, -3e19, f64::MAX, -f64::MAX] {
             assert_eq!(super::number_to_u32(value), reference(value), "{value:e}");
         }
         for value in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
@@ -768,10 +751,7 @@ mod tests {
         for value in narrow {
             let packed = value.to_narrow().expect("narrow");
             assert_eq!(Value::from_narrow(packed), value);
-            assert!(
-                packed >> 30 == 0 || packed >> 30 == 3,
-                "top bits copy each other"
-            );
+            assert!(packed >> 30 == 0 || packed >> 30 == 3, "top bits copy each other");
         }
         let wide = [
             Value::integer(1 << 30),

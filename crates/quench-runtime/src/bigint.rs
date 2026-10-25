@@ -54,18 +54,12 @@ pub(crate) enum Error {
 pub(crate) fn shift(value: &BigInt, count: &BigInt, left_shift: bool) -> Result<BigInt, Error> {
     let reverse = count.sign() == Sign::Minus;
     let magnitude = usize::try_from(count.magnitude()).map_err(|_| Error::ExponentTooLarge)?;
-    Ok(if left_shift != reverse {
-        value << magnitude
-    } else {
-        value >> magnitude
-    })
+    Ok(if left_shift != reverse { value << magnitude } else { value >> magnitude })
 }
 
 /// The value of a BigInt literal; OXC normalizes its digits to base 10 without separators.
 pub(crate) fn decimal_literal(digits: &str) -> BigInt {
-    digits
-        .parse()
-        .expect("OXC normalizes BigInt literal digits to base 10")
+    digits.parse().expect("OXC normalizes BigInt literal digits to base 10")
 }
 
 /// The Number nearest `value`, ties to even; magnitudes past the finite range are infinite.

@@ -30,7 +30,10 @@ pub(super) fn target_isa(opt_level: &str) -> Option<Arc<TargetIsa>> {
     let mut flags = settings::builder();
     flags.set("opt_level", opt_level).ok()?;
     flags
-        .set("enable_verifier", if VERIFY_IR { "true" } else { "false" })
+        .set(
+            "enable_verifier",
+            if VERIFY_IR { "true" } else { "false" },
+        )
         .ok()?;
     let isa = cranelift_native::builder()
         .ok()?

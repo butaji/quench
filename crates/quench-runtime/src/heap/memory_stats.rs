@@ -154,7 +154,8 @@ impl Heap {
                     0,
                 );
                 object_property_counts_by_width[property_width] += 1;
-                if cell.is_some_and(|cell| matches!(cell, Cell::Function(_))) {
+                if cell.is_some_and(|cell| matches!(cell, Cell::Function(_)))
+                {
                     boxed_object_headers += 1;
                 } else {
                     embedded_object_headers += 1;
@@ -320,16 +321,13 @@ impl Heap {
             other_cell_payload_bytes,
             profile_instrumentation_bytes: {
                 #[cfg(feature = "profile-memory")]
-                {
-                    self.memory_profile.memory_bytes()
-                }
+                { self.memory_profile.memory_bytes() }
                 #[cfg(not(feature = "profile-memory"))]
-                {
-                    0
-                }
+                { 0 }
             },
         }
     }
+
 }
 
 impl HeapMemoryComposition {

@@ -97,11 +97,7 @@ mod tests {
                     format!("async function f() {{ {}0; }}", "await ".repeat(depth)),
                 ];
                 for (index, source) in cases.iter().enumerate() {
-                    assert!(
-                        Engine::static_module_analysis(source, "<deep-parser>")
-                            .early_error
-                            .is_none()
-                    );
+                    assert!(Engine::static_module_analysis(source, "<deep-parser>").early_error.is_none());
                     for specialize in [Engine::specialize, Engine::specialize_unspecialized] {
                         let errors = specialize(source, "<deep-parser>").err().unwrap();
                         assert_eq!(errors.len(), 1, "case {index}");

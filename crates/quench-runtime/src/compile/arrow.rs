@@ -85,13 +85,8 @@ impl Compiler<'_> {
         // A list binding its names apart promotes just its hidden argument slots, as a
         // function's does (`Compiler::compile_function`).
         let direct_parameters = FunctionCompiler::binds_parameters_directly(&value.params);
-        let hidden_parameters =
-            !direct_parameters && FunctionCompiler::arguments_promotable_apart(&value.params);
-        let super::PromotedLocalPlan {
-            promoted_local_slots,
-            clobbered_local_slots,
-            ..
-        } = self.promoted_local_plan(
+        let hidden_parameters = !direct_parameters && FunctionCompiler::arguments_promotable_apart(&value.params);
+        let super::PromotedLocalPlan { promoted_local_slots, clobbered_local_slots, .. } = self.promoted_local_plan(
             parent.is_some()
                 && (direct_parameters || hidden_parameters)
                 && !value.r#async

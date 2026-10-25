@@ -191,7 +191,10 @@ impl<H: Host> Vm<H> {
         }
         let prototype = self.array_prototype_for_realm(self.realm.globals);
         let array = self.heap.alloc(Cell::Array {
-            object: crate::heap::ArrayObject::new(Self::empty_object(prototype), Vec::new()),
+            object: crate::heap::ArrayObject::new(
+                Self::empty_object(prototype),
+                Vec::new(),
+            ),
         });
         self.heap.sparse_set_length(array, length);
         Ok(array)
@@ -291,8 +294,7 @@ impl<H: Host> Vm<H> {
                     let mut index = 0;
                     loop {
                         let iterator = self.heap.root_value(iterator_root).unwrap_or(iterator);
-                        let Some(mut value) =
-                            self.rooted_iterator_step_value(p, iterator_root, next)?
+                        let Some(mut value) = self.rooted_iterator_step_value(p, iterator_root, next)?
                         else {
                             break;
                         };
@@ -827,10 +829,7 @@ impl<H: Host> Vm<H> {
         }
         let roots = self.active_call_roots.len();
         let mut undefined_count = 0;
-        if let Some(elements) = self
-            .present_dense_elements(object, 0..length)
-            .map(<[Value]>::to_vec)
-        {
+        if let Some(elements) = self.present_dense_elements(object, 0..length).map(<[Value]>::to_vec) {
             // SortIndexedProperties reads each present own data element, observing nothing.
             let present = elements.into_iter().filter(|value| !value.is_undefined());
             self.active_call_roots.extend(present);
@@ -887,13 +886,7 @@ impl<H: Host> Vm<H> {
             self.set_index_mode(p, object, Value::number(index as f64), *value, true)?;
         }
         for index in sorted_count..sorted_count + undefined_count {
-            self.set_index_mode(
-                p,
-                object,
-                Value::number(index as f64),
-                Value::UNDEFINED,
-                true,
-            )?;
+            self.set_index_mode(p, object, Value::number(index as f64), Value::UNDEFINED, true)?;
         }
         for index in sorted_count + undefined_count..length {
             let deleted = self.object_delete_property(p, &[object, Value::number(index as f64)])?;

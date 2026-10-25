@@ -28,12 +28,12 @@ fn direct_array_record_base_resolves_the_current_live_array_value() {
     // SAFETY: `array` is a live direct-array Value owned by `heap`; its ID resolves within
     // the base returned by that same heap.
     let record = unsafe { &*base.add(id as usize) };
-    assert!(std::ptr::eq(
-        record,
-        heap.array(array).expect("live array record")
-    ));
+    assert!(std::ptr::eq(record, heap.array(array).expect("live array record")));
 
-    let shared_elements = heap.array_elements(array).expect("array elements").clone();
+    let shared_elements = heap
+        .array_elements(array)
+        .expect("array elements")
+        .clone();
     let shared = heap.alloc(Cell::Array {
         object: ArrayObject::new(plain_object(), shared_elements),
     });
@@ -44,14 +44,8 @@ fn direct_array_record_base_resolves_the_current_live_array_value() {
     // Growing the elements may move the backing or keep it (the allocator decides); the
     // record range stays put and each array sees its own elements.
     assert_eq!(heap.array_record_base(), Some(base));
-    assert_eq!(
-        heap.array(array).unwrap().elements().as_slice(),
-        &[Value::integer(7), Value::integer(9)][..]
-    );
-    assert_eq!(
-        heap.array(shared).unwrap().elements().as_slice(),
-        &[Value::integer(7)][..]
-    );
+    assert_eq!(heap.array(array).unwrap().elements().as_slice(), &[Value::integer(7), Value::integer(9)][..]);
+    assert_eq!(heap.array(shared).unwrap().elements().as_slice(), &[Value::integer(7)][..]);
 }
 
 #[test]
@@ -197,9 +191,7 @@ fn minor_collection_keeps_records_written_into_old_records_and_frees_young_garba
 
     // Young records reachable only through stores into old records.
     let child = heap.alloc(Cell::Object(plain_object()));
-    heap.object_mut(owner)
-        .unwrap()
-        .set_inline_property(0, child);
+    heap.object_mut(owner).unwrap().set_inline_property(0, child);
     let element = heap.alloc(Cell::Object(plain_object()));
     heap.array_elements_mut(array).unwrap().make_mut()[0] = element;
     let garbage = heap.alloc(Cell::Object(plain_object()));
@@ -213,9 +205,7 @@ fn minor_collection_keeps_records_written_into_old_records_and_frees_young_garba
     assert!(heap.is_old(owner) && heap.is_old(array));
 
     // An old record that loses its last reference survives minors and dies at a full one.
-    heap.object_mut(owner)
-        .unwrap()
-        .set_inline_property(0, Value::UNDEFINED);
+    heap.object_mut(owner).unwrap().set_inline_property(0, Value::UNDEFINED);
     collect_minor(&mut heap, [owner, array]);
     assert!(heap.is_live(child));
     heap.collect([owner, array]);
@@ -239,6 +229,7 @@ fn records_written_twice_are_logged_once_per_cycle() {
     assert!(heap.is_old(owner));
 }
 
+
 #[cfg(feature = "profile-gc-time")]
 #[test]
 fn gc_time_profile_records_collection_phases_without_aggregate_counters() {
@@ -250,6 +241,7 @@ fn gc_time_profile_records_collection_phases_without_aggregate_counters() {
     assert!(profile.mark_nanos + profile.sweep_nanos + profile.mark_clear_nanos > 0);
     assert_eq!(heap.stats().1, 1);
 }
+
 
 #[test]
 fn scope_slot_owners_survive_collection_and_release() {
@@ -305,10 +297,7 @@ fn scope_slot_owners_survive_collection_and_release() {
 fn ordinary_object_payloads_live_in_compact_records() {
     // The prototype reference packs beside the shape and integrity bits, so a record is a
     // header the size of a property vector plus one payload word of narrow inline values.
-    assert_eq!(
-        size_of::<Object>(),
-        size_of::<ValueVec>() + size_of::<u64>()
-    );
+    assert_eq!(size_of::<Object>(), size_of::<ValueVec>() + size_of::<u64>());
     assert_eq!(size_of::<Slot>(), size_of::<Option<Cell>>());
 }
 
@@ -596,10 +585,7 @@ fn far_sparse_writes_over_a_holey_dense_prefix_stay_sparse() {
     let index = 2 * MAX_DENSE_ARRAY_HOLE_LENGTH;
     heap.sparse_set(array, index, Value::number(2.0));
     assert_eq!(heap.sparse_length(array), Some(index + 1));
-    assert_eq!(
-        heap.array_elements(array).map(|dense| dense.len()),
-        Some(MAX_DENSE_ARRAY_HOLE_LENGTH)
-    );
+    assert_eq!(heap.array_elements(array).map(|dense| dense.len()), Some(MAX_DENSE_ARRAY_HOLE_LENGTH));
     assert_eq!(heap.sparse_get(array, index), Some(Value::number(2.0)));
 }
 
@@ -816,10 +802,7 @@ fn out_of_line_object_metadata_is_included_in_live_memory_totals() {
     data.set_arguments_map(vec![0; 32]);
     data.set_module_namespace();
     data.set_module_bindings(vec![(0, crate::vm::program_store::ProgramId::MAIN, 0)]);
-    data.set_deferred_module(Some(crate::ModuleSource::text(
-        "module.js",
-        "export const value = 1;",
-    )));
+    data.set_deferred_module(Some(crate::ModuleSource::text("module.js", "export const value = 1;")));
     data.add_private_name(PrivateBrand {
         home: object,
         name: 0,
@@ -884,9 +867,7 @@ fn regexp_legacy_constructor_is_traced_through_live_instances() {
                 source: "a".into(),
                 flags: crate::vm::RegExpFlags::validated(""),
                 legacy_constructor: owner(constructor),
-                matcher: crate::heap::RegExpMatcher::compiled(Rc::new(
-                    quench_regexp::Regex::with_flags("a", Default::default()).unwrap(),
-                )),
+                matcher: crate::heap::RegExpMatcher::compiled(Rc::new(quench_regexp::Regex::with_flags("a", Default::default()).unwrap())),
             }),
         });
         let root = heap.root(regexp);
@@ -1046,9 +1027,7 @@ fn wide_environment_clones_store_only_the_slots_they_do_not_share() {
             }),
         })
     };
-    let mut values = (0..width)
-        .map(|slot| Value::number(slot as f64))
-        .collect::<Vec<_>>();
+    let mut values = (0..width).map(|slot| Value::number(slot as f64)).collect::<Vec<_>>();
     values[width - 1] = kept;
     let owner = environment(&mut heap, values.into());
     let first = heap.clone_environment_slots(owner, &[3], &[5]).unwrap();
@@ -1077,11 +1056,5 @@ fn wide_environment_clones_store_only_the_slots_they_do_not_share() {
     assert!(matches!(heap.get(kept), Some(Cell::Error(_))));
     // A narrow environment's copy stays dense.
     let narrow = environment(&mut heap, vec![Value::TRUE; 2].into());
-    assert_eq!(
-        heap.clone_environment_slots(narrow, &[0], &[])
-            .unwrap()
-            .0
-            .len(),
-        2
-    );
+    assert_eq!(heap.clone_environment_slots(narrow, &[0], &[]).unwrap().0.len(), 2);
 }

@@ -37,12 +37,13 @@ impl FunctionCompiler<'_, '_> {
             }
             Expression::ObjectExpression(object) => {
                 let mut keys = FxHashSet::default();
-                Self::static_object_data_properties(object)?
-                    .iter()
-                    .try_fold(1, |count, (property, key)| {
+                Self::static_object_data_properties(object)?.iter().try_fold(
+                    1,
+                    |count, (property, key)| {
                         keys.insert(*key).then_some(())?;
                         Some(count + Self::literal_containers(&property.value)?)
-                    })
+                    },
+                )
             }
             value => binding_time::expression(value).static_value().map(|_| 0),
         }
@@ -53,9 +54,7 @@ impl FunctionCompiler<'_, '_> {
         match value {
             Expression::ArrayExpression(array) => {
                 for element in &array.elements {
-                    let element = element
-                        .as_expression()
-                        .expect("an admitted element is a value");
+                    let element = element.as_expression().expect("an admitted element is a value");
                     self.literal_steps(element, steps);
                 }
                 steps.push(LiteralStep::Array(array.elements.len() as u32));
@@ -63,10 +62,7 @@ impl FunctionCompiler<'_, '_> {
             Expression::ObjectExpression(object) => {
                 let properties = Self::static_object_data_properties(object)
                     .expect("an admitted object has static data properties");
-                let atoms = properties
-                    .iter()
-                    .map(|(_, key)| self.owner.atom(key))
-                    .collect();
+                let atoms = properties.iter().map(|(_, key)| self.owner.atom(key)).collect();
                 for (property, _) in &properties {
                     self.literal_steps(&property.value, steps);
                 }

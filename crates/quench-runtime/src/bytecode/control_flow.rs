@@ -29,7 +29,9 @@ pub(crate) fn for_each_instruction_successor(
             successor(pc + 1);
             successor(instruction.jump_target() as usize);
         }
-        ControlFlowLayout::BranchTable => branch_table_entries(pc, instruction).for_each(successor),
+        ControlFlowLayout::BranchTable => {
+            branch_table_entries(pc, instruction).for_each(successor)
+        }
         ControlFlowLayout::Terminal => {}
         ControlFlowLayout::Call | ControlFlowLayout::Fallthrough
             if instruction.returns_from_frame() => {}

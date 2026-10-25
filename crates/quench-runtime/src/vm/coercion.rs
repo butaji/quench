@@ -31,7 +31,7 @@ impl<H: Host> Vm<H> {
             T::Number
         } else {
             match self.heap.get(value) {
-                _ if self.heap.is_string(value) => T::String,
+                _ if self.heap.is_string(value)  => T::String,
                 Some(Cell::BigInt(_)) => T::BigInt,
                 Some(Cell::Symbol(_)) => T::Symbol,
                 _ if self.is_function(value) => T::Function,
@@ -49,11 +49,7 @@ impl<H: Host> Vm<H> {
     /// undefined (ECMA-262 B.3.6.3).
     #[inline]
     fn typeof_kind(&self, value: Value) -> crate::ValueType {
-        if self.is_html_dda(value) {
-            crate::ValueType::Undefined
-        } else {
-            self.value_type(value)
-        }
+        if self.is_html_dda(value) { crate::ValueType::Undefined } else { self.value_type(value) }
     }
 
     /// The integer a `UNARY_TYPEOF_INDEX` operator yields for `value`: the index in
@@ -67,11 +63,7 @@ impl<H: Host> Vm<H> {
     /// `bytecode::TYPEOF_NAMES` yields for `value`.
     #[inline]
     pub(super) fn typeof_test_value(&self, value: Value, index: usize, negated: bool) -> Value {
-        if (typeof_name_index(self.typeof_kind(value)) == index) != negated {
-            Value::TRUE
-        } else {
-            Value::FALSE
-        }
+        if (typeof_name_index(self.typeof_kind(value)) == index) != negated { Value::TRUE } else { Value::FALSE }
     }
 
     /// The one string `typeof` yields for values of `kind`: every result and every string
@@ -79,11 +71,7 @@ impl<H: Host> Vm<H> {
     /// of them is identity (`Vm::is_typeof_name`).
     fn typeof_name(&mut self, kind: crate::ValueType) -> Value {
         // `null` and objects share one name, kept in the object kind's slot.
-        let kind = if kind == crate::ValueType::Null {
-            crate::ValueType::Object
-        } else {
-            kind
-        };
+        let kind = if kind == crate::ValueType::Null { crate::ValueType::Object } else { kind };
         let cached = self.typeof_names[kind as usize];
         if !cached.is_undefined() {
             return cached;
@@ -140,7 +128,7 @@ impl<H: Host> Vm<H> {
         };
         match self.heap.get(primitive) {
             Some(Cell::BigInt(value)) => Ok(value.as_ref().clone()),
-            _ if let Some(value) = self.heap.string(primitive) => {
+            _ if let Some(value) = self.heap.string(primitive)  => {
                 let Some(value) = crate::bigint::parse_string(&value.host_string()) else {
                     return self
                         .syntax_error_result(p, "invalid BigInt value")
@@ -165,9 +153,7 @@ impl<H: Host> Vm<H> {
         } else {
             value
         };
-        if self.heap.is_string(primitive)
-            || matches!(self.heap.get(primitive), Some(Cell::Symbol(_)))
-        {
+        if self.heap.is_string(primitive) || matches!(self.heap.get(primitive), Some(Cell::Symbol(_))) {
             return Ok(primitive);
         }
         let text = self.coerce_js_string(program, primitive)?;
@@ -265,11 +251,9 @@ impl<H: Host> Vm<H> {
     /// ToNumber of `value` where it runs no guest code and raises nothing: an immediate
     /// primitive or a string. `None` for any other value.
     pub(super) fn primitive_to_number(&self, value: Value) -> Option<f64> {
-        value.immediate_number().or_else(|| {
-            self.heap
-                .string(value)
-                .map(|text| super::number::parse_number_string(&text.host_string()))
-        })
+        value
+            .immediate_number()
+            .or_else(|| self.heap.string(value).map(|text| super::number::parse_number_string(&text.host_string())))
     }
 
     pub(super) fn to_number(
@@ -292,7 +276,9 @@ impl<H: Host> Vm<H> {
                 );
             }
             Some(Cell::BigInt(_)) => {
-                return Err(self.type_error(program, BIGINT_TO_NUMBER.into()));
+                return Err(
+                    self.type_error(program, BIGINT_TO_NUMBER.into())
+                );
             }
             _ => {}
         }
@@ -321,7 +307,7 @@ impl<H: Host> Vm<H> {
         }
         match self.heap.get(value) {
             Some(Cell::Function(_)) => return Ok("function () { [native code] }".into()),
-            _ if let Some(value) = self.heap.string(value) => return Ok(value.to_host_owned()),
+            _ if let Some(value) = self.heap.string(value)  => return Ok(value.to_host_owned()),
             Some(Cell::Error(value)) => return Ok(value.clone()),
             Some(Cell::BigInt(value)) => return Ok(value.to_string()),
             Some(Cell::Symbol(_)) => {
@@ -432,7 +418,7 @@ impl<H: Host> Vm<H> {
     #[inline(never)]
     pub(super) fn heap_cell_truthy(&self, v: Value) -> bool {
         match self.heap.get(v) {
-            _ if let Some(text) = self.heap.string(v) => !text.units().is_empty(),
+            _ if let Some(text) = self.heap.string(v)  => !text.units().is_empty(),
             Some(Cell::BigInt(value)) => value.sign() != num_bigint::Sign::NoSign,
             _ => !self.is_html_dda(v),
         }
@@ -452,16 +438,7 @@ impl<H: Host> Vm<H> {
 /// The kinds whose `typeof` names differ: `null` reads as an object.
 const TYPEOF_KINDS: [crate::ValueType; 8] = {
     use crate::ValueType as T;
-    [
-        T::Undefined,
-        T::Object,
-        T::Boolean,
-        T::Number,
-        T::String,
-        T::BigInt,
-        T::Symbol,
-        T::Function,
-    ]
+    [T::Undefined, T::Object, T::Boolean, T::Number, T::String, T::BigInt, T::Symbol, T::Function]
 };
 
 /// The index in `bytecode::TYPEOF_NAMES` of the name `typeof` yields for a value of `kind`;

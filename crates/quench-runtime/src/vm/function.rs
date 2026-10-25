@@ -32,10 +32,7 @@ impl<H: Host> Vm<H> {
         if let Some(source) = self.own_property(function, source_atom) {
             return Some(source);
         }
-        if let Some(FunctionRecord {
-            kind: FunctionKind::Native(native),
-            ..
-        }) = self.heap.function(function)
+        if let Some(FunctionRecord { kind: FunctionKind::Native(native), .. }) = self.heap.function(function)
             && *native != Native::FunctionBoundCall
             && let Some(name) = self.original_function_name(function)
         {
@@ -87,18 +84,13 @@ impl<H: Host> Vm<H> {
         // Legacy reflection reads the frame stack (`Vm::materialize_deferred_lane`).
         self.materialize_deferred_lane();
         let caller = self.function_caller(function);
-        let Some(&FunctionRecord {
-            kind: FunctionKind::User(program, id),
-            realm,
-            ..
-        }) = self.heap.function(caller)
-        else {
+        let Some(&FunctionRecord { kind: FunctionKind::User(program, id), realm, .. }) = self.heap.function(caller) else {
             return Ok(caller);
         };
-        let deferred = self.programs.get(program).is_some_and(|code| {
-            code.function_get(id as usize)
-                .is_some_and(|body| body.prototype_unobservable)
-        });
+        let deferred = self
+            .programs
+            .get(program)
+            .is_some_and(|code| code.function_get(id as usize).is_some_and(|body| body.prototype_unobservable));
         let atom = self.intern_atom("prototype");
         if deferred && self.own_property(caller, atom).is_none() {
             let parent = self.realm_object_prototype(realm);
@@ -132,7 +124,8 @@ impl<H: Host> Vm<H> {
                 CallContext::Internal | CallContext::IndirectEval(_) => return Value::NULL,
                 CallContext::Function(caller) | CallContext::Constructor(caller) => {
                     let Some(FunctionRecord {
-                        kind: FunctionKind::User(program_id, id),
+                        kind:
+                            FunctionKind::User(program_id, id),
                         realm,
                         ..
                     }) = self.heap.function(caller)
@@ -259,10 +252,7 @@ impl<H: Host> Vm<H> {
         let length_atom = self.length_atom;
         let length_key = self.heap.alloc_string(self.atom_value(length_atom));
         // HasOwnProperty(Target, "length"): [[GetOwnProperty]], a Proxy's through its trap.
-        let bound_length = if self
-            .own_property_enumerable(p, target, length_key)?
-            .is_some()
-        {
+        let bound_length = if self.own_property_enumerable(p, target, length_key)?.is_some() {
             let target = self
                 .heap
                 .root_value(target_root)
@@ -304,7 +294,7 @@ impl<H: Host> Vm<H> {
             .expect("bound target root remains live");
         let target_name = self.get_property(p, target, name_atom)?;
         let target_name = match self.heap.get(target_name) {
-            _ if let Some(name) = self.heap.string(target_name) => name.to_string(),
+            _ if let Some(name) = self.heap.string(target_name)  => name.to_string(),
             _ => String::new(),
         };
         let function = self
@@ -334,10 +324,7 @@ impl<H: Host> Vm<H> {
             // method: the call is that function's, with the first argument as its receiver.
             if matches!(
                 self.heap.function(target),
-                Some(FunctionRecord {
-                    kind: FunctionKind::Native(Native::FunctionCall),
-                    ..
-                })
+                Some(FunctionRecord { kind: FunctionKind::Native(Native::FunctionCall), .. })
             ) {
                 let this = args.first().copied().unwrap_or(Value::UNDEFINED);
                 return self.call_value(p, receiver, this, args.get(1..).unwrap_or_default());
@@ -365,21 +352,14 @@ impl<H: Host> Vm<H> {
     ) -> Option<(Value, Value, &'a [Value])> {
         for depth in 0..CALL_FORWARDING_DEPTH {
             match self.heap.function(callee) {
-                Some(FunctionRecord {
-                    kind: FunctionKind::Native(Native::FunctionBoundCall),
-                    env,
-                    ..
-                }) => {
+                Some(FunctionRecord { kind: FunctionKind::Native(Native::FunctionBoundCall), env, .. }) => {
                     let (target, this, bound) = self.bound_function_parts(*env)?;
                     if !bound.is_empty() {
                         return None;
                     }
                     (callee, receiver) = (target, this);
                 }
-                Some(FunctionRecord {
-                    kind: FunctionKind::Native(Native::FunctionCall),
-                    ..
-                }) => {
+                Some(FunctionRecord { kind: FunctionKind::Native(Native::FunctionCall), .. }) => {
                     callee = receiver;
                     receiver = args.first().copied().unwrap_or(Value::UNDEFINED);
                     args = args.get(1..).unwrap_or_default();
@@ -401,25 +381,14 @@ impl<H: Host> Vm<H> {
     ) -> Option<(Value, Value, smallvec::SmallVec<[Value; N]>)> {
         for depth in 0..CALL_FORWARDING_DEPTH {
             match self.heap.function(callee) {
-                Some(FunctionRecord {
-                    kind: FunctionKind::Native(Native::FunctionBoundCall),
-                    env,
-                    ..
-                }) => {
+                Some(FunctionRecord { kind: FunctionKind::Native(Native::FunctionBoundCall), env, .. }) => {
                     let (target, this, bound) = self.bound_function_parts(*env)?;
                     args.insert_many(0, bound.iter().copied());
                     (callee, receiver) = (target, this);
                 }
-                Some(FunctionRecord {
-                    kind: FunctionKind::Native(Native::FunctionCall),
-                    ..
-                }) => {
+                Some(FunctionRecord { kind: FunctionKind::Native(Native::FunctionCall), .. }) => {
                     callee = receiver;
-                    receiver = if args.is_empty() {
-                        Value::UNDEFINED
-                    } else {
-                        args.remove(0)
-                    };
+                    receiver = if args.is_empty() { Value::UNDEFINED } else { args.remove(0) };
                 }
                 _ => return (depth != 0).then_some((callee, receiver, args)),
             }
@@ -431,9 +400,7 @@ impl<H: Host> Vm<H> {
     /// environment object `Function.prototype.bind` made (`env`); `None` for any other.
     pub(super) fn bound_function_parts(&self, env: Value) -> Option<(Value, Value, &[Value])> {
         let target = self.own_property(env, self.runtime_atoms.bound_target)?;
-        let receiver = self
-            .own_property(env, self.runtime_atoms.bound_this)
-            .unwrap_or(Value::UNDEFINED);
+        let receiver = self.own_property(env, self.runtime_atoms.bound_this).unwrap_or(Value::UNDEFINED);
         let arguments = self
             .own_property(env, self.runtime_atoms.bound_args)
             .and_then(|list| self.heap.array_elements(list))

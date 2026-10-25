@@ -300,7 +300,10 @@ impl<H: Host> Vm<H> {
                 [] => Value::UNDEFINED,
                 [value] => *value,
                 _ => self.heap.alloc(Cell::Array {
-                    object: crate::heap::ArrayObject::new(Self::empty_object(Value::NULL), values),
+                    object: crate::heap::ArrayObject::new(
+                        Self::empty_object(Value::NULL),
+                        values,
+                    ),
                 }),
             })
         })();

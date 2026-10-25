@@ -15,17 +15,11 @@ impl FunctionCompiler<'_, '_> {
         self.expression_with_debug_name(expression, None)
     }
 
-    pub(crate) fn expression_with_debug_name(
-        &mut self,
-        expression: &Expression<'_>,
-        debug_name: Option<Atom>,
-    ) -> Register {
+    pub(crate) fn expression_with_debug_name(&mut self, expression: &Expression<'_>, debug_name: Option<Atom>) -> Register {
         let start = match expression {
             Expression::CallExpression(call) => self.call_source_offset(call),
             Expression::StaticMemberExpression(member) => self.static_access_source_offset(member),
-            Expression::ComputedMemberExpression(member) => {
-                self.computed_access_source_offset(member)
-            }
+            Expression::ComputedMemberExpression(member) => self.computed_access_source_offset(member),
             Expression::PrivateFieldExpression(member) => member.field.span.start,
             _ => expression.span().start,
         };
@@ -38,11 +32,7 @@ impl FunctionCompiler<'_, '_> {
         result
     }
 
-    fn expression_at_current_position(
-        &mut self,
-        expression: &Expression<'_>,
-        debug_name: Option<Atom>,
-    ) -> Register {
+    fn expression_at_current_position(&mut self, expression: &Expression<'_>, debug_name: Option<Atom>) -> Register {
         // Only a direct read or update of a local consumes the last-operand mark; every
         // nested operand starts unmarked.
         let last_operand = std::mem::take(&mut self.last_operand);
@@ -58,11 +48,7 @@ impl FunctionCompiler<'_, '_> {
             Expression::Identifier(value) => {
                 self.last_operand = last_operand;
                 let name = value.name.as_str();
-                self.load_name(if self.arguments_alias.as_deref() == Some(name) {
-                    ARGUMENTS
-                } else {
-                    name
-                })
+                self.load_name(if self.arguments_alias.as_deref() == Some(name) { ARGUMENTS } else { name })
             }
             Expression::ThisExpression(_) => self.load_this_value(),
             Expression::NewTarget(_) => self.load_name(crate::bytecode::NEW_TARGET_BINDING),
@@ -80,20 +66,14 @@ impl FunctionCompiler<'_, '_> {
             Expression::Super(_) => self.super_base(),
             Expression::FunctionExpression(value) => {
                 let function = self.function_expression(value);
-                if value.id.is_none() {
-                    if let Some(name) = debug_name {
-                        self.emit(Op::SetFunctionDebugName, function, 0, 0, name);
-                    }
-                }
+                if value.id.is_none() { if let Some(name) = debug_name { self.emit(Op::SetFunctionDebugName, function, 0, 0, name); } }
                 function
-            }
+            },
             Expression::ArrowFunctionExpression(value) => {
                 let function = self.arrow_function_expression(value);
-                if let Some(name) = debug_name {
-                    self.emit(Op::SetFunctionDebugName, function, 0, 0, name);
-                }
+                if let Some(name) = debug_name { self.emit(Op::SetFunctionDebugName, function, 0, 0, name); }
                 function
-            }
+            },
             Expression::ClassExpression(value) => self.class_expression(value),
             Expression::ArrayExpression(_) | Expression::ObjectExpression(_)
                 if let Some(literal) = self.literal_template(expression) =>
@@ -163,9 +143,7 @@ impl FunctionCompiler<'_, '_> {
             }
             Expression::NewExpression(value) => self.construct(value),
             Expression::SequenceExpression(value) => self.sequence_expression(value, debug_name),
-            Expression::ParenthesizedExpression(value) => {
-                self.expression_with_debug_name(&value.expression, debug_name)
-            }
+            Expression::ParenthesizedExpression(value) => self.expression_with_debug_name(&value.expression, debug_name),
             Expression::AwaitExpression(value) if self.async_function => {
                 let source = self.expression(&value.argument);
                 let destination = self.reg();
@@ -513,10 +491,7 @@ impl FunctionCompiler<'_, '_> {
             parent: self.function_id,
             with_depth: self.with_depth,
             inherited_strict: self.strict,
-            prototype_unobservable: self
-                .owner
-                .prototype_unobservable
-                .contains(&value.span.start),
+            prototype_unobservable: self.owner.prototype_unobservable.contains(&value.span.start),
         };
         let function = self.owner.compile_plain_function(value, context);
         let dst = self.reg();
@@ -593,11 +568,9 @@ impl FunctionCompiler<'_, '_> {
             let second = self.owner.atom(key);
             let site = self.owner.cache_site();
             let second_site = self.owner.cache_site();
-            let access =
-                self.field_site(FieldBase::THIS, (first, site), Some((second, second_site)));
+            let access = self.field_site(FieldBase::THIS, (first, site), Some((second, second_site)));
             let first_position = self.owner.source_position(inner.property.span.start);
-            self.owner.field_sites[access as usize].sources[0] =
-                Some((first_position.line, first_position.column));
+            self.owner.field_sites[access as usize].sources[0] = Some((first_position.line, first_position.column));
             self.emit(Op::GetField, dst, FieldBase::NESTED, 0, access);
             return dst;
         }
@@ -626,11 +599,7 @@ impl FunctionCompiler<'_, '_> {
             first,
             second,
             sink: None,
-            sources: [
-                self.current_source_position,
-                second.and(self.current_source_position),
-                None,
-            ],
+            sources: [self.current_source_position, second.and(self.current_source_position), None],
         });
         site
     }
@@ -734,26 +703,14 @@ impl FunctionCompiler<'_, '_> {
     pub(super) fn update(&mut self, value: &UpdateExpression<'_>, result_used: bool) -> Register {
         let write_source = if value.prefix {
             match &value.argument {
-                SimpleAssignmentTarget::StaticMemberExpression(member) => {
-                    self.static_access_source_offset(member)
-                }
-                SimpleAssignmentTarget::ComputedMemberExpression(member) => {
-                    self.computed_access_source_offset(member)
-                }
+                SimpleAssignmentTarget::StaticMemberExpression(member) => self.static_access_source_offset(member),
+                SimpleAssignmentTarget::ComputedMemberExpression(member) => self.computed_access_source_offset(member),
                 SimpleAssignmentTarget::PrivateFieldExpression(member) => member.field.span.start,
                 _ => value.argument.span().start,
             }
         } else {
-            self.owner.source_delimiter(
-                value.argument.span().end,
-                value.span.end,
-                value
-                    .operator
-                    .as_str()
-                    .chars()
-                    .next()
-                    .expect("update operator"),
-            )
+            self.owner.source_delimiter(value.argument.span().end, value.span.end,
+                value.operator.as_str().chars().next().expect("update operator"))
         };
         let last_operand = std::mem::take(&mut self.last_operand);
         let reference = self.prepare_assignment_reference(&value.argument);
@@ -769,9 +726,7 @@ impl FunctionCompiler<'_, '_> {
         // whose value is unused, increments the register in place.
         if value.prefix && (last_operand || !result_used) && self.is_promoted_register(old) {
             self.emit(Op::IncDec, old, old, 0, u32::from(value.operator as u8));
-            self.with_source_offset(write_source, |compiler| {
-                compiler.store_assignment_reference(reference, old)
-            });
+            self.with_source_offset(write_source, |compiler| compiler.store_assignment_reference(reference, old));
             return old;
         }
         // A postfix update whose value is used yields the old value after ToNumeric.
@@ -790,9 +745,7 @@ impl FunctionCompiler<'_, '_> {
             0,
             u32::from(value.operator as u8),
         );
-        self.with_source_offset(write_source, |compiler| {
-            compiler.store_assignment_reference(reference, next)
-        });
+        self.with_source_offset(write_source, |compiler| compiler.store_assignment_reference(reference, next));
         if value.prefix || !result_used {
             next
         } else {

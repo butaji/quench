@@ -44,9 +44,7 @@ pub(super) struct PrivateSiteHomes {
 
 impl Default for PrivateSiteHomes {
     fn default() -> Self {
-        Self {
-            entries: Default::default(),
-        }
+        Self { entries: Default::default() }
     }
 }
 
@@ -59,8 +57,7 @@ impl PrivateSiteHomes {
     #[inline(always)]
     pub(super) fn home(&self, site: usize, environment: Value, epoch: u64) -> Option<Value> {
         let entry = self.entries.get(Self::index(site))?;
-        (entry.site == site && entry.environment == environment && entry.epoch == epoch)
-            .then_some(entry.home)
+        (entry.site == site && entry.environment == environment && entry.epoch == epoch).then_some(entry.home)
     }
 
     pub(super) fn record(&self, site: usize, environment: Value, epoch: u64, home: Value) {
@@ -71,16 +68,7 @@ impl PrivateSiteHomes {
             .get(index)
             .filter(|entry| entry.site == site && entry.epoch == epoch && entry.home == home)
             .and_then(|entry| entry.element);
-        self.entries.set(
-            index,
-            SiteHome {
-                site,
-                environment,
-                epoch,
-                home,
-                element,
-            },
-        );
+        self.entries.set(index, SiteHome { site, environment, epoch, home, element });
     }
 
     /// The private method or accessor site `site` found for its name under `home` and
@@ -88,32 +76,18 @@ impl PrivateSiteHomes {
     #[inline(always)]
     pub(super) fn element(&self, site: usize, epoch: u64, home: Value) -> Option<PrivateElement> {
         let entry = self.entries.get(Self::index(site))?;
-        (entry.site == site && entry.epoch == epoch && entry.home == home)
-            .then_some(entry.element)
-            .flatten()
+        (entry.site == site && entry.epoch == epoch && entry.home == home).then_some(entry.element).flatten()
     }
 
     /// Records the element site `site`'s name resolved to, for its entry under `home`.
-    pub(super) fn record_element(
-        &self,
-        site: usize,
-        epoch: u64,
-        home: Value,
-        element: PrivateElement,
-    ) {
+    pub(super) fn record_element(&self, site: usize, epoch: u64, home: Value, element: PrivateElement) {
         let index = Self::index(site);
         if let Some(entry) = self.entries.get(index)
             && entry.site == site
             && entry.epoch == epoch
             && entry.home == home
         {
-            self.entries.set(
-                index,
-                SiteHome {
-                    element: Some(element),
-                    ..entry
-                },
-            );
+            self.entries.set(index, SiteHome { element: Some(element), ..entry });
         }
     }
 

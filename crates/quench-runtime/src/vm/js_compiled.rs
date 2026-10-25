@@ -235,12 +235,7 @@ pub(super) fn int32_identity_return_candidate(
         let (check, ret) = (check.as_wide(), ret.as_wide());
         if check.op() != Op::JumpBinaryFalse
             || check.binary_operator_field() != BinaryOperator::Equality as u32
-            || !operands_are(
-                check.operand_b(),
-                check.operand_c(),
-                fast.result_register(),
-                0,
-            )
+            || !operands_are(check.operand_b(), check.operand_c(), fast.result_register(), 0)
             || ret.op() != Op::Return
             || ret.register_a() != 0
             || usize::try_from(check.jump_target()).ok() != Some(target + 3)
@@ -270,9 +265,7 @@ enum NumberDispatchValue {
 fn number_dispatch_equal(left: NumberDispatchValue, right: NumberDispatchValue) -> Option<bool> {
     Some(match (left, right) {
         (NumberDispatchValue::TypeNumber, NumberDispatchValue::String(value))
-        | (NumberDispatchValue::String(value), NumberDispatchValue::TypeNumber) => {
-            value == "number"
-        }
+        | (NumberDispatchValue::String(value), NumberDispatchValue::TypeNumber) => value == "number",
         (NumberDispatchValue::String(left), NumberDispatchValue::String(right)) => left == right,
         (NumberDispatchValue::Boolean(left), NumberDispatchValue::Boolean(right)) => left == right,
         (NumberDispatchValue::Number(left), NumberDispatchValue::Number(right)) => left == right,
@@ -314,9 +307,7 @@ fn number_type_dispatch_reaches(
                     .clone(),
                 OperandKind::Constant => {
                     match program.constants.get(usize::from(operand.payload()))? {
-                        Constant::String(value) => {
-                            Some(NumberDispatchValue::String(value.to_string()))
-                        }
+                        Constant::String(value) => Some(NumberDispatchValue::String(value.to_string())),
                         Constant::Number(value) => Some(NumberDispatchValue::Number(*value)),
                         _ => Some(NumberDispatchValue::Other),
                     }
@@ -340,8 +331,7 @@ fn number_type_dispatch_reaches(
                     && instruction.unary_operator() == crate::bytecode::UNARY_TYPEOF_INDEX
                     && instruction.register_b() == 0 =>
             {
-                let number =
-                    crate::bytecode::typeof_name_index("number").expect("a typeof name") as f64;
+                let number = crate::bytecode::typeof_name_index("number").expect("a typeof name") as f64;
                 *registers.get_mut(usize::from(instruction.result_register()))? =
                     Some(NumberDispatchValue::Number(number));
             }
@@ -412,11 +402,7 @@ fn number_type_dispatch_reaches(
                 } else {
                     equal
                 };
-                pc = if holds {
-                    next
-                } else {
-                    usize::try_from(instruction.jump_target()).ok()?
-                };
+                pc = if holds { next } else { usize::try_from(instruction.jump_target()).ok()? };
                 continue;
             }
             Op::JumpTrue | Op::JumpFalse => {
@@ -605,10 +591,7 @@ pub(super) fn has_int32_bitwise_candidate(program: &ResidualProgram, function: &
     for packed in function.code.iter().copied() {
         let instruction = packed.as_wide();
         let op = instruction.op();
-        if matches!(
-            op,
-            Op::Jump | Op::JumpFalse | Op::JumpTrue | Op::JumpBinaryFalse
-        ) {
+        if matches!(op, Op::Jump | Op::JumpFalse | Op::JumpTrue | Op::JumpBinaryFalse) {
             branch_seen = true;
             continue;
         }
@@ -1014,7 +997,9 @@ pub(super) fn cached_numeric_field_inputs_candidate(
 /// unless it throws. The VM still requires a cached data-property hit; that
 /// path cannot throw or invoke guest code. Accessors, proxies, and cache misses
 /// use the interpreter.
-pub(super) fn cached_this_field_return_candidate(function: &Function) -> Option<JsJitFieldReturn> {
+pub(super) fn cached_this_field_return_candidate(
+    function: &Function,
+) -> Option<JsJitFieldReturn> {
     if function.params != 0
         || !(2..=4).contains(&function.code.len())
         || !function.handlers.is_empty()
@@ -1022,7 +1007,10 @@ pub(super) fn cached_this_field_return_candidate(function: &Function) -> Option<
         return None;
     }
     let get = function_instruction(function, 0)?;
-    if get.op() != Op::GetField || !get.returns_from_frame() || get.writes_current_this() {
+    if get.op() != Op::GetField
+        || !get.returns_from_frame()
+        || get.writes_current_this()
+    {
         return None;
     }
     let FieldLookup::Atom {
@@ -1078,10 +1066,7 @@ pub(super) fn cached_this_field_increment_candidate(
         || ret.op() != Op::Return
         || ret.result_flags() != 0
         || ret.register_a() != load_undefined.result_register()
-        || !matches!(
-            program.constants.get(load_undefined.constant_index()),
-            Some(Constant::Undefined)
-        )
+        || !matches!(program.constants.get(load_undefined.constant_index()), Some(Constant::Undefined))
     {
         return None;
     }
@@ -1131,7 +1116,9 @@ pub(super) fn numeric_find_candidate(function: &Function) -> Option<JsJitNumeric
             return None;
         }
         let FieldLookup::Atom {
-            base, cache_site, ..
+            base,
+            cache_site,
+            ..
         } = instruction.field_lookup()?
         else {
             return None;
@@ -1149,10 +1136,7 @@ pub(super) fn numeric_find_candidate(function: &Function) -> Option<JsJitNumeric
     {
         return None;
     }
-    let moves = [
-        function_instruction(function, 2)?,
-        function_instruction(function, 3)?,
-    ];
+    let moves = [function_instruction(function, 2)?, function_instruction(function, 3)?];
     if moves[0].op() != Op::Move
         || moves[0].register_a() != 3
         || moves[0].register_b() != 6
@@ -1296,8 +1280,7 @@ pub(super) fn string_transform_candidate(
         {
             Some(JsJitStringTransform::PrefixUnderscore)
         }
-        "unescapeLeadingUnderscores"
-            if unescape_leading_underscores_shape(function)
+        "unescapeLeadingUnderscores" if unescape_leading_underscores_shape(function)
                 && field_name(program, function, 1) == Some("length")
                 && field_name(program, function, 4) == Some("charCodeAt")
                 && field_name(program, function, 9) == Some("charCodeAt")
@@ -1317,40 +1300,17 @@ fn unescape_leading_underscores_shape(function: &Function) -> bool {
     use Op::{Call, GetField, JumpBinaryFalse, LoadConst, Move, Return};
     // Each `&&` operand of the test is its own compare-and-branch (`FunctionCompiler::condition`).
     const BODY: [Op; 22] = [
-        Move,
-        GetField,
-        JumpBinaryFalse,
-        Move,
-        GetField,
-        LoadConst,
-        Call,
-        JumpBinaryFalse,
-        Move,
-        GetField,
-        LoadConst,
-        Call,
-        JumpBinaryFalse,
-        Move,
-        GetField,
-        LoadConst,
-        Call,
-        JumpBinaryFalse,
-        Move,
-        GetField,
-        LoadConst,
-        Call,
+        Move, GetField, JumpBinaryFalse,
+        Move, GetField, LoadConst, Call, JumpBinaryFalse,
+        Move, GetField, LoadConst, Call, JumpBinaryFalse,
+        Move, GetField, LoadConst, Call, JumpBinaryFalse,
+        Move, GetField, LoadConst, Call,
     ];
-    let ops = function
-        .code
-        .iter()
-        .map(|instruction| match instruction.as_wide().op() {
-            Op::StoreLocalPlain | Op::LoadLocalPlain => Move,
-            op => op,
-        });
-    let reloaded = BODY
-        .iter()
-        .copied()
-        .chain([Move, Return, LoadConst, Return]);
+    let ops = function.code.iter().map(|instruction| match instruction.as_wide().op() {
+        Op::StoreLocalPlain | Op::LoadLocalPlain => Move,
+        op => op,
+    });
+    let reloaded = BODY.iter().copied().chain([Move, Return, LoadConst, Return]);
     let named = BODY.iter().copied().chain([Return, LoadConst, Return]);
     ops.clone().eq(reloaded) || ops.eq(named)
 }
@@ -1427,9 +1387,7 @@ impl LoopReader<'_> {
     fn load(&mut self, local: LoopLocal) -> Option<crate::bytecode::Register> {
         let instruction = self.peek()?;
         match (instruction.op(), local) {
-            (Op::LoadLocalPlain, LoopLocal::Slot(slot))
-                if instruction.local_slot() as u16 == slot =>
-            {
+            (Op::LoadLocalPlain, LoopLocal::Slot(slot)) if instruction.local_slot() as u16 == slot => {
                 self.pc += 1;
                 Some(instruction.result_register())
             }
@@ -1460,9 +1418,7 @@ impl LoopReader<'_> {
 }
 
 fn string_hash_loop_candidate(program: &ResidualProgram, function: &Function) -> bool {
-    function.params == 1
-        && function.wide.is_empty()
-        && string_hash_loop_shape(program, function).is_some()
+    function.params == 1 && function.wide.is_empty() && string_hash_loop_shape(program, function).is_some()
 }
 
 /// The guarded hash loop `compile_string_hash_loop` emits, matched over the whole function
@@ -1920,7 +1876,9 @@ fn compile_number_domain_boolean_tree(
     function_id: u32,
     function: &Function,
 ) -> Option<JsJitArtifact> {
-    if !function_candidate(function, program) || usize::from(function.registers) > MAX_REGISTERS {
+    if !function_candidate(function, program)
+        || usize::from(function.registers) > MAX_REGISTERS
+    {
         return None;
     }
 
@@ -2375,7 +2333,12 @@ fn compile_number_domain_boolean_tree(
             Op::GetField => {
                 let value = if let Some((field_index, _)) = numeric_field_inputs
                     .as_ref()
-                    .and_then(|inputs| inputs.iter().enumerate().find(|(_, input)| input.pc == pc))
+                    .and_then(|inputs| {
+                        inputs
+                            .iter()
+                            .enumerate()
+                            .find(|(_, input)| input.pc == pc)
+                    })
                 {
                     let argument_index = params
                         .checked_add(capture_arguments.len())?
@@ -2735,8 +2698,7 @@ fn compile_number_domain_boolean_tree(
         requires_signed_int32_arguments: false,
         result: JsJitResultKind::Boolean,
         field_argument,
-        numeric_field_inputs: numeric_field_inputs
-            .map_or_else(Vec::new, |inputs| inputs.into_vec()),
+        numeric_field_inputs: numeric_field_inputs.map_or_else(Vec::new, |inputs| inputs.into_vec()),
         capture_arguments: capture_arguments.into_vec(),
         general_dispatch_native_pcs: Vec::new(),
     })
@@ -2975,10 +2937,7 @@ fn compile_numeric_with_captures(
 ) -> Option<JsJitArtifact> {
     let function = program.function_get(function_id as usize)?;
     if !function_candidate(function, program)
-        || function
-            .code
-            .iter()
-            .any(|instruction| instruction.is_wide())
+        || function.code.iter().any(|instruction| instruction.is_wide())
     {
         return None;
     }
@@ -3109,8 +3068,8 @@ fn compile_numeric_loop(
                     numeric_flow_operand(program, &state, registers, instruction.operand_b())?;
                 let right =
                     numeric_flow_operand(program, &state, registers, instruction.operand_c())?;
-                let number_inputs =
-                    left == NumericFlowKind::Number && right == NumericFlowKind::Number;
+                let number_inputs = left == NumericFlowKind::Number
+                    && right == NumericFlowKind::Number;
                 let operator = instruction.binary_operator();
                 let arithmetic = super::operations::NumberArithmetic::from_js_instruction(
                     instruction.op(),
@@ -4087,19 +4046,11 @@ fn numeric_operand(
 /// since its code and its program never change. Every frame entry and lane call of a function
 /// the tier has not tracked asks, and a fresh scan of its instructions each time had cost the
 /// semver npm scenario 4.6% more instructions in JIT mode than without it.
-pub(super) fn function_candidate(
-    function: &Function,
-    program: &crate::bytecode::ResidualProgram,
-) -> bool {
-    *function
-        .js_tier_candidate
-        .get_or_init(|| scanned_function_candidate(function, program))
+pub(super) fn function_candidate(function: &Function, program: &crate::bytecode::ResidualProgram) -> bool {
+    *function.js_tier_candidate.get_or_init(|| scanned_function_candidate(function, program))
 }
 
-fn scanned_function_candidate(
-    function: &Function,
-    program: &crate::bytecode::ResidualProgram,
-) -> bool {
+fn scanned_function_candidate(function: &Function, program: &crate::bytecode::ResidualProgram) -> bool {
     !function.code.is_empty()
         && function.code.len() <= MAX_INSTRUCTIONS
         && (function.wide.is_empty()
@@ -4362,9 +4313,9 @@ fn eligible(function: &Function, program: &crate::bytecode::ResidualProgram) -> 
             && !activation_is_irrelevant(function)
             && numeric_capture_candidate(function).is_none()
             && !cached_numeric_field_inputs_candidate(function).is_some_and(|inputs| {
-                inputs
-                    .iter()
-                    .any(|input| matches!(input.receiver, JsJitFieldReceiver::Capture { .. }))
+                inputs.iter().any(|input| {
+                    matches!(input.receiver, JsJitFieldReceiver::Capture { .. })
+                })
             }))
     {
         return false;
@@ -4429,8 +4380,7 @@ pub(super) struct JsEntryFacts {
     pub(super) int32_bitwise: bool,
     pub(super) int32_identity: bool,
     pub(super) number_capture: Option<JsJitCaptureArgument>,
-    pub(super) numeric_capture:
-        Option<smallvec::SmallVec<[JsJitCaptureArgument; MAX_CAPTURE_ARGUMENTS]>>,
+    pub(super) numeric_capture: Option<smallvec::SmallVec<[JsJitCaptureArgument; MAX_CAPTURE_ARGUMENTS]>>,
     pub(super) field_argument: Option<JsJitFieldArgument>,
     pub(super) numeric_field_argument: Option<JsJitFieldArgument>,
     pub(super) numeric_field_inputs:
@@ -4457,18 +4407,10 @@ impl JsEntryFacts {
         let candidate = function_candidate(function, program);
         let shape = super::compiled::js_general_dispatch_shape(function);
         let (general, general_acyclic) = (shape.is_some(), shape == Some(true));
-        let enters = candidate
-            || numeric_find.is_some()
-            || field_increment.is_some()
-            || field_return.is_some();
+        let enters = candidate || numeric_find.is_some() || field_increment.is_some() || field_return.is_some();
         // The other facts are read only past the candidate check an entering function passes.
         if !enters {
-            return Self {
-                candidate,
-                general,
-                general_acyclic,
-                ..Self::default()
-            };
+            return Self { candidate, general, general_acyclic, ..Self::default() };
         }
         Self {
             enters,

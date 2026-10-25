@@ -369,12 +369,8 @@ impl<H: Host> Vm<H> {
             let result = (|| {
                 let formatter = self.initialize_host_shadow_realm(global_root)?;
                 let global = self.heap.root_value(global_root).unwrap();
-                self.realm
-                    .intrinsics
-                    .error_intrinsics
-                    .get_mut(&global)
-                    .expect("new realm Error intrinsics")
-                    .host_formatter = formatter;
+                self.realm.intrinsics.error_intrinsics.get_mut(&global)
+                    .expect("new realm Error intrinsics").host_formatter = formatter;
                 let prototype = self.heap.root_value(prototype_root).unwrap();
                 let caller_global = self.heap.root_value(caller_root).unwrap();
                 Ok(self.heap.alloc(Cell::ShadowRealm {

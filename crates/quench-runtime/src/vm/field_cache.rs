@@ -47,10 +47,7 @@ impl<H: Host> Vm<H> {
         function: &'a FunctionRecord,
         atom: Atom,
     ) -> Option<&'a Object> {
-        if self
-            .atom_class(atom)
-            .contains(AtomClass::RESTRICTED_FUNCTION_PROPERTY)
-        {
+        if self.atom_class(atom).contains(AtomClass::RESTRICTED_FUNCTION_PROPERTY) {
             return None;
         }
         self.shape_answers(&function.object, atom, ReceiverKind::Exotic)

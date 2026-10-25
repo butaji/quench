@@ -80,11 +80,7 @@ impl FunctionCompiler<'_, '_> {
         let mut method_home_atoms = FxHashMap::default();
         for element in &class.body.body {
             if let ClassElement::MethodDefinition(method) = element {
-                let atom = self.hidden_local(&format!(
-                    "{}{}",
-                    crate::bytecode::HOME_BINDING_PREFIX,
-                    method.span.start
-                ));
+                let atom = self.hidden_local(&format!("{}{}", crate::bytecode::HOME_BINDING_PREFIX, method.span.start));
                 method_home_atoms.insert(method.span.start, atom);
             }
         }
@@ -152,20 +148,13 @@ impl FunctionCompiler<'_, '_> {
                     class.span.start
                 ))
             });
-        let class_home_atom = self.hidden_local(&format!(
-            "{}class:{}",
-            crate::bytecode::HOME_BINDING_PREFIX,
-            class.span.start
-        ));
+        let class_home_atom =
+            self.hidden_local(&format!("{}class:{}", crate::bytecode::HOME_BINDING_PREFIX, class.span.start));
         let mut private_bindings = FxHashMap::default();
         for element in &class.body.body {
             if let ClassElement::AccessorProperty(accessor) = element {
                 let atom = self.owner.private_name_atom(accessor.span);
-                let home = if accessor.r#static {
-                    class_home_atom
-                } else {
-                    constructor_home_atom
-                };
+                let home = if accessor.r#static { class_home_atom } else { constructor_home_atom };
                 private_bindings.insert(atom, home);
             }
             let (key, is_static) = match element {
@@ -177,14 +166,7 @@ impl FunctionCompiler<'_, '_> {
             if let PropertyKey::PrivateIdentifier(identifier) = key {
                 let atom = self.owner.private_name_atom(identifier.span);
                 if !self.owner.private_name_is_overridden(atom) {
-                    private_bindings.insert(
-                        atom,
-                        if is_static {
-                            class_home_atom
-                        } else {
-                            constructor_home_atom
-                        },
-                    );
+                    private_bindings.insert(atom, if is_static { class_home_atom } else { constructor_home_atom });
                 }
             }
         }
@@ -351,25 +333,21 @@ impl FunctionCompiler<'_, '_> {
         let mut initialized_static_names = FxHashSet::default();
         for element in &class.body.body {
             let (name, accessor_name) = match element {
-                ClassElement::MethodDefinition(method) if method.r#static => (
-                    matches!(&method.key, PropertyKey::PrivateIdentifier(_))
-                        .then(|| method.key.span()),
-                    None,
-                ),
-                ClassElement::AccessorProperty(accessor) if accessor.r#static => (
-                    Some(accessor.span),
-                    matches!(&accessor.key, PropertyKey::PrivateIdentifier(_))
-                        .then(|| accessor.key.span()),
-                ),
+                ClassElement::MethodDefinition(method) if method.r#static => {
+                    (matches!(&method.key, PropertyKey::PrivateIdentifier(_))
+                        .then(|| method.key.span()), None)
+                }
+                ClassElement::AccessorProperty(accessor) if accessor.r#static => {
+                    (Some(accessor.span), matches!(&accessor.key, PropertyKey::PrivateIdentifier(_))
+                        .then(|| accessor.key.span()))
+                }
                 _ => continue,
             };
             for name in name.into_iter().chain(accessor_name) {
                 let atom = self.owner.private_name_atom(name);
                 if self.owner.private_name_is_overridden(atom)
                     || !initialized_static_names.insert(atom)
-                {
-                    continue;
-                }
+                { continue; }
                 self.emit(Op::MarkPrivateName, 0, class_value, class_value, atom);
             }
         }
@@ -633,15 +611,8 @@ impl FunctionCompiler<'_, '_> {
                         self.literal(Constant::Undefined)
                     };
                     self.set_class_field_function_name(field, value);
-                    if matches!(field, ClassField::Property(field) if matches!(&field.key, PropertyKey::PrivateIdentifier(_)))
-                    {
-                        self.emit(
-                            Op::DefinePrivateField,
-                            value,
-                            class_value,
-                            class_value,
-                            name.unwrap(),
-                        );
+                    if matches!(field, ClassField::Property(field) if matches!(&field.key, PropertyKey::PrivateIdentifier(_))) {
+                        self.emit(Op::DefinePrivateField, value, class_value, class_value, name.unwrap());
                     } else if let Some(key) =
                         computed_key.filter(|_| matches!(field, ClassField::Property(_)))
                     {
@@ -667,9 +638,7 @@ impl FunctionCompiler<'_, '_> {
                 _ => {}
             }
         }
-        if has_private_bindings {
-            self.pop_lexical_scope();
-        }
+        if has_private_bindings { self.pop_lexical_scope(); }
         if super_atom.is_some() {
             self.pop_lexical_scope();
         }
@@ -981,24 +950,15 @@ impl FunctionCompiler<'_, '_> {
                     .items
                     .iter()
                     .flat_map(|param| param.pattern.get_binding_identifiers())
-                    .chain(
-                        params
-                            .rest
-                            .iter()
-                            .flat_map(|rest| rest.rest.argument.get_binding_identifiers()),
-                    )
+                    .chain(params.rest.iter().flat_map(|rest| rest.rest.argument.get_binding_identifiers()))
             })
             .map(|binding| binding.name.as_str())
             .collect::<Vec<_>>();
         !references.activation_bound
-            && references
-                .names
-                .iter()
-                .filter(|name| !own.contains(name))
-                .all(|name| {
-                    let atom = self.owner.atom(name);
-                    !self.binds_own_name(atom)
-                })
+            && references.names.iter().filter(|name| !own.contains(name)).all(|name| {
+                let atom = self.owner.atom(name);
+                !self.binds_own_name(atom)
+            })
     }
 }
 
@@ -1006,14 +966,12 @@ impl FunctionCompiler<'_, '_> {
 /// constant (`binding_time::expression`), or an array or object literal of static constants
 /// with plain keys. Each evaluation still makes a fresh array or object.
 fn observes_nothing(initializer: &Expression<'_>) -> bool {
-    let constant =
-        |value: &Expression<'_>| binding_time::expression(value).static_value().is_some();
+    let constant = |value: &Expression<'_>| binding_time::expression(value).static_value().is_some();
     match initializer {
         Expression::ParenthesizedExpression(inner) => observes_nothing(&inner.expression),
-        Expression::ArrayExpression(array) => array
-            .elements
-            .iter()
-            .all(|element| element.as_expression().is_some_and(constant)),
+        Expression::ArrayExpression(array) => array.elements.iter().all(|element| {
+            element.as_expression().is_some_and(constant)
+        }),
         Expression::ObjectExpression(object) => object.properties.iter().all(|property| {
             matches!(
                 property,
@@ -1160,7 +1118,7 @@ impl Compiler<'_> {
             scopes,
             parent,
             FunctionOptions {
-                directive_completion: None,
+                        directive_completion: None,
                 defaults: Some(&method.value.params),
                 source_span: source_span.and_then(|span| {
                     class_method_source_span(self.text, span, method.key.span().start)
@@ -1203,7 +1161,7 @@ impl Compiler<'_> {
             scopes,
             parent,
             FunctionOptions {
-                directive_completion: None,
+                        directive_completion: None,
                 defaults: None,
                 source_span: None,
                 name_binding: None,

@@ -225,14 +225,7 @@ impl<H: Host> Vm<H> {
     /// ToPropertyDescriptor's fields' keys, in the order it reads them.
     fn descriptor_field_atoms(&self) -> [Atom; DESCRIPTOR_FIELDS] {
         let atoms = self.runtime_atoms;
-        [
-            atoms.enumerable,
-            atoms.configurable,
-            atoms.value,
-            atoms.writable,
-            atoms.get,
-            atoms.set,
-        ]
+        [atoms.enumerable, atoms.configurable, atoms.value, atoms.writable, atoms.get, atoms.set]
     }
 
     pub(super) fn to_property_descriptor(
@@ -251,9 +244,7 @@ impl<H: Host> Vm<H> {
         // object literal, nearly always) is read without rooting: nothing allocates.
         let mut plain = [None; DESCRIPTOR_FIELDS];
         if keys.iter().zip(&mut plain).all(|(&key, field)| {
-            self.plain_property_lookup(descriptor, PropertyKey::string(key))
-                .map(|found| *field = found)
-                .is_some()
+            self.plain_property_lookup(descriptor, PropertyKey::string(key)).map(|found| *field = found).is_some()
         }) {
             return self.descriptor_record(p, plain);
         }
@@ -269,15 +260,10 @@ impl<H: Host> Vm<H> {
                 }
                 field_roots[index] = field.map(|value| self.heap.root(value));
             }
-            let fields =
-                field_roots.map(|root| root.map(|root| self.heap.root_value(root).unwrap()));
+            let fields = field_roots.map(|root| root.map(|root| self.heap.root_value(root).unwrap()));
             self.descriptor_record(p, fields)
         })();
-        for root in [Some(descriptor_root)]
-            .into_iter()
-            .chain(field_roots)
-            .flatten()
-        {
+        for root in [Some(descriptor_root)].into_iter().chain(field_roots).flatten() {
             self.heap.release_root(root);
         }
         result
@@ -285,32 +271,21 @@ impl<H: Host> Vm<H> {
 
     /// The fields of `descriptor` read through its shape's `DescriptorLayout`, or `None` when
     /// it is not an ordinary object whose prototype ends the chain, or its shapes have none.
-    fn laid_out_descriptor_fields(
-        &mut self,
-        descriptor: Value,
-    ) -> Option<[Option<Value>; DESCRIPTOR_FIELDS]> {
+    fn laid_out_descriptor_fields(&mut self, descriptor: Value) -> Option<[Option<Value>; DESCRIPTOR_FIELDS]> {
         let plain = |object: &Object| {
             !object.is_module_namespace()
                 && object.deferred_module().is_none()
                 && !object.has_side_descriptors()
         };
-        let data = self
-            .heap
-            .ordinary_object(descriptor)
-            .filter(|data| plain(data))?;
+        let data = self.heap.ordinary_object(descriptor).filter(|data| plain(data))?;
         let shape = data.shape();
-        let prototype = self
-            .heap
-            .ordinary_object(data.proto())
-            .filter(|data| plain(data))?;
+        let prototype = self.heap.ordinary_object(data.proto()).filter(|data| plain(data))?;
         if !prototype.proto().is_null() {
             return None;
         }
         let prototype_shape = prototype.shape();
         let layout = match self.descriptor_layout {
-            Some(layout) if layout.shape == shape && layout.prototype_shape == prototype_shape => {
-                layout
-            }
+            Some(layout) if layout.shape == shape && layout.prototype_shape == prototype_shape => layout,
             _ => {
                 let layout = self.descriptor_layout_of(descriptor, shape, prototype_shape)?;
                 self.descriptor_layout = Some(layout);
@@ -329,12 +304,7 @@ impl<H: Host> Vm<H> {
 
     /// The `DescriptorLayout` of `descriptor`'s shape: `None` when a shape is a dictionary,
     /// a field is an own accessor, or the prototype names a field.
-    fn descriptor_layout_of(
-        &self,
-        descriptor: Value,
-        shape: u32,
-        prototype_shape: u32,
-    ) -> Option<DescriptorLayout> {
+    fn descriptor_layout_of(&self, descriptor: Value, shape: u32, prototype_shape: u32) -> Option<DescriptorLayout> {
         if self.shape_is_dictionary(shape) || self.shape_is_dictionary(prototype_shape) {
             return None;
         }
@@ -344,9 +314,7 @@ impl<H: Host> Vm<H> {
             let key = PropertyKey::string(atom);
             match self.property_shape_slot(shape, key) {
                 Some(own) => {
-                    if self.shape_may_have_accessors(shape)
-                        && self.slot_attributes(data, own)?.accessor
-                    {
+                    if self.shape_may_have_accessors(shape) && self.slot_attributes(data, own)?.accessor {
                         return None;
                     }
                     *slot = Some(u32::try_from(own).ok()?);
@@ -355,19 +323,11 @@ impl<H: Host> Vm<H> {
                 None => {}
             }
         }
-        Some(DescriptorLayout {
-            shape,
-            prototype_shape,
-            slots,
-        })
+        Some(DescriptorLayout { shape, prototype_shape, slots })
     }
 
     /// An accessor field that is absent, undefined or callable.
-    fn checked_accessor(
-        &mut self,
-        p: &ResidualProgram,
-        field: Option<Value>,
-    ) -> Result<(), JsError> {
+    fn checked_accessor(&mut self, p: &ResidualProgram, field: Option<Value>) -> Result<(), JsError> {
         match field {
             Some(accessor) if !accessor.is_undefined() && !self.is_function(accessor) => {
                 Err(self.type_error(p, "Accessor descriptor must be callable".into()))
@@ -380,8 +340,7 @@ impl<H: Host> Vm<H> {
     fn descriptor_record(
         &mut self,
         p: &ResidualProgram,
-        [enumerable, configurable, value, writable, getter, setter]: [Option<Value>;
-            DESCRIPTOR_FIELDS],
+        [enumerable, configurable, value, writable, getter, setter]: [Option<Value>; DESCRIPTOR_FIELDS],
     ) -> Result<PropertyDescriptorRecord, JsError> {
         self.checked_accessor(p, getter)?;
         self.checked_accessor(p, setter)?;
@@ -396,10 +355,7 @@ impl<H: Host> Vm<H> {
             setter,
         };
         if record.has_accessor_fields() && record.has_data_fields() {
-            return Err(self.type_error(
-                p,
-                "Property descriptor cannot mix accessor and data fields".into(),
-            ));
+            return Err(self.type_error(p, "Property descriptor cannot mix accessor and data fields".into()));
         }
         Ok(record)
     }
@@ -490,8 +446,7 @@ impl<H: Host> Vm<H> {
         value: Value,
         attributes: PropertyAttributes,
     ) -> Result<Value, JsError> {
-        let [enumerable, configurable] =
-            [attributes.enumerable, attributes.configurable].map(Self::integrity_bool);
+        let [enumerable, configurable] = [attributes.enumerable, attributes.configurable].map(Self::integrity_bool);
         let atoms = self.runtime_atoms;
         let (keys, values) = if attributes.accessor {
             (
@@ -505,18 +460,8 @@ impl<H: Host> Vm<H> {
             )
         } else {
             (
-                [
-                    atoms.value,
-                    atoms.writable,
-                    atoms.enumerable,
-                    atoms.configurable,
-                ],
-                [
-                    value,
-                    Self::integrity_bool(attributes.writable),
-                    enumerable,
-                    configurable,
-                ],
+                [atoms.value, atoms.writable, atoms.enumerable, atoms.configurable],
+                [value, Self::integrity_bool(attributes.writable), enumerable, configurable],
             )
         };
         let shape = match self.descriptor_shapes[usize::from(attributes.accessor)] {
@@ -528,9 +473,7 @@ impl<H: Host> Vm<H> {
             }
         };
         let prototype = self.realm_object_prototype(self.realm.globals);
-        Ok(self
-            .heap
-            .alloc_object_with_properties(prototype, shape, &values))
+        Ok(self.heap.alloc_object_with_properties(prototype, shape, &values))
     }
 
     pub(super) fn typed_array_index_key(key: &str) -> TypedArrayIndexKey {
@@ -603,9 +546,7 @@ impl<H: Host> Vm<H> {
             let target = self.heap.root_value(source).unwrap();
             let key = self.heap.root_value(key).unwrap();
             if matches!(self.heap.get(target), Some(Cell::Proxy { .. })) {
-                if self.is_host_private_symbol(key) {
-                    return Ok(Value::UNDEFINED);
-                }
+                if self.is_host_private_symbol(key) { return Ok(Value::UNDEFINED); }
                 return self.proxy_own_property_descriptor(p, target, key);
             }
             match self.ordinary_get_own_property(p, target, key)? {
@@ -633,29 +574,27 @@ impl<H: Host> Vm<H> {
             let descriptor = self.object_get_own_property_descriptor(p, &[target, key])?;
             return Ok((!descriptor.is_undefined()).then(|| self.own_descriptor_record(descriptor)));
         }
-        Ok(self
-            .ordinary_get_own_property(p, target, key)?
-            .map(|(value, attributes)| {
-                if attributes.accessor {
-                    PropertyDescriptorRecord {
-                        value: None,
-                        writable: None,
-                        enumerable: Some(attributes.enumerable),
-                        configurable: Some(attributes.configurable),
-                        getter: Some(attributes.getter.unwrap_or(Value::UNDEFINED)),
-                        setter: Some(attributes.setter.unwrap_or(Value::UNDEFINED)),
-                    }
-                } else {
-                    PropertyDescriptorRecord {
-                        value: Some(value),
-                        writable: Some(attributes.writable),
-                        enumerable: Some(attributes.enumerable),
-                        configurable: Some(attributes.configurable),
-                        getter: None,
-                        setter: None,
-                    }
+        Ok(self.ordinary_get_own_property(p, target, key)?.map(|(value, attributes)| {
+            if attributes.accessor {
+                PropertyDescriptorRecord {
+                    value: None,
+                    writable: None,
+                    enumerable: Some(attributes.enumerable),
+                    configurable: Some(attributes.configurable),
+                    getter: Some(attributes.getter.unwrap_or(Value::UNDEFINED)),
+                    setter: Some(attributes.setter.unwrap_or(Value::UNDEFINED)),
                 }
-            }))
+            } else {
+                PropertyDescriptorRecord {
+                    value: Some(value),
+                    writable: Some(attributes.writable),
+                    enumerable: Some(attributes.enumerable),
+                    configurable: Some(attributes.configurable),
+                    getter: None,
+                    setter: None,
+                }
+            }
+        }))
     }
 
     /// [[GetOwnProperty]] of a non-Proxy object for a property key, as its value and
@@ -668,17 +607,13 @@ impl<H: Host> Vm<H> {
         target: Value,
         key: Value,
     ) -> Result<Option<(Value, PropertyAttributes)>, JsError> {
-        if let (Some(atom), Some(name)) =
-            (self.string_key_atom(key), self.heap.string(key).cloned())
-        {
+        if let (Some(atom), Some(name)) = (self.string_key_atom(key), self.heap.string(key).cloned()) {
             // A lazy data property is an accessor whose getter is its member: only a property
             // found as one needs its group materialized and the lookup made again.
             let found = self.ordinary_own_string_property(p, target, &name, atom)?;
             let lazy = found.is_some_and(|(_, attributes)| {
                 attributes.accessor
-                    && attributes
-                        .getter
-                        .is_some_and(|getter| self.lazy_member(getter).is_some())
+                    && attributes.getter.is_some_and(|getter| self.lazy_member(getter).is_some())
             });
             if !lazy {
                 return Ok(found);
@@ -848,9 +783,7 @@ impl<H: Host> Vm<H> {
         }
         let text = self.heap.string(key)?.clone();
         let atom = self.string_key_atom(key)?;
-        let found = self
-            .ordinary_own_string_property(p, object, &text, atom)
-            .ok()?;
+        let found = self.ordinary_own_string_property(p, object, &text, atom).ok()?;
         Some(found.map(|(_, attributes)| attributes))
     }
 
@@ -867,11 +800,7 @@ impl<H: Host> Vm<H> {
         let mut current = source;
         loop {
             if let Some(attributes) = self.plain_own_attributes(p, current, key)? {
-                return Some(if attributes.enumerable {
-                    Value::TRUE
-                } else {
-                    Value::FALSE
-                });
+                return Some(if attributes.enumerable { Value::TRUE } else { Value::FALSE });
             }
             current = self.object_data(current)?.proto();
             if current.is_null() {

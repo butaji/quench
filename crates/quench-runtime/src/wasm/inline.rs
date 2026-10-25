@@ -50,21 +50,12 @@ thread_local! {
 
 /// The leaf budget for a module lowered for `mode`, whose operators `module_operators`
 /// counts (asked only for compiled code).
-pub(super) fn leaf_budget(
-    mode: crate::ExecutionMode,
-    module_operators: impl FnOnce() -> usize,
-) -> usize {
+pub(super) fn leaf_budget(mode: crate::ExecutionMode, module_operators: impl FnOnce() -> usize) -> usize {
     match mode {
         crate::ExecutionMode::Interpreted => INTERPRETED_LEAF_OPERATORS,
         #[cfg(test)]
-        crate::ExecutionMode::Compiled
-            if COMPILED_CALLS_KEPT_FOR_TEST.with(std::cell::Cell::get) =>
-        {
-            0
-        }
-        crate::ExecutionMode::Compiled
-            if module_operators() <= COMPILED_INLINING_MODULE_OPERATORS =>
-        {
+        crate::ExecutionMode::Compiled if COMPILED_CALLS_KEPT_FOR_TEST.with(std::cell::Cell::get) => 0,
+        crate::ExecutionMode::Compiled if module_operators() <= COMPILED_INLINING_MODULE_OPERATORS => {
             INTERPRETED_LEAF_OPERATORS
         }
         crate::ExecutionMode::Compiled => 0,

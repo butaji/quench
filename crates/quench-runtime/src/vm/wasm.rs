@@ -1670,9 +1670,7 @@ impl<H: Host> Vm<H> {
         if ty == crate::WasmType::V128 {
             return match self.heap.v128(value) {
                 Some(bits) => Ok(crate::WasmValue::V128(u128::from_le_bytes(bits))),
-                _ => Err(JsError::validation(
-                    "invalid Wasm scalar representation".into(),
-                )),
+                _ => Err(JsError::validation("invalid Wasm scalar representation".into())),
             };
         }
         let bits = if let Some(bits) = value.as_int() {
@@ -1693,6 +1691,8 @@ impl<H: Host> Vm<H> {
 mod tests {
     use super::*;
     use wasmparser::Operator;
+
+
 
     #[cfg(not(quench_profiled))]
     #[test]
@@ -3388,15 +3388,11 @@ mod tests {
                 ty: crate::WasmCallableType::Embedded(signature),
                 locals: vec![wasmparser::ValType::I32, wasmparser::ValType::I32],
                 operators: vec![
-                    Operator::Block {
-                        blockty: wasmparser::BlockType::Empty,
-                    },
+                    Operator::Block { blockty: wasmparser::BlockType::Empty },
                     Operator::LocalGet { local_index: 0 },
                     Operator::I32Eqz,
                     Operator::BrIf { relative_depth: 0 },
-                    Operator::Loop {
-                        blockty: wasmparser::BlockType::Empty,
-                    },
+                    Operator::Loop { blockty: wasmparser::BlockType::Empty },
                     Operator::LocalGet { local_index: 2 },
                     Operator::LocalGet { local_index: 1 },
                     Operator::I32Add,
@@ -3431,8 +3427,7 @@ mod tests {
         let instance = vm.instantiate_wasm_module(&module).unwrap();
         for trips in 0..13 {
             assert_eq!(
-                vm.invoke_wasm(&instance, 0, &[crate::WasmValue::I32(trips)])
-                    .unwrap(),
+                vm.invoke_wasm(&instance, 0, &[crate::WasmValue::I32(trips)]).unwrap(),
                 Some(crate::WasmValue::I32(trips * (trips - 1) / 2)),
                 "{trips} trips"
             );
@@ -3441,11 +3436,7 @@ mod tests {
             .programs
             .find_shared(&module.program)
             .expect("registered Wasm program");
-        let compiled = vm
-            .programs
-            .compiled(program)
-            .flatten()
-            .expect("compiled loop");
+        let compiled = vm.programs.compiled(program).flatten().expect("compiled loop");
         assert_eq!(compiled.native_entries(0), Some(13));
     }
 
@@ -3972,11 +3963,7 @@ mod tests {
             assert_eq!(vm.programs.len(), 2);
             vm.collect_now(&script);
             assert_eq!(vm.root_value(root), Some(value));
-            assert!(
-                vm.heap
-                    .string(value)
-                    .is_some_and(|text| text.host_string() == "host-owned")
-            );
+            assert!(vm.heap.string(value).is_some_and(|text| text.host_string() == "host-owned"));
         }
         // A deliberate new JS execution retains its existing reset contract.
         vm.execute(&script).unwrap();
@@ -4674,8 +4661,7 @@ mod tests {
         module.program = Rc::new(ResidualProgram::read_binary(&path).unwrap());
         std::fs::remove_file(path).unwrap();
         let mut invalid = (*module.program).clone();
-        let address = invalid
-            .function(0)
+        let address = invalid.function(0)
             .code
             .iter()
             .map(|packed| {

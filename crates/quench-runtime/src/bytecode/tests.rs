@@ -16,10 +16,7 @@ fn generated_js_denotations_cover_the_native_numeric_lowerings() {
     assert_eq!(Op::LoadCapture.js_denotation(), JsDenotation::CapturedValue);
     assert_eq!(Op::Binary.js_denotation(), JsDenotation::NumericBinary);
     assert_eq!(Op::NumericAdd.js_denotation(), JsDenotation::NumericBinary);
-    assert_eq!(
-        Op::NumericMultiply.js_denotation(),
-        JsDenotation::NumericBinary
-    );
+    assert_eq!(Op::NumericMultiply.js_denotation(), JsDenotation::NumericBinary);
     assert_eq!(Op::Unary.js_denotation(), JsDenotation::NumericUnary);
     assert_eq!(Op::Return.js_denotation(), JsDenotation::Return);
     assert_eq!(Op::Call.js_denotation(), JsDenotation::Unsupported);
@@ -145,66 +142,63 @@ fn decoder_rejects_out_of_range_local_load() {
         source: None,
         atoms: AtomTable::default(),
         constants: vec![],
-        functions: vec![
-            Function {
-                parent: None,
-                name: None,
-                inferred_name: None,
-                is_arrow: false,
-                self_binding_slot: None,
-                source_span: None,
-                params: 0,
-                length: 0,
-                parameter_end_pc: 0,
-                parameter_atoms: vec![].into(),
-                rest: false,
-                is_async: false,
-                is_generator: false,
-                is_class_constructor: false,
-                derived_constructor: false,
-                instance_initializer: None,
-                super_home_atom: None,
-                constructible: true,
-                class_initializer: false,
-                parameter_eval_arguments_error: false,
-                unaliased_arguments: false,
-                prototype_unobservable: false,
-                arguments_slot: None,
-                simple_parameters: true,
-                strict: false,
-                locals: 1,
-                local_atoms: vec![].into(),
-                environment_atoms: vec![].into(),
-                selective_capture_slots: None,
-                local_registers: Vec::new().into(),
-                inherited_with_scope: false,
-                lexical_atoms: vec![].into(),
-                global_declarations: None,
-                name_bindings: Default::default(),
-                binding_sites: vec![].into(),
-                source_positions: Default::default(),
-                environment_clones: vec![].into(),
-                code: vec![Instr::new(Op::LoadLocal, 0, 0, 0, 1)],
-                wide: vec![],
-                registers: 1,
-                dispatch: DispatchClass::General,
-                decoded: Default::default(),
-                plain_locals: Default::default(),
-                declared_atom_sets: Default::default(),
-                activation_bindings: Default::default(),
-                live_parameter_reflection: Default::default(),
-                static_name_scope: Default::default(),
-                dynamic_scope_access: Default::default(),
-                js_tier_candidate: Default::default(),
-                call_plan: Default::default(),
-                handlers: vec![].into(),
-                register_roots: Default::default(),
-                undefined_register: None,
-                parameter_registers: None,
-                initial_register: Default::default(),
-            }
-            .into(),
-        ],
+        functions: vec![Function {
+            parent: None,
+            name: None,
+            inferred_name: None,
+            is_arrow: false,
+            self_binding_slot: None,
+            source_span: None,
+            params: 0,
+            length: 0,
+            parameter_end_pc: 0,
+            parameter_atoms: vec![].into(),
+            rest: false,
+            is_async: false,
+            is_generator: false,
+            is_class_constructor: false,
+            derived_constructor: false,
+            instance_initializer: None,
+            super_home_atom: None,
+            constructible: true,
+            class_initializer: false,
+            parameter_eval_arguments_error: false,
+            unaliased_arguments: false,
+            prototype_unobservable: false,
+            arguments_slot: None,
+            simple_parameters: true,
+            strict: false,
+            locals: 1,
+            local_atoms: vec![].into(),
+            environment_atoms: vec![].into(),
+            selective_capture_slots: None,
+            local_registers: Vec::new().into(),
+            inherited_with_scope: false,
+            lexical_atoms: vec![].into(),
+            global_declarations: None,
+            name_bindings: Default::default(),
+            binding_sites: vec![].into(),
+            source_positions: Default::default(),
+            environment_clones: vec![].into(),
+            code: vec![Instr::new(Op::LoadLocal, 0, 0, 0, 1)],
+            wide: vec![],
+            registers: 1,
+            dispatch: DispatchClass::General,
+            decoded: Default::default(),
+            plain_locals: Default::default(),
+            declared_atom_sets: Default::default(),
+            activation_bindings: Default::default(),
+            live_parameter_reflection: Default::default(),
+            static_name_scope: Default::default(),
+            dynamic_scope_access: Default::default(),
+            js_tier_candidate: Default::default(),
+            call_plan: Default::default(),
+            handlers: vec![].into(),
+            register_roots: Default::default(),
+            undefined_register: None,
+            parameter_registers: None,
+            initial_register: Default::default(),
+        }.into()],
         cache_sites: 0,
         method_sites: vec![],
         method_arguments: vec![],
@@ -215,8 +209,8 @@ fn decoder_rejects_out_of_range_local_load() {
         superinstructions: vec![],
         replay: None,
         encoded_records: None,
-        validated: Default::default(),
-        closure_reads: None,
+            validated: Default::default(),
+            closure_reads: None,
     };
     let path = std::env::temp_dir().join(format!("quench-invalid-local-{}", std::process::id()));
     program.write_binary(&path).unwrap();
@@ -237,66 +231,63 @@ fn decoder_rejects_runtime_abi_mismatch_before_tables() {
         source: None,
         atoms: AtomTable::default(),
         constants: vec![],
-        functions: vec![
-            Function {
-                parent: None,
-                name: None,
-                inferred_name: None,
-                is_arrow: false,
-                self_binding_slot: None,
-                source_span: None,
-                params: 0,
-                length: 0,
-                parameter_end_pc: 0,
-                parameter_atoms: vec![].into(),
-                rest: false,
-                is_async: false,
-                is_generator: false,
-                is_class_constructor: false,
-                derived_constructor: false,
-                instance_initializer: None,
-                super_home_atom: None,
-                constructible: true,
-                class_initializer: false,
-                parameter_eval_arguments_error: false,
-                unaliased_arguments: false,
-                prototype_unobservable: false,
-                arguments_slot: None,
-                simple_parameters: true,
-                strict: false,
-                locals: 0,
-                local_atoms: vec![].into(),
-                environment_atoms: vec![].into(),
-                selective_capture_slots: None,
-                local_registers: Vec::new().into(),
-                inherited_with_scope: false,
-                lexical_atoms: vec![].into(),
-                global_declarations: None,
-                name_bindings: Default::default(),
-                binding_sites: vec![].into(),
-                source_positions: Default::default(),
-                environment_clones: vec![].into(),
-                code: vec![Instr::new(Op::Return, 0, 0, 0, 0)],
-                wide: vec![],
-                registers: 1,
-                dispatch: DispatchClass::General,
-                decoded: Default::default(),
-                plain_locals: Default::default(),
-                declared_atom_sets: Default::default(),
-                activation_bindings: Default::default(),
-                live_parameter_reflection: Default::default(),
-                static_name_scope: Default::default(),
-                dynamic_scope_access: Default::default(),
-                js_tier_candidate: Default::default(),
-                call_plan: Default::default(),
-                handlers: vec![].into(),
-                register_roots: Default::default(),
-                undefined_register: None,
-                parameter_registers: None,
-                initial_register: Default::default(),
-            }
-            .into(),
-        ],
+        functions: vec![Function {
+            parent: None,
+            name: None,
+            inferred_name: None,
+            is_arrow: false,
+            self_binding_slot: None,
+            source_span: None,
+            params: 0,
+            length: 0,
+            parameter_end_pc: 0,
+            parameter_atoms: vec![].into(),
+            rest: false,
+            is_async: false,
+            is_generator: false,
+            is_class_constructor: false,
+            derived_constructor: false,
+            instance_initializer: None,
+            super_home_atom: None,
+            constructible: true,
+            class_initializer: false,
+            parameter_eval_arguments_error: false,
+            unaliased_arguments: false,
+            prototype_unobservable: false,
+            arguments_slot: None,
+            simple_parameters: true,
+            strict: false,
+            locals: 0,
+            local_atoms: vec![].into(),
+            environment_atoms: vec![].into(),
+            selective_capture_slots: None,
+            local_registers: Vec::new().into(),
+            inherited_with_scope: false,
+            lexical_atoms: vec![].into(),
+            global_declarations: None,
+            name_bindings: Default::default(),
+            binding_sites: vec![].into(),
+            source_positions: Default::default(),
+            environment_clones: vec![].into(),
+            code: vec![Instr::new(Op::Return, 0, 0, 0, 0)],
+            wide: vec![],
+            registers: 1,
+            dispatch: DispatchClass::General,
+            decoded: Default::default(),
+            plain_locals: Default::default(),
+            declared_atom_sets: Default::default(),
+            activation_bindings: Default::default(),
+            live_parameter_reflection: Default::default(),
+            static_name_scope: Default::default(),
+            dynamic_scope_access: Default::default(),
+            js_tier_candidate: Default::default(),
+            call_plan: Default::default(),
+            handlers: vec![].into(),
+            register_roots: Default::default(),
+            undefined_register: None,
+            parameter_registers: None,
+            initial_register: Default::default(),
+        }.into()],
         cache_sites: 0,
         method_sites: vec![],
         method_arguments: vec![],
@@ -307,8 +298,8 @@ fn decoder_rejects_runtime_abi_mismatch_before_tables() {
         superinstructions: vec![],
         replay: None,
         encoded_records: None,
-        validated: Default::default(),
-        closure_reads: None,
+            validated: Default::default(),
+            closure_reads: None,
     };
     let path = std::env::temp_dir().join(format!("quench-invalid-abi-{}", std::process::id()));
     program.write_binary(&path).unwrap();
@@ -431,10 +422,7 @@ fn closure_reads_survive_round_trip() {
     let decoded = ResidualProgram::read_binary(&path).unwrap();
     std::fs::remove_file(path).unwrap();
     let demands = |program: &ResidualProgram| -> Vec<String> {
-        let reads = program
-            .closure_reads
-            .as_ref()
-            .expect("a compiled program has closure reads");
+        let reads = program.closure_reads.as_ref().expect("a compiled program has closure reads");
         (0..program.functions.len() as u32)
             .flat_map(|function| (1..=2).map(move |distance| (function, distance)))
             .map(|(function, distance)| format!("{:?}", reads.demand(function, distance)))
@@ -528,31 +516,17 @@ fn fused_field_source_locations_survive_binary_round_trip_and_validate_coordinat
             crate::Engine::specialize_unspecialized(source, "fused-field-binary.js")
         } else {
             crate::Engine::specialize(source, "fused-field-binary.js")
-        }
-        .unwrap();
-        let path = std::env::temp_dir().join(format!(
-            "quench-fused-source-{}-{generic}",
-            std::process::id()
-        ));
+        }.unwrap();
+        let path = std::env::temp_dir().join(format!("quench-fused-source-{}-{generic}", std::process::id()));
         program.write_binary(&path).unwrap();
         let decoded = ResidualProgram::read_binary(&path).unwrap();
-        crate::Runtime::new(crate::SystemHost)
-            .execute(&decoded)
-            .unwrap();
-        let site = program
-            .field_sites
-            .iter()
-            .position(|site| site.second.is_some())
-            .expect("nested field site");
+        crate::Runtime::new(crate::SystemHost).execute(&decoded).unwrap();
+        let site = program.field_sites.iter().position(|site| site.second.is_some()).expect("nested field site");
         for coordinate in [(0, 1), (1, 0)] {
             let mut invalid = program.clone();
             invalid.field_sites[site].sources[0] = Some(coordinate);
             invalid.write_binary(&path).unwrap();
-            assert!(
-                ResidualProgram::read_binary(&path)
-                    .unwrap_err()
-                    .contains("invalid field site")
-            );
+            assert!(ResidualProgram::read_binary(&path).unwrap_err().contains("invalid field site"));
         }
         std::fs::remove_file(path).unwrap();
     }
@@ -561,10 +535,7 @@ fn fused_field_source_locations_survive_binary_round_trip_and_validate_coordinat
 #[test]
 fn source_lines_share_javascript_boundaries_and_preserve_wrapper_origins() {
     let text = "a\r\nb\rc\nd\u{2028}e\u{2029}";
-    assert_eq!(
-        super::source_line_starts(text).collect::<Vec<_>>(),
-        [0, 3, 5, 7, 11, 15]
-    );
+    assert_eq!(super::source_line_starts(text).collect::<Vec<_>>(), [0, 3, 5, 7, 11, 15]);
     let source = super::ProgramSource {
         text: super::SourceText::Shared(text.into()),
         base: 0,
@@ -608,31 +579,11 @@ fn source_lines_share_javascript_boundaries_and_preserve_wrapper_origins() {
 #[test]
 fn source_positions_round_trip_every_delta_shape() {
     let positions = [
-        SourcePosition {
-            pc: 0,
-            line: 3,
-            column: 40,
-        },
-        SourcePosition {
-            pc: 1,
-            line: 3,
-            column: 7,
-        },
-        SourcePosition {
-            pc: 9,
-            line: 1,
-            column: 200_000,
-        },
-        SourcePosition {
-            pc: 300,
-            line: 1,
-            column: 200_001,
-        },
-        SourcePosition {
-            pc: u32::MAX,
-            line: u32::MAX,
-            column: u32::MAX,
-        },
+        SourcePosition { pc: 0, line: 3, column: 40 },
+        SourcePosition { pc: 1, line: 3, column: 7 },
+        SourcePosition { pc: 9, line: 1, column: 200_000 },
+        SourcePosition { pc: 300, line: 1, column: 200_001 },
+        SourcePosition { pc: u32::MAX, line: u32::MAX, column: u32::MAX },
     ];
     let table = positions.into_iter().collect::<SourcePositions>();
     assert_eq!(table.iter().collect::<Vec<_>>(), positions);
@@ -663,84 +614,40 @@ fn compact_encoding_names_every_atom_by_its_text() {
     "#;
     let program = crate::Engine::specialize(source, "compact-atoms.js").unwrap();
     let (bytes, order) = program.encode_compact();
-    let names: Vec<std::rc::Rc<str>> = order
-        .iter()
-        .map(|&atom| std::rc::Rc::from(&program.atoms[atom as usize]))
-        .collect();
-    let original: std::collections::HashMap<&str, u32> = names
-        .iter()
-        .map(|name| &**name)
-        .zip(order.iter().copied())
-        .collect();
-    assert_eq!(
-        original.len(),
-        order.len(),
-        "the test source names each atom once"
-    );
+    let names: Vec<std::rc::Rc<str>> =
+        order.iter().map(|&atom| std::rc::Rc::from(&program.atoms[atom as usize])).collect();
+    let original: std::collections::HashMap<&str, u32> =
+        names.iter().map(|name| &**name).zip(order.iter().copied()).collect();
+    assert_eq!(original.len(), order.len(), "the test source names each atom once");
     const SHIFT: u32 = 1 << 12;
     let mut table = vec![std::rc::Rc::<str>::from(""); (SHIFT as usize) + program.atoms.len()];
     for (name, &atom) in names.iter().zip(&order) {
         table[(atom + SHIFT) as usize] = name.clone();
     }
     let text = super::SourceText::Shared(std::sync::Arc::from(source));
-    let mut decoded = ResidualProgram::decode_compact(
-        std::rc::Rc::new(bytes.clone()),
-        &mut |name| original[name] + SHIFT,
-        text,
-    )
-    .unwrap();
+    let mut decoded =
+        ResidualProgram::decode_compact(std::rc::Rc::new(bytes.clone()), &mut |name| original[name] + SHIFT, text).unwrap();
     decoded.atoms = super::AtomTable::from_rcs(&table);
     // Every record but the root's stays encoded until its first read; validation reads all.
     assert!(decoded.functions[0].record().is_some());
-    assert!(
-        decoded.functions[1..]
-            .iter()
-            .all(|slot| slot.record().is_none())
-    );
+    assert!(decoded.functions[1..].iter().all(|slot| slot.record().is_none()));
     decoded.validate().unwrap();
     assert_eq!(decoded.encode_compact().0, bytes);
     // Ids past a narrow immediate widen the instructions naming them, as compiling does.
     const WIDE_SHIFT: u32 = 1 << 17;
     let text = super::SourceText::Shared(std::sync::Arc::from(source));
-    let widened = ResidualProgram::decode_compact(
-        std::rc::Rc::new(bytes.clone()),
-        &mut |name| original[name] + WIDE_SHIFT,
-        text,
-    )
-    .unwrap();
+    let widened = ResidualProgram::decode_compact(std::rc::Rc::new(bytes.clone()), &mut |name| original[name] + WIDE_SHIFT, text).unwrap();
     widened.compile_released();
-    let narrow: usize = decoded
-        .functions
-        .iter()
-        .map(|function| function.wide.len())
-        .sum();
-    let wide: usize = widened
-        .functions
-        .iter()
-        .map(|function| function.wide.len())
-        .sum();
-    assert!(
-        wide > narrow,
-        "atom ids past a narrow immediate are widened"
-    );
+    let narrow: usize = decoded.functions.iter().map(|function| function.wide.len()).sum();
+    let wide: usize = widened.functions.iter().map(|function| function.wide.len()).sum();
+    assert!(wide > narrow, "atom ids past a narrow immediate are widened");
     let names = |program: &ResidualProgram, shift: u32| {
-        program
-            .functions
-            .iter()
-            .flat_map(|function| {
-                function.code.iter().map(move |instruction| {
-                    let instruction =
-                        super::control_flow::instruction_at(function, *instruction).unwrap();
-                    (
-                        instruction.op(),
-                        instruction
-                            .op()
-                            .immediate_names_atom(instruction.b())
-                            .then(|| instruction.imm() - shift),
-                    )
-                })
+        program.functions.iter().flat_map(|function| {
+            function.code.iter().map(move |instruction| {
+                let instruction = super::control_flow::instruction_at(function, *instruction).unwrap();
+                (instruction.op(), instruction.op().immediate_names_atom(instruction.b()).then(|| instruction.imm() - shift))
             })
-            .collect::<Vec<_>>()
+        }).collect::<Vec<_>>()
     };
     assert_eq!(names(&decoded, SHIFT), names(&widened, WIDE_SHIFT));
     // The load checks the body; each deferred record is checked as it decodes.
@@ -749,44 +656,21 @@ fn compact_encoding_names_every_atom_by_its_text() {
     let mut corrupted = bytes.clone();
     corrupted[region / 2] ^= 1;
     let text = super::SourceText::Shared(std::sync::Arc::from(source));
-    assert!(
-        ResidualProgram::decode_compact(
-            std::rc::Rc::new(corrupted),
-            &mut |name| original[name],
-            text
-        )
-        .is_err()
-    );
+    assert!(ResidualProgram::decode_compact(std::rc::Rc::new(corrupted), &mut |name| original[name], text).is_err());
     let mut corrupted = bytes.clone();
     corrupted[region] ^= 1;
     let text = super::SourceText::Shared(std::sync::Arc::from(source));
-    let lazy = ResidualProgram::decode_compact(
-        std::rc::Rc::new(corrupted),
-        &mut |name| original[name] + SHIFT,
-        text,
-    )
-    .expect("a deferred record is not read at load");
+    let lazy = ResidualProgram::decode_compact(std::rc::Rc::new(corrupted), &mut |name| original[name] + SHIFT, text)
+        .expect("a deferred record is not read at load");
     let records = lazy.encoded_records.as_deref().unwrap();
-    let first_deferred = (0..lazy.functions.len())
-        .find(|&index| records.ranges[index].is_some_and(|record| record.start as usize == region))
-        .unwrap();
-    assert!(
-        super::binary::decode_deferred_function(records, first_deferred)
-            .unwrap()
-            .is_err()
-    );
+    let first_deferred = (0..lazy.functions.len()).find(|&index| records.ranges[index].is_some_and(|record| record.start as usize == region)).unwrap();
+    assert!(super::binary::decode_deferred_function(records, first_deferred).unwrap().is_err());
     let shifted = |program: &ResidualProgram| {
-        program
-            .functions
-            .iter()
-            .filter_map(|function| function.name)
-            .collect::<Vec<_>>()
+        program.functions.iter().filter_map(|function| function.name).collect::<Vec<_>>()
     };
     assert_eq!(
         shifted(&decoded),
-        shifted(&program)
-            .iter()
-            .map(|atom| atom + SHIFT)
-            .collect::<Vec<_>>()
+        shifted(&program).iter().map(|atom| atom + SHIFT).collect::<Vec<_>>()
     );
 }
+

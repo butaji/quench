@@ -9,56 +9,24 @@
 //! empty, as after the collection that invalidates them.
 
 use super::*;
-use crate::snapshot::{Reader, Snap, SnapshotError, SnapshotResult, Writer, read_list};
+use crate::snapshot::{read_list, Reader, Snap, SnapshotError, SnapshotResult, Writer};
 
 /// Every VM field that holds the active realm's or the VM's prototype of a builtin family.
 /// One list, so writing and reading cannot disagree about which fields or their order.
 macro_rules! builtin_prototypes {
     ($apply:ident) => {
         $apply!(
-            object_proto,
-            function_proto,
-            array_proto,
-            string_proto,
-            array_buffer_proto,
-            shared_array_buffer_proto,
-            array_iterator_proto,
-            typed_array_proto,
-            uint8_array_proto,
-            uint8_clamped_array_proto,
-            uint16_array_proto,
-            uint32_array_proto,
-            int8_array_proto,
-            int16_array_proto,
-            int32_array_proto,
-            bigint64_array_proto,
-            biguint64_array_proto,
-            float16_array_proto,
-            float32_array_proto,
-            float64_array_proto,
-            data_view_proto,
-            map_proto,
-            set_proto,
-            shadow_realm_proto,
-            map_iterator_proto,
-            set_iterator_proto,
-            weak_map_proto,
-            weak_set_proto,
-            weak_ref_proto,
-            finalization_registry_proto,
-            iterator_proto,
-            string_iterator_proto,
-            regexp_string_iterator_proto,
-            generator_proto,
-            iterator_helper_proto,
-            wrap_for_valid_iterator_proto,
-            async_iterator_proto,
-            async_generator_proto,
-            async_from_sync_iterator_proto,
-            regexp_proto,
-            temporal_plain_date_proto,
-            temporal_plain_time_proto,
-            temporal_plain_month_day_proto,
+            object_proto, function_proto, array_proto, string_proto, array_buffer_proto,
+            shared_array_buffer_proto, array_iterator_proto, typed_array_proto, uint8_array_proto,
+            uint8_clamped_array_proto, uint16_array_proto, uint32_array_proto, int8_array_proto,
+            int16_array_proto, int32_array_proto, bigint64_array_proto, biguint64_array_proto,
+            float16_array_proto, float32_array_proto, float64_array_proto, data_view_proto,
+            map_proto, set_proto, shadow_realm_proto, map_iterator_proto, set_iterator_proto,
+            weak_map_proto, weak_set_proto, weak_ref_proto, finalization_registry_proto,
+            iterator_proto, string_iterator_proto, regexp_string_iterator_proto, generator_proto,
+            iterator_helper_proto, wrap_for_valid_iterator_proto, async_iterator_proto,
+            async_generator_proto, async_from_sync_iterator_proto, regexp_proto,
+            temporal_plain_date_proto, temporal_plain_time_proto, temporal_plain_month_day_proto,
             temporal_plain_year_month_proto
         )
     };
@@ -138,114 +106,34 @@ impl Snap for property_key::PropertyKey {
     }
 }
 
-crate::snapshot::snap_struct!(PropertyAttributes {
-    writable,
-    enumerable,
-    configurable,
-    accessor,
-    getter,
-    setter
-});
-crate::snapshot::snap_struct!(ShapeAttributes {
-    writable,
-    enumerable,
-    configurable,
-    accessor,
-    accessors
-});
-crate::snapshot::snap_struct!(DataAttributes {
-    writable,
-    enumerable,
-    configurable
-});
-crate::snapshot::snap_struct!(GlobalLexicalState {
-    declarations,
-    bindings,
-    immutable_bindings
-});
-crate::snapshot::snap_struct!(ParkedRealm {
-    global,
-    state,
-    prototypes
-});
-crate::snapshot::snap_struct!(ArgumentsObjectTemplate {
-    anchor,
-    length_slot,
-    callee_slot,
-    iterator_slot
-});
-crate::snapshot::snap_struct!(IteratorRealmPrototypes {
-    helper,
-    wrapper,
-    generator,
-    async_generator
-});
+crate::snapshot::snap_struct!(PropertyAttributes { writable, enumerable, configurable, accessor, getter, setter });
+crate::snapshot::snap_struct!(ShapeAttributes { writable, enumerable, configurable, accessor, accessors });
+crate::snapshot::snap_struct!(DataAttributes { writable, enumerable, configurable });
+crate::snapshot::snap_struct!(GlobalLexicalState { declarations, bindings, immutable_bindings });
+crate::snapshot::snap_struct!(ParkedRealm { global, state, prototypes });
+crate::snapshot::snap_struct!(ArgumentsObjectTemplate { anchor, length_slot, callee_slot, iterator_slot });
+crate::snapshot::snap_struct!(IteratorRealmPrototypes { helper, wrapper, generator, async_generator });
 crate::snapshot::snap_struct!(ErrorRealmIntrinsics {
-    host_formatter,
-    constructor,
-    stack_getter,
-    stack_setter,
-    call_site_constructor,
-    call_site_prototype,
+    host_formatter, constructor, stack_getter, stack_setter, call_site_constructor, call_site_prototype,
 });
-crate::snapshot::snap_struct!(PrivateHomeKey {
-    environment,
-    program,
-    function,
-    name
-});
+crate::snapshot::snap_struct!(PrivateHomeKey { environment, program, function, name });
 crate::snapshot::snap_struct!(RuntimeAtoms {
-    lexical_this,
-    new_target,
-    regexp_exec,
-    regexp_flags,
-    last_index,
-    regexp_flag_accessors,
-    then,
-    constructor,
-    next,
-    name,
-    empty,
-    value,
-    done,
-    iterator_return,
-    writable,
-    enumerable,
-    configurable,
-    get,
-    set,
-    bound_target,
-    bound_this,
-    bound_args,
+    lexical_this, new_target, regexp_exec, regexp_flags, last_index, regexp_flag_accessors, then,
+    constructor, next, name, empty, value, done, iterator_return, writable, enumerable, configurable,
+    get, set,
+    bound_target, bound_this, bound_args,
 });
 crate::snapshot::snap_struct!(RealmIntrinsics {
-    arguments_objects,
-    iterator_prototypes,
-    builtin_prototypes,
-    function_constructors,
-    promise_constructors,
-    error_intrinsics,
-    regexp_intrinsics,
-    intl_number_format_constructors,
-    intl_number_format_prototypes,
-    intl_number_format_fallback_symbols,
-    intl_collator_constructors,
-    intl_collator_prototypes,
-    intl_plural_rules_prototypes,
-    intl_datetime_format_constructors,
-    intl_datetime_format_prototypes,
-    intl_datetime_format_fallback_symbols,
-    intl_display_names_constructors,
-    intl_display_names_prototypes,
-    intl_duration_format_constructors,
-    intl_duration_format_prototypes,
-    intl_list_format_constructors,
-    intl_list_format_prototypes,
-    intl_relative_time_format_prototypes,
-    intl_segmenter_prototypes,
-    intl_segment_iterator_prototypes,
-    intl_segments_prototypes,
-    intl_locale_prototypes,
+    arguments_objects, iterator_prototypes, builtin_prototypes, function_constructors,
+    promise_constructors, error_intrinsics, regexp_intrinsics, intl_number_format_constructors,
+    intl_number_format_prototypes, intl_number_format_fallback_symbols, intl_collator_constructors,
+    intl_collator_prototypes, intl_plural_rules_prototypes, intl_datetime_format_constructors,
+    intl_datetime_format_prototypes, intl_datetime_format_fallback_symbols,
+    intl_display_names_constructors, intl_display_names_prototypes,
+    intl_duration_format_constructors, intl_duration_format_prototypes,
+    intl_list_format_constructors, intl_list_format_prototypes,
+    intl_relative_time_format_prototypes, intl_segmenter_prototypes,
+    intl_segment_iterator_prototypes, intl_segments_prototypes, intl_locale_prototypes,
 });
 
 crate::snapshot::snapshot_enum!(dictionary_trigger: DictionaryTrigger {
@@ -285,22 +173,13 @@ impl Snap for ShapeTransition {
                 writer.u32(name);
             }
             Self::FunctionNameReconfigured => writer.u8(transition_tag::FUNCTION_NAME_RECONFIGURED),
-            Self::FunctionLengthReconfigured => {
-                writer.u8(transition_tag::FUNCTION_LENGTH_RECONFIGURED)
-            }
-            Self::Constructed {
-                constructor,
-                new_target_is_base,
-            } => {
+            Self::FunctionLengthReconfigured => writer.u8(transition_tag::FUNCTION_LENGTH_RECONFIGURED),
+            Self::Constructed { constructor, new_target_is_base } => {
                 writer.u8(transition_tag::CONSTRUCTED);
                 writer.value(constructor);
                 writer.bool(new_target_is_base);
             }
-            Self::Add {
-                key,
-                slot,
-                attributes,
-            } => {
+            Self::Add { key, slot, attributes } => {
                 writer.u8(transition_tag::ADD);
                 key.snap(writer)?;
                 writer.u32(slot);
@@ -327,9 +206,7 @@ impl Snap for ShapeTransition {
     fn unsnap(reader: &mut Reader<'_>) -> SnapshotResult<Self> {
         Ok(match reader.u8()? {
             transition_tag::ROOT => Self::Root,
-            transition_tag::FUNCTION_NAME => Self::FunctionName {
-                name: reader.u32()?,
-            },
+            transition_tag::FUNCTION_NAME => Self::FunctionName { name: reader.u32()? },
             transition_tag::FUNCTION_NAME_RECONFIGURED => Self::FunctionNameReconfigured,
             transition_tag::FUNCTION_LENGTH_RECONFIGURED => Self::FunctionLengthReconfigured,
             transition_tag::CONSTRUCTED => Self::Constructed {
@@ -341,18 +218,10 @@ impl Snap for ShapeTransition {
                 slot: reader.u32()?,
                 attributes: Snap::unsnap(reader)?,
             },
-            transition_tag::DELETE => Self::Delete {
-                key: Snap::unsnap(reader)?,
-                slot: reader.u32()?,
-            },
+            transition_tag::DELETE => Self::Delete { key: Snap::unsnap(reader)?, slot: reader.u32()? },
             transition_tag::VACANT => Self::Vacant,
-            transition_tag::DESCRIPTOR => Self::Descriptor {
-                slot: reader.u32()?,
-                attributes: Snap::unsnap(reader)?,
-            },
-            transition_tag::DICTIONARY => Self::Dictionary {
-                trigger: Snap::unsnap(reader)?,
-            },
+            transition_tag::DESCRIPTOR => Self::Descriptor { slot: reader.u32()?, attributes: Snap::unsnap(reader)? },
+            transition_tag::DICTIONARY => Self::Dictionary { trigger: Snap::unsnap(reader)? },
             _ => return Err(SnapshotError("invalid snapshot shape transition".into())),
         })
     }
@@ -549,23 +418,11 @@ impl<H: Host> Vm<H> {
             promise,
         } = realm;
         let running = [
-            (
-                "a running frame",
-                frames.is_empty() && native_stack_frames.is_empty() && active_call_roots.is_empty(),
-            ),
+            ("a running frame", frames.is_empty() && native_stack_frames.is_empty() && active_call_roots.is_empty()),
             ("a with statement", with_stack.is_empty()),
-            (
-                "a pending job",
-                jobs.is_empty() && kept_alive.is_empty() && !native_microtask_running,
-            ),
-            (
-                "an Atomics waiter",
-                shared_async_waiters.is_empty() && !test262_agent.installed,
-            ),
-            (
-                "a lane completion",
-                lane_raised.is_none() && lane_returned.is_none(),
-            ),
+            ("a pending job", jobs.is_empty() && kept_alive.is_empty() && !native_microtask_running),
+            ("an Atomics waiter", shared_async_waiters.is_empty() && !test262_agent.installed),
+            ("a lane completion", lane_raised.is_none() && lane_returned.is_none()),
             (
                 "an eval or construction",
                 !direct_eval
@@ -623,12 +480,7 @@ impl<H: Host> Vm<H> {
         writer.u32s(&transitions.children().collect::<Vec<_>>());
         symbol_registry.snap(&mut writer)?;
         well_known_symbols.snap(&mut writer)?;
-        for atom in [
-            length_atom,
-            prototype_atom,
-            to_fixed_atom,
-            to_precision_atom,
-        ] {
+        for atom in [length_atom, prototype_atom, to_fixed_atom, to_precision_atom] {
             writer.u32(*atom);
         }
         runtime_atoms.snap(&mut writer)?;
@@ -636,31 +488,14 @@ impl<H: Host> Vm<H> {
         writer.len(function_values.len());
         for (key, handles) in function_values {
             key.snap(&mut writer)?;
-            let live = handles
-                .iter()
-                .filter_map(|handle| heap.weak_value(*handle))
-                .collect::<Vec<_>>();
+            let live = handles.iter().filter_map(|handle| heap.weak_value(*handle)).collect::<Vec<_>>();
             writer.values(&live);
         }
         private_homes.snap(&mut writer)?;
-        let wasm_js::WasmJsIntrinsics {
-            module,
-            instance,
-            memory,
-            table,
-            global,
-            js_tag,
-        } = wasm_js;
+        let wasm_js::WasmJsIntrinsics { module, instance, memory, table, global, js_tag } = wasm_js;
         [*module, *instance, *memory, *table, *global, *js_tag].snap(&mut writer)?;
         writer.value(*instanceof_has_instance_holder);
-        write_host(
-            host,
-            &mut crate::SnapshotWriter {
-                writer: &mut writer,
-                heap,
-            },
-        )
-        .map_err(SnapshotError)?;
+        write_host(host, &mut crate::SnapshotWriter { writer: &mut writer, heap }).map_err(SnapshotError)?;
         Ok(writer.finish())
     }
 
@@ -692,8 +527,7 @@ impl<H: Host> Vm<H> {
         builtin_prototypes!(read_prototypes);
         self.natives = Snap::unsnap(&mut reader)?;
         self.atom_strings = Snap::unsnap(&mut reader)?;
-        self.startup_intrinsics =
-            startup_intrinsics::StartupIntrinsics::read_snapshot(&mut reader)?;
+        self.startup_intrinsics = startup_intrinsics::StartupIntrinsics::read_snapshot(&mut reader)?;
         self.with_scope_entered = reader.bool()?;
         self.programs = ProgramStore::read_snapshot(&mut reader, &bytes, &self.atom_sequence)?;
         self.read_shapes(&mut reader)?;
@@ -705,40 +539,26 @@ impl<H: Host> Vm<H> {
         self.to_precision_atom = reader.u32()?;
         self.runtime_atoms = Snap::unsnap(&mut reader)?;
         self.descriptors = Snap::unsnap(&mut reader)?;
-        let function_values = read_list(&mut reader, |reader| {
-            Ok((<(ProgramId, u32)>::unsnap(reader)?, reader.values()?))
-        })?;
+        let function_values =
+            read_list(&mut reader, |reader| Ok((<(ProgramId, u32)>::unsnap(reader)?, reader.values()?)))?;
         for (key, functions) in function_values {
             let handles = functions
                 .into_iter()
                 .map(|function| {
-                    self.heap.weak_handle(function).ok_or_else(|| {
-                        SnapshotError("snapshot function cache names a dead value".into())
-                    })
+                    self.heap
+                        .weak_handle(function)
+                        .ok_or_else(|| SnapshotError("snapshot function cache names a dead value".into()))
                 })
                 .collect::<SnapshotResult<Vec<_>>>()?;
             self.function_values.insert(key, handles);
         }
         self.private_homes = Snap::unsnap(&mut reader)?;
         let [module, instance, memory, table, global, js_tag] = <[Value; 6]>::unsnap(&mut reader)?;
-        self.wasm_js = wasm_js::WasmJsIntrinsics {
-            module,
-            instance,
-            memory,
-            table,
-            global,
-            js_tag,
-        };
+        self.wasm_js = wasm_js::WasmJsIntrinsics { module, instance, memory, table, global, js_tag };
         let holder = reader.value()?;
         self.set_instanceof_has_instance_holder(holder);
-        read_host(
-            &mut self.host,
-            &mut crate::SnapshotReader {
-                reader: &mut reader,
-                heap: &self.heap,
-            },
-        )
-        .map_err(SnapshotError)?;
+        read_host(&mut self.host, &mut crate::SnapshotReader { reader: &mut reader, heap: &self.heap })
+            .map_err(SnapshotError)?;
         reader.finish()?;
         let main = self.rebased_entry(entry)?;
         self.programs.install_main(Rc::new(main.clone()));
@@ -756,10 +576,7 @@ impl<H: Host> Vm<H> {
         let mut ends = Vec::with_capacity(base);
         for _ in 0..base {
             text.push_str(reader.str()?);
-            ends.push(
-                u32::try_from(text.len())
-                    .map_err(|_| SnapshotError("snapshot atom text exceeds u32".into()))?,
-            );
+            ends.push(u32::try_from(text.len()).map_err(|_| SnapshotError("snapshot atom text exceeds u32".into()))?);
         }
         let appended = reader.len()?;
         self.atom_text = AtomTable::new(text, ends);
@@ -813,14 +630,11 @@ impl<H: Host> Vm<H> {
         let children = reader.u32s()?;
         self.transitions = shape_transitions::ShapeTransitionIndex::with_capacity(children.len());
         for child in children {
-            let indexed = self
-                .shapes
-                .get(child as usize)
-                .is_some_and(|shape| shape_transitions_origin_key(&self.shapes, shape).is_some());
+            let indexed = self.shapes.get(child as usize).is_some_and(|shape| {
+                shape_transitions_origin_key(&self.shapes, shape).is_some()
+            });
             if !indexed {
-                return Err(SnapshotError(
-                    "snapshot transition names no cached shape".into(),
-                ));
+                return Err(SnapshotError("snapshot transition names no cached shape".into()));
             }
             self.transitions.insert_child(&self.shapes, child);
         }
@@ -838,19 +652,16 @@ impl<H: Host> Vm<H> {
             .as_ref()
             .filter(|records| records.atoms.is_none())
             .and_then(|records| {
-                ResidualProgram::decode_trusted_interned(records.bytes.clone(), &mut |name| {
-                    self.intern_atom(name)
-                })
-                .ok()
+                ResidualProgram::decode_trusted_interned(records.bytes.clone(), &mut |name| self.intern_atom(name)).ok()
             });
         let mut main = match cached {
             Some(main) => main,
             None => {
                 let (bytes, _) = entry.encode_compact();
-                let text = entry.source.as_ref().map_or_else(
-                    || crate::bytecode::SourceText::Static(""),
-                    |source| source.text.clone(),
-                );
+                let text = entry
+                    .source
+                    .as_ref()
+                    .map_or_else(|| crate::bytecode::SourceText::Static(""), |source| source.text.clone());
                 let bytes: crate::KeptBytes = Rc::new(bytes);
                 ResidualProgram::decode_compact(bytes, &mut |name| self.intern_atom(name), text)
                     .map_err(|error| SnapshotError(format!("snapshot entry: {error}")))?
@@ -893,9 +704,7 @@ impl<H: Host> Vm<H> {
 /// Whether `shape`'s transition is one the transition index caches.
 fn shape_transitions_origin_key(shapes: &[Shape], shape: &Shape) -> Option<ShapeTransitionKey> {
     match (shape.transition, shape.parent()) {
-        (ShapeTransition::Dictionary { .. }, Some(parent)) => {
-            shapes[parent as usize].transition.cache_key()
-        }
+        (ShapeTransition::Dictionary { .. }, Some(parent)) => shapes[parent as usize].transition.cache_key(),
         (transition, _) => transition.cache_key(),
     }
 }
@@ -955,11 +764,7 @@ mod tests {
 
     impl SnapshotHost {
         fn finish_installation(context: &mut NativeContext<'_, Self>) -> Result<(), RootedError> {
-            let callback = context
-                .host_mut()
-                .resume_callback
-                .take()
-                .expect("installed callback");
+            let callback = context.host_mut().resume_callback.take().expect("installed callback");
             let undefined = context.undefined();
             context.call_rooted(callback, undefined, &[])?;
             context.release_root(callback);
@@ -991,10 +796,7 @@ mod tests {
         }
     }
 
-    fn output_of(
-        runtime: &mut Runtime<SnapshotHost>,
-        program: &crate::ResidualProgram,
-    ) -> Vec<String> {
+    fn output_of(runtime: &mut Runtime<SnapshotHost>, program: &crate::ResidualProgram) -> Vec<String> {
         runtime.execute_restored(program).unwrap();
         runtime.run_host_jobs(program).unwrap();
         runtime.host_mut().output.borrow().clone()
@@ -1011,14 +813,9 @@ mod tests {
 
         // The builder's own entry differs from the restored one: only its atoms carry over.
         let builder_entry = Engine::specialize("print('builder');", "builder.js").unwrap();
-        let mut builder = Runtime::new(SnapshotHost {
-            building: true,
-            ..SnapshotHost::default()
-        });
+        let mut builder = Runtime::new(SnapshotHost { building: true, ..SnapshotHost::default() });
         let snapshot = builder
-            .build_snapshot(&builder_entry, |host, writer| {
-                writer.option_root(host.resume_callback)
-            })
+            .build_snapshot(&builder_entry, |host, writer| writer.option_root(host.resume_callback))
             .unwrap();
         assert!(builder.host_mut().output.borrow().is_empty());
 

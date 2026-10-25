@@ -3,6 +3,8 @@ use crate::Host;
 use crate::test_host::TestHost;
 use std::{cell::RefCell, rc::Rc};
 
+
+
 #[test]
 fn async_functions_wrap_return_and_throw_in_promises() {
     let host = TestHost::default();
@@ -52,11 +54,7 @@ impl Host for PromiseContexts {
     fn release_promise_contexts(&mut self, contexts: &[crate::HostExecutionContext]) {
         let mut held = self.held.borrow_mut();
         for context in contexts {
-            assert!(
-                held.remove(&context.0),
-                "context {} released once",
-                context.0
-            );
+            assert!(held.remove(&context.0), "context {} released once", context.0);
         }
     }
 }

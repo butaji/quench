@@ -21,13 +21,13 @@
 //! Nothing in a region allocates, collects, or runs guest code, so the arrays, their
 //! element storage and the captures the entry read stay as they are while native code runs.
 
-use super::super::operations::{NumberArithmetic, NumberBitwise, NumberUnary};
 use crate::bytecode::{
-    FieldBase, FieldLayout, FieldLookup, Function, ImmediateLayout, ImmediateRole,
-    InstructionField, Op, Operand, OperandKind, Register, WideInstruction,
+    FieldBase, FieldLayout, FieldLookup, Function, ImmediateLayout, ImmediateRole, InstructionField, Op, Operand,
+    OperandKind, Register, WideInstruction,
 };
 use crate::compile::liveness::RegisterSet;
 use crate::value::{Value, ValueLayout};
+use super::super::operations::{NumberArithmetic, NumberBitwise, NumberUnary};
 use cranelift_codegen::ir::{
     self, InstBuilder, UserFuncName,
     condcodes::{FloatCC, IntCC},
@@ -119,9 +119,7 @@ impl Widening {
 impl LoopOutcome {
     pub(super) fn decode(word: u64) -> Self {
         match super::RegionExit::decode(word) {
-            super::RegionExit::EntryMiss(payload) => {
-                Self::NotEntered(Widening::decode(u64::from(payload)))
-            }
+            super::RegionExit::EntryMiss(payload) => Self::NotEntered(Widening::decode(u64::from(payload))),
             super::RegionExit::Resume(pc) => Self::Resume(pc),
             super::RegionExit::Fallback(pc) => Self::Exit(pc),
             super::RegionExit::Recompile(pc) => Self::Widen(pc),
@@ -191,12 +189,7 @@ pub(crate) enum FieldReceiver {
 /// The cached field a named `GetField` reads, as a region holds it.
 fn field_use(instruction: WideInstruction, tagged: bool) -> Option<FieldUse> {
     (instruction.op() == Op::GetField && instruction.result_flags() == 0).then_some(())?;
-    let FieldLookup::Atom {
-        atom,
-        base,
-        cache_site,
-    } = instruction.field_lookup()?
-    else {
+    let FieldLookup::Atom { atom, base, cache_site } = instruction.field_lookup()? else {
         return None;
     };
     let receiver = if base == FieldBase::THIS {
@@ -204,12 +197,7 @@ fn field_use(instruction: WideInstruction, tagged: bool) -> Option<FieldUse> {
     } else {
         FieldReceiver::Register(base.register_index()?)
     };
-    Some(FieldUse {
-        receiver,
-        atom,
-        cache_site,
-        tagged,
-    })
+    Some(FieldUse { receiver, atom, cache_site, tagged })
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -237,10 +225,7 @@ fn identity_branch(instruction: WideInstruction, constants: &[Value]) -> Option<
     let (strict, negated) =
         super::super::operations::equality_operator(instruction.binary_operator_field())?;
     strict.then_some(())?;
-    let (register, constant) = match (
-        instruction.operand_b().kind()?,
-        instruction.operand_c().kind()?,
-    ) {
+    let (register, constant) = match (instruction.operand_b().kind()?, instruction.operand_c().kind()?) {
         (OperandKind::Register, OperandKind::Constant) => (
             instruction.operand_b().payload(),
             *constants.get(usize::from(instruction.operand_c().payload()))?,
@@ -268,9 +253,7 @@ fn tagged_registers(
 ) -> Option<std::collections::BTreeSet<Register>> {
     let mut tagged: std::collections::BTreeSet<Register> = instructions
         .iter()
-        .filter_map(|instruction| {
-            identity_branch(*instruction, constants).map(|branch| branch.register)
-        })
+        .filter_map(|instruction| identity_branch(*instruction, constants).map(|branch| branch.register))
         .chain(held.iter().copied())
         .collect();
     loop {
@@ -304,9 +287,7 @@ fn tagged_registers(
 /// The registers the region indexes as arrays that exactly one `GetField` of it defines,
 /// with that read: each holds the array the cached field does, whose element pointer and
 /// length the entry record carries like an entry array's (`ArrayUse::field`).
-fn field_array_registers(
-    instructions: &[WideInstruction],
-) -> std::collections::BTreeMap<Register, FieldUse> {
+fn field_array_registers(instructions: &[WideInstruction]) -> std::collections::BTreeMap<Register, FieldUse> {
     let bases: std::collections::BTreeSet<Register> = instructions
         .iter()
         .filter_map(|instruction| match instruction.op() {
@@ -318,9 +299,8 @@ fn field_array_registers(
     bases
         .into_iter()
         .filter_map(|register| {
-            let mut definitions = instructions
-                .iter()
-                .filter(|instruction| number_definition(**instruction) == Some(register));
+            let mut definitions =
+                instructions.iter().filter(|instruction| number_definition(**instruction) == Some(register));
             let (Some(read), None) = (definitions.next(), definitions.next()) else {
                 return None;
             };
@@ -538,11 +518,7 @@ pub(super) fn inline_region<'a>(
     let (start, end) = (header as usize, backedge as usize);
     (start <= end && end < decoded.len()).then_some(())?;
     let caller = &decoded[start..=end];
-    let defines = |register: Register| {
-        caller
-            .iter()
-            .any(|instruction| instruction.defined_register() == Some(register))
-    };
+    let defines = |register: Register| caller.iter().any(|instruction| instruction.defined_register() == Some(register));
     let targets: std::collections::BTreeSet<u32> = caller
         .iter()
         .filter(|instruction| instruction.op().immediate_role() == ImmediateRole::JumpTarget)
@@ -570,18 +546,13 @@ pub(super) fn inline_region<'a>(
             continue;
         }
         let pc = header + offset as u32;
-        (instruction.result_flags() == 0
-            && !instruction.direct_eval()
-            && !instruction.parameter_eval())
-        .then_some(())?;
+        (instruction.result_flags() == 0 && !instruction.direct_eval() && !instruction.parameter_eval()).then_some(())?;
         let argc = ImmediateLayout::argument_count(instruction.imm());
         let window = ImmediateLayout::call_window_base(instruction.imm());
         let (function_register, receiver) = (instruction.register_b(), instruction.register_c());
         (!defines(receiver)).then_some(())?;
         // The callee's read: the last write of its register before the call, in a straight run.
-        let read_offset = (0..offset)
-            .rev()
-            .find(|index| caller[*index].defined_register() == Some(function_register))?;
+        let read_offset = (0..offset).rev().find(|index| caller[*index].defined_register() == Some(function_register))?;
         let read = header + read_offset as u32;
         let field = field_use(caller[read_offset], true)?;
         let at_read = mask(read)?;
@@ -589,26 +560,16 @@ pub(super) fn inline_region<'a>(
         (run.iter().all(|instruction| pure_setup(instruction.op()))
             && (read + 1..=pc).all(|pc| !targets.contains(&pc))
             && run.iter().all(|instruction| {
-                instruction.defined_register().is_none_or(|register| {
-                    !crate::compile::liveness::register_in(at_read, usize::from(register))
-                })
+                instruction
+                    .defined_register()
+                    .is_none_or(|register| !crate::compile::liveness::register_in(at_read, usize::from(register)))
             }))
         .then_some(())?;
         let callee = resolve(field)?;
         (callee.params == argc && usize::from(argc) <= MAX_INLINE_PARAMS).then_some(())?;
         let reached = reachable(&callee.instructions);
-        let body = || {
-            callee
-                .instructions
-                .iter()
-                .copied()
-                .zip(reached.iter())
-                .filter(|(_, reached)| **reached)
-                .map(|(instruction, _)| instruction)
-        };
-        body()
-            .all(|instruction| inlinable(instruction.op()) && instruction.result_flags() == 0)
-            .then_some(())?;
+        let body = || callee.instructions.iter().copied().zip(reached.iter()).filter(|(_, reached)| **reached).map(|(instruction, _)| instruction);
+        body().all(|instruction| inlinable(instruction.op()) && instruction.result_flags() == 0).then_some(())?;
         // A parameter read as an object is bound to the caller register its argument was
         // moved from in the setup, which the region never writes; any other is a Number it
         // copies.
@@ -617,15 +578,10 @@ pub(super) fn inline_region<'a>(
             if !body().any(|instruction| object_reads(instruction) == Some(parameter)) {
                 continue;
             }
-            body()
-                .all(|instruction| instruction.defined_register() != Some(parameter))
-                .then_some(())?;
+            body().all(|instruction| instruction.defined_register() != Some(parameter)).then_some(())?;
             let argument = window + parameter;
-            let moved = (read_offset + 1..offset)
-                .rev()
-                .find(|index| caller[*index].defined_register() == Some(argument))?;
-            (caller[moved].op() == Op::Move && !defines(caller[moved].register_b()))
-                .then_some(())?;
+            let moved = (read_offset + 1..offset).rev().find(|index| caller[*index].defined_register() == Some(argument))?;
+            (caller[moved].op() == Op::Move && !defines(caller[moved].register_b())).then_some(())?;
             bound[usize::from(parameter)] = Some(caller[moved].register_b());
             dropped.insert(header + moved as u32);
         }
@@ -662,8 +618,7 @@ pub(super) fn inline_region<'a>(
     // moves and its callee's reached instructions, each `Return` two (the result's move and
     // the jump past the call). A dropped instruction's PC is the next instruction's.
     let mut caller_flat = Vec::with_capacity(caller.len());
-    let mut callee_flat: std::collections::BTreeMap<u32, Vec<u32>> =
-        std::collections::BTreeMap::new();
+    let mut callee_flat: std::collections::BTreeMap<u32, Vec<u32>> = std::collections::BTreeMap::new();
     let mut length = 0u32;
     for (offset, _) in caller.iter().enumerate() {
         let pc = header + offset as u32;
@@ -675,10 +630,7 @@ pub(super) fn inline_region<'a>(
             length += 1;
             continue;
         };
-        length += site.frame.bound[..usize::from(site.callee.params)]
-            .iter()
-            .filter(|bound| bound.is_none())
-            .count() as u32;
+        length += site.frame.bound[..usize::from(site.callee.params)].iter().filter(|bound| bound.is_none()).count() as u32;
         let mut flat = Vec::with_capacity(site.callee.instructions.len());
         for (index, instruction) in site.callee.instructions.iter().enumerate() {
             flat.push(header + length);
@@ -697,13 +649,10 @@ pub(super) fn inline_region<'a>(
         if (header..=backedge).contains(&target) {
             return caller_flat[(target - header) as usize];
         }
-        let index = leaves
-            .iter()
-            .position(|leave| *leave == target)
-            .unwrap_or_else(|| {
-                leaves.push(target);
-                leaves.len() - 1
-            });
+        let index = leaves.iter().position(|leave| *leave == target).unwrap_or_else(|| {
+            leaves.push(target);
+            leaves.len() - 1
+        });
         header + length + index as u32
     };
     for (offset, instruction) in caller.iter().copied().enumerate() {
@@ -717,13 +666,7 @@ pub(super) fn inline_region<'a>(
             // A caller instruction keeps its registers; a jump takes the region PC of its target.
             let renamed = if instruction.op().immediate_role() == ImmediateRole::JumpTarget {
                 let target = caller_target(instruction.imm(), &mut leaves);
-                WideInstruction::new(
-                    instruction.op(),
-                    instruction.a(),
-                    instruction.b(),
-                    instruction.c(),
-                    target,
-                )
+                WideInstruction::new(instruction.op(), instruction.a(), instruction.b(), instruction.c(), target)
             } else {
                 instruction
             };
@@ -735,11 +678,10 @@ pub(super) fn inline_region<'a>(
         let frame = site.frame;
         let index = sites.keys().position(|key| *key == pc)? as u16;
         let flat = &callee_flat[&pc];
-        let register =
-            |register: Register| match frame.bound.get(usize::from(register)).copied().flatten() {
-                Some(source) => source,
-                None => frame.base + register,
-            };
+        let register = |register: Register| match frame.bound.get(usize::from(register)).copied().flatten() {
+            Some(source) => source,
+            None => frame.base + register,
+        };
         // A callee's live registers there, in the region, with the caller's live past the call.
         let after = mask(pc + 1)? & !(1 << site.result);
         let frame_mask = |callee_pc: usize| -> Option<RegisterSet> {
@@ -756,47 +698,25 @@ pub(super) fn inline_region<'a>(
             if frame.bound[usize::from(parameter)].is_some() {
                 continue;
             }
-            instructions.push(WideInstruction::new(
-                Op::Move,
-                frame.base + parameter,
-                site.window + parameter,
-                0,
-                0,
-            ));
+            instructions.push(WideInstruction::new(Op::Move, frame.base + parameter, site.window + parameter, 0, 0));
             origins.push(Origin::Caller(site.read));
             masks.push(mask(site.read)?);
         }
-        let continuation = caller_flat
-            .get(offset + 1)
-            .copied()
-            .unwrap_or_else(|| caller_target(pc + 1, &mut leaves));
+        let continuation = caller_flat.get(offset + 1).copied().unwrap_or_else(|| caller_target(pc + 1, &mut leaves));
         for (callee_pc, instruction) in site.callee.instructions.iter().copied().enumerate() {
             if !site.reached[callee_pc] {
                 continue;
             }
-            let origin = Origin::Inlined {
-                frame: index,
-                pc: callee_pc as u32,
-            };
+            let origin = Origin::Inlined { frame: index, pc: callee_pc as u32 };
             let set = frame_mask(callee_pc)?;
             if instruction.op() == Op::Return {
-                instructions.push(WideInstruction::new(
-                    Op::Move,
-                    site.result,
-                    register(instruction.register_a()),
-                    0,
-                    0,
-                ));
+                instructions.push(WideInstruction::new(Op::Move, site.result, register(instruction.register_a()), 0, 0));
                 instructions.push(WideInstruction::new(Op::Jump, 0, 0, 0, continuation));
                 origins.extend([origin, origin]);
                 masks.extend([set, set]);
                 continue;
             }
-            let target = |target: u32| {
-                flat.get(target as usize)
-                    .copied()
-                    .filter(|_| site.reached[target as usize])
-            };
+            let target = |target: u32| flat.get(target as usize).copied().filter(|_| site.reached[target as usize]);
             instructions.push(renamed(instruction, &register, frame.receiver, &target)?);
             origins.push(origin);
             masks.push(set);
@@ -808,15 +728,8 @@ pub(super) fn inline_region<'a>(
         masks.push(mask(*target)?);
     }
     let held = std::collections::BTreeSet::new();
-    let mut region = admit_region(
-        instructions,
-        total as usize,
-        constants,
-        Some(masks.into_boxed_slice()),
-        header,
-        &held,
-    )
-    .ok()?;
+    let mut region =
+        admit_region(instructions, total as usize, constants, Some(masks.into_boxed_slice()), header, &held).ok()?;
     // Each callee's field, which the entry reads and guards still holds it.
     let mut frames = Vec::with_capacity(sites.len());
     for site in sites.into_values() {
@@ -831,11 +744,7 @@ pub(super) fn inline_region<'a>(
         frames.push(frame);
     }
     (region.fields.len() <= MAX_REGION_FIELDS).then_some(())?;
-    region.inlining = Some(Box::new(Inlining {
-        origins,
-        frames,
-        caller_registers,
-    }));
+    region.inlining = Some(Box::new(Inlining { origins, frames, caller_registers }));
     Some(region)
 }
 
@@ -862,14 +771,9 @@ impl LoopRegion {
             return true;
         };
         // An inlining region's liveness is by its own PCs, from the header.
-        let index = if self.inlining.is_some() {
-            (pc - self.header) as usize
-        } else {
-            pc as usize
-        };
-        live.get(index).is_none_or(|mask| {
-            !crate::compile::liveness::register_dead(*mask, usize::from(register))
-        })
+        let index = if self.inlining.is_some() { (pc - self.header) as usize } else { pc as usize };
+        live.get(index)
+            .is_none_or(|mask| !crate::compile::liveness::register_dead(*mask, usize::from(register)))
     }
 
     /// The PC native code reports for leaving at region PC `pc`: the caller's, or an inlined
@@ -893,10 +797,7 @@ impl LoopRegion {
     pub(crate) fn inlined_exit(&self, pc: u32) -> Option<(&InlineFrame, u32)> {
         let inlining = self.inlining.as_ref()?;
         (pc & INLINED_EXIT != 0).then_some(())?;
-        match inlining
-            .origins
-            .get(((pc & !INLINED_EXIT) - self.header) as usize)?
-        {
+        match inlining.origins.get(((pc & !INLINED_EXIT) - self.header) as usize)? {
             Origin::Inlined { frame, pc } => Some((&inlining.frames[usize::from(*frame)], *pc)),
             Origin::Caller(_) | Origin::Leave(_) => None,
         }
@@ -926,22 +827,15 @@ const WORD_BYTES: i32 = 8;
 const ARRAY_WORDS: usize = 2;
 /// The scratch registers' address an inlining region's record ends with.
 const SCRATCH_WORDS: usize = 1;
-const ENTRY_WORDS: usize = ENTRY_CAPTURES
-    + MAX_REGION_CAPTURES
-    + ARRAY_WORDS * MAX_REGION_ARRAYS
-    + MAX_REGION_FIELDS
-    + SCRATCH_WORDS;
+const ENTRY_WORDS: usize =
+    ENTRY_CAPTURES + MAX_REGION_CAPTURES + ARRAY_WORDS * MAX_REGION_ARRAYS + MAX_REGION_FIELDS + SCRATCH_WORDS;
 
 impl LoopEntry {
     pub(crate) fn new() -> Self {
         let mut words = [std::mem::MaybeUninit::uninit(); ENTRY_WORDS];
         // The backward-edge counter is the one leading word native code reads before any push.
         words[ENTRY_BACKEDGE_COUNT].write(0);
-        Self {
-            words,
-            length: ENTRY_CAPTURES,
-            scratch: [std::mem::MaybeUninit::uninit(); MAX_REGION_REGISTERS],
-        }
+        Self { words, length: ENTRY_CAPTURES, scratch: [std::mem::MaybeUninit::uninit(); MAX_REGION_REGISTERS] }
     }
 
     /// Number of taken executions of this region's backward edge in the most recent run.
@@ -988,16 +882,11 @@ impl LoopEntry {
     /// The value of the region's `index`th field as pushed: its word follows the captures
     /// and arrays. A Number field reads back as its double's Number.
     pub(crate) fn field_value(&self, region: &LoopRegion, index: usize) -> Value {
-        let word =
-            ENTRY_CAPTURES + region.captures.len() + ARRAY_WORDS * region.arrays.len() + index;
+        let word = ENTRY_CAPTURES + region.captures.len() + ARRAY_WORDS * region.arrays.len() + index;
         debug_assert!(word < self.length);
         // SAFETY: every field of the region was pushed after its captures and arrays.
         let bits = unsafe { self.words[word].assume_init() };
-        if region.fields[index].tagged {
-            Value::from_bits(bits)
-        } else {
-            Value::number(f64::from_bits(bits))
-        }
+        if region.fields[index].tagged { Value::from_bits(bits) } else { Value::number(f64::from_bits(bits)) }
     }
 
     /// An inlining region's last word: its scratch registers' address.
@@ -1013,17 +902,11 @@ impl LoopEntry {
     /// The exit wrote the register back: it is live at the exit's PC (`LoopRegion::is_live`).
     pub(crate) unsafe fn scratch_value(&self, inlining: &Inlining, register: Register) -> Value {
         // SAFETY: as the caller promises.
-        Value::from_bits(unsafe {
-            self.scratch[usize::from(register - inlining.caller_registers)].assume_init()
-        })
+        Value::from_bits(unsafe { self.scratch[usize::from(register - inlining.caller_registers)].assume_init() })
     }
 
     pub(crate) fn push_field(&mut self, value: Value, tagged: bool) -> Option<()> {
-        let bits = if tagged {
-            value.to_bits()
-        } else {
-            value.as_number()?.to_bits()
-        };
+        let bits = if tagged { value.to_bits() } else { value.as_number()?.to_bits() };
         self.push(bits);
         Some(())
     }
@@ -1107,12 +990,7 @@ impl Admission<'_> {
             (Some(Role::Number), Role::Number) => {}
             (Some(Role::Tagged), Role::Tagged) => {}
             (Some(Role::Array { written }), Role::Array { written: more }) => {
-                self.roles.insert(
-                    register,
-                    Role::Array {
-                        written: written || more,
-                    },
-                );
+                self.roles.insert(register, Role::Array { written: written || more });
             }
             _ => return None,
         }
@@ -1207,10 +1085,7 @@ fn admit_region(
         fields: Vec::new(),
         numbers: std::collections::BTreeMap::new(),
         values: std::collections::BTreeMap::new(),
-        field_arrays: field_arrays
-            .keys()
-            .map(|register| (*register, false))
-            .collect(),
+        field_arrays: field_arrays.keys().map(|register| (*register, false)).collect(),
     };
     for instruction in &instructions {
         admit(&mut admission, *instruction, constants, &tagged)
@@ -1238,10 +1113,7 @@ fn admit_region(
     }) {
         return Err(RegionRejection::FieldMutation);
     }
-    if admission
-        .roles
-        .keys()
-        .any(|register| usize::from(*register) >= registers)
+    if admission.roles.keys().any(|register| usize::from(*register) >= registers)
         || admission.roles.len() > MAX_REGION_REGISTERS
     {
         return Err(RegionRejection::RegisterLimit);
@@ -1265,11 +1137,7 @@ fn admit_region(
         .roles
         .iter()
         .filter_map(|(register, role)| match role {
-            Role::Array { written } => Some(ArrayUse {
-                register: *register,
-                written: *written,
-                field: None,
-            }),
+            Role::Array { written } => Some(ArrayUse { register: *register, written: *written, field: None }),
             Role::Number | Role::Tagged => None,
         })
         .collect();
@@ -1280,11 +1148,7 @@ fn admit_region(
             .iter()
             .position(|use_| *use_ == field)
             .ok_or(RegionRejection::UnsupportedInstruction(Op::GetField))?;
-        arrays.push(ArrayUse {
-            register: *register,
-            written: *written,
-            field: Some(index),
-        });
+        arrays.push(ArrayUse { register: *register, written: *written, field: Some(index) });
     }
     if arrays.len() > MAX_REGION_ARRAYS {
         return Err(RegionRejection::ArrayLimit);
@@ -1465,12 +1329,7 @@ impl Webs {
     /// The web `register` holds before the instruction at `pc`; a PC no path from the header
     /// reaches reads the entry value.
     fn read(&self, region: &LoopRegion, pc: u32, register: Register) -> Definition {
-        let entry = || {
-            region
-                .entry_registers()
-                .position(|number| number == register)
-                .unwrap_or(0)
-        };
+        let entry = || region.entry_registers().position(|number| number == register).unwrap_or(0);
         let definition = self.reaching[(pc - region.header) as usize]
             .get(&register)
             .and_then(|definitions| definitions.first().copied())
@@ -1599,23 +1458,14 @@ fn webs(region: &LoopRegion) -> Webs {
         let pc = region.header + offset as u32;
         let instruction = region.instructions[offset];
         for register in number_reads(instruction) {
-            let definitions = webs.reaching[offset]
-                .get(&register)
-                .cloned()
-                .unwrap_or_default();
+            let definitions = webs.reaching[offset].get(&register).cloned().unwrap_or_default();
             unify(&mut webs, &definitions, &mut reads);
         }
         // Native code may leave at any instruction of the region, before its effects, and
         // resumes the lane where a jump leaves the region; each writes back what is live.
         let leave = |webs: &mut Webs, at: u32, reads: &mut Vec<Definition>| {
-            for register in region
-                .entry_registers()
-                .filter(|register| region.is_live(at, *register))
-            {
-                let mut definitions = webs.reaching[offset]
-                    .get(&register)
-                    .cloned()
-                    .unwrap_or_default();
+            for register in region.entry_registers().filter(|register| region.is_live(at, *register)) {
+                let mut definitions = webs.reaching[offset].get(&register).cloned().unwrap_or_default();
                 if let Some(previous) = webs.leaves.get(&(at, register)) {
                     definitions.insert(*previous);
                 }
@@ -1629,13 +1479,8 @@ fn webs(region: &LoopRegion) -> Webs {
             leave(&mut webs, successor, &mut reads);
         }
     }
-    let read_webs: BTreeSet<Definition> = reads
-        .iter()
-        .map(|definition| webs.find(*definition))
-        .collect();
-    webs.entry_read = (0..entries)
-        .map(|entry| read_webs.contains(&webs.find(entry)))
-        .collect();
+    let read_webs: BTreeSet<Definition> = reads.iter().map(|definition| webs.find(*definition)).collect();
+    webs.entry_read = (0..entries).map(|entry| read_webs.contains(&webs.find(entry))).collect();
     webs
 }
 
@@ -1661,11 +1506,7 @@ fn representations(
     };
     let captures: Vec<Representation> = (0..region.captures.len())
         .map(|index| {
-            let value = observation
-                .captures
-                .get(index)
-                .copied()
-                .unwrap_or(Value::UNDEFINED);
+            let value = observation.captures.get(index).copied().unwrap_or(Value::UNDEFINED);
             of(value, Widening::Capture(index as u16))
         })
         .collect();
@@ -1674,10 +1515,7 @@ fn representations(
         let representation = if region.tagged.contains(&register) {
             Representation::Tagged
         } else {
-            of(
-                (observation.register)(register),
-                Widening::Register(register),
-            )
+            of((observation.register)(register), Widening::Register(register))
         };
         if webs.entry_read[entry] {
             webs_representation[webs.find(entry)] = representation;
@@ -1755,19 +1593,15 @@ fn definition(
         Op::Move | Op::IncDec | Op::ToNumeric => registers(instruction.register_b()),
         Op::LoadCapture => {
             let slot = instruction.capture_slot();
-            let index = region
-                .captures
-                .iter()
-                .position(|capture| *capture == slot)?;
+            let index = region.captures.iter().position(|capture| *capture == slot)?;
             captures[index]
         }
         Op::Binary | Op::NumericAdd | Op::NumericMultiply => {
             match arithmetic(instruction.op(), instruction.binary_operator())? {
                 Arithmetic::Float(NumberArithmetic::Divide) => Representation::Float64,
-                Arithmetic::Float(_) => both(
-                    source(instruction.operand_b()),
-                    source(instruction.operand_c()),
-                ),
+                Arithmetic::Float(_) => {
+                    both(source(instruction.operand_b()), source(instruction.operand_c()))
+                }
                 Arithmetic::Int32(NumberBitwise::ShiftRightUnsigned) => Representation::Float64,
                 Arithmetic::Int32(_) => Representation::Int32,
             }
@@ -1785,10 +1619,7 @@ fn definition(
 
 /// The representation of what `GetIndex` reads: an `i32` from an array that looks to hold
 /// them and no earlier compilation widened.
-fn element_representation(
-    instruction: &WideInstruction,
-    observation: &Observation<'_>,
-) -> Representation {
+fn element_representation(instruction: &WideInstruction, observation: &Observation<'_>) -> Representation {
     match instruction.operand_b().register_index() {
         Some(base)
             if (observation.int32_elements)(base)
@@ -1843,11 +1674,7 @@ struct Affine {
 
 impl Affine {
     fn of(base: Base) -> Self {
-        Self {
-            base,
-            offset: 0,
-            addend: None,
-        }
+        Self { base, offset: 0, addend: None }
     }
 
     fn plus(self, amount: i64) -> Option<Self> {
@@ -1970,9 +1797,7 @@ fn counted_loop(
         let instruction = at(pc);
         match instruction.op() {
             Op::Jump => return None,
-            Op::JumpBinaryFalse
-                if test.is_none() && !(header..=backedge).contains(&instruction.jump_target()) =>
-            {
+            Op::JumpBinaryFalse if test.is_none() && !(header..=backedge).contains(&instruction.jump_target()) => {
                 test = Some(pc);
             }
             Op::JumpBinaryFalse => return None,
@@ -1994,10 +1819,7 @@ fn counted_loop(
     }
     let int32 = |web: Definition| representations[web] == Representation::Int32;
     // The registers the body writes; any other register is invariant in it.
-    let written: BTreeSet<Register> = body
-        .clone()
-        .filter_map(|pc| number_definition(at(pc)))
-        .collect();
+    let written: BTreeSet<Register> = body.clone().filter_map(|pc| number_definition(at(pc))).collect();
     let invariant = |value: &Affine| {
         let base = |base: Base| match base {
             Base::Start(register) => !written.contains(&register),
@@ -2006,12 +1828,7 @@ fn counted_loop(
         base(value.base) && value.addend.is_none_or(base)
     };
     let mut terms: Vec<Term> = Vec::new();
-    let constant = |number: f64| {
-        int32_number(number).then(|| Affine {
-            offset: number as i64,
-            ..Affine::of(Base::Constant)
-        })
-    };
+    let constant = |number: f64| int32_number(number).then(|| Affine { offset: number as i64, ..Affine::of(Base::Constant) });
     let mut state: BTreeMap<Register, Option<Affine>> = BTreeMap::new();
     let value = |state: &BTreeMap<Register, Option<Affine>>, register: Register| {
         state
@@ -2020,33 +1837,22 @@ fn counted_loop(
             .unwrap_or(Some(Affine::of(Base::Start(register))))
     };
     // Whether a source the instruction at `pc` reads is held as an `i32`, and its value.
-    let source =
-        |state: &BTreeMap<Register, Option<Affine>>, pc: u32, operand: Operand| match operand
-            .kind()?
-        {
-            OperandKind::Register => {
-                let register = operand.payload();
-                Some((
-                    int32(webs.read(region, pc, register)),
-                    value(state, register),
-                ))
-            }
-            OperandKind::Constant => {
-                let number = *region.constants.get(&operand.payload())?;
-                Some((int32_number(number), constant(number)))
-            }
-            OperandKind::Field | OperandKind::Local => None,
-        };
+    let source = |state: &BTreeMap<Register, Option<Affine>>, pc: u32, operand: Operand| match operand.kind()? {
+        OperandKind::Register => {
+            let register = operand.payload();
+            Some((int32(webs.read(region, pc, register)), value(state, register)))
+        }
+        OperandKind::Constant => {
+            let number = *region.constants.get(&operand.payload())?;
+            Some((int32_number(number), constant(number)))
+        }
+        OperandKind::Field | OperandKind::Local => None,
+    };
     let mut candidates: Vec<Fact> = Vec::new();
     let mut tested = None;
     for pc in body.clone() {
         let instruction = at(pc);
-        let register = |register: Register| {
-            (
-                int32(webs.read(region, pc, register)),
-                value(&state, register),
-            )
-        };
+        let register = |register: Register| (int32(webs.read(region, pc, register)), value(&state, register));
         let defined = || int32(webs.defined(region, pc));
         let result = match instruction.op() {
             Op::LoadConst => {
@@ -2055,12 +1861,8 @@ fn counted_loop(
             }
             Op::LoadCapture => {
                 let slot = instruction.capture_slot();
-                let index = region
-                    .captures
-                    .iter()
-                    .position(|capture| *capture == slot)?;
-                (captures[index] == Representation::Int32)
-                    .then_some(Affine::of(Base::Capture(index)))
+                let index = region.captures.iter().position(|capture| *capture == slot)?;
+                (captures[index] == Representation::Int32).then_some(Affine::of(Base::Capture(index)))
             }
             Op::Move | Op::ToNumeric => register(instruction.register_b()).1,
             Op::IncDec => {
@@ -2068,11 +1870,7 @@ fn counted_loop(
                 let step = if instruction.boolean_flag()? { -1 } else { 1 };
                 let sum = operand.and_then(|operand| operand.plus(step));
                 if let Some(value) = sum.filter(|_| held && defined()) {
-                    candidates.push(Fact {
-                        pc,
-                        value,
-                        bound: Bound::Int32,
-                    });
+                    candidates.push(Fact { pc, value, bound: Bound::Int32 });
                 }
                 sum
             }
@@ -2083,59 +1881,24 @@ fn counted_loop(
                 // A product of invariant values that are no products is a term.
                 let factor = |value: &Affine| {
                     invariant(value)
-                        && ![Some(value.base), value.addend]
-                            .into_iter()
-                            .flatten()
-                            .any(|base| matches!(base, Base::Term(term) if terms[term].multiply))
+                        && ![Some(value.base), value.addend].into_iter().flatten().any(|base| {
+                            matches!(base, Base::Term(term) if terms[term].multiply)
+                        })
                 };
                 let operator = arithmetic(instruction.op(), instruction.binary_operator())?;
                 let sum = match (operator, left.1, right.1) {
-                    (Arithmetic::Float(NumberArithmetic::Add), Some(left), Some(right)) => {
-                        match (left, right) {
-                            (
-                                _,
-                                Affine {
-                                    base: Base::Constant,
-                                    addend: None,
-                                    offset,
-                                },
-                            ) => left.plus(offset),
-                            (
-                                Affine {
-                                    base: Base::Constant,
-                                    addend: None,
-                                    offset,
-                                },
-                                _,
-                            ) => right.plus(offset),
-                            // An invariant value folds into the other's addend.
-                            (
-                                _,
-                                Affine {
-                                    base,
-                                    addend: None,
-                                    offset,
-                                },
-                            ) if left.addend.is_none() && invariant(&right) => Affine {
-                                addend: Some(base),
-                                ..left
-                            }
-                            .plus(offset),
-                            (
-                                Affine {
-                                    base,
-                                    addend: None,
-                                    offset,
-                                },
-                                _,
-                            ) if right.addend.is_none() && invariant(&left) => Affine {
-                                addend: Some(base),
-                                ..right
-                            }
-                            .plus(offset),
-                            _ => None,
+                    (Arithmetic::Float(NumberArithmetic::Add), Some(left), Some(right)) => match (left, right) {
+                        (_, Affine { base: Base::Constant, addend: None, offset }) => left.plus(offset),
+                        (Affine { base: Base::Constant, addend: None, offset }, _) => right.plus(offset),
+                        // An invariant value folds into the other's addend.
+                        (_, Affine { base, addend: None, offset }) if left.addend.is_none() && invariant(&right) => {
+                            Affine { addend: Some(base), ..left }.plus(offset)
                         }
-                    }
+                        (Affine { base, addend: None, offset }, _) if right.addend.is_none() && invariant(&left) => {
+                            Affine { addend: Some(base), ..right }.plus(offset)
+                        }
+                        _ => None,
+                    },
                     (Arithmetic::Float(NumberArithmetic::Subtract), Some(left), Some(right))
                         if right.base == Base::Constant && right.addend.is_none() =>
                     {
@@ -2144,17 +1907,9 @@ fn counted_loop(
                     (Arithmetic::Float(NumberArithmetic::Multiply), Some(left), Some(right))
                         if held && factor(&left) && factor(&right) =>
                     {
-                        terms.push(Term {
-                            multiply: true,
-                            left,
-                            right,
-                        });
+                        terms.push(Term { multiply: true, left, right });
                         let value = Affine::of(Base::Term(terms.len() - 1));
-                        candidates.push(Fact {
-                            pc,
-                            value,
-                            bound: Bound::Product,
-                        });
+                        candidates.push(Fact { pc, value, bound: Bound::Product });
                         Some(value)
                     }
                     _ => None,
@@ -2162,32 +1917,20 @@ fn counted_loop(
                 if operator != Arithmetic::Float(NumberArithmetic::Multiply)
                     && let Some(value) = sum.filter(|_| held)
                 {
-                    candidates.push(Fact {
-                        pc,
-                        value,
-                        bound: Bound::Int32,
-                    });
+                    candidates.push(Fact { pc, value, bound: Bound::Int32 });
                 }
                 sum
             }
             Op::GetIndex => {
                 let array = instruction.operand_b().register_index()?;
                 if let (true, Some(value)) = source(&state, pc, instruction.operand_c())? {
-                    candidates.push(Fact {
-                        pc,
-                        value,
-                        bound: Bound::Index(array),
-                    });
+                    candidates.push(Fact { pc, value, bound: Bound::Index(array) });
                 }
                 None
             }
             Op::SetIndex => {
                 if let (true, Some(value)) = register(instruction.register_c()) {
-                    candidates.push(Fact {
-                        pc,
-                        value,
-                        bound: Bound::Index(instruction.register_b()),
-                    });
+                    candidates.push(Fact { pc, value, bound: Bound::Index(instruction.register_b()) });
                 }
                 None
             }
@@ -2206,11 +1949,9 @@ fn counted_loop(
     let steps: BTreeMap<Register, i64> = state
         .iter()
         .filter_map(|(register, value)| match value {
-            Some(Affine {
-                base: Base::Start(base),
-                offset,
-                addend: None,
-            }) if base == register => Some((*register, *offset)),
+            Some(Affine { base: Base::Start(base), offset, addend: None }) if base == register => {
+                Some((*register, *offset))
+            }
             _ => None,
         })
         .collect();
@@ -2219,10 +1960,7 @@ fn counted_loop(
     let step = |base: Base| match base {
         Base::Constant | Base::Capture(_) | Base::Term(_) => Some(0),
         Base::Start(register) if !written.contains(&register) => Some(0),
-        Base::Start(register) => steps
-            .get(&register)
-            .copied()
-            .filter(|step| step.abs() <= MAX_AFFINE_TERM),
+        Base::Start(register) => steps.get(&register).copied().filter(|step| step.abs() <= MAX_AFFINE_TERM),
     };
     // A base the proof reads at the header is an `i32` there; a term's values are, and its
     // own values were found invariant when it was made.
@@ -2231,30 +1969,17 @@ fn counted_loop(
             Base::Start(register) => read(register),
             Base::Constant | Base::Capture(_) => true,
             Base::Term(term) => [terms[term].left, terms[term].right].iter().all(|value| {
-                held_base(value.base, terms, read)
-                    && value
-                        .addend
-                        .is_none_or(|addend| held_base(addend, terms, read))
+                held_base(value.base, terms, read) && value.addend.is_none_or(|addend| held_base(addend, terms, read))
             }),
         }
     }
     let read = |register: Register| int32(webs.read(region, header, register));
     let held = |base: Base| held_base(base, &terms, &read);
     // An addend must not change across iterations.
-    let fixed = |value: &Affine| {
-        value
-            .addend
-            .is_none_or(|addend| step(addend) == Some(0) && held(addend))
-    };
+    let fixed = |value: &Affine| value.addend.is_none_or(|addend| step(addend) == Some(0) && held(addend));
     let (operator, (left_held, left), (right_held, right)) = tested?;
     let (left, right) = (left?, right?);
-    (left_held
-        && right_held
-        && held(left.base)
-        && held(right.base)
-        && fixed(&left)
-        && fixed(&right))
-    .then_some(())?;
+    (left_held && right_held && held(left.base) && held(right.base) && fixed(&left) && fixed(&right)).then_some(())?;
     // The induction variable is the side that moves; a relation with it on the right
     // reads mirrored.
     let (induction, bound, mirrored) = match (step(left.base)?, step(right.base)?) {
@@ -2278,9 +2003,7 @@ fn counted_loop(
     };
     let facts: Vec<Fact> = candidates
         .into_iter()
-        .filter(|fact| {
-            held(fact.value.base) && step(fact.value.base).is_some() && fixed(&fact.value)
-        })
+        .filter(|fact| held(fact.value.base) && step(fact.value.base).is_some() && fixed(&fact.value))
         .collect();
     (!facts.is_empty()).then_some(())?;
     Some(CountedLoop {
@@ -2327,7 +2050,7 @@ pub(super) fn lower(
         poll,
         track_backedges,
     )
-    .lower(isa.frontend_config())?;
+        .lower(isa.frontend_config())?;
     Some((native, widenings))
 }
 
@@ -2458,24 +2181,15 @@ impl<'a, 'b> Lowering<'a, 'b> {
         let &[context, registers, _, entry, result] = builder.block_params(start) else {
             unreachable!("the entry signature has five parameters")
         };
-        let blocks = (region.header..=region.backedge)
-            .map(|_| builder.create_block())
-            .collect();
+        let blocks = (region.header..=region.backedge).map(|_| builder.create_block()).collect();
         let straight = straight_pcs(region, &counted);
         let preheaders = counted.iter().map(|_| builder.create_block()).collect();
         let proved_blocks = counted
             .iter()
-            .map(|counted| {
-                (counted.header..=counted.backedge)
-                    .map(|_| builder.create_block())
-                    .collect()
-            })
+            .map(|counted| (counted.header..=counted.backedge).map(|_| builder.create_block()).collect())
             .collect();
-        let written: std::collections::BTreeSet<Register> = region
-            .instructions
-            .iter()
-            .filter_map(|instruction| number_definition(*instruction))
-            .collect();
+        let written: std::collections::BTreeSet<Register> =
+            region.instructions.iter().filter_map(|instruction| number_definition(*instruction)).collect();
         let one = Value::number(1.0);
         let units = (0..region.numbers.len())
             .filter(|entry| webs.entry_read[*entry])
@@ -2544,11 +2258,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
         self.write_back();
         if let Some(block) = self.body.termination_block {
             self.body.builder.switch_to_block(block);
-            let status = self
-                .body
-                .builder
-                .ins()
-                .iconst(types::I32, super::TERMINATED_STATUS);
+            let status = self.body.builder.ins().iconst(types::I32, super::TERMINATED_STATUS);
             self.body.builder.ins().return_(&[status]);
         }
         self.body.builder.seal_all_blocks();
@@ -2594,8 +2304,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
     /// Whether the code being lowered is a proved copy whose proof covers the instruction at
     /// `pc`, so its guard is dropped.
     fn proved(&self, pc: u32) -> bool {
-        self.copy
-            .is_some_and(|index| self.counted[index].proves(pc))
+        self.copy.is_some_and(|index| self.counted[index].proves(pc))
     }
 
     /// The `i64` value at a counted loop's header of a base the proof reads, which
@@ -2609,20 +2318,9 @@ impl<'a, 'b> Lowering<'a, 'b> {
                 self.web(web).value
             }
             Base::Term(term) => {
-                let Term {
-                    multiply,
-                    left,
-                    right,
-                } = counted.terms[term];
-                let (left, right) = (
-                    self.affine_start(counted, left),
-                    self.affine_start(counted, right),
-                );
-                return if multiply {
-                    self.body.builder.ins().imul(left, right)
-                } else {
-                    self.body.builder.ins().iadd(left, right)
-                };
+                let Term { multiply, left, right } = counted.terms[term];
+                let (left, right) = (self.affine_start(counted, left), self.affine_start(counted, right));
+                return if multiply { self.body.builder.ins().imul(left, right) } else { self.body.builder.ins().iadd(left, right) };
             }
         };
         self.body.builder.ins().sextend(types::I64, value)
@@ -2648,10 +2346,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
         let holds = self.proof(&counted);
         let proved = self.proved_blocks[index][0];
         let guarded = self.blocks[(counted.header - self.region.header) as usize];
-        self.body
-            .builder
-            .ins()
-            .brif(holds, proved, &[], guarded, &[]);
+        self.body.builder.ins().brif(holds, proved, &[], guarded, &[]);
     }
 
     /// Whether every fact of `counted` holds for the iterations its arrival runs. The test
@@ -2677,11 +2372,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
                 };
                 let passing = self.body.builder.ins().iadd_imm_s(span, 1);
                 let zero = self.body.builder.ins().iconst(types::I64, 0);
-                let crossed =
-                    self.body
-                        .builder
-                        .ins()
-                        .icmp_imm_s(IntCC::SignedLessThan, distance, 0);
+                let crossed = self.body.builder.ins().icmp_imm_s(IntCC::SignedLessThan, distance, 0);
                 let trips = self.body.builder.ins().select(crossed, zero, passing);
                 (trips, self.body.builder.ins().iconst(types::I8, 1))
             }
@@ -2701,83 +2392,40 @@ impl<'a, 'b> Lowering<'a, 'b> {
         for fact in &counted.facts {
             let first = self.affine_start(counted, fact.value);
             let step = counted.base_step(fact.value.base);
-            let last_iteration = if fact.pc < counted.test {
-                trips
-            } else {
-                trips_after
-            };
+            let last_iteration = if fact.pc < counted.test { trips } else { trips_after };
             let travel = self.body.builder.ins().imul_imm_s(last_iteration, step);
             let last = self.body.builder.ins().iadd(first, travel);
-            let (low, high) = if step >= 0 {
-                (first, last)
-            } else {
-                (last, first)
-            };
+            let (low, high) = if step >= 0 { (first, last) } else { (last, first) };
             let (above, below) = match fact.bound {
                 Bound::Index(array) => {
                     let length = self.arrays[&array].1;
                     (
-                        self.body
-                            .builder
-                            .ins()
-                            .icmp_imm_s(IntCC::SignedGreaterThanOrEqual, low, 0),
-                        self.body
-                            .builder
-                            .ins()
-                            .icmp(IntCC::SignedLessThan, high, length),
+                        self.body.builder.ins().icmp_imm_s(IntCC::SignedGreaterThanOrEqual, low, 0),
+                        self.body.builder.ins().icmp(IntCC::SignedLessThan, high, length),
                     )
                 }
                 Bound::Int32 => (
-                    self.body.builder.ins().icmp_imm_s(
-                        IntCC::SignedGreaterThanOrEqual,
-                        low,
-                        i64::from(i32::MIN),
-                    ),
-                    self.body.builder.ins().icmp_imm_s(
-                        IntCC::SignedLessThanOrEqual,
-                        high,
-                        i64::from(i32::MAX),
-                    ),
+                    self.body.builder.ins().icmp_imm_s(IntCC::SignedGreaterThanOrEqual, low, i64::from(i32::MIN)),
+                    self.body.builder.ins().icmp_imm_s(IntCC::SignedLessThanOrEqual, high, i64::from(i32::MAX)),
                 ),
                 Bound::Product => {
                     // The product is invariant (`low` is `high`); a zero one is -0 when a
                     // factor is negative.
-                    let Base::Term(term) = fact.value.base else {
-                        unreachable!("a product fact names its term")
-                    };
+                    let Base::Term(term) = fact.value.base else { unreachable!("a product fact names its term") };
                     let Term { left, right, .. } = counted.terms[term];
-                    let (left, right) = (
-                        self.affine_start(counted, left),
-                        self.affine_start(counted, right),
-                    );
+                    let (left, right) = (self.affine_start(counted, left), self.affine_start(counted, right));
                     let signs = self.body.builder.ins().bor(left, right);
-                    let nonnegative = self.body.builder.ins().icmp_imm_s(
-                        IntCC::SignedGreaterThanOrEqual,
-                        signs,
-                        0,
-                    );
+                    let nonnegative = self.body.builder.ins().icmp_imm_s(IntCC::SignedGreaterThanOrEqual, signs, 0);
                     let nonzero = self.body.builder.ins().icmp_imm_s(IntCC::NotEqual, low, 0);
                     let signed_zero_free = self.body.builder.ins().bor(nonnegative, nonzero);
-                    let fits = self.body.builder.ins().icmp_imm_s(
-                        IntCC::SignedGreaterThanOrEqual,
-                        low,
-                        i64::from(i32::MIN),
-                    );
-                    let fits_high = self.body.builder.ins().icmp_imm_s(
-                        IntCC::SignedLessThanOrEqual,
-                        high,
-                        i64::from(i32::MAX),
-                    );
+                    let fits = self.body.builder.ins().icmp_imm_s(IntCC::SignedGreaterThanOrEqual, low, i64::from(i32::MIN));
+                    let fits_high = self.body.builder.ins().icmp_imm_s(IntCC::SignedLessThanOrEqual, high, i64::from(i32::MAX));
                     let fits = self.body.builder.ins().band(fits, fits_high);
                     (fits, signed_zero_free)
                 }
             };
             let within = self.body.builder.ins().band(above, below);
-            let within = if fact.pc < counted.test {
-                within
-            } else {
-                self.body.builder.ins().bor(within, none)
-            };
+            let within = if fact.pc < counted.test { within } else { self.body.builder.ins().bor(within, none) };
             holds = self.body.builder.ins().band(holds, within);
         }
         holds
@@ -2792,8 +2440,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
     }
 
     fn word(&mut self, index: usize) -> ir::Value {
-        self.body
-            .builder
+        self.body.builder
             .ins()
             .load(types::I64, flags(), self.entry, index as i32 * WORD_BYTES)
     }
@@ -2820,11 +2467,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
         for (block, outcome) in self.exits.take_outcomes() {
             self.body.builder.switch_to_block(block);
             if matches!(outcome, super::RegionExit::EntryMiss(_)) {
-                let word = self
-                    .body
-                    .builder
-                    .ins()
-                    .iconst(types::I64, outcome.encode() as i64);
+                let word = self.body.builder.ins().iconst(types::I64, outcome.encode() as i64);
                 self.finish(word);
             } else {
                 self.leave(outcome);
@@ -2846,27 +2489,18 @@ impl<'a, 'b> Lowering<'a, 'b> {
             let representation = self.capture_representations[index];
             let otherwise = self.not_entered(Some(Widening::Capture(index as u16)));
             let value = self.unbox(bits, representation, otherwise);
-            self.captures.push(Typed {
-                value,
-                representation,
-            });
+            self.captures.push(Typed { value, representation });
         }
-        let fields_start =
-            ENTRY_CAPTURES + self.region.captures.len() + ARRAY_WORDS * self.region.arrays.len();
+        let fields_start = ENTRY_CAPTURES
+            + self.region.captures.len()
+            + ARRAY_WORDS * self.region.arrays.len();
         for index in 0..self.region.fields.len() {
             let bits = self.word(fields_start + index);
             let value = if self.region.fields[index].tagged {
-                Typed {
-                    value: bits,
-                    representation: Representation::Tagged,
-                }
+                Typed { value: bits, representation: Representation::Tagged }
             } else {
                 Typed {
-                    value: self.body.builder.ins().bitcast(
-                        types::F64,
-                        ir::MemFlagsData::new(),
-                        bits,
-                    ),
+                    value: self.body.builder.ins().bitcast(types::F64, ir::MemFlagsData::new(), bits),
                     representation: Representation::Float64,
                 }
             };
@@ -2878,11 +2512,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
             self.scratch = Some(self.word(fields_start + self.region.fields.len()));
             for frame in inlining.frames.clone() {
                 let held = self.fields[frame.field].value;
-                let other = self.body.builder.ins().icmp_imm_u(
-                    IntCC::NotEqual,
-                    held,
-                    frame.callee.to_bits() as i64,
-                );
+                let other = self.body.builder.ins().icmp_imm_u(IntCC::NotEqual, held, frame.callee.to_bits() as i64);
                 let otherwise = self.not_entered(None);
                 self.pass_unless(other, otherwise);
             }
@@ -2890,19 +2520,12 @@ impl<'a, 'b> Lowering<'a, 'b> {
         // Only an entry value some read reaches is loaded and guarded.
         let registers: Vec<(Register, Definition)> = (0..self.region.entry_count())
             .filter(|entry| self.webs.entry_read[*entry])
-            .map(|entry| {
-                (
-                    self.region.entry_register(entry).expect("entry register"),
-                    self.webs.find(entry),
-                )
-            })
+            .map(|entry| (self.region.entry_register(entry).expect("entry register"), self.webs.find(entry)))
             .collect();
         // An inlined callee's register holds nothing at entry: one read before written there
         // has no value to read.
         if let Some(inlining) = &self.region.inlining
-            && registers
-                .iter()
-                .any(|(register, _)| *register >= inlining.caller_registers)
+            && registers.iter().any(|(register, _)| *register >= inlining.caller_registers)
         {
             return None;
         }
@@ -2915,18 +2538,11 @@ impl<'a, 'b> Lowering<'a, 'b> {
                 i32::from(register) * WORD_BYTES,
             );
             if self.units.contains(&register) {
-                let one = self
-                    .body
-                    .builder
-                    .ins()
-                    .iconst(types::I64, Value::number(1.0).to_bits() as i64);
+                let one = self.body.builder.ins().iconst(types::I64, Value::number(1.0).to_bits() as i64);
                 let other = self.body.builder.ins().icmp(IntCC::NotEqual, bits, one);
                 let otherwise = self.not_entered(Some(Widening::Unit(register)));
                 let pass = self.body.builder.create_block();
-                self.body
-                    .builder
-                    .ins()
-                    .brif(other, otherwise, &[], pass, &[]);
+                self.body.builder.ins().brif(other, otherwise, &[], pass, &[]);
                 self.body.builder.switch_to_block(pass);
             }
             if representation == Representation::Tagged {
@@ -2944,34 +2560,17 @@ impl<'a, 'b> Lowering<'a, 'b> {
 
     /// The value `bits` encode in `representation`: an encoded `i32` for `Int32`, any Number
     /// for `Float64`, testing for a double first; anything else branches to `otherwise`.
-    fn unbox(
-        &mut self,
-        bits: ir::Value,
-        representation: Representation,
-        otherwise: ir::Block,
-    ) -> ir::Value {
+    fn unbox(&mut self, bits: ir::Value, representation: Representation, otherwise: ir::Block) -> ir::Value {
         if representation == Representation::Tagged {
             return bits;
         }
         if representation == Representation::Int32 {
-            let tag = self
-                .body
-                .builder
-                .ins()
-                .band_imm_u(bits, ValueLayout::TAG_MASK as i64);
-            let other = self.body.builder.ins().icmp_imm_u(
-                IntCC::NotEqual,
-                tag,
-                ValueLayout::INT_TAG as i64,
-            );
+            let tag = self.body.builder.ins().band_imm_u(bits, ValueLayout::TAG_MASK as i64);
+            let other = self.body.builder.ins().icmp_imm_u(IntCC::NotEqual, tag, ValueLayout::INT_TAG as i64);
             self.pass_unless(other, otherwise);
             return self.body.builder.ins().ireduce(types::I32, bits);
         }
-        let double = self
-            .body
-            .builder
-            .ins()
-            .bitcast(types::F64, ir::MemFlagsData::new(), bits);
+        let double = self.body.builder.ins().bitcast(types::F64, ir::MemFlagsData::new(), bits);
         self.unbox_float64(double, otherwise)
     }
 
@@ -2980,75 +2579,32 @@ impl<'a, 'b> Lowering<'a, 'b> {
     /// finds; only a NaN pattern, a tagged value or a NaN double, takes the cold test of the
     /// tag field. Anything but a Number branches to `otherwise`.
     fn unbox_float64(&mut self, double: ir::Value, otherwise: ir::Block) -> ir::Value {
-        let entered = self
-            .body
-            .builder
-            .current_block()
-            .expect("lowering inside a block");
-        let unordered = self
-            .body
-            .builder
-            .ins()
-            .fcmp(FloatCC::Unordered, double, double);
+        let entered = self.body.builder.current_block().expect("lowering inside a block");
+        let unordered = self.body.builder.ins().fcmp(FloatCC::Unordered, double, double);
         let nan_block = self.cold_block();
         let tagged_block = self.cold_block();
         let integer_block = self.cold_block();
         let join = self.body.builder.create_block();
         self.body.builder.append_block_param(join, types::F64);
-        self.body.builder.ins().brif(
-            unordered,
-            nan_block,
-            &[],
-            join,
-            &[ir::BlockArg::Value(double)],
-        );
+        self.body.builder.ins().brif(unordered, nan_block, &[], join, &[ir::BlockArg::Value(double)]);
         self.body.builder.switch_to_block(nan_block);
-        let bits = self
-            .body
-            .builder
-            .ins()
-            .bitcast(types::I64, ir::MemFlagsData::new(), double);
+        let bits = self.body.builder.ins().bitcast(types::I64, ir::MemFlagsData::new(), double);
         // A tag field within the tag range marks a non-double.
-        let field = self
-            .body
-            .builder
+        let field = self.body.builder.ins().ushr_imm_u(bits, i64::from(ValueLayout::TAG_SHIFT));
+        let offset = self.body.builder.ins().iadd_imm_s(field, -(ValueLayout::FIRST_TAG_FIELD as i64));
+        let tagged = self
+            .body.builder
             .ins()
-            .ushr_imm_u(bits, i64::from(ValueLayout::TAG_SHIFT));
-        let offset = self
-            .body
-            .builder
-            .ins()
-            .iadd_imm_s(field, -(ValueLayout::FIRST_TAG_FIELD as i64));
-        let tagged = self.body.builder.ins().icmp_imm_u(
-            IntCC::UnsignedLessThanOrEqual,
-            offset,
-            ValueLayout::TAG_FIELD_SPAN as i64,
-        );
-        self.body.builder.ins().brif(
-            tagged,
-            tagged_block,
-            &[],
-            join,
-            &[ir::BlockArg::Value(double)],
-        );
+            .icmp_imm_u(IntCC::UnsignedLessThanOrEqual, offset, ValueLayout::TAG_FIELD_SPAN as i64);
+        self.body.builder.ins().brif(tagged, tagged_block, &[], join, &[ir::BlockArg::Value(double)]);
         self.body.builder.switch_to_block(tagged_block);
         let int_field = (ValueLayout::INT_TAG >> ValueLayout::TAG_SHIFT) as i64;
-        let is_int = self
-            .body
-            .builder
-            .ins()
-            .icmp_imm_u(IntCC::Equal, field, int_field);
-        self.body
-            .builder
-            .ins()
-            .brif(is_int, integer_block, &[], otherwise, &[]);
+        let is_int = self.body.builder.ins().icmp_imm_u(IntCC::Equal, field, int_field);
+        self.body.builder.ins().brif(is_int, integer_block, &[], otherwise, &[]);
         self.body.builder.switch_to_block(integer_block);
         let integer = self.body.builder.ins().ireduce(types::I32, bits);
         let number = self.body.builder.ins().fcvt_from_sint(types::F64, integer);
-        self.body
-            .builder
-            .ins()
-            .jump(join, &[ir::BlockArg::Value(number)]);
+        self.body.builder.ins().jump(join, &[ir::BlockArg::Value(number)]);
         // The join's other predecessors are the cold tests, which `entered` dominates.
         let chain = self.chain(entered);
         self.chains.insert(join, chain);
@@ -3062,10 +2618,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
     /// The encoded bits of an `i32` Number.
     fn boxed_int32(&mut self, integer: ir::Value) -> ir::Value {
         let payload = self.body.builder.ins().uextend(types::I64, integer);
-        self.body
-            .builder
-            .ins()
-            .bor_imm_u(payload, ValueLayout::INT_TAG as i64)
+        self.body.builder.ins().bor_imm_u(payload, ValueLayout::INT_TAG as i64)
     }
 
     /// `Value::number(number)`'s bits: an integer when the truncation converts back to the
@@ -3075,83 +2628,37 @@ impl<'a, 'b> Lowering<'a, 'b> {
     /// conversion.
     fn boxed_float64(&mut self, number: ir::Value) -> ir::Value {
         let truncated = self.body.builder.ins().trunc(number);
-        let integral = self
-            .body
-            .builder
-            .ins()
-            .fcmp(FloatCC::UnorderedOrEqual, truncated, number);
+        let integral = self.body.builder.ins().fcmp(FloatCC::UnorderedOrEqual, truncated, number);
         // Boxing on an exit's path (`write_back`) is as cold as the exit, so its blocks are
         // laid out after the hot code too, not between a loop body's blocks.
         let cold = self
-            .body
-            .builder
+            .body.builder
             .current_block()
             .is_some_and(|block| self.body.builder.func.layout.is_cold(block));
-        let fractional_block = if cold {
-            self.cold_block()
-        } else {
-            self.body.builder.create_block()
-        };
+        let fractional_block = if cold { self.cold_block() } else { self.body.builder.create_block() };
         let integral_block = self.cold_block();
-        let join = if cold {
-            self.cold_block()
-        } else {
-            self.body.builder.create_block()
-        };
+        let join = if cold { self.cold_block() } else { self.body.builder.create_block() };
         self.body.builder.append_block_param(join, types::I64);
-        let tested = self
-            .body
-            .builder
-            .current_block()
-            .expect("lowering inside a block");
-        self.body
-            .builder
-            .ins()
-            .brif(integral, integral_block, &[], fractional_block, &[]);
+        let tested = self.body.builder.current_block().expect("lowering inside a block");
+        self.body.builder.ins().brif(integral, integral_block, &[], fractional_block, &[]);
         self.body.builder.switch_to_block(fractional_block);
         self.body.builder.seal_block(fractional_block);
-        let fractional =
-            self.body
-                .builder
-                .ins()
-                .bitcast(types::I64, ir::MemFlagsData::new(), number);
-        self.body
-            .builder
-            .ins()
-            .jump(join, &[ir::BlockArg::Value(fractional)]);
+        let fractional = self.body.builder.ins().bitcast(types::I64, ir::MemFlagsData::new(), number);
+        self.body.builder.ins().jump(join, &[ir::BlockArg::Value(fractional)]);
         self.body.builder.switch_to_block(integral_block);
         self.body.builder.seal_block(integral_block);
         let integer = self.body.builder.ins().fcvt_to_sint_sat(types::I32, number);
         let back = self.body.builder.ins().fcvt_from_sint(types::F64, integer);
-        let back_bits = self
-            .body
-            .builder
-            .ins()
-            .bitcast(types::I64, ir::MemFlagsData::new(), back);
-        let bits = self
-            .body
-            .builder
-            .ins()
-            .bitcast(types::I64, ir::MemFlagsData::new(), number);
+        let back_bits = self.body.builder.ins().bitcast(types::I64, ir::MemFlagsData::new(), back);
+        let bits = self.body.builder.ins().bitcast(types::I64, ir::MemFlagsData::new(), number);
         let exact = self.body.builder.ins().icmp(IntCC::Equal, back_bits, bits);
         let encoded = self.boxed_int32(integer);
         let integral = self.body.builder.ins().select(exact, encoded, bits);
         // A NaN converts to zero, which is not exact, so only the NaN test remains.
-        let nan = self
-            .body
-            .builder
-            .ins()
-            .fcmp(FloatCC::Unordered, number, number);
-        let canonical = self
-            .body
-            .builder
-            .ins()
-            .iconst(types::I64, ValueLayout::CANONICAL_NAN as i64);
+        let nan = self.body.builder.ins().fcmp(FloatCC::Unordered, number, number);
+        let canonical = self.body.builder.ins().iconst(types::I64, ValueLayout::CANONICAL_NAN as i64);
         let integral = self.body.builder.ins().select(nan, canonical, integral);
-        self.body
-            .builder
-            .ins()
-            .jump(join, &[ir::BlockArg::Value(integral)]);
+        self.body.builder.ins().jump(join, &[ir::BlockArg::Value(integral)]);
         // Both arms return from the test's block, so the join continues its chain.
         let chain = self.chain(tested);
         self.chains.insert(join, chain);
@@ -3165,10 +2672,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
         if self.body.builder.func.dfg.value_type(encoding) == types::I64 {
             return encoding;
         }
-        self.body
-            .builder
-            .ins()
-            .bitcast(types::I64, ir::MemFlagsData::new(), encoding)
+        self.body.builder.ins().bitcast(types::I64, ir::MemFlagsData::new(), encoding)
     }
 
     /// `value`'s encoding as an `i64`, or as the `f64` its bits read as when it was read
@@ -3218,10 +2722,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
                 }
                 _ => (self.registers, register),
             };
-            self.body
-                .builder
-                .ins()
-                .store(flags(), bits, file, i32::from(slot) * WORD_BYTES);
+            self.body.builder.ins().store(flags(), bits, file, i32::from(slot) * WORD_BYTES);
         }
     }
 
@@ -3231,9 +2732,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
         let reported = match outcome {
             super::RegionExit::Resume(pc) => super::RegionExit::Resume(self.region.exit_pc(pc)),
             super::RegionExit::Fallback(pc) => super::RegionExit::Fallback(self.region.exit_pc(pc)),
-            super::RegionExit::Recompile(pc) => {
-                super::RegionExit::Recompile(self.region.exit_pc(pc))
-            }
+            super::RegionExit::Recompile(pc) => super::RegionExit::Recompile(self.region.exit_pc(pc)),
             super::RegionExit::EntryMiss(_) => outcome,
         };
         self.exits.leave(&mut self.body.builder, outcome, reported);
@@ -3255,21 +2754,14 @@ impl<'a, 'b> Lowering<'a, 'b> {
     /// a new block otherwise, sealed at once since the branch is its only predecessor.
     fn pass_unless(&mut self, failed: ir::Value, failed_block: ir::Block) {
         let pass = self.body.builder.create_block();
-        self.body
-            .builder
-            .ins()
-            .brif(failed, failed_block, &[], pass, &[]);
+        self.body.builder.ins().brif(failed, failed_block, &[], pass, &[]);
         self.continue_chain(pass);
         self.body.builder.seal_block(pass);
     }
 
     /// Switches to `block`, which continues the current block's chain (`chains`).
     fn continue_chain(&mut self, block: ir::Block) {
-        let current = self
-            .body
-            .builder
-            .current_block()
-            .expect("lowering inside a block");
+        let current = self.body.builder.current_block().expect("lowering inside a block");
         let head = self.chain(current);
         self.chains.insert(block, head);
         self.body.builder.switch_to_block(block);
@@ -3298,10 +2790,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
     fn web(&mut self, web: Definition) -> Typed {
         let representation = self.representations[web];
         let register = self.webs.register(self.region, web);
-        Typed {
-            value: self.body.read(register, view_type(representation)),
-            representation,
-        }
+        Typed { value: self.body.read(register, view_type(representation)), representation }
     }
 
     /// `register`'s value before the instruction being lowered.
@@ -3319,19 +2808,11 @@ impl<'a, 'b> Lowering<'a, 'b> {
         match source {
             Source::Register(register) => self.register(register),
             Source::Tagged(value) => Typed {
-                value: self
-                    .body
-                    .builder
-                    .ins()
-                    .iconst(types::I64, value.to_bits() as i64),
+                value: self.body.builder.ins().iconst(types::I64, value.to_bits() as i64),
                 representation: Representation::Tagged,
             },
             Source::Number(number) if int32_number(number) => Typed {
-                value: self
-                    .body
-                    .builder
-                    .ins()
-                    .iconst(types::I32, i64::from(number as i32)),
+                value: self.body.builder.ins().iconst(types::I32, i64::from(number as i32)),
                 representation: Representation::Int32,
             },
             Source::Number(number) => Typed {
@@ -3343,11 +2824,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
 
     fn float(&mut self, value: Typed) -> ir::Value {
         match value.representation {
-            Representation::Int32 => self
-                .body
-                .builder
-                .ins()
-                .fcvt_from_sint(types::F64, value.value),
+            Representation::Int32 => self.body.builder.ins().fcvt_from_sint(types::F64, value.value),
             Representation::Float64 => value.value,
             Representation::Tagged => unreachable!("tagged values are not Number operands"),
         }
@@ -3356,9 +2833,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
     fn source(&self, operand: Operand) -> Option<Source> {
         match operand.kind()? {
             OperandKind::Register => Some(Source::Register(operand.payload())),
-            OperandKind::Constant => Some(Source::Number(
-                *self.region.constants.get(&operand.payload())?,
-            )),
+            OperandKind::Constant => Some(Source::Number(*self.region.constants.get(&operand.payload())?)),
             OperandKind::Field | OperandKind::Local => None,
         }
     }
@@ -3372,17 +2847,12 @@ impl<'a, 'b> Lowering<'a, 'b> {
     /// an `i32` result only reaches an `i32` web (`representations`). `register` is the
     /// result register, which names the web through the PC.
     fn define(&mut self, register: Register, value: Typed) {
-        debug_assert_eq!(
-            number_definition(self.region.instructions[(self.pc - self.region.header) as usize]),
-            Some(register)
-        );
+        debug_assert_eq!(number_definition(self.region.instructions[(self.pc - self.region.header) as usize]), Some(register));
         let web = self.webs.defined(self.region, self.pc);
         let representation = self.representations[web];
         let value = match (representation, value.representation) {
             (Representation::Float64, Representation::Int32) => self.float(value),
-            (Representation::Tagged, Representation::Int32 | Representation::Float64) => {
-                self.boxed(value)
-            }
+            (Representation::Tagged, Representation::Int32 | Representation::Float64) => self.boxed(value),
             _ => value.value,
         };
         self.body.write(register, view_type(representation), value);
@@ -3477,44 +2947,20 @@ impl<'a, 'b> Lowering<'a, 'b> {
                 let index = self.body.builder.ins().iadd_imm_s(wide, offset);
                 match i32::try_from(offset * i64::from(WORD_BYTES)) {
                     Ok(displacement) => (index, ElementIndex { wide, displacement }),
-                    Err(_) => (
-                        index,
-                        ElementIndex {
-                            wide: index,
-                            displacement: 0,
-                        },
-                    ),
+                    Err(_) => (index, ElementIndex { wide: index, displacement: 0 }),
                 }
             }
             Representation::Float64 => {
-                let index = self
-                    .body
-                    .builder
-                    .ins()
-                    .fcvt_to_sint_sat(types::I64, key.value);
+                let index = self.body.builder.ins().fcvt_to_sint_sat(types::I64, key.value);
                 let back = self.body.builder.ins().fcvt_from_sint(types::F64, index);
-                let fractional = self
-                    .body
-                    .builder
-                    .ins()
-                    .fcmp(FloatCC::NotEqual, back, key.value);
+                let fractional = self.body.builder.ins().fcmp(FloatCC::NotEqual, back, key.value);
                 self.guard(pc, fractional);
-                (
-                    index,
-                    ElementIndex {
-                        wide: index,
-                        displacement: 0,
-                    },
-                )
+                (index, ElementIndex { wide: index, displacement: 0 })
             }
             Representation::Tagged => unreachable!("indexed operands are Number values"),
         };
         if !self.proved(pc) {
-            let beyond =
-                self.body
-                    .builder
-                    .ins()
-                    .icmp(IntCC::UnsignedGreaterThanOrEqual, index, length);
+            let beyond = self.body.builder.ins().icmp(IntCC::UnsignedGreaterThanOrEqual, index, length);
             self.guard(pc, beyond);
         }
         element
@@ -3526,16 +2972,8 @@ impl<'a, 'b> Lowering<'a, 'b> {
         let dfg = &self.body.builder.func.dfg;
         let (mut value, mut offset) = (dfg.resolve_aliases(value), 0i64);
         loop {
-            let ir::ValueDef::Result(instruction, 0) = dfg.value_def(value) else {
-                break;
-            };
-            let ir::InstructionData::Binary {
-                opcode: ir::Opcode::Iadd,
-                args,
-            } = dfg.insts[instruction]
-            else {
-                break;
-            };
+            let ir::ValueDef::Result(instruction, 0) = dfg.value_def(value) else { break };
+            let ir::InstructionData::Binary { opcode: ir::Opcode::Iadd, args } = dfg.insts[instruction] else { break };
             let (left, right) = (dfg.resolve_aliases(args[0]), dfg.resolve_aliases(args[1]));
             match (self.int32_constant(left), self.int32_constant(right)) {
                 (_, Some(constant)) => (value, offset) = (left, offset + constant),
@@ -3548,20 +2986,13 @@ impl<'a, 'b> Lowering<'a, 'b> {
 
     /// The address of an element with the byte displacement its access carries.
     fn element_address(&mut self, elements: ir::Value, index: ElementIndex) -> (ir::Value, i32) {
-        let offset = self
-            .body
-            .builder
-            .ins()
-            .imul_imm_u(index.wide, i64::from(WORD_BYTES));
+        let offset = self.body.builder.ins().imul_imm_u(index.wide, i64::from(WORD_BYTES));
         let offset = if self.pointer == types::I64 {
             offset
         } else {
             self.body.builder.ins().ireduce(self.pointer, offset)
         };
-        (
-            self.body.builder.ins().iadd(elements, offset),
-            index.displacement,
-        )
+        (self.body.builder.ins().iadd(elements, offset), index.displacement)
     }
 
     /// ToInt32 of `value`: its truncation modulo 2^32. A Float converts to `i64` saturating,
@@ -3572,18 +3003,13 @@ impl<'a, 'b> Lowering<'a, 'b> {
         if value.representation == Representation::Int32 {
             return value.value;
         }
-        let integer = self
-            .body
-            .builder
-            .ins()
-            .fcvt_to_sint_sat(types::I64, value.value);
+        let integer = self.body.builder.ins().fcvt_to_sint_sat(types::I64, value.value);
         // `integer - (MIN + 1)` wraps both bounds, and only them, to the top two values.
         let shifted = self.body.builder.ins().iadd_imm_s(integer, -(i64::MIN + 1));
-        let bound = self.body.builder.ins().icmp_imm_u(
-            IntCC::UnsignedGreaterThanOrEqual,
-            shifted,
-            (u64::MAX - 1) as i64,
-        );
+        let bound = self
+            .body.builder
+            .ins()
+            .icmp_imm_u(IntCC::UnsignedGreaterThanOrEqual, shifted, (u64::MAX - 1) as i64);
         self.guard(pc, bound);
         self.body.builder.ins().ireduce(types::I32, integer)
     }
@@ -3599,17 +3025,10 @@ impl<'a, 'b> Lowering<'a, 'b> {
         left: ir::Value,
         right: ir::Value,
     ) -> ir::Value {
-        let current = self
-            .body
-            .builder
-            .current_block()
-            .expect("lowering inside a block");
+        let current = self.body.builder.current_block().expect("lowering inside a block");
         let chain = self.chain(current);
         // A variable read where a join's parameter proved trivial is an alias of its value.
-        let (left, right) = (
-            self.body.builder.func.dfg.resolve_aliases(left),
-            self.body.builder.func.dfg.resolve_aliases(right),
-        );
+        let (left, right) = (self.body.builder.func.dfg.resolve_aliases(left), self.body.builder.func.dfg.resolve_aliases(right));
         let key = {
             let dfg = &self.body.builder.func.dfg;
             (operator, int32_key(dfg, left), int32_key(dfg, right))
@@ -3636,13 +3055,11 @@ impl<'a, 'b> Lowering<'a, 'b> {
         right: ir::Value,
     ) -> Option<ir::Value> {
         let (value, offset) = match operator {
-            NumberArithmetic::Add => {
-                match (self.int32_constant(left), self.int32_constant(right)) {
-                    (_, Some(offset)) => (left, offset),
-                    (Some(offset), None) => (right, offset),
-                    (None, None) => return None,
-                }
-            }
+            NumberArithmetic::Add => match (self.int32_constant(left), self.int32_constant(right)) {
+                (_, Some(offset)) => (left, offset),
+                (Some(offset), None) => (right, offset),
+                (None, None) => return None,
+            },
             NumberArithmetic::Subtract => (left, -self.int32_constant(right)?),
             NumberArithmetic::Multiply | NumberArithmetic::Divide => return None,
         };
@@ -3665,10 +3082,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
             return None;
         };
         match dfg.insts[instruction] {
-            ir::InstructionData::UnaryImm {
-                opcode: ir::Opcode::Iconst,
-                imm,
-            } => Some(i64::from(imm.bits() as i32)),
+            ir::InstructionData::UnaryImm { opcode: ir::Opcode::Iconst, imm } => Some(i64::from(imm.bits() as i32)),
             _ => None,
         }
     }
@@ -3708,23 +3122,12 @@ impl<'a, 'b> Lowering<'a, 'b> {
                 let zero = self.body.builder.ins().icmp_imm_u(IntCC::Equal, product, 0);
                 let signs_block = self.cold_block();
                 let done = self.body.builder.create_block();
-                let tested = self
-                    .body
-                    .builder
-                    .current_block()
-                    .expect("lowering inside a block");
-                self.body
-                    .builder
-                    .ins()
-                    .brif(zero, signs_block, &[], done, &[]);
+                let tested = self.body.builder.current_block().expect("lowering inside a block");
+                self.body.builder.ins().brif(zero, signs_block, &[], done, &[]);
                 self.body.builder.switch_to_block(signs_block);
                 self.body.builder.seal_block(signs_block);
                 let signs = self.body.builder.ins().bor(left, right);
-                let negative = self
-                    .body
-                    .builder
-                    .ins()
-                    .icmp_imm_s(IntCC::SignedLessThan, signs, 0);
+                let negative = self.body.builder.ins().icmp_imm_s(IntCC::SignedLessThan, signs, 0);
                 self.guard_int32(pc, negative, Widening::Register(register));
                 self.body.builder.ins().jump(done, &[]);
                 // `done`'s predecessors are the test's block and the signs' passing branch,
@@ -3758,10 +3161,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
                     && right.representation == Representation::Int32 =>
             {
                 let value = self.int32_arithmetic(pc, operator, result, left.value, right.value);
-                Typed {
-                    value,
-                    representation: Representation::Int32,
-                }
+                Typed { value, representation: Representation::Int32 }
             }
             Arithmetic::Float(operator) => {
                 let (left, right) = (self.float(left), self.float(right));
@@ -3771,28 +3171,23 @@ impl<'a, 'b> Lowering<'a, 'b> {
                     left,
                     right,
                 );
-                Typed {
-                    value,
-                    representation: Representation::Float64,
-                }
+                Typed { value, representation: Representation::Float64 }
             }
             Arithmetic::Int32(operator) => {
                 let left = self.int32(pc, left);
                 let right = self.int32(pc, right);
-                let bits =
-                    super::emit_number_bitwise_bits(&mut self.body.builder, operator, left, right);
+                let bits = super::emit_number_bitwise_bits(
+                    &mut self.body.builder,
+                    operator,
+                    left,
+                    right,
+                );
                 if operator == NumberBitwise::ShiftRightUnsigned {
                     let value = self.body.builder.ins().fcvt_from_uint(types::F64, bits);
-                    return Typed {
-                        value,
-                        representation: Representation::Float64,
-                    };
+                    return Typed { value, representation: Representation::Float64 };
                 }
                 let value = bits;
-                Typed {
-                    value,
-                    representation: Representation::Int32,
-                }
+                Typed { value, representation: Representation::Int32 }
             }
         }
     }
@@ -3818,11 +3213,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
             }
             Op::LoadCapture => {
                 let slot = instruction.capture_slot();
-                let index = self
-                    .region
-                    .captures
-                    .iter()
-                    .position(|capture| *capture == slot)?;
+                let index = self.region.captures.iter().position(|capture| *capture == slot)?;
                 let value = self.captures[index];
                 self.define(instruction.result_register(), value);
                 self.fall_through(pc)
@@ -3832,11 +3223,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
                 let left = self.operand(instruction.operand_b())?;
                 let right = self.operand(instruction.operand_c())?;
                 let result = instruction.result_register();
-                let unit = |operand: Operand| {
-                    operand
-                        .register_index()
-                        .is_some_and(|register| self.units.contains(&register))
-                };
+                let unit = |operand: Operand| operand.register_index().is_some_and(|register| self.units.contains(&register));
                 let value = match operator {
                     // `x * 1`, `1 * x` and `x / 1` are `x` (`Lowering::units`).
                     Arithmetic::Float(NumberArithmetic::Multiply)
@@ -3867,24 +3254,14 @@ impl<'a, 'b> Lowering<'a, 'b> {
                     && self.result_representation() == Representation::Int32
                 {
                     // Only the extreme the step leaves `i32` from overflows.
-                    let (limit, step) = if decrement {
-                        (i32::MIN, -1)
-                    } else {
-                        (i32::MAX, 1)
-                    };
+                    let (limit, step) = if decrement { (i32::MIN, -1) } else { (i32::MAX, 1) };
                     if !self.proved(pc) {
-                        let overflow = self.body.builder.ins().icmp_imm_s(
-                            IntCC::Equal,
-                            operand.value,
-                            i64::from(limit),
-                        );
+                        let overflow =
+                            self.body.builder.ins().icmp_imm_s(IntCC::Equal, operand.value, i64::from(limit));
                         self.guard_int32(pc, overflow, Widening::Register(result));
                     }
                     let value = self.body.builder.ins().iadd_imm_s(operand.value, step);
-                    Typed {
-                        value,
-                        representation: Representation::Int32,
-                    }
+                    Typed { value, representation: Representation::Int32 }
                 } else {
                     let operator = if decrement {
                         NumberArithmetic::Subtract
@@ -3907,23 +3284,13 @@ impl<'a, 'b> Lowering<'a, 'b> {
                             && self.result_representation() == Representation::Int32 =>
                     {
                         // -0 and -(2^31) are no `i32`.
-                        let zero =
-                            self.body
-                                .builder
-                                .ins()
-                                .icmp_imm_u(IntCC::Equal, operand.value, 0);
-                        let minimum = self.body.builder.ins().icmp_imm_s(
-                            IntCC::Equal,
-                            operand.value,
-                            i64::from(i32::MIN),
-                        );
+                        let zero = self.body.builder.ins().icmp_imm_u(IntCC::Equal, operand.value, 0);
+                        let minimum =
+                            self.body.builder.ins().icmp_imm_s(IntCC::Equal, operand.value, i64::from(i32::MIN));
                         let failed = self.body.builder.ins().bor(zero, minimum);
                         self.guard_int32(pc, failed, Widening::Register(result));
                         let value = self.body.builder.ins().ineg(operand.value);
-                        Typed {
-                            value,
-                            representation: Representation::Int32,
-                        }
+                        Typed { value, representation: Representation::Int32 }
                     }
                     Unary::Number(NumberUnary::Negate) => {
                         let number = self.float(operand);
@@ -3932,18 +3299,12 @@ impl<'a, 'b> Lowering<'a, 'b> {
                             NumberUnary::Negate,
                             number,
                         );
-                        Typed {
-                            value,
-                            representation: Representation::Float64,
-                        }
+                        Typed { value, representation: Representation::Float64 }
                     }
                     Unary::BitwiseNot => {
                         let integer = self.int32(pc, operand);
                         let value = self.body.builder.ins().bnot(integer);
-                        Typed {
-                            value,
-                            representation: Representation::Int32,
-                        }
+                        Typed { value, representation: Representation::Int32 }
                     }
                 };
                 self.define(result, value);
@@ -3953,9 +3314,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
             Op::GetField => {
                 let read = field_use(instruction, false)?;
                 let field = self.region.fields.iter().position(|field| {
-                    field.receiver == read.receiver
-                        && field.atom == read.atom
-                        && field.cache_site == read.cache_site
+                    field.receiver == read.receiver && field.atom == read.atom && field.cache_site == read.cache_site
                 })?;
                 let value = self.fields[field];
                 self.define(instruction.result_register(), value);
@@ -3972,34 +3331,18 @@ impl<'a, 'b> Lowering<'a, 'b> {
                 let representation = element_representation(&instruction, self.observation);
                 let value = match representation {
                     Representation::Int32 => {
-                        let bits = self.body.builder.ins().load(
-                            types::I64,
-                            flags(),
-                            address,
-                            displacement,
-                        );
+                        let bits = self.body.builder.ins().load(types::I64, flags(), address, displacement);
                         let widen = self.widen_block(pc, Widening::Elements(base));
                         self.unbox(bits, representation, widen)
                     }
                     Representation::Float64 => {
-                        let double = self.body.builder.ins().load(
-                            types::F64,
-                            flags(),
-                            address,
-                            displacement,
-                        );
+                        let double = self.body.builder.ins().load(types::F64, flags(), address, displacement);
                         let exit = self.exit_block(pc);
                         self.unbox_float64(double, exit)
                     }
                     Representation::Tagged => return None,
                 };
-                self.define(
-                    instruction.result_register(),
-                    Typed {
-                        value,
-                        representation,
-                    },
-                );
+                self.define(instruction.result_register(), Typed { value, representation });
                 self.fall_through(pc)
             }
             Op::SetIndex => {
@@ -4007,28 +3350,13 @@ impl<'a, 'b> Lowering<'a, 'b> {
                 let key = self.register(instruction.register_c());
                 let index = self.index(pc, key, length);
                 let (address, displacement) = self.element_address(elements, index);
-                let old = self
-                    .body
-                    .builder
-                    .ins()
-                    .load(types::I64, flags(), address, displacement);
-                let tag = self
-                    .body
-                    .builder
-                    .ins()
-                    .band_imm_u(old, ValueLayout::TAG_MASK as i64);
-                let hole = self.body.builder.ins().icmp_imm_u(
-                    IntCC::Equal,
-                    tag,
-                    ValueLayout::DELETED_TAG as i64,
-                );
+                let old = self.body.builder.ins().load(types::I64, flags(), address, displacement);
+                let tag = self.body.builder.ins().band_imm_u(old, ValueLayout::TAG_MASK as i64);
+                let hole = self.body.builder.ins().icmp_imm_u(IntCC::Equal, tag, ValueLayout::DELETED_TAG as i64);
                 self.guard(pc, hole);
                 let value = self.register(instruction.register_a());
                 let bits = self.encoding(value);
-                self.body
-                    .builder
-                    .ins()
-                    .store(flags(), bits, address, displacement);
+                self.body.builder.ins().store(flags(), bits, address, displacement);
                 self.fall_through(pc)
             }
             Op::Jump => self.jump(pc, instruction.jump_target()),
@@ -4039,11 +3367,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
                         return None;
                     }
                     let identity = self.body.builder.ins().icmp_imm_u(
-                        if branch.negated {
-                            IntCC::NotEqual
-                        } else {
-                            IntCC::Equal
-                        },
+                        if branch.negated { IntCC::NotEqual } else { IntCC::Equal },
                         value.value,
                         branch.constant.to_bits() as i64,
                     );
@@ -4055,10 +3379,18 @@ impl<'a, 'b> Lowering<'a, 'b> {
                 let (left, right, domain) = if left.representation == Representation::Int32
                     && right.representation == Representation::Int32
                 {
-                    (left.value, right.value, super::NumberRelationDomain::Int32)
+                    (
+                        left.value,
+                        right.value,
+                        super::NumberRelationDomain::Int32,
+                    )
                 } else {
                     let (left, right) = (self.float(left), self.float(right));
-                    (left, right, super::NumberRelationDomain::Float64)
+                    (
+                        left,
+                        right,
+                        super::NumberRelationDomain::Float64,
+                    )
                 };
                 let holds = super::emit_number_relation(
                     &mut self.body.builder,
@@ -4098,17 +3430,13 @@ impl<'a, 'b> Lowering<'a, 'b> {
 fn int32_key(dfg: &ir::DataFlowGraph, value: ir::Value) -> ir::Value {
     let operand = |value: ir::Value, opcode: ir::Opcode| match dfg.value_def(value) {
         ir::ValueDef::Result(instruction, 0) => match dfg.insts[instruction] {
-            ir::InstructionData::Unary { opcode: found, arg } if found == opcode => {
-                Some(dfg.resolve_aliases(arg))
-            }
+            ir::InstructionData::Unary { opcode: found, arg } if found == opcode => Some(dfg.resolve_aliases(arg)),
             _ => None,
         },
         _ => None,
     };
     let value = dfg.resolve_aliases(value);
-    let Some(wide) = operand(value, ir::Opcode::Ireduce) else {
-        return value;
-    };
+    let Some(wide) = operand(value, ir::Opcode::Ireduce) else { return value };
     operand(wide, ir::Opcode::Uextend)
         .filter(|narrow| dfg.value_type(*narrow) == types::I32)
         .unwrap_or(wide)

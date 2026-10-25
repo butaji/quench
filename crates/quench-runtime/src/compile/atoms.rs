@@ -64,11 +64,7 @@ impl<'a> CompilerAtoms<'a> {
     }
 
     pub(super) fn len(&self) -> usize {
-        debug_assert_eq!(
-            self.prefix_len,
-            self.prefix.len(),
-            "atom prefix grew during compilation"
-        );
+        debug_assert_eq!(self.prefix_len, self.prefix.len(), "atom prefix grew during compilation");
         self.prefix_len + self.added.len()
     }
 
