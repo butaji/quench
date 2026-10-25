@@ -1473,6 +1473,45 @@ pub(crate) enum KeptArguments {
     Passes,
 }
 
+/// The facts before the call plan in `Function::derived_facts`' packing.
+const DERIVED_FACT_COUNT: u32 = 4;
+
+/// `CallPlan`'s flags as bits, in this order; the struct literal names every field, so a
+/// field left out of the list does not compile.
+macro_rules! call_plan_bits {
+    ($($field:ident),* $(,)?) => {
+        impl CallPlan {
+            fn to_bits(self) -> u32 {
+                let mut bits = 0;
+                let mut index = 0;
+                $(bits |= u32::from(self.$field) << index; index += 1;)*
+                let _ = index;
+                bits
+            }
+
+            fn from_bits(bits: u32) -> Self {
+                let mut index = 0;
+                $(let $field = bits & (1 << index) != 0; index += 1;)*
+                let _ = index;
+                Self { $($field),* }
+            }
+        }
+    };
+}
+call_plan_bits!(
+    plain,
+    in_loop,
+    settles_in_loop,
+    legacy_reflection,
+    live_parameters,
+    addresses_locals,
+    forwards_arguments,
+    keeps_arguments,
+    reads_passed_arguments,
+    registers_only,
+    environment_activation,
+);
+
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct CallPlan {
     /// `plain_activation`.
@@ -1542,12 +1581,13 @@ pub(crate) const HIDDEN_PARAMETER_PREFIX: &str = "\0quench:param:";
 /// call, which the compiler derives once from the same liveness (`liveness::mark_register_roots`);
 /// and the per-pc live register masks the collector scans, derived when a collection first
 /// finds the function on the stack. Most of a program's functions never run during a
-/// collection, so their masks are never built.
+/// collection, so their masks are never built. The loop tier's regions share them
+/// (`osr_loop::LoopRegion::live`) rather than copying a function's masks for each loop.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct RegisterRoots {
     covered: bool,
     dead_call_results: Box<[u32]>,
-    masks: std::cell::OnceCell<crate::compile::liveness::RegisterMasks>,
+    masks: std::cell::OnceCell<std::rc::Rc<crate::compile::liveness::RegisterMasks>>,
 }
 
 impl RegisterRoots {
@@ -1576,7 +1616,7 @@ impl RegisterRoots {
     /// The masks a collection derived so far; none until one finds the function running.
     #[cfg(feature = "profile-memory")]
     pub(crate) fn capacity_bytes(&self) -> usize {
-        self.masks.get().map_or(0, crate::compile::liveness::RegisterMasks::bytes)
+        self.masks.get().map_or(0, |masks| masks.bytes())
     }
 }
 
@@ -2026,15 +2066,17 @@ impl Function {
         atoms: &AtomTable,
         functions: &[FunctionSlot],
     ) -> bool {
-        *self.activation_bindings.get_or_init(|| {
-            self.activation_binding_reads(atoms)
-                || self.instructions().any(|instruction| {
-                    instruction.op() == Op::MakeClosure
-                        && functions
-                            .get(instruction.closure_function_index() as usize)
-                            .is_none_or(|closure| closure.header().is_arrow)
-                })
-        })
+        *self.activation_bindings.get_or_init(|| self.derive_activation_bindings_observable(atoms, functions))
+    }
+
+    fn derive_activation_bindings_observable(&self, atoms: &AtomTable, functions: &[FunctionSlot]) -> bool {
+        self.activation_binding_reads(atoms)
+            || self.instructions().any(|instruction| {
+                instruction.op() == Op::MakeClosure
+                    && functions
+                        .get(instruction.closure_function_index() as usize)
+                        .is_none_or(|closure| closure.header().is_arrow)
+            })
     }
 
     /// Whether the activation itself may read its implicit bindings through a name or scope
@@ -2114,7 +2156,11 @@ impl Function {
     /// binding, the parameters are simple, and each is a plain or register-promoted local.
     /// Otherwise the arguments are reflected as passed.
     pub(crate) fn reflects_live_parameters(&self, program: &ResidualProgram) -> bool {
-        *self.live_parameter_reflection.get_or_init(|| {
+        *self.live_parameter_reflection.get_or_init(|| self.derive_reflects_live_parameters(program))
+    }
+
+    fn derive_reflects_live_parameters(&self, program: &ResidualProgram) -> bool {
+        {
             let atoms = &program.atoms;
             let arguments_used = self.local_atoms.iter().enumerate().any(|(slot, &atom)| {
                 usize::try_from(atom)
@@ -2136,7 +2182,7 @@ impl Function {
                             .iter()
                             .any(|entry| entry.local == parameter)
                 })
-        })
+        }
     }
 
     /// Whether an activation is fully described by the function's static layout: a nested,
@@ -2193,7 +2239,11 @@ impl Function {
     /// The function's `CallPlan`, derived on first use.
     #[inline(always)]
     pub(crate) fn call_plan(&self, program: &ResidualProgram) -> CallPlan {
-        *self.call_plan.get_or_init(|| {
+        *self.call_plan.get_or_init(|| self.derive_call_plan(program))
+    }
+
+    fn derive_call_plan(&self, program: &ResidualProgram) -> CallPlan {
+        {
             let atoms = &program.atoms;
             let promoted_parameters = self
                 .local_registers
@@ -2311,7 +2361,42 @@ impl Function {
                         reaches_only_forwarded_arguments
                     },
             }
-        })
+        }
+    }
+
+    /// The facts below and the call plan, each derived now and packed as an encoding keeps
+    /// them (`binary::write_function`): derived lazily, they had cost 3-7% of the instructions
+    /// of cached npm runs (axios, playwright), which each run derived again.
+    pub(crate) fn derived_facts(&self, program: &ResidualProgram) -> u32 {
+        let facts = [
+            self.activation_bindings_observable(&program.atoms, &program.functions),
+            self.reflects_live_parameters(program),
+            self.names_resolve_statically(program),
+            self.has_dynamic_scope_access(),
+        ];
+        let flags = facts.iter().enumerate().fold(0, |bits, (index, &fact)| bits | (u32::from(fact) << index));
+        flags | (self.call_plan(program).to_bits() << DERIVED_FACT_COUNT)
+    }
+
+    /// Seeds the facts `derived_facts` packed; a fact already derived keeps its value.
+    pub(crate) fn seed_derived_facts(&self, bits: u32) {
+        let fact = |index: u32| bits & (1 << index) != 0;
+        let _ = self.activation_bindings.set(fact(0));
+        let _ = self.live_parameter_reflection.set(fact(1));
+        let _ = self.static_name_scope.set(fact(2));
+        let _ = self.dynamic_scope_access.set(fact(3));
+        let _ = self.call_plan.set(CallPlan::from_bits(bits >> DERIVED_FACT_COUNT));
+    }
+
+    /// Whether each fact `derived_facts` packs is this function's own derivation, whether it
+    /// was derived or seeded (`ResidualProgram::validate`).
+    pub(crate) fn derived_facts_hold(&self, program: &ResidualProgram) -> bool {
+        self.activation_bindings_observable(&program.atoms, &program.functions)
+            == self.derive_activation_bindings_observable(&program.atoms, &program.functions)
+            && self.reflects_live_parameters(program) == self.derive_reflects_live_parameters(program)
+            && self.names_resolve_statically(program) == self.derive_names_resolve_statically(program)
+            && self.has_dynamic_scope_access() == self.derive_dynamic_scope_access()
+            && self.call_plan(program).to_bits() == self.derive_call_plan(program).to_bits()
     }
 
     /// Whether the body's whole effect is storing parameters into fields of `this`, then
@@ -2623,11 +2708,13 @@ impl Function {
     /// Derived once per function: lane views, capture layouts and name resolution each ask,
     /// and the instruction scan had cost 1.3% of the axios npm scenario's instructions.
     pub(crate) fn has_dynamic_scope_access(&self) -> bool {
-        *self.dynamic_scope_access.get_or_init(|| {
-            self.inherited_with_scope
-                || !self.binding_sites.is_empty()
-                || self.instructions().any(WideInstruction::resolves_dynamic_scope)
-        })
+        *self.dynamic_scope_access.get_or_init(|| self.derive_dynamic_scope_access())
+    }
+
+    fn derive_dynamic_scope_access(&self) -> bool {
+        self.inherited_with_scope
+            || !self.binding_sites.is_empty()
+            || self.instructions().any(WideInstruction::resolves_dynamic_scope)
     }
 
     /// Whether the body enters a `with` statement, whose by-name loads may denote
@@ -2646,18 +2733,18 @@ impl Function {
     /// `program` holds this function; an enclosing function whose record it has not read yet
     /// is read here.
     pub(crate) fn names_resolve_statically(&self, program: &ResidualProgram) -> bool {
-        *self.static_name_scope.get_or_init(|| {
-            let atoms = &program.atoms;
-            !self.has_dynamic_scope_access()
-                && !self.contains_with_statement(|atom| {
-                    atom < atoms.len() && &atoms[atom] == WITH_ENTER_BINDING
-                })
-                && self.parent.is_none_or(|parent| {
-                    program
-                        .function_get(parent as usize)
-                        .is_some_and(|parent| parent.names_resolve_statically(program))
-                })
-        })
+        *self.static_name_scope.get_or_init(|| self.derive_names_resolve_statically(program))
+    }
+
+    fn derive_names_resolve_statically(&self, program: &ResidualProgram) -> bool {
+        let atoms = &program.atoms;
+        !self.has_dynamic_scope_access()
+            && !self.contains_with_statement(|atom| atom < atoms.len() && &atoms[atom] == WITH_ENTER_BINDING)
+            && self.parent.is_none_or(|parent| {
+                program
+                    .function_get(parent as usize)
+                    .is_some_and(|parent| parent.names_resolve_statically(program))
+            })
     }
 
     /// The memoized `plain_local_slots` projection for this residual's atoms.
@@ -3615,6 +3702,14 @@ impl ResidualProgram {
     /// `function`'s live register masks by pc, one past its last instruction included, when
     /// liveness covers it.
     pub(crate) fn register_root_masks(&self, function: u32) -> Option<&crate::compile::liveness::RegisterMasks> {
+        self.shared_register_root_masks(function).map(|masks| &**masks)
+    }
+
+    /// `register_root_masks`, as the shared derivation the loop tier's regions hold.
+    pub(crate) fn shared_register_root_masks(
+        &self,
+        function: u32,
+    ) -> Option<&std::rc::Rc<crate::compile::liveness::RegisterMasks>> {
         let function = self.function_get(function as usize)?;
         if !function.register_roots.covered {
             return None;
@@ -3629,7 +3724,7 @@ impl ResidualProgram {
                     &self.field_sites,
                     &self.superinstructions,
                 )
-                .map(crate::compile::liveness::RegisterMasks::new)
+                .map(|masks| std::rc::Rc::new(crate::compile::liveness::RegisterMasks::new(masks)))
                 .expect("a covered function's liveness is derivable")
             });
         Some(masks)
@@ -3656,7 +3751,7 @@ impl ResidualProgram {
         Some(position)
     }
 
-    pub const FORMAT_VERSION: u8 = 108;
+    pub const FORMAT_VERSION: u8 = 109;
     pub const RUNTIME_ABI_FINGERPRINT: u64 = {
         const ABI_SIGNATURE: u64 = 0x5251_4a00_0000_0000;
         const FORMAT_VERSION_SHIFT: u32 = 16;

@@ -586,6 +586,22 @@ impl Heap {
         Some(self.object_record_by_id(record_id))
     }
 
+    /// The fixed base of the ordinary-object record range once it has been reserved.
+    ///
+    /// A native reader may combine this with an ID from a current live, rooted direct-object
+    /// Value. It must end before any safepoint and must not retain a record pointer afterward.
+    pub(crate) fn object_record_base(&self) -> Option<*const Object> {
+        self.object_records.base_ptr()
+    }
+
+    /// The current base and length of out-of-line ordinary-object property values.
+    ///
+    /// Native readers may use these only during synchronous no-safepoint execution and must
+    /// bounds-check every slot. Property arena growth and compaction invalidate the base.
+    pub(crate) fn native_property_values(&self) -> (*const Value, usize) {
+        self.properties.native_values()
+    }
+
     /// The object of an object, array or promise record, whose field reads the field cache
     /// answers by shape alone (a promise's internal slots change no object operation). A
     /// function's restricted properties (`AtomClass`) need its kind, so a function record,

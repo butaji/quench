@@ -63,7 +63,11 @@ struct JsJitCallSiteCounters {
     alternate_target_calls: u64,
     other_target_calls: u64,
     outcomes: [u64; JsJitCallOutcome::COUNT],
+    sampled_calls: u64,
+    sampled_call_ns: [u64; JsJitCallOutcome::COUNT],
 }
+
+const JS_JIT_CALL_DIAGNOSTIC_SAMPLE_INTERVAL: u64 = 256;
 
 /// A bounded VM-local entry for GeneralDispatch code shared by equivalent
 /// dynamic functions. Idle artifacts remain available for later dynamic-code
@@ -650,9 +654,8 @@ struct ProgramEntry {
     constants: Vec<Value>,
     const_arrays: Vec<Option<crate::heap::ArrayElements>>,
     function_sources: Vec<Option<Value>>,
-    /// Each RegExp literal site's record, shared by every object it evaluates to, or its
-    /// compile error.
-    regexp_literals: Vec<Option<Result<Rc<crate::heap::RegExpMeta>, Rc<str>>>>,
+    /// Each RegExp literal site's record, shared by every object it evaluates to.
+    regexp_literals: Vec<Option<Rc<crate::heap::RegExpMeta>>>,
     module_environment: Option<Value>,
     import_meta: Option<Value>,
     module_imports: Vec<(u16, ModuleImport)>,
@@ -1763,6 +1766,14 @@ impl ProgramStore {
         self.js_jit_diagnostics.get_or_insert_with(FxHashMap::default);
     }
 
+    #[cfg(all(test, not(quench_profiled)))]
+    pub(super) fn js_jit_field_cache_probes(&self, id: ProgramId, function: u32) -> Option<u64> {
+        self.js_jit_diagnostics
+            .as_ref()?
+            .get(&(id.raw(), function))
+            .map(|counters| counters.field_cache_probes)
+    }
+
     pub(super) fn js_jit_dataview_float64_enabled(&self) -> bool {
         self.js_jit_dataview_float64_enabled
     }
@@ -2509,6 +2520,7 @@ impl ProgramStore {
         opcode: crate::bytecode::Op,
         direct_target: Option<(u32, u32)>,
         outcome: JsJitCallOutcome,
+        sampled_call_ns: Option<u64>,
     ) {
         let Some(counters) = self
             .js_jit_diagnostics
@@ -2559,6 +2571,41 @@ impl ProgramStore {
         }
         let outcome_count = &mut site.outcomes[outcome as usize];
         *outcome_count = outcome_count.saturating_add(1);
+        if let Some(elapsed_ns) = sampled_call_ns {
+            site.sampled_calls = site.sampled_calls.saturating_add(1);
+            let outcome_elapsed = &mut site.sampled_call_ns[outcome as usize];
+            *outcome_elapsed = outcome_elapsed.saturating_add(elapsed_ns);
+        }
+    }
+
+    /// Sample the first call and then one in each interval at a static call site.
+    /// The attempt count is advanced by `record_js_jit_call_site` after the call.
+    pub(super) fn should_sample_js_jit_call_site(
+        &self,
+        id: ProgramId,
+        function: u32,
+        pc: usize,
+        opcode: crate::bytecode::Op,
+    ) -> bool {
+        let Some(counters) = self
+            .js_jit_diagnostics
+            .as_ref()
+            .and_then(|diagnostics| diagnostics.get(&(id.raw(), function)))
+        else {
+            return false;
+        };
+        let Ok(pc) = u32::try_from(pc) else {
+            return false;
+        };
+        let key = (pc, opcode as u16);
+        let attempts = match counters
+            .call_sites
+            .binary_search_by_key(&key, |site| (site.pc, site.opcode))
+        {
+            Ok(index) => counters.call_sites[index].attempts,
+            Err(_) => 0,
+        };
+        attempts % JS_JIT_CALL_DIAGNOSTIC_SAMPLE_INTERVAL == 0
     }
 
     #[cfg(all(test, not(quench_profiled)))]
@@ -2575,6 +2622,8 @@ impl ProgramStore {
         u64,
         u64,
         u64,
+        u64,
+        [u64; JsJitCallOutcome::COUNT],
     )>> {
         self.js_jit_diagnostics
             .as_ref()?
@@ -2593,6 +2642,8 @@ impl ProgramStore {
                             site.direct_target_calls,
                             site.alternate_target_calls,
                             site.other_target_calls,
+                            site.sampled_calls,
+                            site.sampled_call_ns,
                         )
                     })
                     .collect()
@@ -2815,6 +2866,17 @@ impl ProgramStore {
     }
 
     /// A program's lane views by function, derived on first use.
+    /// What a lane running program `id` reads of it, from one look at its entry: its
+    /// residual, lane views (`lane_views`) and constants (`constants`).
+    #[inline]
+    pub(super) fn lane_program(
+        &self,
+        id: ProgramId,
+    ) -> Option<(&ResidualProgram, &[std::cell::OnceCell<super::dispatch_fast::LaneView>], &[Value])> {
+        let entry = self.entry(id)?;
+        Some((&entry.residual, entry.lane_views.of(&entry.residual), entry.constants.as_slice()))
+    }
+
     pub(super) fn lane_views(
         &self,
         id: ProgramId,
@@ -2837,7 +2899,7 @@ impl ProgramStore {
             &crate::bytecode::Function,
             &[Value],
             crate::bytecode::ProgramKind,
-            &dyn Fn() -> Option<&'s crate::compile::liveness::RegisterMasks>,
+            &dyn Fn() -> Option<&'s std::rc::Rc<crate::compile::liveness::RegisterMasks>>,
             &[crate::bytecode::FieldSite],
         ) -> super::dispatch_fast::LaneView,
     ) -> Option<*const super::dispatch_fast::LaneView> {
@@ -2852,7 +2914,7 @@ impl ProgramStore {
         }
         Some(view.get_or_init(|| {
             // Only a loop tier reads the masks; a collection derives them otherwise.
-            let live = || entry.residual.register_root_masks(function);
+            let live = || entry.residual.shared_register_root_masks(function);
             let view = derive(code, &entry.constants, entry.residual.kind, &live, &entry.residual.field_sites);
             #[cfg(feature = "profile-lane-exits")]
             {
@@ -2887,7 +2949,7 @@ impl ProgramStore {
             &crate::bytecode::Function,
             &[Value],
             crate::bytecode::ProgramKind,
-            &dyn Fn() -> Option<&'s crate::compile::liveness::RegisterMasks>,
+            &dyn Fn() -> Option<&'s std::rc::Rc<crate::compile::liveness::RegisterMasks>>,
             &[crate::bytecode::FieldSite],
         ) -> super::dispatch_fast::LaneView,
     ) -> Option<*const super::dispatch_fast::LaneView> {
@@ -2896,7 +2958,7 @@ impl ProgramStore {
         let view = entry.lane_views.of(&entry.residual).get(function as usize)?;
         Some(view.get_or_init(|| {
             // Only a loop tier reads the masks; a collection derives them otherwise.
-            let live = || entry.residual.register_root_masks(function);
+            let live = || entry.residual.shared_register_root_masks(function);
             let view = derive(code, &entry.constants, entry.residual.kind, &live, &entry.residual.field_sites);
             #[cfg(feature = "profile-lane-exits")]
             {
@@ -2956,15 +3018,15 @@ impl ProgramStore {
         &self,
         id: ProgramId,
         site: usize,
-    ) -> Option<Result<Rc<crate::heap::RegExpMeta>, Rc<str>>> {
-        self.entry(id)?.regexp_literals.get(site)?.as_ref().cloned()
+    ) -> Option<Rc<crate::heap::RegExpMeta>> {
+        self.entry(id)?.regexp_literals.get(site)?.clone()
     }
 
     pub(crate) fn cache_regexp_literal_meta(
         &mut self,
         id: ProgramId,
         site: usize,
-        matcher: Result<Rc<crate::heap::RegExpMeta>, Rc<str>>,
+        meta: Rc<crate::heap::RegExpMeta>,
     ) -> bool {
         let Some(entry) = self.entry_mut(id) else {
             return false;
@@ -2973,13 +3035,13 @@ impl ProgramStore {
             return false;
         };
         if cached.is_none() {
-            *cached = Some(matcher);
+            *cached = Some(meta);
         }
         true
     }
 
     #[cfg(test)]
-    pub(crate) fn compiled_regexp_literal_count(&self, id: ProgramId) -> usize {
+    pub(crate) fn regexp_literal_record_count(&self, id: ProgramId) -> usize {
         self.entry(id).map_or(0, |entry| {
             entry
                 .regexp_literals
@@ -3110,7 +3172,7 @@ impl Drop for ProgramStore {
             }
             let _ = write!(
                 stderr,
-                ",\"status\":\"{status}\",\"parameter_count\":{},\"instruction_count\":{},\"entries\":{},\"lane_entries\":{},\"numeric_entries\":{},\"promotions\":{},\"compile_attempts\":{},\"compile_successes\":{},\"general_dispatch_compile_attempts\":{},\"general_dispatch_compile_successes\":{},\"general_artifact_cache_hits\":{},\"general_artifact_cache_misses\":{},\"compile_ns\":{},\"native_entries\":{},\"native_entry_coverage_ppm\":{},\"all_entry_native_coverage_ppm\":{},\"field_cache_probes\":{},\"field_cache_hits\":{},\"field_store_cache_probes\":{},\"field_store_cache_hits\":{},\"field_return_candidate_entries\":{},\"field_return_fixed_this_entries\":{},\"field_return_fast_entries\":{},\"field_increment_candidate_entries\":{},\"field_increment_fixed_this_entries\":{},\"field_increment_fast_entries\":{},\"numeric_find_fast_entries\":{},\"fallback_entries\":{},\"interpreter_completions\":{},\"interpreter_inclusive_ns\":{},\"general_dispatch_work\":{},\"general_dispatch_work_required\":{},\"guard_census\":{{\"conditional_branch_sites\":{},\"typeof_operations\":{},\"strict_comparison_sites\":{},\"relational_comparison_sites\":{}}},\"osr\":{{\"plain_backward_jump_sites\":{},\"admitted_sites\":{},\"promotion_only_sites\":{},\"compile_attempts\":{},\"compile_successes\":{},\"currently_compiled_sites\":{},\"native_entry_attempts\":{},\"native_region_runs\":{},\"entry_guard_misses\":{},\"exits\":{},\"widenings\":{}}},\"call_sites\":[",
+                ",\"status\":\"{status}\",\"parameter_count\":{},\"instruction_count\":{},\"entries\":{},\"lane_entries\":{},\"numeric_entries\":{},\"promotions\":{},\"compile_attempts\":{},\"compile_successes\":{},\"general_dispatch_compile_attempts\":{},\"general_dispatch_compile_successes\":{},\"general_artifact_cache_hits\":{},\"general_artifact_cache_misses\":{},\"compile_ns\":{},\"native_entries\":{},\"native_entry_coverage_ppm\":{},\"all_entry_native_coverage_ppm\":{},\"field_cache_probes\":{},\"field_cache_hits\":{},\"field_store_cache_probes\":{},\"field_store_cache_hits\":{},\"field_return_candidate_entries\":{},\"field_return_fixed_this_entries\":{},\"field_return_fast_entries\":{},\"field_increment_candidate_entries\":{},\"field_increment_fixed_this_entries\":{},\"field_increment_fast_entries\":{},\"numeric_find_fast_entries\":{},\"fallback_entries\":{},\"interpreter_completions\":{},\"interpreter_inclusive_ns\":{},\"general_dispatch_work\":{},\"general_dispatch_work_required\":{},\"guard_census\":{{\"conditional_branch_sites\":{},\"typeof_operations\":{},\"strict_comparison_sites\":{},\"relational_comparison_sites\":{}}},\"osr\":{{\"plain_backward_jump_sites\":{},\"admitted_sites\":{},\"promotion_only_sites\":{},\"compile_attempts\":{},\"compile_successes\":{},\"currently_compiled_sites\":{},\"native_entry_attempts\":{},\"native_region_runs\":{},\"entry_guard_misses\":{},\"exits\":{},\"widenings\":{},\"sites\":[",
                 counters.parameter_count,
                 counters.instruction_count,
                 counters.entries,
@@ -3159,6 +3221,66 @@ impl Drop for ProgramStore {
                 osr.exits,
                 osr.widenings,
             );
+            for (index, site) in osr.sites.iter().enumerate() {
+                if index != 0 {
+                    let _ = write!(stderr, ",");
+                }
+                let status = match site.status {
+                    super::dispatch_fast::OsrSiteStatus::Admitted => "admitted",
+                    super::dispatch_fast::OsrSiteStatus::CallBoundary => "call-boundary",
+                    super::dispatch_fast::OsrSiteStatus::PromotionOnly => "promotion-only",
+                    super::dispatch_fast::OsrSiteStatus::Rejected => "rejected",
+                };
+                let _ = write!(
+                    stderr,
+                    "{{\"header_pc\":{},\"backedge_pc\":{},\"status\":\"{}\",\"admitted\":{},\"deferred_call\":{},\"tier_threshold_reached\":{},\"lane_backedge_count\":{}",
+                    site.header_pc,
+                    site.backedge_pc,
+                    status,
+                    site.admitted,
+                    site.deferred_call,
+                    site.tier_threshold_reached,
+                    site.lane_backedge_count,
+                );
+                let _ = write!(stderr, ",\"call_boundary_pcs\":[");
+                for (boundary_index, pc) in site.call_boundary_pcs.iter().enumerate() {
+                    if boundary_index != 0 {
+                        let _ = write!(stderr, ",");
+                    }
+                    let _ = write!(stderr, "{pc}");
+                }
+                let _ = write!(stderr, "],\"failure_pc\":");
+                if let Some(failure) = site.failure {
+                    let _ = write!(stderr, "{},\"failure_reason\":", failure.pc);
+                    let name = match failure.reason {
+                        super::compiled::RegionRejection::RegionTooLarge => "region-too-large",
+                        super::compiled::RegionRejection::UnsupportedInstruction(op) => {
+                            crate::bytecode::Op::NAMES.get(op as usize).copied().unwrap_or("unknown-opcode")
+                        }
+                        super::compiled::RegionRejection::RegisterLimit => "register-limit",
+                        super::compiled::RegionRejection::CaptureLimit => "capture-limit",
+                        super::compiled::RegionRejection::ArrayLimit => "array-limit",
+                        super::compiled::RegionRejection::FieldLimit => "field-limit",
+                        super::compiled::RegionRejection::FieldStoreLimit => "field-store-limit",
+                        super::compiled::RegionRejection::FieldMutation => "field-mutation",
+                    };
+                    let _ = write_json_string(&mut stderr, name);
+                } else {
+                    let _ = write!(stderr, "null,\"failure_reason\":null");
+                }
+                let _ = write!(
+                    stderr,
+                    ",\"compile_attempts\":{},\"compile_successes\":{},\"native_entry_attempts\":{},\"native_region_runs\":{},\"entry_guard_misses\":{},\"exits\":{},\"widenings\":{}}}",
+                    site.compile_attempts,
+                    site.compile_successes,
+                    site.native_entry_attempts,
+                    site.native_region_runs,
+                    site.entry_guard_misses,
+                    site.exits,
+                    site.widenings,
+                );
+            }
+            let _ = write!(stderr, "]}},\"call_sites\":[");
             for (site_index, site) in counters.call_sites.iter().enumerate() {
                 if site_index != 0 {
                     let _ = write!(stderr, ",");
@@ -3177,11 +3299,23 @@ impl Drop for ProgramStore {
                 }
                 let _ = write!(
                     stderr,
-                    ",\"direct_target_calls\":{},\"alternate_target_calls\":{},\"other_target_calls\":{},\"outcomes\":{{",
+                    ",\"direct_target_calls\":{},\"alternate_target_calls\":{},\"other_target_calls\":{},\"sampled_calls\":{},\"sampled_call_ns_by_outcome\":{{",
                     site.direct_target_calls,
                     site.alternate_target_calls,
                     site.other_target_calls,
+                    site.sampled_calls,
                 );
+                for (sample_index, (outcome, elapsed_ns)) in JsJitCallOutcome::ALL
+                    .into_iter()
+                    .zip(site.sampled_call_ns)
+                    .enumerate()
+                {
+                    if sample_index != 0 {
+                        let _ = write!(stderr, ",");
+                    }
+                    let _ = write!(stderr, "\"{}\":{}", outcome.name(), elapsed_ns);
+                }
+                let _ = write!(stderr, "}},\"outcomes\":{{");
                 for (outcome_index, (outcome, count)) in JsJitCallOutcome::ALL
                     .into_iter()
                     .zip(site.outcomes)

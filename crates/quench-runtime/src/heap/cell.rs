@@ -64,6 +64,39 @@ mod cell_layout_tests {
         assert_eq!(layout.record_align, std::mem::align_of::<ArrayObject>());
         assert_eq!(layout.elements_offset, NATIVE_ARRAY_ELEMENTS_OFFSET);
     }
+
+    #[test]
+    fn native_object_layout_is_derived_from_the_current_storage_types() {
+        assert_eq!(NATIVE_OBJECT_RECORD_SIZE, std::mem::size_of::<Object>());
+        assert_eq!(NATIVE_OBJECT_RECORD_ALIGN, std::mem::align_of::<Object>());
+        assert_eq!(
+            NATIVE_OBJECT_META_OFFSET,
+            std::mem::offset_of!(Object, meta)
+        );
+        assert_eq!(
+            NATIVE_OBJECT_AUXILIARY_OFFSET,
+            std::mem::offset_of!(Object, auxiliary)
+        );
+        assert_eq!(
+            NATIVE_OBJECT_PAYLOAD_OFFSET,
+            std::mem::offset_of!(Object, payload)
+        );
+        assert_eq!(
+            NATIVE_OBJECT_EXTRAS_ARENA_START_OFFSET,
+            std::mem::offset_of!(ObjectExtras, arena_start)
+        );
+
+        let layout = super::super::NATIVE_OBJECT_LAYOUT;
+        assert_eq!(layout.record_size, std::mem::size_of::<Object>());
+        assert_eq!(layout.record_align, std::mem::align_of::<Object>());
+        assert_eq!(layout.meta_offset, NATIVE_OBJECT_META_OFFSET);
+        assert_eq!(layout.auxiliary_offset, NATIVE_OBJECT_AUXILIARY_OFFSET);
+        assert_eq!(layout.payload_offset, NATIVE_OBJECT_PAYLOAD_OFFSET);
+        assert_eq!(
+            layout.extras_arena_start_offset,
+            NATIVE_OBJECT_EXTRAS_ARENA_START_OFFSET
+        );
+    }
 }
 
 impl WeakMapEntries {
@@ -928,6 +961,8 @@ impl Native {
                 | Self::TypedArrayToStringTag
                 | Self::FunctionBind
                 | Self::Array
+                | Self::PromiseResolve
+                | Self::PromiseWithResolvers
         )
     }
 
@@ -1341,6 +1376,7 @@ impl InlineObjectHeader {
     }
 }
 
+#[repr(C)]
 pub(crate) struct Object {
     /// The prototype's heap index (`PROTO_INDEX_BITS`, with null and undefined sentinels) and
     /// the `OBJECT_*` flags: array, inline storage, and the integrity bits `ValueVec` keeps.
@@ -1454,6 +1490,33 @@ impl Default for DisplacedInline {
 
 const EXTRAS_TAG: u64 = 0x7fff_0000_0000_0000;
 const EXTRAS_TAG_MASK: u64 = 0xffff_0000_0000_0000;
+
+/// Layout facts for the generated read-only ordinary-object field path. Keep these derived
+/// from the authoritative storage declarations; native code checks the object and extras
+/// representation bits before using any offset below.
+pub(super) const NATIVE_OBJECT_RECORD_SIZE: usize = std::mem::size_of::<Object>();
+pub(super) const NATIVE_OBJECT_RECORD_ALIGN: usize = std::mem::align_of::<Object>();
+pub(super) const NATIVE_OBJECT_META_OFFSET: usize = std::mem::offset_of!(Object, meta);
+pub(super) const NATIVE_OBJECT_AUXILIARY_OFFSET: usize = std::mem::offset_of!(Object, auxiliary);
+pub(super) const NATIVE_OBJECT_PAYLOAD_OFFSET: usize = std::mem::offset_of!(Object, payload);
+pub(super) const NATIVE_OBJECT_EXTRAS_ARENA_START_OFFSET: usize =
+    std::mem::offset_of!(ObjectExtras, arena_start);
+pub(super) const NATIVE_OBJECT_INLINE_STORAGE_MASK: u32 = OBJECT_INLINE_STORAGE;
+pub(super) const NATIVE_OBJECT_ARRAY_MASK: u32 = OBJECT_ARRAY;
+pub(super) const NATIVE_OBJECT_EXTRAS_TAG: u64 = EXTRAS_TAG;
+pub(super) const NATIVE_OBJECT_EXTRAS_TAG_MASK: u64 = EXTRAS_TAG_MASK;
+
+const _: () =
+    assert!(NATIVE_OBJECT_META_OFFSET + std::mem::size_of::<u32>() <= NATIVE_OBJECT_RECORD_SIZE);
+const _: () = assert!(
+    NATIVE_OBJECT_AUXILIARY_OFFSET + std::mem::size_of::<u32>() <= NATIVE_OBJECT_RECORD_SIZE
+);
+const _: () =
+    assert!(NATIVE_OBJECT_PAYLOAD_OFFSET + std::mem::size_of::<u64>() <= NATIVE_OBJECT_RECORD_SIZE);
+const _: () = assert!(
+    NATIVE_OBJECT_EXTRAS_ARENA_START_OFFSET + std::mem::size_of::<u32>()
+        <= std::mem::size_of::<ObjectExtras>()
+);
 
 impl Clone for Object {
     fn clone(&self) -> Self {
@@ -1617,6 +1680,7 @@ enum PrototypeLookupState {
 }
 
 #[derive(Clone, Debug, Default)]
+#[repr(C)]
 struct ObjectExtras {
     prototype_lookup: PrototypeLookupState,
     /// The object's inline property values, displaced from its payload by the extras pointer.

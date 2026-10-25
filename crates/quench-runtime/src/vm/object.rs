@@ -1363,6 +1363,17 @@ impl<H: Host> Vm<H> {
         unsafe { super::site_table::SiteTable::<FieldCache>::load_from(self.active_field_entries, usize::from(site)) }
     }
 
+    /// The primary holderless shape and out-of-line slot the field cache proves for this
+    /// bytecode site, when generated code can read that slot without a VM helper.
+    #[inline(always)]
+    pub(super) fn native_field_load_descriptor(&self, site: u16) -> Option<(u32, u16)> {
+        let cache = self.field_cache_entry(site);
+        (cache.holder == NO_FIELD_HOLDER
+            && cache.receiver != NO_FIELD_RECEIVER
+            && usize::from(cache.slot) >= crate::value_vec::INLINE_PROPERTY_COUNT)
+            .then_some((cache.receiver, cache.slot))
+    }
+
     /// The value the field cache entry `cache` proves for the direct object `object`: its own
     /// data field where the entry names no holder, else that of its prototype, an object
     /// record; `None` where either shape differs. The primary own and record-holder reads
@@ -3416,7 +3427,7 @@ impl<H: Host> Vm<H> {
         if self.is_private_name(atom) && self.set_private_field_value(p, object, atom, value) { return Ok(()); }
         if let Some((target, handler)) = self.proxy_parts(object) {
             if self.is_private_name(atom) {
-                if self.own_property(object, atom).is_none() {
+                if self.own_property(object, atom).is_none() && self.host.nonextensible_applies_to_private() {
                     let extensible = self.object_is_extensible(p, &[object])?;
                     if !self.truthy(extensible) {
                         return Err(self.type_error(

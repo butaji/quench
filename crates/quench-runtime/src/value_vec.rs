@@ -1,10 +1,10 @@
 use crate::Value;
 use rustc_hash::FxHashMap;
 
-const START_MASK: u32 = 0x3fff_ffff;
+pub(crate) const START_MASK: u32 = 0x3fff_ffff;
 const NON_EXTENSIBLE: u32 = 1 << 30;
 const FROZEN: u32 = 1 << 31;
-const DICTIONARY_STORAGE: u32 = 1 << 31;
+pub(crate) const DICTIONARY_STORAGE: u32 = 1 << 31;
 const SHAPE_MASK: u32 = !DICTIONARY_STORAGE;
 const EMPTY_START: u32 = START_MASK;
 const INLINE_PROPERTY_START: u32 = EMPTY_START - 1;
@@ -183,6 +183,15 @@ impl Default for ValueArena {
 }
 
 impl ValueArena {
+    /// The current storage for out-of-line object properties.
+    ///
+    /// A native reader may use this address only during synchronous no-safepoint execution:
+    /// growth and compaction can move the vector. Every derived slot must be checked against
+    /// `len` before it is read.
+    pub(crate) fn native_values(&self) -> (*const Value, usize) {
+        (self.values.as_ptr(), self.values.len())
+    }
+
     /// The arena as a snapshot keeps it (`crate::snapshot`): storage positions name places in
     /// `values`, so the vector and its free ranges are written as they are.
     pub(crate) fn write_snapshot(&self, writer: &mut crate::snapshot::Writer) {

@@ -57,6 +57,16 @@ component. Measured on x86_64 Linux against the plain production build, V8-v7
 Score rose 7-24% on six fixtures (Splay and NavierStokes flat) and peak RSS fell
 about 1 MiB on all eight.
 
+`tools/pgo-build.sh --static [PROFILE]` builds the static x86_64 Linux binary the
+same way: both builds add `-Ctarget-feature=+crt-static -Crelocation-model=static`
+for the host triple, and the binary lands at `target/<host>/PROFILE/quench-node`.
+That binary is the input of the BOLT layout step below, so one recipe yields the
+qualification binary: `tools/pgo-build.sh --static`, then the callgrind training,
+`bolt-profile` and `llvm-bolt` steps. Every mode keeps the repository's
+`.cargo/config.toml` rustflags (`-D warnings`, the function alignment): the script
+appends its flags with `--config`, which cargo concatenates with the configured
+array. It refuses to run with `RUSTFLAGS` set, as that variable replaces both.
+
 ```sh
 TEST262_TEST_TIMEOUT_MS=900000 TEST262_JOBS=4 \
   cargo run --profile iteration -p quench-test262 --bin run-stages -- 10 10
@@ -356,6 +366,29 @@ checkout's major version (`tests/node/src/node_version.h`) on `PATH`. The curren
 checkout targets Node 26 (26.12.0); other majors can differ on API contracts such as
 `util.parseEnv` object prototypes. Run the CLI/API oracle checks with
 `cargo test --profile iteration -p quench-node-test --test child_entry`.
+
+The checks compare against a Node built with its own native libraries; a host without
+them keeps Quench's portable fallbacks, which several checks then tell apart (legacy
+`TextDecoder` encodings and descriptors, zlib and Brotli streams, OpenSSL 3.4+ digests
+such as `sha256-192`). Build the matching libraries from the pinned checkout and point the
+build at them:
+
+```sh
+python3 tools/build-node-icu.py --node-source tests/node --prefix $DEPS/icu
+python3 tools/build-node-zlib.py --node-source tests/node --prefix $DEPS/zlib
+python3 tools/build-node-brotli.py --node-source tests/node --prefix $DEPS/brotli
+(mkdir -p $DEPS/openssl-build && cd $DEPS/openssl-build && \
+  $REPO/tests/node/deps/openssl/openssl/Configure --prefix=$DEPS/openssl --libdir=lib \
+  no-shared no-tests linux-x86_64 && make -j4 && make install_sw)
+export PKG_CONFIG_PATH=$DEPS/icu/lib/pkgconfig:$DEPS/zlib/lib/pkgconfig:$DEPS/brotli/lib/pkgconfig
+# The target-prefixed names override `.cargo/config.toml`'s system OpenSSL.
+export X86_64_UNKNOWN_LINUX_GNU_OPENSSL_LIB_DIR=$DEPS/openssl/lib \
+  X86_64_UNKNOWN_LINUX_GNU_OPENSSL_INCLUDE_DIR=$DEPS/openssl/include \
+  X86_64_UNKNOWN_LINUX_GNU_OPENSSL_LIBS=ssl:crypto
+```
+
+`tcp_reuse_port_shares_os_listeners_across_processes_like_node` also needs an IPv6
+interface (it listens on `::`).
 
 Run the selected upstream Node `test/parallel` profile against the shared VM
 with the canonical `run-parallel` worker. Profile membership

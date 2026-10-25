@@ -63,12 +63,7 @@ static LAST_RELEASE: std::sync::Mutex<Option<std::time::Instant>> = std::sync::M
 /// `LOAD_RELEASE_INTERVAL` ago.
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 pub fn release_read_only_pages_after_load() {
-    let recent = LAST_RELEASE
-        .lock()
-        .ok()
-        .and_then(|last| *last)
-        .is_some_and(|last| last.elapsed() < LOAD_RELEASE_INTERVAL);
-    if !recent {
+    if !released_within(LOAD_RELEASE_INTERVAL) {
         release_read_only_pages();
     }
 }
@@ -338,10 +333,17 @@ pub fn release_read_only_code_and_data() {}
 pub fn at_compile_phase(phase: quench_runtime::CompilePhase) {
     match phase {
         quench_runtime::CompilePhase::CodeGeneration => {
+            #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+            if ENTRY_CODE_GENERATION_DUE.swap(false, std::sync::atomic::Ordering::Relaxed) {
+                return release_read_only_code_and_data();
+            }
             release_once_per_interval(CompileRelease::CodeGeneration, release_read_only_code_and_data)
         }
         quench_runtime::CompilePhase::FirstCall => {
             release_once_per_interval(CompileRelease::FirstCall, release_read_only_pages)
+        }
+        quench_runtime::CompilePhase::Encoding => {
+            release_once_per_interval(CompileRelease::Encoding, release_read_only_code_and_data)
         }
     }
 }
@@ -362,11 +364,12 @@ pub fn after_program_kept() {
 enum CompileRelease {
     CodeGeneration,
     FirstCall,
+    Encoding,
     Kept,
 }
 
 impl CompileRelease {
-    const COUNT: usize = 3;
+    const COUNT: usize = 4;
 }
 
 /// How far apart each compile-phase release's runs are kept, by the process's memory policy.
@@ -400,6 +403,20 @@ const RELEASE_REFAULT_COST: std::time::Duration = std::time::Duration::from_micr
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 const BUDGET_RELEASE_TIME_DIVISOR: u32 = 10;
 
+/// Releases over the budget a run may spend before its elapsed time has earned them
+/// (`BUDGET_RELEASE_TIME_DIVISOR`): its warm-up specializes the functions it first calls, and
+/// with only the time-earned budget a run 12 ms in had about three, so the specialization's
+/// code built up beside the heap and set the peak whenever no collection released it first
+/// (V8-v7 RayTrace's high runs: 1.9-2.0 MB of file pages at 12-13 ms, against about 1.3 MB
+/// at a later peak). V8-v7 without JIT, 15 interleaved runs of one bolted static binary,
+/// worst max RSS against none (x86_64 VM, 2026-10-25): RayTrace 2892 -> 2704 KiB, Crypto
+/// 3228 -> 3060, Richards 2728 -> 2464, NavierStokes 3980 -> 3928, RegExp 5512 -> 5492,
+/// DeltaBlue 2764 -> 2772; medians equal or lower, scores within noise. 16 and 24 left
+/// RayTrace and Crypto worse. The releases cost a short npm scenario the most: Acorn 138 ->
+/// 165 ms, ESLint 323 -> 341, Ajv 282 -> 305, TypeScript 410 -> 413.
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+const MEMORY_FIRST_START_RELEASES: u32 = 40;
+
 /// When the first budget check ran, and the releases over the budget since.
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 static BUDGET_RELEASES: std::sync::Mutex<Option<(std::time::Instant, u32)>> = std::sync::Mutex::new(None);
@@ -408,7 +425,8 @@ static BUDGET_RELEASES: std::sync::Mutex<Option<(std::time::Instant, u32)>> = st
 impl CompileRelease {
     /// Whether a first call releases inside its interval: the resident file pages passed
     /// `MEMORY_FIRST_RESIDENT_FILE_BUDGET`, and the releases over it so far leave room in
-    /// the run's time (`BUDGET_RELEASE_TIME_DIVISOR`).
+    /// the run's time (`BUDGET_RELEASE_TIME_DIVISOR`) beyond the start's allowance
+    /// (`MEMORY_FIRST_START_RELEASES`).
     fn over_budget(self) -> bool {
         let returns_pages = crate::shared_run::process_memory_policy()
             .is_some_and(quench_runtime::MemoryPolicy::returns_pages_at_collections);
@@ -419,7 +437,7 @@ impl CompileRelease {
             return false;
         };
         let (started, count) = releases.get_or_insert_with(|| (std::time::Instant::now(), 0));
-        let allowed = started.elapsed() / BUDGET_RELEASE_TIME_DIVISOR;
+        let allowed = started.elapsed() / BUDGET_RELEASE_TIME_DIVISOR + RELEASE_REFAULT_COST * MEMORY_FIRST_START_RELEASES;
         if RELEASE_REFAULT_COST * (*count + 1) > allowed
             || resident_file_bytes().is_none_or(|bytes| bytes <= MEMORY_FIRST_RESIDENT_FILE_BUDGET)
         {
@@ -471,7 +489,12 @@ fn release_once_per_interval(release: CompileRelease, action: fn()) {
         return;
     };
     let last = &mut releases[release as usize];
-    if last.is_some_and(|last| last.elapsed() < compile_release_interval()) && !release.over_budget() {
+    let recent = if shares_release_clock() {
+        !release_due()
+    } else {
+        last.is_some_and(|last| last.elapsed() < compile_release_interval())
+    };
+    if recent && !release.over_budget() {
         return;
     }
     *last = Some(std::time::Instant::now());
@@ -483,7 +506,7 @@ fn release_once_per_interval(release: CompileRelease, action: fn()) {
 fn release_once_per_interval(_: CompileRelease, _: fn()) {}
 
 /// Releases before the entry's compilation, the start-up peak, and lets its own code
-/// generation boundary release again whatever `LOAD_RELEASE_INTERVAL` says: only the
+/// generation boundary release again whatever the release pace says: only the
 /// parser's and compiler's pages, not the bootstrap's, need be resident across it, and the
 /// parser's not across its code generation. A bootstrap compilation within the interval had
 /// held that boundary (V8-v7 max RSS, entry compiled with the bootstrap cached, bolted static
@@ -492,9 +515,40 @@ fn release_once_per_interval(_: CompileRelease, _: fn()) {}
 pub fn release_before_entry_compile() {
     release_read_only_code_and_data();
     #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-    if let Ok(mut releases) = LAST_COMPILE_RELEASES.lock() {
-        releases[CompileRelease::CodeGeneration as usize] = None;
-    }
+    ENTRY_CODE_GENERATION_DUE.store(true, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Set before the entry's compilation: its code generation boundary releases whatever the
+/// pace says (`release_before_entry_compile`).
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+static ENTRY_CODE_GENERATION_DUE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Whether the read-only pages left, by any release, less than `interval` ago.
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+fn released_within(interval: std::time::Duration) -> bool {
+    LAST_RELEASE.lock().ok().and_then(|last| *last).is_some_and(|last| last.elapsed() < interval)
+}
+
+/// Whether the process's release pace (`compile_release_interval`) has passed since the
+/// read-only pages last left, by any release.
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+fn release_due() -> bool {
+    !released_within(compile_release_interval())
+}
+
+/// Whether every paced release shares one clock, the last release of any kind
+/// (`release_due`), rather than each compile phase keeping its own. Under throughput a 100 ms
+/// window held up to five full releases, one per phase clock, and npm runs refaulted after
+/// each (TOD-180: whatwg-url 78 ms with one clock vs 99 ms with five, 7.3K vs 9.8K faults).
+/// Memory-first keeps one clock per phase: each phase boundary leaves a distinct working set
+/// resident, and with one clock the collections' releases held back a cold run's encoding and
+/// kept-program releases (V8-v7 cold first run, same-binary toggle, 7 runs, 2026-10-25:
+/// median max RSS Richards 2096 -> 2608 KiB; worst DeltaBlue 2532 -> 2788, NavierStokes
+/// 3540 -> 3792).
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+fn shares_release_clock() -> bool {
+    !crate::shared_run::process_memory_policy()
+        .is_some_and(quench_runtime::MemoryPolicy::returns_pages_at_collections)
 }
 
 /// The loaded segments a release reaches, by the loader's program headers.
@@ -920,5 +974,55 @@ mod tests {
         }
         std::fs::remove_file(&path).unwrap();
         assert_eq!(runs, [(start, start + page), (start + 2 * page, start + 3 * page)]);
+    }
+}
+
+/// A native compilation's boundaries (`Host::before_native_compilation` and
+/// `Host::after_native_compilation`).
+#[derive(Clone, Copy)]
+pub enum NativeCompilation {
+    /// The program's pages leave before the code generator's join them.
+    Before,
+    /// The code generator's pages, and the allocator pages its scratch memory freed, leave
+    /// before the program runs on.
+    After,
+}
+
+/// The native compilations whose boundaries release unpaced under a policy that keeps pages
+/// resident across collections (throughput). Later ones release at most once per
+/// `LOAD_RELEASE_INTERVAL`. Releasing at every boundary made npm `--jit` runs refault their
+/// hot code after each compilation (whatwg-url: 7.5K -> 18.8K faults vs no-JIT). Paced after
+/// the first two (TOD-180, plain release build, interleaved): whatwg-url 126 -> 102 ms, axios
+/// 123 -> 113, semver 121 -> 110, schema-utils 242 -> 222; releasing around the first eight
+/// still cost V8-v7 NavierStokes `--jit` 1.6 MB. Memory-first releases at every boundary.
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+const UNPACED_NATIVE_COMPILATIONS: u32 = 2;
+
+/// The host's action at a native compilation's boundary: the read-only pages leave, paced by
+/// the process's memory policy (`UNPACED_NATIVE_COMPILATIONS`), and after it the allocator's
+/// free pages always do.
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+pub fn at_native_compilation(boundary: NativeCompilation) {
+    /// The native compilations started.
+    static STARTED: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+    let started = match boundary {
+        NativeCompilation::Before => STARTED.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1,
+        NativeCompilation::After => STARTED.load(std::sync::atomic::Ordering::Relaxed),
+    };
+    let returns_pages = crate::shared_run::process_memory_policy()
+        .is_some_and(quench_runtime::MemoryPolicy::returns_pages_at_collections);
+    let release = returns_pages || started <= UNPACED_NATIVE_COMPILATIONS || release_due();
+    if release {
+        release_read_only_pages();
+    }
+    if matches!(boundary, NativeCompilation::After) {
+        release_free_heap_pages();
+    }
+}
+
+#[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
+pub fn at_native_compilation(boundary: NativeCompilation) {
+    if matches!(boundary, NativeCompilation::After) {
+        release_free_heap_pages();
     }
 }

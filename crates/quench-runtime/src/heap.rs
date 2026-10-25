@@ -75,6 +75,62 @@ pub(crate) const NATIVE_ARRAY_LAYOUT: NativeArrayLayout = NativeArrayLayout {
     header_values_offset: array_elements::NATIVE_HEADER_VALUES_OFFSET,
 };
 
+/// The native reader's view of an ordinary object record and its out-of-line property words.
+///
+/// Generated code may resolve only a current direct-object Value to a live record, must
+/// compare its exact auxiliary shape (which also excludes dictionary storage), and must
+/// finish before any safepoint or property-arena mutation. `properties` pointers are scoped
+/// to one synchronous no-safepoint execution because growth and compaction can move the arena.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct NativeObjectLayout {
+    pub(crate) record_capacity: usize,
+    pub(crate) record_size: usize,
+    pub(crate) record_align: usize,
+    pub(crate) meta_offset: usize,
+    pub(crate) auxiliary_offset: usize,
+    pub(crate) payload_offset: usize,
+    pub(crate) extras_arena_start_offset: usize,
+    pub(crate) inline_storage_mask: u32,
+    pub(crate) array_mask: u32,
+    pub(crate) storage_start_mask: u32,
+    pub(crate) dictionary_mask: u32,
+    pub(crate) inline_property_count: usize,
+    pub(crate) extras_tag: u64,
+    pub(crate) extras_tag_mask: u64,
+    pub(crate) property_value_size: usize,
+    pub(crate) property_value_align: usize,
+}
+
+/// Layout facts for code generators which emit read-only ordinary-object field accesses.
+pub(crate) const NATIVE_OBJECT_LAYOUT: NativeObjectLayout = NativeObjectLayout {
+    record_capacity: RECORD_SPACE_CAPACITY,
+    record_size: cell::NATIVE_OBJECT_RECORD_SIZE,
+    record_align: cell::NATIVE_OBJECT_RECORD_ALIGN,
+    meta_offset: cell::NATIVE_OBJECT_META_OFFSET,
+    auxiliary_offset: cell::NATIVE_OBJECT_AUXILIARY_OFFSET,
+    payload_offset: cell::NATIVE_OBJECT_PAYLOAD_OFFSET,
+    extras_arena_start_offset: cell::NATIVE_OBJECT_EXTRAS_ARENA_START_OFFSET,
+    inline_storage_mask: cell::NATIVE_OBJECT_INLINE_STORAGE_MASK,
+    array_mask: cell::NATIVE_OBJECT_ARRAY_MASK,
+    storage_start_mask: crate::value_vec::START_MASK,
+    dictionary_mask: crate::value_vec::DICTIONARY_STORAGE,
+    inline_property_count: INLINE_PROPERTY_COUNT,
+    extras_tag: cell::NATIVE_OBJECT_EXTRAS_TAG,
+    extras_tag_mask: cell::NATIVE_OBJECT_EXTRAS_TAG_MASK,
+    property_value_size: std::mem::size_of::<Value>(),
+    property_value_align: std::mem::align_of::<Value>(),
+};
+
+const _: () =
+    assert!(NATIVE_OBJECT_LAYOUT.record_size.is_multiple_of(NATIVE_OBJECT_LAYOUT.record_align));
+const _: () =
+    assert!(NATIVE_OBJECT_LAYOUT.property_value_size == std::mem::size_of::<Value>());
+const _: () =
+    assert!(NATIVE_OBJECT_LAYOUT.property_value_align == std::mem::align_of::<Value>());
+const _: () = assert!(NATIVE_OBJECT_LAYOUT.inline_property_count > 0);
+const _: () =
+    assert!(NATIVE_OBJECT_LAYOUT.storage_start_mask & NATIVE_OBJECT_LAYOUT.dictionary_mask == 0);
+
 const _: () = assert!(
     NATIVE_ARRAY_LAYOUT
         .record_size
@@ -3015,11 +3071,16 @@ impl Heap {
             .get(&index)
             .copied()
     }
+    /// The length an array's sparse elements give it, if it has any. Inline where no array
+    /// has any, which every `length` read meets first.
+    #[inline(always)]
     pub(crate) fn sparse_length(&self, array: Value) -> Option<usize> {
-        self.sparse_arrays
-            .as_ref()?
-            .get(&array)
-            .map(|elements| elements.length)
+        let arrays = self.sparse_arrays.as_ref()?;
+        Self::sparse_entry_length(arrays, array)
+    }
+    #[inline(never)]
+    fn sparse_entry_length(arrays: &FxHashMap<Value, SparseElements>, array: Value) -> Option<usize> {
+        arrays.get(&array).map(|elements| elements.length)
     }
     /// The write barrier for an edge stored outside `owner`'s own storage (sparse elements,
     /// owner-attached VM tables): `owner` is logged as if it had been written.

@@ -154,6 +154,40 @@ for (let k = 0; k < 6; k++) {
 }
 
 #[test]
+fn warmed_environment_rest_calls_with_fewer_values_than_parameters_match_node() {
+    // A closure-holding function with fixed parameters before a rest list runs as a
+    // frameless environment activation once warm; calls passing fewer values than its
+    // fixed parameters gather an empty rest list (they panicked before cbaf372c1).
+    let source = r#"
+function outer() {
+  function r(a, b, ...m) {
+    const f = () => m.length + (a === undefined ? 0 : 1) + (b === undefined ? 0 : 10);
+    return f();
+  }
+  let sum = 0;
+  for (let i = 0; i < 3000; i++) sum += r() + r(1) + r(1, 2) + r(1, 2, 3, 4);
+  return sum;
+}
+console.log(outer());
+const o = { r(a, b, ...m) { const g = () => m; return g().length + (b ?? 0); } };
+let t = 0;
+for (let i = 0; i < 3000; i++) t += o.r(i) + o.r.call(o) + o.r.apply(o, [1]) + o.r(1, 2, 3);
+console.log(t);
+"#;
+
+    let node = observe_node_source(source);
+    assert!(node.status.success(), "Node oracle failed: {node:?}");
+    let quench = observe_source(source);
+    assert_eq!(
+        quench.outcome(),
+        RunResult::Pass,
+        "Quench failed: {:?}",
+        quench.worker
+    );
+    assert_eq!(quench.stdout, node.stdout, "Node and Quench output differ");
+}
+
+#[test]
 fn deep_named_calls_raise_catchable_range_error_and_recover() {
     let source = r#"
 function Box() {}
@@ -299,6 +333,36 @@ for (const ty of ['anyfunc', 'funcref', 'externref', 'anyref', 'eqref', 'i31ref'
   c('table:' + ty, () => { const table = new WebAssembly.Table({ element: ty, initial: 1 }); table.set(0, 7); return table.get(0); });
 }
 console.log(out.join(' '));
+"#;
+    let node = observe_node_source(source);
+    assert!(node.status.success(), "Node oracle failed: {node:?}");
+    let quench = observe_source(source);
+    assert_eq!(quench.outcome(), RunResult::Pass, "{:?}", quench.worker);
+    assert_eq!(quench.stdout, node.stdout);
+}
+
+#[test]
+fn non_callable_calls_name_their_callee_like_node() {
+    // V8's CallPrinter: names, property chains, computed keys, sequences, operators,
+    // literals, nested calls and constructions, optional chains and private fields.
+    let source = r#"
+'use strict';
+const o = { a: { b: 2, 1: 3 }, n: null, s: 'str', arr: [1] };
+const value = { valueOf: 1 };
+let x = 5, k = 'b', f = () => 1, u;
+class C { #p = 1; m() { return this.#p(); } static s() { return super.toString.call(1)(); } }
+const cases = [
+  () => value.valueOf(), () => o.a.b(), () => o.a['b'](), () => o.a[1](), () => o.a[k](), () => (0, value.valueOf)(),
+  () => x(), () => u(), () => o.s(), () => o.n(), () => o.zz(), () => o?.a.b(), () => o.a?.b(), () => o.a.b?.(),
+  () => f()(), () => (x || o.a.b)(), () => (x && 3)(), () => (x + 1)(), () => (-x)(), () => (typeof x)(), () => (void 0)(),
+  () => (x++)(), () => (x ? 1 : 2)(), () => (x = 3)(), () => [1, 2]['length'](), () => [](), () => ({}).a(), () => ({ a: 1, b: 2 })(),
+  () => 'abc'(), () => 'abc'.length(), () => (1)(), () => /re/g.lastIndex(), () => new C().m(), () => this(),
+  () => new o.a.b(), () => new x(), () => new (f())(), () => new o.a['b'](), () => new f(),
+  () => (function () {})()(), () => (() => 1)()(), () => o.arr[0](), () => new Date().getTime()(), () => `t`(), () => (null)(), () => (true)(),
+  () => o.a
+    .b(), () => [...o.arr].x(), () => JSON.parse('1')(), () => (x, k, o.a.b)(), () => (x == 1)(), () => (x in o)(), () => (x instanceof Object)(),
+];
+for (const c of cases) { try { c(); console.log('no error'); } catch (e) { console.log(e.constructor.name + ': ' + e.message); } }
 "#;
     let node = observe_node_source(source);
     assert!(node.status.success(), "Node oracle failed: {node:?}");

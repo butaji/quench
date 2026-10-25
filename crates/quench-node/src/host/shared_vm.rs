@@ -217,7 +217,7 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "consoleGlobalInitialize" (0) => commonjs::initialize_console_global,
         method "consoleLog" (0) => crate::modules::console_shared_vm::log,
         method "consoleLoad" (0) => crate::modules::console_shared_vm::load,
-        method "processWarningListener" (0) => crate::modules::process_shared_vm::warning_listener,
+        method "processWarningListenerInitialize" (0) => crate::modules::process_shared_vm::initialize_warning_listener,
         method "processWarningLibrary" (1) => crate::modules::process_warning_shared_vm::library,
         method "processWarningOption" (1) => crate::modules::process_warning_shared_vm::option,
         method "processWarningBasename" (2) => crate::modules::process_warning_shared_vm::path_basename,
@@ -1101,15 +1101,14 @@ impl quench_runtime::Host for NodeHost {
     /// NavierStokes `--jit` under MemoryFirst, plain x86_64 build, 2026-10-22: max RSS
     /// 10.84-10.94 -> 8.80-8.89 MB, Score within noise).
     fn before_native_compilation(&mut self) {
-        crate::host::resident_pages::release_read_only_pages();
+        crate::host::resident_pages::at_native_compilation(crate::host::resident_pages::NativeCompilation::Before);
     }
 
     /// The code generator's pages, and the allocator's pages its scratch memory freed, leave
     /// the resident set before the program runs on (V8-v7 Crypto `--jit` under MemoryFirst,
     /// plain x86_64 build, 2026-10-22: max RSS 6.82-6.84 -> 5.91 MB with the release before).
     fn after_native_compilation(&mut self) {
-        crate::host::resident_pages::release_read_only_pages();
-        crate::host::resident_pages::release_free_heap_pages();
+        crate::host::resident_pages::at_native_compilation(crate::host::resident_pages::NativeCompilation::After);
     }
 
     /// Snapshots and compile-cache entries are tracked read-only mappings
@@ -1145,6 +1144,10 @@ impl quench_runtime::Host for NodeHost {
     }
 
     fn proper_tail_calls(&self) -> bool {
+        false
+    }
+
+    fn nonextensible_applies_to_private(&self) -> bool {
         false
     }
 
