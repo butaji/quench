@@ -106,10 +106,7 @@ impl<H: Host> Vm<H> {
         let number = self.native_value(Native::Number);
         self.set_builtin_function_name(number, "Number")?;
         let prototype = self.object();
-        self.realm
-            .intrinsics
-            .builtin_prototypes
-            .insert((self.realm.globals, Native::Number), prototype);
+        self.realm.intrinsics.builtin_prototypes.insert((self.realm.globals, Native::Number), prototype);
         self.set_builtin_value_named(number, "prototype", prototype)?;
         let prototype_key = self.prototype_atom();
         self.set_property_attributes(
@@ -124,9 +121,7 @@ impl<H: Host> Vm<H> {
                 setter: None,
             },
         );
-        self.object_data_mut(prototype)
-            .expect("primitive prototype")
-            .set_boxed_primitive(Value::number(0.0));
+        self.object_data_mut(prototype).expect("primitive prototype").set_boxed_primitive(Value::number(0.0));
         self.set_builtin_value_named(prototype, "constructor", number)?;
         self.set_builtin_named(program, prototype, "toString", Native::NumberString)?;
         self.set_builtin_named(program, prototype, "valueOf", Native::NumberValueOf)?;
@@ -181,10 +176,7 @@ impl<H: Host> Vm<H> {
         let prototype = self
             .heap
             .alloc(Cell::Object(Self::empty_object(object_prototype)));
-        self.realm
-            .intrinsics
-            .builtin_prototypes
-            .insert((global, Native::Number), prototype);
+        self.realm.intrinsics.builtin_prototypes.insert((global, Native::Number), prototype);
         self.set_builtin_value_named(constructor, "prototype", prototype)?;
         let prototype_key = self.prototype_atom();
         self.set_property_attributes(
@@ -200,9 +192,7 @@ impl<H: Host> Vm<H> {
             },
         );
         self.set_builtin_value_named(prototype, "constructor", constructor)?;
-        self.object_data_mut(prototype)
-            .expect("primitive prototype")
-            .set_boxed_primitive(Value::number(0.0));
+        self.object_data_mut(prototype).expect("primitive prototype").set_boxed_primitive(Value::number(0.0));
         let methods = [
             ("toString", Native::NumberString),
             ("valueOf", Native::NumberValueOf),
@@ -285,7 +275,9 @@ impl<H: Host> Vm<H> {
                     let _ = self.to_number(p, value)?;
                 }
             }
-            return Ok(self.heap.alloc_string(number_to_decimal(number).into()));
+            return Ok(self
+                .heap
+                .alloc_string(number_to_decimal(number).into()));
         }
         let digits = digits_value
             .map(|value| self.number_format_digits(p, value))
@@ -437,9 +429,7 @@ pub(super) fn number_predicate(native: Native, value: Value) -> Option<bool> {
         Native::NumberIsNaN => number.is_some_and(f64::is_nan),
         Native::NumberIsFinite => number.is_some_and(f64::is_finite),
         Native::NumberIsInteger => number.is_some_and(integral),
-        Native::NumberIsSafeInteger => {
-            number.is_some_and(|number| integral(number) && number.abs() <= MAX_SAFE_INTEGER)
-        }
+        Native::NumberIsSafeInteger => number.is_some_and(|number| integral(number) && number.abs() <= MAX_SAFE_INTEGER),
         _ => return None,
     })
 }
@@ -579,11 +569,7 @@ pub(super) fn math_numbers(native: Native, values: &[f64]) -> Option<f64> {
     Some(match native {
         Native::MathMin | Native::MathMax => {
             let min = native == Native::MathMin;
-            let mut result = if min {
-                f64::INFINITY
-            } else {
-                f64::NEG_INFINITY
-            };
+            let mut result = if min { f64::INFINITY } else { f64::NEG_INFINITY };
             for &number in values {
                 if number.is_nan() {
                     return Some(f64::NAN);

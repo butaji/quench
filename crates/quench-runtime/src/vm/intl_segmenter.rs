@@ -283,8 +283,7 @@ impl<H: Host> Vm<H> {
             }
             match vm.segment_data(p, data, index)? {
                 Some((value, end)) => {
-                    if let Some(IteratorRecord { index, ext, .. }) = vm.heap.iterator_mut(iterator)
-                    {
+                    if let Some(IteratorRecord { index, ext, .. }) = vm.heap.iterator_mut(iterator) {
                         ext.store_position(index, end);
                     }
                     vm.iterator_result(value, false)

@@ -140,10 +140,7 @@ fn write_scalar_field(
         );
     }
     match (field, layout) {
-        (
-            InstructionField::B,
-            FieldLayout::OptionalRegister | FieldLayout::OptionalReadRegister,
-        ) => {
+        (InstructionField::B, FieldLayout::OptionalRegister | FieldLayout::OptionalReadRegister) => {
             write!(output, " b={:?}", instruction.optional_register_b())
         }
         (InstructionField::B, FieldLayout::FunctionIndex) => {
@@ -311,11 +308,7 @@ fn write_index_immediate(output: &mut String, instruction: WideInstruction) -> f
             )
         }
         ImmediateRole::LiteralTemplateIndex => {
-            write!(
-                output,
-                " literal-template={}",
-                instruction.literal_template_index()
-            )
+            write!(output, " literal-template={}", instruction.literal_template_index())
         }
         ImmediateRole::MethodSiteIndex => {
             write!(output, " method-site={}", instruction.method_site_index())

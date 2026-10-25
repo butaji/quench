@@ -132,8 +132,7 @@ impl<H: Host> Vm<H> {
                     let object = self.heap.root_value(source).unwrap();
                     let name = self.heap.root_value(key).unwrap();
                     let descriptor = self.object_get_own_property_descriptor(p, &[object, name])?;
-                    if descriptor.is_undefined()
-                        || !self.descriptor_flag(descriptor, self.runtime_atoms.enumerable)
+                    if descriptor.is_undefined() || !self.descriptor_flag(descriptor, self.runtime_atoms.enumerable)
                     {
                         continue;
                     }
@@ -622,8 +621,9 @@ impl<H: Host> Vm<H> {
         let previous_context = thenable
             .execution_context
             .and_then(|context| self.host.enter_job_context(context));
-        let outcome =
-            self.with_call_roots([thenable.promise, thenable.thenable, thenable.then], |vm| {
+        let outcome = self.with_call_roots(
+            [thenable.promise, thenable.thenable, thenable.then],
+            |vm| {
                 vm.promise_job_boundary(thenable.execution_context, true)?;
                 if vm.is_intrinsic_promise_then(thenable.then)
                     && vm.is_promise(thenable.thenable)
@@ -643,11 +643,11 @@ impl<H: Host> Vm<H> {
                     vm.call_value(p, reject, Value::UNDEFINED, &[reason])?;
                 }
                 Ok(Value::UNDEFINED)
-            });
-        let after = self
-            .with_call_roots([thenable.promise, thenable.thenable, thenable.then], |vm| {
-                vm.promise_job_boundary(thenable.execution_context, false)
-            });
+            },
+        );
+        let after = self.with_call_roots([thenable.promise, thenable.thenable, thenable.then], |vm| {
+            vm.promise_job_boundary(thenable.execution_context, false)
+        });
         if thenable.execution_context.is_some() {
             self.host.restore_job_context(previous_context);
         }

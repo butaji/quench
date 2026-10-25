@@ -23,9 +23,7 @@ pub(super) struct DirectMappedTable<T: Copy, const ENTRIES: usize> {
 
 impl<T: Copy, const ENTRIES: usize> Default for DirectMappedTable<T, ENTRIES> {
     fn default() -> Self {
-        Self {
-            entries: OnceCell::new(),
-        }
+        Self { entries: OnceCell::new() }
     }
 }
 
@@ -55,17 +53,11 @@ impl<T: Copy, const ENTRIES: usize> DirectMappedTable<T, ENTRIES> {
     #[inline(never)]
     fn allocate(&self) -> &[Cell<Option<T>>] {
         let () = Self::POWER_OF_TWO;
-        self.entries
-            .get_or_init(|| (0..ENTRIES).map(|_| Cell::new(None)).collect())
+        self.entries.get_or_init(|| (0..ENTRIES).map(|_| Cell::new(None)).collect())
     }
 
     pub(super) fn clear(&self) {
-        for entry in self
-            .entries
-            .get()
-            .into_iter()
-            .flat_map(|entries| entries.iter())
-        {
+        for entry in self.entries.get().into_iter().flat_map(|entries| entries.iter()) {
             entry.set(None);
         }
     }
@@ -90,9 +82,7 @@ pub(super) type PlainAssignShapeMemo = ShapeMemo<(u32, super::Value), (u32, u64)
 
 impl<K: Copy + Eq + Hash, V: Copy> Default for ShapeMemo<K, V> {
     fn default() -> Self {
-        Self {
-            entries: DirectMappedTable::default(),
-        }
+        Self { entries: DirectMappedTable::default() }
     }
 }
 
@@ -136,8 +126,7 @@ impl<K: Copy + Eq + Hash, V: Copy> ShapeMemo<K, V> {
     }
 
     pub(super) fn record(&self, shape: u32, key: K, value: V) {
-        self.entries
-            .set(Self::index(shape, key), (shape, key, value));
+        self.entries.set(Self::index(shape, key), (shape, key, value));
     }
 
     pub(super) fn clear(&self) {

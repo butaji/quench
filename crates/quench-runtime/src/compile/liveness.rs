@@ -1,7 +1,6 @@
 use crate::bytecode::{
     ControlFlowLayout, FieldLayout, FieldLookup, FieldSite, Function, ImmediateLayout,
-    ImmediateRole, Instr, InstructionField, Op, Operand, Register, Superinstruction,
-    WideInstruction,
+    ImmediateRole, Instr, InstructionField, Op, Operand, Register, Superinstruction, WideInstruction,
 };
 
 /// A set of registers, one bit each: the uses, definitions and live registers liveness
@@ -34,11 +33,7 @@ pub(crate) trait MethodArguments {
 
 impl MethodArguments for [MethodSite] {
     fn arguments(&self, site: usize) -> RegisterSet {
-        self[site]
-            .2
-            .iter()
-            .copied()
-            .fold(0, |mask, register| mask | register_bit(register))
+        self[site].2.iter().copied().fold(0, |mask, register| mask | register_bit(register))
     }
 }
 
@@ -119,10 +114,7 @@ pub(super) fn transfer(
 /// successors all follow it, so only code with a backward successor iterates to a fixed point.
 /// Each instruction's successors are enumerated once, into `successors[starts[pc]..starts[pc
 /// + 1]]`, which every pass then reads.
-pub(super) fn analyze_transfers(
-    function: &Function,
-    transfers: &[(RegisterSet, RegisterSet)],
-) -> Vec<RegisterSet> {
+pub(super) fn analyze_transfers(function: &Function, transfers: &[(RegisterSet, RegisterSet)]) -> Vec<RegisterSet> {
     let length = function.code.len();
     let mut starts = Vec::with_capacity(length + 1);
     let mut successors = Vec::with_capacity(length);
@@ -176,8 +168,7 @@ pub(super) fn live_out(
 /// enclosing handler: a call that throws, or a suspension point (an awaited rejection, a
 /// generator's `throw` or `return`).
 fn resumes_into_handler(op: Op) -> bool {
-    op.control_flow_layout() == ControlFlowLayout::Call
-        || matches!(op, Op::Await | Op::Yield | Op::YieldStar)
+    op.control_flow_layout() == ControlFlowLayout::Call || matches!(op, Op::Await | Op::Yield | Op::YieldStar)
 }
 
 pub(super) fn add_suspended_exception_roots(function: &Function, live: &mut [RegisterSet]) {
@@ -239,11 +230,7 @@ pub(super) fn uses(
     field_reads | result | packed_uses | indexed_uses
 }
 
-fn field_uses(
-    instruction: WideInstruction,
-    field: InstructionField,
-    fields: &[FieldSite],
-) -> RegisterSet {
+fn field_uses(instruction: WideInstruction, field: InstructionField, fields: &[FieldSite]) -> RegisterSet {
     let layout = instruction.op().field_layout(field);
     match layout {
         FieldLayout::RegisterWindowBase => {
@@ -260,9 +247,7 @@ fn field_uses(
             operand(input_operand.0, fields)
         }
         FieldLayout::FieldBase => field_base(instruction, fields),
-        FieldLayout::OptionalReadRegister => {
-            instruction.optional_register_b().map_or(0, register_bit)
-        }
+        FieldLayout::OptionalReadRegister => instruction.optional_register_b().map_or(0, register_bit),
         FieldLayout::ConstructArguments => match instruction.construct_arguments() {
             crate::bytecode::ConstructArguments::Registers(window) => {
                 range(window.base, window.count)
@@ -352,10 +337,7 @@ fn operand(value: u16, fields: &[FieldSite]) -> RegisterSet {
     0
 }
 
-fn method_arguments(
-    instruction: WideInstruction,
-    methods: &(impl MethodArguments + ?Sized),
-) -> RegisterSet {
+fn method_arguments(instruction: WideInstruction, methods: &(impl MethodArguments + ?Sized)) -> RegisterSet {
     methods.arguments(instruction.method_site_index())
 }
 
@@ -469,15 +451,9 @@ mod tests {
             Op::WasmAtomicAccess,
         ] {
             let instruction = Instr::new(op, 0, 1, 3, 0);
-            assert_eq!(
-                uses(instruction.as_wide(), NO_METHODS, &[], &[]),
-                register_bit(1) | register_bit(2) | register_bit(3)
-            );
+            assert_eq!(uses(instruction.as_wide(), NO_METHODS, &[], &[]), register_bit(1) | register_bit(2) | register_bit(3));
             assert_eq!(definitions(instruction.as_wide(), &[]), register_bit(0));
-            assert_eq!(
-                uses(Instr::new(op, 0, 0, 0, 0).as_wide(), NO_METHODS, &[], &[]),
-                0
-            );
+            assert_eq!(uses(Instr::new(op, 0, 0, 0, 0).as_wide(), NO_METHODS, &[], &[]), 0);
         }
     }
 
@@ -491,10 +467,7 @@ mod tests {
             1,
             0,
         );
-        assert_eq!(
-            uses(append.as_wide(), NO_METHODS, &[], &[]),
-            register_bit(1) | register_bit(2)
-        );
+        assert_eq!(uses(append.as_wide(), NO_METHODS, &[], &[]), register_bit(1) | register_bit(2));
         assert_eq!(definitions(append.as_wide(), &[]), 0);
         // A store's optional register receives a copy of the stored value.
         let store = Instr::new(

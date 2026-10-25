@@ -2,8 +2,7 @@ use super::*;
 use oxc_ast::ast::{BinaryOperator, UnaryOperator};
 
 /// Shared Number/BigInt content mismatch diagnostic.
-pub(super) const MIXED_BIGINT_TYPES: &str =
-    "Cannot mix BigInt and other types, use explicit conversions";
+pub(super) const MIXED_BIGINT_TYPES: &str = "Cannot mix BigInt and other types, use explicit conversions";
 
 pub(super) enum ArrayLikeElementKind {
     Any,
@@ -734,16 +733,8 @@ pub(super) fn number_value_operator<const OP: u32>(left: Value, right: Value) ->
 #[inline(always)]
 fn bitwise_value_operator<const OP: u32>(left: Value, right: Value) -> Option<Value> {
     let operation = NumberBitwise::from_binary_operator(numeric_binary_operator(OP)?)?;
-    let int32 = |value: Value| {
-        value
-            .as_int()
-            .or_else(|| value.as_number().map(|number| number_to_u32(number) as i32))
-    };
-    Some(number_bitwise_result(
-        operation,
-        int32(left)?,
-        int32(right)?,
-    ))
+    let int32 = |value: Value| value.as_int().or_else(|| value.as_number().map(|number| number_to_u32(number) as i32));
+    Some(number_bitwise_result(operation, int32(left)?, int32(right)?))
 }
 
 /// Integer operator `OP` (`numeric_integer_result`) when both operands are integers;
@@ -907,16 +898,15 @@ impl<H: Host> Vm<H> {
         args: &[Value],
     ) -> Result<Value, JsError> {
         self.check_execution_interrupt()?;
-        let result =
-            self.with_call_roots(std::iter::once(this).chain(args.iter().copied()), |vm| {
-                let receiver = vm.string_method_receiver(p, native, this)?;
-                if receiver == this {
-                    return vm.call_native_dispatch(p, native, receiver, args);
-                }
-                vm.with_call_roots([receiver], |vm| {
-                    vm.call_native_dispatch(p, native, receiver, args)
-                })
-            });
+        let result = self.with_call_roots(std::iter::once(this).chain(args.iter().copied()), |vm| {
+            let receiver = vm.string_method_receiver(p, native, this)?;
+            if receiver == this {
+                return vm.call_native_dispatch(p, native, receiver, args);
+            }
+            vm.with_call_roots([receiver], |vm| {
+                vm.call_native_dispatch(p, native, receiver, args)
+            })
+        });
         // String natives make text on demand; charge it before the caller's next safepoint.
         self.heap.charge_materialized_text();
         result
@@ -1369,9 +1359,7 @@ impl<H: Host> Vm<H> {
             Native::GlobalIsNaN | Native::GlobalIsFinite => {
                 let value = args.first().copied().unwrap_or(Value::UNDEFINED);
                 let number = self.to_number(p, value)?;
-                Ok(Value::boolean(
-                    super::number::global_number_predicate(native, number).unwrap_or_default(),
-                ))
+                Ok(Value::boolean(super::number::global_number_predicate(native, number).unwrap_or_default()))
             }
             Native::MathLog => {
                 let v = args.first().copied().unwrap_or(Value::UNDEFINED);
@@ -1924,7 +1912,9 @@ impl<H: Host> Vm<H> {
                 );
                 // ToPrimitive of a string is the string itself and concatenation never
                 // collects, so string + string needs neither coercion nor extra roots.
-                if self.heap.is_string(left) && self.heap.is_string(right) {
+                if self.heap.is_string(left)
+                    && self.heap.is_string(right)
+                {
                     return self.concatenate(p, left, right);
                 }
                 return self.with_coerced_operands(
@@ -2146,12 +2136,7 @@ impl<H: Host> Vm<H> {
 
     /// `binary_bigint` where it succeeds, for callers that leave failures to it: the result
     /// allocated, or `None`.
-    pub(super) fn bigint_binary_value(
-        &mut self,
-        op: u32,
-        left: Value,
-        right: Value,
-    ) -> Option<Value> {
+    pub(super) fn bigint_binary_value(&mut self, op: u32, left: Value, right: Value) -> Option<Value> {
         let value = self.bigint_operation(op, left, right)?.ok()?;
         Some(self.heap.alloc(Cell::bigint(value)))
     }
@@ -2221,10 +2206,7 @@ impl<H: Host> Vm<H> {
     ) -> Option<Value> {
         let (left_string, right_string) = (self.is_string(left), self.is_string(right));
         let converts = |string: bool, value: Value| string || value.as_number().is_some();
-        if !(left_string || right_string)
-            || !converts(left_string, left)
-            || !converts(right_string, right)
-        {
+        if !(left_string || right_string) || !converts(left_string, left) || !converts(right_string, right) {
             return None;
         }
         self.concatenate(p, left, right).ok()
@@ -2316,11 +2298,7 @@ impl<H: Host> Vm<H> {
             return None;
         };
         let integer: &num_bigint::BigInt = integer;
-        let next = if decrement {
-            integer - 1_u8
-        } else {
-            integer + 1_u8
-        };
+        let next = if decrement { integer - 1_u8 } else { integer + 1_u8 };
         Some(self.heap.alloc(Cell::bigint(next)))
     }
 
@@ -2397,11 +2375,7 @@ impl<H: Host> Vm<H> {
                 (false, true) => self.is_html_dda(left),
                 (false, false) => match (self.heap.get(left), self.heap.get(right)) {
                     // Operands of one type compare as `===` does.
-                    _ if let (Some(l), Some(r)) =
-                        (self.heap.string(left), self.heap.string(right)) =>
-                    {
-                        l == r
-                    }
+                    _ if let (Some(l), Some(r)) = (self.heap.string(left), self.heap.string(right)) => l == r,
                     (Some(Cell::BigInt(left)), Some(Cell::BigInt(right))) => left == right,
                     _ if self.is_object_like(left) && self.is_object_like(right) => false,
                     _ => return None,
@@ -2451,8 +2425,7 @@ impl<H: Host> Vm<H> {
         if let Some(values) = self.dense_apply_arguments(list)
             && (matches!(element_kind, ArrayLikeElementKind::Any)
                 || values.iter().all(|value| {
-                    self.heap.is_string(*value)
-                        || matches!(self.heap.get(*value), Some(Cell::Symbol(_)))
+                    self.heap.is_string(*value) || matches!(self.heap.get(*value), Some(Cell::Symbol(_)))
                 }))
         {
             return Ok(values);

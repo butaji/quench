@@ -103,11 +103,7 @@ impl<H: Host> Vm<H> {
                 },
             )?;
         }
-        if self
-            .well_known_symbols
-            .get(WellKnownSymbol::ToStringTag)
-            .is_some()
-        {
+        if self.well_known_symbols.get(WellKnownSymbol::ToStringTag).is_some() {
             self.install_builtin_to_string_tag(prototype, "DataView")?;
         }
         if global == self.realm.globals {
@@ -337,26 +333,10 @@ impl<H: Host> Vm<H> {
             return None;
         }
         let (buffer, offset, length) = self.data_view_view(this)?;
-        let index = data_view_index_of(
-            args.first()
-                .copied()
-                .unwrap_or(Value::UNDEFINED)
-                .immediate_number()?,
-        )?;
+        let index = data_view_index_of(args.first().copied().unwrap_or(Value::UNDEFINED).immediate_number()?)?;
         if data_view_setter(native)
-            && (args
-                .get(1)
-                .copied()
-                .unwrap_or(Value::UNDEFINED)
-                .immediate_number()
-                .is_none()
-                || matches!(
-                    self.heap.get(buffer),
-                    Some(Cell::ArrayBuffer {
-                        immutable: true,
-                        ..
-                    })
-                ))
+            && (args.get(1).copied().unwrap_or(Value::UNDEFINED).immediate_number().is_none()
+                || matches!(self.heap.get(buffer), Some(Cell::ArrayBuffer { immutable: true, .. })))
         {
             return None;
         }
@@ -427,19 +407,14 @@ impl<H: Host> Vm<H> {
         }
         let little_endian = width > 1
             && args
-                .get(if is_setter {
-                    DATA_VIEW_SET_ENDIAN_ARGUMENT
-                } else {
-                    DATA_VIEW_GET_ENDIAN_ARGUMENT
-                })
+                .get(if is_setter { DATA_VIEW_SET_ENDIAN_ARGUMENT } else { DATA_VIEW_GET_ENDIAN_ARGUMENT })
                 .is_some_and(|value| self.truthy(*value));
         match native {
             Native::DataViewBufferGetter => Ok(buffer),
             Native::DataViewByteLengthGetter | Native::DataViewByteOffsetGetter => unreachable!(),
             Native::DataViewGetUint8 => {
                 let value = match self.heap.get(buffer) {
-                    Some(Cell::ArrayBuffer { bytes, .. }) => bytes
-                        .read()
+                    Some(Cell::ArrayBuffer { bytes, .. }) => bytes.read()
                         .get(offset + index)
                         .copied()
                         .ok_or_else(|| JsError("DataView byte offset is out of range".into()))?,
@@ -577,8 +552,7 @@ impl<H: Host> Vm<H> {
 
     fn data_view_byte(&self, buffer: Value, index: usize) -> Result<u8, JsError> {
         match self.heap.get(buffer) {
-            Some(Cell::ArrayBuffer { bytes, .. }) => bytes
-                .read()
+            Some(Cell::ArrayBuffer { bytes, .. }) => bytes.read()
                 .get(index)
                 .copied()
                 .ok_or_else(|| JsError("DataView byte offset is out of range".into())),
@@ -646,7 +620,7 @@ impl<H: Host> Vm<H> {
         let Some(Cell::ArrayBuffer { bytes, .. }) = self.heap.get_mut(buffer) else {
             return Err(JsError("DataView buffer is invalid".into()));
         };
-        let mut guard = bytes.make_mut();
+        let mut guard=bytes.make_mut();
         let Some(slot) = guard.get_mut(index) else {
             return Err(JsError("DataView byte offset is out of range".into()));
         };
@@ -661,8 +635,7 @@ fn data_view_index_of(number: f64) -> Option<usize> {
         return Some(0);
     }
     let integer = number.trunc();
-    (integer.is_finite() && integer >= 0.0 && integer <= MAX_SAFE_INTEGER)
-        .then_some(integer as usize)
+    (integer.is_finite() && integer >= 0.0 && integer <= MAX_SAFE_INTEGER).then_some(integer as usize)
 }
 
 /// Whether `native` is a DataView element `get` or `set` method.

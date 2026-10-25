@@ -54,11 +54,7 @@ pub struct ModuleSource {
 impl ModuleSource {
     /// A module whose bytes are its source text.
     pub fn text(name: impl Into<String>, source: impl Into<std::sync::Arc<str>>) -> Self {
-        Self {
-            name: name.into(),
-            source: source.into(),
-            original_bytes: None,
-        }
+        Self { name: name.into(), source: source.into(), original_bytes: None }
     }
 
     /// A module read as bytes: its source is their UTF-8 decoding, with replacement
@@ -69,20 +65,14 @@ impl ModuleSource {
             Err(error) => {
                 let bytes = error.into_bytes();
                 let source = String::from_utf8_lossy(&bytes).into();
-                Self {
-                    name: name.into(),
-                    source,
-                    original_bytes: Some(bytes.into()),
-                }
+                Self { name: name.into(), source, original_bytes: Some(bytes.into()) }
             }
         }
     }
 
     /// The module's bytes, as an import with `type: "bytes"` reads them.
     pub fn bytes(&self) -> &[u8] {
-        self.original_bytes
-            .as_deref()
-            .unwrap_or(self.source.as_bytes())
+        self.original_bytes.as_deref().unwrap_or(self.source.as_bytes())
     }
 }
 
@@ -220,10 +210,7 @@ pub trait Host {
 
     /// Allocate host metadata before Promise creation becomes observable. This
     /// phase cannot call guest code; reentrant init hooks see the stored identity.
-    fn create_promise_context(
-        &mut self,
-        _parent: Option<HostExecutionContext>,
-    ) -> Option<HostExecutionContext> {
+    fn create_promise_context(&mut self, _parent: Option<HostExecutionContext>) -> Option<HostExecutionContext> {
         None
     }
 
@@ -233,8 +220,7 @@ pub trait Host {
         _promise: crate::RootId,
         _resource: HostExecutionContext,
     ) -> Result<(), crate::RootedError>
-    where
-        Self: Sized,
+    where Self: Sized,
     {
         Ok(())
     }
@@ -244,30 +230,17 @@ pub trait Host {
         _context: &mut crate::NativeContext<'_, Self>,
         _resource: HostExecutionContext,
         _before: bool,
-    ) -> Result<(), crate::RootedError>
-    where
-        Self: Sized,
-    {
-        Ok(())
-    }
+    ) -> Result<(), crate::RootedError> where Self: Sized { Ok(()) }
 
     fn promise_settled(
         _context: &mut crate::NativeContext<'_, Self>,
         _resource: HostExecutionContext,
-    ) -> Result<(), crate::RootedError>
-    where
-        Self: Sized,
-    {
-        Ok(())
-    }
+    ) -> Result<(), crate::RootedError> where Self: Sized { Ok(()) }
 
     /// Capture the host context when the VM creates a Promise or thenable job.
     /// The returned token remains owned by that job until it runs or the VM
     /// collects it.
-    fn capture_job_context(
-        &mut self,
-        _resource: Option<HostExecutionContext>,
-    ) -> Option<HostExecutionContext> {
+    fn capture_job_context(&mut self, _resource: Option<HostExecutionContext>) -> Option<HostExecutionContext> {
         None
     }
 
@@ -331,11 +304,7 @@ pub trait Host {
 
     /// Check a resolved module against the type its import requested (`with { type }`,
     /// `"javascript"` when absent): the host owns each module's format.
-    fn validate_module_type(
-        &mut self,
-        _module: &ModuleSource,
-        _module_type: &str,
-    ) -> Result<(), ModuleLoadError> {
+    fn validate_module_type(&mut self, _module: &ModuleSource, _module_type: &str) -> Result<(), ModuleLoadError> {
         Ok(())
     }
 
@@ -431,12 +400,7 @@ pub struct ModuleLoadError {
 
 impl ModuleLoadError {
     pub fn new(kind: ModuleLoadErrorKind, code: &'static str, message: impl Into<String>) -> Self {
-        Self {
-            kind,
-            code: Some(code),
-            message: message.into(),
-            fields: Vec::new(),
-        }
+        Self { kind, code: Some(code), message: message.into(), fields: Vec::new() }
     }
 
     /// Add an own string property after `code`.
@@ -450,12 +414,7 @@ impl ModuleLoadError {
 /// An uncoded `TypeError`, the report of a host without its own error identities.
 impl From<String> for ModuleLoadError {
     fn from(message: String) -> Self {
-        Self {
-            kind: ModuleLoadErrorKind::TypeError,
-            code: None,
-            message,
-            fields: Vec::new(),
-        }
+        Self { kind: ModuleLoadErrorKind::TypeError, code: None, message, fields: Vec::new() }
     }
 }
 

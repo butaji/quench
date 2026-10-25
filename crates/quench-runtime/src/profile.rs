@@ -172,12 +172,7 @@ fn object_literal_site_executions(
     program: &crate::bytecode::ResidualProgram,
 ) -> Vec<ObjectLiteralSiteExecution> {
     let mut sites = Vec::new();
-    for (function_id, function) in program
-        .functions
-        .iter()
-        .enumerate()
-        .filter_map(|(id, slot)| slot.record().map(|function| (id, function)))
-    {
+    for (function_id, function) in program.functions.iter().enumerate().filter_map(|(id, slot)| slot.record().map(|function| (id, function))) {
         for (pc, encoded) in function.code.iter().copied().enumerate() {
             let Some((dispatch_op, site_op, site)) =
                 object_literal_site(encoded, function, program)
@@ -223,10 +218,9 @@ impl Profile {
             self.last_locations.resize(frame + 1, None);
             self.prior_locations.resize(frame + 1, None);
         }
-        if let (
-            Some((prior_program, prior_function, prior_pc, _)),
-            Some((last_program, last_function, last_pc, _)),
-        ) = (self.prior_locations[frame], self.last_locations[frame])
+        if let (Some((prior_program, prior_function, prior_pc, _)),
+            Some((last_program, last_function, last_pc, _))) =
+            (self.prior_locations[frame], self.last_locations[frame])
             && prior_program == program
             && last_program == program
             && prior_function == function
@@ -277,10 +271,7 @@ impl Profile {
             eprint!("{{\"kind\":\"quench-dispatch-opcode-census-all\",\"counts\":{{");
             for (opcode, count) in counts.iter().enumerate() {
                 let separator = if opcode == 0 { "" } else { "," };
-                eprint!(
-                    "{separator}\"{}\":{count}",
-                    crate::bytecode::Op::NAMES[opcode]
-                );
+                eprint!("{separator}\"{}\":{count}", crate::bytecode::Op::NAMES[opcode]);
             }
             eprintln!("}}}}");
             return true;
@@ -673,11 +664,7 @@ impl Profile {
         // A program releases bytecode records after compiling them. The full
         // function/site report needs those records, but physical opcode and
         // pair counters remain available and can still be reported safely.
-        if program
-            .functions
-            .iter()
-            .any(|function| function.record().is_none())
-        {
+        if program.functions.iter().any(|function| function.record().is_none()) {
             self.report_released_program(program_id);
             return;
         }
@@ -903,9 +890,7 @@ impl Profile {
             .get(program_id as usize)
             .map(Vec::as_slice)
             .unwrap_or(&[]);
-        eprint!(
-            "{{\"kind\":\"quench-profile-released-program\",\"program_id\":{program_id},\"opcodes\":{{"
-        );
+        eprint!("{{\"kind\":\"quench-profile-released-program\",\"program_id\":{program_id},\"opcodes\":{{");
         for (index, count) in opcodes.iter().enumerate() {
             if index != 0 {
                 eprint!(",");
@@ -914,12 +899,7 @@ impl Profile {
         }
         eprint!("}},\"pairs\":[");
         let mut first = true;
-        for (index, count) in pairs
-            .iter()
-            .copied()
-            .enumerate()
-            .filter(|(_, count)| *count != 0)
-        {
+        for (index, count) in pairs.iter().copied().enumerate().filter(|(_, count)| *count != 0) {
             if !first {
                 eprint!(",");
             }

@@ -186,15 +186,7 @@ impl ValueArena {
     /// The arena as a snapshot keeps it (`crate::snapshot`): storage positions name places in
     /// `values`, so the vector and its free ranges are written as they are.
     pub(crate) fn write_snapshot(&self, writer: &mut crate::snapshot::Writer) {
-        let Self {
-            values,
-            free,
-            released_values,
-            shape_lengths,
-            dictionaries,
-            free_dictionaries,
-            next_dictionary,
-        } = self;
+        let Self { values, free, released_values, shape_lengths, dictionaries, free_dictionaries, next_dictionary } = self;
         writer.values(values);
         for bucket in free {
             writer.u32s(bucket);
@@ -214,9 +206,7 @@ impl ValueArena {
         writer.u32(*next_dictionary);
     }
 
-    pub(crate) fn read_snapshot(
-        reader: &mut crate::snapshot::Reader<'_>,
-    ) -> crate::snapshot::SnapshotResult<Self> {
+    pub(crate) fn read_snapshot(reader: &mut crate::snapshot::Reader<'_>) -> crate::snapshot::SnapshotResult<Self> {
         let values = reader.values()?;
         let mut free: [Vec<u32>; BUCKETS] = Default::default();
         for bucket in &mut free {
@@ -226,8 +216,7 @@ impl ValueArena {
         let shape_lengths = reader.u32s()?;
         let dictionaries = crate::snapshot::read_list(reader, |reader| {
             let id = reader.u32()?;
-            let entries =
-                crate::snapshot::read_list(reader, |reader| Ok((reader.u32()?, reader.value()?)))?;
+            let entries = crate::snapshot::read_list(reader, |reader| Ok((reader.u32()?, reader.value()?)))?;
             Ok((id, entries.into_iter().collect()))
         })?
         .into_iter()
@@ -379,12 +368,7 @@ impl ValueArena {
     /// # Safety
     /// As for `set_unchecked`, and `vector` is not a dictionary.
     #[inline(always)]
-    pub(crate) unsafe fn set_flat_unchecked(
-        &mut self,
-        vector: ValueVec,
-        index: usize,
-        value: Value,
-    ) {
+    pub(crate) unsafe fn set_flat_unchecked(&mut self, vector: ValueVec, index: usize, value: Value) {
         debug_assert!(!vector.is_dictionary());
         // SAFETY: caller provides the same initialized-range invariant as get.
         unsafe {
@@ -486,8 +470,7 @@ impl ValueArena {
         let len = self.len(vector);
         match self.allocate(capacity, MAX_ARENA_START) {
             Some(start) => {
-                self.values
-                    .copy_within(vector.start()..vector.start() + len, start);
+                self.values.copy_within(vector.start()..vector.start() + len, start);
                 copy.relocate(start);
             }
             None => {
@@ -769,11 +752,7 @@ mod tests {
         assert_eq!(copy.auxiliary(), source.auxiliary());
         arena.release(source);
         let reused = arena.with_values(1, &[Value::number(7.0), Value::number(8.0)]);
-        assert_eq!(
-            reused.start(),
-            source.start(),
-            "the released range is reused"
-        );
+        assert_eq!(reused.start(), source.start(), "the released range is reused");
         assert_eq!(arena.get(copy, 0).unwrap().as_number(), Some(1.0));
         assert_eq!(arena.get(copy, 1).unwrap().as_number(), Some(2.0));
 
@@ -782,10 +761,7 @@ mod tests {
         let dictionary_copy = arena.duplicate(source);
         assert_ne!(dictionary_copy.dictionary_id(), source.dictionary_id());
         arena.set(source, 0, Value::number(4.0));
-        assert_eq!(
-            arena.get(dictionary_copy, 0).unwrap().as_number(),
-            Some(3.0)
-        );
+        assert_eq!(arena.get(dictionary_copy, 0).unwrap().as_number(), Some(3.0));
     }
 
     #[test]
@@ -798,10 +774,7 @@ mod tests {
             .collect();
         assert!(!arena.compaction_due());
         arena.release(vectors[0]);
-        assert!(
-            !arena.compaction_due(),
-            "one range of eight stays for reuse"
-        );
+        assert!(!arena.compaction_due(), "one range of eight stays for reuse");
         arena.release(vectors[1]);
         assert!(arena.compaction_due(), "a quarter of the arena is released");
         // Reusing a released range takes it off the free lists.

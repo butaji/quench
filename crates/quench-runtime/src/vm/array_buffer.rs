@@ -9,22 +9,10 @@ pub(super) enum BufferIndexUse {
 
 impl<H: Host> Vm<H> {
     /// Object identity and shared data-block identity are distinct facts.
-    pub(super) fn array_buffers_share_data_block(&self, left: Value, right: Value) -> bool {
-        if left == right {
-            return true;
-        }
-        let backing = |v| match self.heap.get(v) {
-            Some(Cell::ArrayBuffer {
-                bytes,
-                shared: true,
-                ..
-            }) => bytes.shared_backing(),
-            _ => None,
-        };
-        match (backing(left), backing(right)) {
-            (Some(a), Some(b)) => std::sync::Arc::ptr_eq(&a, &b),
-            _ => false,
-        }
+    pub(super) fn array_buffers_share_data_block(&self,left:Value,right:Value)->bool{
+        if left==right{return true}
+        let backing=|v|match self.heap.get(v){Some(Cell::ArrayBuffer{bytes,shared:true,..})=>bytes.shared_backing(),_=>None};
+        match(backing(left),backing(right)){(Some(a),Some(b))=>std::sync::Arc::ptr_eq(&a,&b),_=>false}
     }
 
     pub(super) fn install_array_buffer(
@@ -319,7 +307,12 @@ impl<H: Host> Vm<H> {
             ),
         ] {
             let native_function = self.native_value(native);
-            self.install_buffer_species(native_function, prototype, self.realm.globals, tag)?;
+            self.install_buffer_species(
+                native_function,
+                prototype,
+                self.realm.globals,
+                tag,
+            )?;
         }
         Ok(())
     }
@@ -331,11 +324,7 @@ impl<H: Host> Vm<H> {
         global: Value,
         tag: &str,
     ) -> Result<(), JsError> {
-        if self
-            .well_known_symbols
-            .get(WellKnownSymbol::ToStringTag)
-            .is_some()
-        {
+        if self.well_known_symbols.get(WellKnownSymbol::ToStringTag).is_some() {
             self.install_builtin_to_string_tag(prototype, tag)?;
         }
         if let Some(species) = self.well_known_symbols.get(WellKnownSymbol::Species) {
@@ -504,16 +493,7 @@ impl<H: Host> Vm<H> {
                 })?;
         }
         let prototype = self.array_buffer_prototype_from_new_target(p, new_target, shared)?;
-        let bytes = if shared {
-            crate::heap::BufferBytes::from_shared(
-                crate::shared_backing::SharedBacking::new(length, max_byte_length, resizable)
-                    .map_err(|_| {
-                        self.range_error(p, "SharedArrayBuffer allocation failed".into())
-                    })?,
-            )
-        } else {
-            self.array_buffer_zeroed_bytes(p, length)?.into()
-        };
+        let bytes = if shared {crate::heap::BufferBytes::from_shared(crate::shared_backing::SharedBacking::new(length,max_byte_length,resizable).map_err(|_|self.range_error(p,"SharedArrayBuffer allocation failed".into()))?)}else{self.array_buffer_zeroed_bytes(p,length)?.into()};
         let buffer = self.heap.alloc(Cell::ArrayBuffer {
             object: Box::new(Self::empty_object(prototype)),
             bytes,
@@ -580,24 +560,12 @@ impl<H: Host> Vm<H> {
         length: usize,
         shared: bool,
     ) -> Result<Value, JsError> {
-        let bytes = if shared {
-            crate::heap::BufferBytes::from_shared(
-                crate::shared_backing::SharedBacking::new(length, length, false).map_err(|_| {
-                    self.range_error(p, "SharedArrayBuffer allocation failed".into())
-                })?,
-            )
-        } else {
-            self.array_buffer_zeroed_bytes(p, length)?.into()
-        };
+        let bytes = if shared {crate::heap::BufferBytes::from_shared(crate::shared_backing::SharedBacking::new(length,length,false).map_err(|_|self.range_error(p,"SharedArrayBuffer allocation failed".into()))?)}else{self.array_buffer_zeroed_bytes(p,length)?.into()};
         Ok(self.fixed_array_buffer_from(bytes, shared))
     }
 
     /// A fixed-length intrinsic ArrayBuffer that takes ownership of `bytes`.
-    pub(super) fn fixed_array_buffer_from(
-        &mut self,
-        bytes: crate::heap::BufferBytes,
-        shared: bool,
-    ) -> Value {
+    pub(super) fn fixed_array_buffer_from(&mut self, bytes: crate::heap::BufferBytes, shared: bool) -> Value {
         let prototype = self.array_buffer_intrinsic_prototype(shared);
         let length = bytes.len();
         self.heap.alloc(Cell::ArrayBuffer {
@@ -691,11 +659,7 @@ impl<H: Host> Vm<H> {
                     );
                 }
             };
-        if self.array_buffers_share_data_block(result, this)
-            || result_shared != shared
-            || result_detached
-            || result_immutable
-        {
+        if self.array_buffers_share_data_block(result,this) || result_shared != shared || result_detached || result_immutable {
             return Err(self.type_error(p, "ArrayBuffer species returned an invalid buffer".into()));
         }
         if result_bytes.len() < count {
@@ -940,14 +904,7 @@ impl<H: Host> Vm<H> {
         if requested < current_length || requested > max_length {
             return Err(self.range_error(p, "SharedArrayBuffer grow length is out of range".into()));
         }
-        if let Some(Cell::ArrayBuffer { bytes, .. }) = self.heap.get(this) {
-            if let Some(backing) = bytes.shared_backing() {
-                backing
-                    .grow(requested)
-                    .map_err(|_| self.range_error(p, "SharedArrayBuffer grow failed".into()))?;
-                return Ok(Value::UNDEFINED);
-            }
-        }
+        if let Some(Cell::ArrayBuffer{bytes,..})=self.heap.get(this){if let Some(backing)=bytes.shared_backing(){backing.grow(requested).map_err(|_|self.range_error(p,"SharedArrayBuffer grow failed".into()))?;return Ok(Value::UNDEFINED)}}
         let (before, after) = {
             let Some(Cell::ArrayBuffer { bytes, .. }) = self.heap.get_mut(this) else {
                 unreachable!("grow receiver validated before mutation");

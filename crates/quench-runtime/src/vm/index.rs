@@ -25,11 +25,7 @@ impl<H: Host> Vm<H> {
             _ if value.as_number().is_some() => Native::Number,
             _ => return None,
         };
-        self.realm
-            .intrinsics
-            .builtin_prototypes
-            .get(&(self.realm.globals, native))
-            .copied()
+        self.realm.intrinsics.builtin_prototypes.get(&(self.realm.globals, native)).copied()
     }
 
     pub(super) fn require_object_coercible(
@@ -58,9 +54,9 @@ impl<H: Host> Vm<H> {
     /// `get_index` of a string at an integer key inside its length: the one-unit string
     /// there (`string_index_value`). `None` for any other read.
     pub(super) fn string_element(&mut self, string: Value, key: Value) -> Option<Value> {
-        let index = key.as_number().filter(|number| {
-            number.fract() == 0.0 && (0.0..=f64::from(u32::MAX)).contains(number)
-        })?;
+        let index = key
+            .as_number()
+            .filter(|number| number.fract() == 0.0 && (0.0..=f64::from(u32::MAX)).contains(number))?;
         self.string_index_value(string, index as usize)
     }
 
@@ -138,17 +134,12 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         if object.is_null() || object.is_undefined() {
             // A rejected base never invokes a property-key object's conversion hooks.
-            let property = if self.is_object_like(key) {
-                None
-            } else if let Some(Cell::Symbol(description)) = self.heap.get(key) {
-                Some(format!("Symbol({})", description.as_deref().unwrap_or("")))
-            } else {
-                Some(self.to_string(p, key)?)
-            };
+            let property = if self.is_object_like(key) { None }
+                else if let Some(Cell::Symbol(description)) = self.heap.get(key) { Some(format!("Symbol({})", description.as_deref().unwrap_or(""))) }
+                else { Some(self.to_string(p, key)?) };
             return Err(self.nullish_property_error(p, object, property.as_deref()));
         }
-        let key = if self.heap.is_string(key) || matches!(self.heap.get(key), Some(Cell::Symbol(_)))
-        {
+        let key = if self.heap.is_string(key) || matches!(self.heap.get(key), Some(Cell::Symbol(_))) {
             key
         } else {
             self.to_property_key(p, key)?
@@ -290,9 +281,7 @@ impl<H: Host> Vm<H> {
         }
         // A symbol or an existing non-index name that the plain chain walk decides, as the
         // lane stores it: no guest code runs and nothing fails before the slow path would.
-        if self.try_plain_symbol_set(object, key, value)
-            || self.try_plain_string_key_set(object, key, value)
-        {
+        if self.try_plain_symbol_set(object, key, value) || self.try_plain_string_key_set(object, key, value) {
             return Ok(());
         }
         self.set_index_slow(p, object, key, value, strict)
@@ -332,12 +321,7 @@ impl<H: Host> Vm<H> {
                 return None;
             }
             match self.heap.array(current) {
-                Some(array)
-                    if array
-                        .elements()
-                        .get(index)
-                        .is_some_and(|value| !value.is_deleted()) =>
-                {
+                Some(array) if array.elements().get(index).is_some_and(|value| !value.is_deleted()) => {
                     return None;
                 }
                 Some(_) => {}
@@ -363,10 +347,7 @@ impl<H: Host> Vm<H> {
         if atom == self.length_atom {
             return self.own_array_length(base).map(Value::length);
         }
-        if !self
-            .atom_class(atom)
-            .intersects(super::object::AtomClass::ARRAY_INDEX)
-        {
+        if !self.atom_class(atom).intersects(super::object::AtomClass::ARRAY_INDEX) {
             return None;
         }
         let index = self.array_index_key(key)?;
@@ -428,12 +409,7 @@ impl<H: Host> Vm<H> {
 
     /// `object[key] = value` that appends to a dense array at its length
     /// (`append_dense_element`); `false` leaves the store, unobserved, to the general path.
-    pub(super) fn try_append_dense_element(
-        &mut self,
-        object: Value,
-        key: Value,
-        value: Value,
-    ) -> bool {
+    pub(super) fn try_append_dense_element(&mut self, object: Value, key: Value, value: Value) -> bool {
         key.as_int()
             .and_then(|index| usize::try_from(index).ok())
             .is_some_and(|index| self.append_dense_element(object, index, value))
@@ -528,8 +504,7 @@ impl<H: Host> Vm<H> {
         value: Value,
         strict: bool,
     ) -> Result<(), JsError> {
-        let key = if self.heap.is_string(key) || matches!(self.heap.get(key), Some(Cell::Symbol(_)))
-        {
+        let key = if self.heap.is_string(key) || matches!(self.heap.get(key), Some(Cell::Symbol(_))) {
             key
         } else {
             self.to_property_key(p, key)?
@@ -617,12 +592,7 @@ impl<H: Host> Vm<H> {
     /// Storage after either assignment checks or ValidateAndApplyPropertyDescriptor.
     /// A compatible definition can replace an accessor hole on a non-extensible
     /// array, or preserve the same value on a frozen array.
-    pub(super) fn store_validated_array_element(
-        &mut self,
-        object: Value,
-        index: usize,
-        value: Value,
-    ) -> bool {
+    pub(super) fn store_validated_array_element(&mut self, object: Value, index: usize, value: Value) -> bool {
         let Some(array_object) = self.heap.array(object) else {
             return false;
         };
@@ -745,6 +715,7 @@ impl<H: Host> Vm<H> {
 mod tests {
     use super::*;
     use crate::test_host::TestHost;
+
 
     #[test]
     fn high_array_index_stays_out_of_dense_storage() {

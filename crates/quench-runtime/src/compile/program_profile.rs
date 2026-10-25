@@ -2,7 +2,8 @@
 //! program: the function records and each per-function and program-wide table at capacity.
 use crate::bytecode::{
     Atom, BindingSite, Constant, EnvironmentClone, FieldSite, Function, FunctionSlot, Handler,
-    Instr, LocalRegister, MethodSite, ObjectSite, RegExpLiteralSite, Register, ResidualProgram,
+    Instr,
+    LocalRegister, MethodSite, ObjectSite, RegExpLiteralSite, Register, ResidualProgram,
     Superinstruction, WideInstruction,
 };
 use std::mem::size_of;
@@ -27,31 +28,25 @@ fn atom_bytes(function: &Function) -> usize {
     .into_iter()
     .map(slice_bytes::<Atom>)
     .sum::<usize>()
-        + function
-            .global_declarations
-            .as_deref()
-            .map_or(0, |declarations| {
-                size_of::<crate::bytecode::GlobalDeclarations>()
-                    + [
-                        &declarations.lexical,
-                        &declarations.var,
-                        &declarations.function,
-                        &declarations.annex_b_var,
-                        &declarations.immutable,
-                    ]
-                    .into_iter()
-                    .map(bytes)
-                    .sum::<usize>()
-            })
+        + function.global_declarations.as_deref().map_or(0, |declarations| {
+            size_of::<crate::bytecode::GlobalDeclarations>()
+                + [
+                    &declarations.lexical,
+                    &declarations.var,
+                    &declarations.function,
+                    &declarations.annex_b_var,
+                    &declarations.immutable,
+                ]
+                .into_iter()
+                .map(bytes)
+                .sum::<usize>()
+        })
 }
 
 /// Layout tables beside the code: registers, capture slots, binding sites and clones.
 fn layout_bytes(function: &Function) -> usize {
     slice_bytes::<LocalRegister>(&function.local_registers)
-        + function
-            .selective_capture_slots
-            .as_ref()
-            .map_or(0, bytes::<u16>)
+        + function.selective_capture_slots.as_ref().map_or(0, bytes::<u16>)
         + slice_bytes::<BindingSite>(&function.binding_sites)
         + slice_bytes::<EnvironmentClone>(&function.environment_clones)
 }
@@ -66,10 +61,7 @@ pub(super) fn report(program: &ResidualProgram) {
          \"positions\":{},\"handlers\":{},\"atom_lists\":{},\"layout\":{},\"constants\":{},\
          \"sites\":{},\"register_roots\":{}}}",
         program.source_name,
-        program
-            .source
-            .as_ref()
-            .map_or(0, |source| source.text.len()),
+        program.source.as_ref().map_or(0, |source| source.text.len()),
         slots.len(),
         size_of::<Function>(),
         slots.capacity() * size_of::<FunctionSlot>() + records().count() * size_of::<Function>(),

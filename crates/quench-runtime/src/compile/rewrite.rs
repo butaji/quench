@@ -1,8 +1,8 @@
-use super::liveness::{RegisterSet, register_bit};
 use super::*;
 use crate::bytecode::{
     FieldLayout, ImmediateRole, InstructionField, Superinstruction, WideInstruction,
 };
+use super::liveness::{RegisterSet, register_bit};
 
 #[derive(Clone, Copy)]
 struct Rule {
@@ -146,31 +146,13 @@ pub(super) fn apply(
     }
     // Each pass hands the liveness of the code it leaves unchanged to the next.
     let mut liveness = None;
-    while coalesce_distant_producer_moves(
-        function,
-        methods,
-        field_sites.as_slice(),
-        superinstructions.as_slice(),
-        &mut liveness,
-    ) {
+    while coalesce_distant_producer_moves(function, methods, field_sites.as_slice(), superinstructions.as_slice(), &mut liveness) {
         changed_passes += 1;
     }
-    if forward_move_sources(
-        function,
-        methods,
-        field_sites.as_slice(),
-        superinstructions.as_slice(),
-        &mut liveness,
-    ) {
+    if forward_move_sources(function, methods, field_sites.as_slice(), superinstructions.as_slice(), &mut liveness) {
         changed_passes += 1;
     }
-    while rewrite_once(
-        function,
-        methods,
-        field_sites,
-        superinstructions.as_slice(),
-        &mut liveness,
-    ) {
+    while rewrite_once(function, methods, field_sites, superinstructions.as_slice(), &mut liveness) {
         changed_passes += 1;
     }
     if std::env::var_os("QUENCH_REWRITE_STATS").is_some() {
@@ -195,29 +177,11 @@ pub(super) fn coalesce_promoted_moves(
     let mut liveness = None;
     loop {
         let mut changed = false;
-        while coalesce_distant_producer_moves(
-            function,
-            methods,
-            field_sites,
-            superinstructions,
-            &mut liveness,
-        ) {
+        while coalesce_distant_producer_moves(function, methods, field_sites, superinstructions, &mut liveness) {
             changed = true;
         }
-        changed |= forward_move_sources(
-            function,
-            methods,
-            field_sites,
-            superinstructions,
-            &mut liveness,
-        );
-        changed |= remove_dead_moves(
-            function,
-            methods,
-            field_sites,
-            superinstructions,
-            &mut liveness,
-        );
+        changed |= forward_move_sources(function, methods, field_sites, superinstructions, &mut liveness);
+        changed |= remove_dead_moves(function, methods, field_sites, superinstructions, &mut liveness);
         if !changed {
             return;
         }
@@ -235,15 +199,10 @@ fn remove_dead_moves(
     superinstructions: &[Superinstruction],
     current: &mut Option<CodeFacts>,
 ) -> bool {
-    if !function
-        .code
-        .iter()
-        .any(|instruction| instruction.op() == Op::Move)
-    {
+    if !function.code.iter().any(|instruction| instruction.op() == Op::Move) {
         return false;
     }
-    let Some(analysis) =
-        CodeLiveness::of(current, function, methods, field_sites, superinstructions)
+    let Some(analysis) = CodeLiveness::of(current, function, methods, field_sites, superinstructions)
     else {
         return false;
     };
@@ -274,15 +233,7 @@ fn remove_dead_moves(
         function.code[pc] = Instr::new(Op::Nop, 0, 0, 0, 0);
         changed.push(pc);
     }
-    hand_on(
-        analysis,
-        &changed,
-        function,
-        methods,
-        field_sites,
-        superinstructions,
-        current,
-    )
+    hand_on(analysis, &changed, function, methods, field_sites, superinstructions, current)
 }
 
 /// Hands `analysis` on to the next pass after the instructions at `changed` were rewritten in
@@ -426,14 +377,7 @@ impl CodeLiveness {
             }
         }
         let mut transfers = self.transfers;
-        update_transfers(
-            &mut transfers,
-            changed,
-            function,
-            methods,
-            field_sites,
-            superinstructions,
-        );
+        update_transfers(&mut transfers, changed, function, methods, field_sites, superinstructions);
         debug_assert!(
             liveness::analyze_transfers(function, &transfers) == live,
             "coalesced liveness matches the code"
@@ -451,14 +395,7 @@ impl CodeLiveness {
         superinstructions: &[Superinstruction],
     ) -> CodeFacts {
         let mut transfers = self.transfers;
-        update_transfers(
-            &mut transfers,
-            changed,
-            function,
-            methods,
-            field_sites,
-            superinstructions,
-        );
+        update_transfers(&mut transfers, changed, function, methods, field_sites, superinstructions);
         CodeFacts::Transfers(transfers)
     }
 }
@@ -565,8 +502,7 @@ fn coalesce_distant_producer_moves(
     {
         return false;
     }
-    let Some(analysis) =
-        CodeLiveness::of(current, function, methods, field_sites, superinstructions)
+    let Some(analysis) = CodeLiveness::of(current, function, methods, field_sites, superinstructions)
     else {
         return false;
     };
@@ -660,25 +596,10 @@ fn coalesce_distant_producer_moves(
     }
     match spans {
         Some(spans) if !changed.is_empty() => {
-            *current = Some(analysis.coalesced(
-                &spans,
-                &changed,
-                function,
-                methods,
-                field_sites,
-                superinstructions,
-            ));
+            *current = Some(analysis.coalesced(&spans, &changed, function, methods, field_sites, superinstructions));
             true
         }
-        _ => hand_on(
-            analysis,
-            &changed,
-            function,
-            methods,
-            field_sites,
-            superinstructions,
-            current,
-        ),
+        _ => hand_on(analysis, &changed, function, methods, field_sites, superinstructions, current),
     }
 }
 
@@ -712,8 +633,7 @@ fn forward_move_sources(
     {
         return false;
     }
-    let Some(analysis) =
-        CodeLiveness::of(current, function, methods, field_sites, superinstructions)
+    let Some(analysis) = CodeLiveness::of(current, function, methods, field_sites, superinstructions)
     else {
         return false;
     };
@@ -771,15 +691,7 @@ fn forward_move_sources(
             pc += 1;
         }
     }
-    hand_on(
-        analysis,
-        &changed,
-        function,
-        methods,
-        field_sites,
-        superinstructions,
-        current,
-    )
+    hand_on(analysis, &changed, function, methods, field_sites, superinstructions, current)
 }
 
 /// `instruction` reading register `to` wherever a register, operand or field-base field reads
@@ -868,6 +780,7 @@ fn fuses(first: Op, second: Op, recipe: impl Fn(Recipe) -> bool) -> bool {
         .iter()
         .any(|rule| rule.pattern == [first, second] && recipe(rule.recipe))
 }
+
 
 struct SuperRule {
     pattern: &'static [Op],
@@ -1032,34 +945,16 @@ fn rewrite_once(
     let rewrites_pair = |first: &Instr, second: &Instr| {
         !first.is_wide()
             && !second.is_wide()
-            && RULES
-                .iter()
-                .any(|rule| rule.pattern == [first.op(), second.op()])
+            && RULES.iter().any(|rule| rule.pattern == [first.op(), second.op()])
     };
     // A pass without a rule-shaped pair or a `Nop` changes nothing, and liveness is needed
     // only to judge pairs.
-    let has_pair = function
-        .code
-        .windows(2)
-        .any(|pair| rewrites_pair(&pair[0], &pair[1]));
-    if !has_pair
-        && !function
-            .code
-            .iter()
-            .any(|instruction| instruction.op() == Op::Nop)
-    {
+    let has_pair = function.code.windows(2).any(|pair| rewrites_pair(&pair[0], &pair[1]));
+    if !has_pair && !function.code.iter().any(|instruction| instruction.op() == Op::Nop) {
         return false;
     }
     let analysis = has_pair
-        .then(|| {
-            CodeLiveness::of(
-                current,
-                function,
-                methods,
-                field_sites.as_slice(),
-                superinstructions,
-            )
-        })
+        .then(|| CodeLiveness::of(current, function, methods, field_sites.as_slice(), superinstructions))
         .flatten();
     let live = analysis.as_ref().map(|analysis| &analysis.live);
     let old = std::mem::take(&mut function.code);
@@ -1101,8 +996,7 @@ fn rewrite_once(
                         | liveness::definitions(second.as_wide(), superinstructions);
                 let live_out = liveness::live_out(function, live, index + 1, second.as_wide());
                 rules.find_map(|rule| {
-                    let replacement =
-                        apply_rule(*rule, first, *second, field_sites, &positions, index)?;
+                    let replacement = apply_rule(*rule, first, *second, field_sites, &positions, index)?;
                     let removed_definitions = original_definitions
                         & !liveness::definitions(replacement.as_wide(), superinstructions);
                     (live_out & removed_definitions == 0).then_some(replacement)
@@ -1153,16 +1047,10 @@ fn apply_rule(
     let replacement = sound_replacement(first, second, replacement)?;
     if matches!(rule.recipe, Recipe::GetSetThis) {
         if let Some(crate::bytecode::FieldLookup::Site(index)) = replacement.field_lookup() {
-            let at = |pc: usize| {
-                positions
-                    .partition_point(|p| p.pc as usize <= pc)
-                    .checked_sub(1)
-                    .map(|index| (positions[index].line, positions[index].column))
-            };
+            let at = |pc: usize| positions.partition_point(|p| p.pc as usize <= pc)
+                .checked_sub(1).map(|index| (positions[index].line, positions[index].column));
             let site = &mut field_sites[index];
-            if site.sources[0].is_none() {
-                site.sources[0] = at(pc);
-            }
+            if site.sources[0].is_none() { site.sources[0] = at(pc); }
             site.sources[2] = at(pc + 1);
         }
     }
@@ -1262,9 +1150,7 @@ fn relocate_source_positions(
         // Call anchors are observable even when their location matches a
         // preceding Move that a later pass may remove.
         if previous_location == Some(location)
-            && fixed_width(old_code[anchor], wide)
-                .op()
-                .control_flow_layout()
+            && fixed_width(old_code[anchor], wide).op().control_flow_layout()
                 != crate::bytecode::ControlFlowLayout::Call
         {
             continue;
@@ -1326,13 +1212,7 @@ mod tests {
             Instr::new(Op::Move, 5, 3, 0, 0),
             Instr::new(Op::Return, 5, 0, 0, 0),
         ];
-        assert!(!coalesce_distant_producer_moves(
-            function,
-            &[] as &[MethodSiteSpec],
-            &[],
-            &[],
-            &mut None
-        ));
+        assert!(!coalesce_distant_producer_moves(function, &[] as &[MethodSiteSpec], &[], &[], &mut None));
         assert_eq!(function.code[0].result_register(), 3);
         assert_eq!(function.code[2].op(), Op::Move);
     }
@@ -1357,24 +1237,8 @@ mod tests {
             assert!(apply_recipe(recipe, load, binary, &mut SiteTable::default()).is_none());
         }
         let boundary = Instr::new(Op::LoadConst, 0, 0, 0, index - 1);
-        assert!(
-            apply_recipe(
-                Recipe::ConstantLeft,
-                boundary,
-                left,
-                &mut SiteTable::default()
-            )
-            .is_some()
-        );
-        assert!(
-            apply_recipe(
-                Recipe::ConstantRight,
-                boundary,
-                right,
-                &mut SiteTable::default()
-            )
-            .is_some()
-        );
+        assert!(apply_recipe(Recipe::ConstantLeft, boundary, left, &mut SiteTable::default()).is_some());
+        assert!(apply_recipe(Recipe::ConstantRight, boundary, right, &mut SiteTable::default()).is_some());
     }
 
     #[test]
@@ -1394,13 +1258,7 @@ mod tests {
             6,
         );
         let branch = Instr::new(Op::JumpFalse, 7, 0, 0, 41);
-        let fused = apply_recipe(
-            Recipe::BinaryJumpFalse,
-            binary,
-            branch,
-            &mut SiteTable::default(),
-        )
-        .unwrap();
+        let fused = apply_recipe(Recipe::BinaryJumpFalse, binary, branch, &mut SiteTable::default()).unwrap();
         assert_eq!(fused.op(), Op::JumpBinaryFalse);
         assert_eq!(
             (fused.a(), fused.b(), fused.c(), fused.imm()),
@@ -1408,15 +1266,7 @@ mod tests {
         );
 
         let other = Instr::new(Op::JumpFalse, 8, 0, 0, 41);
-        assert!(
-            apply_recipe(
-                Recipe::BinaryJumpFalse,
-                binary,
-                other,
-                &mut SiteTable::default()
-            )
-            .is_none()
-        );
+        assert!(apply_recipe(Recipe::BinaryJumpFalse, binary, other, &mut SiteTable::default()).is_none());
     }
 
     #[test]
@@ -1480,13 +1330,7 @@ mod tests {
                 register,
             })
             .collect();
-        while coalesce_distant_producer_moves(
-            function,
-            &[] as &[MethodSiteSpec],
-            &[],
-            &[],
-            &mut None,
-        ) {}
+        while coalesce_distant_producer_moves(function, &[] as &[MethodSiteSpec], &[], &[], &mut None) {}
         function
             .code
             .iter()
@@ -1592,13 +1436,7 @@ mod tests {
         let function = &mut program.functions[0];
         function.code = code;
         function.registers = registers;
-        rewrite_once(
-            function,
-            &[] as &[MethodSiteSpec],
-            &mut SiteTable::default(),
-            &[],
-            &mut None,
-        );
+        rewrite_once(function, &[] as &[MethodSiteSpec], &mut SiteTable::default(), &[], &mut None);
         std::mem::take(&mut function.code)
     }
 
@@ -1782,21 +1620,9 @@ mod tests {
         let load = Instr::new(Op::LoadConst, 0, 0, 0, 0);
         let call = Instr::wide(0).unwrap();
         let mut positions = vec![
-            SourcePosition {
-                pc: 0,
-                line: 1,
-                column: 74,
-            },
-            SourcePosition {
-                pc: 1,
-                line: 1,
-                column: 69,
-            },
-            SourcePosition {
-                pc: 2,
-                line: 1,
-                column: 69,
-            },
+            SourcePosition { pc: 0, line: 1, column: 74 },
+            SourcePosition { pc: 1, line: 1, column: 69 },
+            SourcePosition { pc: 2, line: 1, column: 69 },
         ]
         .into_iter()
         .collect();
@@ -1805,20 +1631,10 @@ mod tests {
         assert_eq!(positions.last().unwrap().pc, 2);
         let second = [load, Instr::new(Op::Nop, 0, 0, 0, 0), call];
         relocate_source_positions(2, &mut positions, &second, &wide, &[0, 1, 1, 2]);
-        assert_eq!(
-            positions.iter().collect::<Vec<_>>(),
-            vec![
-                SourcePosition {
-                    pc: 0,
-                    line: 1,
-                    column: 74
-                },
-                SourcePosition {
-                    pc: 1,
-                    line: 1,
-                    column: 69
-                },
-            ]
-        );
+        assert_eq!(positions.iter().collect::<Vec<_>>(), vec![
+            SourcePosition { pc: 0, line: 1, column: 74 },
+            SourcePosition { pc: 1, line: 1, column: 69 },
+        ]);
     }
+
 }

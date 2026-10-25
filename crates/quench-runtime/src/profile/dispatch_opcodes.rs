@@ -14,12 +14,7 @@ pub(super) fn derive(
         .get(program_id as usize)
         .map(Vec::as_slice)
         .unwrap_or(&[]);
-    for (function_id, function) in program
-        .functions
-        .iter()
-        .enumerate()
-        .filter_map(|(id, slot)| slot.record().map(|function| (id, function)))
-    {
+    for (function_id, function) in program.functions.iter().enumerate().filter_map(|(id, slot)| slot.record().map(|function| (id, function))) {
         let class = usize::from(function.dispatch == DispatchClass::Numeric);
         let sites = program_sites
             .get(function_id)

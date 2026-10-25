@@ -99,11 +99,7 @@ fn lay_out(digits: &[u8], point: i32, out: &mut Vec<u8>) {
         let exponent = point - 1;
         out.push(b'e');
         out.push(if exponent < 0 { b'-' } else { b'+' });
-        out.extend_from_slice(
-            itoa::Buffer::new()
-                .format(exponent.unsigned_abs())
-                .as_bytes(),
-        );
+        out.extend_from_slice(itoa::Buffer::new().format(exponent.unsigned_abs()).as_bytes());
     }
 }
 
@@ -168,16 +164,8 @@ mod tests {
     /// The significant digits of a Number::toString text, without sign, point or exponent.
     fn significant_digits(text: &str) -> usize {
         let mantissa = text.split('e').next().unwrap();
-        mantissa
-            .bytes()
-            .filter(u8::is_ascii_digit)
-            .skip_while(|&digit| digit == b'0')
-            .count()
-            - mantissa
-                .bytes()
-                .rev()
-                .take_while(|&byte| byte == b'0')
-                .count()
+        mantissa.bytes().filter(u8::is_ascii_digit).skip_while(|&digit| digit == b'0').count()
+            - mantissa.bytes().rev().take_while(|&byte| byte == b'0').count()
     }
 
     #[test]
@@ -187,12 +175,9 @@ mod tests {
         // is 667082108456853.25: it wrote ...853.3, Number::toString and V8 write ...853.2), so
         // the texts are compared by round trip and digit count rather than byte for byte.
         let mut bits: u64 = 0x9E37_79B9_7F4A_7C15;
-        let powers =
-            (-330..=310).map(|exponent: i32| format!("1e{exponent}").parse::<f64>().unwrap());
+        let powers = (-330..=310).map(|exponent: i32| format!("1e{exponent}").parse::<f64>().unwrap());
         let walk = std::iter::repeat_with(|| {
-            bits = bits
-                .wrapping_mul(6_364_136_223_846_793_005)
-                .wrapping_add(1_442_695_040_888_963_407);
+            bits = bits.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1_442_695_040_888_963_407);
             f64::from_bits(bits)
         });
         for value in walk.take(200_000).chain(powers) {
@@ -205,9 +190,6 @@ mod tests {
                 "{value:e}: {text} vs {previous}"
             );
         }
-        assert_eq!(
-            format(f64::from_bits(0x4302_f5a9_40e2_7caa)),
-            "667082108456853.2"
-        );
+        assert_eq!(format(f64::from_bits(0x4302_f5a9_40e2_7caa)), "667082108456853.2");
     }
 }

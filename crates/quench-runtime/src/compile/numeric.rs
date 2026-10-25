@@ -139,7 +139,7 @@ fn local_index_sources(
         && second.local_slot() <= usize::from(REGISTER_MASK)
         && register_dead(live_after, usize::from(first.result_register()))
         && register_dead(live_after, usize::from(second.result_register())))
-    .then_some(())?;
+        .then_some(())?;
     index.set_operand_b(Operand::local(first.local_slot() as u16))?;
     index.set_operand_c(Operand::local(second.local_slot() as u16))?;
     Some(index)
@@ -150,10 +150,10 @@ fn binary_local_target(mut binary: Instr, store: Instr, live_after: RegisterSet)
         && store.optional_register_b().is_none()
         && store.local_slot() <= usize::from(REGISTER_MASK)
         && register_dead(live_after, usize::from(binary.result_register())))
-    .then(|| {
-        binary.set_result_local_target(store.local_slot() as u16);
-        binary
-    })
+        .then(|| {
+            binary.set_result_local_target(store.local_slot() as u16);
+            binary
+        })
 }
 
 fn local_inc_store(code: &[Instr]) -> Option<NumericLocalStoreTarget> {

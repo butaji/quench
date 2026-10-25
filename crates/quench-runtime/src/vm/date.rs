@@ -427,7 +427,9 @@ impl<H: Host> Vm<H> {
             ));
         }
         let hint = match args.first().and_then(|value| self.heap.string(*value)) {
-            Some(hint) if hint.host_string() == "string" || hint.host_string() == "default" => {
+            Some(hint)
+                if hint.host_string() == "string" || hint.host_string() == "default" =>
+            {
                 "string"
             }
             Some(hint) if hint.host_string() == "number" => "number",
@@ -537,9 +539,7 @@ impl<H: Host> Vm<H> {
                 Some(value) => {
                     let primitive = self.to_primitive(p, value, "default")?;
                     match self.heap.get(primitive) {
-                        _ if let Some(text) = self.heap.string(primitive) => {
-                            parse_date_string(text.host_string())
-                        }
+                        _ if let Some(text) = self.heap.string(primitive)  => parse_date_string(text.host_string()),
                         _ => time_clip(self.to_number(p, primitive)?),
                     }
                 }

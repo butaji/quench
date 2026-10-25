@@ -20,29 +20,20 @@ fn immediate_fits(op: Op, value: u32) -> bool {
 }
 
 pub(crate) fn fits(program: &ResidualProgram) -> bool {
-    program
-        .functions
-        .iter()
-        .filter_map(crate::bytecode::FunctionSlot::record)
-        .all(|function| {
-            function.code.iter().all(|instruction| {
-                [instruction.a(), instruction.b(), instruction.c()]
-                    .into_iter()
-                    .enumerate()
-                    .all(|(position, value)| field_fits(instruction.op(), position, value))
-                    && immediate_fits(instruction.op(), instruction.imm())
-            })
+    program.functions.iter().filter_map(crate::bytecode::FunctionSlot::record).all(|function| {
+        function.code.iter().all(|instruction| {
+            [instruction.a(), instruction.b(), instruction.c()]
+                .into_iter()
+                .enumerate()
+                .all(|(position, value)| field_fits(instruction.op(), position, value))
+                && immediate_fits(instruction.op(), instruction.imm())
         })
+    })
 }
 
 pub(super) fn report(program: &ResidualProgram) {
     let mut domains = vec![Domain::default(); Op::COUNT];
-    for instruction in program
-        .functions
-        .iter()
-        .filter_map(crate::bytecode::FunctionSlot::record)
-        .flat_map(|function| &function.code)
-    {
+    for instruction in program.functions.iter().filter_map(crate::bytecode::FunctionSlot::record).flat_map(|function| &function.code) {
         let domain = &mut domains[instruction.op() as usize];
         domain.count += 1;
         domain.max_a = domain.max_a.max(instruction.a());

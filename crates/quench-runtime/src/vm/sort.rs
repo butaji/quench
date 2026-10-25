@@ -185,17 +185,7 @@ mod tests {
 
     #[test]
     fn sorts_stably_like_the_standard_stable_sort() {
-        for len in [
-            0,
-            1,
-            2,
-            3,
-            MIN_RUN_LENGTH - 1,
-            MIN_RUN_LENGTH,
-            MIN_RUN_LENGTH + 1,
-            1000,
-            4099,
-        ] {
+        for len in [0, 1, 2, 3, MIN_RUN_LENGTH - 1, MIN_RUN_LENGTH, MIN_RUN_LENGTH + 1, 1000, 4099] {
             for distinct_keys in [1, 2, 7, 1 << 20] {
                 let mut values = keyed(len, distinct_keys);
                 let mut expected = values.clone();
@@ -221,10 +211,7 @@ mod tests {
             })
             .unwrap();
             assert!(values.iter().copied().eq(0..LEN));
-            assert!(
-                comparisons < LEN,
-                "{comparisons} comparisons, reversed {reversed}"
-            );
+            assert!(comparisons < LEN, "{comparisons} comparisons, reversed {reversed}");
         }
     }
 
@@ -232,20 +219,13 @@ mod tests {
     fn a_failing_or_inconsistent_comparator_leaves_a_permutation() {
         const LEN: usize = 777;
         for fail_after in [0, 1, 40, 500, 3000, 6000] {
-            let mut values: Vec<usize> = keyed(LEN, 1 << 20)
-                .into_iter()
-                .map(|(key, _)| key as usize)
-                .collect();
+            let mut values: Vec<usize> = keyed(LEN, 1 << 20).into_iter().map(|(key, _)| key as usize).collect();
             let mut expected = values.clone();
             expected.sort();
             let mut calls = 0;
             let _ = try_stable_sort_by(&mut values, |left, right| {
                 calls += 1;
-                if calls > fail_after {
-                    Err(())
-                } else {
-                    Ok(left.cmp(right))
-                }
+                if calls > fail_after { Err(()) } else { Ok(left.cmp(right)) }
             });
             values.sort();
             assert_eq!(values, expected, "failing after {fail_after}");
@@ -254,11 +234,7 @@ mod tests {
         let mut flip = false;
         try_stable_sort_by(&mut values, |_, _| {
             flip = !flip;
-            Ok::<_, ()>(if flip {
-                Ordering::Less
-            } else {
-                Ordering::Greater
-            })
+            Ok::<_, ()>(if flip { Ordering::Less } else { Ordering::Greater })
         })
         .unwrap();
         values.sort();

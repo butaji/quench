@@ -76,10 +76,7 @@ impl<H: Host> Vm<H> {
         source: Value,
     ) -> Result<Vec<RootId>, JsError> {
         if let Some(values) = self.intact_iteration_values(source) {
-            return Ok(values
-                .into_iter()
-                .map(|value| self.heap.root(value))
-                .collect());
+            return Ok(values.into_iter().map(|value| self.heap.root(value)).collect());
         }
         let iterator = self.get_iterator(p, source)?;
         self.rooted_iterator_values(p, iterator)
@@ -94,16 +91,14 @@ impl<H: Host> Vm<H> {
             return None;
         }
         let length = self.heap.array(source)?.elements().len();
-        self.present_dense_elements(source, 0..length)
-            .map(<[Value]>::to_vec)
+        self.present_dense_elements(source, 0..length).map(<[Value]>::to_vec)
     }
 
     /// The values iterating `source` yields where no step can run guest code, so copying them
     /// creates no iterator or result object and is observably the same: an intact array
     /// (`array_iteration_values`) or Set (`set_iteration_values`).
     pub(super) fn intact_iteration_values(&mut self, source: Value) -> Option<Vec<Value>> {
-        self.array_iteration_values(source)
-            .or_else(|| self.set_iteration_values(source))
+        self.array_iteration_values(source).or_else(|| self.set_iteration_values(source))
     }
 
     /// The live values of a Set whose iteration runs the intrinsics: no own `@@iterator`,
@@ -129,12 +124,8 @@ impl<H: Host> Vm<H> {
             let Some(slot) = vm.property_shape_slot(data.shape(), key) else {
                 return false;
             };
-            vm.slot_attributes(data, slot)
-                .is_some_and(|attributes| !attributes.accessor)
-                && vm
-                    .heap
-                    .property_get(data, slot)
-                    .is_some_and(|value| vm.is_current_realm_native(value, native))
+            vm.slot_attributes(data, slot).is_some_and(|attributes| !attributes.accessor)
+                && vm.heap.property_get(data, slot).is_some_and(|value| vm.is_current_realm_native(value, native))
         };
         let next = PropertyKey::string(self.runtime_atoms.next);
         let values = entries.to_vec();
@@ -172,10 +163,7 @@ impl<H: Host> Vm<H> {
         let Some(array) = self.heap.array(source) else {
             return false;
         };
-        if array.is_arguments_object()
-            || array.has_side_descriptors()
-            || array.proto() != self.array_proto
-        {
+        if array.is_arguments_object() || array.has_side_descriptors() || array.proto() != self.array_proto {
             return false;
         }
         let (shape, epoch) = (array.shape(), crate::heap::prototype_layout_epoch());
@@ -191,17 +179,8 @@ impl<H: Host> Vm<H> {
                 .and_then(|data| vm.heap.property_get(data, slot))
                 .is_some_and(|value| vm.is_current_realm_native(value, native))
         };
-        intrinsic(
-            self,
-            self.array_proto,
-            proof.method_slot,
-            Native::ArrayValues,
-        ) && intrinsic(
-            self,
-            self.array_iterator_proto,
-            proof.next_slot,
-            Native::ArrayIteratorNext,
-        )
+        intrinsic(self, self.array_proto, proof.method_slot, Native::ArrayValues)
+            && intrinsic(self, self.array_iterator_proto, proof.next_slot, Native::ArrayIteratorNext)
     }
 
     /// `array_iteration_intact`'s lookups past its proof, recording where they found the
@@ -222,12 +201,7 @@ impl<H: Host> Vm<H> {
         }
         let method_slot = data_slot(self, self.array_proto, method)?;
         let next_slot = data_slot(self, self.array_iterator_proto, next)?;
-        let proof = ArrayIterationProof {
-            shape,
-            epoch,
-            method_slot,
-            next_slot,
-        };
+        let proof = ArrayIterationProof { shape, epoch, method_slot, next_slot };
         self.heap.mark_prototype(self.array_proto);
         self.heap.mark_prototype(self.array_iterator_proto);
         // Marking an object that was no prototype yet leaves the epoch where it was.
@@ -380,7 +354,11 @@ impl<H: Host> Vm<H> {
             },
         );
         let native_async_function = self.native_value(Native::AsyncFunction);
-        self.set_builtin_value_named(async_function_proto, "constructor", native_async_function)?;
+        self.set_builtin_value_named(
+            async_function_proto,
+            "constructor",
+            native_async_function,
+        )?;
         let native_async_generator_function = self.native_value(Native::AsyncGeneratorFunction);
         self.set_builtin_value_named(
             async_generator_function_proto,
@@ -489,10 +467,17 @@ impl<H: Host> Vm<H> {
                 .unwrap_or(self.object_proto);
             self.install_builtin_to_string_tag(prototype, tag)?;
         }
-        self.install_async_iterator_prototype(self.async_iterator_proto, self.object_proto, None)?;
+        self.install_async_iterator_prototype(
+            self.async_iterator_proto,
+            self.object_proto,
+            None,
+        )?;
         let native_async_generator_function = self.native_value(Native::AsyncGeneratorFunction);
         let async_generator_function_prototype = self
-            .own_property(native_async_generator_function, prototype_atom)
+            .own_property(
+                native_async_generator_function,
+                prototype_atom,
+            )
             .unwrap_or(self.function_proto);
         self.install_async_generator_prototype(
             self.async_generator_proto,
@@ -509,14 +494,23 @@ impl<H: Host> Vm<H> {
             Native::ArrayIteratorNext,
         )?;
         let native_array = self.native_value(Native::Array);
-        self.set_builtin_value_named(self.array_iterator_proto, "constructor", native_array)?;
+        self.set_builtin_value_named(
+            self.array_iterator_proto,
+            "constructor",
+            native_array,
+        )?;
         self.install_builtin_to_string_tag(self.array_iterator_proto, "Array Iterator")?;
         self.install_collection_iterators(p)?;
         let Some(iterator) = self.well_known_symbols.get(WellKnownSymbol::Iterator) else {
             return Ok(());
         };
         let native_iterator_self = self.native_value(Native::IteratorSelf);
-        self.set_index(p, self.iterator_proto, iterator, native_iterator_self)?;
+        self.set_index(
+            p,
+            self.iterator_proto,
+            iterator,
+            native_iterator_self,
+        )?;
         let native_iterator_self = self.native_value(Native::IteratorSelf);
         self.set_index(
             p,
@@ -525,9 +519,17 @@ impl<H: Host> Vm<H> {
             native_iterator_self,
         )?;
         let native_array_values = self.native_value(Native::ArrayValues);
-        self.set_symbol_property(self.array_proto, iterator, native_array_values)?;
+        self.set_symbol_property(
+            self.array_proto,
+            iterator,
+            native_array_values,
+        )?;
         let native_string_values = self.native_value(Native::StringValues);
-        self.set_symbol_property(self.string_proto, iterator, native_string_values)?;
+        self.set_symbol_property(
+            self.string_proto,
+            iterator,
+            native_string_values,
+        )?;
         self.set_property_attributes(
             self.array_proto,
             PropertyKey::symbol(iterator),
@@ -873,7 +875,9 @@ impl<H: Host> Vm<H> {
 
     fn install_generator_to_string_tag(&mut self, prototype: Value) -> Result<(), JsError> {
         if let Some(symbol) = self.well_known_symbols.get(WellKnownSymbol::ToStringTag) {
-            let tag = self.heap.alloc_string(JsString::from_str("Generator"));
+            let tag = self
+                .heap
+                .alloc_string(JsString::from_str("Generator"));
             self.set_symbol_property(prototype, symbol, tag)?;
             self.set_property_attributes(
                 prototype,
@@ -1054,7 +1058,7 @@ impl<H: Host> Vm<H> {
                 IteratorKind::Array
             } else {
                 match self.heap.get(source) {
-                    _ if self.heap.is_string(source) => IteratorKind::String,
+                    _ if self.heap.is_string(source)  => IteratorKind::String,
                     Some(Cell::Map { .. }) => IteratorKind::MapEntries,
                     Some(Cell::Set { .. }) => IteratorKind::SetValues,
                     _ => return Err(self.type_error(p, "value is not iterable".into())),
@@ -1965,21 +1969,13 @@ impl<H: Host> Vm<H> {
         let mode_atom = self.intern_atom("mode");
         let mode_value = self.get_property(p, options, mode_atom)?;
         let mode = match self.heap.get(mode_value) {
-            _ if let Some(value) = self.heap.string(mode_value)
-                && value.host_string() == "shortest" =>
-            {
+            _ if let Some(value) = self.heap.string(mode_value) && value.host_string() == "shortest" => {
                 IteratorZipMode::Shortest
             }
-            _ if let Some(value) = self.heap.string(mode_value)
-                && value.host_string() == "longest" =>
-            {
+            _ if let Some(value) = self.heap.string(mode_value) && value.host_string() == "longest" => {
                 IteratorZipMode::Longest
             }
-            _ if let Some(value) = self.heap.string(mode_value)
-                && value.host_string() == "strict" =>
-            {
-                IteratorZipMode::Strict
-            }
+            _ if let Some(value) = self.heap.string(mode_value) && value.host_string() == "strict" => IteratorZipMode::Strict,
             _ if mode_value.is_undefined() => IteratorZipMode::Shortest,
             _ => return Err(self.type_error(p, "Iterator.zip mode is invalid".into())),
         };
@@ -2094,8 +2090,7 @@ impl<H: Host> Vm<H> {
                     ) {
                     let descriptor =
                         self.object_get_own_property_descriptor(p, &[input, property_key])?;
-                    !descriptor.is_undefined()
-                        && self.descriptor_flag(descriptor, self.runtime_atoms.enumerable)
+                    !descriptor.is_undefined() && self.descriptor_flag(descriptor, self.runtime_atoms.enumerable)
                 } else {
                     let key =
                         atom.map_or_else(|| PropertyKey::symbol(property_key), PropertyKey::string);
@@ -2190,7 +2185,7 @@ impl<H: Host> Vm<H> {
             let mut values = Vec::with_capacity(keys.len());
             for key in keys.iter().copied() {
                 let value = match self.heap.get(key) {
-                    _ if let Some(name) = self.heap.string(key) => {
+                    _ if let Some(name) = self.heap.string(key)  => {
                         let name = name.clone();
                         let atom = self.intern_js_atom(&name);
                         self.get_property(p, padding, atom)?
@@ -2756,9 +2751,7 @@ impl<H: Host> Vm<H> {
         let key = if name == "constructor" {
             self.heap.alloc_string(JsString::from_str(name))
         } else {
-            self.well_known_symbols
-                .get(WellKnownSymbol::ToStringTag)
-                .unwrap()
+            self.well_known_symbols.get(WellKnownSymbol::ToStringTag).unwrap()
         };
         let receiver = self.heap.root_value(receiver_root).unwrap();
         let value = self.heap.root_value(value_root).unwrap();
@@ -3224,36 +3217,36 @@ impl<H: Host> Vm<H> {
                             selected
                         }
                     }
-                    (IteratorKind::MapKeys, Some(Cell::Map { entries, .. })) => {
-                        entries.next_live(index).map(|(slot, (key, _))| {
+                    (IteratorKind::MapKeys, Some(Cell::Map { entries, .. })) => entries
+                        .next_live(index)
+                        .map(|(slot, (key, _))| {
                             next_position = slot + 1;
                             (key, None)
-                        })
-                    }
-                    (IteratorKind::MapValues, Some(Cell::Map { entries, .. })) => {
-                        entries.next_live(index).map(|(slot, (_, value))| {
+                        }),
+                    (IteratorKind::MapValues, Some(Cell::Map { entries, .. })) => entries
+                        .next_live(index)
+                        .map(|(slot, (_, value))| {
                             next_position = slot + 1;
                             (value, None)
-                        })
-                    }
-                    (IteratorKind::MapEntries, Some(Cell::Map { entries, .. })) => {
-                        entries.next_live(index).map(|(slot, (key, value))| {
+                        }),
+                    (IteratorKind::MapEntries, Some(Cell::Map { entries, .. })) => entries
+                        .next_live(index)
+                        .map(|(slot, (key, value))| {
                             next_position = slot + 1;
                             (key, Some(value))
-                        })
-                    }
-                    (IteratorKind::SetValues, Some(Cell::Set { entries, .. })) => {
-                        entries.next_live(index).map(|(slot, value)| {
+                        }),
+                    (IteratorKind::SetValues, Some(Cell::Set { entries, .. })) => entries
+                        .next_live(index)
+                        .map(|(slot, value)| {
                             next_position = slot + 1;
                             (value, None)
-                        })
-                    }
-                    (IteratorKind::SetEntries, Some(Cell::Set { entries, .. })) => {
-                        entries.next_live(index).map(|(slot, value)| {
+                        }),
+                    (IteratorKind::SetEntries, Some(Cell::Set { entries, .. })) => entries
+                        .next_live(index)
+                        .map(|(slot, value)| {
                             next_position = slot + 1;
                             (value, Some(value))
-                        })
-                    }
+                        }),
                     _ => None,
                 },
             };
@@ -3310,9 +3303,7 @@ impl<H: Host> Vm<H> {
             match vm.array_iterator_item(p, iterator, source, kind, index)? {
                 Some((value, _)) => Ok(Some(value)),
                 None => {
-                    if let Some(IteratorRecord { done, source, .. }) =
-                        vm.heap.iterator_mut(iterator)
-                    {
+                    if let Some(IteratorRecord { done, source, .. }) = vm.heap.iterator_mut(iterator) {
                         *done = true;
                         *source = Value::UNDEFINED;
                     }
@@ -3378,22 +3369,15 @@ impl<H: Host> Vm<H> {
     /// and the element at the position is a present data value (a hole's Get reaches the
     /// prototype chain). The result object is the general step's (`iterator_result`); `None`
     /// leaves the call to the general path.
-    pub(super) fn plain_array_iterator_next(
-        &mut self,
-        callee: Value,
-        iterator: Value,
-    ) -> Option<Value> {
+    pub(super) fn plain_array_iterator_next(&mut self, callee: Value, iterator: Value) -> Option<Value> {
         if !self.is_current_realm_native(callee, Native::ArrayIteratorNext) {
             return None;
         }
         let (source, kind, position) = match self.heap.iterator(iterator)? {
-            IteratorRecord { done: true, .. } => {
-                return self.iterator_result(Value::UNDEFINED, true).ok();
-            }
+            IteratorRecord { done: true, .. } => return self.iterator_result(Value::UNDEFINED, true).ok(),
             IteratorRecord {
                 source,
-                kind:
-                    kind @ (IteratorKind::Array | IteratorKind::ArrayValues | IteratorKind::ArrayKeys),
+                kind: kind @ (IteratorKind::Array | IteratorKind::ArrayValues | IteratorKind::ArrayKeys),
                 index,
                 ext,
                 ..
@@ -3420,11 +3404,7 @@ impl<H: Host> Vm<H> {
         if let Some(IteratorRecord { index, ext, .. }) = self.heap.iterator_mut(iterator) {
             ext.store_position(index, position + 1);
         }
-        let value = if kind == IteratorKind::ArrayKeys {
-            Value::number(position as f64)
-        } else {
-            element
-        };
+        let value = if kind == IteratorKind::ArrayKeys { Value::number(position as f64) } else { element };
         self.iterator_result(value, false).ok()
     }
 
@@ -3433,9 +3413,9 @@ impl<H: Host> Vm<H> {
     pub(super) fn steps_as_array_iterator(&self, iterator: Value, method: Value) -> bool {
         self.is_current_realm_native(method, Native::ArrayIteratorNext)
             && matches!(
-                self.heap.iterator(iterator),
-                Some(IteratorRecord { kind, .. }) if kind.is_array_iterator()
-            )
+            self.heap.iterator(iterator),
+            Some(IteratorRecord { kind, .. }) if kind.is_array_iterator()
+        )
     }
 
     fn array_iterator_item(
@@ -3543,19 +3523,13 @@ impl<H: Host> Vm<H> {
     pub(super) fn reused_iterator_result(&mut self, value: Value, done: bool) -> Value {
         let result = self.reused_iterator_result;
         if result.is_undefined() {
-            let result = self
-                .iterator_result(value, done)
-                .expect("an iterator result allocates");
+            let result = self.iterator_result(value, done).expect("an iterator result allocates");
             self.reused_iterator_result = result;
             return result;
         }
+        self.heap.property_set(result, ITERATOR_RESULT_VALUE_SLOT, value);
         self.heap
-            .property_set(result, ITERATOR_RESULT_VALUE_SLOT, value);
-        self.heap.property_set(
-            result,
-            ITERATOR_RESULT_DONE_SLOT,
-            if done { Value::TRUE } else { Value::FALSE },
-        );
+            .property_set(result, ITERATOR_RESULT_DONE_SLOT, if done { Value::TRUE } else { Value::FALSE });
         result
     }
 

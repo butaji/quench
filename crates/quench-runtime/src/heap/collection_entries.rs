@@ -71,14 +71,9 @@ fn index_slot(slot: usize) -> u32 {
 
 fn insert_slot(index: &mut KeyIndex, hash: u64, slot: usize) {
     let hash = folded_hash(hash);
-    index.insert_unique(
-        table_hash(hash),
-        IndexedSlot {
-            hash,
-            slot: index_slot(slot),
-        },
-        |entry| table_hash(entry.hash),
-    );
+    index.insert_unique(table_hash(hash), IndexedSlot { hash, slot: index_slot(slot) }, |entry| {
+        table_hash(entry.hash)
+    });
 }
 
 #[derive(Clone, Debug)]
@@ -134,25 +129,16 @@ impl<T: CollectionEntry> CollectionEntries<T> {
     /// The slots (holes included, so registered iterators keep their positions), the live
     /// count and the registered iterators, for a snapshot; refused while a walk holds slot
     /// positions outside any iterator. The key index is rebuilt on first lookup.
-    pub(crate) fn snapshot_parts(
-        &self,
-    ) -> crate::snapshot::SnapshotResult<(&[T], usize, &[Value])> {
+    pub(crate) fn snapshot_parts(&self) -> crate::snapshot::SnapshotResult<(&[T], usize, &[Value])> {
         if self.walks != 0 {
-            return Err(crate::snapshot::SnapshotError::unsupported(
-                "a collection being walked",
-            ));
+            return Err(crate::snapshot::SnapshotError::unsupported("a collection being walked"));
         }
         Ok((&self.slots, self.live, &self.iterators))
     }
 
     /// The entries `snapshot_parts` gave.
     pub(crate) fn from_snapshot_parts(slots: Vec<T>, live: usize, iterators: Vec<Value>) -> Self {
-        Self {
-            slots,
-            live,
-            iterators,
-            ..Self::default()
-        }
+        Self { slots, live, iterators, ..Self::default() }
     }
 
     /// The number of live entries.
@@ -240,9 +226,7 @@ impl<T: CollectionEntry> CollectionEntries<T> {
     pub(crate) fn remove(&mut self, slot: usize, key_hash: u64) -> Option<Compaction> {
         if let Some(index) = self.index.get_mut() {
             let indexed = index_slot(slot);
-            if let Ok(entry) = index.find_entry(table_hash(folded_hash(key_hash)), |entry| {
-                entry.slot == indexed
-            }) {
+            if let Ok(entry) = index.find_entry(table_hash(folded_hash(key_hash)), |entry| entry.slot == indexed) {
                 entry.remove();
             }
         }

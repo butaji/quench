@@ -171,28 +171,21 @@ impl<H: Host> Vm<H> {
                 if self.heap.is_string(this) {
                     Ok(this)
                 } else {
-                    self.boxed_primitive_value(this)
-                        .filter(|value| self.heap.is_string(*value))
-                        .ok_or_else(|| {
-                            self.type_error(
-                                p,
-                                "String method called on incompatible receiver".into(),
-                            )
-                        })
+                    self.boxed_primitive_value(this).filter(|value| self.heap.is_string(*value)).ok_or_else(|| {
+                        self.type_error(p, "String method called on incompatible receiver".into())
+                    })
                 }
             }
             Native::NumberValueOf => {
                 if this.as_number().is_some() {
                     Ok(this)
                 } else {
-                    self.boxed_primitive_value(this)
-                        .filter(|value| value.as_number().is_some())
-                        .ok_or_else(|| {
-                            self.type_error(
-                                p,
-                                "Number.prototype.valueOf called on incompatible receiver".into(),
-                            )
-                        })
+                    self.boxed_primitive_value(this).filter(|value| value.as_number().is_some()).ok_or_else(|| {
+                        self.type_error(
+                            p,
+                            "Number.prototype.valueOf called on incompatible receiver".into(),
+                        )
+                    })
                 }
             }
             Native::BooleanValueOf => self.boolean_prototype_value(this).ok_or_else(|| {
@@ -588,14 +581,11 @@ impl<H: Host> Vm<H> {
                 Ok(Value::number(super::fdlibm_math::atan2(y, x)))
             }
             Native::MathMin | Native::MathMax => {
-                let mut numbers =
-                    smallvec::SmallVec::<[f64; super::number::MATH_INLINE_ARGUMENTS]>::new();
+                let mut numbers = smallvec::SmallVec::<[f64; super::number::MATH_INLINE_ARGUMENTS]>::new();
                 for value in args {
                     numbers.push(self.to_number(p, *value)?);
                 }
-                Ok(Value::number(
-                    super::number::math_numbers(native, &numbers).expect("Math.min or Math.max"),
-                ))
+                Ok(Value::number(super::number::math_numbers(native, &numbers).expect("Math.min or Math.max")))
             }
             Native::MathHypot => self.math_hypot(p, args),
             Native::MathImul => {
@@ -628,13 +618,13 @@ impl<H: Host> Vm<H> {
                     return Err(self.range_error(p, "Invalid radix".into()));
                 }
                 if radix == 10 || !number.is_finite() {
-                    return Ok(self
-                        .heap
-                        .alloc_string(super::number::number_to_decimal(number).into()));
+                    return Ok(self.heap.alloc_string(
+                        super::number::number_to_decimal(number).into(),
+                    ));
                 }
-                Ok(self
-                    .heap
-                    .alloc_string(super::string_extra::number_to_radix(number, radix).into()))
+                Ok(self.heap.alloc_string(
+                    super::string_extra::number_to_radix(number, radix).into(),
+                ))
             }
             _ => unreachable!("non-primitive native routed to primitive library"),
         }
@@ -664,7 +654,7 @@ impl<H: Host> Vm<H> {
     /// The receiver string, sharing its units rather than copying them.
     fn string_receiver_text(&self, value: Value) -> Result<super::wtf16::JsString, JsError> {
         match self.heap.get(value) {
-            _ if let Some(text) = self.heap.string(value) => Ok(text.clone()),
+            _ if let Some(text) = self.heap.string(value)  => Ok(text.clone()),
             _ => Err(JsError("string method receiver is not a string".into())),
         }
     }

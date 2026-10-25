@@ -17,17 +17,8 @@ fn assert_contract_matches_node(contract: &str) {
     });
     for observation in &observations {
         assert!(!observation.timed_out);
-        assert_eq!(
-            observation.exit_code,
-            Some(0),
-            "{}",
-            String::from_utf8_lossy(&observation.stderr)
-        );
-        assert!(
-            observation.stderr.is_empty(),
-            "{}",
-            String::from_utf8_lossy(&observation.stderr)
-        );
+        assert_eq!(observation.exit_code, Some(0), "{}", String::from_utf8_lossy(&observation.stderr));
+        assert!(observation.stderr.is_empty(), "{}", String::from_utf8_lossy(&observation.stderr));
     }
     assert_eq!(
         String::from_utf8_lossy(&observations[0].stdout),

@@ -25,10 +25,7 @@ pub(super) struct SymbolWriteProofs {
     /// Per lane write site: the write it made last (`SiteSymbolWrite`), so the site's next
     /// write to a receiver of that shape is one compare and the store. Sites map as the
     /// symbol read sites do (`symbol_load_proof::site_index`).
-    sites: super::shape_memo::DirectMappedTable<
-        SiteSymbolWrite,
-        { super::symbol_load_proof::SITE_OWN_READ_ENTRIES },
-    >,
+    sites: super::shape_memo::DirectMappedTable<SiteSymbolWrite, { super::symbol_load_proof::SITE_OWN_READ_ENTRIES }>,
 }
 
 /// What `Vm::set_plain_symbol_property` did for `key` on an extensible receiver of the
@@ -56,10 +53,7 @@ pub(super) enum SymbolWriteStep {
 
 impl Default for SymbolWriteProofs {
     fn default() -> Self {
-        Self {
-            entries: Default::default(),
-            sites: Default::default(),
-        }
+        Self { entries: Default::default(), sites: Default::default() }
     }
 }
 
@@ -72,63 +66,25 @@ impl SymbolWriteProofs {
     #[inline(always)]
     pub(super) fn holds(&self, prototype: Value, key: Value, epoch: u64) -> bool {
         self.entries.get(Self::index(prototype, key))
-            == Some(SymbolWriteProof {
-                prototype,
-                key,
-                epoch,
-            })
+            == Some(SymbolWriteProof { prototype, key, epoch })
     }
 
     pub(super) fn record(&self, prototype: Value, key: Value, epoch: u64) {
-        self.entries.set(
-            Self::index(prototype, key),
-            SymbolWriteProof {
-                prototype,
-                key,
-                epoch,
-            },
-        );
+        self.entries.set(Self::index(prototype, key), SymbolWriteProof { prototype, key, epoch });
     }
 
     /// The step site `site` last made writing `key` to a receiver of `shape`, while `epoch`
     /// holds.
     #[inline(always)]
-    pub(super) fn site_step(
-        &self,
-        site: usize,
-        shape: u32,
-        key: Value,
-        epoch: u64,
-    ) -> Option<SymbolWriteStep> {
+    pub(super) fn site_step(&self, site: usize, shape: u32, key: Value, epoch: u64) -> Option<SymbolWriteStep> {
         self.sites
             .get(super::symbol_load_proof::site_index(site))
-            .filter(|write| {
-                write.site == site
-                    && write.shape == shape
-                    && write.key == key
-                    && write.epoch == epoch
-            })
+            .filter(|write| write.site == site && write.shape == shape && write.key == key && write.epoch == epoch)
             .map(|write| write.step)
     }
 
-    pub(super) fn record_site_step(
-        &self,
-        site: usize,
-        shape: u32,
-        key: Value,
-        epoch: u64,
-        step: SymbolWriteStep,
-    ) {
-        self.sites.set(
-            super::symbol_load_proof::site_index(site),
-            SiteSymbolWrite {
-                site,
-                shape,
-                key,
-                epoch,
-                step,
-            },
-        );
+    pub(super) fn record_site_step(&self, site: usize, shape: u32, key: Value, epoch: u64, step: SymbolWriteStep) {
+        self.sites.set(super::symbol_load_proof::site_index(site), SiteSymbolWrite { site, shape, key, epoch, step });
     }
 
     pub(super) fn clear(&self) {

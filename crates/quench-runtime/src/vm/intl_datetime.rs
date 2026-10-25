@@ -131,9 +131,7 @@ impl<H: Host> Vm<H> {
             .insert(global, prototype);
         let fallback_symbol = self
             .heap
-            .alloc(Cell::Symbol(crate::heap::SymbolData::public(Some(
-                INTL_LEGACY_CONSTRUCTED_SYMBOL.into(),
-            ))));
+            .alloc(Cell::Symbol(crate::heap::SymbolData::public(Some(INTL_LEGACY_CONSTRUCTED_SYMBOL.into()))));
         self.realm
             .intrinsics
             .intl_datetime_format_fallback_symbols
@@ -287,7 +285,9 @@ impl<H: Host> Vm<H> {
         let locale_numbering_system = locale_unicode_value(&locale, "nu")
             .filter(|system| quench_intl::valid_numbering_system(system))
             .unwrap_or_else(|| quench_intl::default_numbering_system(&locale).into());
-        let calendar_value = self.heap.alloc_string(locale_calendar.clone().into());
+        let calendar_value = self
+            .heap
+            .alloc_string(locale_calendar.clone().into());
         self.set_date_time_property(resolved, "calendar", calendar_value)?;
         let numbering_value = self
             .heap
@@ -1467,7 +1467,10 @@ impl<H: Host> Vm<H> {
             entries.push(entry);
         }
         Ok(self.heap.alloc(Cell::Array {
-            object: crate::heap::ArrayObject::new(Self::empty_object(self.array_proto), entries),
+            object: crate::heap::ArrayObject::new(
+                Self::empty_object(self.array_proto),
+                entries,
+            ),
         }))
     }
 

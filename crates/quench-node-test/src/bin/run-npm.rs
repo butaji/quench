@@ -28,10 +28,7 @@ struct Record {
     #[serde(serialize_with = "serialize_observation")]
     quench: CaseObservation,
     /// Bun's run of the same scenario, observed for resident memory (`--rss`).
-    #[serde(
-        skip_serializing_if = "Option::is_none",
-        serialize_with = "serialize_optional_observation"
-    )]
+    #[serde(skip_serializing_if = "Option::is_none", serialize_with = "serialize_optional_observation")]
     bun: Option<CaseObservation>,
     node_function_checks: Option<serde_json::Value>,
     quench_function_checks: Option<serde_json::Value>,
@@ -115,8 +112,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<_> = std::env::args().skip(1).collect();
     let [node, quench, output, timeout, rest @ ..] = args.as_slice() else {
         return Err(
-            "usage: run-npm NODE QUENCH REPORT TIMEOUT_SECONDS [--surface | --rss BUN] [PACKAGE]"
-                .into(),
+            "usage: run-npm NODE QUENCH REPORT TIMEOUT_SECONDS [--surface | --rss BUN] [PACKAGE]".into(),
         );
     };
     let surface = rest.first().is_some_and(|arg| arg == "--surface");
@@ -177,11 +173,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         quench_sha256: digest(&fs::read(&quench_executable)?),
         node_sha256: digest(&fs::read(&node_executable)?),
         bun_version: match &bun {
-            Some(bun) => Some(
-                String::from_utf8(Command::new(bun).arg("--version").output()?.stdout)?
-                    .trim()
-                    .into(),
-            ),
+            Some(bun) => Some(String::from_utf8(Command::new(bun).arg("--version").output()?.stdout)?.trim().into()),
             None => None,
         },
         bun_executable: bun.clone(),

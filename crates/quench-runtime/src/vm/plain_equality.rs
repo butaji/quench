@@ -39,12 +39,10 @@ impl<H: Host> Vm<H> {
         let Some(tag) = self.well_known_symbols.get(WellKnownSymbol::ToStringTag) else {
             return false;
         };
-        [self.object_proto, self.array_proto]
-            .into_iter()
-            .all(|prototype| {
-                self.own_data_property(prototype, PropertyKey::string(constructor))
-                    && self.plain_property_lookup(prototype, PropertyKey::symbol(tag)) == Some(None)
-            })
+        [self.object_proto, self.array_proto].into_iter().all(|prototype| {
+            self.own_data_property(prototype, PropertyKey::string(constructor))
+                && self.plain_property_lookup(prototype, PropertyKey::symbol(tag)) == Some(None)
+        })
     }
 
     /// Whether `object` owns `key` as a data property its shape records. `%Array.prototype%`
@@ -55,10 +53,7 @@ impl<H: Host> Vm<H> {
         };
         let shape = data.shape();
         self.property_shape_slot(shape, key).is_some_and(|slot| {
-            !(self.shape_may_have_accessors(shape)
-                && self
-                    .slot_attributes(data, slot)
-                    .is_none_or(|attributes| attributes.accessor))
+            !(self.shape_may_have_accessors(shape) && self.slot_attributes(data, slot).is_none_or(|attributes| attributes.accessor))
                 && !(data.has_side_descriptors() && self.descriptors.contains_key(&(object, key)))
         })
     }
@@ -104,10 +99,7 @@ impl<H: Host> Vm<H> {
         constructor: Option<Atom>,
         ancestors: &mut Vec<Value>,
     ) -> bool {
-        let (Some(left), Some(right)) = (
-            self.plain_array_elements(left),
-            self.plain_array_elements(right),
-        ) else {
+        let (Some(left), Some(right)) = (self.plain_array_elements(left), self.plain_array_elements(right)) else {
             return false;
         };
         left.len() == right.len()
@@ -117,11 +109,7 @@ impl<H: Host> Vm<H> {
                 .all(|(&a, &b)| self.plain_equal_values(a, b, constructor, ancestors))
     }
 
-    fn plain_object(
-        &self,
-        value: Value,
-        constructor: Option<Atom>,
-    ) -> Option<&crate::heap::Object> {
+    fn plain_object(&self, value: Value, constructor: Option<Atom>) -> Option<&crate::heap::Object> {
         let data = self.heap.object_record(value)?;
         let shape = data.shape();
         let plain = data.proto() == self.object_proto
@@ -132,14 +120,8 @@ impl<H: Host> Vm<H> {
             && !self.shape_may_have_accessors(shape)
             && !self.error_is_error(value)
             && self.boxed_primitive_data(value).is_none()
-            && !self
-                .shape_entries(shape)
-                .iter()
-                .any(|(key, _)| matches!(key, PropertyKey::Symbol(_)))
-            && constructor.is_none_or(|atom| {
-                self.property_shape_slot(shape, PropertyKey::string(atom))
-                    .is_none()
-            });
+            && !self.shape_entries(shape).iter().any(|(key, _)| matches!(key, PropertyKey::Symbol(_)))
+            && constructor.is_none_or(|atom| self.property_shape_slot(shape, PropertyKey::string(atom)).is_none());
         plain.then_some(data)
     }
 
@@ -150,16 +132,10 @@ impl<H: Host> Vm<H> {
         constructor: Option<Atom>,
         ancestors: &mut Vec<Value>,
     ) -> bool {
-        let (Some(left_data), Some(right_data)) = (
-            self.plain_object(left, constructor),
-            self.plain_object(right, constructor),
-        ) else {
+        let (Some(left_data), Some(right_data)) = (self.plain_object(left, constructor), self.plain_object(right, constructor)) else {
             return false;
         };
-        let (Some(left_slots), Some(right_slots)) = (
-            self.shape_enumerable_slots(left),
-            self.shape_enumerable_slots(right),
-        ) else {
+        let (Some(left_slots), Some(right_slots)) = (self.shape_enumerable_slots(left), self.shape_enumerable_slots(right)) else {
             return false;
         };
         if left_slots.len() != right_slots.len() {

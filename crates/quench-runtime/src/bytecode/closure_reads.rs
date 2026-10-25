@@ -74,23 +74,16 @@ impl<'a> EnvironmentDemand<'a> {
     pub(crate) fn slot_iter(&self) -> impl Iterator<Item = u16> + 'a {
         let (slots, named): (&'a [(u32, u16)], &'a [u16]) = match *self {
             Self::Whole => (&[], &[]),
-            Self::Slots {
-                slots, named_slots, ..
-            } => (slots, named_slots),
+            Self::Slots { slots, named_slots, .. } => (slots, named_slots),
         };
-        slots
-            .iter()
-            .map(|&(_, slot)| slot)
-            .chain(named.iter().copied())
+        slots.iter().map(|&(_, slot)| slot).chain(named.iter().copied())
     }
 
     /// How many slots `slot_iter` yields.
     pub(crate) fn slot_count(&self) -> usize {
         match *self {
             Self::Whole => 0,
-            Self::Slots {
-                slots, named_slots, ..
-            } => slots.len() + named_slots.len(),
+            Self::Slots { slots, named_slots, .. } => slots.len() + named_slots.len(),
         }
     }
 }
@@ -159,16 +152,9 @@ impl ClosureReads {
         let mut lexical_this = closure.is_arrow;
         for level in 0..distance {
             if level != 0 {
-                lexical_this &= self
-                    .functions
-                    .get(owner as usize)
-                    .is_some_and(|function| function.is_arrow);
+                lexical_this &= self.functions.get(owner as usize).is_some_and(|function| function.is_arrow);
             }
-            match self
-                .functions
-                .get(owner as usize)
-                .and_then(|function| function.parent)
-            {
+            match self.functions.get(owner as usize).and_then(|function| function.parent) {
                 Some(parent) => owner = parent,
                 None => return EnvironmentDemand::Whole,
             }
@@ -194,29 +180,16 @@ impl ClosureReads {
 mod tests {
     use super::{ClosureReads, EnvironmentDemand, FunctionReadFacts};
 
-    fn function<'a>(
-        parent: Option<u32>,
-        is_arrow: bool,
-        captures: &'a [(u32, u16)],
-    ) -> FunctionReadFacts<'a> {
-        FunctionReadFacts {
-            parent,
-            is_arrow,
-            captures,
-            named_slots: &[],
-            dynamic: false,
-            instance_initializer: None,
-        }
+    fn function<'a>(parent: Option<u32>, is_arrow: bool, captures: &'a [(u32, u16)]) -> FunctionReadFacts<'a> {
+        FunctionReadFacts { parent, is_arrow, captures, named_slots: &[], dynamic: false, instance_initializer: None }
     }
 
     fn slots(demand: EnvironmentDemand<'_>) -> Option<(u32, Vec<u16>, bool)> {
         match demand {
             EnvironmentDemand::Whole => None,
-            EnvironmentDemand::Slots {
-                owner,
-                lexical_this,
-                ..
-            } => Some((owner, demand.slot_iter().collect(), lexical_this)),
+            EnvironmentDemand::Slots { owner, lexical_this, .. } => {
+                Some((owner, demand.slot_iter().collect(), lexical_this))
+            }
         }
     }
 

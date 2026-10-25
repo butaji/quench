@@ -589,8 +589,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
     /// (`has_non_simple_parameters`): its `arguments` is unmapped.
     pub(super) fn binds_parameters_directly(params: &oxc_ast::ast::FormalParameters<'_>) -> bool {
         params.items.iter().all(|item| {
-            item.initializer.is_none()
-                && matches!(item.pattern, BindingPattern::BindingIdentifier(_))
+            item.initializer.is_none() && matches!(item.pattern, BindingPattern::BindingIdentifier(_))
         }) && params
             .rest
             .as_ref()
@@ -683,9 +682,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
         if let Some(made) = self.code.last()
             && made.op() == Op::MakeClosure
             && made.result_register() == value
-            && self
-                .owner
-                .name_made_function(made.closure_function_index(), name)
+            && self.owner.name_made_function(made.closure_function_index(), name)
         {
             return;
         }
@@ -838,13 +835,8 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
 
     pub(super) fn push_private_bindings(&mut self, bindings: FxHashMap<Atom, Atom>) {
         self.push_lexical_bindings(bindings);
-        let scope = self
-            .lexical_scopes
-            .last_mut()
-            .expect("private lexical scope");
-        for kind in scope.kinds.values_mut() {
-            *kind = LexicalBindingKind::PrivateName;
-        }
+        let scope = self.lexical_scopes.last_mut().expect("private lexical scope");
+        for kind in scope.kinds.values_mut() { *kind = LexicalBindingKind::PrivateName; }
     }
 
     pub(super) fn push_body_lexical_bindings(&mut self, bindings: &[(Atom, LexicalBindingKind)]) {
@@ -1148,10 +1140,9 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                         .filter_map(|(atom, slot)| {
                             let name = &self.owner.atoms[*atom as usize];
                             (self.is_compiler_binding(*atom)
-                                && !LexicalBindingKind::ALL.into_iter().any(|kind| {
-                                    kind != LexicalBindingKind::PrivateName
-                                        && name.starts_with(kind.capture_prefix())
-                                })
+                                && !LexicalBindingKind::ALL
+                                    .into_iter()
+                                    .any(|kind| kind != LexicalBindingKind::PrivateName && name.starts_with(kind.capture_prefix()))
                                 && !name.starts_with(super::CATCH_CAPTURE_PREFIX))
                             .then_some((*atom, *slot))
                         })
@@ -1222,21 +1213,12 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                     if kind == LexicalBindingKind::PrivateName {
                         let name = self.owner.atoms[*source as usize].to_owned();
                         let label = crate::bytecode::private_identity_label(&name);
-                        let stale = scope
-                            .keys()
-                            .copied()
-                            .filter(|atom| {
-                                let text: &str = self.owner.atoms[*atom as usize].as_ref();
-                                let identity = text
-                                    .strip_prefix(LexicalBindingKind::PrivateName.capture_prefix())
-                                    .unwrap_or(text);
-                                label.is_some()
-                                    && crate::bytecode::private_identity_label(identity) == label
-                            })
-                            .collect::<Vec<_>>();
-                        for atom in stale {
-                            scope.remove(&atom);
-                        }
+                        let stale = scope.keys().copied().filter(|atom| {
+                            let text: &str = self.owner.atoms[*atom as usize].as_ref();
+                            let identity = text.strip_prefix(LexicalBindingKind::PrivateName.capture_prefix()).unwrap_or(text);
+                            label.is_some() && crate::bytecode::private_identity_label(identity) == label
+                        }).collect::<Vec<_>>();
+                        for atom in stale { scope.remove(&atom); }
                         scope.insert(*source, slot);
                     }
                     // Only markers this loop inserted can be in `scope`, and each was made
@@ -1245,9 +1227,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                         .map(Some)
                         .into_iter()
                         .chain([None])
-                        .filter_map(|kind| {
-                            self.owner.capture_markers.get(&(kind, *source)).copied()
-                        })
+                        .filter_map(|kind| self.owner.capture_markers.get(&(kind, *source)).copied())
                     {
                         scope.remove(&marker);
                     }

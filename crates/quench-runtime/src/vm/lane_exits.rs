@@ -94,10 +94,7 @@ pub(super) fn field_probe(
 /// Counts one exit by a description of its operands (operator and value kinds).
 pub(super) fn record_detail(detail: String) {
     let mut details = DETAILS.lock().expect("lane exit details");
-    *details
-        .get_or_insert_with(Default::default)
-        .entry(detail)
-        .or_default() += 1;
+    *details.get_or_insert_with(Default::default).entry(detail).or_default() += 1;
 }
 
 pub(super) fn record(op: Op) {
@@ -129,9 +126,7 @@ extern "C" fn report() {
     if let Some(probes) = FIELD_PROBES.lock().expect("field probe census").as_ref() {
         let mut probes: Vec<_> = probes.iter().collect();
         probes.sort_unstable_by_key(|(_, count)| std::cmp::Reverse(**count));
-        eprintln!(
-            "field cache probes (program,function,pc,field_site,cache_site,atom,part,outcome):"
-        );
+        eprintln!("field cache probes (program,function,pc,field_site,cache_site,atom,part,outcome):");
         for (key, count) in probes.into_iter().take(REPORTED_DETAILS) {
             eprintln!("  {count:>12} {key:?}");
         }
@@ -261,11 +256,7 @@ pub(super) fn count_record(address: usize, record_size: usize) {
         } else {
             census.lane[index] += 1;
         }
-        let Some(&op) = census
-            .view_ops
-            .get(&start)
-            .and_then(|ops| ops.get((address - start) / record_size))
-        else {
+        let Some(&op) = census.view_ops.get(&start).and_then(|ops| ops.get((address - start) / record_size)) else {
             return;
         };
         if census.op_counts.is_empty() {
@@ -273,10 +264,7 @@ pub(super) fn count_record(address: usize, record_size: usize) {
         }
         census.op_counts[op as usize] += 1;
         if let Some(previous) = census.previous_op.replace(op) {
-            *census
-                .pair_counts
-                .entry((previous as usize, op as usize))
-                .or_default() += 1;
+            *census.pair_counts.entry((previous as usize, op as usize)).or_default() += 1;
         }
     });
 }
@@ -316,35 +304,19 @@ const REPORTED_RECORDS: usize = 600;
 extern "C" fn report_functions() {
     with_functions(|census| {
         let mut rows: Vec<_> = (0..census.labels.len())
-            .map(|index| {
-                (
-                    census.lane[index] + census.general[index],
-                    census.lane[index],
-                    census.general[index],
-                    &census.labels[index],
-                )
-            })
+            .map(|index| (census.lane[index] + census.general[index], census.lane[index], census.general[index], &census.labels[index]))
             .collect();
         rows.sort_unstable_by(|a, b| b.0.cmp(&a.0));
         let total: u64 = rows.iter().map(|row| row.0).sum();
         let general: u64 = rows.iter().map(|row| row.2).sum();
         eprintln!("function census: {total} instructions, {general} general");
-        let mut ops: Vec<_> = census
-            .op_counts
-            .iter()
-            .enumerate()
-            .filter(|(_, count)| **count > 0)
-            .collect();
+        let mut ops: Vec<_> = census.op_counts.iter().enumerate().filter(|(_, count)| **count > 0).collect();
         ops.sort_unstable_by(|a, b| b.1.cmp(a.1));
         for (op, count) in ops.into_iter().take(REPORTED_DISPATCHES) {
             eprintln!("  lane op {count:>12} {}", Op::NAMES[op]);
         }
-        let mut general_ops: Vec<_> = census
-            .general_op_counts
-            .iter()
-            .enumerate()
-            .filter(|(_, count)| **count > 0)
-            .collect();
+        let mut general_ops: Vec<_> =
+            census.general_op_counts.iter().enumerate().filter(|(_, count)| **count > 0).collect();
         general_ops.sort_unstable_by(|a, b| b.1.cmp(a.1));
         for (op, count) in general_ops.into_iter().take(REPORTED_DISPATCHES) {
             eprintln!("  general op {count:>12} {}", Op::NAMES[op]);
@@ -352,32 +324,19 @@ extern "C" fn report_functions() {
         let mut pairs: Vec<_> = census.pair_counts.iter().collect();
         pairs.sort_unstable_by(|a, b| b.1.cmp(a.1));
         for ((first, second), count) in pairs.into_iter().take(REPORTED_DISPATCHES) {
-            eprintln!(
-                "  lane pair {count:>12} {} -> {}",
-                Op::NAMES[*first],
-                Op::NAMES[*second]
-            );
+            eprintln!("  lane pair {count:>12} {} -> {}", Op::NAMES[*first], Op::NAMES[*second]);
         }
         for (sum, lane, general, label) in rows.into_iter().take(REPORTED_FUNCTIONS) {
             eprintln!("  {sum:>12} lane={lane:>11} general={general:>10} {label}");
         }
         let record_size = std::mem::size_of::<super::dispatch_fast::LaneInstruction>();
-        let mut records: Vec<_> = census
-            .records
-            .iter()
-            .map(|(address, count)| (*count, *address))
-            .collect();
+        let mut records: Vec<_> = census.records.iter().map(|(address, count)| (*count, *address)).collect();
         records.sort_unstable_by(|a, b| b.cmp(a));
         eprintln!("record census:");
         for (count, address) in records.into_iter().take(REPORTED_RECORDS) {
             let at = census.views.partition_point(|view| view.0 <= address);
-            if let Some(&(start, _, index)) = at.checked_sub(1).and_then(|at| census.views.get(at))
-            {
-                eprintln!(
-                    "  {count:>12} {} @{}",
-                    census.labels[index],
-                    (address - start) / record_size
-                );
+            if let Some(&(start, _, index)) = at.checked_sub(1).and_then(|at| census.views.get(at)) {
+                eprintln!("  {count:>12} {} @{}", census.labels[index], (address - start) / record_size);
             }
         }
     });

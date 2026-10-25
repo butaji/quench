@@ -91,11 +91,7 @@ fn builtin_esm_exports_keep_node_snapshots_of_lazy_members() {
     // `node:fs` builds its streams and library policy on first use; its ESM exports must
     // still be the values the members had when the facade was made (Node's `syncExports`).
     let directory = tempfile::tempdir().unwrap();
-    std::fs::write(
-        directory.path().join("reexport.mjs"),
-        "export * from 'node:fs';",
-    )
-    .unwrap();
+    std::fs::write(directory.path().join("reexport.mjs"), "export * from 'node:fs';").unwrap();
     for (name, source, expected) in [
         (
             "read",
@@ -149,51 +145,28 @@ fn builtin_esm_exports_keep_node_snapshots_of_lazy_members() {
 #[test]
 fn package_scope_reads_nearest_type_and_stops_at_node_modules() {
     let directory = tempfile::tempdir().unwrap();
-    std::fs::write(
-        directory.path().join("package.json"),
-        r#"{"type":"module"}"#,
-    )
-    .unwrap();
+    std::fs::write(directory.path().join("package.json"), r#"{"type":"module"}"#).unwrap();
     for (name, config, expected) in [
         ("inherited", None, "undefined\n"),
         ("empty", Some("{}"), "function\n"),
         ("common", Some(r#"{"type":"commonjs"}"#), "function\n"),
         ("unknown", Some(r#"{"type":"other"}"#), "function\n"),
-        (
-            "duplicate",
-            Some(r#"{"type":"commonjs","type":"module"}"#),
-            "undefined\n",
-        ),
+        ("duplicate", Some(r#"{"type":"commonjs","type":"module"}"#), "undefined\n"),
         ("bom", Some("\u{feff}{\"type\":\"module\"}"), "undefined\n"),
         ("node_modules/plain", None, "function\n"),
-        (
-            "node_modules/explicit",
-            Some(r#"{"type":"module"}"#),
-            "undefined\n",
-        ),
+        ("node_modules/explicit", Some(r#"{"type":"module"}"#), "undefined\n"),
     ] {
         let scope = directory.path().join(name);
         std::fs::create_dir_all(scope.join("nested")).unwrap();
-        if let Some(config) = config {
-            std::fs::write(scope.join("package.json"), config).unwrap();
-        }
+        if let Some(config) = config { std::fs::write(scope.join("package.json"), config).unwrap(); }
         let entry = scope.join("nested/entry.js");
         std::fs::write(&entry, "console.log(typeof require)").unwrap();
         for executable in ["node", env!("CARGO_BIN_EXE_run-parallel")] {
             let mut command = Command::new(executable);
             command.arg(&entry);
-            if executable != "node" {
-                command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
-            }
-            let result =
-                quench_node_test::case_process::observe_command(command, Duration::from_secs(10))
-                    .unwrap();
-            assert_eq!(
-                result.exit_code,
-                Some(0),
-                "{name}: {}",
-                String::from_utf8_lossy(&result.stderr)
-            );
+            if executable != "node" { command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1"); }
+            let result = quench_node_test::case_process::observe_command(command, Duration::from_secs(10)).unwrap();
+            assert_eq!(result.exit_code, Some(0), "{name}: {}", String::from_utf8_lossy(&result.stderr));
             assert_eq!(result.stdout, expected.as_bytes(), "{name}");
             assert!(result.stderr.is_empty(), "{name}");
         }
@@ -1563,16 +1536,11 @@ next();
     compare_node_stream_source(source);
 }
 
-fn compare_node_stream_source(
-    source: &str,
-) -> [quench_node_test::case_process::CaseObservation; 2] {
+fn compare_node_stream_source(source: &str) -> [quench_node_test::case_process::CaseObservation; 2] {
     compare_node_source_with_args(source, &[])
 }
 
-fn compare_node_source_with_args(
-    source: &str,
-    flags: &[&str],
-) -> [quench_node_test::case_process::CaseObservation; 2] {
+fn compare_node_source_with_args(source: &str, flags: &[&str]) -> [quench_node_test::case_process::CaseObservation; 2] {
     let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
         let mut command = Command::new(executable);
         command.args(flags).args(["-e", source]);
@@ -1601,8 +1569,7 @@ fn compare_node_source_with_args(
 
 #[test]
 fn native_stat_watch_cache_stop_order_and_reference_counts_match_node() {
-    compare_node_stream_source(
-        r#"
+    compare_node_stream_source(r#"
 const fs=require('fs'),path=require('path'),os=require('os'),assert=require('assert');
 const dir=fs.mkdtempSync(path.join(os.tmpdir(),'quench-statwatch-ref-')),file=path.join(dir,'watched');fs.writeFileSync(file,'data');
 const a=()=>assert.fail('unchanged file'),b=()=>assert.fail('unchanged file');
@@ -1611,14 +1578,12 @@ assert.strictEqual(watcher.unref(),watcher);assert.strictEqual(watcher.unref(),w
 fs.unwatchFile(file,()=>{});assert.strictEqual(watcher.listenerCount('change'),2);fs.unwatchFile(file,a);assert.strictEqual(watcher.listenerCount('change'),1);
 const result=[];let synchronous=true;watcher.once('stop',()=>{assert(!synchronous);result.push('stop');});watcher.stop();assert.strictEqual(watcher._handle,null);watcher.stop();assert.strictEqual(fs.watchFile(file,b),watcher);fs.unwatchFile(file);synchronous=false;
 process.nextTick(()=>{assert.deepStrictEqual(result,['stop']);fs.rmSync(dir,{recursive:true,force:true});console.log(JSON.stringify(result));});
-"#,
-    );
+"#);
 }
 
 #[test]
 fn native_stat_watch_missing_creation_stats_match_node() {
-    compare_node_stream_source(
-        r#"
+    compare_node_stream_source(r#"
 const fs=require('fs'),path=require('path'),os=require('os'),assert=require('assert');
 const dir=fs.mkdtempSync(path.join(os.tmpdir(),'quench-statwatch-stats-')),file=path.join(dir,'watched');
 const options=Object.freeze({interval:0});let phase=0;const result=[];
@@ -1626,25 +1591,21 @@ const watcher=fs.watchFile(file,options,(current,previous)=>{
  if(phase++===0){assert.strictEqual(current.ino,0);assert.strictEqual(previous.ino,0);assert.strictEqual(current.atime.getTime(),0);assert.strictEqual(current.isFile(),false);assert(current instanceof fs.Stats);result.push(['missing',Object.keys(current).filter(x=>!x.endsWith('time')),Object.getOwnPropertySymbols(current).map(String)]);fs.writeFileSync(file,'abc');}
  else {assert(current.ino>0);assert.strictEqual(previous.ino,0);assert.strictEqual(current.size,3);assert(current.isFile());assert(!current.isDirectory());result.push(['created',current.size,current.isFile()]);fs.unwatchFile(file);}
 });watcher.on('stop',()=>{result.push('stop');fs.rmSync(dir,{recursive:true,force:true});console.log(JSON.stringify(result));});
-"#,
-    );
+"#);
 }
 
 #[test]
 fn native_stat_watch_initial_request_survives_unreference_like_node() {
-    compare_node_stream_source(
-        r#"
+    compare_node_stream_source(r#"
 const fs=require('fs');
 fs.watchFile('quench-statwatch-initial-missing',{interval:1,persistent:false},()=>console.log('initial'));
 console.log('ready');
-"#,
-    );
+"#);
 }
 
 #[test]
 fn native_stat_watch_stats_constructor_projection_matches_node() {
-    compare_node_stream_source(
-        r#"
+    compare_node_stream_source(r#"
 const fs=require('fs'),assert=require('assert');process.noDeprecation=true;
 console.log(fs.Stats.name,fs.Stats.length,fs.Stats.prototype.constructor.name,Object.getPrototypeOf(fs.Stats).name);
 const events=[];const sec={valueOf(){events.push('seconds');return 1;}};const ns={valueOf(){events.push('nanoseconds');return 234567890;}};
@@ -1652,14 +1613,12 @@ const stats=new fs.Stats(1,32768,1,2,3,0,4096,4,5,6,sec,ns,0,0,0,0,0,0);
 assert(stats instanceof fs.Stats);assert.strictEqual(stats.isFile(),true);assert.strictEqual(stats.isDirectory(),false);assert.strictEqual(stats.atimeMs,1234.56789);assert.strictEqual(stats.atime.getTime(),1235);assert(Object.hasOwn(stats,'atime'));
 stats._checkModeProperty=function(value){assert.strictEqual(this,stats);return 'override:'+value;};assert.strictEqual(stats.isFile(),'override:32768');
 console.log(JSON.stringify([events,Object.keys(stats),Object.getOwnPropertySymbols(stats).map(String)]));
-"#,
-    );
+"#);
 }
 
 #[test]
 fn native_recursive_watch_class_close_and_per_path_hooks_match_node() {
-    compare_node_stream_source(
-        r#"
+    compare_node_stream_source(r#"
 const fs=require('fs'),path=require('path'),os=require('os'),assert=require('assert');
 const dir=fs.mkdtempSync(path.join(os.tmpdir(),'quench-recwatch-hooks-')),sub=path.join(dir,'sub'),file=path.join(sub,'file');fs.mkdirSync(sub);fs.writeFileSync(file,'before');
 const original=fs.watch,hooks=[],references=[];
@@ -1670,14 +1629,12 @@ const result=[['paths',hooks],['meta',watcher.constructor.name,Object.keys(watch
 assert.strictEqual(watcher.ref(),undefined);assert.strictEqual(watcher.unref(),undefined);result.push(['references',references]);
 let synchronous=true,closed=0;watcher.on('close',()=>{assert(synchronous);closed++;result.push('close');});
 watcher.close();synchronous=false;watcher.close();assert.strictEqual(closed,1);fs.rmSync(dir,{recursive:true,force:true});console.log(JSON.stringify(result));
-"#,
-    );
+"#);
 }
 
 #[test]
 fn native_recursive_watch_discovery_changes_and_ignore_match_node() {
-    compare_node_stream_source(
-        r#"
+    compare_node_stream_source(r#"
 const fs=require('fs'),path=require('path'),os=require('os'),assert=require('assert');
 const dir=fs.mkdtempSync(path.join(os.tmpdir(),'quench-recwatch-events-')),sub=path.join(dir,'sub'),file=path.join(sub,'visible');fs.mkdirSync(sub);fs.writeFileSync(file,'before');
 const watcher=fs.watch(dir,{recursive:true,ignore:['*.log',/\.tmp$/]});const result=[];let stage=0;
@@ -1685,14 +1642,12 @@ watcher.on('change',(kind,name)=>{assert(!name.endsWith('.log'));assert(!name.en
 else if(stage===1&&name==='new/added'){assert.strictEqual(kind,'rename');stage++;result.push([kind,name]);watcher.close();}});
 watcher.once('close',()=>{assert.strictEqual(stage,2);fs.rmSync(dir,{recursive:true,force:true});console.log(JSON.stringify(result));});
 fs.writeFileSync(path.join(sub,'ignored.log'),'log');fs.writeFileSync(path.join(sub,'ignored.tmp'),'tmp');fs.writeFileSync(file,'after');
-"#,
-    );
+"#);
 }
 
 #[test]
 fn native_recursive_watch_validation_matches_node() {
-    compare_node_stream_source(
-        r#"
+    compare_node_stream_source(r#"
 const fs=require('fs'),path=require('path'),os=require('os'),assert=require('assert');
 const dir=fs.mkdtempSync(path.join(os.tmpdir(),'quench-recwatch-options-')),result=[];
 for(const options of [{recursive:'1'},{recursive:1},{recursive:true,persistent:1},{recursive:true,throwIfNoEntry:'1'}]){
@@ -1700,45 +1655,38 @@ try{fs.watch(dir,options).close();assert.fail('expected error');}catch(error){re
 const watcher=fs.watch(dir,{recursive:true,persistent:false,encoding:'buffer'});assert.strictEqual(watcher.ref(),undefined);assert.strictEqual(watcher.unref(),undefined);watcher.close();
 const missing=path.join(dir,'missing');for(const throwIfNoEntry of [undefined,true,false]){try{const absent=fs.watch(missing,{recursive:true,throwIfNoEntry});assert.strictEqual(throwIfNoEntry,false);absent.close();result.push(['missing','ignored']);}catch(error){assert.notStrictEqual(throwIfNoEntry,false);assert.strictEqual(error.code,'ENOENT');assert.strictEqual(error.filename,missing);result.push(['missing',error.name,error.code]);}}
 fs.rmSync(dir,{recursive:true,force:true});console.log(JSON.stringify(result));
-"#,
-    );
+"#);
 }
 
 #[test]
 fn native_recursive_watch_globstar_root_and_nested_paths_match_node() {
-    compare_node_stream_source(
-        r#"
+    compare_node_stream_source(r#"
 const fs=require('fs'),path=require('path'),os=require('os'),assert=require('assert');
 for(const file of ['node_modules','node_modules/package.json','a/node_modules','a/node_modules/package.json','src/app.js'])console.log(file,path.matchesGlob(file,'**/node_modules'),path.matchesGlob(file,'**/node_modules/**'));
 const dir=fs.mkdtempSync(path.join(os.tmpdir(),'quench-recwatch-glob-'));fs.mkdirSync(path.join(dir,'node_modules'));fs.mkdirSync(path.join(dir,'src'));
 const watcher=fs.watch(dir,{recursive:true,ignore:['**/node_modules/**','**/node_modules']});watcher.on('change',(kind,name)=>{assert(!name.includes('node_modules'));if(name==='src/app.js'){assert.strictEqual(kind,'rename');watcher.close();}});
 watcher.once('close',()=>{fs.rmSync(dir,{recursive:true,force:true});console.log('globstar');});fs.writeFileSync(path.join(dir,'node_modules','package.json'),'{}');fs.writeFileSync(path.join(dir,'src','app.js'),'code');
-"#,
-    );
+"#);
 }
 
 #[test]
 fn native_recursive_watch_callback_rm_is_async_and_preserves_errors_like_node() {
-    compare_node_stream_source(
-        r#"
+    compare_node_stream_source(r#"
 const fs=require('fs'),path=require('path'),os=require('os'),assert=require('assert');
 const dir=fs.mkdtempSync(path.join(os.tmpdir(),'quench-rm-callback-')),file=path.join(dir,'file');fs.writeFileSync(file,'data');let synchronous=true;
 fs.rm(file,error=>{assert(!synchronous);assert.strictEqual(error,null);assert(!fs.existsSync(file));fs.rm(file,(error)=>{assert.strictEqual(error.code,'ENOENT');fs.rm(file,{force:true},(error)=>{assert.strictEqual(error,null);fs.rmSync(dir,{recursive:true,force:true});console.log('callback-rm');});});});synchronous=false;
-"#,
-    );
+"#);
 }
 
 #[test]
 fn native_recursive_watch_promises_forward_iterator_and_abort_cause_like_node() {
-    compare_node_stream_source(
-        r#"
+    compare_node_stream_source(r#"
 const fs=require('fs'),fsp=require('fs/promises'),path=require('path'),os=require('os'),assert=require('assert');
 const dir=fs.mkdtempSync(path.join(os.tmpdir(),'quench-recwatch-promises-')),result=[];
 (async()=>{const ac=new AbortController(),marker={original:true};const aborted=fsp.watch(dir,{recursive:true,signal:ac.signal});const pending=aborted.next();ac.abort(marker);await assert.rejects(pending,error=>error.code==='ABORT_ERR'&&error.cause===marker);result.push('abort');
 const pre=fsp.watch(dir,{recursive:true,signal:AbortSignal.abort(marker)});await assert.rejects(pre.next(),error=>error.code==='ABORT_ERR'&&error.cause===marker);result.push('preabort');
 const watcher=fsp.watch(dir,{recursive:true});const next=watcher.next();process.nextTick(()=>fs.writeFileSync(path.join(dir,'file'),'data'));const value=await next;assert.strictEqual(value.done,false);assert.strictEqual(value.value.eventType,'rename');assert.strictEqual(value.value.filename,'file');assert.strictEqual((await watcher.return()).done,true);assert.strictEqual((await watcher.next()).done,true);fs.rmSync(dir,{recursive:true,force:true});result.push('event');console.log(JSON.stringify(result));})();
-"#,
-    );
+"#);
 }
 
 #[test]
@@ -1754,110 +1702,86 @@ console.log('internal-url');
     let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
         let mut command = Command::new(executable);
         command.args(["--expose-internals", "-e", SOURCE]);
-        if executable != "node" {
-            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
-        }
+        if executable != "node" { command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1"); }
         quench_node_test::case_process::observe_command(command, Duration::from_secs(15)).unwrap()
     });
     for observation in &observations {
         assert!(!observation.timed_out);
-        assert_eq!(
-            observation.exit_code,
-            Some(0),
-            "{}",
-            String::from_utf8_lossy(&observation.stderr)
-        );
-        assert!(
-            observation.stderr.is_empty(),
-            "{}",
-            String::from_utf8_lossy(&observation.stderr)
-        );
+        assert_eq!(observation.exit_code, Some(0), "{}", String::from_utf8_lossy(&observation.stderr));
+        assert!(observation.stderr.is_empty(), "{}", String::from_utf8_lossy(&observation.stderr));
     }
     assert_eq!(observations[0].stdout, observations[1].stdout);
 }
 
 #[test]
 fn native_promise_watch_buffers_burst_events_and_closes_like_node() {
-    compare_node_stream_source(
-        r#"
+    compare_node_stream_source(r#"
 const fs=require('fs'),fsp=require('fs/promises'),path=require('path'),os=require('os'),assert=require('assert');
 const dir=fs.mkdtempSync(path.join(os.tmpdir(),'quench-pwatch-burst-'));
 (async()=>{const watcher=fsp.watch(dir);const next=watcher.next();process.nextTick(()=>{for(const name of ['a','b','c'])fs.writeFileSync(path.join(dir,name),'data');});
 const first=await next;assert.strictEqual(first.done,false);assert.strictEqual(Object.getPrototypeOf(first.value),null);const seen=new Set([first.value.filename]);await new Promise(resolve=>setTimeout(resolve,30));
 while(seen.size<3){const item=await watcher.next();seen.add(item.value.filename);}assert.deepStrictEqual([...seen].sort(),['a','b','c']);assert.strictEqual((await watcher.return()).done,true);assert.strictEqual((await watcher.next()).done,true);fs.rmSync(dir,{recursive:true,force:true});console.log('buffered');})();
-"#,
-    );
+"#);
 }
 
 #[test]
 fn native_promise_watch_lazy_validation_matches_node() {
-    compare_node_stream_source(
-        r#"
+    compare_node_stream_source(r#"
 const fs=require('fs/promises'),assert=require('assert');
 (async()=>{const result=[];
 for(const [file,options] of [[1,{}],['.',1],['.',null],['.',[]],['.',{persistent:1}],['.',{recursive:1}],['.',{encoding:1}],['.',{signal:1}],['.',{maxQueue:'silly'}],['.',{maxQueue:1.5}],['.',{maxQueue:Infinity}],['.',{maxQueue:9007199254740992}],['.',{overflow:1}],['.',{overflow:'bad'}],['.',{ignore:123}],['.',{ignore:''}]]){
 let iterator;assert.doesNotThrow(()=>{iterator=fs.watch(file,options);});try{await iterator.next();assert.fail('expected error');}catch(error){result.push([error.name,error.code,error.message]);}}
 console.log(JSON.stringify(result));})();
-"#,
-    );
+"#);
 }
 
 #[test]
 fn native_promise_watch_abort_preserves_cause_and_descriptor_like_node() {
-    compare_node_stream_source(
-        r#"
+    compare_node_stream_source(r#"
 const fs=require('fs'),fsp=require('fs/promises'),path=require('path'),os=require('os'),assert=require('assert');
 const dir=fs.mkdtempSync(path.join(os.tmpdir(),'quench-pwatch-abort-'));
 (async()=>{const result=[];for(const pre of [false,true]){const ac=new AbortController(),marker={original:true};if(pre)ac.abort(marker);const watcher=fsp.watch(dir,{signal:ac.signal});const pending=watcher.next();if(!pre)ac.abort(marker);
 try{await pending;assert.fail('expected abort')}catch(error){assert.strictEqual(error.cause,marker);assert.strictEqual(error.code,'ABORT_ERR');const d=Object.getOwnPropertyDescriptor(error,'cause');result.push([pre,error.name,error.constructor.name,Object.keys(error),[d.enumerable,d.writable,d.configurable]]);}}
 fs.rmSync(dir,{recursive:true,force:true});console.log(JSON.stringify(result));})();
-"#,
-    );
+"#);
 }
 
 #[test]
 fn native_promise_watch_overflow_error_releases_handle_like_node() {
-    compare_node_stream_source(
-        r#"
+    compare_node_stream_source(r#"
 const fs=require('fs'),fsp=require('fs/promises'),path=require('path'),os=require('os'),assert=require('assert');
 const dir=fs.mkdtempSync(path.join(os.tmpdir(),'quench-pwatch-overflow-'));
 (async()=>{const watcher=fsp.watch(dir,{maxQueue:1,overflow:'error'});const first=watcher.next();process.nextTick(()=>fs.writeFileSync(path.join(dir,'initial'),'data'));await first;
 for(const name of ['a','b','c','d'])fs.writeFileSync(path.join(dir,name),'data');await new Promise(resolve=>setTimeout(resolve,50));
 await assert.rejects(watcher.next(),error=>{assert.strictEqual(error.code,'ERR_FS_WATCH_QUEUE_OVERFLOW');console.log(error.message);return true;});assert.strictEqual((await watcher.next()).done,true);fs.rmSync(dir,{recursive:true,force:true});console.log('overflow-closed');})();
-"#,
-    );
+"#);
 }
 
 #[test]
 fn native_promise_watch_abort_resists_stopped_propagation_like_node() {
-    compare_node_stream_source(
-        r#"
+    compare_node_stream_source(r#"
 const fs=require('fs'),fsp=require('fs/promises'),path=require('path'),os=require('os'),assert=require('assert');
 const dir=fs.mkdtempSync(path.join(os.tmpdir(),'quench-pwatch-stopabort-'));
 (async()=>{const ac=new AbortController(),marker={original:true};ac.signal.addEventListener('abort',event=>event.stopImmediatePropagation());const watcher=fsp.watch(dir,{signal:ac.signal});const next=watcher.next();ac.abort(marker);await assert.rejects(next,error=>error.code==='ABORT_ERR'&&error.cause===marker);
 const other=new AbortController();other.signal.addEventListener('abort',event=>event.stopImmediatePropagation());const publicWatcher=fs.watch(dir,{signal:other.signal});let closed=false;publicWatcher.once('close',()=>{closed=true;});other.abort();await new Promise(resolve=>process.nextTick(resolve));assert(closed);fs.rmSync(dir,{recursive:true,force:true});console.log('resisted');})();
-"#,
-    );
+"#);
 }
 
 #[test]
 fn module_path_to_file_url_uses_guest_cwd_and_original_resolver_hooks() {
-    compare_node_stream_source(
-        r#"
+    compare_node_stream_source(r#"
 const fs=require('fs'),path=require('path'),os=require('os'),assert=require('assert'),{pathToFileURL}=require('url');
 const dir=fs.mkdtempSync(path.join(os.tmpdir(),'quench-file-url-cwd-')),before=process.cwd();
 fs.mkdirSync(path.join(dir,'test'),{recursive:true});fs.mkdirSync(path.join(dir,'tests/node/test'),{recursive:true});fs.writeFileSync(path.join(dir,'test/target'),'ordinary');fs.writeFileSync(path.join(dir,'tests/node/test/target'),'other');process.chdir(dir);
 assert.strictEqual(pathToFileURL('./test/target').pathname,dir+'/test/target');assert.strictEqual(pathToFileURL('./test/').pathname,dir+'/test/');
 const resolve=path.posix.resolve,marker={};path.posix.resolve=function(value){assert.strictEqual(this,path.posix);assert.strictEqual(value,'input/');return '/hook/dir';};assert.strictEqual(pathToFileURL('input/').href,'file:///hook/dir/');path.posix.resolve=()=>{throw marker};assert.throws(()=>pathToFileURL('input'),e=>e===marker);path.posix.resolve=resolve;
 assert.throws(()=>pathToFileURL('input',{get windows(){throw marker}}),e=>e===marker);process.chdir(before);fs.rmSync(dir,{recursive:true,force:true});console.log('cwd-and-resolver');
-"#,
-    );
+"#);
 }
 
 #[test]
 fn module_node_search_paths_share_resolution_and_preserve_public_hooks() {
-    compare_node_stream_source(
-        r#"
+    compare_node_stream_source(r#"
 const Module=require('module'),path=require('path'),assert=require('assert');
 for(const input of ['/','/node_modules','/a/node_modules/b/node_modules/c','/a/foo_node_modules','/a/../b/./c','','.','..'])console.log(JSON.stringify([input,Module._nodeModulePaths(input)]));
 console.log(JSON.stringify([Module._nodeModulePaths.name,Module._nodeModulePaths.length,Object.getOwnPropertyDescriptor(Module._nodeModulePaths,'name')]));
@@ -1865,14 +1789,12 @@ console.log(JSON.stringify(Reflect.ownKeys(Module._nodeModulePaths).map(String))
 console.log(JSON.stringify(new Module._nodeModulePaths('/construct/node_modules/child')));
 for(const value of [undefined,null,1,{},Symbol('x')])try{Module._nodeModulePaths(value)}catch(e){console.log(JSON.stringify([e.name,e.code,e.message]));}
 const original=path.resolve,marker={};path.resolve=function(...args){assert.strictEqual(this,path);console.log('resolve-hook',args.length);return '/hook/node_modules/child';};console.log(JSON.stringify(Module._nodeModulePaths(marker)));path.resolve=()=>{throw marker};assert.throws(()=>Module._nodeModulePaths('/absolute'),e=>e===marker);path.resolve=original;
-"#,
-    );
+"#);
 }
 
 #[test]
 fn module_create_require_url_shapes_errors_and_directory_base_match_node() {
-    compare_node_stream_source(
-        r#"
+    compare_node_stream_source(r#"
 const fs=require('fs'),path=require('path'),os=require('os'),assert=require('assert');
 const {createRequire}=require('module'),{pathToFileURL}=require('url');
 console.log(JSON.stringify([Reflect.ownKeys(createRequire).map(String),Object.getOwnPropertyDescriptor(createRequire,'prototype').writable]));
@@ -1888,14 +1810,12 @@ assert.strictEqual(createRequire(candidate)('./dependency.cjs'),42);console.log(
 const marker={};const originalURL=global.URL;global.URL=function(){throw marker};assert.strictEqual(createRequire(url)('./dependency.cjs'),42);global.URL=originalURL;assert.strictEqual((new createRequire(url))('./dependency.cjs'),42);assert.throws(()=>createRequire({get href(){throw marker}}),e=>e===marker);
 const coercion={href:'x',protocol:'file:',toString(){throw marker}};assert.throws(()=>createRequire(coercion),e=>e.code==='ERR_INVALID_ARG_VALUE'&&e!==marker);
 console.log('url-and-directory');fs.rmSync(dir,{recursive:true,force:true});
-"#,
-    );
+"#);
 }
 
 #[test]
 fn commonjs_namespace_static_prefix_uses_syntax_and_matches_node() {
-    compare_node_stream_source(
-        r#"
+    compare_node_stream_source(r#"
 const fs=require('fs'),path=require('path'),os=require('os'),assert=require('assert');
 const dir=fs.mkdtempSync(path.join(os.tmpdir(),'quench-cjs-export-prefix-'));
 const sources={accessor:"const refresh=()=>1,resolve=()=>2;module.exports={refresh,resolve,get path(){return '.';}};",nested:"const before=1,after=2;module.exports={before,nested:{x:1},after};",literal:"const later=2;module.exports={first:1,later};",assignments:"const text='exports.fake=1';/* exports.comment=1 */module.exports['hyphen-name']=3;module.exports.for=4;function unused(){exports.never=5;} exports.compound+=1;exports.logical ||=3;"};
@@ -1904,14 +1824,12 @@ const properties=[...expressions.map(value=>'b:'+value),'...value','...require("
 fs.writeFileSync(path.join(dir,'spread.cjs'),'exports.spread=1');
 for(const [index,property] of properties.entries()) sources['prefix-'+index]='const value={x:1},fn=()=>1,π=value;module.exports={a:value,'+property+',c:value}';
 (async()=>{for(const [name,source] of Object.entries(sources)){const file=path.join(dir,name+'.cjs');fs.writeFileSync(file,source);const namespace=await import(file);assert.strictEqual(namespace.default,require(file));assert.strictEqual(namespace['module.exports'],namespace.default);console.log(name,Object.keys(namespace).join(','));if(name==='accessor'){assert.strictEqual(namespace.refresh(),1);assert.strictEqual(namespace.resolve(),2);}if(name==='assignments'){assert(!Object.hasOwn(namespace,'fake'));assert(!Object.hasOwn(namespace,'comment'));assert.strictEqual(namespace['hyphen-name'],3);assert.strictEqual(namespace.for,4);}}fs.rmSync(dir,{recursive:true,force:true});})();
-"#,
-    );
+"#);
 }
 
 #[test]
 fn commonjs_namespace_follows_static_require_reexports_and_cycles() {
-    compare_node_stream_source(
-        r#"
+    compare_node_stream_source(r#"
 const fs=require('fs'),path=require('path'),os=require('os'),assert=require('assert');
 const dir=fs.mkdtempSync(path.join(os.tmpdir(),'quench-cjs-reexports-'));
 fs.writeFileSync(path.join(dir,'leaf.cjs'), 'exports.answer=42; exports.forwardRef=x=>x;');
@@ -1928,14 +1846,12 @@ fs.writeFileSync(path.join(dir,'cycle-b.cjs'), "exports.b=2;if(false)module.expo
   console.log(Object.keys(cycle).join(','));
   fs.rmSync(dir,{recursive:true,force:true});
 })();
-"#,
-    );
+"#);
 }
 
 #[test]
 fn global_crypto_is_lazy_and_random_values_preserve_views() {
-    compare_node_stream_source(
-        r#"
+    compare_node_stream_source(r#"
 const assert=require('assert');
 const descriptor=Object.getOwnPropertyDescriptor(globalThis,'crypto');
 console.log(JSON.stringify([descriptor.enumerable,descriptor.configurable,typeof descriptor.get,descriptor.get.name,descriptor.get.length,descriptor.set]));
@@ -1951,14 +1867,12 @@ for(const value of [new Float32Array(1),new DataView(new ArrayBuffer(1)),new Uin
 const method=cryptoObject.getRandomValues;
 assert.throws(()=>method(new Uint8Array(1)), {code:'ERR_INVALID_THIS'});
 console.log('random-views');
-"#,
-    );
+"#);
 }
 
 #[test]
 fn buffer_alloc_supports_construction_and_ordinary_calls() {
-    compare_node_stream_source(
-        r#"
+    compare_node_stream_source(r#"
 const assert=require('assert');
 assert.strictEqual(Buffer.alloc.length,3);
 for(const value of [Buffer.alloc(5,'ab'),new Buffer.alloc(5,'ab'),Reflect.construct(Buffer.alloc,[5,'ab'],function Other(){})]) {
@@ -1967,14 +1881,12 @@ for(const value of [Buffer.alloc(5,'ab'),new Buffer.alloc(5,'ab'),Reflect.constr
 }
 assert.throws(()=>new Buffer.alloc(-1),{code:'ERR_OUT_OF_RANGE'});
 console.log('constructible-alloc');
-"#,
-    );
+"#);
 }
 
 #[test]
 fn http_agent_pool_names_preserve_property_reads_and_coercion() {
-    compare_node_stream_source(
-        r#"
+    compare_node_stream_source(r#"
 const agent=new(require('http').Agent)();
 for(const options of [undefined,{}, {host:'a',port:80},{host:'a',port:0,localAddress:'b',family:4,socketPath:'/tmp/socket'},{family:'4'},{family:6}]) console.log(agent.getName(options));
 const log=[];
@@ -1982,42 +1894,23 @@ const value={ [Symbol.toPrimitive](hint){log.push(hint);return 'custom';} };
 const options={get host(){log.push('host');return value},get port(){log.push('port');return value},get localAddress(){log.push('localAddress');return value},get family(){log.push('family');return 6},get socketPath(){log.push('socketPath');return value}};
 console.log(agent.getName(options));console.log(JSON.stringify(log));
 agent.destroy();
-"#,
-    );
+"#);
 }
 
 #[test]
 fn extensionless_entries_use_the_package_module_scope() {
     let directory = tempfile::tempdir().unwrap();
-    std::fs::write(
-        directory.path().join("package.json"),
-        r#"{"type":"module"}"#,
-    )
-    .unwrap();
+    std::fs::write(directory.path().join("package.json"), r#"{"type":"module"}"#).unwrap();
     std::fs::write(directory.path().join("dependency.js"), "export default 42;").unwrap();
     let entry = directory.path().join("cli");
-    std::fs::write(
-        &entry,
-        "import value from './dependency.js';console.log(value);",
-    )
-    .unwrap();
+    std::fs::write(&entry, "import value from './dependency.js';console.log(value);").unwrap();
     for executable in ["node", env!("CARGO_BIN_EXE_run-parallel")] {
         let mut command = Command::new(executable);
         command.arg(&entry);
-        if executable != "node" {
-            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
-        }
-        let result =
-            quench_node_test::case_process::observe_command(command, Duration::from_secs(15))
-                .unwrap();
-        assert_eq!(
-            result.exit_code,
-            Some(0),
-            "{}",
-            String::from_utf8_lossy(&result.stderr)
-        );
-        assert_eq!(result.stdout, b"42\n");
-        assert!(result.stderr.is_empty());
+        if executable != "node" { command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1"); }
+        let result = quench_node_test::case_process::observe_command(command, Duration::from_secs(15)).unwrap();
+        assert_eq!(result.exit_code, Some(0), "{}", String::from_utf8_lossy(&result.stderr));
+        assert_eq!(result.stdout, b"42\n"); assert!(result.stderr.is_empty());
     }
 }
 
@@ -2033,42 +1926,25 @@ export function finalized(events) { try { return bad(); } catch { return 42; } f
 export { bad };
 "#).unwrap();
     let entry = directory.path().join("entry.mjs");
-    std::fs::write(
-        &entry,
-        r#"
+    std::fs::write(&entry, r#"
 import { caught, viaParameter, nested, finalized, bad } from './library.mjs';
 const events=[];
 console.log(JSON.stringify([caught(),viaParameter(bad),nested(),finalized(events),events]));
-"#,
-    )
-    .unwrap();
+"#).unwrap();
     for executable in ["node", env!("CARGO_BIN_EXE_run-parallel")] {
         let mut command = Command::new(executable);
         command.arg(&entry);
-        if executable != "node" {
-            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
-        }
-        let result =
-            quench_node_test::case_process::observe_command(command, Duration::from_secs(15))
-                .unwrap();
-        assert_eq!(
-            result.exit_code,
-            Some(0),
-            "{}",
-            String::from_utf8_lossy(&result.stderr)
-        );
-        assert_eq!(
-            result.stdout,
-            b"[\"marker\",\"marker\",null,42,[\"finally\"]]\n"
-        );
+        if executable != "node" { command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1"); }
+        let result = quench_node_test::case_process::observe_command(command, Duration::from_secs(15)).unwrap();
+        assert_eq!(result.exit_code, Some(0), "{}", String::from_utf8_lossy(&result.stderr));
+        assert_eq!(result.stdout, b"[\"marker\",\"marker\",null,42,[\"finally\"]]\n");
         assert!(result.stderr.is_empty());
     }
 }
 
 #[test]
 fn structured_clone_preserves_array_elements_holes_and_aliases() {
-    compare_node_stream_source(
-        r#"
+    compare_node_stream_source(r#"
 const assert=require('node:assert');
 assert.deepStrictEqual(structuredClone([2]),[2]);
 const shared={answer:42}, source=[]; source.length=5000;
@@ -2090,8 +1966,7 @@ assert.strictEqual(clone[1],clone.extra); assert.strictEqual(clone.self,clone);
 assert.notStrictEqual(clone[1],shared);
 assert.deepStrictEqual(Object.getOwnPropertyDescriptor(clone,'1'),{value:clone[1],writable:true,enumerable:true,configurable:true});
 console.log(JSON.stringify([Object.keys(clone),clone.length,clone[1],reads]));
-"#,
-    );
+"#);
 }
 
 #[test]
@@ -2153,31 +2028,20 @@ console.log(JSON.stringify(out));
 
 #[test]
 fn cyclic_esm_instantiates_live_bindings_before_running_dependencies() {
-    for (fixture, expected) in [
-        ("esm-graph", "cyclic-esm-live-bindings\n"),
-        ("esm-errors", "esm-link-error-retry\n"),
-    ] {
-        let entry = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(format!(
-            "../../tests/npm-top300/regressions/{fixture}/entry.mjs"
-        ));
-        for executable in ["node", env!("CARGO_BIN_EXE_run-parallel")] {
-            let mut command = Command::new(executable);
-            command.arg(&entry);
-            if executable != "node" {
-                command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
-            }
-            let result =
-                quench_node_test::case_process::observe_command(command, Duration::from_secs(15))
-                    .unwrap();
-            assert_eq!(
-                result.exit_code,
-                Some(0),
-                "{}",
-                String::from_utf8_lossy(&result.stderr)
-            );
-            assert_eq!(result.stdout, expected.as_bytes());
-            assert!(result.stderr.is_empty());
+    for (fixture, expected) in [("esm-graph", "cyclic-esm-live-bindings\n"), ("esm-errors", "esm-link-error-retry\n")] {
+    let entry = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join(format!("../../tests/npm-top300/regressions/{fixture}/entry.mjs"));
+    for executable in ["node", env!("CARGO_BIN_EXE_run-parallel")] {
+        let mut command = Command::new(executable);
+        command.arg(&entry);
+        if executable != "node" {
+            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
         }
+        let result = quench_node_test::case_process::observe_command(command, Duration::from_secs(15)).unwrap();
+        assert_eq!(result.exit_code, Some(0), "{}", String::from_utf8_lossy(&result.stderr));
+        assert_eq!(result.stdout, expected.as_bytes());
+        assert!(result.stderr.is_empty());
+    }
     }
 }
 
@@ -2186,9 +2050,7 @@ fn stack_locations_use_module_urls_and_commonjs_paths() {
     let directory = tempfile::tempdir().unwrap();
     let entry = directory.path().join("entry space # ü.mjs");
     let helper = directory.path().join("capture.cjs");
-    std::fs::write(
-        &helper,
-        r#"
+    std::fs::write(&helper, r#"
 exports.capture = function capture() {
   const previous = Error.prepareStackTrace;
   Error.prepareStackTrace = (_, sites) => sites;
@@ -2198,12 +2060,8 @@ exports.capture = function capture() {
   Error.prepareStackTrace = previous;
   return sites;
 };
-"#,
-    )
-    .unwrap();
-    std::fs::write(
-        &entry,
-        r#"
+"#).unwrap();
+    std::fs::write(&entry, r#"
 import assert from 'node:assert/strict';
 import { fileURLToPath } from 'node:url';
 import helper from './capture.cjs';
@@ -2216,24 +2074,15 @@ assert.equal(common.getFileName(), fileURLToPath(new URL('./capture.cjs', import
 assert(own.toString().includes(import.meta.url));
 assert(common.toString().includes(common.getFileName()));
 console.log('stack-source-identities');
-"#,
-    )
-    .unwrap();
+"#).unwrap();
     for executable in ["node", env!("CARGO_BIN_EXE_run-parallel")] {
         let mut command = Command::new(executable);
         command.arg(&entry);
         if executable != "node" {
             command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
         }
-        let result =
-            quench_node_test::case_process::observe_command(command, Duration::from_secs(15))
-                .unwrap();
-        assert_eq!(
-            result.exit_code,
-            Some(0),
-            "{}",
-            String::from_utf8_lossy(&result.stderr)
-        );
+        let result = quench_node_test::case_process::observe_command(command, Duration::from_secs(15)).unwrap();
+        assert_eq!(result.exit_code, Some(0), "{}", String::from_utf8_lossy(&result.stderr));
         assert_eq!(result.stdout, b"stack-source-identities\n");
         assert!(result.stderr.is_empty());
     }
@@ -2243,59 +2092,40 @@ console.log('stack-source-identities');
 fn console_formats_module_values_without_a_global_require() {
     let directory = tempfile::tempdir().unwrap();
     let entry = directory.path().join("entry.mjs");
-    std::fs::write(
-        &entry,
-        r#"
+    std::fs::write(&entry, r#"
 import util from 'node:util';
 util.format=()=>{throw Error('public formatter replacement was used')};
 util.formatWithOptions=util.format;
 console.log(null,undefined,42);
 console.log('%s:%d:%j','answer',42,{value:null});
 console.log(null,undefined);
-"#,
-    )
-    .unwrap();
+"#).unwrap();
     for executable in ["node", env!("CARGO_BIN_EXE_run-parallel")] {
         let mut command = Command::new(executable);
         command.arg(&entry);
-        if executable != "node" {
-            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
-        }
-        let result =
-            quench_node_test::case_process::observe_command(command, Duration::from_secs(15))
-                .unwrap();
-        assert_eq!(
-            result.exit_code,
-            Some(0),
-            "{}",
-            String::from_utf8_lossy(&result.stderr)
-        );
-        assert_eq!(
-            result.stdout,
-            b"null undefined 42\nanswer:42:{\"value\":null}\nnull undefined\n"
-        );
+        if executable != "node" { command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1"); }
+        let result = quench_node_test::case_process::observe_command(command, Duration::from_secs(15)).unwrap();
+        assert_eq!(result.exit_code, Some(0), "{}", String::from_utf8_lossy(&result.stderr));
+        assert_eq!(result.stdout, b"null undefined 42\nanswer:42:{\"value\":null}\nnull undefined\n");
         assert!(result.stderr.is_empty());
     }
 }
 
 #[test]
 fn json_import_attributes_parse_the_original_payload() {
-    compare_node_stream_source(
-        r#"
+    compare_node_stream_source(r#"
 const fs=require('fs'),path=require('path'),os=require('os'),assert=require('assert');
 const dir=fs.mkdtempSync(path.join(os.tmpdir(),'quench-json-module-'));
 const file=path.join(dir,'value.json');fs.writeFileSync(file,'{"value":[1,null,"hello"]}');
 (async()=>{const ns=await import(file,{with:{type:'json'}});assert.deepStrictEqual(ns.default,{value:[1,null,'hello']});console.log(Object.keys(ns).join(','));
 fs.writeFileSync(path.join(dir,'bad.json'),']');try{await import(path.join(dir,'bad.json'),{with:{type:'json'}});assert.fail('invalid JSON accepted')}catch(e){console.log(e.name)}
 fs.rmSync(dir,{recursive:true,force:true});})();
-"#,
-    );
+"#);
 }
 
 #[test]
 fn module_resolve_filename_uses_the_parent_base_without_loading() {
-    compare_node_stream_source(
-        r#"
+    compare_node_stream_source(r#"
 const fs=require('fs'),path=require('path'),os=require('os'),assert=require('assert'),Module=require('module');
 const dir=fs.mkdtempSync(path.join(os.tmpdir(),'quench-parent-resolve-'));
 fs.writeFileSync(path.join(dir,'dependency.cjs'),'throw Error("must not execute")');
@@ -2304,14 +2134,12 @@ assert.strictEqual(Module._resolveFilename('./dependency.cjs',parent),path.join(
 assert.strictEqual(Module._resolveFilename('fs',parent),'fs');
 assert.throws(()=>Module._resolveFilename('./missing.cjs',parent),{code:'MODULE_NOT_FOUND'});
 console.log('parent-resolution');fs.rmSync(dir,{recursive:true,force:true});
-"#,
-    );
+"#);
 }
 
 #[test]
 fn module_constructor_and_compile_preserve_receiver_exports_and_parent() {
-    compare_node_stream_source(
-        r#"
+    compare_node_stream_source(r#"
 const assert=require('node:assert'),Module=require('node:module');
 assert.strictEqual(typeof Module,'function');assert.strictEqual(Module.Module,Module);
 assert.strictEqual(Module.length,0);assert.strictEqual(Module.name,'Module');
@@ -2335,15 +2163,13 @@ assert.strictEqual(getter.enumerable,false);assert.strictEqual(getter.configurab
 assert.throws(()=>new Module(null),e=>e.code==='ERR_INVALID_ARG_TYPE');
 assert.throws(()=>Module('bare'),TypeError);
 console.log(JSON.stringify([m.id,m.path,m.loaded,m.exports,Module.prototype._compile.length]));
-"#,
-    );
+"#);
 }
 
 #[cfg(target_os = "linux")]
 #[test]
 fn os_cpus_reports_online_linux_facts_and_millisecond_times() {
-    compare_node_stream_source(
-        r#"
+    compare_node_stream_source(r#"
 const assert=require('node:assert'),fs=require('node:fs'),os=require('node:os');
 function snapshot(){return fs.readFileSync('/proc/stat','utf8').split('\n').filter(s=>/^cpu\d+ /.test(s)).map(s=>s.trim().split(/\s+/).slice(1).map(Number))}
 const before=snapshot(),cpus=os.cpus(),after=snapshot();
@@ -2358,14 +2184,12 @@ for(let i=0;i<cpus.length;i++){
 }
 
 console.log(JSON.stringify([cpus.length,cpus.map(cpu=>cpu.model)]));
-"#,
-    );
+"#);
 }
 
 #[test]
 fn binary_base64_globals_preserve_utf16_coercion_validation_and_identity() {
-    compare_node_stream_source(
-        r#"
+    compare_node_stream_source(r#"
 const assert=require('node:assert'),buffer=require('node:buffer');
 assert.strictEqual(buffer.btoa,btoa);assert.strictEqual(buffer.atob,atob);
 assert.strictEqual(btoa.name,'btoa');assert.strictEqual(atob.name,'atob');
@@ -2384,14 +2208,12 @@ assert(new btoa('A') instanceof btoa);assert(new atob('QQ==') instanceof atob);
 const original=DOMException;globalThis.DOMException=function(){throw Error('replacement used')};
 assert.throws(()=>atob('!'),e=>e instanceof original&&e.name==='InvalidCharacterError');globalThis.DOMException=original;
 console.log(JSON.stringify([btoa(bytes),atob('SGVsbG8=')]));
-"#,
-    );
+"#);
 }
 
 #[test]
 fn read_file_sync_accepts_file_urls_and_uses_url_validation() {
-    compare_node_stream_source(
-        r#"
+    compare_node_stream_source(r#"
 const fs=require('fs'),path=require('path'),os=require('os'),assert=require('assert'),url=require('url');
 const dir=fs.mkdtempSync(path.join(os.tmpdir(),'quench-read-url-'));
 const file=path.join(dir,'a space %.txt');fs.writeFileSync(file,'hello');
@@ -2401,60 +2223,36 @@ for(const input of ['https://example.com/a','file://example.com/a','file:///a%2F
   catch(error) { console.log(error.name,error.code); }
 }
 console.log('file-url-read');fs.rmSync(dir,{recursive:true,force:true});
-"#,
-    );
+"#);
 }
 
 #[test]
 fn public_commonjs_wrappers_have_five_parameters_and_no_internal_bindings() {
-    compare_node_stream_source(
-        r#"
+    compare_node_stream_source(r#"
 const fs=require('fs'),path=require('path'),os=require('os'),assert=require('assert');
 const dir=fs.mkdtempSync(path.join(os.tmpdir(),'quench-cjs-wrapper-'));
 const file=path.join(dir,'module.cjs');
 fs.writeFileSync(file,'const primordials=42;module.exports=[arguments.length,primordials,typeof internalBinding]');
 assert.deepStrictEqual(require(file),[5,42,'undefined']);
 console.log('public-cjs-wrapper');fs.rmSync(dir,{recursive:true,force:true});
-"#,
-    );
+"#);
 }
 
 #[test]
 fn really_exit_coerces_int32_and_skips_guest_exit_handlers() {
-    for value in [
-        "undefined",
-        "7.9",
-        "'7'",
-        "true",
-        "NaN",
-        "4294967298",
-        "Symbol()",
-        "1n",
-        "({valueOf(){console.log('coerce');throw Error('marker')}})",
-    ] {
+    for value in ["undefined", "7.9", "'7'", "true", "NaN", "4294967298", "Symbol()", "1n", "({valueOf(){console.log('coerce');throw Error('marker')}})"] {
         let source = format!("process.on('exit',()=>console.log('must-not-emit'));console.log('before');process.reallyExit({value});console.log('must-not-return');");
         let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
             let mut command = Command::new(executable);
             command.args(["-e", &source]);
-            if executable != "node" {
-                command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
-            }
-            quench_node_test::case_process::observe_command(command, Duration::from_secs(15))
-                .unwrap()
+            if executable != "node" { command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1"); }
+            quench_node_test::case_process::observe_command(command, Duration::from_secs(15)).unwrap()
         });
         for observation in &observations {
-            assert!(!observation.timed_out);
-            assert!(observation.signal.is_none());
-            assert!(
-                observation.stderr.is_empty(),
-                "{}",
-                String::from_utf8_lossy(&observation.stderr)
-            );
+            assert!(!observation.timed_out); assert!(observation.signal.is_none());
+            assert!(observation.stderr.is_empty(), "{}", String::from_utf8_lossy(&observation.stderr));
         }
-        assert_eq!(
-            observations[0].exit_code, observations[1].exit_code,
-            "{value}"
-        );
+        assert_eq!(observations[0].exit_code, observations[1].exit_code, "{value}");
         assert_eq!(observations[0].stdout, observations[1].stdout, "{value}");
     }
 }
@@ -2469,24 +2267,13 @@ const dir=fs.mkdtempSync(path.join(os.tmpdir(),'quench-recwatch-iterator-')),fil
     let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
         let mut command = Command::new(executable);
         command.args(["--expose-gc", "-e", SOURCE]);
-        if executable != "node" {
-            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
-        }
+        if executable != "node" { command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1"); }
         quench_node_test::case_process::observe_command(command, Duration::from_secs(15)).unwrap()
     });
     for observation in &observations {
         assert!(!observation.timed_out);
-        assert_eq!(
-            observation.exit_code,
-            Some(0),
-            "{}",
-            String::from_utf8_lossy(&observation.stderr)
-        );
-        assert!(
-            observation.stderr.is_empty(),
-            "{}",
-            String::from_utf8_lossy(&observation.stderr)
-        );
+        assert_eq!(observation.exit_code, Some(0), "{}", String::from_utf8_lossy(&observation.stderr));
+        assert!(observation.stderr.is_empty(), "{}", String::from_utf8_lossy(&observation.stderr));
     }
     assert_eq!(observations[0].stdout, observations[1].stdout);
 }
@@ -2508,40 +2295,27 @@ watcher.once('stop',()=>{global.gc();fs.rmSync(dir,{recursive:true,force:true});
     let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
         let mut command = Command::new(executable);
         command.args(["--expose-gc", "-e", SOURCE]);
-        if executable != "node" {
-            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
-        }
+        if executable != "node" { command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1"); }
         quench_node_test::case_process::observe_command(command, Duration::from_secs(15)).unwrap()
     });
     for observation in &observations {
         assert!(!observation.timed_out);
-        assert_eq!(
-            observation.exit_code,
-            Some(0),
-            "{}",
-            String::from_utf8_lossy(&observation.stderr)
-        );
-        assert!(
-            observation.stderr.is_empty(),
-            "{}",
-            String::from_utf8_lossy(&observation.stderr)
-        );
+        assert_eq!(observation.exit_code, Some(0), "{}", String::from_utf8_lossy(&observation.stderr));
+        assert!(observation.stderr.is_empty(), "{}", String::from_utf8_lossy(&observation.stderr));
     }
     assert_eq!(observations[0].stdout, observations[1].stdout);
 }
 
 #[test]
 fn native_stat_watch_validation_option_getters_and_stop_removal_match_node() {
-    compare_node_stream_source(
-        r#"
+    compare_node_stream_source(r#"
 const fs=require('fs'),assert=require('assert'),path=require('path'),os=require('os');
 const dir=fs.mkdtempSync(path.join(os.tmpdir(),'quench-statwatch-validation-')),file=path.join(dir,'watched');fs.writeFileSync(file,'data');const result=[];
 for(const value of [undefined,null,false,1,'bad',{},()=>{}]){try{fs.watchFile(file,value);result.push(['accepted',typeof value]);if(typeof value==='function')fs.unwatchFile(file);}catch(error){result.push([typeof value,error.name,error.code,error.message]);}}
 for(const value of [-1,1.5,NaN,Infinity,4294967296,'1',null,undefined]){try{fs.watchFile(file,{interval:value},()=>{});assert.fail('expected interval error');}catch(error){result.push(['interval',String(value),error.name,error.code,error.message]);}}
 const getters=[],symbol=Symbol('option');const options=Object.create({interval:1});Object.defineProperties(options,{interval:{enumerable:true,get(){getters.push('interval');return 0;}},persistent:{enumerable:true,get(){getters.push('persistent');return false;}},[symbol]:{enumerable:true,get(){getters.push('symbol');return 1;}}});
 const watcher=fs.watchFile(file,options,()=>assert.fail('unchanged'));result.push(getters);const never=()=>assert.fail('removed stop listener');watcher.once('stop',never);watcher.stop();watcher.removeListener('stop',never);fs.unwatchFile(file);process.nextTick(()=>{fs.rmSync(dir,{recursive:true,force:true});console.log(JSON.stringify(result));});
-"#,
-    );
+"#);
 }
 
 #[test]
@@ -2791,7 +2565,7 @@ fn node_entry_resolution_matches_extensionless_files_and_package_directories() {
 
 #[test]
 fn readable_pipe_matches_node_stdio_lifetime_and_captured_end_option() {
-    let source = r#"const {Readable,Writable}=require('stream');const events=[];
+    let source=r#"const {Readable,Writable}=require('stream');const events=[];
 const stdoutEnd=process.stdout.end,stdoutDestroy=process.stdout.destroy;
 process.stdout.end=()=>events.push('stdout-end');process.stdout.destroy=()=>events.push('stdout-destroy');
 const stderrEnd=process.stderr.end,stderrDestroy=process.stderr.destroy;
@@ -2803,25 +2577,14 @@ Object.defineProperty(options,'end',{value:true});
 setImmediate(()=>setImmediate(()=>{events.push(['target',content,target.writableEnded,target.destroyed]);
 process.stdout.end=stdoutEnd;process.stdout.destroy=stdoutDestroy;process.stderr.end=stderrEnd;process.stderr.destroy=stderrDestroy;
 console.log(JSON.stringify(events));}));"#;
-    let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
-        let mut command = Command::new(executable);
-        command.args(["-e", source]);
-        if executable != "node" {
-            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
-        }
-        quench_node_test::case_process::observe_command(command, Duration::from_secs(5)).unwrap()
+    let observations=["node",env!("CARGO_BIN_EXE_run-parallel")].map(|executable|{
+        let mut command=Command::new(executable);command.args(["-e",source]);
+        if executable!="node"{command.env(quench_node::shared_run::CHILD_RUNNER_ENV,"1");}
+        quench_node_test::case_process::observe_command(command,Duration::from_secs(5)).unwrap()
     });
-    for observation in &observations {
-        assert!(!observation.timed_out);
-        assert_eq!(
-            observation.exit_code,
-            Some(0),
-            "{}",
-            String::from_utf8_lossy(&observation.stderr)
-        );
-    }
-    assert_eq!(observations[0].stdout, observations[1].stdout);
-    assert_eq!(observations[0].stderr, observations[1].stderr);
+    for observation in &observations{assert!(!observation.timed_out);assert_eq!(observation.exit_code,Some(0),"{}",String::from_utf8_lossy(&observation.stderr));}
+    assert_eq!(observations[0].stdout,observations[1].stdout);
+    assert_eq!(observations[0].stderr,observations[1].stderr);
 }
 
 #[test]
@@ -3388,12 +3151,7 @@ fn tcp_peer_reset_preserves_os_errno_syscall_and_error_message() {
             let (mut socket, _) = loop {
                 match listener.accept() {
                     Ok(connection) => break connection,
-                    Err(error)
-                        if error.kind() == std::io::ErrorKind::WouldBlock
-                            && Instant::now() < deadline =>
-                    {
-                        std::thread::sleep(Duration::from_millis(1))
-                    }
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock && Instant::now() < deadline => std::thread::sleep(Duration::from_millis(1)),
                     Err(error) => panic!("peer accept: {error}"),
                 }
             };
@@ -4756,7 +4514,7 @@ fn tls_context_material_uses_real_crl_and_pkcs12_parsers() {
         pkcs12::Pkcs12,
         pkey::PKey,
         rsa::Rsa,
-        x509::{X509NameBuilder, X509},
+        x509::{X509, X509NameBuilder},
     };
     let key = PKey::from_rsa(Rsa::generate(2048).unwrap()).unwrap();
     let mut name = X509NameBuilder::new().unwrap();
@@ -4785,19 +4543,9 @@ fn tls_context_material_uses_real_crl_and_pkcs12_parsers() {
         .unwrap();
     let mut no_key = Pkcs12::builder();
     no_key.cert(&certificate);
-    let no_key = no_key
-        .build2("distinct-generated-password")
-        .unwrap()
-        .to_der()
-        .unwrap();
-    let hex = |bytes: &[u8]| {
-        bytes
-            .iter()
-            .map(|byte| format!("{byte:02x}"))
-            .collect::<String>()
-    };
-    let crl = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../tests/node/test/fixtures/keys/ca2-crl.pem");
+    let no_key = no_key.build2("distinct-generated-password").unwrap().to_der().unwrap();
+    let hex = |bytes: &[u8]| bytes.iter().map(|byte| format!("{byte:02x}")).collect::<String>();
+    let crl = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/node/test/fixtures/keys/ca2-crl.pem");
     const SOURCE: &str = r#"
 const assert=require('assert'),tls=require('tls'),fs=require('fs'),result=[];
 const pfx=Buffer.from(ARCHIVE_HEX,'hex'),noKey=Buffer.from(NO_KEY_HEX,'hex'),crl=fs.readFileSync(CRL_PATH),passphrase='distinct-generated-password';
@@ -6216,6 +5964,7 @@ process.on('exit',()=>{assert.strictEqual(plain.context.getMinProto(),plainMinim
     assert_eq!(observations[0].stdout, observations[1].stdout);
 }
 
+
 #[test]
 fn native_tls_context_protocol_options_errors_match_node() {
     compare_node_stream_source(
@@ -6225,6 +5974,7 @@ for(const options of forms)try{const context=tls.createSecureContext(options);co
 "#,
     );
 }
+
 
 #[test]
 fn native_tls_context_option_getter_and_native_method_hook_order_match_node() {
@@ -6238,6 +5988,7 @@ const marker={};assert.throws(()=>tls.createSecureContext({get ca(){throw marker
 "#,
     );
 }
+
 
 #[test]
 fn native_tls_context_retains_real_certificate_material_and_view_offsets_match_node() {
@@ -6263,6 +6014,7 @@ const ctx=tls.createSecureContext();assert.strictEqual(ctx.context.getCertificat
     );
     compare_node_stream_source(&source);
 }
+
 
 #[test]
 fn native_tls_context_engine_errors_and_shared_crypto_warning_match_node() {
@@ -6291,26 +6043,15 @@ console.log(tls.createSecureContext().context.getMinProto(),creations);console.l
     let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
         let mut command = Command::new(executable);
         command.args(["--no-warnings", "--expose-internals", "-e", SOURCE]);
-        if executable != "node" {
-            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
-        }
+        if executable != "node" { command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1"); }
         quench_node_test::case_process::observe_command(command, Duration::from_secs(15)).unwrap()
     });
     for observation in &observations {
         assert!(!observation.timed_out);
-        assert_eq!(
-            observation.exit_code,
-            Some(0),
-            "{}",
-            String::from_utf8_lossy(&observation.stderr)
-        );
-        assert!(
-            observation.stderr.is_empty(),
-            "{}",
-            String::from_utf8_lossy(&observation.stderr)
-        );
+        assert_eq!(observation.exit_code,Some(0),"{}",String::from_utf8_lossy(&observation.stderr));
+        assert!(observation.stderr.is_empty(),"{}",String::from_utf8_lossy(&observation.stderr));
     }
-    assert_eq!(observations[0].stdout, observations[1].stdout);
+    assert_eq!(observations[0].stdout,observations[1].stdout);
 }
 
 #[test]
@@ -6329,35 +6070,20 @@ for(const flags of [0,1,2,3,4,8,16,17,31]){const trace=[];const p=new Proxy({a:1
     let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
         let mut command = Command::new(executable);
         command.args(["--no-warnings", "--expose-internals", "-e", SOURCE]);
-        if executable != "node" {
-            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
-        }
-        quench_node_test::case_process::observe_command(command, Duration::from_secs(10)).unwrap()
+        if executable != "node" { command.env(quench_node::shared_run::CHILD_RUNNER_ENV,"1"); }
+        quench_node_test::case_process::observe_command(command,Duration::from_secs(10)).unwrap()
     });
     for observation in &observations {
         assert!(!observation.timed_out);
-        assert_eq!(
-            observation.exit_code,
-            Some(0),
-            "{}",
-            String::from_utf8_lossy(&observation.stderr)
-        );
-        assert!(
-            observation.stderr.is_empty(),
-            "{}",
-            String::from_utf8_lossy(&observation.stderr)
-        );
+        assert_eq!(observation.exit_code,Some(0),"{}",String::from_utf8_lossy(&observation.stderr));
+        assert!(observation.stderr.is_empty(),"{}",String::from_utf8_lossy(&observation.stderr));
     }
-    assert_eq!(
-        String::from_utf8_lossy(&observations[0].stdout),
-        String::from_utf8_lossy(&observations[1].stdout)
-    );
+    assert_eq!(String::from_utf8_lossy(&observations[0].stdout),String::from_utf8_lossy(&observations[1].stdout));
 }
 
 #[test]
 fn native_tls_bundled_roots_preserve_stable_trust_material_cache_metadata_and_intrinsic_hooks() {
-    compare_node_stream_source(
-        r#"
+    compare_node_stream_source(r#"
 const tls=require('tls'),crypto=require('crypto');
 const O=Object,A=Array,descriptor=O.getOwnPropertyDescriptor(tls,'rootCertificates'),getter=descriptor.get;
 console.log(JSON.stringify([descriptor.enumerable,descriptor.configurable,descriptor.set,getter.name,getter.length,O.hasOwn(getter,'prototype')]));
@@ -6367,27 +6093,23 @@ console.log(JSON.stringify([A.isArray(roots),O.isFrozen(roots),roots===tls.rootC
 globalThis.Array=A;globalThis.Object=O;
 console.log(crypto.createHash('sha256').update(JSON.stringify(roots)).digest('hex'));
 for(const change of [()=>{'use strict';roots[0]='changed'},()=>{'use strict';tls.rootCertificates=[]},()=>roots.push('changed')])try{change();console.log('unexpected mutation')}catch(e){console.log(e.name)}
-"#,
-    );
+"#);
 }
 
 #[test]
 fn native_tls_cipher_discovery_and_cached_copy_contract_match_node() {
-    compare_node_stream_source(
-        r#"
+    compare_node_stream_source(r#"
 const tls=require('tls');const first=tls.getCiphers();console.log(JSON.stringify(first));
 console.log(JSON.stringify([tls.getCiphers.name,tls.getCiphers.length,Object.hasOwn(tls.getCiphers,'prototype'),Object.getOwnPropertyDescriptor(tls,'getCiphers')]));
 first.length=0;first.push('guest mutation');const next=tls.getCiphers();console.log(JSON.stringify([first===next,next.length,next.includes('guest mutation'),next.every(x=>x===x.toLowerCase())]));
 try{Reflect.construct(tls.getCiphers,[]);}catch(e){console.log(e.name);}
 globalThis.Array=function(){throw new Error('public Array used')};console.log(tls.getCiphers().length);
-"#,
-    );
+"#);
 }
 
 #[test]
 fn native_tls_hostname_authorization_values_errors_and_getter_order_match_node() {
-    compare_node_stream_source(
-        r#"
+    compare_node_stream_source(r#"
 const tls=require('tls');
 for(const [host,cert] of [
 ['a.example.com',{subject:{CN:'*.example.com'}}],['a.b.example.com',{subject:{CN:'*.example.com'}}],
@@ -6408,24 +6130,19 @@ const originalReplace=String.prototype.replace,patterns=[],callbacks=[];
 String.prototype.replace=function(pattern,replacer){patterns.push(pattern);if(typeof replacer==='function')callbacks.push(replacer);return originalReplace.call(this,pattern,replacer)};
 try{for(let i=0;i<2;i++)tls.checkServerIdentity('A.COM',{subject:{CN:'a.com'}})}finally{String.prototype.replace=originalReplace}
 console.log(JSON.stringify([patterns.length,new Set(patterns).size,callbacks.every(c=>c===callbacks[0]),callbacks.map(c=>[c.name,c.length,Object.hasOwn(c,'prototype')])])) ;
-"#,
-    );
+"#);
 }
 
 #[test]
 fn native_net_delivery_gates_preserve_connection_before_bytes_and_write_completion() {
-    compare_node_stream_source(
-        r#"
+    compare_node_stream_source(r#"
 const net=require('net');const log=[];let connected=false,accepted=false,writeAfterConnect=false,readAfterAccept=false;
 const server=net.createServer(socket=>{accepted=true;socket.on('data',chunk=>{readAfterAccept=accepted;socket.end(chunk)});});
 server.listen(0,'127.0.0.1',()=>{const socket=net.connect(server.address().port,'127.0.0.1');let text='';socket.on('connect',()=>{connected=true});socket.write('queued-before-connect',()=>{writeAfterConnect=connected});socket.on('data',chunk=>text+=chunk);socket.on('close',()=>server.close(()=>console.log(JSON.stringify([text,writeAfterConnect,readAfterAccept]))));});
-"#,
-    );
+"#);
 }
 
-fn tls_peer_first_line(
-    child: &mut std::process::Child,
-) -> (std::io::BufReader<std::process::ChildStdout>, String) {
+fn tls_peer_first_line(child: &mut std::process::Child) -> (std::io::BufReader<std::process::ChildStdout>, String) {
     use std::io::{BufRead, BufReader};
     let stdout = child.stdout.take().unwrap();
     let (send, receive) = std::sync::mpsc::sync_channel(1);
@@ -6441,8 +6158,7 @@ fn tls_peer_first_line(
         let _ = child.wait();
     }
     reader.join().unwrap();
-    let (stdout, line, result) =
-        result.expect("TLS peer did not announce its port before the startup deadline");
+    let (stdout, line, result) = result.expect("TLS peer did not announce its port before the startup deadline");
     result.expect("TLS peer stdout failed");
     (stdout, line)
 }
@@ -6450,105 +6166,59 @@ fn tls_peer_first_line(
 #[test]
 fn native_tls_client_exchanges_encrypted_bytes_with_independent_node_peer() {
     struct Peer(std::process::Child);
-    impl Drop for Peer {
-        fn drop(&mut self) {
-            let _ = self.0.kill();
-            let _ = self.0.wait();
-        }
-    }
-    let fixtures = std::env::var("QUENCH_NODE_LIBRARY_ROOT")
-        .unwrap_or_else(|_| format!("{}/../../tests/node", env!("CARGO_MANIFEST_DIR")));
+    impl Drop for Peer {fn drop(&mut self){let _=self.0.kill();let _=self.0.wait();}}
+    let fixtures=std::env::var("QUENCH_NODE_LIBRARY_ROOT").unwrap_or_else(|_|format!("{}/../../tests/node",env!("CARGO_MANIFEST_DIR")));
     let mut peer=Peer(Command::new("node").args(["-e",r#"
 const tls=require('tls'),fs=require('fs'),path=require('path');const root=process.env.QUENCH_TLS_PEER_ROOT;
 const server=tls.createServer({key:fs.readFileSync(path.join(root,'test/fixtures/keys/agent1-key.pem')),cert:fs.readFileSync(path.join(root,'test/fixtures/keys/agent1-cert.pem'))},socket=>{socket.on('error',()=>{});socket.on('data',chunk=>socket.write(chunk));socket.on('end',()=>socket.end());});
 server.on('tlsClientError',()=>{});server.listen(0,'127.0.0.1',()=>console.log(server.address().port));setTimeout(()=>process.exit(0),30000);
 "#]).env("QUENCH_TLS_PEER_ROOT",&fixtures).stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::piped()).spawn().unwrap());
     let (_, line) = tls_peer_first_line(&mut peer.0);
-    let port: u16 = line
-        .trim()
-        .parse()
-        .expect("independent TLS peer did not start");
-    let source = format!(
-        r#"
+    let port:u16=line.trim().parse().expect("independent TLS peer did not start");
+    let source=format!(r#"
 const tls=require('tls'),net=require('net');const socket=tls.connect({{port:{port},host:'127.0.0.1',rejectUnauthorized:false}});let result=[];
 socket.once('secureConnect',()=>{{console.log(JSON.stringify([socket instanceof tls.TLSSocket,socket instanceof net.Socket,socket.encrypted,socket.secureConnecting,socket.authorized,socket.authorizationError,socket.getProtocol()]));socket.end(Buffer.from([0,1,2,127,128,255,10,13]));}});
 socket.on('data',chunk=>result.push(chunk));socket.on('end',()=>console.log(JSON.stringify(Array.from(Buffer.concat(result)))));
 socket.on('error',error=>{{console.log(JSON.stringify(['error',error.name,error.code,error.message]));process.exitCode=1}});
-"#
-    );
-    let trusted = format!(
-        r#"
+"#);
+    let trusted=format!(r#"
 const tls=require('tls'),fs=require('fs');const ca=fs.readFileSync(process.env.QUENCH_TLS_PEER_ROOT+'/test/fixtures/keys/ca1-cert.pem');
 const socket=tls.connect({{port:{port},host:'127.0.0.1',servername:'agent1',ca}});let text='';
 socket.on('secureConnect',()=>{{const cert=socket.getPeerCertificate();console.log(JSON.stringify([socket.authorized,socket.authorizationError,cert.subject.CN,cert.issuer.CN,Buffer.isBuffer(cert.raw),cert.bits,cert.exponent]));socket.end('trusted-peer');}});
 socket.on('data',chunk=>text+=chunk);socket.on('end',()=>console.log(text));socket.on('error',e=>{{console.log(JSON.stringify([e.name,e.code,e.message]));process.exitCode=1}});
-"#
-    );
-    let rejected = format!(
-        r#"
+"#);
+    let rejected=format!(r#"
 const tls=require('tls');const socket=tls.connect({{port:{port},host:'127.0.0.1'}});
 socket.on('secureConnect',()=>{{console.log('unexpected secure');socket.end()}});socket.on('error',e=>console.log(JSON.stringify([e.name,e.code,e.message])));socket.on('close',()=>console.log('closed'));
-"#
-    );
-    let mismatch = format!(
-        r#"
+"#);
+    let mismatch=format!(r#"
 const tls=require('tls'),fs=require('fs');const socket=tls.connect({{port:{port},host:'127.0.0.1',servername:'wrong.invalid',ca:fs.readFileSync(process.env.QUENCH_TLS_PEER_ROOT+'/test/fixtures/keys/ca1-cert.pem')}});
 socket.on('secureConnect',()=>{{console.log('unexpected secure');socket.end()}});socket.on('error',e=>console.log(JSON.stringify([e.name,e.code,e.message,e.reason,e.host,e.cert?.subject.CN])));socket.on('close',()=>console.log('closed'));
-"#
-    );
-    let direct = format!(
-        r#"
+"#);
+    let direct=format!(r#"
 const tls=require('tls'),net=require('net');const socket=new tls.TLSSocket(undefined,{{rejectUnauthorized:true,checkServerIdentity:()=>{{throw new Error('direct socket must not authorize')}}}});let result=[];
 console.log(JSON.stringify([socket.getProtocol(),socket.getPeerCertificate(),socket.isSessionReused()]));
 socket.once('secure',()=>{{console.log(JSON.stringify([socket instanceof tls.TLSSocket,socket instanceof net.Socket,socket.encrypted,socket.secureConnecting,socket.authorized,socket.authorizationError,socket.getProtocol()]));socket.end(Buffer.from([0,1,2,127,128,255,10,13]));}});
 socket.on('secureConnect',()=>{{throw new Error('direct socket must emit secure')}});socket.on('data',chunk=>result.push(chunk));socket.on('end',()=>console.log(JSON.stringify(Array.from(Buffer.concat(result)))));
 socket.on('error',error=>{{console.log(JSON.stringify(['error',error.name,error.code,error.message]));process.exitCode=1}});socket.connect({{port:{port},host:'127.0.0.1'}});socket._start();
-"#
-    );
+"#);
     let direct_write = direct
         .replace("socket.end(Buffer.from([0,1,2,127,128,255,10,13]));", "")
         .replace("let result=[];", "let result=[];const initialHandle=socket.ssl;")
         .replace("socket.once('secure',()=>{", "socket.once('secure',()=>{console.log(JSON.stringify([socket.ssl===initialHandle,socket.ssl===socket._handle,socket.ssl.verifyError()?.code]));")
         .replace("socket.connect(", "socket.on('connect',()=>socket.end(Buffer.from([0,1,2,127,128,255,10,13])));socket.connect(")
         .replace("socket._start();", "");
-    for source in [source, trusted, rejected, mismatch, direct, direct_write] {
-        let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
-            let mut command = Command::new(executable);
-            command
-                .args(["-e", &source])
-                .env("QUENCH_TLS_PEER_ROOT", &fixtures);
-            if executable != "node" {
-                command
-                    .env(quench_node::shared_run::CHILD_RUNNER_ENV, "1")
-                    .env("QUENCH_NODE_LIBRARY_ROOT", &fixtures);
-            }
-            quench_node_test::case_process::observe_command(command, Duration::from_secs(10))
-                .unwrap()
-        });
-        assert!(!observations[0].timed_out, "Node TLS oracle timed out");
-        assert!(
-            !observations[1].timed_out,
-            "native TLS client timed out: {}",
-            String::from_utf8_lossy(&observations[1].stderr)
-        );
-        assert_eq!(
-            observations[0].exit_code,
-            Some(0),
-            "Node TLS oracle: {}",
-            String::from_utf8_lossy(&observations[0].stderr)
-        );
-        assert_eq!(
-            observations[1].exit_code,
-            Some(0),
-            "native TLS client: {} stdout: {} case: {source}",
-            String::from_utf8_lossy(&observations[1].stderr),
-            String::from_utf8_lossy(&observations[1].stdout)
-        );
-        assert_eq!(
-            String::from_utf8_lossy(&observations[1].stdout),
-            String::from_utf8_lossy(&observations[0].stdout),
-            "case: {source}"
-        );
+    for source in [source,trusted,rejected,mismatch,direct,direct_write] {
+    let observations=["node",env!("CARGO_BIN_EXE_run-parallel")].map(|executable|{
+        let mut command=Command::new(executable);command.args(["-e",&source]).env("QUENCH_TLS_PEER_ROOT",&fixtures);
+        if executable!="node"{command.env(quench_node::shared_run::CHILD_RUNNER_ENV,"1").env("QUENCH_NODE_LIBRARY_ROOT",&fixtures);}
+        quench_node_test::case_process::observe_command(command,Duration::from_secs(10)).unwrap()
+    });
+    assert!(!observations[0].timed_out,"Node TLS oracle timed out");
+    assert!(!observations[1].timed_out,"native TLS client timed out: {}",String::from_utf8_lossy(&observations[1].stderr));
+    assert_eq!(observations[0].exit_code,Some(0),"Node TLS oracle: {}",String::from_utf8_lossy(&observations[0].stderr));
+    assert_eq!(observations[1].exit_code,Some(0),"native TLS client: {} stdout: {} case: {source}",String::from_utf8_lossy(&observations[1].stderr),String::from_utf8_lossy(&observations[1].stdout));
+    assert_eq!(String::from_utf8_lossy(&observations[1].stdout),String::from_utf8_lossy(&observations[0].stdout),"case: {source}");
     }
 }
 
@@ -6556,20 +6226,14 @@ socket.on('error',error=>{{console.log(JSON.stringify(['error',error.name,error.
 fn native_tls_server_accepts_encrypted_bytes_from_independent_node_client() {
     use std::io::Read;
     struct Peer(std::process::Child);
-    impl Drop for Peer {
-        fn drop(&mut self) {
-            let _ = self.0.kill();
-            let _ = self.0.wait();
-        }
-    }
-    let fixtures = std::env::var("QUENCH_NODE_LIBRARY_ROOT")
-        .unwrap_or_else(|_| format!("{}/../../tests/node", env!("CARGO_MANIFEST_DIR")));
-    let server_source = r#"
+    impl Drop for Peer {fn drop(&mut self){let _=self.0.kill();let _=self.0.wait();}}
+    let fixtures=std::env::var("QUENCH_NODE_LIBRARY_ROOT").unwrap_or_else(|_|format!("{}/../../tests/node",env!("CARGO_MANIFEST_DIR")));
+    let server_source=r#"
 const tls=require('tls'),net=require('net'),fs=require('fs'),path=require('path');const root=process.env.QUENCH_TLS_PEER_ROOT;
 const server=tls.createServer({key:fs.readFileSync(path.join(root,'test/fixtures/keys/agent1-key.pem')),cert:fs.readFileSync(path.join(root,'test/fixtures/keys/agent1-cert.pem'))},socket=>{console.log(JSON.stringify([socket instanceof tls.TLSSocket,socket instanceof net.Socket,socket.encrypted,socket.secureConnecting,socket.getProtocol()]));socket.on('data',chunk=>socket.end(chunk));socket.on('close',()=>server.close());socket.on('error',()=>{});});
 server.listen(0,'127.0.0.1',()=>console.log(server.address().port));
 "#;
-    let direct_server_source = r#"
+    let direct_server_source=r#"
 const tls=require('tls'),net=require('net'),fs=require('fs'),path=require('path');const root=process.env.QUENCH_TLS_PEER_ROOT;
 const context=tls.createSecureContext({key:fs.readFileSync(path.join(root,'test/fixtures/keys/agent1-key.pem')),cert:fs.readFileSync(path.join(root,'test/fixtures/keys/agent1-cert.pem'))});
 const server=net.createServer(raw=>{const socket=new tls.TLSSocket(raw,{isServer:true,secureContext:context});socket.on('secure',()=>{console.log(JSON.stringify([socket instanceof tls.TLSSocket,socket instanceof net.Socket,socket.encrypted,socket.secureConnecting,socket.getProtocol()]));socket.on('data',chunk=>socket.end(chunk));socket.on('close',()=>server.close());});socket.on('error',()=>{});});
@@ -6578,18 +6242,12 @@ server.listen(0,'127.0.0.1',()=>console.log(server.address().port));
     let delayed_server_source = direct_server_source
         .replace("raw=>{const socket=", "raw=>{setTimeout(()=>{console.log(JSON.stringify([raw.readableLength>0,raw.bytesRead>0,raw.readableFlowing==null]));const socket=")
         .replace("socket.on('error',()=>{});});", "socket.on('error',()=>{});},100);});");
-    let abrupt_server_source =
-        direct_server_source.replace("chunk=>socket.end(chunk)", "chunk=>socket.destroy()");
+    let abrupt_server_source = direct_server_source.replace("chunk=>socket.end(chunk)", "chunk=>socket.destroy()");
     // Keep the abrupt-close client open until the server destroys its socket.
     // Racing both peers' shutdown can make even Node's client alternate between
     // clean EOF and ECONNRESET. Compare full outcomes on a directed exchange.
-    for (server_source, half_close) in [
-        (server_source, true),
-        (direct_server_source, true),
-        (delayed_server_source.as_str(), true),
-        (abrupt_server_source.as_str(), false),
-    ] {
-        let observations=["node",env!("CARGO_BIN_EXE_run-parallel")].map(|executable|{
+    for (server_source, half_close) in [(server_source,true),(direct_server_source,true),(delayed_server_source.as_str(),true),(abrupt_server_source.as_str(),false)] {
+    let observations=["node",env!("CARGO_BIN_EXE_run-parallel")].map(|executable|{
         let mut command=Command::new(executable);command.args(["-e",server_source]).env("QUENCH_TLS_PEER_ROOT",&fixtures).stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::piped());
         if executable!="node"{command.env(quench_node::shared_run::CHILD_RUNNER_ENV,"1").env("QUENCH_NODE_LIBRARY_ROOT",&fixtures);}
         let mut peer=Peer(command.spawn().unwrap());let (mut stdout,line)=tls_peer_first_line(&mut peer.0);
@@ -6609,51 +6267,44 @@ socket.on('secureConnect',()=>socket.{send}(Buffer.from([0,22,23,127,254,255])))
         assert!(status.success(),"TLS server failed");
         (result.exit_code,result.signal,result.stdout,result.stderr,rest)
     });
-        assert_eq!(observations[1], observations[0]);
+    assert_eq!(observations[1],observations[0]);
     }
 }
 
 #[test]
 fn native_net_resource_visibility_follows_original_connection_delivery_and_close() {
-    compare_node_stream_source(
-        r#"
+    compare_node_stream_source(r#"
 const net=require('net');let peer,client;const count=t=>process.getActiveResourcesInfo().filter(x=>x===t).length;
 const server=net.createServer(socket=>{peer=socket;});server.listen(0,'127.0.0.1',()=>{client=net.connect(server.address().port,'127.0.0.1',()=>setImmediate(()=>{
 console.log(JSON.stringify([count('TCPSocketWrap'),count('TCPServerWrap')]));client.unref();peer.unref();server.unref();console.log(JSON.stringify([count('TCPSocketWrap'),count('TCPServerWrap')]));client.ref();peer.ref();server.ref();console.log(JSON.stringify([count('TCPSocketWrap'),count('TCPServerWrap')]));client.destroy();peer.end();console.log(count('TCPServerWrap'));server.close(()=>console.log(JSON.stringify([count('TCPSocketWrap'),count('TCPServerWrap')])));
 }));});
-"#,
-    );
+"#);
 }
 
 #[test]
 fn native_net_unconsumed_bytes_remain_buffered_and_count_before_data_listeners() {
-    compare_node_stream_source(
-        r#"
+    compare_node_stream_source(r#"
 const net=require('net');let client;
 const server=net.createServer(socket=>{setTimeout(()=>{
 console.log(JSON.stringify([socket.readableLength,socket.bytesRead,socket.readableFlowing==null]));
 const data=socket.read();console.log(JSON.stringify(Array.from(data)));socket.end(data);socket.on('close',()=>server.close());
 },100);});
 server.listen(0,'127.0.0.1',()=>{client=net.connect(server.address().port,'127.0.0.1',()=>client.end(Buffer.from([0,127,128,255])));client.on('data',data=>console.log(JSON.stringify(Array.from(data))));});
-"#,
-    );
+"#);
 }
 
 #[test]
 fn native_net_accepted_resources_are_visible_inside_original_connection_callback() {
-    compare_node_stream_source(
-        r#"
+    compare_node_stream_source(r#"
 const net=require('net');let client;
 const server=net.createServer(socket=>{console.log(process.getActiveResourcesInfo().filter(x=>x==='TCPSocketWrap').length);socket.end();socket.on('close',()=>server.close());});
 server.listen(0,'127.0.0.1',()=>{client=net.connect(server.address().port,'127.0.0.1');client.resume();});
-"#,
-    );
+"#);
 }
 
 #[test]
 fn net_socket_end_listener_and_write_after_fin_match_node() {
-    compare_node_stream_source(
-        r#"
+    compare_node_stream_source(r#"
 const net=require('net'); const out=[];
 const reads=[];
 const options={get allowHalfOpen(){reads.push('allowHalfOpen');return true;},get noDelay(){reads.push('noDelay');return true;},get extra(){reads.push('extra');return 7;}};
@@ -6679,14 +6330,12 @@ const server=net.createServer(s=>s.end()).listen(0,()=>{
  client.on('end',()=>{out.push(['end',client.writableEnded]);out.push(['return',client.write('x',e=>{callbackError=e;out.push(['callback',e.code,e.message]);})]);out.push(['sync']);});
  client.on('close',()=>server.close(()=>console.log(JSON.stringify(out))));
 });
-"#,
-    );
+"#);
 }
 
 #[test]
 fn net_server_uses_original_event_emitter_protocol() {
-    compare_node_stream_source(
-        r#"
+    compare_node_stream_source(r#"
 const net=require('net'),{EventEmitter}=require('events');const output=[];
 const server=net.createServer();
 output.push(['inherit',Object.getPrototypeOf(net.Server)===EventEmitter,Object.getPrototypeOf(net.Server.prototype)===EventEmitter.prototype,server instanceof EventEmitter]);
@@ -6699,25 +6348,21 @@ output.push(['raw',server.listeners('value')[1]===callback,server.rawListeners('
 output.push(['emit',server.emit('value'),server.emit('value')]);server.removeAllListeners('value');
 output.push(['events',events]);
 console.log(JSON.stringify(output));
-"#,
-    );
+"#);
 }
 
 #[test]
 fn net_resource_counts_exclude_undelivered_accepted_wrappers() {
-    compare_node_stream_source(
-        r#"
+    compare_node_stream_source(r#"
 const net=require('net'),assert=require('assert');const clients=[],accepted=[];let completed=0;
 const server=net.createServer(socket=>accepted.push(socket)).listen(0,next);
 function next(){const client=net.connect(server.address().port,()=>{if(++completed===8){const count=process.getActiveResourcesInfo().filter(x=>x==='TCPSocketWrap').length;assert.strictEqual(count,clients.length+accepted.length);console.log('resource-count-matches-delivered-wrappers');for(const socket of clients)socket.destroy();for(const socket of accepted)socket.end();server.close();}else next();});clients.push(client);}
-"#,
-    );
+"#);
 }
 
 #[test]
 fn string_repeat_node_limit_errors_and_lazy_lengths_match_node() {
-    compare_node_stream_source(
-        r#"
+    compare_node_stream_source(r#"
 const assert=require('assert');const limit=require('buffer').constants.MAX_STRING_LENGTH;const out=[];
 for(const count of [-0.5,-0,NaN,undefined,0,1,2]){out.push([String(count),'xy'.repeat(count)]);}
 assert.strictEqual('x'.repeat(limit).length,limit);
@@ -6726,25 +6371,21 @@ for(const input of ['x','xy','日']){const count=Math.floor(limit/input.length)+
 for(const count of [-1,-1.5,Infinity,-Infinity]){try{'x'.repeat(count);out.push('accepted');}catch(e){out.push([e.name,e.message]);}}
 const order=[];const receiver={toString(){order.push('receiver');return 'xy';}};const count={valueOf(){order.push('count');return -0.5;}};out.push([String.prototype.repeat.call(receiver,count),order]);
 console.log(JSON.stringify(out));
-"#,
-    );
+"#);
 }
 
 #[test]
 fn net_create_server_preserves_options_connection_listener_and_arity() {
-    compare_node_stream_source(
-        r#"
+    compare_node_stream_source(r#"
 const net=require('net');const output=[];function listener(){}
 for(const args of [[],[listener],[{},listener],[null,listener],[undefined,listener]]){const server=net.createServer(...args);output.push([server instanceof net.Server,server.listeners('connection').length,server.listeners('connection')[0]===listener]);}
 output.push([net.createServer.name,net.createServer.length]);console.log(JSON.stringify(output));
-"#,
-    );
+"#);
 }
 
 #[test]
 fn net_socket_option_normalization_cache_and_metadata_match_node() {
-    compare_node_stream_source(
-        r#"
+    compare_node_stream_source(r#"
 const net=require('net');const out=[];
 const socket=new net.Socket({noDelay:false,keepAlive:true,keepAliveInitialDelay:1000});
 socket._handle={setNoDelay(...args){out.push(['nodelay',args,this===socket._handle]);return 0;},setKeepAlive(...args){out.push(['keepalive',args,this===socket._handle]);return 0;}};
@@ -6752,14 +6393,12 @@ for(const enable of [undefined,true,true,false,false])out.push(['returnNoDelay',
 for(const args of [[true,1000],[true,2000],[true,3000],[false,4000],[false,5000],[true,0],[{enable:true,initialDelay:1234,interval:3456,count:9}]])out.push(['returnKeepAlive',socket.setKeepAlive(...args)===socket]);
 out.push(['metadata',net.Socket.prototype.setNoDelay.name,net.Socket.prototype.setNoDelay.length,net.Socket.prototype.setKeepAlive.name,net.Socket.prototype.setKeepAlive.length]);
 socket._handle=null;socket.destroy();console.log(JSON.stringify(out));
-"#,
-    );
+"#);
 }
 
 #[test]
 fn original_socket_option_exception_preserves_identity_and_close_progress() {
-    compare_node_stream_source(
-        r#"
+    compare_node_stream_source(r#"
 const net=require('net'),assert=require('assert');const marker={};let client;const out=[];
 const server=net.createServer(socket=>socket.end()).listen(0,()=>{
  client=net.connect({port:server.address().port,noDelay:true});
@@ -6767,14 +6406,12 @@ const server=net.createServer(socket=>socket.end()).listen(0,()=>{
  client.on('connect',()=>assert.fail('connect after original option exception'));
 });
 process.once('uncaughtException',(error,origin)=>{out.push([error===marker,origin]);client.destroy();server.close(()=>console.log(JSON.stringify(out)));});
-"#,
-    );
+"#);
 }
 
 #[test]
 fn net_server_admission_counts_and_drop_addresses_match_node() {
-    compare_node_stream_source(
-        r#"
+    compare_node_stream_source(r#"
 'use strict';
 const net=require('net'),assert=require('assert');const output=[];
 const server=net.createServer(socket=>{
@@ -6795,14 +6432,12 @@ server.listen(0,()=>{
   });
  });
 });
-"#,
-    );
+"#);
 }
 
 #[test]
 fn net_server_original_admission_hooks_errors_and_count_timing_match_node() {
-    compare_node_stream_source(
-        r#"
+    compare_node_stream_source(r#"
 'use strict';
 const net=require('net');const output=[];
 const server=net.createServer().listen(0,()=>{
@@ -6826,14 +6461,12 @@ const server=net.createServer().listen(0,()=>{
  output.push(['return',returned===server,server.getConnections.name,server.getConnections.length]);
  synchronous=false;
 });
-"#,
-    );
+"#);
 }
 
 #[test]
 fn net_raw_handle_close_preserves_mutable_callback_and_first_request() {
-    compare_node_stream_source(
-        r#"
+    compare_node_stream_source(r#"
 'use strict';
 const net=require('net');const output=[];
 const server=net.createServer(socket=>socket.on('close',()=>server.close(()=>console.log(JSON.stringify(output))))).listen(0,()=>{
@@ -6846,14 +6479,12 @@ const server=net.createServer(socket=>socket.on('close',()=>server.close(()=>con
   handle.close(()=>output.push('second'));
  }));
 });
-"#,
-    );
+"#);
 }
 
 #[test]
 fn net_default_listener_and_native_endpoint_addresses_match_node() {
-    compare_node_stream_source(
-        r#"
+    compare_node_stream_source(r#"
 const net=require('net');const out=[];
 const server=net.createServer(socket=>socket.end()).listen(0,()=>{
  const address=server.address();out.push(['server',address.address,address.family]);
@@ -6864,14 +6495,12 @@ const server=net.createServer(socket=>socket.end()).listen(0,()=>{
  });
  client.on('close',()=>server.close(()=>console.log(JSON.stringify(out))));
 });
-"#,
-    );
+"#);
 }
 
 #[test]
 fn native_stat_exact_bigint_metadata_matches_node_across_sync_callback_and_promises() {
-    compare_node_stream_source(
-        r#"
+    compare_node_stream_source(r#"
 'use strict';
 const fs=require('fs'),path=require('path'),os=require('os'),assert=require('assert');
 const dir=fs.mkdtempSync(path.join(os.tmpdir(),'quench-stat-exact-')),file=path.join(dir,'file'),link=path.join(dir,'link');
@@ -6896,14 +6525,12 @@ function check(label,big,num,exact){
  const handle=await fs.promises.open(file,'r');check('handleStat',await handle.stat({bigint:true}),await handle.stat(),true);await handle.close();
  fs.closeSync(fd);fs.rmSync(dir,{recursive:true,force:true});console.log(JSON.stringify(out));
 })().catch(error=>{console.error(error);process.exitCode=1;});
-"#,
-    );
+"#);
 }
 
 #[test]
 fn native_socket_paused_accept_defers_actual_reads_until_resume() {
-    compare_node_stream_source(
-        r#"
+    compare_node_stream_source(r#"
 'use strict';
 const net=require('net'),assert=require('assert');const out=[];
 const server=net.createServer({pauseOnConnect:true},socket=>{
@@ -6915,14 +6542,12 @@ const server=net.createServer({pauseOnConnect:true},socket=>{
  const client=net.connect(server.address().port,()=>client.write('payload'));
  client.on('close',()=>server.close(()=>console.log(JSON.stringify(out))));
 });
-"#,
-    );
+"#);
 }
 
 #[test]
 fn stream_resume_preserves_readable_listener_buffer_ownership() {
-    compare_node_stream_source(
-        r#"
+    compare_node_stream_source(r#"
 'use strict';
 const {Readable}=require('node:stream');
 const out=[];
@@ -6936,14 +6561,12 @@ process.nextTick(()=>{
  out.push(['read',stream.read()?.toString()]);
  console.log(JSON.stringify(out));
 });
-"#,
-    );
+"#);
 }
 
 #[test]
 fn async_process_exit_preserves_requested_status_and_stops_rejection_dispatch() {
-    compare_node_stream_source(
-        r#"
+    compare_node_stream_source(r#"
 'use strict';
 const {spawnSync}=require('node:child_process');
 const output=[];
@@ -6953,14 +6576,12 @@ for(const operation of ['exit','reallyExit'])for(const code of [0,7]) {
  output.push([operation,code,result.status,result.signal,result.stdout,result.stderr]);
 }
 console.log(JSON.stringify(output));
-"#,
-    );
+"#);
 }
 
 #[test]
 fn stream_explicit_flowing_false_prevents_automatic_data_resume() {
-    compare_node_stream_source(
-        r#"
+    compare_node_stream_source(r#"
 'use strict';
 const {Readable}=require('stream');const out=[];let reads=0;
 const stream=new Readable({read(){reads++;this.push('x');this.push(null);}});
@@ -6968,14 +6589,12 @@ stream.readableFlowing=false;stream.on('data',data=>out.push(['data',data.toStri
 out.push(['initial',stream.isPaused(),stream.readableFlowing,reads]);
 process.nextTick(()=>{out.push(['tick',stream.isPaused(),stream.readableFlowing,reads]);stream.resume();});
 stream.on('end',()=>{out.push(['end',reads]);console.log(JSON.stringify(out));});
-"#,
-    );
+"#);
 }
 
 #[test]
 fn native_paused_connected_socket_keeps_reference_bit_without_active_loop_work() {
-    compare_node_stream_source(
-        r#"
+    compare_node_stream_source(r#"
 'use strict';
 const net=require('net'),assert=require('assert');const output=[];
 const server=net.createServer(socket=>socket.unref()).listen(0,()=>{
@@ -6983,8 +6602,7 @@ const server=net.createServer(socket=>socket.unref()).listen(0,()=>{
  setTimeout(()=>assert.fail('idle referenced socket kept event loop alive'),100).unref();
 }).unref();
 process.on('exit',()=>console.log(JSON.stringify(output)));
-"#,
-    );
+"#);
 }
 
 #[test]
@@ -7011,8 +6629,7 @@ const server=tls.createServer({key:fs.readFileSync(root+'agent1-key.pem'),cert:f
 
 #[test]
 fn native_socket_endpoint_getters_follow_original_handle_and_cache_like_node() {
-    compare_node_stream_source(
-        r#"
+    compare_node_stream_source(r#"
 'use strict';
 const net=require('net'),assert=require('assert');const out=[];
 for(const name of ['remoteAddress','remoteFamily','remotePort','localAddress','localFamily','localPort']){
@@ -7023,14 +6640,12 @@ const handle={get getpeername(){calls.push('get-peer');return function(o){calls.
 socket._handle=handle;socket.connecting=true;out.push(['connecting',socket.remoteAddress]);socket.connecting=false;
 out.push(['failed',socket.remoteAddress,!!socket._peername]);fail=false;out.push(['success',socket.remotePort,socket.remoteFamily]);socket._handle=null;out.push(['closed',socket.remoteAddress,socket.localAddress]);
 socket._handle=handle;out.push(['local',socket.localAddress,socket.localPort]);socket._handle=null;out.push(['local-after-close',socket.localAddress]);socket._getpeername=()=>({address:'override'});out.push(['override',socket.remoteAddress]);out.push(calls);console.log(JSON.stringify(out));
-"#,
-    );
+"#);
 }
 
 #[test]
 fn native_timer_callbacks_and_resource_projection_match_node() {
-    compare_node_stream_source(
-        r#"
+    compare_node_stream_source(r#"
 'use strict';
 const assert=require('assert'),out=[];
 for(const value of [null,undefined,0,false,{},'none']){out.push(['clear',String(value),clearTimeout(value),clearInterval(value),clearImmediate(value)]);}
@@ -7043,8 +6658,7 @@ function record(kind,handle,args){assert.strictEqual(this,handle);rows.push([kin
 const immediate=setImmediate(function(...args){record.call(this,'immediate',immediate,args)},'i',2);
 const timeout=setTimeout(function(...args){const before=process.getActiveResourcesInfo().filter(v=>v==='Timeout').length;clearTimeout(timeout);assert.strictEqual(process.getActiveResourcesInfo().filter(v=>v==='Timeout').length,before-1);record.call(this,'timeout',timeout,args)},1,'t',3);
 const interval=setInterval(function(...args){clearInterval(interval);record.call(this,'interval',interval,args)},1,'r',4);
-"#,
-    );
+"#);
 }
 
 #[test]
@@ -7054,27 +6668,16 @@ fn global_crypto_is_installed_before_commonjs_entry_and_preloads() {
 console.log(JSON.stringify([typeof globalThis.crypto,descriptor.enumerable,descriptor.configurable,typeof descriptor.get,globalThis.crypto===require('crypto').webcrypto]));"#;
     std::fs::write(directory.path().join("preload.cjs"), source).unwrap();
     std::fs::write(directory.path().join("entry.cjs"), source).unwrap();
-    for arguments in [
-        vec!["entry.cjs"],
-        vec!["--require", "./preload.cjs", "entry.cjs"],
-    ] {
+    for arguments in [vec!["entry.cjs"], vec!["--require", "./preload.cjs", "entry.cjs"]] {
         let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
             let mut command = Command::new(executable);
             command.current_dir(directory.path()).args(&arguments);
-            if executable != "node" {
-                command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
-            }
-            quench_node_test::case_process::observe_command(command, Duration::from_secs(5))
-                .unwrap()
+            if executable != "node" { command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1"); }
+            quench_node_test::case_process::observe_command(command, Duration::from_secs(5)).unwrap()
         });
         for observation in &observations {
             assert!(!observation.timed_out);
-            assert_eq!(
-                observation.exit_code,
-                Some(0),
-                "{}",
-                String::from_utf8_lossy(&observation.stderr)
-            );
+            assert_eq!(observation.exit_code, Some(0), "{}", String::from_utf8_lossy(&observation.stderr));
             assert!(observation.stderr.is_empty());
         }
         assert_eq!(observations[0].stdout, observations[1].stdout);
@@ -7083,8 +6686,7 @@ console.log(JSON.stringify([typeof globalThis.crypto,descriptor.enumerable,descr
 
 #[test]
 fn native_performance_queries_preserve_identity_order_coercion_and_errors() {
-    compare_node_stream_source(
-        r#"
+    compare_node_stream_source(r#"
 'use strict';
 const {performance:p}=require('perf_hooks');const out=[],log=[];
 p.clearMarks();p.clearMeasures();
@@ -7099,14 +6701,12 @@ const brand=Reflect.ownKeys(p).find(key=>typeof key==='symbol'&&key.description=
 out.push(p.getEntries.call(new Proxy(p,{})).length,p.getEntries.call({[brand]:false}).length);
 try{p.getEntries.call(Object.create(p))}catch(e){out.push([e.name,e.code,e.message]);}
 p.clearMarks();p.clearMeasures();console.log(JSON.stringify(out));
-"#,
-    );
+"#);
 }
 
 #[test]
 fn native_timer_disposal_metadata_and_destroyed_phases_match_node() {
-    compare_node_stream_source(
-        r#"
+    compare_node_stream_source(r#"
 'use strict';
 const assert=require('assert'),out=[],rows=[];
 for(const [kind,handle] of [['Timeout',setTimeout(()=>assert.fail('disposed timeout fired'),10000)],['Interval',setInterval(()=>assert.fail('disposed interval fired'),10000)],['Immediate',setImmediate(()=>assert.fail('disposed immediate fired'))]]){
@@ -7121,14 +6721,12 @@ const timeout=setTimeout(function(){rows.push(['timeout','during',this===timeout
 const interval=setInterval(function(){rows.push(['interval','during',this===interval,this._destroyed,this.hasRef()]);assert.strictEqual(this.close(),this);rows.push(['interval','after',this._destroyed,this.hasRef()]);},1);
 const immediate=setImmediate(function(){rows.push(['immediate','during',this===immediate,this._destroyed,this.hasRef()]);});
 process.on('exit',()=>{rows.sort((a,b)=>JSON.stringify(a).localeCompare(JSON.stringify(b)));out.push(rows);console.log(JSON.stringify(out));});
-"#,
-    );
+"#);
 }
 
 #[test]
 fn native_immediate_destroyed_setter_failure_preserves_original_callback_ownership() {
-    compare_node_stream_source(
-        r#"
+    compare_node_stream_source(r#"
 'use strict';
 const out=[],marker={};
 const immediate=setImmediate(()=>out.push('fired'));
@@ -7136,14 +6734,12 @@ Object.defineProperty(immediate,'_destroyed',{configurable:true,get(){return fal
 try{clearImmediate(immediate)}catch(error){out.push(error===marker);}
 Object.defineProperty(immediate,'_destroyed',{value:false,writable:true,enumerable:true,configurable:true});
 setImmediate(()=>{out.push('rescue');console.log(JSON.stringify(out));process.exit(0);});
-"#,
-    );
+"#);
 }
 
 #[test]
 fn native_timer_custom_promisify_getters_preserve_exports_identity_and_mutation() {
-    compare_node_stream_source(
-        r#"
+    compare_node_stream_source(r#"
 'use strict';
 const assert=require('assert'),timers=require('timers'),promises=require('timers/promises'),util=require('util'),out=[];
 for(const name of ['setTimeout','setImmediate']){
@@ -7152,14 +6748,12 @@ for(const name of ['setTimeout','setImmediate']){
  const original=promises[name],marker=function changed(){};promises[name]=marker;out.push(util.promisify(timers[name])===marker);promises[name]=original;
 }
 Promise.all([util.promisify(timers.setTimeout)(1,'timeout'),util.promisify(timers.setImmediate)('immediate')]).then(values=>{out.push(values);console.log(JSON.stringify(out));});
-"#,
-    );
+"#);
 }
 
 #[test]
 fn native_timer_promise_options_validate_with_original_getters_and_coded_errors() {
-    compare_node_stream_source(
-        r#"
+    compare_node_stream_source(r#"
 'use strict';
 const timers=require('timers/promises'),out=[];
 (async()=>{
@@ -7174,8 +6768,7 @@ const timers=require('timers/promises'),out=[];
  const marker={};try{await timers.setImmediate(null,{get signal(){throw marker}})}catch(e){out.push(e===marker)}
  console.log(JSON.stringify(out));
 })();
-"#,
-    );
+"#);
 }
 
 #[test]
@@ -7194,8 +6787,7 @@ fn cli_print_evaluates_script_statements_and_language_completion_like_node() {
 
 #[test]
 fn native_timer_primitive_aliases_cancel_original_handles_like_node() {
-    compare_node_stream_source(
-        r#"
+    compare_node_stream_source(r#"
 "use strict";
 const assert=require('assert'),out=[],fired=[];
 const a=setTimeout(()=>fired.push('number'),10),b=setInterval(()=>fired.push('string'),10);
@@ -7216,14 +6808,12 @@ Object.defineProperty(f,primitive,{configurable:true,get(){throw marker;}});
 try{method.call(f)}catch(error){out.push(error===marker)}
 Object.defineProperty(f,primitive,{configurable:true,value:false,writable:true});clearTimeout(f);
 setTimeout(()=>{out.push(fired);console.log(JSON.stringify(out));},30);
-"#,
-    );
+"#);
 }
 
 #[test]
 fn native_timer_duration_coercion_warning_policy_and_overflow_delay_match_node() {
-    compare_node_stream_source(
-        r#"
+    compare_node_stream_source(r#"
 "use strict";
 const out=[],log=[],noop=()=>{};
 process.emitWarning=function(message,name){out.push([this===process,arguments.length,message,name]);};
@@ -7234,14 +6824,12 @@ const marker={};try{setTimeout(noop,{[Symbol.toPrimitive](){throw marker;}});}ca
 for(const delay of [Symbol('x'),1n]) {try{setTimeout(noop,delay);}catch(error){out.push(error.name);}}
 process.emitWarning=()=>{throw marker;};try{setTimeout(noop,Infinity);}catch(error){out.push(error===marker);}
 let fired=false;process.emitWarning=()=>{};setTimeout(()=>{fired=true;},2147483648);setTimeout(()=>{out.push(fired);console.log(JSON.stringify(out));},30);
-"#,
-    );
+"#);
 }
 
 #[test]
 fn native_timer_refresh_reactivates_original_slots_and_repeat_transitions_like_node() {
-    compare_node_stream_source(
-        r#"
+    compare_node_stream_source(r#"
 "use strict";
 const assert=require('assert'),out=[],fired=[];
 const cleared=setTimeout(()=>fired.push('cleared'),1);clearTimeout(cleared);out.push(cleared.refresh()===cleared,cleared._idleTimeout,cleared._onTimeout);
@@ -7257,8 +6845,7 @@ const unref=setTimeout(()=>fired.push('unref'),1);unref.unref();out.push(unref.r
 let switched=0;const switchTimer=setTimeout(()=>{switched++;if(switched===1){switchTimer._repeat=1;}else{clearInterval(switchTimer);}},1);
 const d=Object.getOwnPropertyDescriptor(Object.getPrototypeOf(timer),'refresh');out.push([d.value.name,d.value.length,d.writable,d.enumerable,d.configurable,Object.hasOwn(d.value,'prototype')]);
 setTimeout(()=>{out.push(['end',count,switched,fired,timer._destroyed,typeof timer._onTimeout]);console.log(JSON.stringify(out));},30);
-"#,
-    );
+"#);
 }
 
 #[test]
@@ -7275,19 +6862,12 @@ setTimeout(()=>{hook.disable();out.push(phases);console.log(JSON.stringify(out))
     let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
         let mut command = Command::new(executable);
         command.args(["--expose-internals", "--no-warnings", "-e", source]);
-        if executable != "node" {
-            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
-        }
+        if executable != "node" { command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1"); }
         quench_node_test::case_process::observe_command(command, Duration::from_secs(5)).unwrap()
     });
     for observation in &observations {
         assert!(!observation.timed_out);
-        assert_eq!(
-            observation.exit_code,
-            Some(0),
-            "{}",
-            String::from_utf8_lossy(&observation.stderr)
-        );
+        assert_eq!(observation.exit_code, Some(0), "{}", String::from_utf8_lossy(&observation.stderr));
         assert!(observation.stderr.is_empty());
     }
     assert_eq!(observations[0].stdout, observations[1].stdout);
@@ -7295,27 +6875,18 @@ setTimeout(()=>{hook.disable();out.push(phases);console.log(JSON.stringify(out))
 
 #[test]
 fn native_internal_timer_require_and_resolution_obey_exposure_flag() {
-    let source = r#"for(const operation of [()=>require('internal/timers').setUnrefTimeout,()=>require.resolve('internal/timers')]){try{const value=operation();console.log(JSON.stringify([typeof value,typeof value==='string'?value:value.name]));}catch(error){console.log(JSON.stringify([error.name,error.code,error.message.split('\n')[0]]));}}
+    let source=r#"for(const operation of [()=>require('internal/timers').setUnrefTimeout,()=>require.resolve('internal/timers')]){try{const value=operation();console.log(JSON.stringify([typeof value,typeof value==='string'?value:value.name]));}catch(error){console.log(JSON.stringify([error.name,error.code,error.message.split('\n')[0]]));}}
 "#;
-    for expose in [false, true] {
-        let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
-            let mut command = Command::new(executable);
-            if expose {
-                command.arg("--expose-internals");
-            }
-            command.args(["-e", source]);
-            if executable != "node" {
-                command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
-            }
-            quench_node_test::case_process::observe_command(command, Duration::from_secs(5))
-                .unwrap()
+    for expose in [false,true] {
+        let observations=["node",env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
+            let mut command=Command::new(executable);
+            if expose { command.arg("--expose-internals"); }
+            command.args(["-e",source]);
+            if executable!="node" { command.env(quench_node::shared_run::CHILD_RUNNER_ENV,"1"); }
+            quench_node_test::case_process::observe_command(command,Duration::from_secs(5)).unwrap()
         });
-        for observation in &observations {
-            assert!(!observation.timed_out);
-            assert_eq!(observation.exit_code, Some(0));
-            assert!(observation.stderr.is_empty());
-        }
-        assert_eq!(observations[0].stdout, observations[1].stdout);
+        for observation in &observations { assert!(!observation.timed_out); assert_eq!(observation.exit_code,Some(0)); assert!(observation.stderr.is_empty()); }
+        assert_eq!(observations[0].stdout,observations[1].stdout);
     }
 }
 
@@ -7328,31 +6899,19 @@ const d=Object.getOwnPropertyDescriptor(binding,'getLibuvNow');out.push(binding=
 for(const receiver of [undefined,{},binding]){try{const value=fn.call(receiver);out.push(['value',Number.isInteger(value),value>=0,value<0x3ffffff]);}catch(error){out.push([error.name,error.code||null,error.message]);}}
 process.uptime=()=>99999999;const begin=binding.getLibuvNow();while(binding.getLibuvNow()-begin<2){}out.push(binding.getLibuvNow()-begin>=2);console.log(JSON.stringify(out));
 "#;
-    let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
-        let mut command = Command::new(executable);
-        command.args(["--expose-internals", "--no-warnings", "-e", source]);
-        if executable != "node" {
-            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
-        }
-        quench_node_test::case_process::observe_command(command, Duration::from_secs(5)).unwrap()
+    let observations=["node",env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
+        let mut command=Command::new(executable);
+        command.args(["--expose-internals","--no-warnings","-e",source]);
+        if executable!="node" { command.env(quench_node::shared_run::CHILD_RUNNER_ENV,"1"); }
+        quench_node_test::case_process::observe_command(command,Duration::from_secs(5)).unwrap()
     });
-    for observation in &observations {
-        assert!(!observation.timed_out);
-        assert_eq!(
-            observation.exit_code,
-            Some(0),
-            "{}",
-            String::from_utf8_lossy(&observation.stderr)
-        );
-        assert!(observation.stderr.is_empty());
-    }
-    assert_eq!(observations[0].stdout, observations[1].stdout);
+    for observation in &observations { assert!(!observation.timed_out); assert_eq!(observation.exit_code,Some(0),"{}",String::from_utf8_lossy(&observation.stderr)); assert!(observation.stderr.is_empty()); }
+    assert_eq!(observations[0].stdout,observations[1].stdout);
 }
 
 #[test]
 fn native_buffer_search_matches_node_offsets_bounds_encodings_and_original_hooks() {
-    compare_node_stream_source(
-        r#"
+    compare_node_stream_source(r#"
 "use strict";
 const out=[],buffer=Buffer.from('abcabc');
 for(const name of ['indexOf','lastIndexOf','includes']) {
@@ -7378,14 +6937,12 @@ out.push(aligned.indexOf('a',1,undefined,'utf16le'));
 out.push(aligned.indexOf(Buffer.from('a','utf16le'),1,undefined,'utf16le'));
 out.push(aligned.includes('a',5,undefined,'utf16le'));
 console.log(JSON.stringify(out));
-"#,
-    );
+"#);
 }
 
 #[test]
 fn native_buffer_backing_getters_preserve_descriptors_membership_and_original_hooks() {
-    compare_node_stream_source(
-        r#"
+    compare_node_stream_source(r#"
 "use strict";
 const out=[];
 for(const key of ['parent','offset']){
@@ -7401,14 +6958,12 @@ const get=Object.getOwnPropertyDescriptor(Buffer.prototype,'parent').get,log=[],
 Object.defineProperty(Buffer,Symbol.hasInstance,{configurable:true,value(value){log.push(this===Buffer,value===target);return true;}});out.push(get.call(target)===marker,log);
 Object.defineProperty(Buffer,Symbol.hasInstance,{configurable:true,value(){throw marker;}});try{get.call(target);out.push('accepted');}catch(e){out.push(e===marker);}delete Buffer[Symbol.hasInstance];
 console.log(JSON.stringify(out));
-"#,
-    );
+"#);
 }
 
 #[test]
 fn native_buffer_bigint_methods_preserve_layout_original_hooks_errors_and_aliases() {
-    compare_node_stream_source(
-        r#"
+    compare_node_stream_source(r#"
 'use strict';
 const out=[],names=[];
 for(const action of ['read','write'])for(const type of ['BigUInt64','BigInt64'])for(const end of ['LE','BE'])names.push(action+type+end);
@@ -7433,14 +6988,12 @@ for(const name of names.filter(name=>name.startsWith('write'))){
 }
 const original=globalThis.BigInt;globalThis.BigInt=()=>{throw Error('public BigInt must not replace internal conversion');};out.push(Buffer.from([1,0,0,0,0,0,0,0]).readBigUInt64LE().toString());globalThis.BigInt=original;
 console.log(JSON.stringify(out));
-"#,
-    );
+"#);
 }
 
 #[test]
 fn native_buffer_swaps_preserve_generic_views_thresholds_aliases_and_backing_identity() {
-    compare_node_stream_source(
-        r#"
+    compare_node_stream_source(r#"
 'use strict';
 const out=[];
 for(const name of ['swap16','swap32','swap64']){
@@ -7457,14 +7010,12 @@ for(const name of ['swap16','swap32','swap64']){
 }
 const locale=Object.getOwnPropertyDescriptor(Buffer.prototype,'toLocaleString');out.push(locale.value===Buffer.prototype.toString,locale.enumerable,locale.writable,locale.configurable,Buffer.from('aβ').toLocaleString());
 console.log(JSON.stringify(out));
-"#,
-    );
+"#);
 }
 
 #[test]
 fn stream_once_readable_pipe_preserves_original_resume_calls_and_completion() {
-    compare_node_stream_source(
-        r#"
+    compare_node_stream_source(r#"
 'use strict';
 const {Readable,Writable}=require('stream'),out=[];
 for(const placement of ['before','after']){
@@ -7477,14 +7028,12 @@ for(const placement of ['before','after']){
  destination.on('finish',()=>result.finish++);
 }
 process.on('exit',()=>console.log(JSON.stringify(out)));
-"#,
-    );
+"#);
 }
 
 #[test]
 fn native_buffer_constructor_preserves_calls_species_original_methods_and_warning_identity() {
-    compare_node_stream_source(
-        r#"
+    compare_node_stream_source(r#"
 'use strict';
 const {Buffer:B}=require('buffer'),out=[],warnings=[];
 const originalWarning=process.emitWarning;process.emitWarning=function(...args){warnings.push([this===process,args]);};
@@ -7501,14 +7050,12 @@ B.alloc=function(...args){out.push(['alloc',this===B,args]);return marker;};out.
 const real=B.from([1]);Object.defineProperty(B,Symbol.hasInstance,{configurable:true,value(value){out.push(['membership',this===B,value===real]);return true;}});out.push(B.isBuffer(real));delete B[Symbol.hasInstance];
 const identity=B.isBuffer;out.push([identity.name,identity.length,Object.hasOwn(identity,'prototype')]);
 process.emitWarning=originalWarning;out.push(warnings);console.log(JSON.stringify(out));
-"#,
-    );
+"#);
 }
 
 #[test]
 fn buffer_pool_size_preserves_public_configuration_and_legacy_numeric_construction() {
-    compare_node_stream_source(
-        r#"
+    compare_node_stream_source(r#"
 const B=require('buffer').Buffer,out=[];
 const d=Object.getOwnPropertyDescriptor(B,'poolSize');
 out.push([d.value,d.writable,d.enumerable,d.configurable]);
@@ -7517,14 +7064,12 @@ const b=new B(B.poolSize);out.push([b.length,b.parent instanceof ArrayBuffer]);
 B.poolSize=128;out.push(B.poolSize);delete B.poolSize;out.push(Object.hasOwn(B,'poolSize'));
 Object.defineProperty(B,'poolSize',d);out.push(B.poolSize);
 process.emitWarning=emit;console.log(JSON.stringify(out));
-"#,
-    );
+"#);
 }
 
 #[test]
 fn native_buffer_constructor_deprecation_follows_original_vm_filenames_and_process_flags() {
-    compare_node_stream_source(
-        r#"
+    compare_node_stream_source(r#"
 'use strict';
 const {spawnSync}=require('child_process'),out=[];
 for(const filename of ['/a/node_modules/x.js','/a/node_modules/pkg/node_modules/x.js','/a.js','/node_modules/b.js','c:\\a\\node_modules\\b.js','c:\\a.js','node_modules']){
@@ -7535,14 +7080,12 @@ for(const filename of ['/a/node_modules/x.js','/a/node_modules/pkg/node_modules/
  }
 }
 console.log(JSON.stringify(out));
-"#,
-    );
+"#);
 }
 
 #[test]
 fn native_buffer_of_avoids_legacy_warnings_and_preserves_original_coercions() {
-    compare_node_stream_source(
-        r#"
+    compare_node_stream_source(r#"
  'use strict';
 const B=require('buffer').Buffer,out=[],warnings=[];
 process.emitWarning=(...args)=>warnings.push(args);
@@ -7556,14 +7099,12 @@ out.push(Array.from(f(a,b)),hooks);
 for(const v of [1n,Symbol('x')])try{f(v)}catch(e){out.push([e.name,e.message])}
 try{new f(1)}catch(e){out.push([e.name])}
 out.push(warnings);console.log(JSON.stringify(out));
-"#,
-    );
+"#);
 }
 
 #[test]
 fn native_buffer_write_preserves_overloads_encodings_bounds_backing_and_hooks() {
-    compare_node_stream_source(
-        r#"
+ compare_node_stream_source(r#"
 'use strict';
 const B=require('buffer').Buffer,out=[];
 const fn=B.prototype.write,descriptor=Object.getOwnPropertyDescriptor(B.prototype,'write');
@@ -7591,14 +7132,12 @@ for(const mode of ['primitive','string','inspect']){
  try{out.push(['unknown-hooks',mode,fn.call(B.alloc(8),'x',0,4,encoding),events])}catch(e){out.push(['unknown-hooks',mode,e.name,e.code,e.message,events])}
 }
 console.log(JSON.stringify(out));
-"#,
-    );
+"#);
 }
 
 #[test]
 fn native_util_string_format_preserves_primitives_builtin_objects_and_original_hooks() {
-    compare_node_stream_source(
-        r#"
+compare_node_stream_source(r#"
 'use strict';
 const u=require('util'),out=[],hooks=[];
 class Custom{toString(){hooks.push('custom');return 'custom-string'}}
@@ -7610,14 +7149,12 @@ for(const value of [new Date(0),new Date(NaN),new Number(3),new String('abc'),ne
  out.push(u.format('%s',value));
 }
 out.push(hooks);console.log(JSON.stringify(out));
-"#,
-    );
+"#);
 }
 
 #[test]
 fn native_buffer_fill_preserves_overloads_views_ranges_coercions_and_overlap() {
-    compare_node_stream_source(
-        r#"
+compare_node_stream_source(r#"
 'use strict';const B=require('buffer').Buffer,out=[],fn=B.prototype.fill,d=Object.getOwnPropertyDescriptor(B.prototype,'fill');out.push([fn.name,fn.length,Object.hasOwn(fn,'prototype'),d.writable,d.enumerable,d.configurable]);
 const values=[undefined,null,true,false,0,-1,257,NaN,Infinity,1n,Symbol('v'),'', 'a','é','😀','yKJh','\u0222',B.from([1,2]),new Uint8Array([3,4]),new Uint16Array([0x1234,0x5678]),new DataView(new ArrayBuffer(2)),new ArrayBuffer(2),[],{}, {valueOf(){return 7}}];
 for(let i=0;i<values.length;i++)for(const tail of [[],[1,4],[1,4,'utf8'],['hex'],['base64'],[0,0,'bogus'],[9,10]]){const b=B.alloc(8,0x7f);try{out.push([i,tail,fn.call(b,values[i],...tail)===b,Array.from(b)])}catch(e){out.push([i,tail,e.name,e.code,e.message,Array.from(b)])}}
@@ -7628,26 +7165,22 @@ const b=B.from([1,2,3,4,5,6,7,8]);out.push(['overlap',fn.call(b,b.subarray(0,3),
 for(const value of [B.alloc(0),new Uint8Array(0),new DataView(new ArrayBuffer(0)),new DataView(new Uint8Array([3,4]).buffer),new Uint8Array([5,6]).buffer,new String('7')]){const b=B.alloc(8,0x7f);try{out.push(['additional-value',Object.prototype.toString.call(value),fn.call(b,value)===b,Array.from(b)])}catch(e){out.push(['additional-value',Object.prototype.toString.call(value),e.name,e.code,e.message,Array.from(b)])}}
 for(const length of [2,4,9]){const events=[],encoding={length,toString(){events.push('string');return 'utf8'}};const b=B.alloc(8);try{out.push(['encoding-hooks',length,fn.call(b,'ab',1,4,encoding)===b,events,Array.from(b)])}catch(e){out.push(['encoding-hooks',length,e.name,e.code,e.message,events])}}
 console.log(JSON.stringify(out));
-"#,
-    );
+"#);
 }
 
 #[test]
 fn native_buffer_binding_fill_preserves_statuses_indices_and_shared_byte_policy() {
-    compare_node_stream_source(
-        r#"
+compare_node_stream_source(r#"
 'use strict';
 const {spawnSync}=require('child_process');
 const source=`process.emitWarning=()=>{};const internal=require('internal/test/binding').internalBinding,binding=internal('buffer'),f=binding.fill,out=[];out.push(binding===internal('buffer'));out.push([f.name,f.length,Object.hasOwn(f,'prototype')]);for(const args of [[1,-1,0,1],[1,0,-2,1],[1,0,3,1],['ab',0,4,'utf8'],['x',0,4,'hex'],[Buffer.alloc(0),0,4,'utf8'],[true,1,4,'utf8'],[new Uint8Array([2,3]),1,7,'utf8']]){const b=Buffer.alloc(8,0x7f);try{const value=f(b,...args);out.push([value===undefined?'undefined':value,Array.from(b)])}catch(e){out.push([e.name,e.code,e.message,Array.from(b)])}}console.log(JSON.stringify(out));`;
 const result=spawnSync(process.execPath,['--expose-internals','-e',source],{encoding:'utf8'});console.log(JSON.stringify([result.status,result.signal,result.stdout,result.stderr]));
-"#,
-    );
+"#);
 }
 
 #[test]
 fn native_buffer_inspection_preserves_aliases_limits_properties_and_constructor_errors() {
-    compare_node_stream_source(
-        r#"
+compare_node_stream_source(r#"
 'use strict';const mod=require('buffer'),B=mod.Buffer,u=require('util'),out=[],custom=Symbol.for('nodejs.util.inspect.custom');
 for(const key of ['inspect',custom]){const d=Object.getOwnPropertyDescriptor(B.prototype,key);out.push([String(key),d.value.name,d.value.length,Object.hasOwn(d.value,'prototype'),d.writable,d.enumerable,d.configurable])}
 {const d=Object.getOwnPropertyDescriptor(mod,'INSPECT_MAX_BYTES');out.push([d.get.name,d.get.length,d.set.name,d.set.length,d.enumerable,d.configurable,B.prototype.inspect===B.prototype[custom]])}
@@ -7659,26 +7192,22 @@ const b=B.from([1,2]);Object.defineProperty(b,'constructor',{get(){throw new Err
 
 for(const length of [NaN,undefined,-1,-0.5,2.5,100,Infinity])for(const size of [0,4]){const b=B.alloc(size,1),events=[];Object.defineProperty(b,'length',{get(){events.push('length');return length}});try{out.push(['length-hooks',String(length),size,b.inspect(),events])}catch(e){out.push(['length-hooks',String(length),size,e.name,e.code,e.message,events])}}
 console.log(JSON.stringify(out));
-"#,
-    );
+"#);
 }
 
 #[test]
 fn native_binary_inspection_preserves_view_layouts_backing_and_detached_state() {
-    compare_node_stream_source(
-        r#"
+compare_node_stream_source(r#"
 'use strict';const u=require('util'),out=[];
 for(const value of [new Uint8Array(0),new Uint8Array([1,2,255]),new Uint16Array([256,512]),new BigInt64Array([-1n,2n]),new ArrayBuffer(0),new Uint8Array([1,2,3]).buffer,new DataView(new ArrayBuffer(0)),new DataView(new Uint8Array([3,4]).buffer)])out.push(u.inspect(value));
 const ab=new ArrayBuffer(2);structuredClone(ab,{transfer:[ab]});out.push(u.inspect(ab));
 console.log(JSON.stringify(out));
-"#,
-    );
+"#);
 }
 
 #[test]
 fn http_response_preserves_http10_close_framing_raw_send_and_date_setting() {
-    compare_node_stream_source(
-        r#"
+    compare_node_stream_source(r#"
 'use strict';
 const http=require('http'),net=require('net');
 let index=0,dateReads=0;
@@ -7703,14 +7232,12 @@ function next(){
  });
 }
 next();
-"#,
-    );
+"#);
 }
 
 #[test]
 fn http_header_validators_preserve_metadata_coercions_errors_and_byte_rules() {
-    compare_node_stream_source(
-        r#"
+compare_node_stream_source(r#"
 'use strict';
 const http=require('http'),out=[],hooks=[];
 function shape(fn){
@@ -7740,14 +7267,12 @@ for(let code=0;code<=255;code++)for(const lenient of [false,true])invoke(['byte'
 for(let n=0;n<names.length;n++)for(const value of [undefined,'\r','ok'])invoke(['error-name',n,value],http.validateHeaderValue,[names[n],value]);
 for(const name of ['validateHeaderName','validateHeaderValue'])for(const args of [[],['valid','ok'],['bad name','\r']])invoke(['unwrapped',name,args],http[name].withoutStackTrace,args);
 console.log(JSON.stringify(out));
-"#,
-    );
+"#);
 }
 
 #[test]
 fn cli_eval_builtin_globals_preserve_lazy_descriptors_cache_and_assignment() {
-    compare_node_stream_source(
-        r#"
+compare_node_stream_source(r#"
 'use strict';
 const out=[];
 function descriptor(name){const d=Object.getOwnPropertyDescriptor(globalThis,name);return !d?null:[d.enumerable,d.configurable,typeof d.get,typeof d.set,d.get&&[d.get.name,d.get.length,Object.hasOwn(d.get,'prototype')],d.set&&[d.set.name,d.set.length,Object.hasOwn(d.set,'prototype')]]}
@@ -7756,28 +7281,24 @@ const before=Object.getOwnPropertyDescriptor(globalThis,'vm');
 try{const value=vm;const after=Object.getOwnPropertyDescriptor(globalThis,'vm');out.push(['load',value===require('vm'),descriptor('vm'),before.get===after.get,before.set===after.set])}catch(e){out.push(['load-error',e.name,e.message])}
 try{vm=123;out.push(['assign',vm,Object.getOwnPropertyDescriptor(globalThis,'vm')])}catch(e){out.push(['assign-error',e.name,e.message])}
 console.log(JSON.stringify(out));
-"#,
-    );
+"#);
 }
 
 #[test]
 fn cli_eval_builtin_globals_use_original_module_identity_and_mutable_require_hook() {
-    compare_node_stream_source(
-        r#"
+compare_node_stream_source(r#"
 'use strict';
 const M=require('module'),original=M.prototype.require,out=[];
 M.prototype.require=function(name){out.push(['require-hook',name,this.id,this.filename,this.loaded]);if(name==='vm')return {fromHook:1};return original.call(this,name)};
 try{const first=vm;M.prototype.require=function(){throw new Error('second require must not run')};out.push(['cached',first===vm,first.fromHook])}catch(e){out.push(['error',e.name,e.message])}
 M.prototype.require=original;
 console.log(JSON.stringify(out));
-"#,
-    );
+"#);
 }
 
 #[test]
 fn cli_eval_builtin_accessors_preserve_blocked_cache_inherited_setters_and_errors() {
-    compare_node_stream_source(
-        r#"
+compare_node_stream_source(r#"
 'use strict';
 const M=require('module'),original=M.prototype.require,out=[];
 let calls=0;
@@ -7794,14 +7315,12 @@ const marker={};M.prototype.require=function(){throw marker};
 try{void vm}catch(e){out.push(['original-error',e===marker])}
 M.prototype.require=original;
 console.log(JSON.stringify(out));
-"#,
-    );
+"#);
 }
 
 #[test]
 fn native_buffer_from_and_copy_bytes_preserve_conversion_bounds_brands_and_hooks() {
-    compare_node_stream_source(
-        r#"
+compare_node_stream_source(r#"
 'use strict';const B=Buffer,out=[],hooks=[];
 function check(tag,value,...tail){hooks.length=0;try{const b=B.from(value,...tail);out.push([tag,'ok',Array.from(b),Object.getPrototypeOf(b)===B.prototype,b.buffer===value,hooks.slice()])}catch(e){out.push([tag,e.name,e.code,e.message,hooks.slice()])}}
 for(const fn of [B.from,B.copyBytesFrom])out.push(['shape',fn&&fn.name,fn&&fn.length,!!fn&&Object.hasOwn(fn,'prototype')]);
@@ -7823,26 +7342,22 @@ for(const source of [new Uint8Array([1,2,3]),new Uint16Array([0x1234,0xabcd]),ne
  hooks.length=0;try{const b=B.copyBytesFrom(source,offset,length);out.push(['copy',source.constructor.name,typeof offset,String(offset),length,'ok',Array.from(b)])}catch(e){out.push(['copy',source.constructor.name,typeof offset,String(offset),length,e.name,e.code,e.message])}
 }
 console.log(JSON.stringify(out));
-"#,
-    );
+"#);
 }
 
 #[test]
 fn inspect_shallow_null_prototype_records_preserve_empty_hidden_and_symbol_keys() {
-    compare_node_stream_source(
-        r#"
+compare_node_stream_source(r#"
 const u=require('util'),out=[],empty=Object.create(null),visible=Object.assign(Object.create(null),{a:1}),hidden=Object.create(null),symbol=Object.create(null),hiddenSymbol=Object.create(null);
 Object.defineProperty(hidden,'x',{value:1});symbol[Symbol('x')]=1;Object.defineProperty(hiddenSymbol,Symbol('x'),{value:1});
 for(const value of [empty,visible,hidden,symbol,hiddenSymbol])for(const depth of [-2,-1])for(const showHidden of [false,true])out.push(u.inspect(value,{depth,showHidden}));
 console.log(JSON.stringify(out));
-"#,
-    );
+"#);
 }
 
 #[test]
 fn native_buffer_string_conversion_preserves_bounds_metadata_encodings_and_original_hooks() {
-    compare_node_stream_source(
-        r#"
+compare_node_stream_source(r#"
 const B=require('buffer').Buffer,out=[],hooks=[];
 function record(tag,fn){hooks.length=0;try{const value=fn();out.push([tag,'ok',typeof value==='string'?Array.from(value,c=>c.codePointAt(0)):value,hooks.slice()])}catch(e){out.push([tag,e.name,e.code,e.message,hooks.slice()])}}
 for(const n of ['toString','toLocaleString','asciiSlice','base64Slice','base64urlSlice','latin1Slice','hexSlice','ucs2Slice','utf8Slice']){const f=B.prototype[n];record(['shape',n],()=>[f.name,f.length,Object.hasOwn(f,'prototype'),Object.getOwnPropertyDescriptor(B.prototype,n).enumerable])}
@@ -7855,30 +7370,25 @@ for(const n of ['asciiSlice','base64Slice','base64urlSlice','latin1Slice','hexSl
 const own=B.from([65,66,67]);Object.defineProperty(own,'length',{get(){hooks.push('length');return 1}});own.subarray=()=>{throw Error('public subarray')};
 for(const args of [[],[undefined],['hex'],['hex',0,2]])record(['original-hooks',args],()=>own.toString(...args));
 console.log(JSON.stringify(out));
-"#,
-    );
+"#);
 }
 
 #[test]
 fn native_buffer_string_slices_preserve_detached_views_and_original_conversion_errors() {
-    compare_node_stream_source(
-        r#"
+compare_node_stream_source(r#"
 const out=[],marker={},hooks=[];function check(tag,fn){hooks.length=0;try{const v=fn();out.push([tag,'ok',v,hooks.slice()])}catch(e){out.push([tag,e.name,e.code,e.message,e===marker,hooks.slice()])}}
 for(const detach of [false,true]){const ab=new ArrayBuffer(4);new Uint8Array(ab).set([65,66,67,68]);const dv=new DataView(ab);if(detach)structuredClone(ab,{transfer:[ab]});for(const method of ['utf8Slice','hexSlice'])check([method,'dv',detach],()=>Buffer.prototype[method].call(dv,{valueOf(){hooks.push('start');throw marker}}));}
 const rab=new ArrayBuffer(8,{maxByteLength:16}),dv=new DataView(rab,4,4);rab.resize(2);check('oob-dv',()=>Buffer.prototype.hexSlice.call(dv,0,4));
 const b=Buffer.from([65,66,67,68]);check('changing-start',()=>b.toString('hex',{valueOf(){hooks.push('start');return hooks.length}}));
 for(const position of ['start','end','encoding'])check(['throw',position],()=>b.toString(position==='encoding'?{toString(){throw marker}}:'hex',position==='start'?{valueOf(){throw marker}}:0,position==='end'?{valueOf(){throw marker}}:4));
-const constants=require('buffer').constants;check('limit-export-isolation',()=>{try{constants.MAX_STRING_LENGTH=0}catch{}return b.toString('hex')});for(const name of ['MAX_LENGTH','MAX_STRING_LENGTH'])check(['constant',name],()=>Object.getOwnPropertyDescriptor(constants,name));console.log(JSON.stringify(out));"#,
-    );
+const constants=require('buffer').constants;check('limit-export-isolation',()=>{try{constants.MAX_STRING_LENGTH=0}catch{}return b.toString('hex')});for(const name of ['MAX_LENGTH','MAX_STRING_LENGTH'])check(['constant',name],()=>Object.getOwnPropertyDescriptor(constants,name));console.log(JSON.stringify(out));"#);
 }
 
 #[test]
 fn native_buffer_static_comparison_preserves_brands_detachment_metadata_and_byte_order() {
-    compare_node_stream_source(
-        r#"
+compare_node_stream_source(r#"
 const B=Buffer,out=[];const f=B.compare,d=Object.getOwnPropertyDescriptor(B,'compare');out.push([f.name,f.length,Object.hasOwn(f,'prototype'),d.writable,d.enumerable,d.configurable]);function record(a,b){try{out.push(['ok',f(a,b)])}catch(e){out.push([e.name,e.code,e.message])}};const fake=Object.create(B.prototype),u8=new Uint8Array([1,2]);for(const a of [undefined,null,0,'x',{},fake,new Uint8ClampedArray([1]),new Uint16Array([1]),new DataView(new ArrayBuffer(1)),B.from([]),B.from([1]),u8])for(const b of [undefined,fake,new Uint8Array([]),new Uint8Array([1,3]),u8])record(a,b);const ab=new ArrayBuffer(2),view=new Uint8Array(ab);structuredClone(ab,{transfer:[ab]});record(view,view);record(view,B.alloc(0));for(const left of [{},fake,new Uint8Array([1,2]),new Uint16Array([513]),B.alloc(0)])for(const right of [undefined,fake,new Uint8Array([]),new Uint8Array([1,2])]){try{out.push(['equals','ok',B.prototype.equals.call(left,right)])}catch(e){out.push(['equals',e.name,e.code,e.message])}};const eq=B.prototype.equals;out.push(['equals-shape',eq.name,eq.length,Object.hasOwn(eq,'prototype')]);console.log(JSON.stringify(out));
-"#,
-    );
+"#);
 }
 
 #[test]
@@ -8004,8 +7514,7 @@ console.log(JSON.stringify(rows));
 
 #[test]
 fn native_http_status_reasons_preserve_mutable_map_coercion_errors_and_wire_bytes() {
-    compare_node_stream_source(
-        r#"
+compare_node_stream_source(r#"
 const http=require('http'),net=require('net'),codes=http.STATUS_CODES,marker={},out=[],saved=Object.getOwnPropertyDescriptors(codes);
 const initial=[Object.keys(codes).map(k=>[k,codes[k],Object.getOwnPropertyDescriptor(codes,k)]),Object.getOwnPropertyDescriptor(http,'STATUS_CODES').writable,Object.getPrototypeOf(codes)===Object.prototype];
 const cases=[
@@ -8038,14 +7547,12 @@ const server=http.createServer((req,res)=>{const i=Number(req.url.slice(1)),even
  if(error){res.statusMessage='OK';res.statusCode=200}if(!res.finished)res.end('x');});
 server.listen(0,'127.0.0.1',()=>{let i=0;function next(){const parts=[];const socket=net.connect(server.address().port,'127.0.0.1',()=>socket.write(`GET /${i} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n`));socket.on('data',b=>parts.push(b));socket.on('end',()=>{out[i].push(Buffer.concat(parts).toString('latin1').split('\r\n')[0]);if(++i<cases.length)next();else server.close(()=>console.log(JSON.stringify([initial,out])))});}next();});
 
-"#,
-    );
+"#);
 }
 
 #[test]
 fn native_util_extend_preserves_reverse_copy_effects_metadata_errors_and_deprecation() {
-    compare_node_stream_source(
-        r#"
+compare_node_stream_source(r#"
 const u=require('util'),f=u._extend,out=[],marker={},events=[],original=process.emitWarning;
 process.emitWarning=function(...args){events.push(['warning',...args.map(x=>typeof x==='function'?[x.name,x.length]:x)])};
 function check(tag,fn){events.length=0;try{out.push([tag,'ok',fn(),events.slice()])}catch(e){out.push([tag,e.name,e.code,e.message,e===marker,events.slice()])}}
@@ -8065,26 +7572,22 @@ check('proto',()=>{const source=JSON.parse('{"__proto__":{"inherited":42}}');con
 check('construct',()=>{const source={x:1},target={};return new f(target,source)===target});
 process.emitWarning=original;console.log(JSON.stringify(out));
 
-"#,
-    );
+"#);
 }
 
 #[test]
 fn native_stream_duplex_pair_preserves_metadata_demand_finish_and_peer_destruction() {
-    compare_node_stream_source(
-        r#"
+compare_node_stream_source(r#"
 const {duplexPair,Duplex}=require('stream'),out=[],events=[];const f=duplexPair;out.push(['function',f.name,f.length,Object.hasOwn(f,'prototype'),Object.getOwnPropertyDescriptor(require('stream'),'duplexPair')]);
 const [a,b]=f({objectMode:true,highWaterMark:2});const proto=Object.getPrototypeOf(a);out.push(['side',a instanceof Duplex,b instanceof Duplex,a!==b,Object.getPrototypeOf(b)===proto,proto.constructor.name,Object.getOwnPropertyNames(proto),Object.getOwnPropertySymbols(proto).map(s=>[String(s),Object.getOwnPropertyDescriptor(proto,s).value.name]),Object.getOwnPropertySymbols(a).map(s=>[String(s),typeof a[s]])]);
 const item={id:1};a.write(item,()=>events.push('write-callback'));events.push(['queued',a.writableLength,b.readableLength]);const value=b.read();events.push(['read',value===item]);a.end(()=>events.push('finish-callback'));b.on('end',()=>events.push('peer-end'));b.resume();a.on('finish',()=>events.push('finish'));setImmediate(()=>{out.push(['flow',events]);const [c,d]=f();const error=new Error('marker'),closed=[];c.on('error',e=>closed.push(['error',e===error]));d.on('error',()=>closed.push('peer-error'));c.on('close',()=>closed.push('close'));d.on('close',()=>closed.push('peer-close'));c.destroy(error);setImmediate(()=>{out.push(['destroy',closed,c.destroyed,d.destroyed]);console.log(JSON.stringify(out));});});
 
-"#,
-    );
+"#);
 }
 
 #[test]
 fn native_stream_emitters_preserve_capture_flags_limits_and_domain_owner() {
-    compare_node_stream_source(
-        r#"
+compare_node_stream_source(r#"
 const {Readable,Writable,Duplex,PassThrough}=require('stream'),EE=require('events'),out=[];
 for(const Type of [Readable,Writable,Duplex,PassThrough]){const s=new Type({read(){},write(c,e,cb){cb()},captureRejections:true});const symbols=Object.getOwnPropertySymbols(s),shape=symbols.find(x=>String(x)==='Symbol(shapeMode)'),capture=symbols.find(x=>String(x)==='Symbol(kCapture)');s.setMaxListeners(7);out.push([Type.name,s[shape],s[capture],s._maxListeners,s.getMaxListeners(),Object.getOwnPropertyDescriptor(s,capture)]);s.destroy();}
 const domain=require('domain').create(),marker=new Error('marker');let stream;domain.on('error',e=>out.push(['domain-error',e===marker,e.domainEmitter===stream,e.domain===domain]));domain.run(()=>{stream=new PassThrough({autoDestroy:false});out.push(['domain',stream.domain===domain,domain.members.includes(stream),domain.members.length]);});try{stream.emit('error',marker)}catch(e){out.push(['thrown',e===marker])}setImmediate(()=>console.log(JSON.stringify(out)));
@@ -8108,15 +7611,12 @@ const http=require('http'),net=require('net');
 
 #[test]
 fn util_parse_args_preserves_defaults_getter_order_tokens_and_strict_writes() {
-    compare_node_stream_source(include_str!(
-        "../node-tests/test-util-parse-args-contract.js"
-    ));
+    compare_node_stream_source(include_str!("../node-tests/test-util-parse-args-contract.js"));
 }
 
 #[test]
 fn util_parse_args_uses_captured_intrinsics_after_nonconfigurable_guest_replacement() {
-    compare_node_stream_source(
-        r#"
+    compare_node_stream_source(r#"
 const savedStringify=JSON.stringify;
 for(const [owner,key] of [[Array.prototype,'slice'],[Array.prototype,'shift'],[Array.prototype,'unshift'],[Array.prototype,'push'],[Array.prototype,'map'],[Object,'hasOwn'],[Object,'entries'],[Reflect,'apply'],[String.prototype,'charAt'],[String.prototype,'startsWith'],[String.prototype,'includes'],[String.prototype,'indexOf'],[String.prototype,'slice']]){
 Object.defineProperty(owner,key,{value(){throw Error('guest intrinsic '+key)},configurable:false,writable:false});
@@ -8124,120 +7624,45 @@ Object.defineProperty(owner,key,{value(){throw Error('guest intrinsic '+key)},co
 const parse=require('node:util').parseArgs;
 const result=parse({args:['-abx','--no-flag','--','pos'],options:{alpha:{type:'boolean',short:'a'},beta:{type:'string',short:'b'},flag:{type:'boolean'}},allowNegative:true,allowPositionals:true,tokens:true});
 process.stdout.write(savedStringify({name:parse.name,length:parse.length,prototype:Object.hasOwnProperty.call(parse,'prototype'),result})+'\n');
-"#,
-    );
+"#);
 }
 
 #[test]
 fn util_parse_args_default_argv_matches_eval_print_and_file_entry_forms() {
     let directory = tempfile::tempdir().unwrap();
     let source = "JSON.stringify(require('util').parseArgs({strict:false}).values)";
-    std::fs::write(
-        directory.path().join("entry.cjs"),
-        format!("process.stdout.write({source})"),
-    )
-    .unwrap();
-    std::fs::write(
-        directory.path().join("preload.cjs"),
-        format!("process.stdout.write({source})"),
-    )
-    .unwrap();
+    std::fs::write(directory.path().join("entry.cjs"), format!("process.stdout.write({source})")).unwrap();
+    std::fs::write(directory.path().join("preload.cjs"),format!("process.stdout.write({source})")).unwrap();
     for args in [
-        vec![
-            "-e".to_owned(),
-            format!("process.stdout.write({source})"),
-            "--".into(),
-            "--foo".into(),
-            "--bar".into(),
-        ],
-        vec![
-            "--eval".to_owned(),
-            format!("process.stdout.write({source})"),
-            "--".into(),
-            "--foo".into(),
-            "--bar".into(),
-        ],
-        vec![
-            format!("--eval=process.stdout.write({source})"),
-            "--".into(),
-            "--foo".into(),
-            "--bar".into(),
-        ],
-        vec![
-            "-p".into(),
-            source.into(),
-            "--".into(),
-            "--foo".into(),
-            "--bar".into(),
-        ],
-        vec![
-            "--print".into(),
-            "--eval".into(),
-            source.into(),
-            "--".into(),
-            "--foo".into(),
-            "--bar".into(),
-        ],
-        vec![
-            "--print".into(),
-            format!("--eval={source}"),
-            "--".into(),
-            "--foo".into(),
-            "--bar".into(),
-        ],
-        vec![
-            "-r".into(),
-            "./preload.cjs".into(),
-            "-e".into(),
-            "".into(),
-            "--".into(),
-            "--foo".into(),
-            "--bar".into(),
-        ],
-        vec![
-            "-r".into(),
-            "./preload.cjs".into(),
-            "-p".into(),
-            "".into(),
-            "--".into(),
-            "--foo".into(),
-            "--bar".into(),
-        ],
-        vec!["entry.cjs".into(), "--foo".into(), "--bar".into()],
-        vec![
-            "--".into(),
-            "entry.cjs".into(),
-            "--foo".into(),
-            "--bar".into(),
-        ],
+        vec!["-e".to_owned(),format!("process.stdout.write({source})"),"--".into(),"--foo".into(),"--bar".into()],
+        vec!["--eval".to_owned(),format!("process.stdout.write({source})"),"--".into(),"--foo".into(),"--bar".into()],
+        vec![format!("--eval=process.stdout.write({source})"),"--".into(),"--foo".into(),"--bar".into()],
+        vec!["-p".into(),source.into(),"--".into(),"--foo".into(),"--bar".into()],
+        vec!["--print".into(),"--eval".into(),source.into(),"--".into(),"--foo".into(),"--bar".into()],
+        vec!["--print".into(),format!("--eval={source}"),"--".into(),"--foo".into(),"--bar".into()],
+        vec!["-r".into(),"./preload.cjs".into(),"-e".into(),"".into(),"--".into(),"--foo".into(),"--bar".into()],
+        vec!["-r".into(),"./preload.cjs".into(),"-p".into(),"".into(),"--".into(),"--foo".into(),"--bar".into()],
+        vec!["entry.cjs".into(),"--foo".into(),"--bar".into()],
+        vec!["--".into(),"entry.cjs".into(),"--foo".into(),"--bar".into()],
     ] {
-        let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
+        let observations = ["node",env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
             let mut command = Command::new(executable);
             command.current_dir(directory.path()).args(&args);
-            if executable != "node" {
-                command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
-            }
-            quench_node_test::case_process::observe_command(command, Duration::from_secs(10))
-                .unwrap()
+            if executable != "node" { command.env(quench_node::shared_run::CHILD_RUNNER_ENV,"1"); }
+            quench_node_test::case_process::observe_command(command,Duration::from_secs(10)).unwrap()
         });
         for observation in &observations {
-            assert!(!observation.timed_out, "{args:?}");
-            assert_eq!(
-                observation.exit_code,
-                Some(0),
-                "{args:?}: {}",
-                String::from_utf8_lossy(&observation.stderr)
-            );
-            assert!(observation.stderr.is_empty(), "{args:?}");
+            assert!(!observation.timed_out,"{args:?}");
+            assert_eq!(observation.exit_code,Some(0),"{args:?}: {}",String::from_utf8_lossy(&observation.stderr));
+            assert!(observation.stderr.is_empty(),"{args:?}");
         }
-        assert_eq!(observations[0].stdout, observations[1].stdout, "{args:?}");
+        assert_eq!(observations[0].stdout,observations[1].stdout,"{args:?}");
     }
 }
 
 #[test]
 fn native_builtin_setup_preserves_regexp_and_crypto_uses_canonical_streams() {
-    compare_node_stream_source(
-        r#"
+    compare_node_stream_source(r#"
 const state=()=>[RegExp.input,RegExp.lastMatch,RegExp.lastParen,RegExp.leftContext,RegExp.rightContext,RegExp.$1,RegExp.$2,RegExp.$9];
 /(before)-(after)/.exec('leftbefore-afterright');RegExp.input='caller input';const before=JSON.stringify(state());
 const crypto=require('crypto');const after=JSON.stringify(state());
@@ -8245,8 +7670,7 @@ const stream=require('stream');const promises=require('stream/promises');
 console.log(before===after,stream.promises===promises,stream.Stream===stream);
 const hash=crypto.createHash('sha256');console.log(hash instanceof stream.Transform);
 hash.on('data',chunk=>console.log(chunk.toString('hex')));hash.end('abc');
-"#,
-    );
+"#);
 }
 
 #[test]
@@ -8279,8 +7703,7 @@ setImmediate(()=>console.log(JSON.stringify(events)));
 
 #[test]
 fn canonical_web_streams_share_globals_and_preserve_byte_and_abort_algorithms() {
-    compare_node_stream_source(
-        r#"
+    compare_node_stream_source(r#"
 const web=require('stream/web');
 console.log(['ReadableStream','WritableStream','TransformStream','TextEncoderStream','TextDecoderStream'].every(name=>web[name]===globalThis[name]));
 (async()=>{
@@ -8294,16 +7717,12 @@ console.log(['ReadableStream','WritableStream','TransformStream','TextEncoderStr
  const read=r.read();await w.write('\ud83d');await w.write('\ude00');console.log('encoded',JSON.stringify([...(await read).value]));
  await w.close();console.log('closed',(await r.read()).done);
 })().catch(error=>{console.error(error);process.exitCode=1});
-"#,
-    );
+"#);
 }
 
 #[test]
 fn native_encoding_and_array_buffer_copy_match_stable_slots_and_byte_ranges() {
-    compare_node_source_with_args(
-        include_str!("../node-tests/test-native-encoding-bytes.js"),
-        &["--no-warnings", "--expose-internals"],
-    );
+    compare_node_source_with_args(include_str!("../node-tests/test-native-encoding-bytes.js"), &["--no-warnings", "--expose-internals"]);
 }
 
 #[test]
@@ -8588,30 +8007,24 @@ Promise.all([callback,promise]).then(results=>{out.push(...results);console.log(
 
 #[test]
 fn canonical_string_decoder_preserves_native_boundaries_and_live_state_views() {
-    compare_node_stream_source(include_str!(
-        "../node-tests/test-string-decoder-native-state.js"
-    ));
+    compare_node_stream_source(include_str!("../node-tests/test-string-decoder-native-state.js"));
 }
 
 #[test]
 fn internal_fast_buffer_shares_public_buffer_identity_and_backing() {
-    compare_node_source_with_args(
-        r#"
+    compare_node_source_with_args(r#"
 const {FastBuffer}=require('internal/buffer'),stream=require('stream');
 const original=Buffer.from([1,2,3,4]),view=new FastBuffer(original.buffer,original.byteOffset,original.byteLength);
 console.log(FastBuffer===Buffer[Symbol.species],FastBuffer.prototype===Buffer.prototype,view instanceof Buffer,view.constructor===Buffer,FastBuffer.name,FastBuffer.length);
 view[1]=9;console.log(original.toString('hex'),view.readUInt16BE(0));
 const raw=new Uint8Array([65,66]),converted=stream._uint8ArrayToBuffer(raw);
 console.log(converted instanceof Buffer,Object.getPrototypeOf(converted)===Buffer.prototype,converted.toString(),converted.buffer===raw.buffer);converted[0]=67;console.log(raw[0]);
-"#,
-        &["--no-warnings", "--expose-internals"],
-    );
+"#, &["--no-warnings","--expose-internals"]);
 }
 
 #[test]
 fn socket_end_counts_final_queued_bytes_and_finishes_without_a_transport() {
-    compare_node_stream_source(
-        r#"
+    compare_node_stream_source(r#"
 const net=require('net'),events=[];const fresh=new net.Socket();fresh.end(()=>events.push(['fresh',fresh.writable]));
 const server=net.createServer(socket=>{let body='';socket.setEncoding('utf8');socket.on('data',chunk=>body+=chunk);socket.on('end',()=>{events.push(['received',body]);socket.end()})});
 server.listen(0,'127.0.0.1',()=>{
@@ -8619,8 +8032,7 @@ server.listen(0,'127.0.0.1',()=>{
  socket.write('hé',()=>events.push(['write',socket.bytesWritten]));socket.end('😀',()=>events.push(['finish',socket.bytesWritten,socket.writable]));events.push(['queued',socket.bytesWritten]);
  socket.on('close',()=>server.close(()=>console.log(JSON.stringify(events))));
 });
-"#,
-    );
+"#);
 }
 
 #[test]
@@ -9233,8 +8645,7 @@ fn scalar_assertion_guards_preserve_aliases_metadata_success_effects_and_failure
 
 #[test]
 fn events_async_iterator_preserves_queues_cleanup_abort_and_watermarks() {
-    let observations = compare_node_stream_source(
-        r#"
+    let observations = compare_node_stream_source(r#"
 const assert=require('assert'),{EventEmitter,on}=require('events');
 (async()=>{
  const e=new EventEmitter(),flow=[];
@@ -9267,18 +8678,13 @@ const assert=require('assert'),{EventEmitter,on}=require('events');
  assert.strictEqual(e.listenerCount('data')+e.listenerCount('error'),0);
  console.log(JSON.stringify({complete:true}));
 })().catch(error=>{console.error(error);process.exitCode=1});
-"#,
-    );
-    assert_eq!(
-        String::from_utf8_lossy(&observations[1].stdout).trim(),
-        r#"{"complete":true}"#
-    );
+"#);
+    assert_eq!(String::from_utf8_lossy(&observations[1].stdout).trim(), r#"{"complete":true}"#);
 }
 
 #[test]
 fn events_async_iterator_descriptor_initialization_captures_original_abort_helper() {
-    let observations = compare_node_stream_source(
-        r#"
+    let observations=compare_node_stream_source(r#"
 const assert=require('assert'),events=require('events');
 const marker={};events.addAbortListener=()=>{throw marker};
 const originalPromise=globalThis.Promise,originalApply=Reflect.apply;
@@ -9296,35 +8702,25 @@ assert.strictEqual(events.on,descriptor.value);Object.freeze(events);assert.stri
  await assert.rejects(pending,error=>error.code==='ABORT_ERR'&&error.cause==='reason');
  console.log(JSON.stringify({complete:true}));
 })().catch(error=>{console.error(error);process.exitCode=1});
-"#,
-    );
-    assert_eq!(
-        String::from_utf8_lossy(&observations[1].stdout).trim(),
-        r#"{"complete":true}"#
-    );
+"#);
+    assert_eq!(String::from_utf8_lossy(&observations[1].stdout).trim(),r#"{"complete":true}"#);
 }
 
 #[test]
 fn events_async_iterator_initialization_preserves_freeze_before_observation() {
-    let observations = compare_node_stream_source(
-        r#"
+    let observations=compare_node_stream_source(r#"
 const assert=require('assert'),events=require('events');Object.freeze(events);
 const descriptor=Object.getOwnPropertyDescriptor(events,'on');assert.strictEqual(typeof descriptor.value,'function');
 assert.strictEqual(descriptor.writable,false);assert.strictEqual(descriptor.configurable,false);assert.strictEqual(descriptor.enumerable,true);
 assert.strictEqual(events.on,descriptor.value);
 (async()=>{const emitter=new events.EventEmitter(),iterator=events.on(emitter,'data');emitter.emit('data',42);assert.deepStrictEqual((await iterator.next()).value,[42]);await iterator.return();console.log(JSON.stringify({complete:true}));})().catch(error=>{console.error(error);process.exitCode=1});
-"#,
-    );
-    assert_eq!(
-        String::from_utf8_lossy(&observations[1].stdout).trim(),
-        r#"{"complete":true}"#
-    );
+"#);
+    assert_eq!(String::from_utf8_lossy(&observations[1].stdout).trim(),r#"{"complete":true}"#);
 }
 
 #[test]
 fn child_stdin_destruction_closes_pipe_and_precedes_exit_observers() {
-    let observations = compare_node_stream_source(
-        r#"
+    let observations = compare_node_stream_source(r#"
 const assert=require('assert'),{spawn}=require('child_process');
 const child=spawn(process.execPath,['-e',`process.stdin.resume();process.stdin.on('end',()=>process.exit(0));`]);
 const original=child.stdin.destroy;let calls=0,exited=false;
@@ -9333,12 +8729,8 @@ child.on('error',error=>{throw error});
 child.on('spawn',()=>child.stdin.destroy());
 child.on('exit',(code,signal)=>{assert.strictEqual(code,0);assert.strictEqual(signal,null);assert(child.stdin.destroyed);assert(calls>=2);assert.strictEqual(child._handle,null);exited=true});
 child.on('close',()=>{assert(exited);console.log(JSON.stringify({complete:true}))});
-"#,
-    );
-    assert_eq!(
-        String::from_utf8_lossy(&observations[1].stdout).trim(),
-        r#"{"complete":true}"#
-    );
+"#);
+    assert_eq!(String::from_utf8_lossy(&observations[1].stdout).trim(), r#"{"complete":true}"#);
 }
 
 #[test]
@@ -9349,13 +8741,9 @@ fn ipc_counted_references_preserve_initial_state_explicit_overrides_and_exit() {
         ("['refCounted','refCounted','unrefCounted']", true),
         ("['unref','refCounted','refCounted']", false),
         ("['ref','unrefCounted']", true),
-        (
-            "['unrefCounted','refCounted','refCounted','unrefCounted']",
-            false,
-        ),
+        ("['unrefCounted','refCounted','refCounted','unrefCounted']", false),
     ] {
-        let source = format!(
-            r#"
+        let source = format!(r#"
 const assert=require('assert'),{{spawn}}=require('child_process');
 const child=spawn(process.execPath,['-e','process.on("message",()=>process.exit(0))'],{{stdio:['ignore','ignore','ignore','ipc']}});
 child.unref();
@@ -9367,20 +8755,15 @@ for(const name of ['refCounted','unrefCounted']){{
 }}
 for(const method of {methods})assert.strictEqual(child.channel[method](),undefined);
 console.log('setup');setTimeout(()=>{{console.log('kept');child.send('done')}},50).unref();
-"#
-        );
+"#);
         let observations = compare_node_stream_source(&source);
-        assert_eq!(
-            String::from_utf8_lossy(&observations[1].stdout),
-            if kept { "setup\nkept\n" } else { "setup\n" }
-        );
+        assert_eq!(String::from_utf8_lossy(&observations[1].stdout), if kept {"setup\nkept\n"} else {"setup\n"});
     }
 }
 
 #[test]
 fn ipc_process_counted_references_compose_with_implicit_listener_counts() {
-    let observations = compare_node_stream_source(
-        r#"
+    let observations = compare_node_stream_source(r#"
 const assert=require('assert'),{spawn}=require('child_process');
 (async()=>{
  const out=[];
@@ -9396,28 +8779,21 @@ const assert=require('assert'),{spawn}=require('child_process');
  }
  console.log(JSON.stringify({complete:true,out}));
 })().catch(error=>{console.error(error);process.exitCode=1});
-"#,
-    );
-    let result: serde_json::Value = serde_json::from_slice(&observations[1].stdout).unwrap();
-    assert_eq!(result["complete"], true);
+"#);
+    let result: serde_json::Value=serde_json::from_slice(&observations[1].stdout).unwrap();
+    assert_eq!(result["complete"],true);
 }
+
 
 #[test]
 fn file_url_module_imports_share_plain_aliases_and_preserve_query_identity() {
     let directory = tempfile::tempdir().unwrap();
-    std::fs::write(
-        directory.path().join("sibling.mjs"),
-        "globalThis.siblingLoads=(globalThis.siblingLoads||0)+1;export const sibling={};",
-    )
-    .unwrap();
-    let dependency = directory.path().join("module # ü.mjs");
+    std::fs::write(directory.path().join("sibling.mjs"), "globalThis.siblingLoads=(globalThis.siblingLoads||0)+1;export const sibling={};").unwrap();
+    let dependency=directory.path().join("module # ü.mjs");
     std::fs::write(&dependency,"import {sibling} from './sibling.mjs';export {sibling};export const id=globalThis.moduleLoads=(globalThis.moduleLoads||0)+1;export let live=1;export function increment(){live++}export const url=import.meta.url;").unwrap();
-    let url = url::Url::from_file_path(&dependency).unwrap().to_string();
-    let entry = directory.path().join("entry.mjs");
-    std::fs::write(
-        &entry,
-        format!(
-            r#"
+    let url=url::Url::from_file_path(&dependency).unwrap().to_string();
+    let entry=directory.path().join("entry.mjs");
+    std::fs::write(&entry,format!(r#"
 import * as first from {literal};
 import assert from 'node:assert/strict';
 const base={literal};
@@ -9444,36 +8820,19 @@ for(const [input,canonical] of [['?x=one#','?x=one'],['?#part','#part']]){{
 assert.strictEqual(globalThis.siblingLoads,1);
 assert.strictEqual(globalThis.moduleLoads,7);
 console.log(JSON.stringify({{out,firstId:first.id,firstLive:first.live}}));
-"#,
-            literal = serde_json::to_string(&url).unwrap()
-        ),
-    )
-    .unwrap();
-    let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
-        let mut command = Command::new(executable);
-        command.arg(&entry);
-        if executable != "node" {
-            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
-        }
-        quench_node_test::case_process::observe_command(command, Duration::from_secs(20)).unwrap()
+"#,literal=serde_json::to_string(&url).unwrap())).unwrap();
+    let observations=["node",env!("CARGO_BIN_EXE_run-parallel")].map(|executable|{
+        let mut command=Command::new(executable);command.arg(&entry);
+        if executable!="node"{command.env(quench_node::shared_run::CHILD_RUNNER_ENV,"1");}
+        quench_node_test::case_process::observe_command(command,Duration::from_secs(20)).unwrap()
     });
-    for result in &observations {
-        assert!(!result.timed_out);
-        assert_eq!(
-            result.exit_code,
-            Some(0),
-            "{}",
-            String::from_utf8_lossy(&result.stderr)
-        );
-        assert!(result.stderr.is_empty());
-    }
-    assert_eq!(observations[0].stdout, observations[1].stdout);
+    for result in &observations {assert!(!result.timed_out);assert_eq!(result.exit_code,Some(0),"{}",String::from_utf8_lossy(&result.stderr));assert!(result.stderr.is_empty());}
+    assert_eq!(observations[0].stdout,observations[1].stdout);
 }
 
 #[test]
 fn text_decoder_unicode_labels_bom_fatal_errors_and_recovery_match_node() {
-    compare_node_stream_source(
-        r#"
+    compare_node_stream_source(r#"
 const out=[];
 for(const label of ['utf8','utf-16','utf-16be','ascii'])for(const fatal of [false,true])for(const ignoreBOM of [false,true]){
  const decoder=new TextDecoder(label,{fatal,ignoreBOM});
@@ -9484,41 +8843,23 @@ for(const label of ['utf8','utf-16','utf-16be','ascii'])for(const fatal of [fals
 }
 for(const label of ['bogus','replacement','iso-2022-cn','\u00a0utf-8\u00a0'])try{new TextDecoder(label)}catch(e){out.push([label,e.name,e.code,e.message])}
 console.log(JSON.stringify(out));
-"#,
-    );
+"#);
 }
 
 #[test]
 fn synchronous_esm_require_preserves_namespaces_live_bindings_errors_and_later_imports() {
-    let directory = tempfile::tempdir().unwrap();
-    for (name, source) in [
-        ("plain.mjs", "export let n=1;export function inc(){n++}"),
-        (
-            "default.mjs",
-            "export default function f(){return 42};export let n=1;export function inc(){n++}",
-        ),
-        (
-            "marker.mjs",
-            "export default 42;export const __esModule=false;",
-        ),
-        (
-            "special.mjs",
-            "const value={answer:42};export {value as 'module.exports'};export default 7;",
-        ),
-        (
-            "async.mjs",
-            "globalThis.asyncStarted=true;await 0;export const done=true;",
-        ),
-        (
-            "parent.mjs",
-            "import './async.mjs';globalThis.parentExecuted=true;export const done=true;",
-        ),
-        ("cycle.mjs", "import './cycle.cjs';export const n=1;"),
-        ("cycle.cjs", "module.exports=require('./cycle.mjs');"),
-    ] {
-        std::fs::write(directory.path().join(name), source).unwrap();
-    }
-    let entry = directory.path().join("entry.cjs");
+    let directory=tempfile::tempdir().unwrap();
+    for (name,source) in [
+        ("plain.mjs","export let n=1;export function inc(){n++}"),
+        ("default.mjs","export default function f(){return 42};export let n=1;export function inc(){n++}"),
+        ("marker.mjs","export default 42;export const __esModule=false;"),
+        ("special.mjs","const value={answer:42};export {value as 'module.exports'};export default 7;"),
+        ("async.mjs","globalThis.asyncStarted=true;await 0;export const done=true;"),
+        ("parent.mjs","import './async.mjs';globalThis.parentExecuted=true;export const done=true;"),
+        ("cycle.mjs","import './cycle.cjs';export const n=1;"),
+        ("cycle.cjs","module.exports=require('./cycle.mjs');"),
+    ] {std::fs::write(directory.path().join(name),source).unwrap();}
+    let entry=directory.path().join("entry.cjs");
     std::fs::write(&entry,r#"
 (async()=>{
 const out=[];
@@ -9539,27 +8880,16 @@ const asyncNS=await import('./parent.mjs');out.push(['async imported',asyncNS.do
 console.log(JSON.stringify({complete:true,out}));
 })().catch(e=>{console.error(e.stack);process.exitCode=1});
 "#).unwrap();
-    let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
-        let mut command = Command::new(executable);
-        command.arg(&entry);
-        if executable != "node" {
-            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
-        }
-        quench_node_test::case_process::observe_command(command, Duration::from_secs(20)).unwrap()
+    let observations=["node",env!("CARGO_BIN_EXE_run-parallel")].map(|executable|{
+        let mut command=Command::new(executable);command.arg(&entry);
+        if executable!="node"{command.env(quench_node::shared_run::CHILD_RUNNER_ENV,"1");}
+        quench_node_test::case_process::observe_command(command,Duration::from_secs(20)).unwrap()
     });
     for result in &observations {
-        assert!(!result.timed_out);
-        assert_eq!(
-            result.exit_code,
-            Some(0),
-            "{}",
-            String::from_utf8_lossy(&result.stderr)
-        );
-        assert!(result.stderr.is_empty());
-        let value: serde_json::Value = serde_json::from_slice(&result.stdout).unwrap();
-        assert_eq!(value["complete"], true);
+        assert!(!result.timed_out);assert_eq!(result.exit_code,Some(0),"{}",String::from_utf8_lossy(&result.stderr));assert!(result.stderr.is_empty());
+        let value:serde_json::Value=serde_json::from_slice(&result.stdout).unwrap();assert_eq!(value["complete"],true);
     }
-    assert_eq!(observations[0].stdout, observations[1].stdout);
+    assert_eq!(observations[0].stdout,observations[1].stdout);
 }
 
 #[test]
@@ -9607,21 +8937,13 @@ for(const name of ['default','namespace']){
 console.log(JSON.stringify({complete:true,out}));
 "#).unwrap();
     let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
-        let mut command = Command::new(executable);
-        command.arg(&entry);
-        if executable != "node" {
-            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
-        }
+        let mut command = Command::new(executable); command.arg(&entry);
+        if executable != "node" { command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1"); }
         quench_node_test::case_process::observe_command(command, Duration::from_secs(20)).unwrap()
     });
     for result in &observations {
         assert!(!result.timed_out);
-        assert_eq!(
-            result.exit_code,
-            Some(0),
-            "{}",
-            String::from_utf8_lossy(&result.stderr)
-        );
+        assert_eq!(result.exit_code, Some(0), "{}", String::from_utf8_lossy(&result.stderr));
         assert!(result.stderr.is_empty());
         let value: serde_json::Value = serde_json::from_slice(&result.stdout).unwrap();
         assert_eq!(value["complete"], true);
@@ -9635,22 +8957,13 @@ fn ambiguous_commonjs_sources_detect_esm_syntax_await_and_wrapper_bindings() {
     for (name, source) in [
         ("esm.js", "export const n=42;"),
         ("meta.js", "globalThis.detectedMeta=import.meta.url;"),
-        (
-            "lexical.js",
-            "const require=42;globalThis.detectedLexical=require;",
-        ),
-        (
-            "destructure.js",
-            "const {x:exports}={x:42};globalThis.detectedDestructure=exports;",
-        ),
+        ("lexical.js", "const require=42;globalThis.detectedLexical=require;"),
+        ("destructure.js", "const {x:exports}={x:42};globalThis.detectedDestructure=exports;"),
         ("script.js", "var require;module.exports=42;return;"),
         ("string.js", "module.exports='export { imaginary }';"),
         ("await-name.js", "var await=8;module.exports=await/2/2;"),
         ("dynamic.js", "module.exports=()=>import('./esm.js');"),
-        (
-            "async.js",
-            "globalThis.detectedStarted=true;await 0;globalThis.detectedFinished=true;",
-        ),
+        ("async.js", "globalThis.detectedStarted=true;await 0;globalThis.detectedFinished=true;"),
         ("hashbang.js", "#!/usr/bin/env node\nexport const n=42;"),
         ("bom.js", "\u{feff}export const n=42;"),
         ("common/package.json", "{\"type\":\"commonjs\"}"),
@@ -9686,39 +8999,23 @@ console.log(JSON.stringify({complete:true,out}));
 })().catch(e=>{console.error(e.stack);process.exitCode=1});
 "#).unwrap();
     let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
-        let mut command = Command::new(executable);
-        command.arg(&entry);
-        if executable != "node" {
-            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
-        }
+        let mut command = Command::new(executable); command.arg(&entry);
+        if executable != "node" { command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1"); }
         quench_node_test::case_process::observe_command(command, Duration::from_secs(20)).unwrap()
     });
     for result in &observations {
         assert!(!result.timed_out);
-        assert_eq!(
-            result.exit_code,
-            Some(0),
-            "{}",
-            String::from_utf8_lossy(&result.stderr)
-        );
-        assert!(
-            result.stderr.is_empty(),
-            "{}",
-            String::from_utf8_lossy(&result.stderr)
-        );
+        assert_eq!(result.exit_code, Some(0), "{}", String::from_utf8_lossy(&result.stderr));
+        assert!(result.stderr.is_empty(), "{}", String::from_utf8_lossy(&result.stderr));
         let value: serde_json::Value = serde_json::from_slice(&result.stdout).unwrap();
         assert_eq!(value["complete"], true);
     }
-    assert_eq!(
-        String::from_utf8_lossy(&observations[0].stdout),
-        String::from_utf8_lossy(&observations[1].stdout)
-    );
+    assert_eq!(String::from_utf8_lossy(&observations[0].stdout), String::from_utf8_lossy(&observations[1].stdout));
 }
 
 #[test]
 fn stream_callable_duplex_transform_and_passthrough_initialize_supplied_receivers() {
-    let observations = compare_node_stream_source(
-        r#"
+    let observations = compare_node_stream_source(r#"
 const stream=require('node:stream');
 (async()=>{
 const out=[];
@@ -9747,8 +9044,7 @@ stream.PassThrough.prototype._transform.call({push(){throw Error('unexpected pus
 out.push(['direct',direct,stream.PassThrough.prototype._transform.name,Object.hasOwn(stream.PassThrough.prototype._transform,'prototype')]);
 console.log(JSON.stringify({complete:true,out}));
 })().catch(e=>{console.error(e.stack);process.exitCode=1});
-"#,
-    );
+"#);
     for observation in observations {
         let result: serde_json::Value = serde_json::from_slice(&observation.stdout).unwrap();
         assert_eq!(result["complete"], true);
@@ -9757,8 +9053,7 @@ console.log(JSON.stringify({complete:true,out}));
 
 #[test]
 fn canonical_inspection_preserves_inherited_getter_receivers_cycles_and_depth() {
-    compare_node_stream_source(
-        r#"
+    compare_node_stream_source(r#"
 const inspect=require('node:util').inspect,out=[];
 class X { constructor(){this._y=123}get y(){return this._y} }
 out.push(inspect(new X(),{getters:true,showHidden:true}));
@@ -9770,14 +9065,12 @@ for(const getters of [false,true,'get','set'])out.push(inspect(value,{getters,so
 const d=Object.getOwnPropertyDescriptor(inspect,'defaultOptions');out.push([d.enumerable,d.configurable,d.get.name,d.set.name]);
 for(const options of [null,1,'x',Symbol('x'),()=>{}])try{inspect.defaultOptions=options;out.push('ok')}catch(e){out.push([e.name,e.code,e.message])}
 console.log(JSON.stringify(out));
-"#,
-    );
+"#);
 }
 
 #[test]
 fn canonical_inspection_unwraps_proxies_without_traps_and_keeps_binding_identity() {
-    compare_node_source_with_args(
-        r#"
+    compare_node_source_with_args(r#"
 const inspect=require('node:util').inspect,{getProxyDetails}=require('internal/test/binding').internalBinding('util'),out=[];
 let calls=0;const target={x:1},handler={get(){calls++;throw Error('get trap')},ownKeys(){calls++;throw Error('keys trap')},getPrototypeOf(){calls++;throw Error('prototype trap')}};
 const proxy=new Proxy(target,handler);
@@ -9790,15 +9083,12 @@ const revoked=Proxy.revocable({},{});revoked.revoke();out.push(getProxyDetails(r
 const original=require('internal/util/inspect');out.push(original.inspect===inspect,original.format===require('node:util').format,original.formatWithOptions===require('node:util').formatWithOptions);
 for(const v of [undefined,null,{},[],new Uint8Array(1),new Proxy({},{}),Symbol('External')])out.push(require('util').types.isExternal(v));
 console.log(JSON.stringify(out));
-"#,
-        &["--expose-internals", "--no-warnings"],
-    );
+"#,&["--expose-internals","--no-warnings"]);
 }
 
 #[test]
 fn canonical_inspection_previews_collection_iterators_without_consuming_or_public_hooks() {
-    compare_node_source_with_args(
-        r#"
+    compare_node_source_with_args(r#"
 const inspect=require('node:util').inspect,{previewEntries}=require('internal/test/binding').internalBinding('util'),out=[];
 const map=new Map([['a',1],['b',2],['c',3]]),set=new Set(['a','b','c']);
 for(const value of [map,set,map.keys(),map.values(),map.entries(),set.values(),set.entries()]){
@@ -9812,15 +9102,12 @@ const key={k:1},value={v:2},wm=new WeakMap([[key,value]]),ws=new WeakSet([key]);
 for(const value of [undefined,null,{},[],[1].values(),new Proxy(map,{})])out.push(previewEntries(value,true)===undefined);
 const original=Map.prototype.entries;Map.prototype.entries=()=>{throw Error('public entries')};try{out.push(previewEntries(map),inspect(map))}finally{Map.prototype.entries=original}
 console.log(JSON.stringify(out));
-"#,
-        &["--expose-internals", "--no-warnings"],
-    );
+"#,&["--expose-internals","--no-warnings"]);
 }
 
 #[test]
 fn native_inspection_class_fallback_uses_slots_and_data_tags_without_public_getters() {
-    compare_node_source_with_args(
-        r#"
+    compare_node_source_with_args(r#"
 const {getConstructorName}=require('internal/test/binding').internalBinding('util'),out=[];let calls=0;
 const plain=Object.create(null),tagged=Object.create(null),accessor=Object.create(null),ownConstructor={};
 Object.defineProperty(tagged,Symbol.toStringTag,{value:'Tagged'});Object.defineProperty(accessor,Symbol.toStringTag,{get(){calls++;throw Error('tag getter')}});
@@ -9829,9 +9116,7 @@ const array=[],map=new Map(),typed=new Uint16Array(1);for(const v of [array,map,
 const original=globalThis.Symbol;globalThis.Symbol=function(){throw Error('public Symbol')};
 try{for(const v of [plain,tagged,accessor,ownConstructor,array,map,typed])out.push(getConstructorName(v))}finally{globalThis.Symbol=original}
 out.push(calls);console.log(JSON.stringify(out));
-"#,
-        &["--expose-internals", "--no-warnings"],
-    );
+"#,&["--expose-internals","--no-warnings"]);
 }
 
 #[test]
@@ -9854,56 +9139,24 @@ fn native_collection_previews_keep_iterator_positions_live_slots_and_return_conv
 #[test]
 fn cli_signal_defaults_reset_inherited_ignores_before_vm_workers_start() {
     use std::os::unix::process::CommandExt;
-    let runner = std::path::PathBuf::from(env!("CARGO_BIN_EXE_run-parallel"));
-    let cli = runner.with_file_name("quench-node");
-    for (name, signal) in [
-        ("SIGINT", libc::SIGINT),
-        ("SIGQUIT", libc::SIGQUIT),
-        ("SIGTERM", libc::SIGTERM),
-    ] {
-        for executable in [
-            std::path::PathBuf::from("node"),
-            runner.clone(),
-            cli.clone(),
-        ] {
-            let mut command = Command::new(&executable);
-            command.args([
-                "-e",
-                "process.kill(process.pid,process.argv[1]);console.log('survived')",
-                name,
-            ]);
-            if executable != std::path::Path::new("node") {
-                command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
-            }
-            unsafe {
-                command.pre_exec(move || {
-                    if libc::signal(signal, libc::SIG_IGN) == libc::SIG_ERR {
-                        return Err(std::io::Error::last_os_error());
-                    }
-                    let limit = libc::rlimit {
-                        rlim_cur: 0,
-                        rlim_max: 0,
-                    };
-                    if libc::setrlimit(libc::RLIMIT_CORE, &limit) != 0 {
-                        return Err(std::io::Error::last_os_error());
-                    }
-                    Ok(())
-                });
-            }
-            let observation =
-                quench_node_test::case_process::observe_command(command, Duration::from_secs(10))
-                    .unwrap();
-            assert!(!observation.timed_out, "{executable:?} {name}");
-            assert_eq!(
-                observation.signal,
-                Some(signal),
-                "{executable:?} {name}: exit {:?}, stderr {}",
-                observation.exit_code,
-                String::from_utf8_lossy(&observation.stderr)
-            );
-            assert_eq!(observation.exit_code, None);
-            assert!(observation.stdout.is_empty());
-            assert!(observation.stderr.is_empty());
+    let runner=std::path::PathBuf::from(env!("CARGO_BIN_EXE_run-parallel"));
+    let cli=runner.with_file_name("quench-node");
+    for (name,signal) in [("SIGINT",libc::SIGINT),("SIGQUIT",libc::SIGQUIT),("SIGTERM",libc::SIGTERM)] {
+        for executable in [std::path::PathBuf::from("node"),runner.clone(),cli.clone()] {
+            let mut command=Command::new(&executable);
+            command.args(["-e","process.kill(process.pid,process.argv[1]);console.log('survived')",name]);
+            if executable!=std::path::Path::new("node") { command.env(quench_node::shared_run::CHILD_RUNNER_ENV,"1"); }
+            unsafe { command.pre_exec(move || {
+                if libc::signal(signal,libc::SIG_IGN)==libc::SIG_ERR { return Err(std::io::Error::last_os_error()); }
+                let limit=libc::rlimit{rlim_cur:0,rlim_max:0};
+                if libc::setrlimit(libc::RLIMIT_CORE,&limit)!=0 { return Err(std::io::Error::last_os_error()); }
+                Ok(())
+            }); }
+            let observation=quench_node_test::case_process::observe_command(command,Duration::from_secs(10)).unwrap();
+            assert!(!observation.timed_out,"{executable:?} {name}");
+            assert_eq!(observation.signal,Some(signal),"{executable:?} {name}: exit {:?}, stderr {}",observation.exit_code,String::from_utf8_lossy(&observation.stderr));
+            assert_eq!(observation.exit_code,None);
+            assert!(observation.stdout.is_empty());assert!(observation.stderr.is_empty());
         }
     }
 }
@@ -9961,15 +9214,12 @@ out.push(calls);console.log(JSON.stringify(out));
 
 #[test]
 fn file_handle_read_parameters_preserve_defaults_options_getter_order_and_result_prototype() {
-    compare_node_stream_source(include_str!(
-        "../node-tests/test-file-handle-read-parameters.js"
-    ));
+    compare_node_stream_source(include_str!("../node-tests/test-file-handle-read-parameters.js"));
 }
 
 #[test]
 fn stack_function_names_follow_mutation_after_capture_and_preserve_utf16_without_getters() {
-    compare_node_source_with_args(
-        r#"
+    compare_node_source_with_args(r#"
 let calls=0;Error.prepareStackTrace=(_,frames)=>frames.slice(0,2);
 function Original(){return new Error};const error=Original();Object.defineProperty(Original,'name',{value:'Changed'});
 const sites=error.stack,out=[sites[0].getFunctionName()];
@@ -9979,9 +9229,7 @@ Object.defineProperty(Original,'name',{get(){calls++;throw Error('name getter')}
 Object.defineProperty(Original,'name',{value:'\0Public'});out.push(sites[0].getFunctionName());
 Object.defineProperty(Original,'name',{value:''});out.push(sites[0].getFunctionName()===null);
 console.log(JSON.stringify(out));
-"#,
-        &[],
-    );
+"#, &[]);
 }
 
 #[test]
@@ -10019,8 +9267,7 @@ console.log(JSON.stringify(out));
 
 #[test]
 fn errors_and_stack_rendering_preserve_utf16_and_capture_targets_observe_original_getters() {
-    compare_node_source_with_args(
-        r#"
+    compare_node_source_with_args(r#"
 const out=[];for(const [C,args] of [[Error,[]],[TypeError,[]],[RangeError,[]],[AggregateError,[[]]],[SuppressedError,[1,2]]]){
  const error=new C(...args,'\ud800');out.push(error.message,error.toString(),error.stack.split('\n')[0]);
 }
@@ -10032,52 +9279,29 @@ let calls=[];const target={get name(){calls.push('name');return {toString(){call
 Error.captureStackTrace(target);const first=target.stack;out.push(first.split('\n')[0],target.stack===first,calls);
 Error.prepareStackTrace=(_,frames)=>frames[0].toString();function Frame(){return new Error};Object.defineProperty(Frame,'name',{value:'\ud800'});out.push(Frame().stack);
 console.log(JSON.stringify(out));
-"#,
-        &[],
-    );
+"#, &[]);
 }
 
 #[test]
 fn implemented_cli_option_snapshots_tokenization_and_stream_iterator_policy_match_node() {
-    for flags in [
-        &["--no-warnings", "--expose-internals"][..],
-        &[
-            "--no-warnings",
-            "--expose-internals",
-            "--experimental-stream-iter",
-        ][..],
-    ] {
-        compare_node_source_with_args(
-            include_str!("../node-tests/test-cli-options-stream-iter.js"),
-            flags,
-        );
+    for flags in [&["--no-warnings","--expose-internals"][..], &["--no-warnings","--expose-internals","--experimental-stream-iter"][..]] {
+        compare_node_source_with_args(include_str!("../node-tests/test-cli-options-stream-iter.js"),flags);
     }
 }
 
 #[test]
 fn stream_iterator_webidl_uses_genuine_original_abort_signal_brands() {
-    compare_node_source_with_args(
-        include_str!("../node-tests/test-stream-iter-abort-brand.js"),
-        &[
-            "--no-warnings",
-            "--expose-internals",
-            "--experimental-stream-iter",
-        ],
-    );
+    compare_node_source_with_args(include_str!("../node-tests/test-stream-iter-abort-brand.js"),&["--no-warnings","--expose-internals","--experimental-stream-iter"]);
 }
 
 #[test]
 fn internal_abort_operation_uses_original_provider_state_reason_and_dependent_delivery() {
-    compare_node_source_with_args(
-        include_str!("../node-tests/test-internal-abort-provider.js"),
-        &["--no-warnings", "--expose-internals"],
-    );
+    compare_node_source_with_args(include_str!("../node-tests/test-internal-abort-provider.js"),&["--no-warnings","--expose-internals"]);
 }
 
 #[test]
 fn text_decoder_stream_boundaries_and_repeated_flush_match_node() {
-    compare_node_stream_source(
-        r#"
+    compare_node_stream_source(r#"
 const inputs=[['utf-8',[239,187,191,226,130,172,240,159,152,128,65]],['utf-16le',[255,254,61,216,0,222,65,0]],['utf-16be',[254,255,216,61,222,0,0,65]],['shift_jis',[130,160,65]],['big5',[164,164,65]],['euc-kr',[176,161,65]],['gb18030',[144,48,129,48,65]],['iso-2022-jp',[27,36,66,36,34,27,40,66,65]]];
 const rows=[];
 for(const [encoding,bytes]of inputs)for(const fatal of [false,true])for(const ignoreBOM of [false,true])for(let cut=0;cut<=bytes.length;cut++){
@@ -10086,14 +9310,12 @@ for(const [encoding,bytes]of inputs)for(const fatal of [false,true])for(const ig
  catch(e){rows.push([encoding,fatal,ignoreBOM,cut,{name:e.name,code:e.code??null,message:e.message}]);}
 }
 console.log(JSON.stringify({complete:true,cases:rows.length,rows}));
-"#,
-    );
+"#);
 }
 
 #[test]
 fn text_decoder_descriptors_validation_and_utf8_encoding_match_node() {
-    compare_node_stream_source(
-        r#"
+    compare_node_stream_source(r#"
 const rows=[];
 function capture(name,fn){try{rows.push({name,result:fn()});}catch(error){rows.push({name,error:{name:error.name,code:error.code??null,message:error.message}});}}
 function descriptors(object){return Reflect.ownKeys(object).map(key=>{const d=Object.getOwnPropertyDescriptor(object,key);return {key:String(key),enumerable:d.enumerable,configurable:d.configurable,...('writable'in d?{writable:d.writable}:{}),...('value'in d?{value:typeof d.value==='function'?[d.value.name,d.value.length]:typeof d.value==='symbol'?String(d.value):d.value}:{}),...(d.get?{get:[d.get.name,d.get.length]}:{}),...(d.set?{set:[d.set.name,d.set.length]}:{})};});}
@@ -10118,14 +9340,12 @@ capture('encoder-encodeInto-symbol',()=>new TextEncoder().encodeInto(Symbol('tex
 capture('encoder-encodeInto-coercion-order',()=>{const calls=[];let error;try{new TextEncoder().encodeInto({toString(){calls.push('string');return'x';}},[]);}catch(e){error={name:e.name,code:e.code??null,message:e.message};}return[calls,error];});
 capture('encoder-partial-codepoint',()=>{const out=[];for(let length=0;length<=5;length++){const b=new Uint8Array(length).fill(255);out.push([new TextEncoder().encodeInto('😀x',b),Array.from(b)]);}return out;});
 console.log(JSON.stringify({complete:true,cases:rows.length,rows}));
-"#,
-    );
+"#);
 }
 
 #[test]
 fn text_decoder_stream_errors_recover_and_reset_bom_match_node() {
-    compare_node_stream_source(
-        r#"
+    compare_node_stream_source(r#"
 const fixtures=[
  ['utf-8',[0xef,0xbb,0xbf,0x41],[0xe2,0x28,0xa1]],
  ['utf-16le',[0xff,0xfe,0x41,0],[0,0xd8,0x41,0]],
@@ -10145,14 +9365,12 @@ for(const [encoding,valid,invalid]of fixtures)for(const fatal of [false,true])fo
  rows.push([encoding,fatal,ignoreBOM,cut,out]);
 }
 console.log(JSON.stringify({complete:true,cases:rows.length,calls:rows.length*7,rows}));
-"#,
-    );
+"#);
 }
 
 #[test]
 fn callsites_share_native_prototypes_and_supported_methods_preserve_descriptors_and_brands() {
-    compare_node_source_with_args(
-        r#"
+    compare_node_source_with_args(r#"
 Error.prepareStackTrace=(_,frames)=>frames;function Frame(){return new Error};const first=Frame().stack,second=Frame().stack,site=first[0],proto=Object.getPrototypeOf(site),C=proto.constructor,out=[];
 const methods=['getColumnNumber','getEvalOrigin','getFileName','getFunctionName','getLineNumber','getMethodName','getThis','getTypeName','isConstructor','isEval','isNative','toString'];
 out.push(Reflect.ownKeys(site),Object.getPrototypeOf(first[1])===proto,Object.getPrototypeOf(second[0])===proto,C.name,C.length,Function.prototype.toString.call(C),Object.getOwnPropertyDescriptor(C,'prototype'),Object.getOwnPropertyDescriptor(proto,'constructor'));
@@ -10161,16 +9379,12 @@ for(const value of [undefined,null,1,'x',true,Symbol('s'),1n,{},()=>{},proto,new
 for(const invoke of [()=>C(),()=>new C])try{invoke()}catch(e){out.push([e.name,e.message])}
 const get=require('internal/test/binding').internalBinding('util').getConstructorName;out.push(get(site));Object.defineProperty(C,'name',{value:'Changed'});proto.constructor=null;out.push(get(site));
 console.log(JSON.stringify(out));
-"#,
-        &["--expose-internals", "--no-warnings"],
-    );
+"#, &["--expose-internals","--no-warnings"]);
 }
 
 #[test]
 fn async_iterator_protocol_and_secondary_realm_inheritance_match_node() {
-    compare_node_stream_source(include_str!(
-        "../node-tests/test-async-iterator-protocol.js"
-    ));
+    compare_node_stream_source(include_str!("../node-tests/test-async-iterator-protocol.js"));
 }
 
 #[test]
@@ -10185,8 +9399,7 @@ fn async_delegated_return_unwinds_original_generator_finally() {
 
 #[test]
 fn callsite_function_identity_obeys_strict_frame_visibility_and_ignores_name_getters() {
-    compare_node_source_with_args(
-        r#"
+    compare_node_source_with_args(r#"
 Error.prepareStackTrace=(_,frames)=>frames;
 function Loose(){return new Error}
 function Strict(){'use strict';return Loose()}
@@ -10200,9 +9413,7 @@ const site=Loose().stack[0];Object.defineProperty(Loose,'name',{get(){throw Erro
 const method=Object.getPrototypeOf(site).getFunction;out.push(method.name,method.length,Function.prototype.toString.call(method),Object.getOwnPropertyDescriptor(Object.getPrototypeOf(site),'getFunction'));
 for(const receiver of [{},undefined])try{method.call(receiver)}catch(e){out.push([e.name,e.message])}
 console.log(JSON.stringify(out));
-"#,
-        &[],
-    );
+"#, &[]);
 }
 
 #[test]
@@ -10229,16 +9440,12 @@ console.log(JSON.stringify(out));
 
 #[test]
 fn abort_listener_errors_are_reported_on_ticks_without_replacing_source_errors() {
-    compare_node_source_with_args(
-        include_str!("../node-tests/test-abort-listener-errors.js"),
-        &["--no-warnings", "--experimental-stream-iter"],
-    );
+    compare_node_source_with_args(include_str!("../node-tests/test-abort-listener-errors.js"), &["--no-warnings", "--experimental-stream-iter"]);
 }
 
 #[test]
 fn function_factory_constructor_names_follow_original_realms_and_ignore_public_links() {
-    compare_node_source_with_args(
-        r#"
+    compare_node_source_with_args(r#"
 const get=require('internal/test/binding').internalBinding('util').getConstructorName,out=[];
 const factories=[()=>function(){},()=>()=>{},()=>async function(){},()=>function*(){},()=>async function*(){}];
 for(const factory of factories){
@@ -10264,85 +9471,47 @@ for(const value of [Array.prototype.map,Math.max,(()=>{}).bind(null),(async()=>{
  try{out.push(get(value))}finally{Object.defineProperty(C,'name',name);Object.setPrototypeOf(value,prototype)}
 }
 console.log(JSON.stringify(out));
-"#,
-        &["--expose-internals", "--no-warnings"],
-    );
+"#, &["--expose-internals","--no-warnings"]);
 }
 
 #[test]
 fn constructor_class_names_preserve_iterator_origins_proxy_kinds_and_prototype_roles() {
-    compare_node_source_with_args(
-        include_str!("../node-tests/test-constructor-class-data.js"),
-        &["--expose-internals", "--no-warnings"],
-    );
+    compare_node_source_with_args(include_str!("../node-tests/test-constructor-class-data.js"), &["--expose-internals", "--no-warnings"]);
 }
 
 #[test]
 fn callsite_type_names_and_constructor_flags_follow_actual_activation_and_receiver_identity() {
-    compare_node_source_with_args(
-        include_str!("../node-tests/test-callsite-type-construction.js"),
-        &[],
-    );
+    compare_node_source_with_args(include_str!("../node-tests/test-callsite-type-construction.js"), &[]);
 }
 
 #[test]
 fn inferred_debug_names_preserve_empty_public_names_and_native_name_property_state() {
-    compare_node_source_with_args(
-        include_str!("../node-tests/test-inferred-function-debug-names.js"),
-        &[],
-    );
+    compare_node_source_with_args(include_str!("../node-tests/test-inferred-function-debug-names.js"), &[]);
 }
 
 #[test]
 fn native_zlib_streaming_counts_bytes_pending_close_and_iterable_pipelines_match_node() {
-    compare_node_source_with_args(
-        include_str!("../node-tests/test-native-zlib-streaming.js"),
-        &[
-            "--no-warnings",
-            "--expose-internals",
-            "--experimental-stream-iter",
-        ],
-    );
+    compare_node_source_with_args(include_str!("../node-tests/test-native-zlib-streaming.js"), &["--no-warnings", "--expose-internals", "--experimental-stream-iter"]);
 }
 
 #[test]
 fn native_brotli_streaming_bytes_dictionaries_and_errors_match_node() {
-    compare_node_source_with_args(
-        include_str!("../node-tests/test-native-brotli-streaming.js"),
-        &[
-            "--no-warnings",
-            "--expose-internals",
-            "--experimental-stream-iter",
-        ],
-    );
+    compare_node_source_with_args(include_str!("../node-tests/test-native-brotli-streaming.js"), &["--no-warnings", "--expose-internals", "--experimental-stream-iter"]);
 }
 
 #[test]
 fn native_zstd_streaming_frames_dictionaries_pledges_and_errors_match_node() {
-    compare_node_source_with_args(
-        include_str!("../node-tests/test-native-zstd-streaming.js"),
-        &[
-            "--no-warnings",
-            "--expose-internals",
-            "--experimental-stream-iter",
-        ],
-    );
+    compare_node_source_with_args(include_str!("../node-tests/test-native-zstd-streaming.js"), &["--no-warnings", "--expose-internals", "--experimental-stream-iter"]);
 }
 
 #[test]
 fn default_node_stack_policy_uses_real_coded_brands_and_system_errors() {
-    compare_node_source_with_args(
-        include_str!("../node-tests/test-node-error-stack-policy.js"),
-        &["--no-warnings", "--expose-internals"],
-    );
+    compare_node_source_with_args(include_str!("../node-tests/test-node-error-stack-policy.js"), &["--no-warnings", "--expose-internals"]);
 }
 
 #[test]
 fn node_compatibility_version_follows_bundled_library_target() {
-    compare_node_source_with_args(
-        include_str!("../node-tests/test-node-compatibility-version.js"),
-        &[],
-    );
+    compare_node_source_with_args(include_str!("../node-tests/test-node-compatibility-version.js"), &[]);
 }
 
 #[test]
@@ -10363,10 +9532,7 @@ fn native_buffer_pool_shares_real_aligned_backing_and_preserves_reentrant_copies
 
 #[test]
 fn boxed_primitive_brands_use_internal_values_and_reject_forged_properties_and_proxies() {
-    compare_node_source_with_args(
-        include_str!("../node-tests/test-boxed-primitive-slots.js"),
-        &[],
-    );
+    compare_node_source_with_args(include_str!("../node-tests/test-boxed-primitive-slots.js"), &[]);
 }
 
 #[test]
@@ -10403,101 +9569,65 @@ fn native_buffer_public_policy_captures_original_validators_and_coded_constructo
 
 #[test]
 fn callsite_columns_follow_member_parenthesized_and_constructor_call_syntax() {
-    compare_node_source_with_args(
-        include_str!("../node-tests/test-callsite-call-columns.js"),
-        &[],
-    );
+    compare_node_source_with_args(include_str!("../node-tests/test-callsite-call-columns.js"), &[]);
 }
 
 #[test]
 fn util_call_sites_capture_actual_metadata_without_error_hooks_and_use_node_validation() {
-    compare_node_source_with_args(
-        include_str!("../node-tests/test-util-real-call-sites.js"),
-        &[],
-    );
+    compare_node_source_with_args(include_str!("../node-tests/test-util-real-call-sites.js"), &[]);
 }
 
 #[test]
 fn shadow_realms_own_original_node_error_policy_default_hooks_and_private_fallbacks() {
     compare_node_source_with_args(
         include_str!("../node-tests/test-shadow-stack-policy-isolation.js"),
-        &[
-            "--no-warnings",
-            "--expose-internals",
-            "--experimental-shadow-realm",
-            "--expose-gc",
-        ],
+        &["--no-warnings", "--expose-internals", "--experimental-shadow-realm", "--expose-gc"],
     );
 }
 
 #[test]
 fn optional_private_and_complex_call_columns_follow_actual_syntax_tokens() {
-    for source in [
-        include_str!("../node-tests/test-optional-private-call-columns.js"),
-        include_str!("../node-tests/test-call-column-trivia.js"),
-        include_str!("../node-tests/test-complex-call-columns.js"),
-        include_str!("../node-tests/test-special-call-columns.js"),
-    ] {
+    for source in [include_str!("../node-tests/test-optional-private-call-columns.js"), include_str!("../node-tests/test-call-column-trivia.js"), include_str!("../node-tests/test-complex-call-columns.js"), include_str!("../node-tests/test-special-call-columns.js")] {
         compare_node_source_with_args(source, &[]);
     }
 }
 
 #[test]
 fn getter_operation_columns_remain_distinct_from_call_continuations() {
-    compare_node_source_with_args(
-        include_str!("../node-tests/test-getter-call-columns.js"),
-        &[],
-    );
+    compare_node_source_with_args(include_str!("../node-tests/test-getter-call-columns.js"), &[]);
 }
 
 #[test]
 fn property_reads_and_writes_capture_their_own_operation_positions() {
-    for source in [
-        include_str!("../node-tests/test-property-access-columns.js"),
-        include_str!("../node-tests/test-assignment-access-columns.js"),
-    ] {
+    for source in [include_str!("../node-tests/test-property-access-columns.js"), include_str!("../node-tests/test-assignment-access-columns.js")] {
         compare_node_source_with_args(source, &[]);
     }
 }
 
 #[test]
 fn source_positions_use_javascript_line_terminators_and_utf16_columns() {
-    compare_node_source_with_args(
-        include_str!("../node-tests/test-source-line-terminators.js"),
-        &[],
-    );
+    compare_node_source_with_args(include_str!("../node-tests/test-source-line-terminators.js"), &[]);
 }
 
 #[test]
 fn fused_field_reads_preserve_each_getter_operation_source() {
-    compare_node_source_with_args(
-        include_str!("../node-tests/test-fused-field-source-positions.js"),
-        &[],
-    );
+    compare_node_source_with_args(include_str!("../node-tests/test-fused-field-source-positions.js"), &[]);
 }
 
 #[test]
 fn callsite_eval_classification_follows_compilation_origin_and_survives_escaped_closures() {
-    compare_node_source_with_args(
-        include_str!("../node-tests/test-callsite-eval-origin.js"),
-        &["--expose-gc"],
-    );
+    compare_node_source_with_args(include_str!("../node-tests/test-callsite-eval-origin.js"), &["--expose-gc"]);
 }
 
 #[test]
 fn fs_glob_uses_original_policy_and_real_dirent_types_across_all_three_apis() {
-    compare_node_source_with_args(
-        include_str!("../node-tests/test-fs-original-glob-policy.js"),
-        &[],
-    );
+    compare_node_source_with_args(include_str!("../node-tests/test-fs-original-glob-policy.js"), &[]);
 }
 
 #[test]
 fn eval_uses_parsed_program_completion_grammar_and_original_source_positions() {
-    compare_node_source_with_args(
-        include_str!("../node-tests/test-compiled-eval-source.js"),
-        &[],
-    );
+    compare_node_source_with_args(include_str!("../node-tests/test-compiled-eval-source.js"), &[]);
+
 }
 
 #[test]
@@ -10512,8 +9642,7 @@ fn fatal_source_excerpts_follow_javascript_line_terminators_and_original_file_li
             if executable != "node" {
                 command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
             }
-            quench_node_test::case_process::observe_command(command, Duration::from_secs(15))
-                .unwrap()
+            quench_node_test::case_process::observe_command(command, Duration::from_secs(15)).unwrap()
         });
         for observation in &observations {
             assert!(!observation.timed_out);
@@ -10521,11 +9650,7 @@ fn fatal_source_excerpts_follow_javascript_line_terminators_and_original_file_li
             assert!(observation.stdout.is_empty());
         }
         let excerpts = observations.each_ref().map(|observation| {
-            String::from_utf8_lossy(&observation.stderr)
-                .lines()
-                .take(4)
-                .map(str::to_owned)
-                .collect::<Vec<_>>()
+            String::from_utf8_lossy(&observation.stderr).lines().take(4).map(str::to_owned).collect::<Vec<_>>()
         });
         assert_eq!(excerpts[0][1], "  missing();");
         assert_eq!(excerpts[0], excerpts[1]);
@@ -10534,485 +9659,314 @@ fn fatal_source_excerpts_follow_javascript_line_terminators_and_original_file_li
 
 #[test]
 fn eval_call_sites_capture_original_compiling_callers_and_hide_absent_script_names() {
-    compare_node_source_with_args(
-        include_str!("../node-tests/test-callsite-eval-origins.js"),
-        &["--expose-gc"],
-    );
+    compare_node_source_with_args(include_str!("../node-tests/test-callsite-eval-origins.js"), &["--expose-gc"]);
 }
 
 #[test]
 fn indirect_eval_script_identity_preserves_origins_fresh_values_templates_and_realm_isolation() {
-    compare_node_source_with_args(
-        include_str!("../node-tests/test-indirect-eval-script-identity.js"),
-        &[],
-    );
+    compare_node_source_with_args(include_str!("../node-tests/test-indirect-eval-script-identity.js"), &[]);
 }
 
 #[test]
 fn error_source_positions_preserve_captured_compiler_metadata_without_guest_hooks() {
-    compare_node_source_with_args(
-        include_str!("../node-tests/test-error-source-positions.js"),
-        &["--expose-gc", "--expose-internals", "--no-warnings"],
-    );
+    compare_node_source_with_args(include_str!("../node-tests/test-error-source-positions.js"), &["--expose-gc", "--expose-internals", "--no-warnings"]);
 }
 
 #[test]
 fn native_protocol_constants_derive_from_configured_sdk_headers_and_preserve_descriptors() {
-    compare_node_source_with_args(
-        include_str!("../node-tests/test-native-protocol-constants.js"),
-        &["--expose-internals", "--no-warnings"],
-    );
+    compare_node_source_with_args(include_str!("../node-tests/test-native-protocol-constants.js"), &["--expose-internals", "--no-warnings"]);
 }
 
 #[test]
 fn native_caller_location_uses_original_activations_independently_of_error_hooks() {
-    compare_node_source_with_args(
-        include_str!("../node-tests/test-native-caller-location.js"),
-        &["--expose-internals", "--no-warnings"],
-    );
+    compare_node_source_with_args(include_str!("../node-tests/test-native-caller-location.js"), &["--expose-internals", "--no-warnings"]);
 }
 
 #[test]
 fn filesystem_glob_policy_defers_promises_dependencies_and_preserves_data_descriptors() {
-    compare_node_source_with_args(
-        include_str!("../node-tests/test-fs-promises-glob-lazy-policy.js"),
-        &["--expose-internals", "--no-warnings"],
-    );
+    compare_node_source_with_args(include_str!("../node-tests/test-fs-promises-glob-lazy-policy.js"), &["--expose-internals", "--no-warnings"]);
 }
 
 #[test]
 fn function_constructor_default_debug_names_remain_distinct_from_public_names_and_descriptors() {
-    compare_node_source_with_args(
-        include_str!("../node-tests/test-function-constructor-debug-names.js"),
-        &["--expose-internals", "--no-warnings"],
-    );
+    compare_node_source_with_args(include_str!("../node-tests/test-function-constructor-debug-names.js"), &["--expose-internals", "--no-warnings"]);
 }
 
 #[test]
 fn function_prototype_info_lookups_preserve_native_accessor_layout_and_descriptor_transitions() {
-    compare_node_source_with_args(
-        include_str!("../node-tests/test-function-prototype-info-lookups.js"),
-        &["--expose-internals", "--no-warnings"],
-    );
+    compare_node_source_with_args(include_str!("../node-tests/test-function-prototype-info-lookups.js"), &["--expose-internals", "--no-warnings"]);
 }
 
 #[test]
 fn function_constructor_sources_preserve_whitespace_parameter_positions_and_synthetic_name_scope() {
-    compare_node_source_with_args(
-        include_str!("../node-tests/test-function-constructor-source-layout.js"),
-        &[],
-    );
+    compare_node_source_with_args(include_str!("../node-tests/test-function-constructor-source-layout.js"), &[]);
 }
 
 #[test]
 fn filesystem_readdir_sync_uses_sdk_policy_with_raw_names_and_recursive_native_layout() {
-    compare_node_source_with_args(
-        include_str!("../node-tests/test-fs-readdir-sdk-policy.js"),
-        &["--expose-internals", "--no-warnings"],
-    );
+    compare_node_source_with_args(include_str!("../node-tests/test-fs-readdir-sdk-policy.js"), &["--expose-internals", "--no-warnings"]);
 }
 
 #[test]
 fn private_fields_keep_class_creation_identity_and_atomic_internal_initialization() {
-    compare_node_source_with_args(
-        include_str!("../node-tests/test-private-field-identity.js"),
-        &[],
-    );
+    compare_node_source_with_args(include_str!("../node-tests/test-private-field-identity.js"), &[]);
 }
 
 #[test]
 fn private_eval_environments_cross_static_instance_and_ordinary_function_boundaries() {
-    compare_node_source_with_args(
-        include_str!("../node-tests/test-private-eval-environments.js"),
-        &[],
-    );
+    compare_node_source_with_args(include_str!("../node-tests/test-private-eval-environments.js"), &[]);
 }
 
 #[test]
 fn private_brands_follow_initialization_without_branding_the_declaring_prototype() {
-    compare_node_source_with_args(
-        include_str!("../node-tests/test-private-brand-initialization.js"),
-        &[],
-    );
+    compare_node_source_with_args(include_str!("../node-tests/test-private-brand-initialization.js"), &[]);
 }
 
 #[test]
 fn static_blocks_retain_strict_eval_super_receiver_and_separate_var_contexts() {
-    compare_node_source_with_args(
-        include_str!("../node-tests/test-static-block-context.js"),
-        &[],
-    );
+    compare_node_source_with_args(include_str!("../node-tests/test-static-block-context.js"), &[]);
 }
 
 #[test]
 fn tcp_default_listen_backlog_matches_node_when_syscall_tracing_is_available() {
-    compare_node_source_with_args(
-        include_str!("../node-tests/test-tcp-default-listen-backlog.js"),
-        &[],
-    );
+    compare_node_source_with_args(include_str!("../node-tests/test-tcp-default-listen-backlog.js"), &[]);
 }
 
 #[test]
 fn tcp_option_listen_backlog_matches_node_truthiness_and_int32_when_tracing_is_available() {
-    compare_node_source_with_args(
-        include_str!("../node-tests/test-tcp-option-listen-backlog.js"),
-        &[],
-    );
+    compare_node_source_with_args(include_str!("../node-tests/test-tcp-option-listen-backlog.js"), &[]);
 }
 
 #[test]
 fn utility_sdk_projection_preserves_mime_diff_timing_promise_state_and_uv_protocol_metadata() {
-    compare_node_source_with_args(
-        include_str!("../node-tests/test-util-sdk-projection.js"),
-        &["--expose-internals", "--no-warnings"],
-    );
+    compare_node_source_with_args(include_str!("../node-tests/test-util-sdk-projection.js"), &["--expose-internals", "--no-warnings"]);
 }
 
 #[test]
 fn net_listen_lifecycle_retains_dns_generations_callbacks_and_public_method_shapes() {
-    compare_node_source_with_args(
-        include_str!("../node-tests/test-net-listen-lifecycle.js"),
-        &["--expose-gc"],
-    );
+    compare_node_source_with_args(include_str!("../node-tests/test-net-listen-lifecycle.js"), &["--expose-gc"]);
 }
 
 #[test]
 fn net_dns_iterator_errors_close_once_preserve_original_abrupt_values_and_survive_gc() {
-    compare_node_source_with_args(
-        include_str!("../node-tests/test-net-dns-iterator-errors.js"),
-        &["--expose-gc"],
-    );
+    compare_node_source_with_args(include_str!("../node-tests/test-net-dns-iterator-errors.js"), &["--expose-gc"]);
 }
 
 #[test]
 fn process_capture_callback_reset_prioritizes_null_and_original_type_validation() {
-    compare_node_source_with_args(
-        include_str!("../node-tests/test-process-capture-callback-reset.js"),
-        &[],
-    );
+    compare_node_source_with_args(include_str!("../node-tests/test-process-capture-callback-reset.js"), &[]);
 }
 
 #[test]
 fn http_listening_derives_from_the_handle_and_close_cancels_pending_notification() {
-    compare_node_source_with_args(
-        include_str!("../node-tests/test-http-listening-handle.js"),
-        &[],
-    );
+    compare_node_source_with_args(include_str!("../node-tests/test-http-listening-handle.js"), &[]);
 }
 
 #[test]
 fn process_capture_state_is_canonical_receiver_independent_and_survives_collection() {
-    compare_node_source_with_args(
-        include_str!("../node-tests/test-process-capture-canonical-state.js"),
-        &["--expose-gc"],
-    );
+    compare_node_source_with_args(include_str!("../node-tests/test-process-capture-canonical-state.js"), &["--expose-gc"]);
 }
 
 #[test]
 fn process_uncaught_monitor_precedes_capture_and_can_replace_the_pending_handler() {
-    compare_node_source_with_args(
-        include_str!("../node-tests/test-process-monitor-capture-transition.js"),
-        &[],
-    );
+    compare_node_source_with_args(include_str!("../node-tests/test-process-monitor-capture-transition.js"), &[]);
 }
 
 #[test]
 fn process_uncaught_events_ignore_monitor_results_and_use_emit_truthiness() {
-    compare_node_source_with_args(
-        include_str!("../node-tests/test-process-uncaught-emit-truthiness.js"),
-        &[],
-    );
+    compare_node_source_with_args(include_str!("../node-tests/test-process-uncaught-emit-truthiness.js"), &[]);
 }
 
 #[test]
 fn process_capture_delivery_reloads_the_callback_after_the_null_check() {
-    compare_node_source_with_args(
-        include_str!("../node-tests/test-process-capture-getter-order.js"),
-        &[],
-    );
+    compare_node_source_with_args(include_str!("../node-tests/test-process-capture-getter-order.js"), &[]);
 }
 
 #[test]
 fn process_auxiliary_capture_runs_in_reverse_order_with_exact_true_handling() {
-    compare_node_source_with_args(
-        include_str!("../node-tests/test-process-capture-auxiliary.js"),
-        &[],
-    );
+    compare_node_source_with_args(include_str!("../node-tests/test-process-capture-auxiliary.js"), &[]);
 }
 
 #[test]
 fn process_auxiliary_capture_preserves_length_coercion_fractional_keys_and_replacement() {
-    compare_node_source_with_args(
-        include_str!("../node-tests/test-process-capture-auxiliary-coercion.js"),
-        &["--expose-gc"],
-    );
+    compare_node_source_with_args(include_str!("../node-tests/test-process-capture-auxiliary-coercion.js"), &["--expose-gc"]);
 }
 
 #[test]
 fn process_capture_methods_have_public_names_and_ordinary_constructor_shapes() {
-    compare_node_source_with_args(
-        include_str!("../node-tests/test-process-capture-method-shape.js"),
-        &[],
-    );
+    compare_node_source_with_args(include_str!("../node-tests/test-process-capture-method-shape.js"), &[]);
 }
 
 #[test]
 fn native_contextify_scripts_compile_once_keep_template_sites_and_return_global_functions() {
-    compare_node_source_with_args(
-        include_str!("../node-tests/test-native-contextify-owned-script.js"),
-        &["--expose-internals", "--no-warnings", "--expose-gc"],
-    );
+    compare_node_source_with_args(include_str!("../node-tests/test-native-contextify-owned-script.js"), &["--expose-internals", "--no-warnings", "--expose-gc"]);
 }
 
 #[test]
 fn sdk_mock_tracker_preserves_call_records_restoration_and_virtual_timer_queue() {
-    compare_node_source_with_args(
-        include_str!("../node-tests/test-sdk-mock-tracker.js"),
-        &["--no-warnings"],
-    );
+    compare_node_source_with_args(include_str!("../node-tests/test-sdk-mock-tracker.js"), &["--no-warnings"]);
 }
 
 #[test]
 fn original_sdk_test_harness_runs_hooks_subtests_contexts_and_mock_cleanup() {
-    compare_node_source_with_args(
-        include_str!("../node-tests/test-sdk-test-harness.js"),
-        &["--no-warnings", "--test-reporter=dot"],
-    );
+    compare_node_source_with_args(include_str!("../node-tests/test-sdk-test-harness.js"), &["--no-warnings", "--test-reporter=dot"]);
 }
 
 #[test]
 fn promise_async_hooks_observe_real_resources_trigger_identity_and_job_order() {
-    compare_node_source_with_args(
-        include_str!("../node-tests/test-promise-async-hooks-lifecycle.js"),
-        &[],
-    );
+    compare_node_source_with_args(include_str!("../node-tests/test-promise-async-hooks-lifecycle.js"), &[]);
 }
 
 #[test]
 fn promise_hooks_keep_suspended_continuations_and_reactions_live_during_gc() {
-    compare_node_source_with_args(
-        include_str!("../node-tests/test-promise-hooks-gc-roots.js"),
-        &["--expose-gc"],
-    );
+    compare_node_source_with_args(include_str!("../node-tests/test-promise-hooks-gc-roots.js"), &["--expose-gc"]);
 }
 
 #[test]
 fn promise_init_hooks_can_settle_await_sources_reentrantly() {
-    compare_node_source_with_args(
-        include_str!("../node-tests/test-promise-init-reentry.js"),
-        &[],
-    );
+    compare_node_source_with_args(include_str!("../node-tests/test-promise-init-reentry.js"), &[]);
 }
 
 #[test]
 fn fs_internal_module_stat_follows_links_returns_errno_and_resolves_node_cwd() {
-    compare_node_source_with_args(
-        include_str!("../node-tests/test-fs-internal-module-stat.js"),
-        &["--expose-internals", "--no-warnings"],
-    );
+    compare_node_source_with_args(include_str!("../node-tests/test-fs-internal-module-stat.js"), &["--expose-internals", "--no-warnings"]);
 }
 
 #[test]
 fn process_fatal_handler_exits_preserve_sdk_status_event_suppression_and_explicit_requests() {
-    compare_node_source_with_args(
-        include_str!("../node-tests/test-process-fatal-handler-exit.js"),
-        &[],
-    );
+    compare_node_source_with_args(include_str!("../node-tests/test-process-fatal-handler-exit.js"), &[]);
 }
+
 
 #[test]
 fn cli_version_aliases_use_the_configured_sdk_and_short_circuit_before_guest_execution() {
     compare_node_source_with_args(include_str!("../node-tests/test-cli-version-order.js"), &[]);
 }
 
+
 #[test]
 fn process_report_configuration_uses_sdk_descriptors_validation_and_shared_native_state() {
-    compare_node_source_with_args(
-        include_str!("../node-tests/test-process-report-configuration.js"),
-        &["--expose-internals", "--no-warnings"],
-    );
+    compare_node_source_with_args(include_str!("../node-tests/test-process-report-configuration.js"), &["--expose-internals", "--no-warnings"]);
 }
+
 
 #[test]
 fn process_capture_preserves_report_flag_snapshot_restoration_and_accessor_order() {
-    compare_node_source_with_args(
-        include_str!("../node-tests/test-process-capture-report-flags.js"),
-        &[],
-    );
+    compare_node_source_with_args(include_str!("../node-tests/test-process-capture-report-flags.js"), &[]);
 }
+
 
 #[test]
 fn process_report_startup_flags_preserve_environment_precedence_aliases_and_signal_registration() {
-    compare_node_source_with_args(
-        include_str!("../node-tests/test-process-report-startup.js"),
-        &[],
-    );
+    compare_node_source_with_args(include_str!("../node-tests/test-process-report-startup.js"), &[]);
 }
+
 
 #[test]
 fn process_events_share_emitter_storage_inspection_borrowed_methods_and_once_wrappers() {
-    compare_node_source_with_args(
-        include_str!("../node-tests/test-process-shared-event-store.js"),
-        &[],
-    );
+    compare_node_source_with_args(include_str!("../node-tests/test-process-shared-event-store.js"), &[]);
 }
 
 #[test]
 fn module_cache_protocol_types_come_from_configured_sdk_and_preserve_native_descriptors() {
-    compare_node_source_with_args(
-        include_str!("../node-tests/test-module-cache-protocol.js"),
-        &["--expose-internals", "--no-warnings"],
-    );
+    compare_node_source_with_args(include_str!("../node-tests/test-module-cache-protocol.js"), &["--expose-internals", "--no-warnings"]);
 }
 
 #[test]
 fn process_warning_policy_preserves_default_listener_removal_suppression_and_startup_descriptors() {
-    compare_node_source_with_args(
-        include_str!("../node-tests/test-process-warning-policy.js"),
-        &[],
-    );
+    compare_node_source_with_args(include_str!("../node-tests/test-process-warning-policy.js"), &[]);
 }
 
 #[test]
 fn sdk_test_context_survives_native_ticks_timers_and_immediate_callbacks() {
-    compare_node_source_with_args(
-        include_str!("../node-tests/test-sdk-test-context-callbacks.js"),
-        &["--no-warnings", "--test-reporter=dot"],
-    );
+    compare_node_source_with_args(include_str!("../node-tests/test-sdk-test-context-callbacks.js"), &["--no-warnings", "--test-reporter=dot"]);
 }
 
 #[test]
 fn native_callback_uncaught_handlers_observe_resource_before_after_hook_and_scope_restore() {
-    compare_node_source_with_args(
-        include_str!("../node-tests/test-async-callback-error-scope.js"),
-        &[],
-    );
+    compare_node_source_with_args(include_str!("../node-tests/test-async-callback-error-scope.js"), &[]);
 }
 
 #[test]
 fn native_tick_resources_own_mutable_callback_slots_and_complete_actual_hook_lifecycle() {
-    compare_node_source_with_args(
-        include_str!("../node-tests/test-tick-resource-canonical-slots.js"),
-        &[],
-    );
+    compare_node_source_with_args(include_str!("../node-tests/test-tick-resource-canonical-slots.js"), &[]);
 }
 
 #[test]
 fn process_warning_uses_sdk_identity_and_only_public_option_getters() {
-    compare_node_source_with_args(
-        include_str!("../node-tests/test-process-warning-sdk-authority.js"),
-        &["--expose-internals", "--no-warnings"],
-    );
+    compare_node_source_with_args(include_str!("../node-tests/test-process-warning-sdk-authority.js"), &["--expose-internals", "--no-warnings"]);
 }
+
 
 #[test]
 fn process_rejection_warnings_pass_public_arguments_and_preserve_original_stack() {
-    compare_node_source_with_args(
-        include_str!("../node-tests/test-process-rejection-warning-arguments.js"),
-        &["--unhandled-rejections=warn", "--no-warnings"],
-    );
+    compare_node_source_with_args(include_str!("../node-tests/test-process-rejection-warning-arguments.js"), &["--unhandled-rejections=warn", "--no-warnings"]);
 }
+
 
 #[test]
 fn process_report_native_compact_uses_truthiness_without_coercion_hooks() {
-    compare_node_source_with_args(
-        include_str!("../node-tests/test-process-report-native-compact.js"),
-        &["--expose-internals", "--no-warnings"],
-    );
+    compare_node_source_with_args(include_str!("../node-tests/test-process-report-native-compact.js"), &["--expose-internals", "--no-warnings"]);
 }
 
 #[cfg(target_os = "linux")]
+
 #[test]
 fn process_native_cpu_resource_and_rss_facts_use_sdk_validation_and_live_os_data() {
-    compare_node_source_with_args(
-        include_str!("../node-tests/test-process-native-metrics.js"),
-        &["--expose-internals", "--no-warnings"],
-    );
+    compare_node_source_with_args(include_str!("../node-tests/test-process-native-metrics.js"), &["--expose-internals", "--no-warnings"]);
 }
 
 #[test]
 fn process_binding_uses_sdk_metadata_native_identity_and_original_legacy_type_policy() {
-    compare_node_source_with_args(
-        include_str!("../node-tests/test-process-binding-native.js"),
-        &["--no-warnings"],
-    );
+    compare_node_source_with_args(include_str!("../node-tests/test-process-binding-native.js"), &["--no-warnings"]);
 }
 
 #[test]
 fn process_default_warning_listener_preserves_sdk_source_without_internal_exposure() {
-    compare_node_source_with_args(
-        include_str!("../node-tests/test-process-warning-listener-source.js"),
-        &[],
-    );
+    compare_node_source_with_args(include_str!("../node-tests/test-process-warning-listener-source.js"), &[]);
 }
 
 #[test]
 fn process_binding_pending_warnings_follow_sdk_wrapper_native_once_state_and_flag_precedence() {
     let source = include_str!("../node-tests/test-process-binding-pending-warning.js");
-    for flags in [
-        vec![],
-        vec!["--pending-deprecation"],
-        vec!["--pending-deprecation", "--no-deprecation"],
-        vec!["--pending-deprecation", "--no-pending-deprecation"],
-    ] {
+    for flags in [vec![], vec!["--pending-deprecation"], vec!["--pending-deprecation", "--no-deprecation"], vec!["--pending-deprecation", "--no-pending-deprecation"]] {
         compare_node_source_with_args(source, &flags);
     }
 }
 
 #[test]
 fn awaited_primitives_use_enclosing_async_promise_parent_for_real_hook_resources() {
-    compare_node_source_with_args(
-        include_str!("../node-tests/test-await-primitive-promise-parent.js"),
-        &[],
-    );
+    compare_node_source_with_args(include_str!("../node-tests/test-await-primitive-promise-parent.js"), &[]);
 }
 
 #[test]
 fn missing_internal_bindings_throw_native_module_errors_with_original_descriptors() {
-    compare_node_source_with_args(
-        include_str!("../node-tests/test-internal-binding-missing-error.js"),
-        &["--no-warnings", "--expose-internals"],
-    );
+    compare_node_source_with_args(include_str!("../node-tests/test-internal-binding-missing-error.js"), &["--no-warnings", "--expose-internals"]);
 }
 
 #[test]
 fn console_global_and_constructor_use_sdk_identity_namespace_and_output_policy() {
-    compare_node_source_with_args(
-        include_str!("../node-tests/test-console-sdk-authority.js"),
-        &["--expose-internals", "--no-warnings"],
-    );
+    compare_node_source_with_args(include_str!("../node-tests/test-console-sdk-authority.js"), &["--expose-internals", "--no-warnings"]);
 }
 
 #[test]
 fn errors_reserve_native_stack_before_fields_and_capture_after_observable_conversions() {
-    compare_node_source_with_args(
-        include_str!("../node-tests/test-error-stack-layout.js"),
-        &["--no-warnings", "--expose-internals"],
-    );
+    compare_node_source_with_args(include_str!("../node-tests/test-error-stack-layout.js"), &["--no-warnings", "--expose-internals"]);
 }
 
 #[test]
 fn sdk_vfs_mount_lifecycle_and_native_reads_use_canonical_handler_state() {
-    compare_node_file_source_with_args(
-        include_str!("../node-tests/test-sdk-vfs-read-bridge.js"),
-        &["--experimental-vfs", "--expose-internals", "--no-warnings"],
-    );
+    compare_node_file_source_with_args(include_str!("../node-tests/test-sdk-vfs-read-bridge.js"), &["--experimental-vfs", "--expose-internals", "--no-warnings"]);
 }
 
 #[test]
 fn sdk_vfs_handlers_preserve_receiver_argument_counts_results_and_errors() {
-    compare_node_file_source_with_args(
-        include_str!("../node-tests/test-sdk-vfs-handler-protocol.js"),
-        &["--experimental-vfs", "--expose-internals", "--no-warnings"],
-    );
+    compare_node_file_source_with_args(include_str!("../node-tests/test-sdk-vfs-handler-protocol.js"), &["--experimental-vfs", "--expose-internals", "--no-warnings"]);
 }
 
 #[test]
 fn private_promise_job_snapshots_preserve_public_async_ids_and_isolated_stores() {
-    compare_node_source_with_args(
-        include_str!("../node-tests/test-async-private-job-identities.js"),
-        &["--no-warnings"],
-    );
+    compare_node_source_with_args(include_str!("../node-tests/test-async-private-job-identities.js"), &["--no-warnings"]);
 }
 
 fn compare_node_file_source_with_args(source: &str, flags: &[&str]) {
@@ -11029,67 +9983,40 @@ fn compare_node_file_source_with_args(source: &str, flags: &[&str]) {
     });
     for observation in &observations {
         assert!(!observation.timed_out);
-        assert_eq!(
-            observation.exit_code,
-            Some(0),
-            "{}",
-            String::from_utf8_lossy(&observation.stderr)
-        );
-        assert!(
-            observation.stderr.is_empty(),
-            "{}",
-            String::from_utf8_lossy(&observation.stderr)
-        );
+        assert_eq!(observation.exit_code, Some(0), "{}", String::from_utf8_lossy(&observation.stderr));
+        assert!(observation.stderr.is_empty(), "{}", String::from_utf8_lossy(&observation.stderr));
     }
     assert_eq!(observations[0].stdout, observations[1].stdout);
 }
 
 #[test]
 fn sdk_vfs_mkdir_realpath_preserve_handler_protocol_and_result_projection() {
-    compare_node_file_source_with_args(
-        include_str!("../node-tests/test-sdk-vfs-mkdir-realpath-protocol.js"),
-        &["--experimental-vfs", "--expose-internals", "--no-warnings"],
-    );
+    compare_node_file_source_with_args(include_str!("../node-tests/test-sdk-vfs-mkdir-realpath-protocol.js"), &["--experimental-vfs", "--expose-internals", "--no-warnings"]);
 }
 
 #[test]
 fn sdk_vfs_open_preserves_flag_mode_validation_and_raw_path_dispatch() {
-    compare_node_file_source_with_args(
-        include_str!("../node-tests/test-sdk-vfs-open-protocol.js"),
-        &["--experimental-vfs", "--expose-internals", "--no-warnings"],
-    );
+    compare_node_file_source_with_args(include_str!("../node-tests/test-sdk-vfs-open-protocol.js"), &["--experimental-vfs", "--expose-internals", "--no-warnings"]);
 }
 
 #[test]
 fn sdk_vfs_write_options_preserve_getter_order_identity_and_void_results() {
-    compare_node_file_source_with_args(
-        include_str!("../node-tests/test-sdk-vfs-write-options-protocol.js"),
-        &["--experimental-vfs", "--expose-internals", "--no-warnings"],
-    );
+    compare_node_file_source_with_args(include_str!("../node-tests/test-sdk-vfs-write-options-protocol.js"), &["--experimental-vfs", "--expose-internals", "--no-warnings"]);
 }
 
 #[test]
 fn sdk_vfs_write_continuations_preserve_append_copying_loop_and_finally() {
-    compare_node_file_source_with_args(
-        include_str!("../node-tests/test-sdk-vfs-write-continuation.js"),
-        &["--experimental-vfs", "--expose-internals", "--no-warnings"],
-    );
+    compare_node_file_source_with_args(include_str!("../node-tests/test-sdk-vfs-write-continuation.js"), &["--experimental-vfs", "--expose-internals", "--no-warnings"]);
 }
 
 #[test]
 fn sdk_vfs_write_native_effects_preserve_flags_bytes_and_descriptor_ownership() {
-    compare_node_file_source_with_args(
-        include_str!("../node-tests/test-sdk-vfs-write-native-effects.js"),
-        &["--experimental-vfs", "--expose-internals", "--no-warnings"],
-    );
+    compare_node_file_source_with_args(include_str!("../node-tests/test-sdk-vfs-write-native-effects.js"), &["--experimental-vfs", "--expose-internals", "--no-warnings"]);
 }
 
 #[test]
 fn sdk_vfs_write_fd_domains_and_append_delegation_match_source_policy() {
-    compare_node_file_source_with_args(
-        include_str!("../node-tests/test-sdk-write-fd-domains.js"),
-        &["--experimental-vfs", "--expose-internals", "--no-warnings"],
-    );
+    compare_node_file_source_with_args(include_str!("../node-tests/test-sdk-write-fd-domains.js"), &["--experimental-vfs", "--expose-internals", "--no-warnings"]);
 }
 
 #[test]
@@ -11101,74 +10028,47 @@ fn native_dns_lookup_policy_shares_promise_identity_defaults_and_numeric_bypass(
 
 #[test]
 fn native_dns_binding_dispatch_preserves_request_identity_and_async_submission_errors() {
-    compare_node_source_with_args(
-        include_str!("../node-tests/test-native-dns-binding-dispatch.js"),
-        &["--expose-internals", "--no-warnings"],
-    );
+    compare_node_source_with_args(include_str!("../node-tests/test-native-dns-binding-dispatch.js"), &["--expose-internals", "--no-warnings"]);
 }
 
 #[test]
 fn native_dns_requests_preserve_async_resource_storage_and_gc_lifetime() {
-    compare_node_source_with_args(
-        include_str!("../node-tests/test-native-dns-request-lifetime.js"),
-        &["--expose-gc", "--no-warnings"],
-    );
+    compare_node_source_with_args(include_str!("../node-tests/test-native-dns-request-lifetime.js"), &["--expose-gc", "--no-warnings"]);
 }
 
 #[test]
 fn native_dns_lowlevel_completion_reads_current_callback_and_retains_request_receiver() {
-    compare_node_source_with_args(
-        include_str!("../node-tests/test-native-dns-lowlevel-completion.js"),
-        &["--expose-internals", "--expose-gc", "--no-warnings"],
-    );
+    compare_node_source_with_args(include_str!("../node-tests/test-native-dns-lowlevel-completion.js"), &["--expose-internals", "--expose-gc", "--no-warnings"]);
 }
 
 #[test]
 fn native_dns_promise_requests_own_mutable_resolvers_and_preserve_binding_address_values() {
-    compare_node_source_with_args(
-        include_str!("../node-tests/test-native-dns-promise-request-contract.js"),
-        &["--expose-internals", "--no-warnings"],
-    );
+    compare_node_source_with_args(include_str!("../node-tests/test-native-dns-promise-request-contract.js"), &["--expose-internals", "--no-warnings"]);
 }
 
 #[test]
 fn native_tcp_constructor_bind_and_inherited_stream_prototypes_match_node() {
-    compare_node_file_source_with_args(
-        include_str!("../node-tests/test-native-tcp-constructor.js"),
-        &["--no-warnings", "--expose-internals"],
-    );
+    compare_node_file_source_with_args(include_str!("../node-tests/test-native-tcp-constructor.js"), &["--no-warnings", "--expose-internals"]);
 }
 
 #[test]
 fn native_tcp_accept_preserves_handle_identity_and_real_close_completion() {
-    compare_node_file_source_with_args(
-        include_str!("../node-tests/test-native-tcp-accept.js"),
-        &["--no-warnings", "--expose-internals"],
-    );
+    compare_node_file_source_with_args(include_str!("../node-tests/test-native-tcp-accept.js"), &["--no-warnings", "--expose-internals"]);
 }
 
 #[test]
 fn native_stream_reads_and_synchronous_writes_project_real_buffers_and_state() {
-    compare_node_file_source_with_args(
-        include_str!("../node-tests/test-native-tcp-stream.js"),
-        &["--no-warnings", "--expose-internals"],
-    );
+    compare_node_file_source_with_args(include_str!("../node-tests/test-native-tcp-stream.js"), &["--no-warnings", "--expose-internals"]);
 }
 
 #[test]
 fn native_stream_pressure_completes_actual_write_request_once() {
-    compare_node_file_source_with_args(
-        include_str!("../node-tests/test-native-tcp-async.js"),
-        &["--no-warnings", "--expose-internals"],
-    );
+    compare_node_file_source_with_args(include_str!("../node-tests/test-native-tcp-async.js"), &["--no-warnings", "--expose-internals"]);
 }
 
 #[test]
 fn native_stream_close_cancels_pending_write_before_handle_close() {
-    compare_node_file_source_with_args(
-        include_str!("../node-tests/test-native-tcp-cancel.js"),
-        &["--no-warnings", "--expose-internals"],
-    );
+    compare_node_file_source_with_args(include_str!("../node-tests/test-native-tcp-cancel.js"), &["--no-warnings", "--expose-internals"]);
 }
 
 #[test]
@@ -11205,69 +10105,49 @@ fn native_secret_key_job_preserves_hook_order_and_async_local_context() {
 
 #[test]
 fn admitted_public_socket_owns_data_and_eof_after_native_read_request() {
-    compare_node_file_source_with_args(
-        include_str!("../node-tests/test-native-public-socket-read-owner.js"),
-        &["--no-warnings"],
-    );
+    compare_node_file_source_with_args(include_str!("../node-tests/test-native-public-socket-read-owner.js"), &["--no-warnings"]);
 }
+
 
 #[test]
 fn native_tcp_close_callbacks_follow_real_libuv_lifo_requests() {
-    compare_node_file_source_with_args(
-        include_str!("../node-tests/test-native-tcp-close-order.js"),
-        &["--no-warnings", "--expose-internals"],
-    );
+    compare_node_file_source_with_args(include_str!("../node-tests/test-native-tcp-close-order.js"), &["--no-warnings", "--expose-internals"]);
 }
+
+
 
 #[test]
 fn sdk_vfs_metadata_preserves_public_shape_options_accessors_and_error_boundaries() {
     let source = include_str!("../node-tests/test-sdk-vfs-metadata-protocol.js");
     compare_node_file_source_with_args(source, &["--no-warnings", "--expose-internals"]);
-    compare_node_file_source_with_args(
-        source,
-        &["--no-warnings", "--expose-internals", "--experimental-vfs"],
-    );
+    compare_node_file_source_with_args(source, &["--no-warnings", "--expose-internals", "--experimental-vfs"]);
 }
 
 #[test]
 fn sdk_vfs_virtual_metadata_and_descriptor_lifecycle_match_configured_source() {
-    compare_node_file_source_with_args(
-        include_str!("../node-tests/test-sdk-vfs-metadata-lifecycle.js"),
-        &["--no-warnings", "--experimental-vfs"],
-    );
+    compare_node_file_source_with_args(include_str!("../node-tests/test-sdk-vfs-metadata-lifecycle.js"), &["--no-warnings", "--experimental-vfs"]);
 }
+
 
 #[test]
 fn native_private_symbol_table_has_all_sdk_keys_and_private_semantics() {
-    compare_node_source_with_args(
-        include_str!("../node-tests/test-native-private-symbol-table.js"),
-        &["--no-warnings", "--expose-internals"],
-    );
+    compare_node_source_with_args(include_str!("../node-tests/test-native-private-symbol-table.js"), &["--no-warnings", "--expose-internals"]);
 }
 
 #[test]
 fn native_exit_listener_accepts_owned_dns_and_crypto_work_without_callbacks() {
-    compare_node_source_with_args(
-        include_str!("../node-tests/test-native-exit-work-normal.js"),
-        &["--no-warnings"],
-    );
+    compare_node_source_with_args(include_str!("../node-tests/test-native-exit-work-normal.js"), &["--no-warnings"]);
 }
 
 #[test]
 #[cfg(target_os = "linux")]
 fn native_pool_reads_environment_at_first_dns_work_and_keeps_configuration() {
-    compare_node_source_with_args(
-        include_str!("../node-tests/test-native-pool-first-use.js"),
-        &["--no-warnings"],
-    );
+    compare_node_source_with_args(include_str!("../node-tests/test-native-pool-first-use.js"), &["--no-warnings"]);
 }
 
 #[test]
 fn native_pending_dns_and_crypto_keep_resources_and_als_across_gc() {
-    compare_node_source_with_args(
-        include_str!("../node-tests/test-native-pending-work-gc.js"),
-        &["--no-warnings", "--expose-gc"],
-    );
+    compare_node_source_with_args(include_str!("../node-tests/test-native-pending-work-gc.js"), &["--no-warnings", "--expose-gc"]);
 }
 
 #[test]
@@ -11276,17 +10156,12 @@ fn native_exit_listener_throw_still_abandons_owned_work_without_callbacks() {
     for executable in ["node", env!("CARGO_BIN_EXE_run-parallel")] {
         let mut command = Command::new(executable);
         command.args(["--no-warnings", "-e", source]);
-        if executable != "node" {
-            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
-        }
-        let observation =
-            quench_node_test::case_process::observe_command(command, Duration::from_secs(15))
-                .unwrap();
+        if executable != "node" { command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1"); }
+        let observation = quench_node_test::case_process::observe_command(command, Duration::from_secs(15)).unwrap();
         assert!(!observation.timed_out);
         assert_eq!(observation.exit_code, Some(1));
         assert_eq!(observation.stdout, b"native-exit-work-accepted\n");
-        assert!(String::from_utf8_lossy(&observation.stderr)
-            .contains("Error: native-exit-lifecycle-marker"));
+        assert!(String::from_utf8_lossy(&observation.stderr).contains("Error: native-exit-lifecycle-marker"));
     }
 }
 
@@ -11294,25 +10169,15 @@ fn native_exit_listener_throw_still_abandons_owned_work_without_callbacks() {
 fn native_commonjs_realm_reuses_canonical_private_util_binding() {
     // This host bootstrap adapter is intentionally not a require-able Node module.
     let mut command = Command::new(env!("CARGO_BIN_EXE_run-parallel"));
-    command.args([
-        "--no-warnings",
-        "--expose-internals",
-        "-e",
-        include_str!("../node-tests/test-native-realm-private-binding.js"),
-    ]);
+    command.args(["--no-warnings", "--expose-internals", "-e", include_str!("../node-tests/test-native-realm-private-binding.js")]);
     command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
-    let observation =
-        quench_node_test::case_process::observe_command(command, Duration::from_secs(15)).unwrap();
+    let observation = quench_node_test::case_process::observe_command(command, Duration::from_secs(15)).unwrap();
     assert!(!observation.timed_out);
-    assert_eq!(
-        observation.exit_code,
-        Some(0),
-        "{}",
-        String::from_utf8_lossy(&observation.stderr)
-    );
+    assert_eq!(observation.exit_code, Some(0), "{}", String::from_utf8_lossy(&observation.stderr));
     assert!(observation.stderr.is_empty());
-    assert_eq!(observation.stdout, b"native-realm-binding-identity-ok\n");
+    assert_eq!(observation.stdout,b"native-realm-binding-identity-ok\n");
 }
+
 
 #[test]
 fn child_process_original_sdk_mocktracker_intercepts_real_native_spawn() {
@@ -11354,6 +10219,7 @@ fn crypto_original_sdk_hash_hmac_state_copy_and_errors() {
     );
 }
 
+
 #[test]
 fn crypto_original_sdk_hkdf_uses_native_provider_jobs_and_async_context() {
     compare_node_file_source_with_args(
@@ -11369,6 +10235,7 @@ fn abort_timeouts_use_original_sdk_weak_owners_and_listener_persistence() {
         &["--no-warnings", "--expose-gc"],
     );
 }
+
 
 #[test]
 fn crypto_native_jobs_resolve_legacy_provider_at_execution() {
@@ -11545,8 +10412,7 @@ fn buffer_parity_directory() -> tempfile::TempDir {
     let directory = tempfile::tempdir().unwrap();
     std::fs::write(directory.path().join("parity.cjs"), BUFFER_PARITY_SCRIPT).unwrap();
     // Below Node's unpooled size, above it, and within the heap-buffer size.
-    let pattern =
-        |length: u32, modulus: u32| (0..length).map(|i| (i % modulus) as u8).collect::<Vec<_>>();
+    let pattern = |length: u32, modulus: u32| (0..length).map(|i| (i % modulus) as u8).collect::<Vec<_>>();
     std::fs::write(directory.path().join("small.bin"), pattern(7684, 251)).unwrap();
     std::fs::write(directory.path().join("big.bin"), pattern(100_000, 241)).unwrap();
     std::fs::write(directory.path().join("tiny.bin"), pattern(50, 256)).unwrap();
@@ -11555,18 +10421,9 @@ fn buffer_parity_directory() -> tempfile::TempDir {
 
 fn run_quench(entry: &std::path::Path, args: &[&str]) -> String {
     let mut command = Command::new(env!("CARGO_BIN_EXE_run-parallel"));
-    command
-        .arg(entry)
-        .args(args)
-        .env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
-    let result =
-        quench_node_test::case_process::observe_command(command, Duration::from_secs(20)).unwrap();
-    assert_eq!(
-        result.exit_code,
-        Some(0),
-        "{args:?}: {}",
-        String::from_utf8_lossy(&result.stderr)
-    );
+    command.arg(entry).args(args).env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+    let result = quench_node_test::case_process::observe_command(command, Duration::from_secs(20)).unwrap();
+    assert_eq!(result.exit_code, Some(0), "{args:?}: {}", String::from_utf8_lossy(&result.stderr));
     String::from_utf8_lossy(&result.stdout).into_owned()
 }
 
@@ -11578,18 +10435,11 @@ fn buffer_prototype_keys_match_node() {
     let probe = "const p = Object.getPrototypeOf(globalThis.__first());
       console.log(JSON.stringify(Reflect.ownKeys(p).map(k => [String(k), Object.getOwnPropertyDescriptor(p, k)]).map(([k, d]) => [k, 'value' in d, d.enumerable, d.configurable, d.writable])));";
     let eager = directory.path().join("eager.cjs");
-    std::fs::write(
-        &eager,
-        format!("globalThis.__first = () => Buffer.alloc(1);\n{probe}"),
-    )
-    .unwrap();
+    std::fs::write(&eager, format!("globalThis.__first = () => Buffer.alloc(1);\n{probe}")).unwrap();
     let lazy = directory.path().join("lazy.cjs");
     std::fs::write(&lazy, format!("globalThis.__first = () => require('fs').readFileSync(__dirname + '/small.bin');\n{probe}")).unwrap();
     let eager = run_quench(&eager, &[]);
-    assert!(
-        eager.contains("readBigUInt64LE") && eager.contains("nodejs.util.inspect.custom"),
-        "{eager}"
-    );
+    assert!(eager.contains("readBigUInt64LE") && eager.contains("nodejs.util.inspect.custom"), "{eager}");
     assert_eq!(run_quench(&lazy, &[]), eager);
 }
 
@@ -11601,39 +10451,20 @@ fn read_file_before_buffer_keeps_node_buffer_semantics() {
     for (case, expected) in [
         ("proto", r#"true true true\ntrue true true"#),
         ("ctor-first", r#"true Buffer Buffer"#),
-        (
-            "pool",
-            r#"7684 65600 0 100000 0 65600\ntrue 7688\ntrue 56\ntransfer TypeError"#,
-        ),
-        (
-            "inspect",
-            r#"<Buffer 00 0\n100 acc,true,false, data,true,true,true data,false,true,true"#,
-        ),
-        (
-            "desc-first",
-            r#"acc,true,false, acc,true,false, data,true,true,true data,true,true,true\n97"#,
-        ),
+        ("pool", r#"7684 65600 0 100000 0 65600\ntrue 7688\ntrue 56\ntransfer TypeError"#),
+        ("inspect", r#"<Buffer 00 0\n100 acc,true,false, data,true,true,true data,false,true,true"#),
+        ("desc-first", r#"acc,true,false, acc,true,false, data,true,true,true data,true,true,true\n97"#),
         ("write-first", r#"mine mine 79"#),
         ("delete-first", r#"function false 95"#),
         ("define-first", r#"data,false,true,false 1 94"#),
         ("buffer-first", r#"function true 97 true"#),
         ("parent", r#"true true"#),
         ("freeze", r#"true function 97"#),
-        (
-            "forin",
-            r#"95 ["readBigUInt64LE","readBigUInt64BE","readBigUint64LE"] ["swap32","swap64","toLocaleString"]"#,
-        ),
-        (
-            "sym",
-            r#"function true ["Symbol(nodejs.util.inspect.custom)"]"#,
-        ),
+        ("forin", r#"95 ["readBigUInt64LE","readBigUInt64BE","readBigUint64LE"] ["swap32","swap64","toLocaleString"]"#),
+        ("sym", r#"function true ["Symbol(nodejs.util.inspect.custom)"]"#),
         ("stream-first", r#"function 00010203 true 97"#),
     ] {
-        assert_eq!(
-            run_quench(&entry, &[case]),
-            format!("{}\n", expected.replace("\\n", "\n")),
-            "{case}"
-        );
+        assert_eq!(run_quench(&entry, &[case]), format!("{}\n", expected.replace("\\n", "\n")), "{case}");
     }
 }
 
@@ -11648,39 +10479,16 @@ fn wasm_files_are_es_modules_as_in_node() {
         let mut module: wast::Wat = wast::parser::parse(&buffer).unwrap();
         std::fs::write(directory.path().join(name), module.encode().unwrap()).unwrap();
     };
-    wat(
-        "lib.wasm",
-        r#"(module (func (export "add") (param i32 i32) (result i32) local.get 0 local.get 1 i32.add)
-        (memory (export "mem") 1) (global (export "g") i32 (i32.const 42)) (global (export "m") (mut i32) (i32.const 7)))"#,
-    );
-    wat(
-        "main.wasm",
-        r#"(module (import "./lib.wasm" "g" (global i32)) (import "./lib.wasm" "add" (func $add (param i32 i32) (result i32)))
+    wat("lib.wasm", r#"(module (func (export "add") (param i32 i32) (result i32) local.get 0 local.get 1 i32.add)
+        (memory (export "mem") 1) (global (export "g") i32 (i32.const 42)) (global (export "m") (mut i32) (i32.const 7)))"#);
+    wat("main.wasm", r#"(module (import "./lib.wasm" "g" (global i32)) (import "./lib.wasm" "add" (func $add (param i32 i32) (result i32)))
         (import "./host.mjs" "log" (func $log (param i32)))
-        (func (export "start") global.get 0 i32.const 1 call $add call $log) (start 2))"#,
-    );
-    wat(
-        "missing.wasm",
-        r#"(module (import "./host.mjs" "nope" (func)))"#,
-    );
-    wat(
-        "reserved-import.wasm",
-        r#"(module (import "wasm-js:x" "f" (func)))"#,
-    );
-    wat(
-        "reserved-export.wasm",
-        r#"(module (func (export "wasm:f")))"#,
-    );
-    std::fs::write(
-        directory.path().join("bad.wasm"),
-        b"\0asm\x01\0\0\0\x01\x05",
-    )
-    .unwrap();
-    std::fs::write(
-        directory.path().join("host.mjs"),
-        "export function log(value) { console.log('log', value); }",
-    )
-    .unwrap();
+        (func (export "start") global.get 0 i32.const 1 call $add call $log) (start 2))"#);
+    wat("missing.wasm", r#"(module (import "./host.mjs" "nope" (func)))"#);
+    wat("reserved-import.wasm", r#"(module (import "wasm-js:x" "f" (func)))"#);
+    wat("reserved-export.wasm", r#"(module (func (export "wasm:f")))"#);
+    std::fs::write(directory.path().join("bad.wasm"), b"\0asm\x01\0\0\0\x01\x05").unwrap();
+    std::fs::write(directory.path().join("host.mjs"), "export function log(value) { console.log('log', value); }").unwrap();
     std::fs::write(directory.path().join("namespace.mjs"), "import * as lib from './lib.wasm';
         import { add, g, m } from './lib.wasm';
         console.log(Object.keys(lib), g, m, typeof add, add(2, 3), lib.mem instanceof WebAssembly.Memory,
@@ -11695,12 +10503,8 @@ fn wasm_files_are_es_modules_as_in_node() {
           }
         }").unwrap();
     // The warning goes through the public `process.emitWarning` as it is when it warns.
-    std::fs::write(
-        directory.path().join("patched.mjs"),
-        "process.emitWarning = (message, type) => console.log(type);
-        console.log((await import('./lib.wasm')).g);",
-    )
-    .unwrap();
+    std::fs::write(directory.path().join("patched.mjs"), "process.emitWarning = (message, type) => console.log(type);
+        console.log((await import('./lib.wasm')).g);").unwrap();
     let warning = "ExperimentalWarning: Importing WebAssembly module instances is an experimental feature and might change at any time";
     for (entry, expected, warnings) in [
         (
@@ -11772,9 +10576,7 @@ setTimeout(() => console.log(JSON.stringify(seen)), 10);
         for line in text.lines() {
             // The process id, and the program name in the trace hint (`process.argv0`).
             let line = match (line.find("(node:"), line.find(") ")) {
-                (Some(start), Some(end)) if start < end => {
-                    format!("{}(node:PID{}", &line[..start], &line[end..])
-                }
+                (Some(start), Some(end)) if start < end => format!("{}(node:PID{}", &line[..start], &line[end..]),
                 _ => line.to_owned(),
             };
             let line = match (line.find("(Use `"), line.find(" --trace")) {
@@ -11786,39 +10588,17 @@ setTimeout(() => console.log(JSON.stringify(seen)), 10);
         }
         normalized
     };
-    for flags in [
-        &[][..],
-        &["--no-warnings"],
-        &[
-            "--disable-warning=CustomType",
-            "--disable-warning=DeprecationWarning",
-        ],
-        &["--no-deprecation"],
-    ] {
+    for flags in [&[][..], &["--no-warnings"], &["--disable-warning=CustomType", "--disable-warning=DeprecationWarning"], &["--no-deprecation"]] {
         for (name, _) in scripts {
             let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
                 let mut command = Command::new(executable);
                 command.args(flags).arg(directory.path().join(name));
-                if executable != "node" {
-                    command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
-                }
-                quench_node_test::case_process::observe_command(command, Duration::from_secs(10))
-                    .unwrap()
+                if executable != "node" { command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1"); }
+                quench_node_test::case_process::observe_command(command, Duration::from_secs(10)).unwrap()
             });
-            assert_eq!(
-                observations[0].exit_code, observations[1].exit_code,
-                "{name} {flags:?}"
-            );
-            assert_eq!(
-                normalize(&observations[0].stdout),
-                normalize(&observations[1].stdout),
-                "{name} {flags:?}"
-            );
-            assert_eq!(
-                normalize(&observations[0].stderr),
-                normalize(&observations[1].stderr),
-                "{name} {flags:?}"
-            );
+            assert_eq!(observations[0].exit_code, observations[1].exit_code, "{name} {flags:?}");
+            assert_eq!(normalize(&observations[0].stdout), normalize(&observations[1].stdout), "{name} {flags:?}");
+            assert_eq!(normalize(&observations[0].stderr), normalize(&observations[1].stderr), "{name} {flags:?}");
         }
     }
 }

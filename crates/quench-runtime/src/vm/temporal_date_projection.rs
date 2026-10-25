@@ -145,7 +145,9 @@ impl<H: Host> Vm<H> {
                 self.set_builtin_named(p, prototype, method, *native)?;
             }
             if let Some(symbol) = self.well_known_symbols.get(WellKnownSymbol::ToStringTag) {
-                let tag = self.heap.alloc_string(format!("Temporal.{name}").into());
+                let tag = self
+                    .heap
+                    .alloc_string(format!("Temporal.{name}").into());
                 self.set_symbol_property(prototype, symbol, tag)?;
                 self.set_property_attributes(
                     prototype,
@@ -737,7 +739,9 @@ impl<H: Host> Vm<H> {
             )),
             Native::TemporalPlainYearMonthEraGetter => Ok(calendar_fields
                 .and_then(|fields| fields.era)
-                .map_or(Value::UNDEFINED, |era| self.heap.alloc_string(era.into()))),
+                .map_or(Value::UNDEFINED, |era| {
+                    self.heap.alloc_string(era.into())
+                })),
             Native::TemporalPlainYearMonthEraYearGetter => Ok(calendar_fields
                 .and_then(|fields| fields.era_year)
                 .map_or(Value::UNDEFINED, |year| Value::number(f64::from(year)))),
@@ -1555,7 +1559,7 @@ impl<H: Host> Vm<H> {
     ) -> Result<String, JsError> {
         match self.heap.get(value) {
             None if value.is_undefined() => Ok("iso8601".into()),
-            _ if self.heap.is_string(value) => {
+            _ if self.heap.is_string(value)  => {
                 let text = self.to_string(p, value)?.to_string();
                 temporal_date_parse::calendar_identifier_from_string(&text)
                     .ok_or_else(|| self.range_error(p, "Invalid calendar".into()))

@@ -97,9 +97,7 @@ impl ExecutionInterrupt {
         std::sync::atomic::fence(Ordering::SeqCst);
         // Either the running lane sees the raised floor or its entry sees the request
         // (`dispatch_fast`'s `run_fast_lane`).
-        self.state
-            .lane_floor
-            .store(LANE_FLOOR_RAISED, Ordering::SeqCst);
+        self.state.lane_floor.store(LANE_FLOOR_RAISED, Ordering::SeqCst);
         if let Some(Some(page)) = self.state.poll.get() {
             page.close();
         }

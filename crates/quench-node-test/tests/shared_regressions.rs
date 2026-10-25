@@ -65,10 +65,7 @@ console.log(String(read()));
 "#;
     let node = observe_node_source(source);
     assert!(node.status.success(), "Node oracle failed: {node:?}");
-    assert_eq!(
-        String::from_utf8_lossy(&node.stdout).trim(),
-        "ReferenceError"
-    );
+    assert_eq!(String::from_utf8_lossy(&node.stdout).trim(), "ReferenceError");
     let quench = observe_source(source);
     assert_eq!(quench.outcome(), RunResult::Pass, "{:?}", quench.worker);
     assert_eq!(quench.stdout, node.stdout);
@@ -91,10 +88,7 @@ console.log(sum, errors[0], errors[49], new R(marker) === marker, new R(0) insta
 "#;
     let node = observe_node_source(source);
     assert!(node.status.success(), "Node oracle failed: {node:?}");
-    assert_eq!(
-        String::from_utf8_lossy(&node.stdout).trim(),
-        "1275 TypeError TypeError true true"
-    );
+    assert_eq!(String::from_utf8_lossy(&node.stdout).trim(), "1275 TypeError TypeError true true");
     let quench = observe_source(source);
     assert_eq!(quench.outcome(), RunResult::Pass, "{:?}", quench.worker);
     assert_eq!(quench.stdout, node.stdout);
@@ -177,10 +171,7 @@ if (!caught) throw new Error("deep call did not throw the stack RangeError");
 if (new Box().walk(2, 0) !== 2) throw new Error("runtime did not recover after deep call");
 "#;
     // Exercise the actual shared resource boundary, not a depth below its limit.
-    let source = source.replace(
-        "__GUEST_DEPTH__",
-        &(quench_stack::MAX_GUEST_CALL_DEPTH + 1).to_string(),
-    );
+    let source = source.replace("__GUEST_DEPTH__", &(quench_stack::MAX_GUEST_CALL_DEPTH + 1).to_string());
     let observation = observe_source(&source);
     assert_eq!(
         observation.outcome(),

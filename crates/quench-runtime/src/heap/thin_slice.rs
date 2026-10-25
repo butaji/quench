@@ -42,13 +42,7 @@ impl<T> ThinBoxSlice<T> {
         }
         debug_assert_eq!(Self::layout(self.len()).1, Self::ELEMENTS_OFFSET);
         // SAFETY: the allocation spans the header and `len` elements from `ELEMENTS_OFFSET`.
-        unsafe {
-            self.header
-                .as_ptr()
-                .cast::<u8>()
-                .add(Self::ELEMENTS_OFFSET)
-                .cast::<T>()
-        }
+        unsafe { self.header.as_ptr().cast::<u8>().add(Self::ELEMENTS_OFFSET).cast::<T>() }
     }
 
     #[inline(always)]
@@ -102,10 +96,7 @@ impl<T> ThinBoxSlice<T> {
 
     /// A slice of `len` elements made in place by `element(index)`, or `None` when one is
     /// missing, which drops those made before it.
-    pub(crate) fn try_from_fn(
-        len: usize,
-        mut element: impl FnMut(usize) -> Option<T>,
-    ) -> Option<Self> {
+    pub(crate) fn try_from_fn(len: usize, mut element: impl FnMut(usize) -> Option<T>) -> Option<Self> {
         /// Owns the allocation and its initialized prefix until every element exists.
         struct Partial<T> {
             raw: *mut u8,
@@ -118,10 +109,7 @@ impl<T> ThinBoxSlice<T> {
                 // SAFETY: the prefix is initialized and the allocation came from `alloc` with
                 // this layout.
                 unsafe {
-                    std::ptr::drop_in_place(std::ptr::slice_from_raw_parts_mut(
-                        self.elements,
-                        self.initialized,
-                    ));
+                    std::ptr::drop_in_place(std::ptr::slice_from_raw_parts_mut(self.elements, self.initialized));
                     dealloc(self.raw, self.layout);
                 }
             }
@@ -161,10 +149,7 @@ impl<T> ThinBoxSlice<T> {
     pub(crate) fn from_exact_iter(mut values: impl ExactSizeIterator<Item = T>) -> Self {
         let slice = Self::try_from_fn(values.len(), |_| values.next())
             .expect("exact-size iterator yielded less than its length");
-        assert!(
-            values.next().is_none(),
-            "exact-size iterator yielded more than its length"
-        );
+        assert!(values.next().is_none(), "exact-size iterator yielded more than its length");
         slice
     }
 }
@@ -308,9 +293,7 @@ mod tests {
         let made = ThinBoxSlice::try_from_fn(3, |_| Some(shared.clone())).unwrap();
         assert_eq!(std::rc::Rc::strong_count(&shared), 4);
         drop(made);
-        assert!(
-            ThinBoxSlice::try_from_fn(3, |index| (index < 2).then(|| shared.clone())).is_none()
-        );
+        assert!(ThinBoxSlice::try_from_fn(3, |index| (index < 2).then(|| shared.clone())).is_none());
         assert_eq!(std::rc::Rc::strong_count(&shared), 1);
         let empty: ThinBoxSlice<u64> = Vec::new().into_boxed_slice().into();
         assert!(empty.is_empty());

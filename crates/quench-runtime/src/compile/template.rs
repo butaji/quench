@@ -126,9 +126,7 @@ impl FunctionCompiler<'_, '_> {
     }
 
     pub(super) fn bigint_literal(&mut self, value: &oxc_ast::ast::BigIntLiteral<'_>) -> Register {
-        self.literal(Constant::BigInt(crate::bigint::decimal_literal(
-            &value.value,
-        )))
+        self.literal(Constant::BigInt(crate::bigint::decimal_literal(&value.value)))
     }
 
     pub(super) fn template_literal(

@@ -57,11 +57,7 @@ struct ScopedRoots {
 
 impl Default for ScopedRoots {
     fn default() -> Self {
-        Self {
-            id: RootTableId::fresh(),
-            entries: Vec::new(),
-            next_generation: 1,
-        }
+        Self { id: RootTableId::fresh(), entries: Vec::new(), next_generation: 1 }
     }
 }
 
@@ -94,21 +90,11 @@ impl RootTable {
 
     /// A table `write_snapshot` wrote, under a fresh identity: handles the host kept across the
     /// snapshot come back through `restored_root`.
-    pub(crate) fn read_snapshot(
-        reader: &mut crate::snapshot::Reader<'_>,
-    ) -> crate::snapshot::SnapshotResult<Self> {
+    pub(crate) fn read_snapshot(reader: &mut crate::snapshot::Reader<'_>) -> crate::snapshot::SnapshotResult<Self> {
         let entries = crate::snapshot::read_list(reader, |reader| {
-            Ok(Entry {
-                generation: reader.u32()?,
-                value: reader.option_value()?,
-            })
+            Ok(Entry { generation: reader.u32()?, value: reader.option_value()? })
         })?;
-        Ok(Self {
-            id: RootTableId::fresh(),
-            entries,
-            free: reader.u32s()?,
-            scope: ScopedRoots::default(),
-        })
+        Ok(Self { id: RootTableId::fresh(), entries, free: reader.u32s()?, scope: ScopedRoots::default() })
     }
 
     /// The parts of `root` a snapshot keeps: its slot and generation.
@@ -119,11 +105,7 @@ impl RootTable {
     /// The handle `snapshot_root` gave the parts of, in this restored table.
     pub(crate) fn restored_root(&self, slot: u32, generation: u32) -> Option<RootId> {
         let entry = self.entries.get(slot as usize)?;
-        (entry.generation == generation && entry.value.is_some()).then_some(RootId {
-            table: self.id,
-            slot,
-            generation,
-        })
+        (entry.generation == generation && entry.value.is_some()).then_some(RootId { table: self.id, slot, generation })
     }
 
     pub(crate) fn insert(&mut self, value: Value) -> RootId {
@@ -158,15 +140,8 @@ impl RootTable {
         let generation = scope.next_generation;
         scope.next_generation = generation.wrapping_add(1).max(1);
         let slot = u32::try_from(scope.entries.len()).expect("scoped root stack exhausted");
-        scope.entries.push(Entry {
-            generation,
-            value: Some(value),
-        });
-        RootId {
-            table: scope.id,
-            slot,
-            generation,
-        }
+        scope.entries.push(Entry { generation, value: Some(value) });
+        RootId { table: scope.id, slot, generation }
     }
 
     /// The scoped stack's height, where a scope's own scoped roots begin.
@@ -184,11 +159,7 @@ impl RootTable {
     pub(crate) fn release_scope_keeping(&mut self, height: usize, keep: &[RootId]) {
         let id = self.scope.id;
         for (slot, entry) in self.scope.entries.iter_mut().enumerate().skip(height) {
-            let root = RootId {
-                table: id,
-                slot: slot as u32,
-                generation: entry.generation,
-            };
+            let root = RootId { table: id, slot: slot as u32, generation: entry.generation };
             if !keep.contains(&root) {
                 entry.value = None;
             }
@@ -198,12 +169,7 @@ impl RootTable {
 
     /// Drops released entries from the top of the scoped stack.
     fn trim_scope(&mut self) {
-        while self
-            .scope
-            .entries
-            .last()
-            .is_some_and(|entry| entry.value.is_none())
-        {
+        while self.scope.entries.last().is_some_and(|entry| entry.value.is_none()) {
             self.scope.entries.pop();
         }
     }
@@ -216,10 +182,7 @@ impl RootTable {
 
     pub(crate) fn update(&mut self, root: RootId, value: Value) -> bool {
         if root.table == self.scope.id {
-            return self
-                .scoped_entry(root)
-                .map(|entry| entry.value = Some(value))
-                .is_some();
+            return self.scoped_entry(root).map(|entry| entry.value = Some(value)).is_some();
         }
         if root.table != self.id {
             return false;
@@ -237,9 +200,7 @@ impl RootTable {
     pub(crate) fn get(&self, root: RootId) -> Option<Value> {
         if root.table == self.scope.id {
             let entry = self.scope.entries.get(root.slot as usize)?;
-            return (entry.generation == root.generation)
-                .then_some(entry.value)
-                .flatten();
+            return (entry.generation == root.generation).then_some(entry.value).flatten();
         }
         if root.table != self.id {
             return None;
@@ -279,10 +240,7 @@ impl RootTable {
     }
 
     pub(crate) fn values(&self) -> impl Iterator<Item = Value> + '_ {
-        self.entries
-            .iter()
-            .chain(&self.scope.entries)
-            .filter_map(|entry| entry.value)
+        self.entries.iter().chain(&self.scope.entries).filter_map(|entry| entry.value)
     }
 
     pub(crate) fn clear(&mut self) {

@@ -273,8 +273,7 @@ impl<H: Host> Vm<H> {
             }
         }
         if resealed {
-            self.startup_intrinsics.shape_roots =
-                self.shape_roots(&self.startup_intrinsics.holders);
+            self.startup_intrinsics.shape_roots = self.shape_roots(&self.startup_intrinsics.holders);
         }
         // The swap list stays traced until every script value is back in place.
         let swapped = self.startup_intrinsics.swapped.clone();
@@ -310,9 +309,7 @@ impl<H: Host> Vm<H> {
         let (_, slot) = self.object_property_slot(holder, key)?;
         let object = self.object_data(holder)?;
         let attributes = self.slot_attributes(object, slot)?;
-        let value = self
-            .slot_data_value(object, slot)
-            .unwrap_or(Value::UNDEFINED);
+        let value = self.slot_data_value(object, slot).unwrap_or(Value::UNDEFINED);
         Some(SlotProperty { value, attributes })
     }
 
@@ -335,9 +332,7 @@ impl<H: Host> Vm<H> {
         }
         let extensible = self.object_data(holder).is_some_and(Object::is_extensible);
         if !extensible {
-            self.object_data_mut(holder)
-                .expect("sealed intrinsic holder")
-                .set_extensible(true);
+            self.object_data_mut(holder).expect("sealed intrinsic holder").set_extensible(true);
         }
         let key = self.property_key_value(key);
         let record = PropertyDescriptorRecord::from_attributes(property.value, property.attributes);
@@ -345,9 +340,7 @@ impl<H: Host> Vm<H> {
             vm.define_own_property_record(p, holder, key, record)
         });
         if !extensible {
-            self.object_data_mut(holder)
-                .expect("sealed intrinsic holder")
-                .set_extensible(false);
+            self.object_data_mut(holder).expect("sealed intrinsic holder").set_extensible(false);
         }
         result
     }
@@ -366,29 +359,13 @@ impl<H: Host> Vm<H> {
 impl StartupIntrinsics {
     /// The sealed holders for a snapshot (`crate::snapshot`); a snapshot is taken outside every
     /// `enter_startup_intrinsics`, so nothing is swapped.
-    pub(super) fn write_snapshot(
-        &self,
-        writer: &mut crate::snapshot::Writer,
-    ) -> crate::snapshot::SnapshotResult<()> {
-        let Self {
-            holders,
-            shape_roots,
-            depth,
-            swapped,
-            regexp,
-        } = self;
+    pub(super) fn write_snapshot(&self, writer: &mut crate::snapshot::Writer) -> crate::snapshot::SnapshotResult<()> {
+        let Self { holders, shape_roots, depth, swapped, regexp } = self;
         if *depth != 0 || !swapped.is_empty() || regexp.is_some() {
-            return Err(crate::snapshot::SnapshotError::unsupported(
-                "a startup intrinsics scope",
-            ));
+            return Err(crate::snapshot::SnapshotError::unsupported("a startup intrinsics scope"));
         }
         writer.len(holders.len());
-        for SealedHolder {
-            holder,
-            shape,
-            values,
-        } in holders
-        {
+        for SealedHolder { holder, shape, values } in holders {
             writer.value(*holder);
             writer.u32(*shape);
             writer.values(values);
@@ -397,22 +374,10 @@ impl StartupIntrinsics {
         Ok(())
     }
 
-    pub(super) fn read_snapshot(
-        reader: &mut crate::snapshot::Reader<'_>,
-    ) -> crate::snapshot::SnapshotResult<Self> {
+    pub(super) fn read_snapshot(reader: &mut crate::snapshot::Reader<'_>) -> crate::snapshot::SnapshotResult<Self> {
         let holders = crate::snapshot::read_list(reader, |reader| {
-            Ok(SealedHolder {
-                holder: reader.value()?,
-                shape: reader.u32()?,
-                values: reader.values()?.into(),
-            })
+            Ok(SealedHolder { holder: reader.value()?, shape: reader.u32()?, values: reader.values()?.into() })
         })?;
-        Ok(Self {
-            holders,
-            shape_roots: reader.values()?.into(),
-            depth: 0,
-            swapped: Vec::new(),
-            regexp: None,
-        })
+        Ok(Self { holders, shape_roots: reader.values()?.into(), depth: 0, swapped: Vec::new(), regexp: None })
     }
 }

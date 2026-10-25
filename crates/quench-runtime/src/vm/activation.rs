@@ -68,10 +68,9 @@ impl CallContext {
 
     pub(super) fn callee(self) -> Option<Value> {
         match self {
-            Self::Function(value)
-            | Self::Constructor(value)
-            | Self::DirectEval(value)
-            | Self::IndirectEval(value) => Some(value),
+            Self::Function(value) | Self::Constructor(value) | Self::DirectEval(value) | Self::IndirectEval(value) => {
+                Some(value)
+            }
             Self::Internal => None,
         }
     }
@@ -122,11 +121,7 @@ impl GeneratorRecord {
         if let Some(continuation) = &self.continuation {
             continuation.extend_roots(out);
         }
-        out.extend(
-            self.requests
-                .iter()
-                .flat_map(|request| [request.promise, request.value]),
-        );
+        out.extend(self.requests.iter().flat_map(|request| [request.promise, request.value]));
     }
 }
 
@@ -154,12 +149,7 @@ impl Continuation {
         promise: Value,
     ) -> Self {
         frame.js_jit_interpreter_started = None;
-        Self {
-            frame,
-            completion,
-            resume_register,
-            promise,
-        }
+        Self { frame, completion, resume_register, promise }
     }
 
     /// The suspended frame, ready to push: it continues after its suspending instruction,
@@ -218,28 +208,10 @@ use crate::snapshot::Snap;
 impl Snap for Continuation {
     fn snap(&self, writer: &mut crate::snapshot::Writer) -> crate::snapshot::SnapshotResult<()> {
         let super::Frame {
-            context,
-            reflected_parameters,
-            original_arguments,
-            program,
-            function,
-            pc,
-            env,
-            this,
-            locals,
-            dynamic_bindings,
-            registers,
-            active_iterators,
-            with_objects,
-            captured,
-            pc_is_resume: _,
-            source_field: _,
-            binding_site_pc: _,
-            initialized_registers: _,
-            capture_cache: _,
-            with_base: _,
-            js_jit_interpreter_started: _,
-            fixed_this: _,
+            context, reflected_parameters, original_arguments, program, function, pc, env, this,
+            locals, dynamic_bindings, registers, active_iterators, with_objects, captured,
+            pc_is_resume: _, source_field: _, binding_site_pc: _, initialized_registers: _,
+            capture_cache: _, with_base: _, js_jit_interpreter_started: _, fixed_this: _,
             js_jit_skip_entry_once: _,
         } = &*self.frame;
         context.snap(writer)?;
@@ -309,12 +281,8 @@ mod tests {
         frame.with_objects = vec![Value::heap(11)];
         frame.with_base = 3;
         frame.fixed_this = true;
-        let continuation = Continuation::suspend(
-            frame,
-            Completion::Await(Value::heap(6)),
-            Some(1),
-            Value::heap(7),
-        );
+        let continuation =
+            Continuation::suspend(frame, Completion::Await(Value::heap(6)), Some(1), Value::heap(7));
         assert_eq!(
             continuation.roots(),
             [

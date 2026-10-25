@@ -679,14 +679,10 @@ impl Heap {
                 stats.1 += usize::from(value.to_narrow().is_some());
             }
         });
-        for object in self
-            .slots
-            .iter()
-            .filter_map(|slot| match slot.cell.as_ref()? {
-                Cell::Array { object } => Some(object),
-                _ => None,
-            })
-        {
+        for object in self.slots.iter().filter_map(|slot| match slot.cell.as_ref()? {
+            Cell::Array { object } => Some(object),
+            _ => None,
+        }) {
             for value in object.elements().as_slice() {
                 stats.0 += 1;
                 stats.1 += usize::from(value.to_narrow().is_some());
@@ -751,7 +747,8 @@ fn cell_bytes(cell: &Cell) -> usize {
             Cell::BigInt(value) => crate::bigint::magnitude_bytes(value),
             Cell::Error(value) => value.capacity(),
             Cell::Promise(promise) => {
-                size_of::<super::PromiseCell>() + promise.record.reaction_heap_bytes()
+                size_of::<super::PromiseCell>()
+                    + promise.record.reaction_heap_bytes()
             }
             Cell::Symbol(value) => value.as_ref().map_or(0, |description| description.len()),
             Cell::Date { .. } => 0,

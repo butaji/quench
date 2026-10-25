@@ -423,12 +423,16 @@ impl<H: Host> Vm<H> {
             (
                 "usage",
                 self.collator_string_slot(this, COLLATOR_USAGE_SLOT)
-                    .map_or(Value::UNDEFINED, |v| self.heap.alloc_string(v.into())),
+                    .map_or(Value::UNDEFINED, |v| {
+                        self.heap.alloc_string(v.into())
+                    }),
             ),
             (
                 "sensitivity",
                 self.collator_string_slot(this, COLLATOR_SENSITIVITY_SLOT)
-                    .map_or(Value::UNDEFINED, |v| self.heap.alloc_string(v.into())),
+                    .map_or(Value::UNDEFINED, |v| {
+                        self.heap.alloc_string(v.into())
+                    }),
             ),
             (
                 "ignorePunctuation",
@@ -457,7 +461,9 @@ impl<H: Host> Vm<H> {
             (
                 "caseFirst",
                 self.collator_string_slot(this, COLLATOR_CASE_FIRST_SLOT)
-                    .map_or(Value::UNDEFINED, |v| self.heap.alloc_string(v.into())),
+                    .map_or(Value::UNDEFINED, |v| {
+                        self.heap.alloc_string(v.into())
+                    }),
             ),
         ] {
             let atom = self.intern_atom(key);
