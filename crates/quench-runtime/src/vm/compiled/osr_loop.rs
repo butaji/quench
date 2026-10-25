@@ -476,6 +476,11 @@ fn tagged_registers_with_failure(
     let mut tagged: std::collections::BTreeSet<Register> = instructions
         .iter()
         .filter_map(|instruction| identity_branch(*instruction, constants).map(|branch| branch.register))
+        .chain(instructions.iter().filter_map(|instruction| {
+            (instruction.op() == Op::Unary
+                && instruction.unary_operator() == crate::bytecode::UNARY_TYPEOF_INDEX)
+                .then_some(instruction.result_register())
+        }))
         .chain(instructions.iter().filter_map(|instruction| match instruction.op() {
             Op::GetIndex => instruction.operand_b().register_index(),
             Op::SetIndex | Op::RequireObjectCoercible => Some(instruction.register_b()),
@@ -588,6 +593,12 @@ fn tagged_registers_with_failure(
                 }
                 // A cached field's value, which the entry record carries tagged.
                 Op::GetField | Op::GetIndex => {}
+                // The type-name index is still a boxed Number at bytecode level. Its
+                // lowering reads only immediate tags and exits before the operation for
+                // heap values, whose language type depends on VM metadata.
+                Op::Unary if instruction.unary_operator() == crate::bytecode::UNARY_TYPEOF_INDEX => {
+                    tagged.insert(instruction.register_b());
+                }
                 _ => {
                     if std::env::var_os("QUENCH_JS_JIT_TRACE_OSR_REJECT").is_some() {
                         eprintln!(
@@ -1859,9 +1870,16 @@ fn admit(
             admission.number(instruction.register_b())?;
         }
         Op::Unary => {
-            unary(instruction.op(), instruction.unary_operator())?;
-            admission.result(instruction)?;
-            admission.number(instruction.register_b())?;
+            if instruction.unary_operator() == crate::bytecode::UNARY_TYPEOF_INDEX
+                && tagged.contains(&instruction.result_register())
+            {
+                admission.tagged(instruction.result_register())?;
+                admission.tagged(instruction.register_b())?;
+            } else {
+                unary(instruction.op(), instruction.unary_operator())?;
+                admission.result(instruction)?;
+                admission.number(instruction.register_b())?;
+            }
         }
         // An array the entry guard proved is an object passes.
         Op::RequireObjectCoercible => {
@@ -1928,6 +1946,29 @@ fn admit(
         Op::JumpBinaryFalse => {
             if let Some(branch) = identity_branch(instruction, constants) {
                 admission.tagged(branch.register)?;
+            } else if let Some((register, constant)) = match (
+                instruction.operand_b().kind(),
+                instruction.operand_c().kind(),
+            ) {
+                (Some(OperandKind::Register), Some(OperandKind::Constant)) => Some((
+                    instruction.operand_b().payload(),
+                    usize::from(instruction.operand_c().payload()),
+                )),
+                (Some(OperandKind::Constant), Some(OperandKind::Register)) => Some((
+                    instruction.operand_c().payload(),
+                    usize::from(instruction.operand_b().payload()),
+                )),
+                _ => None,
+            }
+            .filter(|(register, constant)| {
+                super::super::operations::equality_operator(instruction.binary_operator_field())
+                    .is_some_and(|(strict, _)| strict)
+                    && tagged.contains(register)
+                    && constants.get(*constant).and_then(|value| value.as_number()).is_some()
+            })
+            {
+                admission.tagged(register)?;
+                admission.constant(constant)?;
             } else if super::super::operations::NumberRelation::from_operator(
                 instruction.binary_operator_field(),
             )
@@ -2050,6 +2091,7 @@ impl Webs {
 fn number_reads(instruction: WideInstruction) -> Vec<Register> {
     let register = |operand: Operand| operand.register_index();
     match instruction.op() {
+        Op::Unary if instruction.unary_operator() == crate::bytecode::UNARY_TYPEOF_INDEX => Vec::new(),
         Op::Move | Op::IncDec | Op::Unary | Op::ToNumeric => vec![instruction.register_b()],
         Op::Binary | Op::NumericAdd | Op::NumericMultiply | Op::JumpBinaryFalse => [
             register(instruction.operand_b()),
@@ -3855,6 +3897,137 @@ impl<'a, 'b> Lowering<'a, 'b> {
         self.pass_unless(failed, exit);
     }
 
+    /// The bytecode `typeof` switch index for immediate values. Heap values need the VM to
+    /// distinguish strings, symbols, bigints, functions, and HTMLDDA, so resume at this
+    /// exact unary instruction for them.
+    fn typeof_index(&mut self, pc: u32, value: Typed) -> Option<Typed> {
+        if value.representation != Representation::Tagged {
+            return None;
+        }
+        let tag = self
+            .body
+            .builder
+            .ins()
+            .band_imm_u(value.value, ValueLayout::TAG_MASK as i64);
+        let is_undefined = self
+            .body
+            .builder
+            .ins()
+            .icmp_imm_u(IntCC::Equal, tag, Value::UNDEFINED.to_bits() as i64);
+        let is_null = self
+            .body
+            .builder
+            .ins()
+            .icmp_imm_u(IntCC::Equal, tag, Value::NULL.to_bits() as i64);
+        let is_boolean = self
+            .body
+            .builder
+            .ins()
+            .icmp_imm_u(IntCC::Equal, tag, Value::FALSE.to_bits() as i64);
+        let integer_tag = Value::integer(0).to_bits() & ValueLayout::TAG_MASK;
+        let is_integer = self
+            .body
+            .builder
+            .ins()
+            .icmp_imm_u(IntCC::Equal, tag, integer_tag as i64);
+        let tag_field = self
+            .body
+            .builder
+            .ins()
+            .ushr_imm_u(tag, i64::from(ValueLayout::TAG_SHIFT));
+        let below_tags = self.body.builder.ins().icmp_imm_u(
+            IntCC::UnsignedLessThan,
+            tag_field,
+            ValueLayout::FIRST_TAG_FIELD as i64,
+        );
+        let past_tags = self.body.builder.ins().icmp_imm_u(
+            IntCC::UnsignedGreaterThan,
+            tag_field,
+            (ValueLayout::FIRST_TAG_FIELD + ValueLayout::TAG_FIELD_SPAN) as i64,
+        );
+        let is_number = self.body.builder.ins().bor(below_tags, past_tags);
+        let supported_tag = self.body.builder.ins().bor(is_undefined, is_null);
+        let supported_tag = self.body.builder.ins().bor(supported_tag, is_boolean);
+        let supported_tag = self.body.builder.ins().bor(supported_tag, is_integer);
+        let unsupported = self.body.builder.ins().bnot(supported_tag);
+        let is_tagged = self.body.builder.ins().bnot(is_number);
+        let unsupported_tag = self.body.builder.ins().band(is_tagged, unsupported);
+        self.guard(pc, unsupported_tag);
+
+        let typeof_index = |name: &str| {
+            Value::integer(crate::bytecode::typeof_name_index(name).expect("built-in typeof name") as i32)
+                .to_bits() as i64
+        };
+        let undefined = self.body.builder.ins().iconst(types::I64, typeof_index("undefined"));
+        let object = self.body.builder.ins().iconst(types::I64, typeof_index("object"));
+        let boolean = self.body.builder.ins().iconst(types::I64, typeof_index("boolean"));
+        let number = self.body.builder.ins().iconst(types::I64, typeof_index("number"));
+        let index = self.body.builder.ins().select(is_boolean, boolean, number);
+        let index = self.body.builder.ins().select(is_null, object, index);
+        let index = self.body.builder.ins().select(is_undefined, undefined, index);
+        Some(Typed { value: index, representation: Representation::Tagged })
+    }
+
+    /// Strict Number equality for a tagged value and a numeric constant. Integer and
+    /// double encodings share ECMAScript Number equality, including +0/-0 and NaN behavior.
+    fn tagged_number_equality(&mut self, instruction: WideInstruction, operator: u32) -> Option<ir::Value> {
+        let (strict, negated) = super::super::operations::equality_operator(operator)?;
+        if !strict {
+            return None;
+        }
+        let (register, constant) = match (
+            instruction.operand_b().kind()?,
+            instruction.operand_c().kind()?,
+        ) {
+            (OperandKind::Register, OperandKind::Constant) => (
+                instruction.operand_b().payload(),
+                self.region.constants.get(&usize::from(instruction.operand_c().payload())).copied()?,
+            ),
+            (OperandKind::Constant, OperandKind::Register) => (
+                instruction.operand_c().payload(),
+                self.region.constants.get(&usize::from(instruction.operand_b().payload())).copied()?,
+            ),
+            _ => return None,
+        };
+        let value = self.register(register);
+        if value.representation != Representation::Tagged {
+            return None;
+        }
+
+        let tag = self.body.builder.ins().band_imm_u(value.value, ValueLayout::TAG_MASK as i64);
+        let integer_tag = Value::integer(0).to_bits() & ValueLayout::TAG_MASK;
+        let is_integer = self
+            .body
+            .builder
+            .ins()
+            .icmp_imm_u(IntCC::Equal, tag, integer_tag as i64);
+        let tag_field = self
+            .body
+            .builder
+            .ins()
+            .ushr_imm_u(tag, i64::from(ValueLayout::TAG_SHIFT));
+        let below_tags = self.body.builder.ins().icmp_imm_u(
+            IntCC::UnsignedLessThan,
+            tag_field,
+            ValueLayout::FIRST_TAG_FIELD as i64,
+        );
+        let past_tags = self.body.builder.ins().icmp_imm_u(
+            IntCC::UnsignedGreaterThan,
+            tag_field,
+            (ValueLayout::FIRST_TAG_FIELD + ValueLayout::TAG_FIELD_SPAN) as i64,
+        );
+        let is_double = self.body.builder.ins().bor(below_tags, past_tags);
+        let integer = self.body.builder.ins().ireduce(types::I32, value.value);
+        let integer = self.body.builder.ins().fcvt_from_sint(types::F64, integer);
+        let double = self.body.builder.ins().bitcast(types::F64, flags(), value.value);
+        let number = self.body.builder.ins().select(is_integer, integer, double);
+        let constant = self.body.builder.ins().f64const(constant);
+        let equal = self.body.builder.ins().fcmp(FloatCC::Equal, number, constant);
+        let is_number = self.body.builder.ins().bor(is_integer, is_double);
+        let equal = self.body.builder.ins().band(is_number, equal);
+        Some(if negated { self.body.builder.ins().bnot(equal) } else { equal })
+    }
+
     /// Reads a field from the receiver's current register value. The callback only probes
     /// the warmed data-field cache: a miss exits before `GetField`, so the lane performs the
     /// full property semantics once with this PC's live register state written back.
@@ -4677,6 +4850,11 @@ impl<'a, 'b> Lowering<'a, 'b> {
             Op::Unary => {
                 let operand = self.register(instruction.register_b());
                 let result = instruction.result_register();
+                if instruction.unary_operator() == crate::bytecode::UNARY_TYPEOF_INDEX {
+                    let value = self.typeof_index(pc, operand)?;
+                    self.define(result, value);
+                    return self.fall_through(pc);
+                }
                 let value = match unary(instruction.op(), instruction.unary_operator())? {
                     Unary::Number(NumberUnary::Plus) => operand,
                     Unary::Number(NumberUnary::Negate)
@@ -4891,6 +5069,9 @@ impl<'a, 'b> Lowering<'a, 'b> {
                     return self.branch(pc, instruction.jump_target(), condition, false);
                 }
                 let operator = instruction.binary_operator_field();
+                if let Some(condition) = self.tagged_number_equality(instruction, operator) {
+                    return self.branch(pc, instruction.jump_target(), condition, false);
+                }
                 let left = self.operand(instruction.operand_b())?;
                 let right = self.operand(instruction.operand_c())?;
                 let (left, right, domain) = if left.representation == Representation::Int32
