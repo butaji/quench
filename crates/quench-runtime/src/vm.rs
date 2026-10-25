@@ -101,6 +101,7 @@ mod bigint;
 mod boolean;
 mod builtins;
 mod call_arguments;
+mod call_printer;
 mod coercion;
 mod collections;
 mod construction;
@@ -3027,9 +3028,16 @@ impl<H: Host> Vm<H> {
     /// index reads. A program's layout is appended before the program can run.
     #[inline(always)]
     pub(super) fn set_active_program(&mut self, program: ProgramId) {
+        let constants = std::ptr::from_ref(self.programs.constants(program));
+        self.activate_program(program, constants);
+    }
+
+    /// `set_active_program` with `program`'s constants (`ProgramStore::constants`) in hand.
+    #[inline(always)]
+    pub(super) fn activate_program(&mut self, program: ProgramId, constants: *const [Value]) {
         self.active_program = program;
         self.active_layout = self.program_cache_layouts[program.raw() as usize];
-        self.active_constants = self.programs.constants(program);
+        self.active_constants = constants;
         self.refresh_active_field_entries();
     }
 

@@ -106,15 +106,23 @@ node run-workload.mjs react-ssr no-jit 11 ../../target/react-no-jit-linux.json
 The rows run `quench-node`, Node with `--jitless`, and Bun with
 `BUN_JSC_useJIT=0`. Bun's option dump must report `useJIT=false`; Node's
 `process.execArgv` confirms `--jitless`. The runner compares deterministic
-outputs and records guest throughput, elapsed time, maximum RSS, versions,
-commands and input hashes. It sets `NODE_ENV=production` for every engine.
-Linux runs sample the live process tree's summed `/proc/<pid>/status` `VmRSS`
-every 50 ms and are diagnostic only. The sample can miss short-lived children
-and counts shared pages once per process; use the platform's maximum-RSS tool
-for qualification;
+outputs and records guest throughput, elapsed time, RSS, versions, commands
+and input hashes. It sets `NODE_ENV=production` for every engine. On Linux it
+records the engine process's kernel-maintained `/proc/<pid>/status` `VmHWM`
+with a default 5 ms sampling interval, plus a sample of summed process-tree
+`VmRSS`. Set `QUENCH_NPM_PERF_RSS_SAMPLE_MS` to change the interval. The
+per-engine high-water mark is exact when the process remains alive long enough
+to sample; the tree estimate can miss shorter-lived descendants and counts
+shared pages once per process. It also reports each observed descendant PID's
+sample count and the sum of its `VmHWM` with the engine's, a conservative bound
+over observed processes. Unobserved short-lived descendants can still escape
+both metrics, so process-tree RSS remains diagnostic and cannot qualify the
+memory gate yet.
 macOS qualification reads process maximum RSS from `/usr/bin/time -l`. Set
 `QUENCH_NODE_BIN`, `NODE_BIN` and `BUN_BIN` when the binaries are outside their
-defaults.
+defaults. A one-round report-generation smoke with separate process and tree
+RSS fields is in
+[`reports/rss-hwm-smoke-2026-10-25/`](reports/rss-hwm-smoke-2026-10-25/).
 
 After each package's no-JIT win is established, run the JIT-enabled phase:
 

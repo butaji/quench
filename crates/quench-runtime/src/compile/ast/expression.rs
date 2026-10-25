@@ -143,7 +143,12 @@ impl FunctionCompiler<'_, '_> {
             }
             Expression::NewExpression(value) => self.construct(value),
             Expression::SequenceExpression(value) => self.sequence_expression(value, debug_name),
-            Expression::ParenthesizedExpression(value) => self.expression_with_debug_name(&value.expression, debug_name),
+            Expression::ParenthesizedExpression(value) => {
+                // `(function () {})` is the conventional mark of a function about to run, as
+                // a bundle's module functions and a UMD factory are.
+                self.owner.note_invoked_callee(&value.expression);
+                self.expression_with_debug_name(&value.expression, debug_name)
+            }
             Expression::AwaitExpression(value) if self.async_function => {
                 let source = self.expression(&value.argument);
                 let destination = self.reg();

@@ -42,7 +42,7 @@ mod register_profile;
 pub(crate) mod replay;
 mod rewrite;
 mod sequence;
-mod stack;
+pub(crate) mod stack;
 mod string;
 mod template;
 use ast::{FunctionCompiler, StatementCompletion};
@@ -1643,8 +1643,8 @@ struct Compiler<'a> {
     dynamic_binding_scopes: u32,
     /// The replays of functions finished and released during the load.
     early_replays: FxHashMap<u32, replay::FunctionReplay>,
-    /// The source starts of function expressions called where they are made, which run at
-    /// once and so keep their records (`note_invoked_callee`).
+    /// The source starts of function expressions called where they are made or marked as
+    /// about to run, which keep their records (`note_invoked_callee`).
     invoked_functions: FxHashSet<u32>,
     /// How each replayable function was compiled, with the cursors it started from.
     replay_calls: FxHashMap<u32, (replay::TableCursors, replay::ReplayCall)>,
@@ -2095,7 +2095,8 @@ impl<'a> Compiler<'a> {
     }
 
     /// Notes a function expression called where it is made: `(function () {})()`, an arrow
-    /// likewise, or either through `.call` or `.apply`. A replay of it would only compile it
+    /// likewise, or either through `.call` or `.apply`; or one marked as about to run by
+    /// parentheses, as engines read `(function () {})`. A replay of it would only compile it
     /// again a moment after its load did.
     fn note_invoked_callee(&mut self, callee: &Expression<'_>) {
         let callee = match callee.without_parentheses() {
