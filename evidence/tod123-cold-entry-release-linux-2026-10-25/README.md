@@ -40,3 +40,22 @@ Richards 2188 -> 2052, DeltaBlue 2536 -> 2440, Crypto 2604 -> 2548.
   interval at all, an npm run's back-to-back decodes release after each one. The throughput
   policy keeps `LOAD_RELEASE_INTERVAL`.
 - Confirmed on the boards that follow (see TOD-123).
+
+## Encoding release (r49 build plus `CompilePhase::Encoding`, `qn-e`)
+
+After the kept-program release, the cold Crypto peak moved to `encode_cached_program`
+(`peakbt.py`). Anon pages rise about 350 KiB for the program plus its encoding, beside
+1.2 MB of code faulted since the code-generation release: the rest of code generation,
+atom interning and the encoder. A release as encoding starts (`CompilePhase::Encoding`)
+takes those pages out of the peak. Cold runs, an env toggle disabling it on the same
+binary, 11 interleaved runs (a quiet rerun), median/max KiB:
+
+| Fixture   | Without   | With      |
+|-----------|-----------|-----------|
+| Crypto    | 2832/2872 | 2572/2776 |
+| Richards  | 2408/2412 | 2220/2412 |
+| DeltaBlue | 2580/2752 | 2460/2788 |
+| RayTrace  | 2584/2740 | 2556/2596 |
+
+In the first 9-run pass, NavierStokes went 3648 -> 3684 median and RegExp and EarleyBoyer
+were unchanged.

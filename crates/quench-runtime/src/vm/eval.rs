@@ -408,6 +408,7 @@ impl<H: Host> Vm<H> {
     }
 
     pub(super) fn encode_cached_program(&self, program: &crate::ResidualProgram) -> Option<Vec<u8>> {
+        crate::compile::compile_phase_boundary(crate::compile::CompilePhase::Encoding);
         let (bytes, atoms) = program.encode_compact();
         atoms
             .iter()
