@@ -96,6 +96,16 @@ const TLS_FACTORY: &str = quench_js_check::checked_js!(
         }
       }
       function Server(options, listener) { return serverConstructOperation(this,new.target,options,listener); }
+      Server.prototype[Symbol.for('nodejs.rejection')] = function(error, event, socket) {
+        if (event === 'secureConnection') socket.destroy(error);
+        else {
+          const inherited = Object.getPrototypeOf(Server.prototype)?.[Symbol.for('nodejs.rejection')];
+          if (typeof inherited === 'function') {
+            return Reflect.apply(inherited, this, [error, event, socket]);
+          }
+          this.emit('error', error);
+        }
+      };
       Server.prototype.setSecureContext=function setSecureContext(options){return serverContextOperation(this,options);};
       Server.prototype.setTicketKeys=function setTicketKeys(keys){
         const context = this._sharedCreds?.context;
