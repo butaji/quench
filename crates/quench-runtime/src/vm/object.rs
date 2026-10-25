@@ -3416,7 +3416,7 @@ impl<H: Host> Vm<H> {
         if self.is_private_name(atom) && self.set_private_field_value(p, object, atom, value) { return Ok(()); }
         if let Some((target, handler)) = self.proxy_parts(object) {
             if self.is_private_name(atom) {
-                if self.own_property(object, atom).is_none() {
+                if self.own_property(object, atom).is_none() && self.host.nonextensible_applies_to_private() {
                     let extensible = self.object_is_extensible(p, &[object])?;
                     if !self.truthy(extensible) {
                         return Err(self.type_error(

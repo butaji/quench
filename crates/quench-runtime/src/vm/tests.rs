@@ -12278,6 +12278,41 @@ print(out.slice(45, 52).join(" "));
 
 #[test]
 #[cfg(not(quench_profiled))]
+fn shared_osr_indexes_from_negative_carried_roots() {
+    // Loop-carried `i32`s below zero key reads at constant offsets from them (`r + 2`,
+    // `++r`): their views hold them sign-extended, so a key folds its offset into the
+    // access from the root's own 64 bits.
+    let source = r#"
+function walk(a, start, n) {
+  var s = 0, r = start, q = start + n + 2;
+  for (var i = 0; i < n; i++) {
+    s += a[r + 2] + a[q - 1];
+    s += a[++r + 1];
+    q--;
+  }
+  return s;
+}
+var a = [];
+for (var i = 0; i < 64; i++) a.push(i * 5 + 3);
+var out = [];
+for (var c = 0; c < 300; c++) out.push(walk(a, -2 + (c % 3), 40));
+print(out.slice(290).join(" "));
+"#;
+    let program = Engine::specialize(source, "osr-negative-roots.js").unwrap();
+    let interpreted_output = Rc::new(RefCell::new(Vec::new()));
+    Vm::new(TestHost::writing_to(interpreted_output.clone())).execute(&program).unwrap();
+    for policy in crate::MemoryPolicy::ALL {
+        let compiled_output = Rc::new(RefCell::new(Vec::new()));
+        let mut compiled = Vm::new(TestHost::writing_to(compiled_output.clone()));
+        compiled.set_memory_policy(policy);
+        compiled.set_execution_mode(crate::ExecutionMode::Compiled);
+        compiled.execute(&program).unwrap();
+        assert_eq!(compiled_output.borrow().as_slice(), interpreted_output.borrow().as_slice(), "{policy:?}");
+    }
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
 fn shared_osr_numeric_relations_keep_signed_int32_ordering() {
     let program = Engine::compile(crate::ExecutionRequest::script(
         r#"
@@ -12496,6 +12531,78 @@ fn shared_osr_compiles_strict_null_identity_branches_on_rooted_values() {
             diagnostics.analysis_rejections
         );
     }
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
+fn shared_osr_compiles_loose_nullish_equality_without_coercion() {
+    let program = Engine::compile(crate::ExecutionRequest::script(
+        r#"
+          function seed() { return 0; }
+          function countNonNull(value) {
+            let count = seed();
+            let hits = 0;
+            while (count < 4) {
+              if (value != null) hits++;
+              count++;
+            }
+            return hits;
+          }
+          let coercions = 0;
+          const object = { valueOf() { coercions++; throw Error('nullish equality coerced'); } };
+          let result = 0;
+          for (let call = 0; call < 400; call++) {
+            result += countNonNull(call % 2 ? object : undefined);
+          }
+          if (coercions !== 0) throw Error('nullish equality coerced an object');
+          print(result);
+          print(countNonNull(null));
+          print(countNonNull({}));
+        "#,
+        "osr-loose-nullish-equality.js",
+    ))
+    .unwrap();
+    let _disassembly = program.disassemble();
+    let function_id = program
+        .functions
+        .iter()
+        .position(|function| {
+            function
+                .header()
+                .name
+                .is_some_and(|name| &program.atoms[name as usize] == "countNonNull")
+        })
+        .expect("loose nullish loop function");
+    let interpreted_output = Rc::new(RefCell::new(Vec::new()));
+    let mut interpreter = Vm::new(TestHost::writing_to(interpreted_output.clone()));
+    interpreter.execute(&program).unwrap();
+    assert_eq!(interpreted_output.borrow().as_slice(), ["800", "0", "4"]);
+
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    vm.set_execution_mode(crate::ExecutionMode::Compiled);
+    vm.programs.enable_js_jit_diagnostics();
+    vm.execute(&program).unwrap();
+    assert_eq!(output.borrow().as_slice(), ["800", "0", "4"]);
+
+    let views = vm
+        .programs
+        .lane_views(super::program_store::ProgramId::MAIN)
+        .expect("main program lane views");
+    let view = views
+        .get(function_id)
+        .and_then(std::cell::OnceCell::get)
+        .expect("hot loose nullish loop lane view");
+    let diagnostics = view.osr_diagnostics();
+    assert_eq!(
+        diagnostics.currently_compiled_sites,
+        1,
+        "OSR diagnostics: {diagnostics:?}"
+    );
+    assert!(
+        diagnostics.native_region_runs > 0,
+        "native OSR region never ran; diagnostics: {diagnostics:?}"
+    );
 }
 
 #[test]

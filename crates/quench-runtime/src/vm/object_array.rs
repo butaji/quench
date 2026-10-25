@@ -23,7 +23,11 @@ fn array_length_uint32(number: f64) -> u32 {
 
 impl<H: Host> Vm<H> {
     pub(super) fn own_array_length(&self, target: Value) -> Option<usize> {
-        let object = self.heap.array(target)?;
+        // A direct array's record is found inline, as nearly every `length` read finds it.
+        let object = match self.heap.record_array(target) {
+            Some(object) => object,
+            None => self.heap.array(target)?,
+        };
         let elements = object.elements();
         (!object.is_arguments_object()).then(|| {
             self.heap

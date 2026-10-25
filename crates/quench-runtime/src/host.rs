@@ -109,8 +109,8 @@ pub trait Host {
     /// A collection has finished, or a full one is starting: a host may return memory the
     /// process no longer needs resident (its read-only pages), which nothing observable
     /// depends on. At these boundaries the code about to run differs from the code that ran.
-    /// The runtime's memory policy says how often it should
-    /// (`MemoryPolicy::resident_release_interval`).
+    /// The runtime's memory policy says whether it should
+    /// (`MemoryPolicy::returns_pages_at_collections`).
     fn at_collection_boundary(&mut self, _policy: crate::MemoryPolicy) {}
 
     /// A compiled host program kept across runs: the bytes `keep_compiled_program` was given
@@ -157,6 +157,14 @@ pub trait Host {
     /// ECMAScript proper tail calls discard strict caller activations. Hosts
     /// matching engines that retain those observable frames can disable them.
     fn proper_tail_calls(&self) -> bool {
+        true
+    }
+
+    /// The stage 3 proposal "non-extensible applies to private": adding a private field,
+    /// method or accessor to a non-extensible object throws (Test262
+    /// `nonextensible-applies-to-private`). Hosts matching engines that do not ship it (V8,
+    /// so Node) add them as before.
+    fn nonextensible_applies_to_private(&self) -> bool {
         true
     }
 

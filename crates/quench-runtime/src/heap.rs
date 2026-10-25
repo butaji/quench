@@ -3015,11 +3015,16 @@ impl Heap {
             .get(&index)
             .copied()
     }
+    /// The length an array's sparse elements give it, if it has any. Inline where no array
+    /// has any, which every `length` read meets first.
+    #[inline(always)]
     pub(crate) fn sparse_length(&self, array: Value) -> Option<usize> {
-        self.sparse_arrays
-            .as_ref()?
-            .get(&array)
-            .map(|elements| elements.length)
+        let arrays = self.sparse_arrays.as_ref()?;
+        Self::sparse_entry_length(arrays, array)
+    }
+    #[inline(never)]
+    fn sparse_entry_length(arrays: &FxHashMap<Value, SparseElements>, array: Value) -> Option<usize> {
+        arrays.get(&array).map(|elements| elements.length)
     }
     /// The write barrier for an edge stored outside `owner`'s own storage (sparse elements,
     /// owner-attached VM tables): `owner` is logged as if it had been written.

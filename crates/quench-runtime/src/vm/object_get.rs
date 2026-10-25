@@ -1228,11 +1228,17 @@ impl<H: Host> Vm<H> {
         self.object_data_mut(target).is_some_and(|object| object.set_private_field(PrivateBrand { home, name: atom }, value))
     }
 
+    /// Whether `object` may gain a private element: always, unless the host applies
+    /// non-extensibility to private elements (`Host::nonextensible_applies_to_private`).
+    pub(super) fn private_element_addable(&self, object: &Object) -> bool {
+        object.is_extensible() || !self.host.nonextensible_applies_to_private()
+    }
+
     pub(super) fn initialize_private_field(&mut self, p: &ResidualProgram, target: Value, home: Value, atom: Atom, value: Value) -> Result<(), JsError> {
-        let Some(extensible) = self.object_data(target).map(Object::is_extensible) else {
+        let Some(addable) = self.object_data(target).map(|object| self.private_element_addable(object)) else {
             return Err(self.type_error(p, "Cannot add private field to a non-object".into()));
         };
-        if !extensible {
+        if !addable {
             return Err(self.type_error(p, "Cannot add private field to a non-extensible object".into()));
         }
         if let Some(object) = self.object_data_mut(target)
