@@ -16,3 +16,9 @@ Score: JetStream's per-test Score; RSS: child `ru_maxrss` (wait4). Runner: `cli.
   sha256 and pbkdf2 against Bun and against 336c186e9.
 - `jit-vs-bun-jit-7d1d6adfa.txt`: quench `--jit` against Bun with its JIT (`tools/jsweep.sh`); ratios in
   `-ratios.txt`: geomean Score 0.149x, RSS 2.88x; 0 of 34 tests >=1.2x on Score, 34 of 34 on RSS.
+- `nojit-vs-node26-jitless-7d1d6adfa.txt`: quench against Node v26.12.0 `--jitless` (official
+  linux-x64 build, SHA256 verified). Node `--jitless` has no `WebAssembly`, so the 8 tests that
+  need it (the 7 Wasm tests and source-map-wtb) fail there; Bun is their only no-JIT rival.
+  Geomean Score 0.620x, RSS 3.47x over the 26 that run; 3 >=1.2x on both.
+- `nojit-strongest-rival-7d1d6adfa.txt`: per test, the lower ratio of the two rivals for Score and
+  for RSS: **8 of 34 tests >=1.2x on both** (the 6 Wasm tests other than argon2, hash-map, pbkdf2).
