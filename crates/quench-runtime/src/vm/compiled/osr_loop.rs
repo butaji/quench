@@ -1310,6 +1310,10 @@ fn admit_region(
     let mut field_reads = std::collections::BTreeMap::new();
     let mut field_stores = std::collections::BTreeMap::new();
     let mut field_store_sites = Vec::new();
+    let defined_registers: std::collections::BTreeSet<Register> = instructions
+        .iter()
+        .filter_map(|instruction| instruction.defined_register())
+        .collect();
     for (offset, instruction) in instructions.iter().copied().enumerate() {
         if instruction.op() == Op::GetField {
             let path = field_path(instruction, sites, &paths).ok_or(RegionRejection::UnsupportedInstruction(Op::GetField))?;
@@ -1346,7 +1350,7 @@ fn admit_region(
         if let Some(register) = object_reads(instruction).filter(|register| paths.contains_key(register)) {
             admission.field_arrays.entry(register).or_insert(false);
         }
-        admit(&mut admission, instruction, constants, &tagged)
+        admit(&mut admission, instruction, constants, &tagged, &defined_registers)
             .ok_or(RegionRejection::UnsupportedInstruction(instruction.op()))?;
     }
     let held: std::collections::BTreeMap<Register, (FieldPath, usize)> = paths
@@ -1448,6 +1452,7 @@ fn admit(
     instruction: WideInstruction,
     constants: &[Value],
     tagged: &std::collections::BTreeSet<Register>,
+    defined_registers: &std::collections::BTreeSet<Register>,
 ) -> Option<()> {
     match instruction.op() {
         Op::LoadConst => {
@@ -1521,7 +1526,14 @@ fn admit(
             admission.number(instruction.register_c())?;
         }
         Op::SetField | Op::SetFieldStrict => {
-            admission.number(instruction.register_a())?;
+            let value_register = instruction.register_a();
+            if defined_registers.contains(&value_register) {
+                admission.number(value_register)?;
+            } else {
+                // An unchanged entry value can be any tagged value. The VM logs the
+                // receiver in the generational barrier before native writes begin.
+                admission.tagged(value_register)?;
+            }
             admission.tagged(instruction.register_b())?;
         }
         Op::Jump => {}
