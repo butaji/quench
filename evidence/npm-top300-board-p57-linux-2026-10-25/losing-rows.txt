@@ -1,0 +1,11 @@
+MODE n losses 25
+  bun-threads(cpu<=bun): 9  wall:ajv-formats 1.23x(110/89), wall:playwright 1.19x(412/347), wall:schema-utils 1.15x(164/142), wall:typescript-eslint 1.15x(716/621), wall:@babel/core 1.09x(144/133), wall:@babel/helper-compilation-targets 1.07x(78/72), wall:date-fns 1.01x(57/57), wall:vitest 1.01x(438/436), wall:@typescript-eslint/type-utils 1.00x(361/360)
+  declarations-child: 10  wall:@types/babel__template 1.04x(242/232), wall:@types/babel__traverse 1.03x(243/236), wall:@types/react 1.02x(239/234), wall:@types/json-schema 1.02x(213/209), rss:@types/babel__traverse 1.01x(56/55), rss:@types/chai 1.01x(46/45), rss:@types/babel__template 1.01x(54/53), rss:@types/ms 1.00x(45/44), rss:@types/json-schema 1.00x(45/45), rss:undici-types 1.00x(75/74)
+  single-thread: 2  wall:color-convert 1.36x(80/59), wall:node-fetch 1.06x(37/35)
+  structural-builtin: 4  wall:jiti 2.28x(126/55), wall:undici 2.08x(80/39), rss:jiti 1.16x(41/35), rss:undici 1.03x(30/29)
+MODE j losses 28
+  bun-threads(cpu<=bun): 10  wall:semver 1.20x(97/81), wall:schema-utils 1.14x(151/132), wall:ajv-formats 1.14x(116/102), wall:typescript-eslint 1.11x(705/634), wall:ajv-keywords 1.08x(111/102), wall:vitest 1.07x(450/419), wall:@typescript-eslint/eslint-plugin 1.06x(715/672), wall:browserslist 1.04x(67/64), wall:@babel/helper-module-transforms 1.04x(152/147), wall:@testing-library/dom 1.03x(640/623)
+  declarations-child: 10  wall:@types/ms 1.07x(247/232), wall:@types/node 1.06x(317/300), rss:type-fest 1.01x(54/53), rss:@types/ws 1.01x(73/72), rss:undici-types 1.00x(75/75), rss:@types/ms 1.00x(45/45), rss:@types/chai 1.00x(46/46), rss:@types/react-dom 1.00x(54/54), rss:@types/react 1.00x(53/53), rss:@types/node 1.00x(72/72)
+  noise(<3%): 2  wall:@aws-sdk/signature-v4-multi-region 1.01x(54/53), rss:typescript 1.00x(42/42)
+  single-thread: 4  wall:color-convert 1.53x(83/54), wall:playwright 1.30x(382/293), wall:axios 1.21x(98/81), wall:node-fetch 1.17x(44/37)
+  structural-builtin: 2  wall:undici 2.60x(93/36), wall:jiti 2.21x(151/68)

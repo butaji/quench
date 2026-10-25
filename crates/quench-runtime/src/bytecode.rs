@@ -1493,6 +1493,9 @@ pub(crate) struct CallPlan {
     /// it kept and makes the object only at its last read (`KeptArguments::Passes`). Its
     /// frame makes the object on entry.
     pub(crate) keeps_arguments: bool,
+    /// `Function::reads_passed_arguments_only`: an environment activation keeps every value
+    /// passed after its locals, past its parameters too.
+    pub(crate) reads_passed_arguments: bool,
     /// The activation's whole state is its registers, plus the values it was passed when it
     /// forwards them: it reaches no local but a forwarded `arguments` binding, and legacy
     /// reflection, if any, reads its parameter registers or the forwarded values. A lane
@@ -2232,7 +2235,7 @@ impl Function {
                 && self.self_binding_slot.is_none()
                 && !self.inherited_with_scope
                 && self.local_registers.is_empty()
-                && self.arguments_slot.is_none()
+                && (self.arguments_slot.is_none() || self.reads_passed_arguments_only())
                 && self.binding_sites.is_empty()
                 && self.selective_capture_slots.is_some()
                 && self.initial_register == InitialRegister::Undefined
@@ -2256,7 +2259,9 @@ impl Function {
                             // A read whose base is a plain local reads the window's local
                             // (`lane_plain_local_operand`).
                             || (op == Op::GetField
-                                && instruction.addressed_local_slots().eq(instruction.local_field_base())))
+                                && instruction.addressed_local_slots().eq(instruction.local_field_base()))
+                            // The window keeps every value passed, which these answer.
+                            || matches!(op, Op::ArgumentsLength | Op::ArgumentGet))
                 });
             CallPlan {
                 environment_activation,
@@ -2268,6 +2273,7 @@ impl Function {
                 addresses_locals,
                 forwards_arguments,
                 keeps_arguments: kept_arguments.is_some(),
+                reads_passed_arguments: self.reads_passed_arguments_only(),
                 registers_only: (ordinary_with_rest && in_loop || constructs_frameless)
                     && self.initial_register == InitialRegister::Undefined
                     && if self.arguments_slot.is_none() {
@@ -2318,6 +2324,28 @@ impl Function {
                 }
                 _ => false,
             }
+    }
+
+    /// Whether the body reaches its `arguments` binding only by reading its length or an
+    /// element (`ArgumentsLength`, `ArgumentGet`), with no closure capturing the binding, so
+    /// the values passed answer every read: the object is unmapped, mapped onto no
+    /// parameters, or mapped without a write that could observe it (`unaliased_arguments`).
+    /// An environment activation then keeps those values after its locals.
+    pub(crate) fn reads_passed_arguments_only(&self) -> bool {
+        let Some(slot) = self.arguments_slot else {
+            return false;
+        };
+        !self.is_generator
+            && !self.is_async
+            && !(self.arguments_alias_parameters() && self.params != 0)
+            && !self.local_slot_uses_environment(usize::from(slot))
+            && !self.has_dynamic_scope_access()
+            && self.instructions().all(|instruction| {
+                matches!(instruction.op(), Op::ArgumentsLength | Op::ArgumentGet)
+                    || !instruction
+                        .addressed_local_slots()
+                        .any(|addressed| addressed == slot)
+            })
     }
 
     /// What a derived constructor whose whole body constructs its parent and returns the

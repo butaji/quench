@@ -903,6 +903,14 @@ impl<H: Host> Vm<H> {
             self.reconfigure_function_name(target, key);
         }
         if descriptor_accessor {
+            if is_new
+                && !matches!(key, PropertyKey::Private(_))
+                && let Some(shape) = self.object_data(target).map(Object::shape)
+                && self.property_shape_slot(shape, key).is_none()
+            {
+                self.create_shape_accessor_property(target, key, attributes)?;
+                return Ok(true);
+            }
             if is_new {
                 self.set_shape_property(target, key, Value::UNDEFINED)?;
             }
