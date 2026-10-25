@@ -184,8 +184,9 @@ pub(crate) struct LoopRegion {
     /// Tagged constants the region moves, by constant index.
     tagged_constants: std::collections::BTreeMap<usize, Value>,
     /// The function's live registers before each instruction (`compile::liveness`), when
-    /// liveness covers it; for an inlining region, by its own PCs (`Inlining`).
-    live: Option<crate::compile::liveness::RegisterMasks>,
+    /// liveness covers it; for an inlining region, by its own PCs (`Inlining`). A plain
+    /// region shares its function's masks (`ResidualProgram::shared_register_root_masks`).
+    live: Option<std::rc::Rc<crate::compile::liveness::RegisterMasks>>,
     /// Where an inlining region's instructions come from, when the region inlines calls.
     pub(crate) inlining: Option<Box<Inlining>>,
 }
@@ -937,7 +938,7 @@ pub(super) fn inline_region<'a>(
         total as usize,
         constants,
         sites,
-        Some(crate::compile::liveness::RegisterMasks::new(masks)),
+        Some(std::rc::Rc::new(crate::compile::liveness::RegisterMasks::new(masks))),
         header_live,
         header,
         &receivers,
@@ -1289,7 +1290,7 @@ pub(super) fn region(
     decoded: &[WideInstruction],
     constants: &[Value],
     sites: &[FieldSite],
-    live: Option<&crate::compile::liveness::RegisterMasks>,
+    live: Option<&std::rc::Rc<crate::compile::liveness::RegisterMasks>>,
     header: u32,
     backedge: u32,
 ) -> Result<LoopRegion, RegionRejection> {
@@ -1320,7 +1321,7 @@ fn admit_region(
     registers: usize,
     constants: &[Value],
     sites: &[FieldSite],
-    live: Option<crate::compile::liveness::RegisterMasks>,
+    live: Option<std::rc::Rc<crate::compile::liveness::RegisterMasks>>,
     header_live: Option<RegisterSet>,
     header: u32,
     objects: &std::collections::BTreeSet<Register>,
