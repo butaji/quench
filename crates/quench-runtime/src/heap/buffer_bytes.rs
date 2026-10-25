@@ -81,7 +81,10 @@ impl BufferBytes {
         match &*self.0 {
             BufferStore::Owned(bytes) => Some((bytes, None)),
             BufferStore::Shared(bytes) => Some((bytes, None)),
-            BufferStore::AddressPinned(bytes) => Some((bytes, Some(bytes.as_ptr() as usize % OBSERVED_ALIGNMENT_BOUND))),
+            BufferStore::AddressPinned(bytes) => Some((
+                bytes,
+                Some(bytes.as_ptr() as usize % OBSERVED_ALIGNMENT_BOUND),
+            )),
             BufferStore::Wasm(_) | BufferStore::AtomicShared(_) => None,
         }
     }

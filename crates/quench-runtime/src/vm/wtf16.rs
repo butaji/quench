@@ -1,7 +1,7 @@
-use std::mem::MaybeUninit;
 use std::borrow::Cow;
 use std::cell::{OnceCell, UnsafeCell};
 use std::hash::{Hash, Hasher};
+use std::mem::MaybeUninit;
 use std::ops::Range;
 use std::rc::Rc;
 
@@ -172,13 +172,18 @@ impl FlatUnits {
     #[inline(always)]
     pub(crate) fn unit(&self, index: usize) -> Option<u16> {
         match self {
-            Self::Short(text) => text.as_str().as_bytes().get(index).map(|byte| u16::from(*byte)),
+            Self::Short(text) => text
+                .as_str()
+                .as_bytes()
+                .get(index)
+                .map(|byte| u16::from(*byte)),
             Self::Ascii(text) => text.as_bytes().get(index).map(|byte| u16::from(*byte)),
             Self::AsciiSlice(slice) => (index < slice.range.len())
                 .then(|| u16::from(slice.text.as_bytes()[slice.range.start + index])),
             Self::Wide(units) => units.get(index).copied(),
-            Self::WideSlice(slice) => (index < slice.range.len())
-                .then(|| slice.units[slice.range.start + index]),
+            Self::WideSlice(slice) => {
+                (index < slice.range.len()).then(|| slice.units[slice.range.start + index])
+            }
         }
     }
 
@@ -618,7 +623,9 @@ impl JsStringInner {
                 visit(Units::Wide(&wide_units(host, part.length as usize)));
                 continue;
             }
-            let (left, right) = part.halves().expect("an unflattened string is a rope or decoded text");
+            let (left, right) = part
+                .halves()
+                .expect("an unflattened string is a rope or decoded text");
             pending.push(right);
             pending.push(left);
         }
@@ -721,16 +728,19 @@ impl JsStringBuilder {
     pub(super) fn finish(self) -> Result<JsString, StringBuildError> {
         let length = self.length?;
         if self.parts.iter().all(|part| part.units.is_ascii()) {
-            return Ok(JsString::from_flat(FlatUnits::ascii_with(length, |output| {
-                let mut written = 0;
-                for part in &self.parts {
-                    if let Units::Ascii(bytes) = part.units.view().slice(part.range.clone()) {
-                        output[written..written + bytes.len()].write_copy_of_slice(bytes);
-                        written += bytes.len();
+            return Ok(JsString::from_flat(FlatUnits::ascii_with(
+                length,
+                |output| {
+                    let mut written = 0;
+                    for part in &self.parts {
+                        if let Units::Ascii(bytes) = part.units.view().slice(part.range.clone()) {
+                            output[written..written + bytes.len()].write_copy_of_slice(bytes);
+                            written += bytes.len();
+                        }
                     }
-                }
-                assert_eq!(written, output.len(), "the parts fill the string's length");
-            })));
+                    assert_eq!(written, output.len(), "the parts fill the string's length");
+                },
+            )));
         }
         let mut storage = Rc::<[u16]>::new_uninit_slice(length);
         let output = Rc::get_mut(&mut storage).expect("a new allocation is unshared");
@@ -785,16 +795,22 @@ impl JsString {
     }
 
     fn shared(inner: JsStringInner) -> Self {
-        Self { repr: Repr::Shared(Rc::new(inner)) }
+        Self {
+            repr: Repr::Shared(Rc::new(inner)),
+        }
     }
 
     /// The string a rope node holds.
     fn from_node(node: Rc<JsStringInner>) -> Self {
         match node.flat.get() {
-            Some(units @ (FlatUnits::Short(_) | FlatUnits::Ascii(_) | FlatUnits::AsciiSlice(_))) => Self {
+            Some(
+                units @ (FlatUnits::Short(_) | FlatUnits::Ascii(_) | FlatUnits::AsciiSlice(_)),
+            ) => Self {
                 repr: Repr::Flat(units.clone()),
             },
-            Some(FlatUnits::Wide(_) | FlatUnits::WideSlice(_)) | None => Self { repr: Repr::Shared(node) },
+            Some(FlatUnits::Wide(_) | FlatUnits::WideSlice(_)) | None => Self {
+                repr: Repr::Shared(node),
+            },
         }
     }
 
@@ -833,9 +849,9 @@ impl JsString {
         match units {
             // SAFETY: `Units::Ascii` only views an ASCII `FlatUnits`, and every run of ASCII
             // bytes is UTF-8.
-            Units::Ascii(bytes) => {
-                Self::from_flat(FlatUnits::ascii(unsafe { std::str::from_utf8_unchecked(bytes) }))
-            }
+            Units::Ascii(bytes) => Self::from_flat(FlatUnits::ascii(unsafe {
+                std::str::from_utf8_unchecked(bytes)
+            })),
             Units::Wide(units) => Self::from_units(units),
         }
     }
@@ -850,7 +866,10 @@ impl JsString {
         if text.is_ascii() {
             return Self::from_flat(FlatUnits::ascii(text));
         }
-        Self::from_flat(FlatUnits::Wide(wide_units(text, text.encode_utf16().count())))
+        Self::from_flat(FlatUnits::Wide(wide_units(
+            text,
+            text.encode_utf16().count(),
+        )))
     }
 
     /// Text decoded out of data (a file's or a buffer's bytes). Long non-ASCII text keeps the
@@ -863,7 +882,10 @@ impl JsString {
             return Self::from_str(text);
         }
         charge_materialized(text.len());
-        Self::shared(JsStringInner::decoded(Rc::from(text), text.encode_utf16().count()))
+        Self::shared(JsStringInner::decoded(
+            Rc::from(text),
+            text.encode_utf16().count(),
+        ))
     }
 
     /// The host text of decoded text whose units are not made yet (`JsString::decoded`): a
@@ -938,7 +960,9 @@ impl JsString {
                 Some(units) => std::borrow::Cow::Borrowed(units),
                 // Decoded text shares no storage a copy could leave in place: its units are
                 // made once and kept, so each reader does not decode them again.
-                None if inner.unflattened_host().is_some() => std::borrow::Cow::Borrowed(self.flat()),
+                None if inner.unflattened_host().is_some() => {
+                    std::borrow::Cow::Borrowed(self.flat())
+                }
                 None => std::borrow::Cow::Owned(Self::flattened(inner)),
             },
         }
@@ -996,7 +1020,9 @@ impl JsString {
             (wide @ (FlatUnits::Wide(_) | FlatUnits::WideSlice(_)), Repr::Shared(inner)) => {
                 inner.cached_host().map_or_else(
                     || {
-                        let Units::Wide(units) = wide.view() else { unreachable!("wide units") };
+                        let Units::Wide(units) = wide.view() else {
+                            unreachable!("wide units")
+                        };
                         String::from_utf16_lossy(units)
                     },
                     str::to_owned,
@@ -1017,7 +1043,9 @@ impl JsString {
             FlatUnits::AsciiSlice(slice) => &slice.text[slice.range.clone()],
             wide @ (FlatUnits::Wide(_) | FlatUnits::WideSlice(_)) => match &self.repr {
                 Repr::Shared(inner) => inner.host(|| {
-                    let Units::Wide(units) = wide.view() else { unreachable!("wide units") };
+                    let Units::Wide(units) = wide.view() else {
+                        unreachable!("wide units")
+                    };
                     Rc::<str>::from(String::from_utf16_lossy(units))
                 }),
                 Repr::Flat(_) => unreachable!("a flat string held by value is ASCII"),
@@ -1060,8 +1088,7 @@ impl JsString {
             // The storage belongs to the string sliced; the slice owns its record.
             FlatUnits::AsciiSlice(_) => std::mem::size_of::<AsciiSlice>(),
             FlatUnits::Wide(units) => {
-                std::mem::size_of_val(&**units)
-                    + self.existing_host().map_or(0, |host| host.len())
+                std::mem::size_of_val(&**units) + self.existing_host().map_or(0, |host| host.len())
             }
             // As an ASCII slice: the storage belongs to the string sliced.
             FlatUnits::WideSlice(_) => {
@@ -1085,7 +1112,10 @@ impl JsString {
                 RC_HEADER_BYTES + std::mem::size_of::<JsStringInner>(),
             );
             let host = self.existing_host().map(|host| {
-                (Rc::as_ptr(host) as *const u8 as usize, RC_HEADER_BYTES + host.len())
+                (
+                    Rc::as_ptr(host) as *const u8 as usize,
+                    RC_HEADER_BYTES + host.len(),
+                )
             });
             return (node, host);
         };
@@ -1132,15 +1162,18 @@ impl JsString {
         // storage when both are ASCII (a template literal's pieces, a key built from parts,
         // a rope's last leaf and the text appended to it).
         let joined = |left: &Self, right: &Self| {
-            if let (Some(Units::Ascii(head)), Some(Units::Ascii(tail))) =
-                (left.existing_flat().map(FlatUnits::view), right.existing_flat().map(FlatUnits::view))
-            {
+            if let (Some(Units::Ascii(head)), Some(Units::Ascii(tail))) = (
+                left.existing_flat().map(FlatUnits::view),
+                right.existing_flat().map(FlatUnits::view),
+            ) {
                 let units = FlatUnits::ascii_with(head.len() + tail.len(), |bytes| {
                     let (start, end) = bytes.split_at_mut(head.len());
                     start.write_copy_of_slice(head);
                     end.write_copy_of_slice(tail);
                 });
-                return Self { repr: Repr::Flat(units) };
+                return Self {
+                    repr: Repr::Flat(units),
+                };
             }
             let mut flat = JsStringBuilder::default();
             flat.append(left);

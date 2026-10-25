@@ -137,9 +137,7 @@ impl<H: Host> Vm<H> {
         }
         self.set_builtin_named(p, prototype, "equals", Native::TemporalPlainDateTimeEquals)?;
         if let Some(symbol) = self.well_known_symbols.get(WellKnownSymbol::ToStringTag) {
-            let value = self
-                .heap
-                .alloc_string("Temporal.PlainDateTime".into());
+            let value = self.heap.alloc_string("Temporal.PlainDateTime".into());
             self.set_symbol_property(prototype, symbol, value)?;
             self.set_property_attributes(
                 prototype,
@@ -349,9 +347,7 @@ impl<H: Host> Vm<H> {
                 return Ok(match native {
                     Native::TemporalPlainDateTimeEraGetter => calendar_fields
                         .and_then(|fields| fields.era)
-                        .map_or(Value::UNDEFINED, |era| {
-                            self.heap.alloc_string(era.into())
-                        }),
+                        .map_or(Value::UNDEFINED, |era| self.heap.alloc_string(era.into())),
                     _ => calendar_fields
                         .and_then(|fields| fields.era_year)
                         .map_or(Value::UNDEFINED, |year| Value::number(f64::from(year))),
@@ -1154,7 +1150,7 @@ impl<H: Host> Vm<H> {
             return Err(self.type_error(p, "Missing calendar".into()));
         }
         let calendar = match self.heap.get(calendar_value) {
-            _ if let Some(value) = self.heap.string(calendar_value)  => {
+            _ if let Some(value) = self.heap.string(calendar_value) => {
                 super::temporal_date_parse::calendar_identifier_from_string(value.host_string())
                     .ok_or_else(|| self.range_error(p, "Invalid calendar".into()))?
             }

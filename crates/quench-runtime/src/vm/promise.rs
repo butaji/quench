@@ -11,7 +11,10 @@ use crate::{ModuleSource, module_identity::ModuleIdentity};
 use rustc_hash::FxHashSet;
 
 fn module_cache_key(name: &str, module_type: &str) -> String {
-    format!("{}:{module_type}", crate::module_identity::normalized_text(name))
+    format!(
+        "{}:{module_type}",
+        crate::module_identity::normalized_text(name)
+    )
 }
 
 fn self_import_referrer(referrer: &str, resolved: &str) -> bool {
@@ -84,16 +87,27 @@ impl StaticModuleNode {
     ) -> Rc<Self> {
         let mut sites = FxHashMap::default();
         for (index, (name, _)) in locals.iter().enumerate() {
-            sites.entry(name.clone()).or_insert(StaticExportSite::Local(index));
+            sites
+                .entry(name.clone())
+                .or_insert(StaticExportSite::Local(index));
         }
         for (index, reexport) in reexports.iter().enumerate() {
             if let crate::compile::StaticModuleReexport::Named { exported, .. }
             | crate::compile::StaticModuleReexport::Namespace { exported, .. } = reexport
             {
-                sites.entry(exported.clone()).or_insert(StaticExportSite::Reexport(index));
+                sites
+                    .entry(exported.clone())
+                    .or_insert(StaticExportSite::Reexport(index));
             }
         }
-        Rc::new(Self { locals, reexports, sites, dependencies: Default::default(), exported_names: Default::default(), stars: Default::default() })
+        Rc::new(Self {
+            locals,
+            reexports,
+            sites,
+            dependencies: Default::default(),
+            exported_names: Default::default(),
+            stars: Default::default(),
+        })
     }
 }
 
@@ -990,7 +1004,6 @@ pub(super) enum RejectionNotification {
     Handled(Value),
 }
 
-
 #[derive(Clone, Copy, Debug)]
 pub(super) struct PromiseJob {
     /// The realm current when the reaction was queued, where the job runs.
@@ -1113,7 +1126,9 @@ impl PromiseRuntime {
             callback.handler,
             callback.constructor
         ]);
-        edges!(self.finally_continuation_callbacks, |callback| [callback.original]);
+        edges!(self.finally_continuation_callbacks, |callback| [
+            callback.original
+        ]);
         edges!(self.aggregates, |record| {
             [record.output, record.resolve, record.reject]
                 .into_iter()
@@ -1121,10 +1136,12 @@ impl PromiseRuntime {
                 .chain(record.keys.iter().flatten().copied())
         });
         edges!(self.aggregate_jobs, |job| [job.aggregate]);
-        edges!(self.reaction_capabilities, |capability| [capability.0, capability.1]);
+        edges!(self.reaction_capabilities, |capability| [
+            capability.0,
+            capability.1
+        ]);
     }
 }
-
 
 /// Names a static module's parse goal in its compile-cache key, apart from an application
 /// entry's (`Runtime::compile_entry`), whose cached form differs.
@@ -1842,9 +1859,9 @@ impl<H: Host> Vm<H> {
                         for dependency in asynchronous {
                             vm.evaluate_static_module_source(p, dependency, &mut active)?;
                         }
-                        let entry_has_tla =
-                            vm.static_module_plan(&module.source, &module.name)
-                                .is_some_and(|plan| plan.has_top_level_await);
+                        let entry_has_tla = vm
+                            .static_module_plan(&module.source, &module.name)
+                            .is_some_and(|plan| plan.has_top_level_await);
                         if !entry_has_tla {
                             let namespace = vm.deferred_module_namespace(p, &module)?;
                             vm.realm
@@ -2245,16 +2262,43 @@ impl<H: Host> Vm<H> {
         Ok(value)
     }
 
-    fn synchronous_graph_has_await(&self, key: &str, seen: &mut FxHashSet<String>) -> Result<bool, ()> {
+    fn synchronous_graph_has_await(
+        &self,
+        key: &str,
+        seen: &mut FxHashSet<String>,
+    ) -> Result<bool, ()> {
         let _stack = quench_stack::StackGuard::enter()?;
-        if !seen.insert(key.to_owned()) { return Ok(false); }
-        let Some(record) = self.realm.promise.modules.get(key) else { return Ok(false); };
-        let Some(program) = record.program.and_then(|program| self.programs.get(program)) else { return Ok(false); };
-        if program.functions.first().is_some_and(|function| function.is_async) { return Ok(true); }
-        for (request, dependency) in program.module_requests.iter().zip(&record.resolved_requests) {
+        if !seen.insert(key.to_owned()) {
+            return Ok(false);
+        }
+        let Some(record) = self.realm.promise.modules.get(key) else {
+            return Ok(false);
+        };
+        let Some(program) = record
+            .program
+            .and_then(|program| self.programs.get(program))
+        else {
+            return Ok(false);
+        };
+        if program
+            .functions
+            .first()
+            .is_some_and(|function| function.is_async)
+        {
+            return Ok(true);
+        }
+        for (request, dependency) in program
+            .module_requests
+            .iter()
+            .zip(&record.resolved_requests)
+        {
             if request.phase == crate::bytecode::ModuleRequestPhase::Evaluation
                 && request.module_type.as_deref().unwrap_or("javascript") == "javascript"
-                && self.synchronous_graph_has_await(&module_cache_key(dependency, "javascript"), seen)? {
+                && self.synchronous_graph_has_await(
+                    &module_cache_key(dependency, "javascript"),
+                    seen,
+                )?
+            {
                 return Ok(true);
             }
         }
@@ -2275,22 +2319,52 @@ impl<H: Host> Vm<H> {
                 unreachable!("failed instantiation throws");
             }
         };
-        if self.synchronous_graph_has_await(&key, &mut FxHashSet::default()).map_err(|()| self.stack_exhaustion_error())? {
+        if self
+            .synchronous_graph_has_await(&key, &mut FxHashSet::default())
+            .map_err(|()| self.stack_exhaustion_error())?
+        {
             for (linked_module, _) in linked {
-                if let Some(record) = self.realm.promise.modules.get_mut(&module_cache_key(&linked_module.name, "javascript")) {
+                if let Some(record) = self
+                    .realm
+                    .promise
+                    .modules
+                    .get_mut(&module_cache_key(&linked_module.name, "javascript"))
+                {
                     record.retain_instantiation();
                 }
             }
             return Ok(SynchronousModule::AsyncGraph);
         }
         drop(linked);
-        if self.realm.promise.modules.get(&key).is_some_and(|record| matches!(record.phase(), ModulePhase::Evaluating | ModulePhase::EvaluatingAsync | ModulePhase::WaitingForDependencies)) {
+        if self.realm.promise.modules.get(&key).is_some_and(|record| {
+            matches!(
+                record.phase(),
+                ModulePhase::Evaluating
+                    | ModulePhase::EvaluatingAsync
+                    | ModulePhase::WaitingForDependencies
+            )
+        }) {
             return Ok(SynchronousModule::Evaluating);
         }
-        self.evaluate_static_module_source(p, module.clone(), &mut ModuleEvaluationStack::default())?;
-        match self.realm.promise.modules.get(&key).map(|record| record.outcome) {
-            Some(ModuleOutcome::Evaluated(namespace)) => Ok(SynchronousModule::Namespace(namespace)),
-            Some(ModuleOutcome::Errored(reason)) => Err(JsError::thrown(reason, "synchronous module evaluation failed".into())),
+        self.evaluate_static_module_source(
+            p,
+            module.clone(),
+            &mut ModuleEvaluationStack::default(),
+        )?;
+        match self
+            .realm
+            .promise
+            .modules
+            .get(&key)
+            .map(|record| record.outcome)
+        {
+            Some(ModuleOutcome::Evaluated(namespace)) => {
+                Ok(SynchronousModule::Namespace(namespace))
+            }
+            Some(ModuleOutcome::Errored(reason)) => Err(JsError::thrown(
+                reason,
+                "synchronous module evaluation failed".into(),
+            )),
             _ => Ok(SynchronousModule::Evaluating),
         }
     }
@@ -2302,7 +2376,8 @@ impl<H: Host> Vm<H> {
         name: &str,
         value: Value,
     ) -> Result<Value, JsError> {
-        let mut exports = self.cached_static_exports(namespace)
+        let mut exports = self
+            .cached_static_exports(namespace)
             .ok_or_else(|| self.type_error(p, "module namespace required".into()))?;
         exports.push((name.to_owned(), StaticModuleValue::Cached(value)));
         self.module_namespace_from_static(exports)
@@ -2525,7 +2600,8 @@ impl<H: Host> Vm<H> {
             return Ok(false);
         }
         for request in plan.requests {
-            let dependency = self.resolve_module_request(p, &module.name, &request)?
+            let dependency = self
+                .resolve_module_request(p, &module.name, &request)?
                 .ok_or_else(|| {
                     self.type_error(p, "static module request was not resolved".into())
                 })?;
@@ -2594,11 +2670,13 @@ impl<H: Host> Vm<H> {
         if let Some(reason) = crate::Engine::static_module_throw(&module.source) {
             return self.evaluate_static_module_throw(p, reason);
         }
-        if self.static_module_plan(&module.source, &module.name).is_some_and(|plan| {
-            plan.link_plan
-                .is_some_and(|link_plan| link_plan.reexports.is_empty())
-        }) && let Some(exports) =
-            crate::Engine::module_export_names(&module.source, &module.name)
+        if self
+            .static_module_plan(&module.source, &module.name)
+            .is_some_and(|plan| {
+                plan.link_plan
+                    .is_some_and(|link_plan| link_plan.reexports.is_empty())
+            })
+            && let Some(exports) = crate::Engine::module_export_names(&module.source, &module.name)
         {
             let mut active = ActiveModuleExports::default();
             active.insert(
@@ -2693,7 +2771,11 @@ impl<H: Host> Vm<H> {
         self.realm
             .promise
             .dynamic_import_jobs
-            .push(DynamicImportJob { cache_key, module, promise });
+            .push(DynamicImportJob {
+                cache_key,
+                module,
+                promise,
+            });
     }
 
     pub(super) fn advance_dynamic_import_jobs(
@@ -2709,10 +2791,7 @@ impl<H: Host> Vm<H> {
         // Taking the batch transfers its roots out of the persistent queue.
         // Keep every waiter alive, including jobs not yet evaluated, until it
         // is settled or transferred back to a queue/module record.
-        let waiters: Vec<_> = jobs
-            .iter()
-            .map(|job| job.promise)
-            .collect();
+        let waiters: Vec<_> = jobs.iter().map(|job| job.promise).collect();
         self.with_call_roots(waiters, |vm| {
             for job in jobs {
                 if let Some(outcome) = vm
@@ -3201,10 +3280,10 @@ impl<H: Host> Vm<H> {
         if record.and_then(ModuleRecord::deferred_namespace).is_some() {
             return Ok(());
         }
-        if record.is_none() && let Some(message) = self.static_module_early_error(&module.source, &module.name) {
-            return self
-                .syntax_error_result(p, &message)
-                .map(|_| ());
+        if record.is_none()
+            && let Some(message) = self.static_module_early_error(&module.source, &module.name)
+        {
+            return self.syntax_error_result(p, &message).map(|_| ());
         }
         let namespace = self.deferred_module_namespace(p, module)?;
         self.realm
@@ -3352,7 +3431,10 @@ impl<H: Host> Vm<H> {
         if let Some(module) = &module
             && request.phase == crate::bytecode::ModuleRequestPhase::Evaluation
         {
-            let requested = request.module_type.as_deref().unwrap_or(JAVASCRIPT_MODULE_TYPE);
+            let requested = request
+                .module_type
+                .as_deref()
+                .unwrap_or(JAVASCRIPT_MODULE_TYPE);
             self.host
                 .validate_module_type(module, requested)
                 .map_err(|error| self.module_load_error(p, error))?;
@@ -3466,7 +3548,8 @@ impl<H: Host> Vm<H> {
                 {
                     continue;
                 }
-                let dependency = self.resolve_module_request(p, &module.name, request)?
+                let dependency = self
+                    .resolve_module_request(p, &module.name, request)?
                     .ok_or_else(|| {
                         self.type_error(p, "static module request was not resolved".into())
                     })?;
@@ -3503,28 +3586,41 @@ impl<H: Host> Vm<H> {
     /// `Engine::static_module_analysis` of a module, kept across runs in the host's compile
     /// cache for its exact text, as its compiled program is: a process otherwise parses every
     /// static module it links once more than it compiles it.
-    pub(super) fn static_module_analysis(&mut self, source: &str, name: &str) -> Rc<crate::compile::StaticModuleAnalysis> {
+    pub(super) fn static_module_analysis(
+        &mut self,
+        source: &str,
+        name: &str,
+    ) -> Rc<crate::compile::StaticModuleAnalysis> {
         let host = &mut self.host;
         crate::Engine::static_module_analysis_with(source, name, |analyze| {
             let parts = [STATIC_MODULE_ANALYSIS_GOAL, source];
-            if let Some(analysis) = host
-                .kept_compiled_program(name, &parts)
-                .and_then(|bytes| crate::bytecode::decode_static_module_analysis((*bytes).as_ref()).ok())
-            {
+            if let Some(analysis) = host.kept_compiled_program(name, &parts).and_then(|bytes| {
+                crate::bytecode::decode_static_module_analysis((*bytes).as_ref()).ok()
+            }) {
                 return analysis;
             }
             let analysis = analyze();
-            host.keep_compiled_program(name, &parts, &crate::bytecode::encode_static_module_analysis(&analysis));
+            host.keep_compiled_program(
+                name,
+                &parts,
+                &crate::bytecode::encode_static_module_analysis(&analysis),
+            );
             analysis
         })
     }
 
-    fn static_module_plan(&mut self, source: &str, name: &str) -> Option<crate::compile::StaticModulePlan> {
+    fn static_module_plan(
+        &mut self,
+        source: &str,
+        name: &str,
+    ) -> Option<crate::compile::StaticModulePlan> {
         self.static_module_analysis(source, name).plan.clone()
     }
 
     fn static_module_early_error(&mut self, source: &str, name: &str) -> Option<String> {
-        self.static_module_analysis(source, name).early_error.clone()
+        self.static_module_analysis(source, name)
+            .early_error
+            .clone()
     }
 
     /// A static module's program kept by the host's compile cache
@@ -3533,11 +3629,16 @@ impl<H: Host> Vm<H> {
     fn kept_static_module_program(&mut self, module: &ModuleSource) -> Option<ResidualProgram> {
         let bytes = self.host.kept_compiled_program(
             &module.name,
-            &[self.specialization_part(), STATIC_MODULE_GOAL, &module.source],
+            &[
+                self.specialization_part(),
+                STATIC_MODULE_GOAL,
+                &module.source,
+            ],
         )?;
         let text = crate::bytecode::SourceText::Shared(module.source.clone());
         let specialized = self.specialized;
-        self.decode_cached_program(bytes, text, 0, &module.name, specialized).ok()
+        self.decode_cached_program(bytes, text, 0, &module.name, specialized)
+            .ok()
     }
 
     /// Offers the host the compiled program of a static module (`kept_static_module_program`).
@@ -3545,8 +3646,15 @@ impl<H: Host> Vm<H> {
         if let Some(residual) = self.programs.get(program)
             && let Some(bytes) = self.encode_cached_program(&residual)
         {
-            self.host
-                .keep_compiled_program(&module.name, &[self.specialization_part(), STATIC_MODULE_GOAL, &module.source], &bytes);
+            self.host.keep_compiled_program(
+                &module.name,
+                &[
+                    self.specialization_part(),
+                    STATIC_MODULE_GOAL,
+                    &module.source,
+                ],
+                &bytes,
+            );
         }
     }
 
@@ -3581,10 +3689,9 @@ impl<H: Host> Vm<H> {
                 .store_module_program(program)
                 .ok_or_else(|| self.type_error(p, "module program store is full".into()))?,
             None => {
-                if let Some(message) = self.static_module_early_error(&module.source, &module.name) {
-                    return self
-                        .syntax_error_result(p, &message)
-                        .map(|_| ());
+                if let Some(message) = self.static_module_early_error(&module.source, &module.name)
+                {
+                    return self.syntax_error_result(p, &message).map(|_| ());
                 }
                 let residual = crate::Engine::specialize_module_with_atom_prefix(
                     &module.source,
@@ -3747,9 +3854,7 @@ impl<H: Host> Vm<H> {
             None => {}
         }
         if let Some(message) = self.static_module_early_error(&module.source, &module.name) {
-            return self
-                .syntax_error_result(p, &message)
-                .map(|_| ());
+            return self.syntax_error_result(p, &message).map(|_| ());
         }
         let Some(plan) = self.static_module_plan(&module.source, &module.name) else {
             return Err(self.type_error(p, "static module metadata is unavailable".into()));
@@ -3926,7 +4031,8 @@ impl<H: Host> Vm<H> {
                 request.phase == crate::bytecode::ModuleRequestPhase::Evaluation
                     && request.module_type.as_deref().unwrap_or("javascript") == "javascript"
             }) {
-                let dependency = self.resolve_module_request(p, &parent.name, request)?
+                let dependency = self
+                    .resolve_module_request(p, &parent.name, request)?
                     .ok_or_else(|| {
                         self.type_error(p, "static module request was not resolved".into())
                     })?;
@@ -4015,17 +4121,21 @@ impl<H: Host> Vm<H> {
     /// Async-evaluating modules whose evaluation promise has settled: the ones module
     /// advancement completes, as (key, promise, namespace).
     fn settled_async_modules(&self) -> impl Iterator<Item = (&String, Value, Value)> + '_ {
-        self.realm.promise.async_module_order.iter().filter_map(|key| {
-            let module = self.realm.promise.modules.get(key)?;
-            if module.phase() != ModulePhase::EvaluatingAsync {
-                return None;
-            }
-            let promise = module.evaluation_promise()?;
-            let settled = self
-                .promise_record(promise)
-                .is_some_and(|record| record.state != PromiseState::Pending);
-            settled.then_some((key, promise, module.pending_namespace()?))
-        })
+        self.realm
+            .promise
+            .async_module_order
+            .iter()
+            .filter_map(|key| {
+                let module = self.realm.promise.modules.get(key)?;
+                if module.phase() != ModulePhase::EvaluatingAsync {
+                    return None;
+                }
+                let promise = module.evaluation_promise()?;
+                let settled = self
+                    .promise_record(promise)
+                    .is_some_and(|record| record.state != PromiseState::Pending);
+                settled.then_some((key, promise, module.pending_namespace()?))
+            })
     }
 
     fn settle_pending_async_modules(&mut self, p: &ResidualProgram) -> Result<(), JsError> {
@@ -4086,7 +4196,8 @@ impl<H: Host> Vm<H> {
             if request.module_type.as_deref().unwrap_or("javascript") != "javascript" {
                 continue;
             }
-            let dependency = self.resolve_module_request(p, &module.name, request)?
+            let dependency = self
+                .resolve_module_request(p, &module.name, request)?
                 .ok_or_else(|| {
                     self.type_error(p, "static module request was not resolved".into())
                 })?;
@@ -4196,7 +4307,8 @@ impl<H: Host> Vm<H> {
                 .position(|name| name == &import.local)
                 .ok_or_else(|| self.type_error(p, "source import binding is unavailable".into()))?
                 as u32;
-            let slot = residual.function(0)
+            let slot = residual
+                .function(0)
                 .local_atoms
                 .iter()
                 .position(|candidate| *candidate == atom)
@@ -4285,7 +4397,8 @@ impl<H: Host> Vm<H> {
                                 .is_some_and(|name| residual.atoms[name as usize] == local)
                     })
                     .and_then(|(id, _)| self.cached_functions(program_id, id as u32).next_back());
-                let slot = residual.function(0)
+                let slot = residual
+                    .function(0)
                     .local_atoms
                     .iter()
                     .position(|candidate| *candidate == atom)
@@ -4394,7 +4507,10 @@ impl<H: Host> Vm<H> {
                     .ok_or_else(|| self.type_error(p, "module import was not resolved".into()))?;
                 *value = StaticModuleValue::ModuleSource(self.module_source_value(p, &dependency)?);
             }
-            nodes.insert(identity, StaticModuleNode::new(locals, plan.reexports.clone()));
+            nodes.insert(
+                identity,
+                StaticModuleNode::new(locals, plan.reexports.clone()),
+            );
             return Ok(true);
         }
         if let Some(exports) = crate::Engine::static_module_exports(&module.source, &module.name) {
@@ -4420,23 +4536,20 @@ impl<H: Host> Vm<H> {
         let Some(link_plan) = plan.link_plan else {
             return Ok(false);
         };
-        let residual = crate::Engine::specialize_module_with_atom_prefix(
-            &module.source,
-            &module.name,
-            &*self,
-        )
-        .map_err(|diagnostics| {
-            if diagnostics
-                .iter()
-                .any(crate::compile::Diagnostic::is_stack_exhausted)
-            {
-                return self.stack_exhaustion_error();
-            }
-            self.type_error(
-                p,
-                format!("dynamic module compilation failed: {diagnostics:?}"),
-            )
-        })?;
+        let residual =
+            crate::Engine::specialize_module_with_atom_prefix(&module.source, &module.name, &*self)
+                .map_err(|diagnostics| {
+                    if diagnostics
+                        .iter()
+                        .any(crate::compile::Diagnostic::is_stack_exhausted)
+                    {
+                        return self.stack_exhaustion_error();
+                    }
+                    self.type_error(
+                        p,
+                        format!("dynamic module compilation failed: {diagnostics:?}"),
+                    )
+                })?;
         if !residual.module_imports.is_empty() {
             return Ok(false);
         }
@@ -4479,8 +4592,7 @@ impl<H: Host> Vm<H> {
                     names.push(exported.clone());
                 }
                 crate::compile::StaticModuleReexport::Star { source } => {
-                    let Some(dependency) =
-                        self.static_node_dependency(p, module, source, nodes)?
+                    let Some(dependency) = self.static_node_dependency(p, module, source, nodes)?
                     else {
                         return Ok(None);
                     };
@@ -4533,16 +4645,24 @@ impl<H: Host> Vm<H> {
         source: &str,
         nodes: &StaticModuleNodes,
     ) -> Result<Option<ModuleSource>, JsError> {
-        let node = nodes.get(&crate::module_identity::normalize(std::path::Path::new(&module.name))).cloned();
+        let node = nodes
+            .get(&crate::module_identity::normalize(std::path::Path::new(
+                &module.name,
+            )))
+            .cloned();
         if let Some(node) = &node
             && let Some(name) = node.dependencies.borrow().get(source)
-            && nodes.contains_key(&crate::module_identity::normalize(std::path::Path::new(name)))
+            && nodes.contains_key(&crate::module_identity::normalize(std::path::Path::new(
+                name,
+            )))
         {
             return Ok(Some(ModuleSource::text(name.clone(), "")));
         }
         let dependency = self.static_module_dependency(p, &module.name, source)?;
         if let (Some(node), Some(dependency)) = (&node, &dependency) {
-            node.dependencies.borrow_mut().insert(source.to_owned(), dependency.name.clone());
+            node.dependencies
+                .borrow_mut()
+                .insert(source.to_owned(), dependency.name.clone());
         }
         Ok(dependency)
     }
@@ -4599,9 +4719,15 @@ impl<H: Host> Vm<H> {
             };
             let position = index.dependencies.len();
             for name in names.iter() {
-                index.exporters.entry(name.clone()).or_default().push(position);
+                index
+                    .exporters
+                    .entry(name.clone())
+                    .or_default()
+                    .push(position);
             }
-            index.dependencies.push(ModuleSource::text(dependency.name, ""));
+            index
+                .dependencies
+                .push(ModuleSource::text(dependency.name, ""));
         }
         let index = complete.then(|| Rc::new(index));
         Ok(node.stars.get_or_init(|| index).clone())
@@ -4627,10 +4753,14 @@ impl<H: Host> Vm<H> {
         };
         match node.sites.get(name).copied() {
             Some(StaticExportSite::Local(index)) => {
-                return Ok(StaticModuleResolution::Binding(node.locals[index].1.clone()));
+                return Ok(StaticModuleResolution::Binding(
+                    node.locals[index].1.clone(),
+                ));
             }
             Some(StaticExportSite::Reexport(index)) => match &node.reexports[index] {
-                crate::compile::StaticModuleReexport::Named { source, imported, .. } => {
+                crate::compile::StaticModuleReexport::Named {
+                    source, imported, ..
+                } => {
                     let Some(dependency) = self.static_node_dependency(p, module, source, nodes)?
                     else {
                         return Ok(StaticModuleResolution::Missing);
@@ -4650,16 +4780,14 @@ impl<H: Host> Vm<H> {
                     };
                     let key = module_cache_key(&dependency.name, "javascript");
                     if let Some(namespace) =
-                        self.realm
-                            .promise
-                            .modules
-                            .get(&key)
-                            .and_then(|record| match record.outcome {
+                        self.realm.promise.modules.get(&key).and_then(|record| {
+                            match record.outcome {
                                 ModuleOutcome::Evaluated(namespace)
                                 | ModuleOutcome::Deferred(namespace) => Some(namespace),
                                 ModuleOutcome::Pending(_) => record.pending_namespace(),
                                 ModuleOutcome::Errored(_) => None,
-                            })
+                            }
+                        })
                     {
                         return Ok(StaticModuleResolution::Binding(StaticModuleValue::Cached(
                             namespace,
@@ -4684,7 +4812,8 @@ impl<H: Host> Vm<H> {
                             &mut StaticModuleResolveSet::default(),
                         )? {
                             StaticModuleResolution::Binding(value) => exports.push((name, value)),
-                            StaticModuleResolution::Missing | StaticModuleResolution::Ambiguous => {}
+                            StaticModuleResolution::Missing | StaticModuleResolution::Ambiguous => {
+                            }
                             StaticModuleResolution::Unsupported => {
                                 return Ok(StaticModuleResolution::Unsupported);
                             }
@@ -4714,7 +4843,10 @@ impl<H: Host> Vm<H> {
                 .exporters
                 .get(name)
                 .map_or_else(Vec::new, |positions| {
-                    positions.iter().map(|&position| index.dependencies[position].clone()).collect()
+                    positions
+                        .iter()
+                        .map(|&position| index.dependencies[position].clone())
+                        .collect()
                 }),
             None => {
                 let mut candidates = Vec::new();
@@ -4722,7 +4854,8 @@ impl<H: Host> Vm<H> {
                     let crate::compile::StaticModuleReexport::Star { source } = reexport else {
                         continue;
                     };
-                    let Some(dependency) = self.static_node_dependency(p, module, source, nodes)? else {
+                    let Some(dependency) = self.static_node_dependency(p, module, source, nodes)?
+                    else {
                         return Ok(StaticModuleResolution::Missing);
                     };
                     if !self
@@ -4881,10 +5014,13 @@ impl<H: Host> Vm<H> {
                 incomplete: true,
             });
         }
-        if self.static_module_plan(&module.source, &module.name).is_some_and(|plan| {
-            plan.link_plan
-                .is_some_and(|link_plan| !link_plan.reexports.is_empty())
-        }) && let Some(graph) = self.resolve_static_module_plan_graph(p, module.clone())?
+        if self
+            .static_module_plan(&module.source, &module.name)
+            .is_some_and(|plan| {
+                plan.link_plan
+                    .is_some_and(|link_plan| !link_plan.reexports.is_empty())
+            })
+            && let Some(graph) = self.resolve_static_module_plan_graph(p, module.clone())?
         {
             return Ok(graph);
         }
@@ -5163,7 +5299,9 @@ impl<H: Host> Vm<H> {
         let mut module_type = None;
         for key in keys {
             let key_name = match self.heap.get(key) {
-                _ if let Some(value) = self.heap.string(key)  => Some(value.host_string().to_owned()),
+                _ if let Some(value) = self.heap.string(key) => {
+                    Some(value.host_string().to_owned())
+                }
                 Some(Cell::Symbol(_)) => continue,
                 _ => return Err(JsError("invalid import attribute key".into())),
             };
@@ -5228,9 +5366,7 @@ impl<H: Host> Vm<H> {
             }
         }
         if let Some(symbol) = self.well_known_symbols.get(WellKnownSymbol::ToStringTag) {
-            let module = self
-                .heap
-                .alloc_string(namespace_tag.to_string().into());
+            let module = self.heap.alloc_string(namespace_tag.to_string().into());
             self.set_symbol_property(namespace, symbol, module)?;
             self.set_property_attributes(
                 namespace,
@@ -5257,9 +5393,7 @@ impl<H: Host> Vm<H> {
             Constant::WasmBits64(bits) => self.encode_bits64(bits),
             Constant::WasmV128(bits) => self.heap.alloc_v128(bits),
             Constant::String(value) => self.heap.alloc_string(JsString::from_shared_text(&value)),
-            Constant::StringUnits(value) => {
-                self.heap.alloc_string(JsString::from_units(&value))
-            }
+            Constant::StringUnits(value) => self.heap.alloc_string(JsString::from_units(&value)),
             Constant::BigInt(value) => self.heap.alloc(Cell::bigint(value)),
             Constant::Boolean(true) => Value::TRUE,
             Constant::Boolean(false) => Value::FALSE,
@@ -5318,16 +5452,19 @@ impl<H: Host> Vm<H> {
         if !self.is_function(then) {
             return self.promise_settle(p, promise, PromiseState::Fulfilled, value);
         }
-        let execution_context = self
-            .host
-            .capture_job_context(self.promise_record(promise).and_then(|record| record.host_context.get()));
-        self.realm.jobs.push_back(super::PendingJob::Thenable(ThenableJob {
-            realm: self.realm.globals,
-            then,
-            thenable: value,
-            promise,
-            execution_context,
-        }));
+        let execution_context = self.host.capture_job_context(
+            self.promise_record(promise)
+                .and_then(|record| record.host_context.get()),
+        );
+        self.realm
+            .jobs
+            .push_back(super::PendingJob::Thenable(ThenableJob {
+                realm: self.realm.globals,
+                then,
+                thenable: value,
+                promise,
+                execution_context,
+            }));
         Ok(())
     }
 
@@ -5397,16 +5534,19 @@ impl<H: Host> Vm<H> {
         let promise = self.promise_object_with_parent(None).ok()?;
         if self.is_function(then) {
             let execution_context = self.host.capture_job_context(None);
-            self.realm.jobs.push_back(super::PendingJob::Thenable(ThenableJob {
-                realm: self.realm.globals,
-                then,
-                thenable: value,
-                promise,
-                execution_context,
-            }));
+            self.realm
+                .jobs
+                .push_back(super::PendingJob::Thenable(ThenableJob {
+                    realm: self.realm.globals,
+                    then,
+                    thenable: value,
+                    promise,
+                    execution_context,
+                }));
         } else {
             // A fresh promise has no reactions, so the settle enqueues nothing.
-            self.promise_settle(p, promise, PromiseState::Fulfilled, value).ok()?;
+            self.promise_settle(p, promise, PromiseState::Fulfilled, value)
+                .ok()?;
         }
         Some(promise)
     }
@@ -5444,7 +5584,12 @@ impl<H: Host> Vm<H> {
             // A %Promise% capability has no guest executor (see `promise_resolve_for_constructor`):
             // its promise is settled directly when the reaction runs.
             let next = if constructor == vm.intrinsic_promise_constructor() {
-                vm.promise_object_with_parent(vm.promise_record(promise).expect("promise record").host_context.get())?
+                vm.promise_object_with_parent(
+                    vm.promise_record(promise)
+                        .expect("promise record")
+                        .host_context
+                        .get(),
+                )?
             } else {
                 let (next, resolve, reject) = vm.new_promise_capability(p, constructor)?;
                 vm.realm
@@ -5469,7 +5614,12 @@ impl<H: Host> Vm<H> {
             return Err(self.type_error(p, "Promise.prototype method called on non-Promise".into()));
         }
         let next = self.with_call_roots([promise, on_fulfilled, on_rejected], |vm| {
-            vm.promise_object_with_parent(vm.promise_record(promise).expect("promise record").host_context.get())
+            vm.promise_object_with_parent(
+                vm.promise_record(promise)
+                    .expect("promise record")
+                    .host_context
+                    .get(),
+            )
         })?;
         let (resolve, reject) = self.promise_resolving_functions(next);
         self.realm
@@ -5501,7 +5651,13 @@ impl<H: Host> Vm<H> {
                 Value::UNDEFINED
             },
             next,
-            execution_context: self.host.capture_job_context(self.promise_record(next).and_then(|record| record.host_context.get())).into(),
+            execution_context: self
+                .host
+                .capture_job_context(
+                    self.promise_record(next)
+                        .and_then(|record| record.host_context.get()),
+                )
+                .into(),
         };
         // Species selection and capability construction may settle the source.
         // Read its authoritative state only when installing this reaction.
@@ -5803,7 +5959,10 @@ impl<H: Host> Vm<H> {
 impl PromiseRuntime {
     /// A snapshot (`crate::snapshot`) is taken between jobs, with no module loading and no
     /// combinator or reaction in flight, so only the rejection numbering carries over.
-    pub(super) fn write_snapshot(&self, writer: &mut crate::snapshot::Writer) -> crate::snapshot::SnapshotResult<()> {
+    pub(super) fn write_snapshot(
+        &self,
+        writer: &mut crate::snapshot::Writer,
+    ) -> crate::snapshot::SnapshotResult<()> {
         let Self {
             rejection_notifications,
             last_rejection_id,
@@ -5821,12 +5980,27 @@ impl PromiseRuntime {
             async_module_settled,
         } = self;
         let pending = [
-            ("a rejection notification", rejection_notifications.is_empty()),
-            ("a finally callback", finally_handler_callbacks.is_empty() && finally_continuation_callbacks.is_empty()),
-            ("a promise combinator", aggregates.is_empty() && aggregate_jobs.is_empty()),
+            (
+                "a rejection notification",
+                rejection_notifications.is_empty(),
+            ),
+            (
+                "a finally callback",
+                finally_handler_callbacks.is_empty() && finally_continuation_callbacks.is_empty(),
+            ),
+            (
+                "a promise combinator",
+                aggregates.is_empty() && aggregate_jobs.is_empty(),
+            ),
             ("a reaction capability", reaction_capabilities.is_empty()),
-            ("a module record", modules.is_empty() && async_module_order.is_empty() && module_sources.is_empty()),
-            ("a module load", dynamic_import_jobs.is_empty() && waiting_static_modules.is_empty()),
+            (
+                "a module record",
+                modules.is_empty() && async_module_order.is_empty() && module_sources.is_empty(),
+            ),
+            (
+                "a module load",
+                dynamic_import_jobs.is_empty() && waiting_static_modules.is_empty(),
+            ),
             ("a settled async module", !async_module_settled),
             ("a native activation", active_native.is_empty()),
         ];
@@ -5837,15 +6011,21 @@ impl PromiseRuntime {
         Ok(())
     }
 
-    pub(super) fn read_snapshot(reader: &mut crate::snapshot::Reader<'_>) -> crate::snapshot::SnapshotResult<Self> {
-        Ok(Self { last_rejection_id: reader.u64()?, ..Self::default() })
+    pub(super) fn read_snapshot(
+        reader: &mut crate::snapshot::Reader<'_>,
+    ) -> crate::snapshot::SnapshotResult<Self> {
+        Ok(Self {
+            last_rejection_id: reader.u64()?,
+            ..Self::default()
+        })
     }
 }
 
 /// The slot of each atom among a function's locals: the first slot naming it, as a scan from
 /// the first local finds it. Module linking looks up every import, export and hoisted binding.
 fn local_slots(function: &crate::bytecode::Function) -> FxHashMap<Atom, usize> {
-    let mut slots = FxHashMap::with_capacity_and_hasher(function.local_atoms.len(), Default::default());
+    let mut slots =
+        FxHashMap::with_capacity_and_hasher(function.local_atoms.len(), Default::default());
     for (slot, atom) in function.local_atoms.iter().enumerate() {
         slots.entry(*atom).or_insert(slot);
     }

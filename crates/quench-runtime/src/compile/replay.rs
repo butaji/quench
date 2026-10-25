@@ -75,9 +75,9 @@ impl<'a, T: Clone> SiteTable<'a, T> {
     pub(super) fn get(&self, index: usize) -> Option<&T> {
         match self {
             Self::Owned(entries) => entries.get(index),
-            Self::Replay { entries, written, .. } => {
-                written.get(&index).or_else(|| entries.get(index))
-            }
+            Self::Replay {
+                entries, written, ..
+            } => written.get(&index).or_else(|| entries.get(index)),
         }
     }
 
@@ -99,7 +99,9 @@ impl<'a, T: Clone> SiteTable<'a, T> {
     pub(super) fn written(&self) -> impl Iterator<Item = (usize, &T)> {
         match self {
             Self::Owned(_) => None,
-            Self::Replay { written, .. } => Some(written.iter().map(|(index, value)| (*index, value))),
+            Self::Replay { written, .. } => {
+                Some(written.iter().map(|(index, value)| (*index, value)))
+            }
         }
         .into_iter()
         .flatten()
@@ -118,7 +120,9 @@ impl<T: Clone> IndexMut<usize> for SiteTable<'_, T> {
     fn index_mut(&mut self, index: usize) -> &mut T {
         match self {
             Self::Owned(entries) => &mut entries[index],
-            Self::Replay { entries, written, .. } => written
+            Self::Replay {
+                entries, written, ..
+            } => written
                 .entry(index)
                 .or_insert_with(|| entries[index].clone()),
         }
@@ -212,11 +216,14 @@ impl ConstantIndex<'_> {
         added: &SiteTable<'_, crate::bytecode::Constant>,
     ) -> Option<u32> {
         let hash = constant_key_hash(key);
-        let matches = |constant: &crate::bytecode::Constant| super::ConstantKey::from(constant) == key;
+        let matches =
+            |constant: &crate::bytecode::Constant| super::ConstantKey::from(constant) == key;
         match self {
-            Self::Owned(index) => {
-                index.get(&hash)?.iter().copied().find(|index| matches(&added[*index as usize]))
-            }
+            Self::Owned(index) => index
+                .get(&hash)?
+                .iter()
+                .copied()
+                .find(|index| matches(&added[*index as usize])),
             Self::Replay { hashes, constants } => {
                 let start = hashes.partition_point(|(candidate, _)| *candidate < hash);
                 hashes[start..]
@@ -231,7 +238,10 @@ impl ConstantIndex<'_> {
     /// Records the first index of `key`. A replay adds no constant.
     pub(super) fn insert(&mut self, key: super::ConstantKey<'_>, index: u32) {
         match self {
-            Self::Owned(entries) => entries.entry(constant_key_hash(key)).or_default().push(index),
+            Self::Owned(entries) => entries
+                .entry(constant_key_hash(key))
+                .or_default()
+                .push(index),
             Self::Replay { .. } => {
                 debug_assert!(false, "a replay adds no constant");
             }
@@ -244,7 +254,12 @@ fn constant_hashes(constants: &[crate::bytecode::Constant]) -> Vec<(u64, u32)> {
     let mut hashes: Vec<(u64, u32)> = constants
         .iter()
         .enumerate()
-        .map(|(index, constant)| (constant_key_hash(super::ConstantKey::from(constant)), index as u32))
+        .map(|(index, constant)| {
+            (
+                constant_key_hash(super::ConstantKey::from(constant)),
+                index as u32,
+            )
+        })
         .collect();
     hashes.sort_unstable();
     hashes
@@ -346,14 +361,21 @@ impl<'a> FunctionTable<'a> {
                 _ => None,
             },
             Self::Replay { target, record, .. } => {
-                if id == *target { record.as_mut() } else { None }
+                if id == *target {
+                    record.as_mut()
+                } else {
+                    None
+                }
             }
         }
     }
 
     /// The header of a function whose record this compilation does not hold: one a replay
     /// skipped, which the load made, or one the load released.
-    pub(super) fn header_without_record(&self, id: u32) -> Option<&crate::bytecode::FunctionHeader> {
+    pub(super) fn header_without_record(
+        &self,
+        id: u32,
+    ) -> Option<&crate::bytecode::FunctionHeader> {
         match self {
             Self::Owned(entries) => match entries.get(id as usize)? {
                 FunctionEntry::Released(released) => Some(&released.header),
@@ -416,7 +438,9 @@ impl<'a> FunctionTable<'a> {
     pub(super) fn into_entries(self) -> Vec<FunctionEntry> {
         match self {
             Self::Owned(entries) => entries,
-            Self::Replay { record, .. } => record.into_iter().map(FunctionEntry::Compiled).collect(),
+            Self::Replay { record, .. } => {
+                record.into_iter().map(FunctionEntry::Compiled).collect()
+            }
         }
     }
 
@@ -498,8 +522,12 @@ impl ReplayCall {
     /// its class element's, which also says whether it is static.
     fn source_span(&self, function: Option<crate::bytecode::SourceSpan>) -> Option<(u32, u32)> {
         match self {
-            Self::ClassMethod(context) => Some((context.element_span.start, context.element_span.end)),
-            Self::ObjectMethod(context) => Some((context.property_span.start, context.property_span.end)),
+            Self::ClassMethod(context) => {
+                Some((context.element_span.start, context.element_span.end))
+            }
+            Self::ObjectMethod(context) => {
+                Some((context.property_span.start, context.property_span.end))
+            }
             Self::Plain(_) | Self::Arrow(_) => function.map(|span| (span.start, span.end)),
         }
     }
@@ -683,12 +711,10 @@ fn wrapped_arrow<'s, 'a>(
             _ => return None,
         },
         oxc_ast::ast::Expression::ObjectExpression(object) => match object.properties.as_slice() {
-            [oxc_ast::ast::ObjectPropertyKind::ObjectProperty(property)] => {
-                match &property.value {
-                    oxc_ast::ast::Expression::FunctionExpression(function) => function,
-                    _ => return None,
-                }
-            }
+            [oxc_ast::ast::ObjectPropertyKind::ObjectProperty(property)] => match &property.value {
+                oxc_ast::ast::Expression::FunctionExpression(function) => function,
+                _ => return None,
+            },
             _ => return None,
         },
         _ => return None,
@@ -713,12 +739,18 @@ pub(crate) fn recompile(
     id: u32,
 ) -> Result<Recompiled, String> {
     use super::{Compiler, Constant, SpecializationMode, capture_layout, liveness};
-    let replay = program.replay.as_deref().ok_or("the program keeps no replay")?;
+    let replay = program
+        .replay
+        .as_deref()
+        .ok_or("the program keeps no replay")?;
     let function_replay = replay
         .functions
         .get(&id)
         .ok_or("the function is not replayable")?;
-    let source = program.source.as_ref().ok_or("the program keeps no source")?;
+    let source = program
+        .source
+        .as_ref()
+        .ok_or("the program keeps no source")?;
     if source.base != 0 {
         return Err("the program keeps part of its compiled source".into());
     }
@@ -745,7 +777,8 @@ pub(crate) fn recompile(
     let (prefix, suffix) = replay_wrapper(&function_replay.call, strict);
     let wrapped = format!("{prefix}{snippet}{suffix}");
     let allocator = oxc_allocator::Allocator::with_capacity(wrapped.len().saturating_mul(6));
-    let mut parsed = super::annex_b_targets::parse_program(&allocator, &wrapped, replay.source_type);
+    let mut parsed =
+        super::annex_b_targets::parse_program(&allocator, &wrapped, replay.source_type);
     if parsed.stack_exhausted || !parsed.diagnostics.is_empty() {
         return Err(format!(
             "the function's source does not parse alone: {}",
@@ -824,12 +857,13 @@ pub(crate) fn recompile(
     compiler.seek(function_replay.entry);
     let made = match &function_replay.call {
         ReplayCall::Plain(context) => {
-            let function = wrapped_function(&parsed.program)
-                .ok_or("the wrapped source holds no function")?;
+            let function =
+                wrapped_function(&parsed.program).ok_or("the wrapped source holds no function")?;
             compiler.compile_plain_function(function, context.clone())
         }
         ReplayCall::Arrow(context) => {
-            let arrow = wrapped_arrow(&parsed.program).ok_or("the wrapped source holds no arrow")?;
+            let arrow =
+                wrapped_arrow(&parsed.program).ok_or("the wrapped source holds no arrow")?;
             compiler.compile_replayable_arrow(arrow, context.clone())
         }
         ReplayCall::ObjectMethod(context) => {
@@ -851,10 +885,12 @@ pub(crate) fn recompile(
         }
         ReplayCall::ClassMethod(context) => {
             let method = match wrapped_method_holder(&parsed.program) {
-                Some(oxc_ast::ast::Expression::ClassExpression(class)) => match class.body.body.as_slice() {
-                    [oxc_ast::ast::ClassElement::MethodDefinition(method)] => method,
-                    _ => return Err("the wrapped class holds no method".into()),
-                },
+                Some(oxc_ast::ast::Expression::ClassExpression(class)) => {
+                    match class.body.body.as_slice() {
+                        [oxc_ast::ast::ClassElement::MethodDefinition(method)] => method,
+                        _ => return Err("the wrapped class holds no method".into()),
+                    }
+                }
                 _ => return Err("the wrapped source holds no class".into()),
             };
             compiler.compile_replayable_class_method(method, context.clone())
@@ -870,7 +906,12 @@ pub(crate) fn recompile(
         .into_replayed()
         .ok_or("the replay made no record")?;
     function.arguments_slot = function_replay.arguments_slot;
-    capture_layout::apply_function(&mut function, id as usize, &function_replay.layout, &compiler.atoms);
+    capture_layout::apply_function(
+        &mut function,
+        id as usize,
+        &function_replay.layout,
+        &compiler.atoms,
+    );
     compiler
         .field_sites
         .skip_to(function_replay.rewrite_cursors.0 as usize);
@@ -895,38 +936,54 @@ pub(crate) fn recompile(
     let mut entries = Vec::new();
     #[cfg(feature = "verify-replay")]
     {
-    fn written<T: Clone + std::fmt::Debug>(
-        entries: &mut Vec<(&'static str, usize, String, String)>,
-        table: &'static str,
-        replayed: &SiteTable<'_, T>,
-    ) {
-        for (index, value) in replayed.written() {
-            let loaded = replayed
-                .as_slice()
-                .get(index)
-                .map_or_else(|| "<none>".to_owned(), |loaded| format!("{loaded:?}"));
-            entries.push((table, index, format!("{value:?}"), loaded));
+        fn written<T: Clone + std::fmt::Debug>(
+            entries: &mut Vec<(&'static str, usize, String, String)>,
+            table: &'static str,
+            replayed: &SiteTable<'_, T>,
+        ) {
+            for (index, value) in replayed.written() {
+                let loaded = replayed
+                    .as_slice()
+                    .get(index)
+                    .map_or_else(|| "<none>".to_owned(), |loaded| format!("{loaded:?}"));
+                entries.push((table, index, format!("{value:?}"), loaded));
+            }
         }
-    }
-    written(&mut entries, "constants", &compiler.constants);
-    // A replay keeps no method-site table of its own; the program's are flattened.
-    for (index, value) in compiler.method_sites.written() {
-        let loaded = program.method_sites.get(index).map_or_else(
-            || "<none>".to_owned(),
-            |site| {
-                let start = site.argument_start as usize;
-                let arguments =
-                    program.method_arguments[start..start + usize::from(site.argument_count)].to_vec();
-                format!("{:?}", (site.atom, site.cache, arguments, site.receiver_path))
-            },
+        written(&mut entries, "constants", &compiler.constants);
+        // A replay keeps no method-site table of its own; the program's are flattened.
+        for (index, value) in compiler.method_sites.written() {
+            let loaded = program.method_sites.get(index).map_or_else(
+                || "<none>".to_owned(),
+                |site| {
+                    let start = site.argument_start as usize;
+                    let arguments = program.method_arguments
+                        [start..start + usize::from(site.argument_count)]
+                        .to_vec();
+                    format!(
+                        "{:?}",
+                        (site.atom, site.cache, arguments, site.receiver_path)
+                    )
+                },
+            );
+            entries.push(("method_sites", index, format!("{value:?}"), loaded));
+        }
+        written(&mut entries, "field_sites", &compiler.field_sites);
+        written(&mut entries, "object_sites", &compiler.object_sites);
+        written(
+            &mut entries,
+            "regexp_literal_sites",
+            &compiler.regexp_literal_sites,
         );
-        entries.push(("method_sites", index, format!("{value:?}"), loaded));
-    }
-    written(&mut entries, "field_sites", &compiler.field_sites);
-    written(&mut entries, "object_sites", &compiler.object_sites);
-    written(&mut entries, "regexp_literal_sites", &compiler.regexp_literal_sites);
-    written(&mut entries, "literal_templates", &compiler.literal_templates);
-    written(&mut entries, "superinstructions", &compiler.superinstructions);
+        written(
+            &mut entries,
+            "literal_templates",
+            &compiler.literal_templates,
+        );
+        written(
+            &mut entries,
+            "superinstructions",
+            &compiler.superinstructions,
+        );
     }
     Ok(Recompiled { function, entries })
 }
@@ -977,7 +1034,9 @@ pub(crate) fn verify(program: &crate::bytecode::ResidualProgram) {
                     .unwrap_or(replayed.len().min(loaded.len()));
                 let window = |text: &str| {
                     let start = at.saturating_sub(120);
-                    text.get(start..(at + 240).min(text.len())).unwrap_or("").to_owned()
+                    text.get(start..(at + 240).min(text.len()))
+                        .unwrap_or("")
+                        .to_owned()
                 };
                 lines.push(format!(
                     "{{\"kind\":\"replay-differs\",\"program\":{:?},\"function\":{id},\"replayed\":{:?},\"loaded\":{:?},\"entry\":{:?}}}",
@@ -1001,7 +1060,11 @@ pub(crate) fn verify(program: &crate::bytecode::ResidualProgram) {
         program.source_name,
         program.functions.len()
     ));
-    if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
+    if let Ok(mut file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+    {
         let _ = file.write_all((lines.join("\n") + "\n").as_bytes());
     }
 }

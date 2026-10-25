@@ -54,7 +54,10 @@ mod cell_layout_tests {
     #[test]
     fn native_array_layout_is_derived_from_the_current_storage_types() {
         assert_eq!(NATIVE_ARRAY_RECORD_SIZE, std::mem::size_of::<ArrayObject>());
-        assert_eq!(NATIVE_ARRAY_RECORD_ALIGN, std::mem::align_of::<ArrayObject>());
+        assert_eq!(
+            NATIVE_ARRAY_RECORD_ALIGN,
+            std::mem::align_of::<ArrayObject>()
+        );
         assert_eq!(
             NATIVE_ARRAY_ELEMENTS_OFFSET,
             std::mem::offset_of!(ArrayObject, elements)
@@ -658,14 +661,19 @@ pub(crate) struct WasmMemoryHeader {
 pub(crate) enum WasmObjectSlot {
     Module(Box<crate::WasmModule>),
     /// The frozen exports object of an instance; its bindings stay alive through it.
-    Instance { exports: Value },
+    Instance {
+        exports: Value,
+    },
 }
 
 impl std::fmt::Debug for WasmObjectSlot {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Module(_) => f.write_str("Module"),
-            Self::Instance { exports } => f.debug_struct("Instance").field("exports", exports).finish(),
+            Self::Instance { exports } => f
+                .debug_struct("Instance")
+                .field("exports", exports)
+                .finish(),
         }
     }
 }
@@ -925,6 +933,7 @@ impl Native {
                 | Self::WeakMapSet
                 | Self::FinalizationRegistryRegister
                 | Self::TypedArrayToStringTag
+                | Self::FunctionBind
         )
     }
 
@@ -1239,11 +1248,7 @@ impl IteratorKind {
     pub(crate) fn is_collection_iterator(self) -> bool {
         matches!(
             self,
-            Self::MapKeys
-                | Self::MapValues
-                | Self::MapEntries
-                | Self::SetValues
-                | Self::SetEntries
+            Self::MapKeys | Self::MapValues | Self::MapEntries | Self::SetValues | Self::SetEntries
         )
     }
 }
@@ -1489,8 +1494,7 @@ pub(crate) struct ArrayObject {
 /// Native read-only layout facts for `ArrayObject`, kept beside its field declarations.
 pub(super) const NATIVE_ARRAY_RECORD_SIZE: usize = std::mem::size_of::<ArrayObject>();
 pub(super) const NATIVE_ARRAY_RECORD_ALIGN: usize = std::mem::align_of::<ArrayObject>();
-pub(super) const NATIVE_ARRAY_ELEMENTS_OFFSET: usize =
-    std::mem::offset_of!(ArrayObject, elements);
+pub(super) const NATIVE_ARRAY_ELEMENTS_OFFSET: usize = std::mem::offset_of!(ArrayObject, elements);
 
 const _: () = assert!(
     NATIVE_ARRAY_ELEMENTS_OFFSET + std::mem::size_of::<super::ArrayElements>()
@@ -1592,13 +1596,18 @@ pub(crate) struct CallSiteRecord {
 impl CallSiteRecord {
     fn visit_roots(&self, visit: &mut impl FnMut(Value)) {
         visit(self.this_value);
-        if let CallSiteName::Callable(function) = self.name { visit(function); }
+        if let CallSiteName::Callable(function) = self.name {
+            visit(function);
+        }
     }
 }
 
 #[derive(Clone, Debug)]
 pub(crate) enum StackData {
-    Captured { records: Vec<CallSiteRecord>, source: Option<crate::bytecode::ProgramSource> },
+    Captured {
+        records: Vec<CallSiteRecord>,
+        source: Option<crate::bytecode::ProgramSource>,
+    },
     Formatted(Value),
     CallSite(CallSiteRecord),
 }
@@ -1666,7 +1675,10 @@ impl ObjectExtras {
             + self.deferred_module.as_ref().map_or(0, |module| {
                 module.name.capacity()
                     + module.source.len()
-                    + module.original_bytes.as_ref().map_or(0, |bytes| bytes.len())
+                    + module
+                        .original_bytes
+                        .as_ref()
+                        .map_or(0, |bytes| bytes.len())
             })
             + self.private_elements.capacity() * std::mem::size_of::<PrivateElement>()
             + self
@@ -1681,7 +1693,10 @@ impl StackData {
             (match &record.location {
                 CallSiteLocation::Source { file_name, .. } => file_name.capacity(),
                 CallSiteLocation::Native => 0,
-            }) + match &record.name { CallSiteName::Static(name) => name.capacity(), _ => 0 }
+            }) + match &record.name {
+                CallSiteName::Static(name) => name.capacity(),
+                _ => 0,
+            }
         }
         match self {
             Self::Captured { records, .. } => {
@@ -1750,9 +1765,13 @@ impl Object {
             Some(HeapReference::FunctionRecord(id)) => PROTO_FUNCTION_RECORD_BASE + id,
             Some(HeapReference::PromiseRecord(id)) => PROTO_PROMISE_RECORD_BASE + id,
             Some(HeapReference::IteratorRecord(id)) => PROTO_ITERATOR_RECORD_BASE + id,
-            Some(HeapReference::AwaitRecord(_)) => unreachable!("an await state is never a prototype"),
+            Some(HeapReference::AwaitRecord(_)) => {
+                unreachable!("an await state is never a prototype")
+            }
             Some(HeapReference::StringRecord(_)) => unreachable!("a string is never a prototype"),
-            Some(HeapReference::V128Record(_)) => unreachable!("a Wasm vector is never a prototype"),
+            Some(HeapReference::V128Record(_)) => {
+                unreachable!("a Wasm vector is never a prototype")
+            }
             None if proto.is_null() => PROTO_NULL,
             None => {
                 debug_assert!(proto.is_undefined(), "a prototype is an object or null");
@@ -1863,7 +1882,10 @@ impl Object {
                 let (inline, arena_start) = if self.meta & OBJECT_INLINE_STORAGE != 0 {
                     (Self::unpack_inline(self.payload), 0)
                 } else {
-                    ([Value::UNDEFINED; INLINE_PROPERTY_COUNT], self.payload as u32)
+                    (
+                        [Value::UNDEFINED; INLINE_PROPERTY_COUNT],
+                        self.payload as u32,
+                    )
                 };
                 self.payload = Self::tag_extras(Box::new(ObjectExtras {
                     inline_properties: DisplacedInline(inline),
@@ -1904,7 +1926,8 @@ impl Object {
         debug_assert!(values.len() <= INLINE_PROPERTY_COUNT);
         // A loop over the fixed bound unrolls to element moves, where one over `values`
         // becomes a `memcpy` call.
-        let inline = std::array::from_fn(|slot| values.get(slot).copied().unwrap_or(Value::UNDEFINED));
+        let inline =
+            std::array::from_fn(|slot| values.get(slot).copied().unwrap_or(Value::UNDEFINED));
         let payload = Self::pack_inline(inline)?;
         let mut object = Self {
             meta: Self::encode_proto(proto),
@@ -2048,9 +2071,18 @@ impl Object {
     /// Appends `value` at `slot` and moves to `shape`, the add `admits_plain_append` admitted.
     /// Without extras the object was never a prototype, so the move retires no proof.
     #[inline(always)]
-    pub(crate) fn append_plain(&mut self, properties: &mut ValueArena, slot: usize, value: Value, shape: u32) {
+    pub(crate) fn append_plain(
+        &mut self,
+        properties: &mut ValueArena,
+        slot: usize,
+        value: Value,
+        shape: u32,
+    ) {
         debug_assert!(self.admits_plain_append(slot, value));
-        match value.to_narrow().filter(|_| self.meta & OBJECT_INLINE_STORAGE != 0) {
+        match value
+            .to_narrow()
+            .filter(|_| self.meta & OBJECT_INLINE_STORAGE != 0)
+        {
             Some(narrow) => self.store_payload_narrow(slot, narrow),
             // SAFETY: `admits_plain_append` found the arena range's room for the value.
             None => unsafe { properties.push_in_place(self.properties(), slot, value) },
@@ -2091,7 +2123,11 @@ impl Object {
 
     /// Takes `source`'s property values, given `properties`, the arena's duplicate of
     /// `source.properties()`, and returns the storage this object held before.
-    pub(crate) fn copy_property_storage_from(&mut self, source: &Self, properties: ValueVec) -> ValueVec {
+    pub(crate) fn copy_property_storage_from(
+        &mut self,
+        source: &Self,
+        properties: ValueVec,
+    ) -> ValueVec {
         let previous = self.properties();
         self.set_properties(properties);
         if properties.has_inline_property_storage() {
@@ -2113,7 +2149,10 @@ impl Object {
     }
 
     pub(crate) fn structured_serialization(&self) -> StructuredSerialization {
-        self.extras().map_or(StructuredSerialization::Ordinary, |extras| extras.structured_serialization)
+        self.extras()
+            .map_or(StructuredSerialization::Ordinary, |extras| {
+                extras.structured_serialization
+            })
     }
 
     pub(crate) fn forbid_structured_transfer(&mut self) {
@@ -2151,10 +2190,14 @@ impl Object {
         let Some(extras) = self.extras() else {
             return;
         };
-        if let Some(value) = extras.boxed_primitive { visit(value); }
+        if let Some(value) = extras.boxed_primitive {
+            visit(value);
+        }
         for element in &extras.private_elements {
             visit(element.brand.home);
-            if let Some(value) = element.data { visit(value); }
+            if let Some(value) = element.data {
+                visit(value);
+            }
         }
         match extras.stack_data.as_ref() {
             Some(StackData::Captured { records, .. }) => {
@@ -2164,26 +2207,32 @@ impl Object {
             }
             Some(StackData::CallSite(record)) => {
                 record.visit_roots(&mut visit);
-            },
+            }
             Some(StackData::Formatted(value)) => visit(*value),
             None => {}
         }
     }
 
     pub(crate) fn was_used_as_prototype(&self) -> bool {
-        self.extras().is_some_and(|extras| extras.prototype_lookup != PrototypeLookupState::Ordinary)
+        self.extras()
+            .is_some_and(|extras| extras.prototype_lookup != PrototypeLookupState::Ordinary)
     }
 
     pub(crate) fn mark_as_prototype(&mut self) {
-        if !self.was_used_as_prototype() { self.extras_mut().prototype_lookup = PrototypeLookupState::Setup; }
+        if !self.was_used_as_prototype() {
+            self.extras_mut().prototype_lookup = PrototypeLookupState::Setup;
+        }
     }
 
     pub(crate) fn prototype_lookup_ready(&self) -> bool {
-        self.extras().is_some_and(|extras| extras.prototype_lookup == PrototypeLookupState::Ready)
+        self.extras()
+            .is_some_and(|extras| extras.prototype_lookup == PrototypeLookupState::Ready)
     }
 
     pub(crate) fn prepare_prototype_lookup(&mut self) {
-        if self.was_used_as_prototype() { self.extras_mut().prototype_lookup = PrototypeLookupState::Ready; }
+        if self.was_used_as_prototype() {
+            self.extras_mut().prototype_lookup = PrototypeLookupState::Ready;
+        }
     }
 
     pub(crate) fn shape(&self) -> u32 {
@@ -2212,7 +2261,9 @@ impl Object {
     #[inline(always)]
     pub(crate) fn admits_cached_add(&self) -> bool {
         self.is_extensible()
-            && self.extras().is_none_or(|extras| !extras.arguments_object && !extras.module_namespace)
+            && self
+                .extras()
+                .is_none_or(|extras| !extras.arguments_object && !extras.module_namespace)
     }
     pub(crate) fn set_extensible(&mut self, value: bool) {
         let mut properties = ValueVec::from_parts(self.meta & VALUE_VEC_INTEGRITY_BITS, 0);
@@ -2310,31 +2361,51 @@ impl Object {
         self.extras_mut().deferred_module = module;
     }
     pub(crate) fn private_names(&self) -> impl Iterator<Item = PrivateBrand> + '_ {
-        self.extras().into_iter().flat_map(|extras| extras.private_elements.iter().map(|element| element.brand))
+        self.extras()
+            .into_iter()
+            .flat_map(|extras| extras.private_elements.iter().map(|element| element.brand))
     }
     pub(crate) fn has_private_name(&self, brand: PrivateBrand) -> bool {
         self.private_names().any(|candidate| candidate == brand)
     }
     pub(crate) fn add_private_name(&mut self, brand: PrivateBrand) {
         if !self.has_private_name(brand) {
-            self.extras_mut().private_elements.push(PrivateElement { brand, data: None });
+            self.extras_mut()
+                .private_elements
+                .push(PrivateElement { brand, data: None });
         }
     }
     pub(crate) fn private_field(&self, brand: PrivateBrand) -> Option<Value> {
-        self.extras()?.private_elements.iter().find(|element| element.brand == brand)?.data
+        self.extras()?
+            .private_elements
+            .iter()
+            .find(|element| element.brand == brand)?
+            .data
     }
     pub(crate) fn set_private_field(&mut self, brand: PrivateBrand, value: Value) -> bool {
-        let Some(element) = self.extras_mut_existing().and_then(|extras| extras.private_elements.iter_mut().find(|element| element.brand == brand && element.data.is_some())) else { return false; };
+        let Some(element) = self.extras_mut_existing().and_then(|extras| {
+            extras
+                .private_elements
+                .iter_mut()
+                .find(|element| element.brand == brand && element.data.is_some())
+        }) else {
+            return false;
+        };
         element.data = Some(value);
         true
     }
     pub(crate) fn initialize_private_field(&mut self, brand: PrivateBrand, value: Value) -> bool {
         let elements = &mut self.extras_mut().private_elements;
         if let Some(element) = elements.iter_mut().find(|element| element.brand == brand) {
-            if element.data.is_some() { return false; }
+            if element.data.is_some() {
+                return false;
+            }
             element.data = Some(value);
         } else {
-            elements.push(PrivateElement { brand, data: Some(value) });
+            elements.push(PrivateElement {
+                brand,
+                data: Some(value),
+            });
         }
         true
     }
@@ -2364,8 +2435,11 @@ mod object_payload_tests {
     fn out_of_line_extras_preserve_inline_values_and_clone_state() {
         let inline: [Value; INLINE_PROPERTY_COUNT] =
             std::array::from_fn(|slot| Value::integer(11 + 2 * slot as i32));
-        let mut object =
-            Object::with_property_storage(Value::NULL, ValueVec::inline_property_storage(7), inline);
+        let mut object = Object::with_property_storage(
+            Value::NULL,
+            ValueVec::inline_property_storage(7),
+            inline,
+        );
         object.set_arguments_object();
         assert!(object.is_arguments_object());
         assert_eq!(object.shape(), 7);
@@ -2406,8 +2480,11 @@ mod object_payload_tests {
     fn out_of_line_extras_keep_arena_storage_mode_and_integrity() {
         let mut properties = ValueVec::new();
         properties.set_extensible(false);
-        let mut object =
-            Object::with_property_storage(Value::NULL, properties, [Value::UNDEFINED; INLINE_PROPERTY_COUNT]);
+        let mut object = Object::with_property_storage(
+            Value::NULL,
+            properties,
+            [Value::UNDEFINED; INLINE_PROPERTY_COUNT],
+        );
         object.set_module_namespace();
         assert!(object.is_module_namespace());
         assert!(!object.properties().has_inline_property_storage());
@@ -2466,7 +2543,10 @@ impl EnvironmentSlot {
 
     /// The owned value, for writing in place.
     pub(crate) fn owned_mut(&mut self) -> Option<&mut Value> {
-        self.0.shared_environment_owner().is_none().then_some(&mut self.0)
+        self.0
+            .shared_environment_owner()
+            .is_none()
+            .then_some(&mut self.0)
     }
 }
 
@@ -2530,7 +2610,9 @@ impl EnvironmentScopeRef {
     }
 
     fn inline(program: Option<u32>) -> Option<Self> {
-        let payload = program.map_or(Some(0), |program| usize::try_from(program).ok()?.checked_add(1))?;
+        let payload = program.map_or(Some(0), |program| {
+            usize::try_from(program).ok()?.checked_add(1)
+        })?;
         (payload.leading_zeros() >= INLINE_PROGRAM_SHIFT).then(|| {
             Self(
                 std::num::NonZeroUsize::new(payload << INLINE_PROGRAM_SHIFT | INLINE_SCOPE_TAG)
@@ -2568,7 +2650,8 @@ impl EnvironmentScopeRef {
     }
 
     pub(crate) fn dynamic_bindings(&self) -> &EnvironmentBindings {
-        self.scope().map_or(&NO_DYNAMIC_BINDINGS, |scope| &scope.dynamic_bindings)
+        self.scope()
+            .map_or(&NO_DYNAMIC_BINDINGS, |scope| &scope.dynamic_bindings)
     }
 
     pub(crate) fn with_objects(&self) -> &[Value] {
@@ -2775,7 +2858,8 @@ impl EnvironmentSlots {
             SlotUse::Value => {}
             SlotUse::Unread => *slot = EnvironmentSlot::owned(Value::DELETED),
             SlotUse::Initialization => {
-                if matches!(slot.state(), EnvironmentSlotState::Owned(value) if !value.is_deleted()) {
+                if matches!(slot.state(), EnvironmentSlotState::Owned(value) if !value.is_deleted())
+                {
                     *slot = EnvironmentSlot::owned(Value::UNDEFINED);
                 }
             }
@@ -2836,11 +2920,15 @@ impl EnvironmentSlots {
         }
         let shared = Value::shared_environment_slot(owner);
         let mut words = Vec::with_capacity(SPARSE_ENTRIES_START + listed * SPARSE_ENTRY_WORDS);
-        words.push(EnvironmentSlot(Value::environment_index(u32::try_from(len).ok()?)));
+        words.push(EnvironmentSlot(Value::environment_index(
+            u32::try_from(len).ok()?,
+        )));
         words.push(EnvironmentSlot(shared));
         for (index, slot) in dense.iter().enumerate() {
             if slot.0 != shared {
-                words.push(EnvironmentSlot(Value::environment_index(u32::try_from(index).ok()?)));
+                words.push(EnvironmentSlot(Value::environment_index(
+                    u32::try_from(index).ok()?,
+                )));
                 words.push(*slot);
             }
         }
@@ -2880,12 +2968,13 @@ impl EnvironmentSlots {
         };
         let Some((_, owner)) = self.sparse() else {
             // Every slot shares with its current owner, then the fresh and reset ones own.
-            let mut copy = super::thin_slice::ThinBoxSlice::from_exact_iter(self.0.iter().map(
-                |slot| match slot.state() {
-                    EnvironmentSlotState::Owned(_) => EnvironmentSlot::shared(environment),
-                    EnvironmentSlotState::Shared(owner) => EnvironmentSlot::shared(owner),
-                },
-            ));
+            let mut copy =
+                super::thin_slice::ThinBoxSlice::from_exact_iter(self.0.iter().map(|slot| {
+                    match slot.state() {
+                        EnvironmentSlotState::Owned(_) => EnvironmentSlot::shared(environment),
+                        EnvironmentSlotState::Shared(owner) => EnvironmentSlot::shared(owner),
+                    }
+                }));
             for &slot in fresh {
                 let index = usize::from(slot);
                 let Some(source) = self.0.get(index) else {
@@ -2908,8 +2997,11 @@ impl EnvironmentSlots {
         // Each list is ascending (sparse entries by position, `fresh` and `reset` sorted), so
         // their union is merged, never sorted.
         let mut indexes = merge_ascending(
-            merge_ascending(self.sparse_indexes(), fresh.iter().map(|&slot| usize::from(slot)))
-                .into_iter(),
+            merge_ascending(
+                self.sparse_indexes(),
+                fresh.iter().map(|&slot| usize::from(slot)),
+            )
+            .into_iter(),
             reset.iter().map(|&slot| usize::from(slot)),
         );
         indexes.truncate(indexes.partition_point(|&index| index < len));
@@ -2924,11 +3016,16 @@ impl EnvironmentSlots {
         if SPARSE_ENTRIES_START + listed.len() * SPARSE_ENTRY_WORDS >= len {
             return super::thin_slice::ThinBoxSlice::try_from_fn(len, copy_slot).map(Self);
         }
-        let mut words = Vec::with_capacity(SPARSE_ENTRIES_START + listed.len() * SPARSE_ENTRY_WORDS);
-        words.push(EnvironmentSlot(Value::environment_index(u32::try_from(len).ok()?)));
+        let mut words =
+            Vec::with_capacity(SPARSE_ENTRIES_START + listed.len() * SPARSE_ENTRY_WORDS);
+        words.push(EnvironmentSlot(Value::environment_index(
+            u32::try_from(len).ok()?,
+        )));
         words.push(EnvironmentSlot(shared));
         for (index, slot) in listed {
-            words.push(EnvironmentSlot(Value::environment_index(u32::try_from(index).ok()?)));
+            words.push(EnvironmentSlot(Value::environment_index(
+                u32::try_from(index).ok()?,
+            )));
             words.push(slot);
         }
         let mut storage = super::thin_slice::ThinBoxSlice::from_exact_iter(words.into_iter());
@@ -2944,7 +3041,10 @@ impl EnvironmentSlots {
     /// As `ThinBoxSlice::lay_out_in_place`; each slot is an owned value.
     pub(crate) unsafe fn lay_out_in_place(words: *mut Value, len: usize) -> *const Self {
         // SAFETY: as the caller guarantees; a slot is a `Value`, a word.
-        unsafe { super::thin_slice::ThinBoxSlice::<EnvironmentSlot>::lay_out_in_place(words.cast(), len).cast() }
+        unsafe {
+            super::thin_slice::ThinBoxSlice::<EnvironmentSlot>::lay_out_in_place(words.cast(), len)
+                .cast()
+        }
     }
 
     pub(crate) fn from_values(values: impl ExactSizeIterator<Item = Value>) -> Self {
@@ -3189,18 +3289,29 @@ pub(crate) struct SymbolData {
     pub(crate) kind: SymbolKind,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum SymbolKind { Public, HostPrivate }
+pub(crate) enum SymbolKind {
+    Public,
+    HostPrivate,
+}
 impl SymbolData {
     pub(crate) fn public(description: Option<String>) -> Self {
-        Self { description: description.map(String::into_boxed_str), kind: SymbolKind::Public }
+        Self {
+            description: description.map(String::into_boxed_str),
+            kind: SymbolKind::Public,
+        }
     }
     pub(crate) fn host_private(description: Option<String>) -> Self {
-        Self { description: description.map(String::into_boxed_str), kind: SymbolKind::HostPrivate }
+        Self {
+            description: description.map(String::into_boxed_str),
+            kind: SymbolKind::HostPrivate,
+        }
     }
 }
 impl std::ops::Deref for SymbolData {
     type Target = Option<Box<str>>;
-    fn deref(&self) -> &Self::Target { &self.description }
+    fn deref(&self) -> &Self::Target {
+        &self.description
+    }
 }
 
 #[derive(Clone, Debug)]

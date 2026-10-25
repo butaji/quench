@@ -44,7 +44,9 @@ pub(crate) struct Writer {
 
 impl Writer {
     pub(crate) fn new() -> Self {
-        let mut writer = Self { bytes: Vec::with_capacity(1 << 20) };
+        let mut writer = Self {
+            bytes: Vec::with_capacity(1 << 20),
+        };
         writer.bytes.extend_from_slice(MAGIC);
         writer.u64(crate::ResidualProgram::RUNTIME_ABI_FINGERPRINT);
         writer
@@ -155,7 +157,12 @@ impl<'a> Reader<'a> {
     /// A reader past the header, when the header is this build's, giving the bytes it has
     /// read to `release` as it goes.
     pub(crate) fn new(bytes: &'a [u8], release: Option<fn(&[u8])>) -> SnapshotResult<Self> {
-        let mut reader = Self { bytes, cursor: 0, release, released: 0 };
+        let mut reader = Self {
+            bytes,
+            cursor: 0,
+            release,
+            released: 0,
+        };
         if reader.take(MAGIC.len())? != MAGIC {
             return Err(SnapshotError("not a Quench snapshot".into()));
         }
@@ -187,8 +194,14 @@ impl<'a> Reader<'a> {
         if self.cursor - self.released >= RELEASE_STRIDE {
             self.release_read();
         }
-        let end = self.cursor.checked_add(len).ok_or_else(|| SnapshotError("snapshot overflow".into()))?;
-        let bytes = self.bytes.get(self.cursor..end).ok_or_else(|| SnapshotError("truncated snapshot".into()))?;
+        let end = self
+            .cursor
+            .checked_add(len)
+            .ok_or_else(|| SnapshotError("snapshot overflow".into()))?;
+        let bytes = self
+            .bytes
+            .get(self.cursor..end)
+            .ok_or_else(|| SnapshotError("truncated snapshot".into()))?;
         self.cursor = end;
         Ok(bytes)
     }
@@ -199,7 +212,10 @@ impl<'a> Reader<'a> {
     #[inline(always)]
     fn array<const N: usize>(&mut self) -> SnapshotResult<[u8; N]> {
         if self.cursor - self.released < RELEASE_STRIDE
-            && let Some(bytes) = self.bytes.get(self.cursor..).and_then(<[u8]>::first_chunk::<N>)
+            && let Some(bytes) = self
+                .bytes
+                .get(self.cursor..)
+                .and_then(<[u8]>::first_chunk::<N>)
         {
             self.cursor += N;
             return Ok(*bytes);
@@ -269,7 +285,11 @@ impl<'a> Reader<'a> {
     }
 
     pub(crate) fn option_value(&mut self) -> SnapshotResult<Option<crate::value::Value>> {
-        Ok(if self.bool()? { Some(self.value()?) } else { None })
+        Ok(if self.bool()? {
+            Some(self.value()?)
+        } else {
+            None
+        })
     }
 
     pub(crate) fn bytes(&mut self) -> SnapshotResult<&'a [u8]> {
@@ -278,7 +298,8 @@ impl<'a> Reader<'a> {
     }
 
     pub(crate) fn str(&mut self) -> SnapshotResult<&'a str> {
-        std::str::from_utf8(self.bytes()?).map_err(|_| SnapshotError("invalid snapshot text".into()))
+        std::str::from_utf8(self.bytes()?)
+            .map_err(|_| SnapshotError("invalid snapshot text".into()))
     }
 
     pub(crate) fn string(&mut self) -> SnapshotResult<String> {
@@ -286,18 +307,31 @@ impl<'a> Reader<'a> {
     }
 
     pub(crate) fn option_string(&mut self) -> SnapshotResult<Option<String>> {
-        Ok(if self.bool()? { Some(self.string()?) } else { None })
+        Ok(if self.bool()? {
+            Some(self.string()?)
+        } else {
+            None
+        })
     }
 
     pub(crate) fn u16s(&mut self) -> SnapshotResult<Vec<u16>> {
         let len = self.len()?;
-        let bytes = self.take(len.checked_mul(2).ok_or_else(|| SnapshotError("snapshot overflow".into()))?)?;
-        Ok(bytes.chunks_exact(2).map(|unit| u16::from_le_bytes([unit[0], unit[1]])).collect())
+        let bytes = self.take(
+            len.checked_mul(2)
+                .ok_or_else(|| SnapshotError("snapshot overflow".into()))?,
+        )?;
+        Ok(bytes
+            .chunks_exact(2)
+            .map(|unit| u16::from_le_bytes([unit[0], unit[1]]))
+            .collect())
     }
 
     pub(crate) fn u32s(&mut self) -> SnapshotResult<Vec<u32>> {
         let len = self.len()?;
-        let bytes = self.take(len.checked_mul(4).ok_or_else(|| SnapshotError("snapshot overflow".into()))?)?;
+        let bytes = self.take(
+            len.checked_mul(4)
+                .ok_or_else(|| SnapshotError("snapshot overflow".into()))?,
+        )?;
         Ok(bytes
             .chunks_exact(4)
             .map(|word| u32::from_le_bytes(word.try_into().expect("chunks of four")))
@@ -498,7 +532,11 @@ impl<T: Snap> Snap for Option<T> {
         self.as_ref().map_or(Ok(()), |value| value.snap(writer))
     }
     fn unsnap(reader: &mut Reader<'_>) -> SnapshotResult<Self> {
-        Ok(if reader.bool()? { Some(T::unsnap(reader)?) } else { None })
+        Ok(if reader.bool()? {
+            Some(T::unsnap(reader)?)
+        } else {
+            None
+        })
     }
 }
 
@@ -516,8 +554,12 @@ impl<T: Snap, const N: usize> Snap for [T; N] {
         self.iter().try_for_each(|item| item.snap(writer))
     }
     fn unsnap(reader: &mut Reader<'_>) -> SnapshotResult<Self> {
-        let items = (0..N).map(|_| T::unsnap(reader)).collect::<SnapshotResult<Vec<T>>>()?;
-        Ok(items.try_into().unwrap_or_else(|_| unreachable!("N items were read")))
+        let items = (0..N)
+            .map(|_| T::unsnap(reader))
+            .collect::<SnapshotResult<Vec<T>>>()?;
+        Ok(items
+            .try_into()
+            .unwrap_or_else(|_| unreachable!("N items were read")))
     }
 }
 
@@ -542,7 +584,9 @@ impl<A: Snap, B: Snap, C: Snap> Snap for (A, B, C) {
     }
 }
 
-impl<K: Snap + Eq + std::hash::Hash, V: Snap, S: std::hash::BuildHasher + Default> Snap for std::collections::HashMap<K, V, S> {
+impl<K: Snap + Eq + std::hash::Hash, V: Snap, S: std::hash::BuildHasher + Default> Snap
+    for std::collections::HashMap<K, V, S>
+{
     fn snap(&self, writer: &mut Writer) -> SnapshotResult<()> {
         writer.len(self.len());
         self.iter().try_for_each(|(key, value)| {
@@ -561,7 +605,9 @@ impl<K: Snap + Eq + std::hash::Hash, V: Snap, S: std::hash::BuildHasher + Defaul
     }
 }
 
-impl<K: Snap + Eq + std::hash::Hash, S: std::hash::BuildHasher + Default> Snap for std::collections::HashSet<K, S> {
+impl<K: Snap + Eq + std::hash::Hash, S: std::hash::BuildHasher + Default> Snap
+    for std::collections::HashSet<K, S>
+{
     fn snap(&self, writer: &mut Writer) -> SnapshotResult<()> {
         writer.len(self.len());
         self.iter().try_for_each(|key| key.snap(writer))
@@ -665,8 +711,10 @@ impl SnapshotWriter<'_> {
     }
     /// A root the host holds, which `SnapshotReader::root` gives back in the restored heap.
     pub fn root(&mut self, root: crate::RootId) -> Result<(), String> {
-        let (slot, generation) =
-            self.heap.snapshot_root(root).ok_or("a snapshot root belongs to another heap")?;
+        let (slot, generation) = self
+            .heap
+            .snapshot_root(root)
+            .ok_or("a snapshot root belongs to another heap")?;
         self.writer.u32(slot);
         self.writer.u32(generation);
         Ok(())
@@ -709,15 +757,24 @@ impl SnapshotReader<'_, '_> {
         self.reader.string().map_err(|error| error.0)
     }
     pub fn bytes(&mut self) -> Result<Vec<u8>, String> {
-        self.reader.bytes().map(<[u8]>::to_vec).map_err(|error| error.0)
+        self.reader
+            .bytes()
+            .map(<[u8]>::to_vec)
+            .map_err(|error| error.0)
     }
     pub fn root(&mut self) -> Result<crate::RootId, String> {
         let slot = self.u32()?;
         let generation = self.u32()?;
-        self.heap.restored_root(slot, generation).ok_or_else(|| "snapshot root is not live".into())
+        self.heap
+            .restored_root(slot, generation)
+            .ok_or_else(|| "snapshot root is not live".into())
     }
     pub fn option_root(&mut self) -> Result<Option<crate::RootId>, String> {
-        if self.bool()? { self.root().map(Some) } else { Ok(None) }
+        if self.bool()? {
+            self.root().map(Some)
+        } else {
+            Ok(None)
+        }
     }
     pub fn weak_root(&mut self) -> Result<crate::HostWeakRoot, String> {
         self.root().map(crate::HostWeakRoot)

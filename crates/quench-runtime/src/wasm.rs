@@ -35,9 +35,8 @@ pub(crate) mod simd;
 pub(crate) mod table;
 pub(crate) use scalar::{ScalarBits, V128_BYTES, WasmSignatures};
 pub use scalar::{
-    WasmHostSignature,
-    WasmCallableType, WasmFunctionBody, WasmFunctionImport, WasmReferenceKind, WasmSignature,
-    WasmType, WasmValue,
+    WasmCallableType, WasmFunctionBody, WasmFunctionImport, WasmHostSignature, WasmReferenceKind,
+    WasmSignature, WasmType, WasmValue,
 };
 pub(crate) mod conversion;
 pub(crate) mod float;
@@ -803,7 +802,10 @@ impl Engine {
             },
             &signature_pool,
             inline::leaf_budget(mode, || {
-                sources.iter().map(|source| source.operators.clone().into_iter().count()).sum()
+                sources
+                    .iter()
+                    .map(|source| source.operators.clone().into_iter().count())
+                    .sum()
             }),
         )?;
         for position in 0..sources.len() {
@@ -928,7 +930,7 @@ impl Engine {
                 class_initializer: false,
                 parameter_eval_arguments_error: false,
                 unaliased_arguments: false,
-            prototype_unobservable: false,
+                prototype_unobservable: false,
                 arguments_slot: None,
                 simple_parameters: true,
                 strict: true,

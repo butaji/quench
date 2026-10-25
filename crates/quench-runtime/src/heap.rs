@@ -1,6 +1,6 @@
 use crate::value::{HeapReference, Value};
-use crate::vm::wtf16::JsString;
 use crate::value_vec::{INLINE_PROPERTY_COUNT, ValueArena, ValueVec};
+use crate::vm::wtf16::JsString;
 use rayon::prelude::*;
 use rayon::{Scope, ThreadPool, ThreadPoolBuilder};
 use rustc_hash::FxHashMap;
@@ -10,9 +10,9 @@ use std::sync::{Mutex, OnceLock};
 mod access;
 mod array_elements;
 pub(crate) use array_elements::{ArrayElements, UniqueElements};
+mod buffer_bytes;
 mod cell;
 mod cell_access;
-mod buffer_bytes;
 mod collection_entries;
 mod environment_trace;
 pub(crate) use environment_trace::{ClosureReadSource, EnvironmentTrace};
@@ -23,7 +23,10 @@ pub use memory_stats::HeapMemoryComposition;
 mod memory_profile;
 mod pacing;
 mod promise_record;
-pub(crate) use promise_record::{AbandonedHostContexts, PromiseCell, PromiseReaction, PromiseRecord, PromiseRejectionState, PromiseState};
+pub(crate) use promise_record::{
+    AbandonedHostContexts, PromiseCell, PromiseReaction, PromiseRecord, PromiseRejectionState,
+    PromiseState,
+};
 mod records;
 mod root;
 mod slots;
@@ -31,15 +34,16 @@ mod snapshot;
 mod thin_slice;
 pub(crate) use thin_slice::ThinBoxSlice;
 mod weak;
+pub(crate) use buffer_bytes::{BufferBytes, BufferRead};
 pub(crate) use cell::*;
-pub(crate) use buffer_bytes::{BufferBytes,BufferRead};
 pub(crate) use collection_entries::{CollectionEntries, CollectionEntry};
 use external::array_payload_bytes;
-use records::{
-    ArrayRecordSpace, AwaitRecordSpace, FunctionRecordSpace, IteratorRecordSpace, V128RecordSpace,
-    ObjectRecordSpace, PromiseRecordSpace, RecordFamily, StringRecordSpace, RecordId, RecordSweep,
-};
 use records::RECORD_SPACE_CAPACITY;
+use records::{
+    ArrayRecordSpace, AwaitRecordSpace, FunctionRecordSpace, IteratorRecordSpace,
+    ObjectRecordSpace, PromiseRecordSpace, RecordFamily, RecordId, RecordSweep, StringRecordSpace,
+    V128RecordSpace,
+};
 pub use root::RootId;
 pub(crate) use root::{RootTable, WeakHandle};
 use slots::{FreeSlotBitmap, SLOTS_PER_SLAB, SlotArena};
@@ -131,9 +135,13 @@ const PAYLOAD_BYTES_PER_ALLOCATION: usize = 64;
 const MINIMUM_EXTERNAL_COLLECTION_BUDGET: usize = 8 << 20;
 /// Diagnostic builds read the unit from `QUENCH_GC_PAYLOAD_UNIT` to measure it.
 #[cfg(feature = "gc-tuning")]
-static PAYLOAD_BYTES_PER_ALLOCATION_TUNED: std::sync::LazyLock<usize> = std::sync::LazyLock::new(|| {
-    std::env::var("QUENCH_GC_PAYLOAD_UNIT").ok().and_then(|v| v.parse().ok()).unwrap_or(64)
-});
+static PAYLOAD_BYTES_PER_ALLOCATION_TUNED: std::sync::LazyLock<usize> =
+    std::sync::LazyLock::new(|| {
+        std::env::var("QUENCH_GC_PAYLOAD_UNIT")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(64)
+    });
 const PARALLEL_MARK_MINIMUM_SLOTS: usize = 50_000;
 const PARALLEL_MARK_MAX_THREADS: usize = 4;
 // Paired Splay screens on the 4-vCPU Linux host favored the collector thread;
@@ -400,9 +408,11 @@ impl MarkBits<'_> {
             Some(HeapReference::V128Record(id)) => self.v128_records.is_marked(id),
             Some(HeapReference::LegacySlot(index)) => {
                 let index = index as usize;
-                self.marks.get(index / u64::BITS as usize).is_some_and(|word| {
-                    word.load(Ordering::Relaxed) & (1 << (index % u64::BITS as usize)) != 0
-                })
+                self.marks
+                    .get(index / u64::BITS as usize)
+                    .is_some_and(|word| {
+                        word.load(Ordering::Relaxed) & (1 << (index % u64::BITS as usize)) != 0
+                    })
             }
             None => false,
         }
@@ -841,7 +851,10 @@ impl Heap {
     /// Selects the memory policy at startup, before the first collection: the next
     /// collection runs after the policy's young minimum, and pacing follows its table.
     pub(crate) fn set_memory_policy(&mut self, policy: MemoryPolicy) {
-        debug_assert_eq!(self.collections, 0, "the memory policy is chosen at startup");
+        debug_assert_eq!(
+            self.collections, 0,
+            "the memory policy is chosen at startup"
+        );
         self.memory_policy = policy;
         self.threshold = self.pacing().minimum_young;
         self.max_threshold = self.threshold;
@@ -917,7 +930,10 @@ impl Heap {
 
     /// Each program a live cell or function can still run or resolve names in
     /// (`Cell::program_references`).
-    pub(crate) fn for_each_program_reference(&mut self, mut visit: impl FnMut(crate::vm::ProgramId)) {
+    pub(crate) fn for_each_program_reference(
+        &mut self,
+        mut visit: impl FnMut(crate::vm::ProgramId),
+    ) {
         self.function_records
             .for_each_live(|_, function| function.program().into_iter().for_each(&mut visit));
         self.await_records
@@ -1009,7 +1025,9 @@ impl Heap {
         // A flag, not an edge: no write barrier for record prototypes.
         let object = match prototype.direct_object_index() {
             // SAFETY: direct-object Values name live records; `&mut self` is exclusive.
-            Some(record_id) => Some(unsafe { self.object_records.get_live_mut_unbarriered(record_id) }),
+            Some(record_id) => {
+                Some(unsafe { self.object_records.get_live_mut_unbarriered(record_id) })
+            }
             None => self.object_mut(prototype),
         };
         if let Some(object) = object {
@@ -1024,7 +1042,9 @@ impl Heap {
     #[inline(always)]
     pub fn alloc(&mut self, cell: Cell) -> Value {
         match cell {
-            Cell::Array { object } if !cfg!(feature = "profile-aggregate") => self.alloc_array(object),
+            Cell::Array { object } if !cfg!(feature = "profile-aggregate") => {
+                self.alloc_array(object)
+            }
             cell => self.alloc_cell(cell),
         }
     }
@@ -1059,7 +1079,9 @@ impl Heap {
     }
 
     fn alloc_cell(&mut self, cell: Cell) -> Value {
-        if let Some(object) = cell.object() { self.mark_prototype(object.proto()); }
+        if let Some(object) = cell.object() {
+            self.mark_prototype(object.proto());
+        }
         #[cfg(feature = "profile-aggregate")]
         {
             let kind = Self::cell_kind(&cell) as usize;
@@ -1139,7 +1161,12 @@ impl Heap {
         slots: EnvironmentSlots,
         scope: EnvironmentScopeRef,
     ) -> (Value, *const EnvironmentSlots) {
-        let cell = Cell::Environment { parent, function, slots, scope };
+        let cell = Cell::Environment {
+            parent,
+            function,
+            slots,
+            scope,
+        };
         let environment = if cfg!(feature = "profile-aggregate") {
             self.alloc(cell)
         } else {
@@ -1188,7 +1215,9 @@ impl Heap {
         inline: [Value; INLINE_PROPERTY_COUNT],
     ) -> Value {
         let shape = header.shape();
-        let length = self.properties.len(ValueVec::inline_property_storage(shape));
+        let length = self
+            .properties
+            .len(ValueVec::inline_property_storage(shape));
         self.alloc_object_with_properties(prototype, shape, &inline[..length])
     }
 
@@ -1216,7 +1245,8 @@ impl Heap {
     /// Whether `prototype` names no object or one flagged as a prototype, as
     /// `mark_new_prototype` leaves it.
     fn prototype_flagged(&self, prototype: Value) -> bool {
-        self.object(prototype).is_none_or(Object::was_used_as_prototype)
+        self.object(prototype)
+            .is_none_or(Object::was_used_as_prototype)
     }
 
     /// An object record of `object`, else a slot: one allocation, with no external bytes.
@@ -1248,7 +1278,10 @@ impl Heap {
 
     /// `alloc_function` of `function` whose prototype is already flagged as one, as
     /// `alloc_object_under_flagged_prototype` allocates an object.
-    pub(crate) fn alloc_function_under_flagged_prototype(&mut self, function: FunctionRecord) -> Value {
+    pub(crate) fn alloc_function_under_flagged_prototype(
+        &mut self,
+        function: FunctionRecord,
+    ) -> Value {
         debug_assert!(self.prototype_flagged(function.object.proto()));
         if cfg!(feature = "profile-aggregate") {
             return self.alloc(Cell::Function(Box::new(function)));
@@ -1372,9 +1405,10 @@ impl Heap {
                 self.profile_allocation(value);
                 value
             }
-            Err(iterator) => {
-                self.alloc_in_slot(Cell::Iterator(Box::new(iterator)), self.tracks_young_cells())
-            }
+            Err(iterator) => self.alloc_in_slot(
+                Cell::Iterator(Box::new(iterator)),
+                self.tracks_young_cells(),
+            ),
         }
     }
 
@@ -1535,7 +1569,8 @@ impl Heap {
         if inline && values.len() <= INLINE_PROPERTY_COUNT && Object::inline_values_narrow(values) {
             // At most `INLINE_PROPERTY_COUNT` values: a loop over the fixed bound unrolls to
             // element moves, where one over `values` becomes a `memcpy` call.
-            let inline = std::array::from_fn(|slot| values.get(slot).copied().unwrap_or(Value::UNDEFINED));
+            let inline =
+                std::array::from_fn(|slot| values.get(slot).copied().unwrap_or(Value::UNDEFINED));
             (ValueVec::inline_property_storage(shape), inline)
         } else {
             (
@@ -1881,11 +1916,11 @@ impl Heap {
         if !full {
             #[cfg(feature = "profile-aggregate")]
             {
-                self.gc_profile.remembered_owner_scans += self
-                    .record_families()
-                    .iter()
-                    .map(|(family, _)| family.remembered_count())
-                    .sum::<usize>() as u64;
+                self.gc_profile.remembered_owner_scans +=
+                    self.record_families()
+                        .iter()
+                        .map(|(family, _)| family.remembered_count())
+                        .sum::<usize>() as u64;
             }
             for (family, handle) in self.record_families_mut() {
                 work.extend(family.take_remembered().into_iter().map(handle));
@@ -1954,7 +1989,11 @@ impl Heap {
         #[cfg(debug_assertions)]
         {
             if full {
-                self.debug_verify_full(&verify_roots, &mut object_roots, closure_reads.filter(|_| trims_environments));
+                self.debug_verify_full(
+                    &verify_roots,
+                    &mut object_roots,
+                    closure_reads.filter(|_| trims_environments),
+                );
             } else {
                 let mut pinned = verify_old_records.unwrap_or_default();
                 pinned.extend(verify_remembered_records);
@@ -2015,127 +2054,137 @@ impl Heap {
         {
             #[cfg(feature = "profile-aggregate")]
             {
-                self.gc_profile.sweep_slots +=
-                    self.record_families()
-                        .iter()
-                        .map(|(family, _)| family.high_water())
-                        .sum::<usize>() as u64;
+                self.gc_profile.sweep_slots += self
+                    .record_families()
+                    .iter()
+                    .map(|(family, _)| family.high_water())
+                    .sum::<usize>() as u64;
             }
             #[cfg(feature = "profile-memory")]
             let memory_profile = &mut self.memory_profile;
             let properties = &mut self.properties;
             let payload_bytes = &mut self.payload_bytes;
-            let (object_live, object_freed) = self.object_records.sweep(full, full, |record| match record {
-                RecordSweep::Keep(record_id, object) => {
-                    if compacts && object.properties().has_compact_range() {
-                        direct_property_owners.push((
-                            object.properties().start_offset(),
-                            Value::direct_object(record_id),
-                        ));
-                    }
-                }
-                RecordSweep::Dead(_record_id, object) => {
-                    #[cfg(feature = "profile-memory")]
-                    let slots = properties.len(object.properties());
-                    properties.release(object.properties());
-                    #[cfg(feature = "profile-memory")]
-                    memory_profile.freed_object(Value::direct_object(_record_id), slots);
-                }
-            });
-            let (function_live, function_freed) =
-                self.function_records.sweep(full, full, |record| match record {
-                    RecordSweep::Keep(record_id, function) => {
-                        if compacts && function.object.properties().has_compact_range() {
-                            direct_property_owners.push((
-                                function.object.properties().start_offset(),
-                                Value::direct_function(record_id),
-                            ));
+            let (object_live, object_freed) =
+                self.object_records
+                    .sweep(full, full, |record| match record {
+                        RecordSweep::Keep(record_id, object) => {
+                            if compacts && object.properties().has_compact_range() {
+                                direct_property_owners.push((
+                                    object.properties().start_offset(),
+                                    Value::direct_object(record_id),
+                                ));
+                            }
                         }
-                    }
-                    RecordSweep::Dead(_record_id, function) => {
-                        #[cfg(feature = "profile-memory")]
-                        let slots = properties.len(function.object.properties());
-                        properties.release(function.object.properties());
-                        #[cfg(feature = "profile-memory")]
-                        memory_profile.freed_function(Value::direct_function(_record_id), slots);
-                    }
-                });
+                        RecordSweep::Dead(_record_id, object) => {
+                            #[cfg(feature = "profile-memory")]
+                            let slots = properties.len(object.properties());
+                            properties.release(object.properties());
+                            #[cfg(feature = "profile-memory")]
+                            memory_profile.freed_object(Value::direct_object(_record_id), slots);
+                        }
+                    });
+            let (function_live, function_freed) =
+                self.function_records
+                    .sweep(full, full, |record| match record {
+                        RecordSweep::Keep(record_id, function) => {
+                            if compacts && function.object.properties().has_compact_range() {
+                                direct_property_owners.push((
+                                    function.object.properties().start_offset(),
+                                    Value::direct_function(record_id),
+                                ));
+                            }
+                        }
+                        RecordSweep::Dead(_record_id, function) => {
+                            #[cfg(feature = "profile-memory")]
+                            let slots = properties.len(function.object.properties());
+                            properties.release(function.object.properties());
+                            #[cfg(feature = "profile-memory")]
+                            memory_profile
+                                .freed_function(Value::direct_function(_record_id), slots);
+                        }
+                    });
             let abandoned_contexts = &mut self.abandoned_contexts;
             let (promise_live, promise_freed) =
-                self.promise_records.sweep(full, full, |record| match record {
-                    RecordSweep::Keep(record_id, promise) => {
-                        if compacts && promise.object.properties().has_compact_range() {
-                            direct_property_owners.push((
-                                promise.object.properties().start_offset(),
-                                Value::direct_promise(record_id),
-                            ));
+                self.promise_records
+                    .sweep(full, full, |record| match record {
+                        RecordSweep::Keep(record_id, promise) => {
+                            if compacts && promise.object.properties().has_compact_range() {
+                                direct_property_owners.push((
+                                    promise.object.properties().start_offset(),
+                                    Value::direct_promise(record_id),
+                                ));
+                            }
                         }
-                    }
-                    RecordSweep::Dead(_record_id, promise) => {
-                        abandoned_contexts.abandon(&promise.record);
-                        #[cfg(feature = "profile-memory")]
-                        let slots = properties.len(promise.object.properties());
-                        properties.release(promise.object.properties());
-                        #[cfg(feature = "profile-memory")]
-                        memory_profile.freed_promise(Value::direct_promise(_record_id), slots);
-                    }
-                });
+                        RecordSweep::Dead(_record_id, promise) => {
+                            abandoned_contexts.abandon(&promise.record);
+                            #[cfg(feature = "profile-memory")]
+                            let slots = properties.len(promise.object.properties());
+                            properties.release(promise.object.properties());
+                            #[cfg(feature = "profile-memory")]
+                            memory_profile.freed_promise(Value::direct_promise(_record_id), slots);
+                        }
+                    });
             // An await state owns no arena storage; dropping a dead one frees its unresumed
             // continuation.
             let (await_live, await_freed) = self.await_records.sweep(full, false, |_| {});
             // A vector owns nothing beyond its record.
             let (v128_live, v128_freed) = self.v128_records.sweep(full, false, |_| {});
             let (iterator_live, iterator_freed) =
-                self.iterator_records.sweep(full, full, |record| match record {
-                    RecordSweep::Keep(record_id, iterator) => {
-                        if compacts && iterator.object.properties().has_compact_range() {
+                self.iterator_records
+                    .sweep(full, full, |record| match record {
+                        RecordSweep::Keep(record_id, iterator) => {
+                            if compacts && iterator.object.properties().has_compact_range() {
+                                direct_property_owners.push((
+                                    iterator.object.properties().start_offset(),
+                                    Value::direct_iterator(record_id),
+                                ));
+                            }
+                        }
+                        RecordSweep::Dead(_record_id, iterator) => {
+                            #[cfg(feature = "profile-memory")]
+                            let slots = properties.len(iterator.object.properties());
+                            properties.release(iterator.object.properties());
+                            #[cfg(feature = "profile-memory")]
+                            memory_profile
+                                .freed_iterator(Value::direct_iterator(_record_id), slots);
+                        }
+                    });
+            let (string_live, string_freed) =
+                self.string_records
+                    .sweep(full, full, |record| match record {
+                        RecordSweep::Keep(_, string) => {
+                            if full {
+                                live_payload_bytes += string.flat_unit_bytes();
+                            }
+                        }
+                        RecordSweep::Dead(_, string) => {
+                            *payload_bytes = payload_bytes.saturating_sub(string.flat_unit_bytes());
+                        }
+                    });
+            let mut dead_arrays = Vec::new();
+            let (array_live, array_freed) =
+                self.array_records.sweep(full, full, |record| match record {
+                    RecordSweep::Keep(record_id, array) => {
+                        if full {
+                            live_payload_bytes += array_payload_bytes(array);
+                        }
+                        if compacts && array.properties().has_compact_range() {
                             direct_property_owners.push((
-                                iterator.object.properties().start_offset(),
-                                Value::direct_iterator(record_id),
+                                array.properties().start_offset(),
+                                Value::direct_array(record_id),
                             ));
                         }
                     }
-                    RecordSweep::Dead(_record_id, iterator) => {
+                    RecordSweep::Dead(record_id, array) => {
+                        *payload_bytes = payload_bytes.saturating_sub(array_payload_bytes(&array));
                         #[cfg(feature = "profile-memory")]
-                        let slots = properties.len(iterator.object.properties());
-                        properties.release(iterator.object.properties());
+                        let slots = properties.len(array.properties());
+                        properties.release(array.properties());
                         #[cfg(feature = "profile-memory")]
-                        memory_profile.freed_iterator(Value::direct_iterator(_record_id), slots);
+                        memory_profile.freed_array(Value::direct_array(record_id), slots, &array);
+                        dead_arrays.push(Value::direct_array(record_id));
                     }
                 });
-            let (string_live, string_freed) = self.string_records.sweep(full, full, |record| match record {
-                RecordSweep::Keep(_, string) => {
-                    if full {
-                        live_payload_bytes += string.flat_unit_bytes();
-                    }
-                }
-                RecordSweep::Dead(_, string) => {
-                    *payload_bytes = payload_bytes.saturating_sub(string.flat_unit_bytes());
-                }
-            });
-            let mut dead_arrays = Vec::new();
-            let (array_live, array_freed) = self.array_records.sweep(full, full, |record| match record {
-                RecordSweep::Keep(record_id, array) => {
-                    if full {
-                        live_payload_bytes += array_payload_bytes(array);
-                    }
-                    if compacts && array.properties().has_compact_range() {
-                        direct_property_owners.push((
-                            array.properties().start_offset(),
-                            Value::direct_array(record_id),
-                        ));
-                    }
-                }
-                RecordSweep::Dead(record_id, array) => {
-                    *payload_bytes = payload_bytes.saturating_sub(array_payload_bytes(&array));
-                    #[cfg(feature = "profile-memory")]
-                    let slots = properties.len(array.properties());
-                    properties.release(array.properties());
-                    #[cfg(feature = "profile-memory")]
-                    memory_profile.freed_array(Value::direct_array(record_id), slots, &array);
-                    dead_arrays.push(Value::direct_array(record_id));
-                }
-            });
             if let Some(arrays) = &mut self.sparse_arrays {
                 for array in dead_arrays {
                     arrays.remove(&array);
@@ -2206,7 +2255,8 @@ impl Heap {
         let live_weight = live + self.payload_bytes / payload_unit();
         let allocated = std::mem::take(&mut self.allocations);
         self.external_since_collection = 0;
-        self.external_collection_budget = self.external_bytes.max(MINIMUM_EXTERNAL_COLLECTION_BUDGET);
+        self.external_collection_budget =
+            self.external_bytes.max(MINIMUM_EXTERNAL_COLLECTION_BUDGET);
         if full {
             self.allocations_since_full = 0;
             self.old_live = legacy_live;
@@ -2239,12 +2289,20 @@ impl Heap {
             // Diagnostic recount of the payload ledger after a full sweep.
             let mut exact = 0;
             self.for_each_live_cell(|cell| exact += cell.payload_bytes());
-            self.array_records.for_each_live(|_, array| exact += array_payload_bytes(array));
+            self.array_records
+                .for_each_live(|_, array| exact += array_payload_bytes(array));
             eprintln!("gc payload ledger={} exact={exact}", self.payload_bytes);
         }
         #[cfg(feature = "gc-tuning")]
         if std::env::var_os("QUENCH_GC_TRACE").is_some() {
-            eprintln!("gc full={full} live={live} prev={} after_full={} alloc={} since_full={} next={next:?} state={:?}", self.live_weight_after_previous, self.live_after_full, allocated, self.allocations_since_full, self.pacing_state);
+            eprintln!(
+                "gc full={full} live={live} prev={} after_full={} alloc={} since_full={} next={next:?} state={:?}",
+                self.live_weight_after_previous,
+                self.live_after_full,
+                allocated,
+                self.allocations_since_full,
+                self.pacing_state
+            );
         }
         self.live_weight_after_previous = live_weight;
         self.threshold = next.threshold;
@@ -2552,7 +2610,11 @@ impl Heap {
             }
 
             let mut trace_object_root =
-                |kind: GcTraceKind, owner: Value, shape: u32, prototype: bool, roots: &mut Vec<Value>| {
+                |kind: GcTraceKind,
+                 owner: Value,
+                 shape: u32,
+                 prototype: bool,
+                 roots: &mut Vec<Value>| {
                     if let Some(parallel_object_roots) = parallel_object_roots {
                         parallel_object_roots(kind, owner, shape, prototype, roots);
                     } else {
@@ -2698,7 +2760,8 @@ impl Heap {
         );
         let verified_record_marks = self.snapshot_record_marks();
         let marked = |marks: &[u64], id: RecordId| {
-            marks[id as usize / u64::BITS as usize] & (1_u64 << (id as usize % u64::BITS as usize)) != 0
+            marks[id as usize / u64::BITS as usize] & (1_u64 << (id as usize % u64::BITS as usize))
+                != 0
         };
         for (((family, handle), minor), verified) in self
             .record_families()
@@ -2775,12 +2838,7 @@ impl Heap {
                     &mut last_proto,
                 );
                 let mark_bits = mark_bits!(self);
-                ephemerons.newly_marked(
-                    value,
-                    None,
-                    |target| mark_bits.is_marked(target),
-                    work,
-                );
+                ephemerons.newly_marked(value, None, |target| mark_bits.is_marked(target), work);
             } else if let Some(record_id) = value.direct_array_index() {
                 if !self.array_records.mark(record_id) {
                     continue;
@@ -2807,12 +2865,7 @@ impl Heap {
                     work.extend(elements.values.values().copied());
                 }
                 let mark_bits = mark_bits!(self);
-                ephemerons.newly_marked(
-                    value,
-                    None,
-                    |target| mark_bits.is_marked(target),
-                    work,
-                );
+                ephemerons.newly_marked(value, None, |target| mark_bits.is_marked(target), work);
             } else if let Some(record_id) = value.direct_function_index() {
                 if !self.function_records.mark(record_id) {
                     continue;
@@ -3029,7 +3082,9 @@ impl Heap {
             Some(HeapReference::FunctionRecord(record_id)) => {
                 self.function_records.remember(record_id)
             }
-            Some(HeapReference::PromiseRecord(record_id)) => self.promise_records.remember(record_id),
+            Some(HeapReference::PromiseRecord(record_id)) => {
+                self.promise_records.remember(record_id)
+            }
             Some(HeapReference::AwaitRecord(record_id)) => self.await_records.remember(record_id),
             Some(HeapReference::IteratorRecord(record_id)) => {
                 self.iterator_records.remember(record_id)
@@ -3055,7 +3110,9 @@ impl Heap {
         let fills = |count: usize| dense_storage_fits(count.saturating_add(sparse_count), length);
         let dense = self.array_elements(array);
         let dense_enough = fills(dense.map_or(0, |dense| dense.len()))
-            && fills(dense.map_or(0, |dense| dense.iter().filter(|value| !value.is_deleted()).count()));
+            && fills(dense.map_or(0, |dense| {
+                dense.iter().filter(|value| !value.is_deleted()).count()
+            }));
         if length <= MAX_DENSE_ARRAY_HOLE_LENGTH || dense_enough {
             self.materialize_sparse_array(array, length);
         }
@@ -3235,7 +3292,14 @@ impl Heap {
         if data.properties().has_inline_property_storage() {
             if !data.store_inline_narrow(slot, value) {
                 let length = self.properties.len(data.properties());
-                widen_inline_storage(data, &mut self.properties, data.shape(), length, slot, value);
+                widen_inline_storage(
+                    data,
+                    &mut self.properties,
+                    data.shape(),
+                    length,
+                    slot,
+                    value,
+                );
             }
             return true;
         }
@@ -3278,7 +3342,13 @@ impl Heap {
     /// `property_add` to a direct object's record at `slot`, which the caller proved its
     /// storage length (a cached add's recorded slot), without deriving it again.
     #[inline(always)]
-    pub(crate) fn record_property_add_at(&mut self, object: Value, slot: usize, value: Value, shape: u32) {
+    pub(crate) fn record_property_add_at(
+        &mut self,
+        object: Value,
+        slot: usize,
+        value: Value,
+        shape: u32,
+    ) {
         let Some(record_id) = object.direct_object_index() else {
             return self.property_add(object, value, shape);
         };
@@ -3298,7 +3368,13 @@ impl Heap {
     /// `record_property_add_at` out of line, for an add whose storage moves or whose store
     /// the write barrier logs, so a caller's plain appends keep their code call-free.
     #[inline(never)]
-    pub(crate) fn record_property_add_moving(&mut self, object: Value, slot: usize, value: Value, shape: u32) {
+    pub(crate) fn record_property_add_moving(
+        &mut self,
+        object: Value,
+        slot: usize,
+        value: Value,
+        shape: u32,
+    ) {
         self.record_property_add_at(object, slot, value, shape);
     }
 
@@ -3307,7 +3383,13 @@ impl Heap {
     /// the write barrier would log is left to the caller (`false`, nothing changed), as for
     /// `record_property_set_flat`, so this one makes no call.
     #[inline(always)]
-    pub(crate) fn record_property_append_plain(&mut self, record_id: u32, slot: usize, value: Value, shape: u32) -> bool {
+    pub(crate) fn record_property_append_plain(
+        &mut self,
+        record_id: u32,
+        slot: usize,
+        value: Value,
+        shape: u32,
+    ) -> bool {
         if self.object_records.store_logs(record_id, value) {
             return false;
         }
@@ -3418,7 +3500,13 @@ impl Heap {
                 work.push(proto);
             }
         }
-        object_roots(trace_kind, owner, object.shape(), object.was_used_as_prototype(), work);
+        object_roots(
+            trace_kind,
+            owner,
+            object.shape(),
+            object.was_used_as_prototype(),
+            work,
+        );
         object.visit_extras_roots(|value| work.push(value));
         if let Some(values) = object.inline_properties() {
             for value in values {
@@ -3544,7 +3632,11 @@ impl Heap {
                 object(&function.object);
                 work.extend([function.env, function.realm]);
             }
-            Cell::WasmGlobal { header, value: global, .. } => {
+            Cell::WasmGlobal {
+                header,
+                value: global,
+                ..
+            } => {
                 object(&header.object);
                 work.push(*global);
             }
@@ -3557,7 +3649,8 @@ impl Heap {
             } => {
                 work.push(*parent);
                 work.extend(slots.roots());
-                let (dynamic_bindings, with_objects) = (scope.dynamic_bindings(), scope.with_objects());
+                let (dynamic_bindings, with_objects) =
+                    (scope.dynamic_bindings(), scope.with_objects());
                 match dynamic_bindings {
                     EnvironmentBindings::Owned(bindings) => {
                         work.extend(bindings.iter().map(|(_, value)| *value));
@@ -3567,7 +3660,11 @@ impl Heap {
                 work.extend(with_objects.iter().copied());
             }
             Cell::WasmElements(elements) => work.extend(elements.iter().copied()),
-            Cell::WasmTable { object: value, elements, .. } => {
+            Cell::WasmTable {
+                object: value,
+                elements,
+                ..
+            } => {
                 object(value);
                 work.extend(elements.iter().copied());
             }
@@ -3614,7 +3711,10 @@ impl Heap {
                 work.push(target.function);
                 work.push(target.view_environment);
             }
-            Cell::WasmObject { object: value, slot } => {
+            Cell::WasmObject {
+                object: value,
+                slot,
+            } => {
                 object(value);
                 if let crate::heap::WasmObjectSlot::Instance { exports } = slot {
                     work.push(*exports);
@@ -3813,8 +3913,7 @@ impl Heap {
                 | Cell::WasmExtern(_)
                 | Cell::WasmTag { .. } => 0,
                 Cell::Promise(promise) => {
-                    size_of::<PromiseCell>()
-                        + promise.record.reaction_heap_bytes()
+                    size_of::<PromiseCell>() + promise.record.reaction_heap_bytes()
                 }
                 Cell::WasmException { payload, .. } => payload.capacity() * size_of::<Value>(),
                 Cell::WasmHostFunction { target, signature } => {
@@ -3967,7 +4066,13 @@ fn widen_inline_storage(
 /// `Heap::property_add` on the owner's storage: writes `value` at `slot`, the owner's
 /// storage length, and moves the owner to `shape`.
 #[inline(always)]
-fn append_property(data: &mut Object, properties: &mut ValueArena, slot: usize, value: Value, shape: u32) {
+fn append_property(
+    data: &mut Object,
+    properties: &mut ValueArena,
+    slot: usize,
+    value: Value,
+    shape: u32,
+) {
     let mut vector = data.properties();
     if !vector.has_inline_property_storage() {
         let before = vector.into_parts();

@@ -164,7 +164,9 @@ impl AtomSequence {
         // SAFETY: `appended` is borrowed only within this sequence's methods, none of which
         // re-enters another, so no mutable borrow is live here.
         let chunks = unsafe { &*self.appended.get() };
-        chunks.last().map_or(0, |last| (chunks.len() - 1) * ATOM_SEQUENCE_CHUNK + last.len())
+        chunks.last().map_or(0, |last| {
+            (chunks.len() - 1) * ATOM_SEQUENCE_CHUNK + last.len()
+        })
     }
 
     pub(crate) fn append(&self, name: JsString) {

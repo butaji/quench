@@ -1,6 +1,6 @@
 mod compiled;
-mod js_compiled;
 mod jit_backend;
+mod js_compiled;
 mod shape_transitions;
 mod snapshot;
 mod startup_intrinsics;
@@ -20,9 +20,9 @@ use crate::bytecode::{
 #[cfg(feature = "profile-memory")]
 use crate::heap::CellKind;
 use crate::heap::{
-    CallSiteLocation, CallSiteName, CallSiteRecord, Cell, FunctionKind, FunctionRecord, GcTraceKind, IteratorRecord, Heap, IteratorConsumer,
-    IteratorHelper, IteratorKind, Native, Object, ProtoLink, ProxyKind, RootId, StackData, TypedArrayKind,
-    WeakHandle,
+    CallSiteLocation, CallSiteName, CallSiteRecord, Cell, FunctionKind, FunctionRecord,
+    GcTraceKind, Heap, IteratorConsumer, IteratorHelper, IteratorKind, IteratorRecord, Native,
+    Object, ProtoLink, ProxyKind, RootId, StackData, TypedArrayKind, WeakHandle,
 };
 use crate::host::{CapabilityId, Host, HostContext};
 use crate::profile::Profile;
@@ -111,18 +111,13 @@ mod dispatch_fast;
 mod dispatch_frame;
 mod dispatch_wasm;
 mod dynamic_strings;
-#[cfg(feature = "profile-lane-exits")]
-mod lane_exits;
 mod embedding;
-mod provenance;
-mod inspection;
 mod environment;
 mod equality;
 mod error;
 mod eval;
 mod fdlibm_math;
 mod field_cache;
-mod site_table;
 mod finalization;
 mod function;
 mod function_cache;
@@ -131,6 +126,7 @@ mod generator;
 mod group_by;
 mod host_function;
 mod index;
+mod inspection;
 mod intl_collator;
 mod intl_datetime;
 mod intl_datetime_parts;
@@ -143,26 +139,25 @@ mod intl_plural_rules;
 mod intl_relative;
 mod intl_segmenter;
 mod iterator_list;
+#[cfg(feature = "profile-lane-exits")]
+mod lane_exits;
 mod lazy_data_property;
 mod local_time;
 mod property_definition;
+mod provenance;
+mod site_table;
 use group_by::GroupByKind;
 use property_definition::PropertyDefinitionKind;
+mod enumerable_key_memo;
 mod iterators;
 mod json;
 mod method_cache;
-mod plain_equality;
 mod module;
+mod name_atom_memo;
 mod number;
 mod object;
-mod shape_memo;
-mod symbol_write_proof;
-mod symbol_load_proof;
-mod private_site_home;
-mod enumerable_key_memo;
-mod name_atom_memo;
-mod object_assignment;
 mod object_array;
+mod object_assignment;
 mod object_builtins;
 mod object_descriptors;
 mod object_get;
@@ -172,16 +167,22 @@ mod object_static;
 mod object_symbols;
 #[cfg(test)]
 mod object_tests;
+mod plain_equality;
+mod private_site_home;
 mod property_key;
+mod shape_memo;
+mod symbol_load_proof;
+mod symbol_write_proof;
 use call_arguments::CallArguments;
 use object::AtomClass;
 pub(crate) use program_store::ProgramId;
-pub(crate) use regexp::RegExpFlags;
 use program_store::{ModuleImport, ProgramStore};
 use promise::PromiseRuntime;
 use property_key::PropertyKey;
+pub(crate) use regexp::RegExpFlags;
 mod operations;
 pub(crate) use operations::number_is_truthy;
+mod owned_clone_native;
 mod primitives;
 pub(crate) mod program_store;
 mod promise;
@@ -197,8 +198,6 @@ mod sort;
 mod string;
 mod string_cache;
 mod string_extra;
-mod value_serializer;
-mod owned_clone_native;
 mod superinstruction;
 mod symbol;
 mod temporal;
@@ -222,19 +221,21 @@ mod typed_array_access;
 mod typed_array_base64;
 mod typed_array_construct;
 mod typed_array_install;
+mod value_serializer;
 mod vm_init;
 pub(crate) mod wtf16;
 pub use error::JsError;
 pub use value_serializer::{
-    write_double, write_raw_bytes, write_uint32, write_uint64, HostObjectRead, SerializedValue, SharedWireInput, ValueDeserializer,
-    ValueSerializer, WireInput, WireOutput, WIRE_FORMAT_VERSION,
+    HostObjectRead, SerializedValue, SharedWireInput, ValueDeserializer, ValueSerializer,
+    WIRE_FORMAT_VERSION, WireInput, WireOutput, write_double, write_raw_bytes, write_uint32,
+    write_uint64,
 };
 pub(crate) use value_serializer::{ReadHooks, WriteHooks};
 use wtf16::JsString;
 #[cfg(test)]
-mod tests;
-#[cfg(test)]
 mod closure_retention_tests;
+#[cfg(test)]
+mod tests;
 #[derive(Clone)]
 pub(super) struct Frame {
     // Actual callable identity is distinct from the code ID and captured environment.
@@ -325,7 +326,11 @@ pub(super) struct CaptureWalk {
 
 impl Frame {
     fn source_instruction_pc(&self) -> usize {
-        if self.pc_is_resume { self.pc.saturating_sub(1) } else { self.pc }
+        if self.pc_is_resume {
+            self.pc.saturating_sub(1)
+        } else {
+            self.pc
+        }
     }
 
     fn empty(program: ProgramId, with_base: usize) -> Self {
@@ -653,8 +658,12 @@ struct ParkedRealm {
 /// One `typeof` name per `crate::ValueType`, indexed by its discriminant; `Function` is the
 /// last type.
 const TYPEOF_NAMES: usize = crate::ValueType::Function as usize + 1;
-const REALM_FOLLOWING_PROTOTYPES: [Native; 4] =
-    [Native::Object, Native::Function, Native::Array, Native::String];
+const REALM_FOLLOWING_PROTOTYPES: [Native; 4] = [
+    Native::Object,
+    Native::Function,
+    Native::Array,
+    Native::String,
+];
 #[derive(Clone, Copy, PartialEq, Eq)]
 struct FieldCache {
     receiver: u32,
@@ -839,7 +848,8 @@ impl FieldAddCacheSet {
     }
     #[inline(always)]
     fn find(&self, source_shape: u32, atom: Atom) -> Option<&FieldAddCache> {
-        let matches = |cache: &&FieldAddCache| cache.source_shape == source_shape && cache.atom == atom;
+        let matches =
+            |cache: &&FieldAddCache| cache.source_shape == source_shape && cache.atom == atom;
         if self.len > 0 && matches(&&self.first) {
             return Some(&self.first);
         }
@@ -848,12 +858,15 @@ impl FieldAddCacheSet {
     #[inline(always)]
     fn find_mut(&mut self, source_shape: u32, atom: Atom) -> Option<&mut FieldAddCache> {
         let len = usize::from(self.len);
-        let matches = |cache: &FieldAddCache| cache.source_shape == source_shape && cache.atom == atom;
+        let matches =
+            |cache: &FieldAddCache| cache.source_shape == source_shape && cache.atom == atom;
         if len > 0 && matches(&self.first) {
             return Some(&mut self.first);
         }
         let rest = self.rest.as_deref_mut()?;
-        rest[..len.saturating_sub(1)].iter_mut().find(|cache| matches(cache))
+        rest[..len.saturating_sub(1)]
+            .iter_mut()
+            .find(|cache| matches(cache))
     }
     /// Replaces the entry for the same source shape and atom, else appends, evicting the oldest
     /// entry when the set is full.
@@ -881,7 +894,9 @@ impl FieldAddCacheSet {
         let len = kept + 1;
         self.first = entries[0];
         if len > 1 {
-            let rest = self.rest.get_or_insert_with(|| Box::new([FieldAddCache::EMPTY; FIELD_ADD_CACHE_WAYS - 1]));
+            let rest = self
+                .rest
+                .get_or_insert_with(|| Box::new([FieldAddCache::EMPTY; FIELD_ADD_CACHE_WAYS - 1]));
             rest[..len - 1].copy_from_slice(&entries[1..len]);
         }
         self.len = len as u8;
@@ -1101,10 +1116,15 @@ struct StringConcatCache {
 #[derive(Clone, Copy)]
 enum ShapeTransition {
     Root,
-    FunctionName { name: Atom },
+    FunctionName {
+        name: Atom,
+    },
     FunctionNameReconfigured,
     FunctionLengthReconfigured,
-    Constructed { constructor: Value, new_target_is_base: bool },
+    Constructed {
+        constructor: Value,
+        new_target_is_base: bool,
+    },
     Add {
         key: property_key::PropertyKey,
         slot: u32,
@@ -1257,7 +1277,11 @@ impl ShapeAttributes {
     }
 
     /// The accessor functions, given the property's slot value for a `SLOT_GETTER` record.
-    fn functions(self, accessors: &[ShapeAccessors], slot_value: impl FnOnce() -> Option<Value>) -> ShapeAccessors {
+    fn functions(
+        self,
+        accessors: &[ShapeAccessors],
+        slot_value: impl FnOnce() -> Option<Value>,
+    ) -> ShapeAccessors {
         if self.slot_getter() {
             return (slot_value(), None);
         }
@@ -1267,7 +1291,11 @@ impl ShapeAttributes {
             .unwrap_or((None, None))
     }
 
-    fn attributes(self, accessors: &[ShapeAccessors], slot_value: impl FnOnce() -> Option<Value>) -> PropertyAttributes {
+    fn attributes(
+        self,
+        accessors: &[ShapeAccessors],
+        slot_value: impl FnOnce() -> Option<Value>,
+    ) -> PropertyAttributes {
         let (getter, setter) = self.functions(accessors, slot_value);
         PropertyAttributes {
             writable: self.writable,
@@ -1284,7 +1312,14 @@ impl ShapeTransition {
         match self {
             Self::Add { key, .. } => key.symbol_value().is_some(),
             Self::Descriptor { attributes, .. } => attributes.table_accessors(),
-            Self::Root | Self::FunctionName { .. } | Self::FunctionNameReconfigured | Self::FunctionLengthReconfigured | Self::Constructed { .. } | Self::Delete { .. } | Self::Vacant | Self::Dictionary { .. } => false,
+            Self::Root
+            | Self::FunctionName { .. }
+            | Self::FunctionNameReconfigured
+            | Self::FunctionLengthReconfigured
+            | Self::Constructed { .. }
+            | Self::Delete { .. }
+            | Self::Vacant
+            | Self::Dictionary { .. } => false,
         }
     }
 
@@ -1292,12 +1327,18 @@ impl ShapeTransition {
         match self {
             Self::FunctionName { name } => Some(ShapeTransitionKey::FunctionName(name)),
             Self::FunctionNameReconfigured => Some(ShapeTransitionKey::FunctionNameReconfigured),
-            Self::FunctionLengthReconfigured => Some(ShapeTransitionKey::FunctionLengthReconfigured),
-            Self::Constructed { constructor, new_target_is_base } => Some(ShapeTransitionKey::Constructed(constructor, new_target_is_base)),
+            Self::FunctionLengthReconfigured => {
+                Some(ShapeTransitionKey::FunctionLengthReconfigured)
+            }
+            Self::Constructed {
+                constructor,
+                new_target_is_base,
+            } => Some(ShapeTransitionKey::Constructed(
+                constructor,
+                new_target_is_base,
+            )),
             Self::Add {
-                key,
-                attributes,
-                ..
+                key, attributes, ..
             } => Some(ShapeTransitionKey::Add(key, attributes)),
             // The transition table outlives individual properties. Never put
             // accessor values in a key, where they would become strong roots.
@@ -1452,15 +1493,19 @@ impl ShapeFacts {
 
     fn extended_by(self, transition: ShapeTransition) -> Self {
         let introduced = |fact: bool, bit: u8| if fact { bit } else { 0 };
-        let descriptor = |test: fn(ShapeAttributes) -> bool| {
-            matches!(transition, ShapeTransition::Descriptor { attributes, .. } if test(attributes))
-        };
+        let descriptor = |test: fn(ShapeAttributes) -> bool| matches!(transition, ShapeTransition::Descriptor { attributes, .. } if test(attributes));
         Self(
             self.0
                 | introduced(transition.introduces_gc_roots(), Self::MAY_HAVE_GC_ROOTS)
                 | introduced(descriptor(ShapeAttributes::slot_getter), Self::SLOT_GETTERS)
-                | introduced(descriptor(|attributes| attributes.accessor), Self::ACCESSORS)
-                | introduced(descriptor(ShapeAttributes::table_accessors), Self::TABLE_ACCESSORS),
+                | introduced(
+                    descriptor(|attributes| attributes.accessor),
+                    Self::ACCESSORS,
+                )
+                | introduced(
+                    descriptor(ShapeAttributes::table_accessors),
+                    Self::TABLE_ACCESSORS,
+                ),
         )
     }
 
@@ -1760,7 +1805,7 @@ pub(crate) struct Vm<H> {
     /// carries any.
     with_scope_entered: bool,
     test262_agent: Test262AgentState,
-    shared_async_waiters:Vec<atomics::SharedAsyncWaiter>,
+    shared_async_waiters: Vec<atomics::SharedAsyncWaiter>,
     programs: ProgramStore,
     program_cache_layouts: Vec<ProgramCacheLayout>,
     /// The register file of the frame the general loop dispatches; see `run_general_loop`.
@@ -1986,8 +2031,16 @@ impl<H: Host> Vm<H> {
                 if total == 0 {
                     continue;
                 }
-                let Some(code) = residual.function_get(function) else { continue };
-                rows.push((total, code.registers, code.local_atoms.len(), program, function));
+                let Some(code) = residual.function_get(function) else {
+                    continue;
+                };
+                rows.push((
+                    total,
+                    code.registers,
+                    code.local_atoms.len(),
+                    program,
+                    function,
+                ));
             }
         }
         let all: u64 = rows.iter().map(|row| row.0).sum();
@@ -1999,13 +2052,21 @@ impl<H: Host> Vm<H> {
         rows.sort_unstable_by(|a, b| b.0.cmp(&a.0));
         eprintln!("register-width: dispatches {all}, in functions over the root mask {wide}");
         for (total, registers, locals, program, function) in rows.iter().take(15) {
-            eprintln!("  {total:>12} registers={registers} locals={locals} program={program} function={function}");
+            eprintln!(
+                "  {total:>12} registers={registers} locals={locals} program={program} function={function}"
+            );
         }
     }
 
-    pub(crate) fn execution_interrupt_handle(&self)->crate::ExecutionInterrupt { self.execution_interrupt.clone() }
-    pub(super) fn check_execution_interrupt(&self)->Result<(),JsError> {
-        if self.execution_interrupt.is_termination_requested() { Err(JsError::execution_terminated()) } else { Ok(()) }
+    pub(crate) fn execution_interrupt_handle(&self) -> crate::ExecutionInterrupt {
+        self.execution_interrupt.clone()
+    }
+    pub(super) fn check_execution_interrupt(&self) -> Result<(), JsError> {
+        if self.execution_interrupt.is_termination_requested() {
+            Err(JsError::execution_terminated())
+        } else {
+            Ok(())
+        }
     }
 
     /// Makes `global`'s realm current, carrying each realm's global lexical
@@ -2031,13 +2092,16 @@ impl<H: Host> Vm<H> {
                     &mut self.realm.immutable_global_lexical_bindings,
                 ),
             },
-            prototypes: REALM_FOLLOWING_PROTOTYPES.map(|native| *self.realm_prototype_field(native)),
+            prototypes: REALM_FOLLOWING_PROTOTYPES
+                .map(|native| *self.realm_prototype_field(native)),
         };
         let parked = match self.realm.parked.replace(leaving) {
             Some(parked) if parked.global == global => Some(parked),
             parked => {
                 if let Some(parked) = parked {
-                    self.realm.global_lexical_states.insert(parked.global, parked.state);
+                    self.realm
+                        .global_lexical_states
+                        .insert(parked.global, parked.state);
                 }
                 None
             }
@@ -2048,13 +2112,17 @@ impl<H: Host> Vm<H> {
                 // Natives are shared by every realm and allocate from these fields, so the
                 // fields follow the active realm: a native called from a realm builds that
                 // realm's objects.
-                for (native, prototype) in REALM_FOLLOWING_PROTOTYPES.into_iter().zip(parked.prototypes) {
-                    debug_assert!(self
-                        .realm
-                        .intrinsics
-                        .builtin_prototypes
-                        .get(&(global, native))
-                        .is_none_or(|intrinsic| *intrinsic == prototype));
+                for (native, prototype) in REALM_FOLLOWING_PROTOTYPES
+                    .into_iter()
+                    .zip(parked.prototypes)
+                {
+                    debug_assert!(
+                        self.realm
+                            .intrinsics
+                            .builtin_prototypes
+                            .get(&(global, native))
+                            .is_none_or(|intrinsic| *intrinsic == prototype)
+                    );
                     *self.realm_prototype_field(native) = prototype;
                 }
                 parked.state
@@ -2070,7 +2138,10 @@ impl<H: Host> Vm<H> {
                         *self.realm_prototype_field(native) = prototype;
                     }
                 }
-                self.realm.global_lexical_states.remove(&global).unwrap_or_default()
+                self.realm
+                    .global_lexical_states
+                    .remove(&global)
+                    .unwrap_or_default()
             }
         };
         self.realm.global_lexical_declarations = state.declarations;
@@ -2259,14 +2330,16 @@ impl<H: Host> Vm<H> {
         if current.function != ROOT_FUNCTION_ID {
             return;
         }
-        let Some(atom) = program.function(ROOT_FUNCTION_ID as usize)
+        let Some(atom) = program
+            .function(ROOT_FUNCTION_ID as usize)
             .local_atoms
             .get(slot)
             .copied()
         else {
             return;
         };
-        if program.function(ROOT_FUNCTION_ID as usize)
+        if program
+            .function(ROOT_FUNCTION_ID as usize)
             .global_lexical_atoms()
             .contains(&atom)
         {
@@ -2358,7 +2431,10 @@ impl<H: Host> Vm<H> {
 
     /// Installs the realm and the host as `execute_deferred_jobs` does, without running the
     /// program: the state a startup snapshot is taken from (`write_snapshot`).
-    pub(crate) fn initialize_for_snapshot(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
+    pub(crate) fn initialize_for_snapshot(
+        &mut self,
+        program: &ResidualProgram,
+    ) -> Result<(), JsError> {
         if program.functions.is_empty() {
             return Err(JsError::validation("program has no entry function".into()));
         }
@@ -2463,16 +2539,29 @@ impl<H: Host> Vm<H> {
         let gc = self.heap.gc_profile();
         eprintln!(
             "{{\"kind\":\"quench-gc-time\",\"collections\":{collections},\"full_collections\":{},\"full_mark_nanos\":{},\"minor_mark_nanos\":{},\"mark_nanos\":{},\"sweep_nanos\":{},\"sweep_phase_nanos\":{:?},\"mark_clear_nanos\":{},\"vm_owner_edges_nanos\":{},\"vm_roots_nanos\":{},\"vm_shape_setup_nanos\":{},\"vm_after_nanos\":{}}}",
-            gc.full_collections, gc.full_mark_nanos, gc.minor_mark_nanos,
-            gc.mark_nanos, gc.sweep_nanos, gc.sweep_phase_nanos, gc.mark_clear_nanos, gc.vm_phase_nanos[0], gc.vm_phase_nanos[1], gc.vm_phase_nanos[2], gc.vm_phase_nanos[3],
+            gc.full_collections,
+            gc.full_mark_nanos,
+            gc.minor_mark_nanos,
+            gc.mark_nanos,
+            gc.sweep_nanos,
+            gc.sweep_phase_nanos,
+            gc.mark_clear_nanos,
+            gc.vm_phase_nanos[0],
+            gc.vm_phase_nanos[1],
+            gc.vm_phase_nanos[2],
+            gc.vm_phase_nanos[3],
         );
         // Sizes of the VM-side tables beside the heap: a table that grows with work done
         // rather than with live data is retention.
         let mut kinds: std::collections::BTreeMap<&'static str, usize> = Default::default();
-        self.heap.for_each_live_cell(|cell| *kinds.entry(cell.profile_variant_name()).or_default() += 1);
+        self.heap
+            .for_each_live_cell(|cell| *kinds.entry(cell.profile_variant_name()).or_default() += 1);
         let mut kinds: Vec<_> = kinds.into_iter().collect();
         kinds.sort_by_key(|(_, count)| std::cmp::Reverse(*count));
-        eprintln!("{{\"kind\":\"quench-live-cells\",\"top\":{:?}}}", &kinds[..kinds.len().min(8)]);
+        eprintln!(
+            "{{\"kind\":\"quench-live-cells\",\"top\":{:?}}}",
+            &kinds[..kinds.len().min(8)]
+        );
         let promise = &self.realm.promise;
         eprintln!(
             "{{\"kind\":\"quench-vm-tables\",\"live_slots\":{},\"reaction_capabilities\":{},\"jobs\":{},\"descriptors\":{},\"function_values\":{},\"frames\":{},\"active_call_roots\":{}}}",
@@ -2497,7 +2586,11 @@ impl<H: Host> Vm<H> {
     pub(crate) fn report_function_use(&self) {
         let (mut functions, mut called, mut uncalled_bytes) = (0usize, 0usize, 0usize);
         for program in self.programs.residuals() {
-            for function in program.functions.iter().filter_map(crate::bytecode::FunctionSlot::record) {
+            for function in program
+                .functions
+                .iter()
+                .filter_map(crate::bytecode::FunctionSlot::record)
+            {
                 functions += 1;
                 if function.call_plan.get().is_some() {
                     called += 1;
@@ -2733,7 +2826,10 @@ impl<H: Host> Vm<H> {
             heap.cell_payload_bytes,
             shape_table_bytes,
             self.shapes.len(),
-            self.shapes.iter().filter(|shape| shape.dictionary_trigger.is_some()).count(),
+            self.shapes
+                .iter()
+                .filter(|shape| shape.dictionary_trigger.is_some())
+                .count(),
             shape_lookup_bytes,
             transition_table_bytes,
             descriptor_side_table_bytes,
@@ -2865,11 +2961,14 @@ impl<H: Host> Vm<H> {
         self.field_cache_writes = Some(Vec::new());
         program.prime_loop_decoding();
         self.inherited_field_caches.clear();
-        self.inherited_field_indices = site_table::SiteTable::with_empty(usize::from(program.cache_sites));
-        self.field_add_indices = site_table::SiteTable::with_empty(usize::from(program.cache_sites));
+        self.inherited_field_indices =
+            site_table::SiteTable::with_empty(usize::from(program.cache_sites));
+        self.field_add_indices =
+            site_table::SiteTable::with_empty(usize::from(program.cache_sites));
         self.field_add_sets.clear();
         self.keyed_adds.fill(FieldAddCache::EMPTY);
-        self.megamorphic_field_indices = site_table::SiteTable::with_empty(usize::from(program.cache_sites));
+        self.megamorphic_field_indices =
+            site_table::SiteTable::with_empty(usize::from(program.cache_sites));
         self.megamorphic_fields.clear();
         self.length_atom = self.intern_atom("length");
         self.prototype_atom = self.intern_atom("prototype");
@@ -2899,7 +2998,10 @@ impl<H: Host> Vm<H> {
         self.set_instanceof_has_instance_holder(Value::NULL);
         self.program_cache_layouts.clear();
         self.program_cache_layouts.push(ProgramCacheLayout {
-            shared_uncached_field: ProgramCacheLayout::shared_uncached_field(0, program.cache_sites),
+            shared_uncached_field: ProgramCacheLayout::shared_uncached_field(
+                0,
+                program.cache_sites,
+            ),
             ..ProgramCacheLayout::default()
         });
         self.set_active_program(ProgramId::MAIN);
@@ -3000,10 +3102,17 @@ impl<H: Host> Vm<H> {
 
     /// Lays out the cache tables of program `id`, with `sites` of each kind, after those of
     /// the programs before it.
-    pub(super) fn append_cache_layout(&mut self, id: ProgramId, sites: crate::bytecode::CacheSiteCounts) {
+    pub(super) fn append_cache_layout(
+        &mut self,
+        id: ProgramId,
+        sites: crate::bytecode::CacheSiteCounts,
+    ) {
         debug_assert_eq!(id.raw() as usize, self.program_cache_layouts.len());
         self.program_cache_layouts.push(ProgramCacheLayout {
-            shared_uncached_field: ProgramCacheLayout::shared_uncached_field(self.field_caches.len(), sites.fields),
+            shared_uncached_field: ProgramCacheLayout::shared_uncached_field(
+                self.field_caches.len(),
+                sites.fields,
+            ),
             field_base: self.field_caches.len(),
             method_base: self.method_caches.len(),
             object_base: self.object_shapes.len(),
@@ -3014,7 +3123,10 @@ impl<H: Host> Vm<H> {
         self.megamorphic_field_indices.extend_empty(fields);
         self.field_add_indices.extend_empty(fields);
         self.inherited_field_indices.extend_empty(fields);
-        self.method_caches.resize(self.method_caches.len() + sites.methods, [EMPTY_METHOD_CACHE; 2]);
+        self.method_caches.resize(
+            self.method_caches.len() + sites.methods,
+            [EMPTY_METHOD_CACHE; 2],
+        );
         self.object_shapes.extend_empty(sites.objects);
     }
     /// Makes `program` the executing program and caches its layout, the projection every cache
@@ -3030,7 +3142,9 @@ impl<H: Host> Vm<H> {
     /// Re-derive `active_field_entries` after the active program or the field cache table
     /// changed.
     pub(super) fn refresh_active_field_entries(&mut self) {
-        self.active_field_entries = self.field_caches.entries_from(self.active_layout.field_base);
+        self.active_field_entries = self
+            .field_caches
+            .entries_from(self.active_layout.field_base);
     }
 
     /// Constant `index` of the active program.
@@ -3117,7 +3231,8 @@ impl<H: Host> Vm<H> {
         // The roots are pushed as a slice: a chained iterator's extend cost a callback from an
         // array method about 60 instructions (`Array.prototype.map`, 1,000-element arrays).
         let start = self.active_call_roots.len();
-        self.active_call_roots.reserve(args.len() + CALL_ROOTS_BESIDE_ARGUMENTS);
+        self.active_call_roots
+            .reserve(args.len() + CALL_ROOTS_BESIDE_ARGUMENTS);
         self.active_call_roots.push(callee);
         self.active_call_roots.push(this);
         self.active_call_roots.extend_from_slice(args);
@@ -3186,7 +3301,8 @@ impl<H: Host> Vm<H> {
                 let numeric = program
                     .function_get(id as usize)
                     .is_some_and(|function| function.dispatch == DispatchClass::Numeric);
-                self.profile.call_target(1 + usize::from(numeric), args.len());
+                self.profile
+                    .call_target(1 + usize::from(numeric), args.len());
                 let active_program = self.replace_active_program(program_id);
                 let realm = self
                     .heap
@@ -3196,7 +3312,9 @@ impl<H: Host> Vm<H> {
                 let result = if program
                     .function_get(id as usize)
                     .is_some_and(|function| function.is_class_constructor)
-                    && !self.construct_target.is_some_and(|target| target.callee == callee)
+                    && !self
+                        .construct_target
+                        .is_some_and(|target| target.callee == callee)
                 {
                     Err(self.type_error(p, "class constructor cannot be called without new".into()))
                 } else {

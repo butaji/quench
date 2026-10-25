@@ -4,7 +4,10 @@
 
 use std::{process::Command, time::Duration};
 
-const CONTRACT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/node-tests/workers/worker_contract.cjs");
+const CONTRACT: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/node-tests/workers/worker_contract.cjs"
+);
 const CONTRACT_TIMEOUT: Duration = Duration::from_secs(60);
 
 #[test]
@@ -19,8 +22,17 @@ fn worker_threads_contract_matches_node() {
     });
     for observation in &observations {
         assert!(!observation.timed_out);
-        assert_eq!(observation.exit_code, Some(0), "{}", String::from_utf8_lossy(&observation.stderr));
-        assert!(observation.stderr.is_empty(), "{}", String::from_utf8_lossy(&observation.stderr));
+        assert_eq!(
+            observation.exit_code,
+            Some(0),
+            "{}",
+            String::from_utf8_lossy(&observation.stderr)
+        );
+        assert!(
+            observation.stderr.is_empty(),
+            "{}",
+            String::from_utf8_lossy(&observation.stderr)
+        );
     }
     assert_eq!(
         String::from_utf8_lossy(&observations[0].stdout),

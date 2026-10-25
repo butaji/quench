@@ -167,7 +167,9 @@ fn atom_hash_ascii(bytes: &[u8]) -> u64 {
     hasher.write_usize(bytes.len());
     let mut words = bytes.chunks_exact(HASH_UNITS_PER_WORD);
     for word in &mut words {
-        hasher.write_u64(widen_ascii_word(u32::from_le_bytes(word.try_into().unwrap())));
+        hasher.write_u64(widen_ascii_word(u32::from_le_bytes(
+            word.try_into().unwrap(),
+        )));
     }
     for &byte in words.remainder() {
         hasher.write_u16(u16::from(byte));
@@ -195,7 +197,10 @@ mod tests {
         for len in 0..=text.len() {
             let ascii = &text.as_bytes()[..len];
             let wide: Vec<u16> = ascii.iter().map(|&byte| u16::from(byte)).collect();
-            assert_eq!(super::atom_hash_ascii(ascii), super::atom_hash_wide(len, wide.into_iter()));
+            assert_eq!(
+                super::atom_hash_ascii(ascii),
+                super::atom_hash_wide(len, wide.into_iter())
+            );
         }
     }
 }

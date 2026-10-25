@@ -14,7 +14,9 @@ fn field_base_in_bounds(base: u16, limit: u16, locals: u16) -> bool {
     base == FieldBase::THIS
         || base.0 == FieldBase::NESTED
         || base.local_index().is_some_and(|local| local < locals)
-        || base.register_index().is_some_and(|register| register < limit)
+        || base
+            .register_index()
+            .is_some_and(|register| register < limit)
 }
 
 fn operand_in_bounds(
@@ -572,10 +574,12 @@ impl ResidualProgram {
             {
                 return Err(format!("function {index} has an invalid parent"));
             }
-            let module_body = (self.kind == super::ProgramKind::Module && index == 0 && function.parent.is_none())
-                .then_some(self.module_link_plan.as_ref())
-                .flatten()
-                .map(|plan| (plan, &self.module_imports[..]));
+            let module_body = (self.kind == super::ProgramKind::Module
+                && index == 0
+                && function.parent.is_none())
+            .then_some(self.module_link_plan.as_ref())
+            .flatten()
+            .map(|plan| (plan, &self.module_imports[..]));
             if let Some(captured) = &function.selective_capture_slots
                 && ((module_body.is_none() && (index == 0 || function.parent.is_none()))
                     || captured.iter().any(|slot| *slot >= function.locals)
@@ -587,7 +591,12 @@ impl ResidualProgram {
             }
             if function.selective_capture_slots.is_some()
                 && (selective_capture_scope_unsafe[index]
-                    || !selective_capture_layout_is_eligible(function, index, module_body, &self.atoms))
+                    || !selective_capture_layout_is_eligible(
+                        function,
+                        index,
+                        module_body,
+                        &self.atoms,
+                    ))
             {
                 return Err(format!(
                     "function {index} has an ineligible selective capture layout"
@@ -603,7 +612,7 @@ impl ResidualProgram {
             let plain_local_slots = if self.kind == super::ProgramKind::Wasm {
                 vec![true; usize::from(function.locals)]
             } else {
-function.plain_local_slots(&self.superinstructions)
+                function.plain_local_slots(&self.superinstructions)
             };
             if let Some(initializer) = function.instance_initializer {
                 let valid = self
@@ -884,7 +893,11 @@ function.plain_local_slots(&self.superinstructions)
             }
         }
         for site in &self.field_sites {
-            if site.sources.iter().flatten().any(|(line, column)| *line == 0 || *column == 0)
+            if site
+                .sources
+                .iter()
+                .flatten()
+                .any(|(line, column)| *line == 0 || *column == 0)
                 || !field_base_in_bounds(site.base.0, REGISTER_MASK, 0)
                 || !atom_in_bounds(site.first.0, self.atoms.len())
                 || !cache_in_bounds(site.first.1, self.cache_sites)
@@ -941,9 +954,7 @@ function.plain_local_slots(&self.superinstructions)
         let mut depth = 0usize;
         for step in steps {
             let (taken, valid) = match *step {
-                super::LiteralStep::Constant(index) => {
-                    (0, (index as usize) < self.constants.len())
-                }
+                super::LiteralStep::Constant(index) => (0, (index as usize) < self.constants.len()),
                 super::LiteralStep::Array(count) => (count as usize, true),
                 super::LiteralStep::Object(site) => match self.object_sites.get(site as usize) {
                     Some(site) => (site.atoms.len(), true),
@@ -1075,8 +1086,8 @@ fn selective_capture_layout_is_eligible(
                             .is_ok_and(|slot| captured.binary_search(&slot).is_ok()))
             })
         });
-    let mapped_parameter_is_captured =
-        function.arguments_alias_parameters() && captured.iter().any(|slot| *slot < function.params);
+    let mapped_parameter_is_captured = function.arguments_alias_parameters()
+        && captured.iter().any(|slot| *slot < function.params);
     // A mapped `arguments` object shares the captured parameters, so it lives in the
     // environment with them; a body that keeps no `arguments` binding maps nothing.
     let mapped_arguments_are_captured = !mapped_parameter_is_captured
@@ -1090,7 +1101,10 @@ fn selective_capture_layout_is_eligible(
     let activation_splits = if let Some((plan, imports)) = module_body {
         function
             .module_environment_slots(plan, imports, |atom| {
-                usize::try_from(atom).ok().filter(|atom| *atom < atoms.len()).map(|atom| &atoms[atom])
+                usize::try_from(atom)
+                    .ok()
+                    .filter(|atom| *atom < atoms.len())
+                    .map(|atom| &atoms[atom])
             })
             .all(|slot| captured.binary_search(&slot).is_ok())
     } else {
@@ -1122,10 +1136,12 @@ mod tests {
         .unwrap();
         // Validation compiles every released function first.
         assert_eq!(program.validate(), Ok(()));
-        assert!(program
-            .functions
-            .iter()
-            .any(|function| function.rest && function.selective_capture_slots.is_some()));
+        assert!(
+            program
+                .functions
+                .iter()
+                .any(|function| function.rest && function.selective_capture_slots.is_some())
+        );
     }
 
     #[test]
@@ -1335,15 +1351,14 @@ mod tests {
             ),
         ] {
             for count in [0, minimum] {
-                let constructor = program(
-                    function(
-                        vec![
-                            Instr::new(op, 0, 0, count, 0),
-                            Instr::new(Op::Return, 0, 0, 0, 0),
-                        ],
-                        1,
-                        u32::MAX,
-                    ));
+                let constructor = program(function(
+                    vec![
+                        Instr::new(op, 0, 0, count, 0),
+                        Instr::new(Op::Return, 0, 0, 0, 0),
+                    ],
+                    1,
+                    u32::MAX,
+                ));
                 assert_eq!(constructor.validate().is_ok(), count != 0);
             }
         }
@@ -1358,41 +1373,41 @@ mod tests {
         ] {
             let expected = operator.input_count();
             for count in [0, expected - 1, expected, expected + 1] {
-                let access = program(
-                    function(
-                        vec![
-                            Instr::new(Op::WasmAtomicAccess, 0, 0, count, operator as u32),
-                            Instr::new(Op::Return, 0, 0, 0, 0),
-                        ],
-                        expected + 1,
-                        u32::MAX,
-                    ));
+                let access = program(function(
+                    vec![
+                        Instr::new(Op::WasmAtomicAccess, 0, 0, count, operator as u32),
+                        Instr::new(Op::Return, 0, 0, 0, 0),
+                    ],
+                    expected + 1,
+                    u32::MAX,
+                ));
                 assert_eq!(access.validate().is_ok(), count == expected);
             }
         }
-        let invalid_atomic = program(
-            function(
-                vec![
-                    Instr::new(Op::WasmAtomicAccess, 0, 0, 2, u32::from(u8::MAX)),
-                    Instr::new(Op::Return, 0, 0, 0, 0),
-                ],
-                4,
-                u32::MAX,
-            ));
+        let invalid_atomic = program(function(
+            vec![
+                Instr::new(Op::WasmAtomicAccess, 0, 0, 2, u32::from(u8::MAX)),
+                Instr::new(Op::Return, 0, 0, 0, 0),
+            ],
+            4,
+            u32::MAX,
+        ));
         assert!(invalid_atomic.validate().is_err());
-        let invalid_constant = program(
-            function(vec![Instr::new(Op::LoadConst, 0, 0, 0, 0)], 1, u32::MAX));
+        let invalid_constant = program(function(
+            vec![Instr::new(Op::LoadConst, 0, 0, 0, 0)],
+            1,
+            u32::MAX,
+        ));
         assert!(invalid_constant.validate().is_err());
 
-        let mut invalid_shuffle = program(
-            function(
-                vec![
-                    Instr::new(Op::WasmSimdShuffle, 0, 0, 0, 0),
-                    Instr::new(Op::Return, 0, 0, 0, 0),
-                ],
-                1,
-                u32::MAX,
-            ));
+        let mut invalid_shuffle = program(function(
+            vec![
+                Instr::new(Op::WasmSimdShuffle, 0, 0, 0, 0),
+                Instr::new(Op::Return, 0, 0, 0, 0),
+            ],
+            1,
+            u32::MAX,
+        ));
         invalid_shuffle
             .constants
             .push(super::super::Constant::WasmV128(
@@ -1402,15 +1417,14 @@ mod tests {
         invalid_shuffle.constants[0] =
             super::super::Constant::WasmV128([0; crate::wasm::V128_BYTES]);
         assert!(invalid_shuffle.validate().is_ok());
-        let mut invalid_selector = program(
-            function(
-                vec![
-                    Instr::new(Op::WasmSimd, 0, 0, 0, u32::from(u8::MAX)),
-                    Instr::new(Op::Return, 0, 0, 0, 0),
-                ],
-                1,
-                u32::MAX,
-            ));
+        let mut invalid_selector = program(function(
+            vec![
+                Instr::new(Op::WasmSimd, 0, 0, 0, u32::from(u8::MAX)),
+                Instr::new(Op::Return, 0, 0, 0, 0),
+            ],
+            1,
+            u32::MAX,
+        ));
         assert!(invalid_selector.validate().is_err());
         invalid_selector.functions[0].code[0] =
             Instr::new(Op::WasmI31, 0, 0, 0, u32::from(u8::MAX));
@@ -1450,37 +1464,44 @@ mod tests {
         invalid_selector.functions[0].code[0] = Instr::new(Op::WasmSimd, 0, 0, 0, 0);
         assert!(invalid_selector.validate().is_ok());
 
-        let invalid_field = program(
-            function(vec![Instr::new(Op::GetField, 0, 0, 0, 0)], 1, u32::MAX));
+        let invalid_field = program(function(
+            vec![Instr::new(Op::GetField, 0, 0, 0, 0)],
+            1,
+            u32::MAX,
+        ));
         assert!(invalid_field.validate().is_err());
 
-        let invalid_call = program(
-            function(
-                vec![Instr::new(
-                    Op::Call,
-                    0,
-                    0,
-                    0,
-                    super::super::ImmediateLayout::call_immediate(1, 1, false, false),
-                )],
-                1,
-                u32::MAX,
-            ));
+        let invalid_call = program(function(
+            vec![Instr::new(
+                Op::Call,
+                0,
+                0,
+                0,
+                super::super::ImmediateLayout::call_immediate(1, 1, false, false),
+            )],
+            1,
+            u32::MAX,
+        ));
         assert!(invalid_call.validate().is_err());
     }
 
     #[test]
     fn reachable_control_flow_cannot_fall_off_code() {
-        let fallthrough = program(
-            function(vec![Instr::new(Op::Nop, 0, 0, 0, 0)], 1, u32::MAX));
+        let fallthrough = program(function(vec![Instr::new(Op::Nop, 0, 0, 0, 0)], 1, u32::MAX));
         assert!(fallthrough.validate().is_err());
 
-        let branch_fallthrough = program(
-            function(vec![Instr::new(Op::JumpFalse, 0, 0, 0, 0)], 1, u32::MAX));
+        let branch_fallthrough = program(function(
+            vec![Instr::new(Op::JumpFalse, 0, 0, 0, 0)],
+            1,
+            u32::MAX,
+        ));
         assert!(branch_fallthrough.validate().is_err());
 
-        let loop_forever = program(
-            function(vec![Instr::new(Op::Jump, 0, 0, 0, 0)], 1, u32::MAX));
+        let loop_forever = program(function(
+            vec![Instr::new(Op::Jump, 0, 0, 0, 0)],
+            1,
+            u32::MAX,
+        ));
         assert!(loop_forever.validate().is_ok());
     }
 }

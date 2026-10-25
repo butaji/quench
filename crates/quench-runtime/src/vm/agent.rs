@@ -289,7 +289,9 @@ impl<H: Host> Vm<H> {
 
     fn agent_report_is_number(&self, index: usize) -> bool {
         self.test262_agent.reports.get(index).is_some_and(|report| {
-            self.heap.string(*report).is_some_and(|value| value.host_string().parse::<f64>().is_ok())
+            self.heap
+                .string(*report)
+                .is_some_and(|value| value.host_string().parse::<f64>().is_ok())
         })
     }
 

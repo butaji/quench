@@ -636,9 +636,7 @@ impl<H: Host> Vm<H> {
                 format!(".{trimmed}")
             }
         };
-        Ok(self
-            .heap
-            .alloc_string(format!("{time}{fraction}").into()))
+        Ok(self.heap.alloc_string(format!("{time}{fraction}").into()))
     }
 
     fn temporal_plain_time_with(

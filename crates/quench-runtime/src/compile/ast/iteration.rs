@@ -352,7 +352,9 @@ impl FunctionCompiler<'_, '_> {
             start: cleanup,
             end: close_end,
             target: close_error,
-            slot: self.local_slot(ignored_error).map(crate::bytecode::ThrownValueSlot::Local),
+            slot: self
+                .local_slot(ignored_error)
+                .map(crate::bytecode::ThrownValueSlot::Local),
             return_target: None,
             return_slot: None,
             with_depth: self.with_depth,

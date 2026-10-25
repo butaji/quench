@@ -2,7 +2,9 @@
 //! Values are written as their bits, every heap index being restored where it was.
 
 use super::*;
-use crate::snapshot::{read_list, snap_struct, snapshot_enum, Reader, Snap, SnapshotError, SnapshotResult, Writer};
+use crate::snapshot::{
+    Reader, Snap, SnapshotError, SnapshotResult, Writer, read_list, snap_struct, snapshot_enum,
+};
 
 snapshot_enum!(proxy_kind: ProxyKind { Object, Callable, Constructor });
 snapshot_enum!(typed_array_kind: TypedArrayKind {
@@ -154,7 +156,11 @@ fn read_object(reader: &mut Reader<'_>) -> SnapshotResult<Object> {
         1 => Object::tag_extras(Box::new(read_extras(reader)?)),
         _ => return Err(SnapshotError("invalid snapshot object".into())),
     };
-    Ok(Object { meta, auxiliary, payload })
+    Ok(Object {
+        meta,
+        auxiliary,
+        payload,
+    })
 }
 
 fn write_extras(writer: &mut Writer, extras: &ObjectExtras) -> SnapshotResult<()> {
@@ -180,7 +186,9 @@ fn write_extras(writer: &mut Writer, extras: &ObjectExtras) -> SnapshotResult<()
         side_descriptors,
     } = extras;
     if external_address.is_some() {
-        return Err(SnapshotError::unsupported("an object whose address an embedder observed"));
+        return Err(SnapshotError::unsupported(
+            "an object whose address an embedder observed",
+        ));
     }
     prototype_lookup::write(writer, *lookup);
     writer.values(&inline_properties.0);
@@ -189,7 +197,16 @@ fn write_extras(writer: &mut Writer, extras: &ObjectExtras) -> SnapshotResult<()
     if let Some(map) = arguments_map {
         writer.u16s(map);
     }
-    for flag in [*arguments_object, *raw_json, *error_data, *module_namespace, *structured_transfer_forbidden, *indexed_descriptors, *length_descriptor, *side_descriptors] {
+    for flag in [
+        *arguments_object,
+        *raw_json,
+        *error_data,
+        *module_namespace,
+        *structured_transfer_forbidden,
+        *indexed_descriptors,
+        *length_descriptor,
+        *side_descriptors,
+    ] {
         writer.bool(flag);
     }
     writer.option_value(*boxed_primitive);
@@ -221,23 +238,63 @@ fn read_extras(reader: &mut Reader<'_>) -> SnapshotResult<ObjectExtras> {
     let prototype_lookup = prototype_lookup::read(reader)?;
     let inline = reader.values()?;
     let inline_properties = DisplacedInline(
-        inline.try_into().map_err(|_| SnapshotError("invalid snapshot inline properties".into()))?,
+        inline
+            .try_into()
+            .map_err(|_| SnapshotError("invalid snapshot inline properties".into()))?,
     );
     let arena_start = reader.u32()?;
-    let arguments_map = if reader.bool()? { Some(reader.u16s()?) } else { None };
-    let [arguments_object, raw_json, error_data, module_namespace, structured_transfer_forbidden, indexed_descriptors, length_descriptor, side_descriptors] =
-        [reader.bool()?, reader.bool()?, reader.bool()?, reader.bool()?, reader.bool()?, reader.bool()?, reader.bool()?, reader.bool()?];
+    let arguments_map = if reader.bool()? {
+        Some(reader.u16s()?)
+    } else {
+        None
+    };
+    let [
+        arguments_object,
+        raw_json,
+        error_data,
+        module_namespace,
+        structured_transfer_forbidden,
+        indexed_descriptors,
+        length_descriptor,
+        side_descriptors,
+    ] = [
+        reader.bool()?,
+        reader.bool()?,
+        reader.bool()?,
+        reader.bool()?,
+        reader.bool()?,
+        reader.bool()?,
+        reader.bool()?,
+        reader.bool()?,
+    ];
     let boxed_primitive = reader.option_value()?;
     let structured_serialization = structured_serialization::read(reader)?;
-    let module_bindings = read_list(reader, |reader| Ok((reader.u32()?, ProgramId::from_raw(reader.u32()?), reader.u16()?)))?;
-    let deferred_module = if reader.bool()? { Some(read_module_source(reader)?) } else { None };
+    let module_bindings = read_list(reader, |reader| {
+        Ok((
+            reader.u32()?,
+            ProgramId::from_raw(reader.u32()?),
+            reader.u16()?,
+        ))
+    })?;
+    let deferred_module = if reader.bool()? {
+        Some(read_module_source(reader)?)
+    } else {
+        None
+    };
     let private_elements = read_list(reader, |reader| {
         Ok(PrivateElement {
-            brand: PrivateBrand { home: reader.value()?, name: reader.u32()? },
+            brand: PrivateBrand {
+                home: reader.value()?,
+                name: reader.u32()?,
+            },
             data: reader.option_value()?,
         })
     })?;
-    let stack_data = if reader.bool()? { Some(read_stack_data(reader)?) } else { None };
+    let stack_data = if reader.bool()? {
+        Some(read_stack_data(reader)?)
+    } else {
+        None
+    };
     Ok(ObjectExtras {
         prototype_lookup,
         inline_properties,
@@ -274,14 +331,29 @@ fn read_module_source(reader: &mut Reader<'_>) -> SnapshotResult<crate::ModuleSo
     Ok(crate::ModuleSource {
         name: reader.string()?,
         source: reader.string()?.into(),
-        original_bytes: if reader.bool()? { Some(reader.bytes()?.into()) } else { None },
+        original_bytes: if reader.bool()? {
+            Some(reader.bytes()?.into())
+        } else {
+            None
+        },
     })
 }
 
 fn write_call_site(writer: &mut Writer, record: &CallSiteRecord) {
-    let CallSiteRecord { location, name, this_value, hide_identity, is_constructor, eval_origin } = record;
+    let CallSiteRecord {
+        location,
+        name,
+        this_value,
+        hide_identity,
+        is_constructor,
+        eval_origin,
+    } = record;
     match location {
-        CallSiteLocation::Source { file_name, line, column } => {
+        CallSiteLocation::Source {
+            file_name,
+            line,
+            column,
+        } => {
             writer.u8(0);
             writer.str(file_name);
             writer.u32(*line);
@@ -311,7 +383,11 @@ fn write_call_site(writer: &mut Writer, record: &CallSiteRecord) {
 
 fn read_call_site(reader: &mut Reader<'_>) -> SnapshotResult<CallSiteRecord> {
     let location = match reader.u8()? {
-        0 => CallSiteLocation::Source { file_name: reader.string()?, line: reader.u32()?, column: reader.u32()? },
+        0 => CallSiteLocation::Source {
+            file_name: reader.string()?,
+            line: reader.u32()?,
+            column: reader.u32()?,
+        },
         1 => CallSiteLocation::Native,
         _ => return Err(SnapshotError("invalid snapshot call site".into())),
     };
@@ -327,7 +403,11 @@ fn read_call_site(reader: &mut Reader<'_>) -> SnapshotResult<CallSiteRecord> {
         this_value: reader.value()?,
         hide_identity: reader.bool()?,
         is_constructor: reader.bool()?,
-        eval_origin: if reader.bool()? { Some(JsString::read_snapshot(reader)?) } else { None },
+        eval_origin: if reader.bool()? {
+            Some(JsString::read_snapshot(reader)?)
+        } else {
+            None
+        },
     })
 }
 
@@ -360,7 +440,11 @@ fn read_stack_data(reader: &mut Reader<'_>) -> SnapshotResult<StackData> {
     Ok(match reader.u8()? {
         0 => StackData::Captured {
             records: read_list(reader, read_call_site)?,
-            source: if reader.bool()? { Some(crate::bytecode::ProgramSource::read_snapshot(reader)?) } else { None },
+            source: if reader.bool()? {
+                Some(crate::bytecode::ProgramSource::read_snapshot(reader)?)
+            } else {
+                None
+            },
         },
         1 => StackData::Formatted(reader.value()?),
         2 => StackData::CallSite(read_call_site(reader)?),
@@ -378,7 +462,9 @@ impl ArrayObject {
     pub(crate) fn read_snapshot(reader: &mut Reader<'_>) -> SnapshotResult<Self> {
         let object = read_object(reader)?;
         if !object.is_array() {
-            return Err(SnapshotError("snapshot array without its array flag".into()));
+            return Err(SnapshotError(
+                "snapshot array without its array flag".into(),
+            ));
         }
         let elements = super::super::ArrayElements::from(reader.values()?);
         Ok(Self { object, elements })
@@ -397,7 +483,12 @@ impl Object {
 
 impl FunctionRecord {
     pub(crate) fn write_snapshot(&self, writer: &mut Writer) -> SnapshotResult<()> {
-        let Self { object, realm, env, kind } = self;
+        let Self {
+            object,
+            realm,
+            env,
+            kind,
+        } = self;
         write_object(writer, object)?;
         writer.value(*realm);
         writer.value(*env);
@@ -417,8 +508,22 @@ impl FunctionRecord {
 
 impl IteratorRecord {
     pub(crate) fn write_snapshot(&self, writer: &mut Writer) -> SnapshotResult<()> {
-        let Self { object, source, kind, index, done, ext } = self;
-        let IteratorExt { position_high, next_method, helper, helper_running, helper_started, generator } = ext;
+        let Self {
+            object,
+            source,
+            kind,
+            index,
+            done,
+            ext,
+        } = self;
+        let IteratorExt {
+            position_high,
+            next_method,
+            helper,
+            helper_running,
+            helper_started,
+            generator,
+        } = ext;
         write_object(writer, object)?;
         writer.value(*source);
         iterator_kind::write(writer, *kind);
@@ -498,12 +603,22 @@ impl crate::heap::PromiseCell {
                 on_fulfilled: reader.value()?,
                 on_rejected: reader.value()?,
                 next: reader.value()?,
-                execution_context: if reader.bool()? { Some(crate::HostExecutionContext(reader.u64()?)) } else { None }.into(),
+                execution_context: if reader.bool()? {
+                    Some(crate::HostExecutionContext(reader.u64()?))
+                } else {
+                    None
+                }
+                .into(),
             })
         })?;
         let rejection = promise_rejection::read(reader)?;
         let rejection_id = std::num::NonZeroU64::new(reader.u64()?);
-        let host_context = if reader.bool()? { Some(crate::HostExecutionContext(reader.u64()?)) } else { None }.into();
+        let host_context = if reader.bool()? {
+            Some(crate::HostExecutionContext(reader.u64()?))
+        } else {
+            None
+        }
+        .into();
         Ok(Self {
             object,
             record: crate::heap::PromiseRecord {
@@ -531,9 +646,19 @@ impl Cell {
                 writer.u8(tag::ARRAY);
                 object.write_snapshot(writer)?;
             }
-            Self::ArrayBuffer { object, bytes, shared, detached, max_byte_length, resizable, immutable } => {
+            Self::ArrayBuffer {
+                object,
+                bytes,
+                shared,
+                detached,
+                max_byte_length,
+                resizable,
+                immutable,
+            } => {
                 let Some((contents, pinned_residue)) = bytes.snapshot_contents() else {
-                    return Err(SnapshotError::unsupported("a buffer over Wasm or atomically shared memory"));
+                    return Err(SnapshotError::unsupported(
+                        "a buffer over Wasm or atomically shared memory",
+                    ));
                 };
                 writer.u8(tag::ARRAY_BUFFER);
                 write_object(writer, object)?;
@@ -546,7 +671,13 @@ impl Cell {
                 writer.bool(*resizable);
                 writer.bool(*immutable);
             }
-            Self::TypedArray { kind, object, buffer, length, length_tracking } => {
+            Self::TypedArray {
+                kind,
+                object,
+                buffer,
+                length,
+                length_tracking,
+            } => {
                 writer.u8(tag::TYPED_ARRAY);
                 typed_array_kind::write(writer, *kind);
                 write_object(writer, &object.object)?;
@@ -555,7 +686,12 @@ impl Cell {
                 writer.u64(*length as u64);
                 writer.bool(*length_tracking);
             }
-            Self::DataView { object, buffer, length, length_tracking } => {
+            Self::DataView {
+                object,
+                buffer,
+                length,
+                length_tracking,
+            } => {
                 writer.u8(tag::DATA_VIEW);
                 write_object(writer, &object.object)?;
                 writer.u64(object.offset as u64);
@@ -583,7 +719,11 @@ impl Cell {
                 writer.len(live);
                 writer.values(iterators);
             }
-            Self::ShadowRealm { object, caller_global, realm_global } => {
+            Self::ShadowRealm {
+                object,
+                caller_global,
+                realm_global,
+            } => {
                 writer.u8(tag::SHADOW_REALM);
                 write_object(writer, object)?;
                 writer.value(*caller_global);
@@ -608,7 +748,11 @@ impl Cell {
                 write_object(writer, object)?;
                 writer.option_value(target.map(|handle| handle.value));
             }
-            Self::FinalizationRegistry { object, callback, entries } => {
+            Self::FinalizationRegistry {
+                object,
+                callback,
+                entries,
+            } => {
                 writer.u8(tag::FINALIZATION_REGISTRY);
                 write_object(writer, object)?;
                 writer.value(*callback);
@@ -623,7 +767,12 @@ impl Cell {
                 writer.u8(tag::ITERATOR);
                 iterator.write_snapshot(writer)?;
             }
-            Self::Proxy { object, kind, target, handler } => {
+            Self::Proxy {
+                object,
+                kind,
+                target,
+                handler,
+            } => {
                 writer.u8(tag::PROXY);
                 write_object(writer, object)?;
                 proxy_kind::write(writer, *kind);
@@ -634,13 +783,22 @@ impl Cell {
                 writer.u8(tag::FUNCTION);
                 function.write_snapshot(writer)?;
             }
-            Self::BindingReference { environment, slot, kind } => {
+            Self::BindingReference {
+                environment,
+                slot,
+                kind,
+            } => {
                 writer.u8(tag::BINDING_REFERENCE);
                 writer.value(*environment);
                 writer.u16(*slot);
                 lexical_binding_kind::write(writer, *kind);
             }
-            Self::Environment { parent, function, slots, scope } => {
+            Self::Environment {
+                parent,
+                function,
+                slots,
+                scope,
+            } => {
                 writer.u8(tag::ENVIRONMENT);
                 writer.value(*parent);
                 writer.u32(*function);
@@ -660,7 +818,10 @@ impl Cell {
                 writer.option_str(description.as_deref());
                 symbol_kind::write(writer, *kind);
             }
-            Self::Date { milliseconds, object } => {
+            Self::Date {
+                milliseconds,
+                object,
+            } => {
                 writer.u8(tag::DATE);
                 writer.f64(*milliseconds);
                 write_object(writer, object)?;
@@ -669,7 +830,12 @@ impl Cell {
                 writer.u8(tag::REGEXP);
                 write_object(writer, object)?;
                 // The matcher is compiled again from the source and flags on restore.
-                let RegExpMeta { source, flags, legacy_constructor, matcher: _ } = &**meta;
+                let RegExpMeta {
+                    source,
+                    flags,
+                    legacy_constructor,
+                    matcher: _,
+                } = &**meta;
                 source.write_snapshot(writer);
                 writer.str(&flags.text());
                 match legacy_constructor {
@@ -691,7 +857,10 @@ impl Cell {
                 writer.u8(tag::PROMISE);
                 promise.write_snapshot(writer)?;
             }
-            Self::PromiseResolvingState { promise, already_resolved } => {
+            Self::PromiseResolvingState {
+                promise,
+                already_resolved,
+            } => {
                 writer.u8(tag::PROMISE_RESOLVING_STATE);
                 writer.value(*promise);
                 writer.bool(*already_resolved);
@@ -699,7 +868,9 @@ impl Cell {
             Self::ArrayFromAsyncState(_) | Self::AwaitState(_) => {
                 return Err(SnapshotError::unsupported("a suspended async operation"));
             }
-            Self::WasmTag { declarations, ty } if crate::vm::js_tag_type() == (declarations.clone(), *ty) => {
+            Self::WasmTag { declarations, ty }
+                if crate::vm::js_tag_type() == (declarations.clone(), *ty) =>
+            {
                 writer.u8(tag::JS_TAG);
             }
             Self::WasmBits64(_)
@@ -720,7 +891,9 @@ impl Cell {
             | Self::TemporalPlainMonthDay { .. }
             | Self::TemporalPlainYearMonth { .. }
             | Self::TemporalZonedDateTime { .. }
-            | Self::TemporalInstant { .. } => return Err(SnapshotError::unsupported("a Temporal object")),
+            | Self::TemporalInstant { .. } => {
+                return Err(SnapshotError::unsupported("a Temporal object"));
+            }
         }
         Ok(())
     }
@@ -729,7 +902,9 @@ impl Cell {
         let boxed_object = |reader: &mut Reader<'_>| read_object(reader).map(Box::new);
         Ok(match reader.u8()? {
             tag::OBJECT => Self::Object(read_object(reader)?),
-            tag::ARRAY => Self::Array { object: ArrayObject::read_snapshot(reader)? },
+            tag::ARRAY => Self::Array {
+                object: ArrayObject::read_snapshot(reader)?,
+            },
             tag::ARRAY_BUFFER => Self::ArrayBuffer {
                 object: boxed_object(reader)?,
                 bytes: {
@@ -737,7 +912,9 @@ impl Cell {
                     let pinned = reader.bool()?;
                     let residue = reader.len()?;
                     crate::heap::BufferBytes::restored(contents, pinned.then_some(residue))
-                        .ok_or_else(|| SnapshotError("snapshot buffer lost its observed alignment".into()))?
+                        .ok_or_else(|| {
+                            SnapshotError("snapshot buffer lost its observed alignment".into())
+                        })?
                 },
                 shared: reader.bool()?,
                 detached: reader.bool()?,
@@ -749,14 +926,20 @@ impl Cell {
                 let kind = typed_array_kind::read(reader)?;
                 Self::TypedArray {
                     kind,
-                    object: Box::new(BufferViewObject { object: read_object(reader)?, offset: reader.u64()? as usize }),
+                    object: Box::new(BufferViewObject {
+                        object: read_object(reader)?,
+                        offset: reader.u64()? as usize,
+                    }),
                     buffer: reader.value()?,
                     length: reader.u64()? as usize,
                     length_tracking: reader.bool()?,
                 }
             }
             tag::DATA_VIEW => Self::DataView {
-                object: Box::new(BufferViewObject { object: read_object(reader)?, offset: reader.u64()? as usize }),
+                object: Box::new(BufferViewObject {
+                    object: read_object(reader)?,
+                    offset: reader.u64()? as usize,
+                }),
                 buffer: reader.value()?,
                 length: reader.u64()? as usize,
                 length_tracking: reader.bool()?,
@@ -766,14 +949,24 @@ impl Cell {
                 let slots = read_list(reader, |reader| Ok((reader.value()?, reader.value()?)))?;
                 let live = reader.len()?;
                 let iterators = reader.values()?;
-                Self::Map { object, entries: Box::new(crate::heap::CollectionEntries::from_snapshot_parts(slots, live, iterators)) }
+                Self::Map {
+                    object,
+                    entries: Box::new(crate::heap::CollectionEntries::from_snapshot_parts(
+                        slots, live, iterators,
+                    )),
+                }
             }
             tag::SET => {
                 let object = boxed_object(reader)?;
                 let slots = reader.values()?;
                 let live = reader.len()?;
                 let iterators = reader.values()?;
-                Self::Set { object, entries: Box::new(crate::heap::CollectionEntries::from_snapshot_parts(slots, live, iterators)) }
+                Self::Set {
+                    object,
+                    entries: Box::new(crate::heap::CollectionEntries::from_snapshot_parts(
+                        slots, live, iterators,
+                    )),
+                }
             }
             tag::SHADOW_REALM => Self::ShadowRealm {
                 object: boxed_object(reader)?,
@@ -783,10 +976,20 @@ impl Cell {
             tag::WEAK_MAP => {
                 let object = boxed_object(reader)?;
                 let ordered = read_list(reader, |reader| Ok((reader.value()?, reader.value()?)))?;
-                let indices = ordered.iter().enumerate().map(|(index, (key, _))| (*key, index)).collect();
-                Self::WeakMap { object, entries: Box::new(WeakMapEntries { ordered, indices }) }
+                let indices = ordered
+                    .iter()
+                    .enumerate()
+                    .map(|(index, (key, _))| (*key, index))
+                    .collect();
+                Self::WeakMap {
+                    object,
+                    entries: Box::new(WeakMapEntries { ordered, indices }),
+                }
             }
-            tag::WEAK_SET => Self::WeakSet { object: boxed_object(reader)?, entries: Box::new(reader.values()?) },
+            tag::WEAK_SET => Self::WeakSet {
+                object: boxed_object(reader)?,
+                entries: Box::new(reader.values()?),
+            },
             tag::WEAK_REF => Self::WeakRef {
                 object: boxed_object(reader)?,
                 target: reader.option_value()?.map(|value| WeakHandle { value }),
@@ -796,12 +999,18 @@ impl Cell {
                 let callback = reader.value()?;
                 let entries = read_list(reader, |reader| {
                     Ok(FinalizationEntry {
-                        target: WeakHandle { value: reader.value()? },
+                        target: WeakHandle {
+                            value: reader.value()?,
+                        },
                         held: reader.value()?,
                         token: reader.option_value()?.map(|value| WeakHandle { value }),
                     })
                 })?;
-                Self::FinalizationRegistry { object, callback, entries: Box::new(FinalizationEntries(entries)) }
+                Self::FinalizationRegistry {
+                    object,
+                    callback,
+                    entries: Box::new(FinalizationEntries(entries)),
+                }
             }
             tag::ITERATOR => Self::Iterator(Box::new(IteratorRecord::read_snapshot(reader)?)),
             tag::PROXY => Self::Proxy {
@@ -821,19 +1030,31 @@ impl Cell {
                 let function = reader.u32()?;
                 let marked = reader.bool()?;
                 let values = reader.values()?;
-                let mut slots = crate::heap::ThinBoxSlice::from(values.into_iter().map(EnvironmentSlot).collect::<Vec<_>>());
+                let mut slots = crate::heap::ThinBoxSlice::from(
+                    values.into_iter().map(EnvironmentSlot).collect::<Vec<_>>(),
+                );
                 if marked {
                     slots.mark();
                 }
-                Self::Environment { parent, function, slots: EnvironmentSlots(slots), scope: EnvironmentScopeRef::read_snapshot(reader)? }
+                Self::Environment {
+                    parent,
+                    function,
+                    slots: EnvironmentSlots(slots),
+                    scope: EnvironmentScopeRef::read_snapshot(reader)?,
+                }
             }
             tag::JS_TAG => crate::vm::js_tag_cell(),
-            tag::BIGINT => Self::BigInt(Box::new(num_bigint::BigInt::from_signed_bytes_le(reader.bytes()?))),
+            tag::BIGINT => Self::BigInt(Box::new(num_bigint::BigInt::from_signed_bytes_le(
+                reader.bytes()?,
+            ))),
             tag::SYMBOL => Self::Symbol(SymbolData {
                 description: reader.option_string()?.map(String::into_boxed_str),
                 kind: symbol_kind::read(reader)?,
             }),
-            tag::DATE => Self::Date { milliseconds: reader.f64()?, object: boxed_object(reader)? },
+            tag::DATE => Self::Date {
+                milliseconds: reader.f64()?,
+                object: boxed_object(reader)?,
+            },
             tag::REGEXP => {
                 let object = boxed_object(reader)?;
                 let source = JsString::read_snapshot(reader)?;
@@ -847,11 +1068,24 @@ impl Cell {
                 };
                 // A restored RegExp owns its record; literal sites share theirs again from the
                 // program store (`ProgramStore::regexp_literal_meta`) on their next evaluation.
-                Self::RegExp { object, meta: std::rc::Rc::new(RegExpMeta { source, flags, legacy_constructor, matcher: Default::default() }) }
+                Self::RegExp {
+                    object,
+                    meta: std::rc::Rc::new(RegExpMeta {
+                        source,
+                        flags,
+                        legacy_constructor,
+                        matcher: Default::default(),
+                    }),
+                }
             }
             tag::ERROR => Self::Error(reader.string()?),
-            tag::PROMISE => Self::Promise(Box::new(crate::heap::PromiseCell::read_snapshot(reader)?)),
-            tag::PROMISE_RESOLVING_STATE => Self::PromiseResolvingState { promise: reader.value()?, already_resolved: reader.bool()? },
+            tag::PROMISE => {
+                Self::Promise(Box::new(crate::heap::PromiseCell::read_snapshot(reader)?))
+            }
+            tag::PROMISE_RESOLVING_STATE => Self::PromiseResolvingState {
+                promise: reader.value()?,
+                already_resolved: reader.bool()?,
+            },
             _ => return Err(SnapshotError("invalid snapshot cell".into())),
         })
     }
@@ -865,7 +1099,13 @@ impl EnvironmentScopeRef {
                 writer.bool(self.program().is_some());
                 writer.u32(self.program().unwrap_or(0));
             }
-            Some(EnvironmentScope { program, root_eval_scope, binding_site_pc, dynamic_bindings, with_objects }) => {
+            Some(EnvironmentScope {
+                program,
+                root_eval_scope,
+                binding_site_pc,
+                dynamic_bindings,
+                with_objects,
+            }) => {
                 writer.u8(1);
                 writer.bool(program.is_some());
                 writer.u32(program.unwrap_or(0));
@@ -897,13 +1137,16 @@ impl EnvironmentScopeRef {
         let program = reader.u32()?;
         let program = has_program.then_some(program);
         match tag {
-            0 => Self::inline(program).ok_or_else(|| SnapshotError("invalid snapshot inline scope".into())),
+            0 => Self::inline(program)
+                .ok_or_else(|| SnapshotError("invalid snapshot inline scope".into())),
             1 => {
                 let root_eval_scope = reader.bool()?;
                 let has_pc = reader.bool()?;
                 let pc = reader.u32()?;
                 let dynamic_bindings = match reader.u8()? {
-                    0 => EnvironmentBindings::Owned(read_list(reader, |reader| Ok((reader.u32()?, reader.value()?)))?),
+                    0 => EnvironmentBindings::Owned(read_list(reader, |reader| {
+                        Ok((reader.u32()?, reader.value()?))
+                    })?),
                     1 => EnvironmentBindings::Shared(reader.value()?),
                     _ => return Err(SnapshotError("invalid snapshot scope bindings".into())),
                 };
@@ -923,7 +1166,9 @@ impl EnvironmentScopeRef {
 
 // A suspended generator or iterator helper: its saved activation is plain data, whose program
 // counter names the same instruction of the same function record once restored.
-use crate::vm::activation::{AsyncGeneratorOperation, AsyncGeneratorRequest, CallContext, Completion, GeneratorRecord};
+use crate::vm::activation::{
+    AsyncGeneratorOperation, AsyncGeneratorRequest, CallContext, Completion, GeneratorRecord,
+};
 
 snapshot_enum!(async_generator_operation: AsyncGeneratorOperation { Next, Return, Throw });
 snapshot_enum!(iterator_zip_mode: IteratorZipMode { Shortest, Longest, Strict });
@@ -946,10 +1191,19 @@ snap_via_enum! {
     IteratorZipMode => iterator_zip_mode;
 }
 
-snap_struct!(AsyncGeneratorRequest { operation, promise, value });
+snap_struct!(AsyncGeneratorRequest {
+    operation,
+    promise,
+    value
+});
 snap_struct!(crate::vm::ActiveIterator { iterator, done });
-snap_struct!(GeneratorRecord { continuation, realm, done, running, requests });
-
+snap_struct!(GeneratorRecord {
+    continuation,
+    realm,
+    done,
+    running,
+    requests
+});
 
 /// `CallContext` tags, in declaration order.
 mod call_context_tag {
@@ -1038,7 +1292,11 @@ mod helper_tag {
 impl Snap for IteratorHelper {
     fn snap(&self, writer: &mut Writer) -> SnapshotResult<()> {
         match self {
-            Self::RegExpStringMatchAll { input, global, unicode } => {
+            Self::RegExpStringMatchAll {
+                input,
+                global,
+                unicode,
+            } => {
                 writer.u8(helper_tag::REGEXP_STRING_MATCH_ALL);
                 input.snap(writer)?;
                 writer.bool(*global);
@@ -1062,13 +1320,23 @@ impl Snap for IteratorHelper {
                 writer.u8(helper_tag::DROP);
                 writer.f64(*remaining);
             }
-            Self::FlatMap { callback, index, inner } => {
+            Self::FlatMap {
+                callback,
+                index,
+                inner,
+            } => {
                 writer.u8(helper_tag::FLAT_MAP);
                 writer.value(*callback);
                 index.snap(writer)?;
                 writer.option_value(*inner);
             }
-            Self::Concat { items, methods, opened, next_item, active } => {
+            Self::Concat {
+                items,
+                methods,
+                opened,
+                next_item,
+                active,
+            } => {
                 writer.u8(helper_tag::CONCAT);
                 writer.values(items);
                 writer.values(methods);
@@ -1076,7 +1344,14 @@ impl Snap for IteratorHelper {
                 next_item.snap(writer)?;
                 writer.option_value(*active);
             }
-            Self::Zip { iterators, padding, mode, keys, opened, done } => {
+            Self::Zip {
+                iterators,
+                padding,
+                mode,
+                keys,
+                opened,
+                done,
+            } => {
                 writer.u8(helper_tag::ZIP);
                 writer.values(iterators);
                 writer.values(padding);
@@ -1095,10 +1370,20 @@ impl Snap for IteratorHelper {
                 global: reader.bool()?,
                 unicode: reader.bool()?,
             },
-            helper_tag::MAP => Self::Map { callback: reader.value()?, index: Snap::unsnap(reader)? },
-            helper_tag::FILTER => Self::Filter { callback: reader.value()?, index: Snap::unsnap(reader)? },
-            helper_tag::TAKE => Self::Take { remaining: reader.f64()? },
-            helper_tag::DROP => Self::Drop { remaining: reader.f64()? },
+            helper_tag::MAP => Self::Map {
+                callback: reader.value()?,
+                index: Snap::unsnap(reader)?,
+            },
+            helper_tag::FILTER => Self::Filter {
+                callback: reader.value()?,
+                index: Snap::unsnap(reader)?,
+            },
+            helper_tag::TAKE => Self::Take {
+                remaining: reader.f64()?,
+            },
+            helper_tag::DROP => Self::Drop {
+                remaining: reader.f64()?,
+            },
             helper_tag::FLAT_MAP => Self::FlatMap {
                 callback: reader.value()?,
                 index: Snap::unsnap(reader)?,

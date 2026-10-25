@@ -33,7 +33,9 @@ impl<H: Host> Vm<H> {
                 let object = self.heap.root_value(descriptors).unwrap();
                 let property = self.heap.root_value(key).unwrap();
                 let current = self.object_get_own_property_descriptor(p, &[object, property])?;
-                if current.is_undefined() || !self.descriptor_flag(current, self.runtime_atoms.enumerable) {
+                if current.is_undefined()
+                    || !self.descriptor_flag(current, self.runtime_atoms.enumerable)
+                {
                     continue;
                 }
                 let object = self.heap.root_value(descriptors).unwrap();

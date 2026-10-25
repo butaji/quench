@@ -12,10 +12,22 @@ const LEXICAL_FAILURES: &[(&str, Option<&str>)] = &[
     ("Invalid Character", None),
     ("Unterminated string", None),
     ("Unterminated multiline comment", None),
-    ("Unterminated template", Some("Unterminated template literal")),
-    ("Unterminated regular expression", Some("Invalid regular expression: missing /")),
-    ("Invalid escape sequence", Some("Invalid hexadecimal escape sequence")),
-    ("Invalid Unicode escape sequence", Some("Invalid Unicode escape sequence")),
+    (
+        "Unterminated template",
+        Some("Unterminated template literal"),
+    ),
+    (
+        "Unterminated regular expression",
+        Some("Invalid regular expression: missing /"),
+    ),
+    (
+        "Invalid escape sequence",
+        Some("Invalid hexadecimal escape sequence"),
+    ),
+    (
+        "Invalid Unicode escape sequence",
+        Some("Invalid Unicode escape sequence"),
+    ),
     ("Invalid characters after number", None),
     ("Invalid Number", None),
 ];
@@ -30,24 +42,59 @@ const UNEXPECTED_TOKEN_FAILURES: &[&str] = &[
 
 /// Keywords V8 lexes as their own tokens, so `Unexpected token 'kw'` (ECMA-262 ReservedWord).
 const RESERVED_WORDS: &[&str] = &[
-    "break", "case", "catch", "class", "const", "continue", "debugger", "default", "delete", "do",
-    "else", "enum", "export", "extends", "false", "finally", "for", "function", "if", "import", "in",
-    "instanceof", "new", "null", "return", "super", "switch", "this", "throw", "true", "try",
-    "typeof", "var", "void", "while", "with",
+    "break",
+    "case",
+    "catch",
+    "class",
+    "const",
+    "continue",
+    "debugger",
+    "default",
+    "delete",
+    "do",
+    "else",
+    "enum",
+    "export",
+    "extends",
+    "false",
+    "finally",
+    "for",
+    "function",
+    "if",
+    "import",
+    "in",
+    "instanceof",
+    "new",
+    "null",
+    "return",
+    "super",
+    "switch",
+    "this",
+    "throw",
+    "true",
+    "try",
+    "typeof",
+    "var",
+    "void",
+    "while",
+    "with",
 ];
 
 /// ECMA-262 punctuators, longest first so the first match is the maximal munch.
 const PUNCTUATORS: &[&str] = &[
     ">>>=", "...", "===", "!==", "**=", "<<=", ">>=", ">>>", "&&=", "||=", "??=", "=>", "==", "!=",
     "<=", ">=", "&&", "||", "??", "?.", "++", "--", "+=", "-=", "*=", "/=", "%=", "&=", "|=", "^=",
-    "<<", ">>", "**", "{", "}", "(", ")", "[", "]", ";", ",", "<", ">", "+", "-", "*", "/", "%", "&",
-    "|", "^", "!", "~", "?", ":", "=", ".",
+    "<<", ">>", "**", "{", "}", "(", ")", "[", "]", ";", ",", "<", ">", "+", "-", "*", "/", "%",
+    "&", "|", "^", "!", "~", "?", ":", "=", ".",
 ];
 
 /// V8's message for an OXC parse diagnostic over `source`; other failures keep OXC's text.
 pub(crate) fn parse_failure(source: &str, error: &OxcDiagnostic) -> String {
     let message = error.message.as_ref();
-    if let Some((_, v8)) = LEXICAL_FAILURES.iter().find(|(oxc, _)| message.starts_with(oxc)) {
+    if let Some((_, v8)) = LEXICAL_FAILURES
+        .iter()
+        .find(|(oxc, _)| message.starts_with(oxc))
+    {
         return v8.unwrap_or(ILLEGAL_TOKEN).to_owned();
     }
     let unexpected = UNEXPECTED_TOKEN_FAILURES.contains(&message)
@@ -55,7 +102,9 @@ pub(crate) fn parse_failure(source: &str, error: &OxcDiagnostic) -> String {
     if !unexpected {
         return message.to_owned();
     }
-    let offset = error.labels.first().map_or(source.len(), |label| usize::try_from(label.offset()).unwrap_or(source.len()));
+    let offset = error.labels.first().map_or(source.len(), |label| {
+        usize::try_from(label.offset()).unwrap_or(source.len())
+    });
     let before = source.get(..offset).unwrap_or_default();
     if follows_decorator(before) {
         return ILLEGAL_TOKEN.to_owned();
@@ -130,12 +179,17 @@ fn unexpected_token(rest: &str) -> String {
     let second = rest[first.len_utf8()..].chars().next();
     match first {
         '0'..='9' => return "Unexpected number".to_owned(),
-        '.' if second.is_some_and(|character| character.is_ascii_digit()) => return "Unexpected number".to_owned(),
+        '.' if second.is_some_and(|character| character.is_ascii_digit()) => {
+            return "Unexpected number".to_owned();
+        }
         '"' | '\'' => return "Unexpected string".to_owned(),
         '`' => return "Unexpected template string".to_owned(),
         _ => {}
     }
-    match PUNCTUATORS.iter().find(|punctuator| rest.starts_with(*punctuator)) {
+    match PUNCTUATORS
+        .iter()
+        .find(|punctuator| rest.starts_with(*punctuator))
+    {
         Some(punctuator) => format!("Unexpected token '{punctuator}'"),
         None => ILLEGAL_TOKEN.to_owned(),
     }
@@ -145,10 +199,13 @@ fn unexpected_token(rest: &str) -> String {
 fn skip_trivia(mut rest: &str) -> &str {
     loop {
         let trimmed = rest.trim_start_matches(|character: char| {
-            oxc_syntax::identifier::is_white_space(character) || oxc_syntax::line_terminator::is_line_terminator(character)
+            oxc_syntax::identifier::is_white_space(character)
+                || oxc_syntax::line_terminator::is_line_terminator(character)
         });
         if let Some(comment) = trimmed.strip_prefix("//") {
-            rest = comment.find(oxc_syntax::line_terminator::is_line_terminator).map_or("", |end| &comment[end..]);
+            rest = comment
+                .find(oxc_syntax::line_terminator::is_line_terminator)
+                .map_or("", |end| &comment[end..]);
         } else if let Some(comment) = trimmed.strip_prefix("/*") {
             match comment.find("*/") {
                 Some(end) => rest = &comment[end + "*/".len()..],
@@ -166,7 +223,10 @@ mod tests {
 
     #[test]
     fn tokens_are_named_like_v8() {
-        assert_eq!(unexpected_token(" License"), "Unexpected identifier 'License'");
+        assert_eq!(
+            unexpected_token(" License"),
+            "Unexpected identifier 'License'"
+        );
         assert_eq!(unexpected_token("1"), "Unexpected number");
         assert_eq!(unexpected_token(""), "Unexpected end of input");
         assert_eq!(unexpected_token("}"), "Unexpected token '}'");

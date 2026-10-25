@@ -84,171 +84,172 @@ impl<H: Host> Vm<H> {
         let mut target = None;
         let mut prototype_root = None;
         let new_target_root = new_target.map(|value| self.heap.root(value));
-        let outcome =
-            (|| {
+        let outcome = (|| {
+            let source = self.heap.root_value(source_root).unwrap();
+            if !self.is_object_like(source) {
+                initialization = Some(self.typed_array_initialization(p, source_root)?);
+            }
+            let prototype = if let Some(root) = new_target_root {
+                let new_target = self.heap.root_value(root).unwrap();
+                let native = TYPED_ARRAY_INSTALLS
+                    .iter()
+                    .find_map(|(candidate, native, _)| (*candidate == kind).then_some(*native))
+                    .expect("typed array kinds have constructor rows");
+                self.native_constructor_prototype(p, new_target, native)?
+                    .expect("typed array constructors have intrinsic prototypes")
+            } else {
+                self.typed_array_proto(kind)
+            };
+            prototype_root = Some(self.heap.root(prototype));
+            let width = kind.width();
+            if buffer_source {
+                let offset_value = offset
+                    .and_then(|root| self.heap.root_value(root))
+                    .unwrap_or(Value::number(0.0));
+                let offset = self.buffer_to_index(
+                    p,
+                    offset_value,
+                    super::array_buffer::BufferIndexUse::TypedArrayByteOffset,
+                )?;
+                if !offset.is_multiple_of(width) {
+                    return Err(
+                        self.range_error(p, format!("{name} byte offset is out of range").into())
+                    );
+                }
+                let requested_length = match requested_length {
+                    Some(root) => {
+                        let value = self.heap.root_value(root).unwrap();
+                        Some(self.array_buffer_to_index(p, value)?)
+                    }
+                    None => None,
+                };
                 let source = self.heap.root_value(source_root).unwrap();
-                if !self.is_object_like(source) {
-                    initialization = Some(self.typed_array_initialization(p, source_root)?);
-                }
-                let prototype = if let Some(root) = new_target_root {
-                    let new_target = self.heap.root_value(root).unwrap();
-                    let native = TYPED_ARRAY_INSTALLS
-                        .iter()
-                        .find_map(|(candidate, native, _)| (*candidate == kind).then_some(*native))
-                        .expect("typed array kinds have constructor rows");
-                    self.native_constructor_prototype(p, new_target, native)?
-                        .expect("typed array constructors have intrinsic prototypes")
-                } else {
-                    self.typed_array_proto(kind)
+                let Some(Cell::ArrayBuffer {
+                    bytes,
+                    detached,
+                    resizable,
+                    ..
+                }) = self.heap.get(source)
+                else {
+                    unreachable!("typed array buffer source remains live")
                 };
-                prototype_root = Some(self.heap.root(prototype));
-                let width = kind.width();
-                if buffer_source {
-                    let offset_value = offset
-                        .and_then(|root| self.heap.root_value(root))
-                        .unwrap_or(Value::number(0.0));
-                    let offset = self.buffer_to_index(
+                let resizable = *resizable;
+                let buffer_length = bytes.len();
+                if *detached {
+                    return Err(
+                        self.type_error(p, format!("{name} backing buffer is detached").into())
+                    );
+                }
+                if offset > buffer_length {
+                    return Err(
+                        self.range_error(p, format!("{name} byte offset is out of range").into())
+                    );
+                }
+                if requested_length.is_none()
+                    && !resizable
+                    && !(buffer_length - offset).is_multiple_of(width)
+                {
+                    return Err(self.range_error(
                         p,
-                        offset_value,
-                        super::array_buffer::BufferIndexUse::TypedArrayByteOffset,
-                    )?;
-                    if !offset.is_multiple_of(width) {
-                        return Err(self
-                            .range_error(p, format!("{name} byte offset is out of range").into()));
-                    }
-                    let requested_length = match requested_length {
-                        Some(root) => {
-                            let value = self.heap.root_value(root).unwrap();
-                            Some(self.array_buffer_to_index(p, value)?)
-                        }
-                        None => None,
-                    };
-                    let source = self.heap.root_value(source_root).unwrap();
-                    let Some(Cell::ArrayBuffer {
-                        bytes,
-                        detached,
-                        resizable,
-                        ..
-                    }) = self.heap.get(source)
-                    else {
-                        unreachable!("typed array buffer source remains live")
-                    };
-                    let resizable = *resizable;
-                    let buffer_length = bytes.len();
-                    if *detached {
-                        return Err(
-                            self.type_error(p, format!("{name} backing buffer is detached").into())
-                        );
-                    }
-                    if offset > buffer_length {
-                        return Err(self
-                            .range_error(p, format!("{name} byte offset is out of range").into()));
-                    }
-                    if requested_length.is_none()
-                        && !resizable
-                        && !(buffer_length - offset).is_multiple_of(width)
-                    {
-                        return Err(self.range_error(
-                            p,
-                            format!("{name} byte length is not divisible by element size").into(),
-                        ));
-                    }
-                    let length = requested_length.unwrap_or((buffer_length - offset) / width);
-                    let byte_length = length.checked_mul(width).ok_or_else(|| {
-                        self.range_error(p, format!("{name} length is out of range").into())
-                    })?;
-                    if offset
-                        .checked_add(byte_length)
-                        .is_none_or(|end| end > buffer_length)
-                    {
-                        return Err(
-                            self.range_error(p, format!("{name} length is out of range").into())
-                        );
-                    }
-                    return Ok(self.heap.alloc(Cell::TypedArray {
-                        kind,
-                        object: Box::new(crate::heap::BufferViewObject {
-                            object: Self::empty_object(
-                                self.heap.root_value(prototype_root.unwrap()).unwrap(),
-                            ),
-                            offset,
-                        }),
-                        buffer: source,
-                        length,
-                        length_tracking: resizable && requested_length.is_none(),
-                    }));
+                        format!("{name} byte length is not divisible by element size").into(),
+                    ));
                 }
-
-                if initialization.is_none() {
-                    initialization = Some(self.typed_array_initialization(p, source_root)?);
-                }
-                let length = match initialization.as_ref().unwrap() {
-                    TypedArrayInitialization::Length(length)
-                    | TypedArrayInitialization::ArrayLike(length)
-                    | TypedArrayInitialization::TypedArray(length) => *length,
-                    TypedArrayInitialization::List(values) => values.len(),
-                };
+                let length = requested_length.unwrap_or((buffer_length - offset) / width);
                 let byte_length = length.checked_mul(width).ok_or_else(|| {
-                    self.range_error(p, "typed array byte length is out of range".into())
+                    self.range_error(p, format!("{name} length is out of range").into())
                 })?;
-                // A same-kind typed source is a byte copy, taken straight into the new
-                // backing store instead of zeroing it first.
-                let copied = matches!(initialization, Some(TypedArrayInitialization::TypedArray(_)))
-                    .then(|| self.heap.root_value(source_root).unwrap())
-                    .filter(|source| {
-                        matches!(self.heap.get(*source), Some(Cell::TypedArray { kind: source_kind, .. }) if *source_kind == kind)
-                    })
-                    .and_then(|source| self.embedding_with_view_bytes(source, |bytes| bytes.get(..byte_length).map(<[u8]>::to_vec))?);
-                let source_copied = copied.is_some();
-                let buffer = match copied {
-                    Some(bytes) => self.fixed_array_buffer_from(bytes.into(), false),
-                    None => self.new_fixed_array_buffer(p, byte_length, false)?,
-                };
-                let buffer_root = self.heap.root(buffer);
-                backing = Some(buffer_root);
-                let typed_array = self.heap.alloc(Cell::TypedArray {
+                if offset
+                    .checked_add(byte_length)
+                    .is_none_or(|end| end > buffer_length)
+                {
+                    return Err(
+                        self.range_error(p, format!("{name} length is out of range").into())
+                    );
+                }
+                return Ok(self.heap.alloc(Cell::TypedArray {
                     kind,
                     object: Box::new(crate::heap::BufferViewObject {
                         object: Self::empty_object(
                             self.heap.root_value(prototype_root.unwrap()).unwrap(),
                         ),
-                        offset: 0,
+                        offset,
                     }),
-                    buffer: self.heap.root_value(buffer_root).unwrap(),
+                    buffer: source,
                     length,
-                    length_tracking: false,
-                });
-                let target_root = self.heap.root(typed_array);
-                target = Some(target_root);
-                if matches!(
-                    initialization,
-                    Some(TypedArrayInitialization::TypedArray(_))
-                ) {
-                    if !source_copied {
-                        let source = self.heap.root_value(source_root).unwrap();
-                        self.typed_array_copy_elements(p, source, typed_array, 0, length)?;
+                    length_tracking: resizable && requested_length.is_none(),
+                }));
+            }
+
+            if initialization.is_none() {
+                initialization = Some(self.typed_array_initialization(p, source_root)?);
+            }
+            let length = match initialization.as_ref().unwrap() {
+                TypedArrayInitialization::Length(length)
+                | TypedArrayInitialization::ArrayLike(length)
+                | TypedArrayInitialization::TypedArray(length) => *length,
+                TypedArrayInitialization::List(values) => values.len(),
+            };
+            let byte_length = length.checked_mul(width).ok_or_else(|| {
+                self.range_error(p, "typed array byte length is out of range".into())
+            })?;
+            // A same-kind typed source is a byte copy, taken straight into the new
+            // backing store instead of zeroing it first.
+            let copied = matches!(initialization, Some(TypedArrayInitialization::TypedArray(_)))
+                    .then(|| self.heap.root_value(source_root).unwrap())
+                    .filter(|source| {
+                        matches!(self.heap.get(*source), Some(Cell::TypedArray { kind: source_kind, .. }) if *source_kind == kind)
+                    })
+                    .and_then(|source| self.embedding_with_view_bytes(source, |bytes| bytes.get(..byte_length).map(<[u8]>::to_vec))?);
+            let source_copied = copied.is_some();
+            let buffer = match copied {
+                Some(bytes) => self.fixed_array_buffer_from(bytes.into(), false),
+                None => self.new_fixed_array_buffer(p, byte_length, false)?,
+            };
+            let buffer_root = self.heap.root(buffer);
+            backing = Some(buffer_root);
+            let typed_array = self.heap.alloc(Cell::TypedArray {
+                kind,
+                object: Box::new(crate::heap::BufferViewObject {
+                    object: Self::empty_object(
+                        self.heap.root_value(prototype_root.unwrap()).unwrap(),
+                    ),
+                    offset: 0,
+                }),
+                buffer: self.heap.root_value(buffer_root).unwrap(),
+                length,
+                length_tracking: false,
+            });
+            let target_root = self.heap.root(typed_array);
+            target = Some(target_root);
+            if matches!(
+                initialization,
+                Some(TypedArrayInitialization::TypedArray(_))
+            ) {
+                if !source_copied {
+                    let source = self.heap.root_value(source_root).unwrap();
+                    self.typed_array_copy_elements(p, source, typed_array, 0, length)?;
+                }
+                return Ok(self.heap.root_value(target_root).unwrap());
+            }
+            for index in 0..length {
+                let value = match initialization.as_ref().unwrap() {
+                    TypedArrayInitialization::Length(_) => break,
+                    TypedArrayInitialization::TypedArray(_) => {
+                        unreachable!("typed sources use buffer copying")
                     }
-                    return Ok(self.heap.root_value(target_root).unwrap());
-                }
-                for index in 0..length {
-                    let value = match initialization.as_ref().unwrap() {
-                        TypedArrayInitialization::Length(_) => break,
-                        TypedArrayInitialization::TypedArray(_) => {
-                            unreachable!("typed sources use buffer copying")
-                        }
-                        TypedArrayInitialization::List(values) => {
-                            self.heap.root_value(values[index]).unwrap()
-                        }
-                        TypedArrayInitialization::ArrayLike(_) => {
-                            let source = self.heap.root_value(source_root).unwrap();
-                            self.get_index(p, source, Value::number(index as f64))?
-                        }
-                    };
-                    let target = self.heap.root_value(target_root).unwrap();
-                    self.typed_array_set(p, target, index, value)?;
-                }
-                Ok(self.heap.root_value(target_root).unwrap())
-            })();
+                    TypedArrayInitialization::List(values) => {
+                        self.heap.root_value(values[index]).unwrap()
+                    }
+                    TypedArrayInitialization::ArrayLike(_) => {
+                        let source = self.heap.root_value(source_root).unwrap();
+                        self.get_index(p, source, Value::number(index as f64))?
+                    }
+                };
+                let target = self.heap.root_value(target_root).unwrap();
+                self.typed_array_set(p, target, index, value)?;
+            }
+            Ok(self.heap.root_value(target_root).unwrap())
+        })();
         for root in [
             Some(source_root),
             offset,
@@ -309,7 +310,10 @@ impl<H: Host> Vm<H> {
         let to_string_tag =
             self.native_with_realm(Native::TypedArrayToStringTag, Value::NULL, realm);
         self.set_builtin_function_name(to_string_tag, "get [Symbol.toStringTag]")?;
-        let tag_symbol = self.well_known_symbols.get(WellKnownSymbol::ToStringTag).unwrap();
+        let tag_symbol = self
+            .well_known_symbols
+            .get(WellKnownSymbol::ToStringTag)
+            .unwrap();
         self.set_symbol_property(prototype, tag_symbol, Value::UNDEFINED)?;
         self.set_property_attributes(
             prototype,
@@ -323,7 +327,10 @@ impl<H: Host> Vm<H> {
                 setter: None,
             },
         );
-        let species = self.well_known_symbols.get(WellKnownSymbol::Species).unwrap();
+        let species = self
+            .well_known_symbols
+            .get(WellKnownSymbol::Species)
+            .unwrap();
         let getter = self.native_with_realm(Native::ArraySpecies, realm, realm);
         self.set_builtin_function_name(getter, "get [Symbol.species]")?;
         self.set_symbol_property(constructor, species, Value::UNDEFINED)?;

@@ -58,7 +58,8 @@ fn finished_closure_slots(
     debug_assert!(finished_closure_fits(prototype));
     let mut slots = [Value::UNDEFINED; crate::value_vec::INLINE_PROPERTY_COUNT];
     slots[..FINISHED_CLOSURE_NAMED_SLOTS].copy_from_slice(named);
-    if let (Some(prototype), Some(slot)) = (prototype, slots.get_mut(FINISHED_CLOSURE_NAMED_SLOTS)) {
+    if let (Some(prototype), Some(slot)) = (prototype, slots.get_mut(FINISHED_CLOSURE_NAMED_SLOTS))
+    {
         *slot = prototype;
     }
     slots
@@ -108,10 +109,9 @@ impl<H: Host> Vm<H> {
     }
 
     pub(super) fn string_constructor_argument(&mut self, args: &[Value]) -> Value {
-        args.first().copied().unwrap_or_else(|| {
-            self.heap
-                .alloc_string(super::wtf16::JsString::from_str(""))
-        })
+        args.first()
+            .copied()
+            .unwrap_or_else(|| self.heap.alloc_string(super::wtf16::JsString::from_str("")))
     }
 
     pub(super) fn string_constructor_value(
@@ -173,16 +173,15 @@ impl<H: Host> Vm<H> {
             return recent[slot].1;
         }
         let value = self.heap.alloc_string(self.atom_value(atom));
-        self.recent_atom_strings
-            .get_or_insert_with(|| {
-                Box::new([(super::NO_RECENT_ATOM, Value::UNDEFINED); super::ATOM_STRING_CACHE_SIZE])
-            })[slot] = (atom, value);
+        self.recent_atom_strings.get_or_insert_with(|| {
+            Box::new([(super::NO_RECENT_ATOM, Value::UNDEFINED); super::ATOM_STRING_CACHE_SIZE])
+        })[slot] = (atom, value);
         value
     }
 
     pub(super) fn set_function_name_key(&mut self, function: Value, key: Value, prefix: u32) {
         let name = match self.heap.get(key) {
-            _ if let Some(value) = self.heap.string(key)  => value.to_string(),
+            _ if let Some(value) = self.heap.string(key) => value.to_string(),
             Some(Cell::Symbol(description)) => description
                 .as_ref()
                 .map_or_else(String::new, |description| format!("[{}]", description)),
@@ -213,8 +212,14 @@ impl<H: Host> Vm<H> {
             return None;
         }
         let name_atom = self.runtime_atoms.name;
-        let current = self.own_property(function, name_atom).unwrap_or(Value::UNDEFINED);
-        if !self.heap.string(current).is_some_and(|value| value.units().is_empty()) {
+        let current = self
+            .own_property(function, name_atom)
+            .unwrap_or(Value::UNDEFINED);
+        if !self
+            .heap
+            .string(current)
+            .is_some_and(|value| value.units().is_empty())
+        {
             return None;
         }
         self.shape_slot(self.object_data(function)?.shape(), name_atom)
@@ -231,101 +236,100 @@ impl<H: Host> Vm<H> {
             );
         };
         match kind {
-                FunctionKind::Native(Native::HostFunction) => self.host_function_constructible(*env),
-                FunctionKind::User(program_id, id) => {
-                    self.programs.get(*program_id).is_some_and(|program| {
-                        program.functions.get(*id as usize).is_some_and(|function| {
-                            let header = function.header();
-                            header.constructible && !header.is_async && !header.is_generator
-                        })
+            FunctionKind::Native(Native::HostFunction) => self.host_function_constructible(*env),
+            FunctionKind::User(program_id, id) => {
+                self.programs.get(*program_id).is_some_and(|program| {
+                    program.functions.get(*id as usize).is_some_and(|function| {
+                        let header = function.header();
+                        header.constructible && !header.is_async && !header.is_generator
                     })
-                }
-                FunctionKind::Native(Native::FunctionBoundCall) => {
-                    self.own_property(*env, self.runtime_atoms.bound_target)
-                        .is_some_and(|target| self.is_constructable(p, target))
-                }
-                FunctionKind::Native(native) => matches!(
-                    native,
-                    Native::Function
-                        | Native::CallSiteConstructor
-                        | Native::AbstractModuleSource
-                        | Native::AsyncFunction
-                        | Native::GeneratorFunction
-                        | Native::AsyncGeneratorFunction
-                        | Native::Iterator
-                        | Native::Object
-                        | Native::Proxy
-                        | Native::Array
-                        | Native::TypedArray
-                        | Native::ArrayBuffer
-                        | Native::SharedArrayBuffer
-                        | Native::Uint8Array
-                        | Native::Uint8ClampedArray
-                        | Native::Uint16Array
-                        | Native::Uint32Array
-                        | Native::Int8Array
-                        | Native::Int16Array
-                        | Native::Int32Array
-                        | Native::BigInt64Array
-                        | Native::BigUint64Array
-                        | Native::Float16Array
-                        | Native::Float32Array
-                        | Native::Float64Array
-                        | Native::DataView
-                        | Native::Map
-                        | Native::Set
-                        | Native::ShadowRealm
-                        | Native::WeakMap
-                        | Native::WeakSet
-                        | Native::WeakRef
-                        | Native::FinalizationRegistry
-                        | Native::DisposableStack
-                        | Native::AsyncDisposableStack
-                        | Native::Date
-                        | Native::BigInt
-                        | Native::Error
-                        | Native::AggregateError
-                        | Native::SuppressedError
-                        | Native::EvalError
-                        | Native::RangeError
-                        | Native::ReferenceError
-                        | Native::SyntaxError
-                        | Native::TypeError
-                        | Native::RealmTypeError
-                        | Native::URIError
-                        | Native::RegExp
-                        | Native::String
-                        | Native::Boolean
-                        | Native::Number
-                        | Native::IntlNumberFormat
-                        | Native::IntlCollator
-                        | Native::IntlPluralRules
-                        | Native::IntlDateTimeFormat
-                        | Native::IntlDisplayNames
-                        | Native::IntlDurationFormat
-                        | Native::IntlListFormat
-                        | Native::IntlLocale
-                        | Native::IntlRelativeTimeFormat
-                        | Native::IntlSegmenter
-                        | Native::Promise
-                        | Native::Symbol
-                        | Native::TemporalDuration
-                        | Native::TemporalPlainTime
-                        | Native::TemporalInstant
-                        | Native::TemporalPlainDate
-                        | Native::TemporalPlainDateTime
-                        | Native::TemporalZonedDateTime
-                        | Native::TemporalPlainMonthDay
-                        | Native::TemporalPlainYearMonth
-                        | Native::WasmModule
-                        | Native::WasmInstance
-                        | Native::WasmMemory
-                        | Native::WasmTable
-                        | Native::WasmGlobal
-                        | Native::WasmCompileError
-                        | Native::WasmLinkError
-                        | Native::WasmRuntimeError
-                ),
+                })
+            }
+            FunctionKind::Native(Native::FunctionBoundCall) => self
+                .own_property(*env, self.runtime_atoms.bound_target)
+                .is_some_and(|target| self.is_constructable(p, target)),
+            FunctionKind::Native(native) => matches!(
+                native,
+                Native::Function
+                    | Native::CallSiteConstructor
+                    | Native::AbstractModuleSource
+                    | Native::AsyncFunction
+                    | Native::GeneratorFunction
+                    | Native::AsyncGeneratorFunction
+                    | Native::Iterator
+                    | Native::Object
+                    | Native::Proxy
+                    | Native::Array
+                    | Native::TypedArray
+                    | Native::ArrayBuffer
+                    | Native::SharedArrayBuffer
+                    | Native::Uint8Array
+                    | Native::Uint8ClampedArray
+                    | Native::Uint16Array
+                    | Native::Uint32Array
+                    | Native::Int8Array
+                    | Native::Int16Array
+                    | Native::Int32Array
+                    | Native::BigInt64Array
+                    | Native::BigUint64Array
+                    | Native::Float16Array
+                    | Native::Float32Array
+                    | Native::Float64Array
+                    | Native::DataView
+                    | Native::Map
+                    | Native::Set
+                    | Native::ShadowRealm
+                    | Native::WeakMap
+                    | Native::WeakSet
+                    | Native::WeakRef
+                    | Native::FinalizationRegistry
+                    | Native::DisposableStack
+                    | Native::AsyncDisposableStack
+                    | Native::Date
+                    | Native::BigInt
+                    | Native::Error
+                    | Native::AggregateError
+                    | Native::SuppressedError
+                    | Native::EvalError
+                    | Native::RangeError
+                    | Native::ReferenceError
+                    | Native::SyntaxError
+                    | Native::TypeError
+                    | Native::RealmTypeError
+                    | Native::URIError
+                    | Native::RegExp
+                    | Native::String
+                    | Native::Boolean
+                    | Native::Number
+                    | Native::IntlNumberFormat
+                    | Native::IntlCollator
+                    | Native::IntlPluralRules
+                    | Native::IntlDateTimeFormat
+                    | Native::IntlDisplayNames
+                    | Native::IntlDurationFormat
+                    | Native::IntlListFormat
+                    | Native::IntlLocale
+                    | Native::IntlRelativeTimeFormat
+                    | Native::IntlSegmenter
+                    | Native::Promise
+                    | Native::Symbol
+                    | Native::TemporalDuration
+                    | Native::TemporalPlainTime
+                    | Native::TemporalInstant
+                    | Native::TemporalPlainDate
+                    | Native::TemporalPlainDateTime
+                    | Native::TemporalZonedDateTime
+                    | Native::TemporalPlainMonthDay
+                    | Native::TemporalPlainYearMonth
+                    | Native::WasmModule
+                    | Native::WasmInstance
+                    | Native::WasmMemory
+                    | Native::WasmTable
+                    | Native::WasmGlobal
+                    | Native::WasmCompileError
+                    | Native::WasmLinkError
+                    | Native::WasmRuntimeError
+            ),
         }
     }
 
@@ -342,7 +346,9 @@ impl<H: Host> Vm<H> {
     #[inline(always)]
     fn recorded_closure_template(&self, id: u32, realm: Value) -> Option<ClosureTemplate> {
         self.closure_templates[closure_template_index(self.active_program, id)].filter(|template| {
-            template.function == id && template.program == self.active_program && template.realm == realm
+            template.function == id
+                && template.program == self.active_program
+                && template.realm == realm
         })
     }
 
@@ -364,30 +370,36 @@ impl<H: Host> Vm<H> {
             );
         }
         let [length, name] = named;
-        let values: [Value; FINISHED_CLOSURE_SLOTS] = [length, name, prototype.unwrap_or(Value::UNDEFINED)];
+        let values: [Value; FINISHED_CLOSURE_SLOTS] =
+            [length, name, prototype.unwrap_or(Value::UNDEFINED)];
         let count = FINISHED_CLOSURE_NAMED_SLOTS + usize::from(prototype.is_some());
-        let (storage, inline) = self.heap.initial_object_storage(shape, &values[..count], false);
+        let (storage, inline) = self
+            .heap
+            .initial_object_storage(shape, &values[..count], false);
         crate::heap::Object::with_property_storage(function_prototype, storage, inline)
     }
 
     /// A closure of `template`'s function over `env`. The template's prototypes were flagged
     /// as prototypes by the closure it was recorded from, which needs no marking again.
     fn closure_of_template(&mut self, template: ClosureTemplate, env: Value) -> Value {
-        let prototype = template
-            .prototype
-            .map(|(parent, _)| self.heap.alloc_object_under_flagged_prototype(Self::empty_object(parent)));
+        let prototype = template.prototype.map(|(parent, _)| {
+            self.heap
+                .alloc_object_under_flagged_prototype(Self::empty_object(parent))
+        });
         let object = self.finished_closure_object(
             template.function_prototype,
             template.shape,
             [template.length, template.name],
             prototype,
         );
-        let function = self.heap.alloc_function_under_flagged_prototype(FunctionRecord {
-            object,
-            realm: template.realm,
-            kind: template.kind,
-            env,
-        });
+        let function = self
+            .heap
+            .alloc_function_under_flagged_prototype(FunctionRecord {
+                object,
+                realm: template.realm,
+                kind: template.kind,
+                env,
+            });
         if let (Some(prototype), Some((_, constructor))) = (prototype, template.prototype) {
             self.heap.property_add(prototype, function, constructor);
         }
@@ -412,7 +424,11 @@ impl<H: Host> Vm<H> {
         let with_objects = if env.is_null() {
             Vec::new()
         } else {
-            let inherited = self.captured_with_objects_for_function(env, function_plan.inherited_with_scope, p.kind);
+            let inherited = self.captured_with_objects_for_function(
+                env,
+                function_plan.inherited_with_scope,
+                p.kind,
+            );
             let active = self.frames.last().map_or(&[][..], |frame| {
                 &self.with_stack[frame.with_base.min(self.with_stack.len())..]
             });
@@ -466,7 +482,8 @@ impl<H: Host> Vm<H> {
             (true, false) => Native::AsyncFunction,
             (false, false) => Native::Function,
         };
-        let function_object_prototype = self.realm.intrinsics.builtin_prototypes[&(realm, intrinsic)];
+        let function_object_prototype =
+            self.realm.intrinsics.builtin_prototypes[&(realm, intrinsic)];
         let plan_name = function_plan.name.or(function_plan.inferred_name);
         // Names are the compiled functions' own, so keeping each one's string is bounded by
         // the code loaded, while every closure of a module function would otherwise make one.
@@ -492,7 +509,12 @@ impl<H: Host> Vm<H> {
                 let named =
                     self.function_name_shape(shape, plan_name.unwrap_or(self.runtime_atoms.empty));
                 named_shape = Some(named);
-                self.finished_closure_object(function_object_prototype, named, [length_value, name_value], own_prototype)
+                self.finished_closure_object(
+                    function_object_prototype,
+                    named,
+                    [length_value, name_value],
+                    own_prototype,
+                )
             }
             None => Self::empty_object(function_object_prototype),
         };
@@ -529,7 +551,9 @@ impl<H: Host> Vm<H> {
             // makes the next ones the same way; a top-level one is recorded above. A prototype
             // the recorded shapes do not hold leaves the template unmade.
             if plain_scope
-                && function_plan.parent.is_some_and(|parent| parent != super::ROOT_FUNCTION_ID)
+                && function_plan
+                    .parent
+                    .is_some_and(|parent| parent != super::ROOT_FUNCTION_ID)
                 && prototype.is_some() == constructor.is_some()
                 && let Some(shape) = named_shape
             {
@@ -542,7 +566,8 @@ impl<H: Host> Vm<H> {
                     length: length_value,
                     name: name_value,
                     kind,
-                    prototype: constructor.map(|constructor| (self.realm_object_prototype(realm), constructor)),
+                    prototype: constructor
+                        .map(|constructor| (self.realm_object_prototype(realm), constructor)),
                 });
             }
             return Ok(function);
@@ -978,7 +1003,9 @@ impl<H: Host> Vm<H> {
         let shape = object.shape();
         let key = PropertyKey::string(prototype_atom);
         if self.shape_is_dictionary(shape) {
-            return self.heap.property_get(object, self.prototype_data_slot(constructor, shape, key)?);
+            return self
+                .heap
+                .property_get(object, self.prototype_data_slot(constructor, shape, key)?);
         }
         let memo = &self.shapes[shape as usize].prototype_slot;
         let slot = match memo.get() {
@@ -1002,7 +1029,12 @@ impl<H: Host> Vm<H> {
     /// lane inlines this lookup into passes it no address of its stack, which would keep its
     /// dispatch from being a sibling call (`tools/check-lane-tail-calls.sh`).
     #[inline(never)]
-    fn prototype_data_slot(&self, constructor: Value, shape: u32, key: PropertyKey) -> Option<usize> {
+    fn prototype_data_slot(
+        &self,
+        constructor: Value,
+        shape: u32,
+        key: PropertyKey,
+    ) -> Option<usize> {
         self.property_attributes(constructor, key)
             .filter(|attributes| !attributes.accessor)
             .and_then(|_| self.property_shape_slot(shape, key))
@@ -1463,20 +1495,14 @@ impl<H: Host> Vm<H> {
                 return Err(self.range_error(p, "Invalid array length".into()));
             }
             let array = self.heap.alloc(Cell::Array {
-                object: crate::heap::ArrayObject::new(
-                    Self::empty_object(prototype),
-                    Vec::new(),
-                ),
+                object: crate::heap::ArrayObject::new(Self::empty_object(prototype), Vec::new()),
             });
             self.heap.sparse_set_length(array, length as usize);
             return Ok(array);
         }
 
         Ok(self.heap.alloc(Cell::Array {
-            object: crate::heap::ArrayObject::new(
-                Self::empty_object(prototype),
-                args.to_vec(),
-            ),
+            object: crate::heap::ArrayObject::new(Self::empty_object(prototype), args.to_vec()),
         }))
     }
 }

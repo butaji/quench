@@ -40,7 +40,10 @@ impl From<Option<HostExecutionContext>> for StoredHostContext {
     fn from(context: Option<HostExecutionContext>) -> Self {
         match context {
             Some(HostExecutionContext(number)) => {
-                assert_ne!(number, NO_HOST_CONTEXT, "host contexts are numbered below NO_HOST_CONTEXT");
+                assert_ne!(
+                    number, NO_HOST_CONTEXT,
+                    "host contexts are numbered below NO_HOST_CONTEXT"
+                );
                 Self(number)
             }
             None => Self(NO_HOST_CONTEXT),
@@ -106,7 +109,9 @@ impl PromiseRecord {
     /// The host job contexts its pending reactions hold, which the host releases when the
     /// promise dies with them unrun.
     pub(crate) fn reaction_job_contexts(&self) -> impl Iterator<Item = HostExecutionContext> + '_ {
-        self.reactions.iter().filter_map(|reaction| reaction.execution_context.get())
+        self.reactions
+            .iter()
+            .filter_map(|reaction| reaction.execution_context.get())
     }
 }
 
@@ -136,4 +141,3 @@ impl AbandonedHostContexts {
         self.jobs.is_empty() && self.promises.is_empty()
     }
 }
-

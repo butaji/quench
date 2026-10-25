@@ -81,7 +81,9 @@ impl FunctionCompiler<'_, '_> {
             start,
             end,
             target: exceptional_target,
-            slot: self.local_slot(error).map(crate::bytecode::ThrownValueSlot::Local),
+            slot: self
+                .local_slot(error)
+                .map(crate::bytecode::ThrownValueSlot::Local),
             return_target,
             return_slot: context.and_then(|context| self.local_slot(context.return_atom)),
             with_depth: self.with_depth,

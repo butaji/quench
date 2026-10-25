@@ -49,8 +49,11 @@ impl<H: Host> Vm<H> {
         }
         let shape = object.shape();
         [true, false].into_iter().find_map(|expose_callee| {
-            let template =
-                self.realm.intrinsics.arguments_objects.get(&(self.realm.globals, expose_callee))?;
+            let template = self
+                .realm
+                .intrinsics
+                .arguments_objects
+                .get(&(self.realm.globals, expose_callee))?;
             (self.heap.object(template.anchor)?.shape() == shape)
                 .then(|| self.heap.property_get(object, template.length_slot))
                 .flatten()
@@ -80,12 +83,13 @@ impl<H: Host> Vm<H> {
 
     /// Whether `holder` stores an element at `index`, densely or sparsely.
     pub(super) fn own_element_present(&self, holder: Value, index: usize) -> bool {
-        self.heap.array_elements(holder).is_some_and(|elements| {
-            elements.get(index).is_some_and(|value| !value.is_deleted())
-        }) || self
-            .heap
-            .sparse_get(holder, index)
-            .is_some_and(|value| !value.is_deleted())
+        self.heap
+            .array_elements(holder)
+            .is_some_and(|elements| elements.get(index).is_some_and(|value| !value.is_deleted()))
+            || self
+                .heap
+                .sparse_get(holder, index)
+                .is_some_and(|value| !value.is_deleted())
     }
 
     pub(super) fn define_array_length(

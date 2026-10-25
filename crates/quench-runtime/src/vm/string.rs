@@ -313,7 +313,9 @@ impl<H: Host> Vm<H> {
         let prototype = self
             .heap
             .alloc(Cell::Object(Self::empty_object(object_proto)));
-        self.object_data_mut(prototype).expect("primitive prototype").set_boxed_primitive(empty);
+        self.object_data_mut(prototype)
+            .expect("primitive prototype")
+            .set_boxed_primitive(empty);
         self.set_named_constant(program, prototype, "length", Value::number(0.0))?;
         self.set_builtin_value_named(prototype, "constructor", constructor)?;
         self.set_builtin_value_named(constructor, "prototype", prototype)?;
@@ -513,11 +515,17 @@ impl<H: Host> Vm<H> {
                 let units = receiver.units();
                 // ASCII maps ASCII without locale tailoring; an already-mapped string is its
                 // own result, as primitive strings have no identity.
-                if matches!(native, Native::StringToUpperCase | Native::StringToLowerCase)
-                    && let super::wtf16::Units::Ascii(bytes) = units
+                if matches!(
+                    native,
+                    Native::StringToUpperCase | Native::StringToLowerCase
+                ) && let super::wtf16::Units::Ascii(bytes) = units
                 {
                     let mapped = |byte: &u8| {
-                        if upper { byte.to_ascii_uppercase() } else { byte.to_ascii_lowercase() }
+                        if upper {
+                            byte.to_ascii_uppercase()
+                        } else {
+                            byte.to_ascii_lowercase()
+                        }
                     };
                     if bytes.iter().all(|byte| mapped(byte) == *byte) {
                         return Ok(this);
@@ -550,7 +558,9 @@ impl<H: Host> Vm<H> {
                     args.get(1).copied().unwrap_or(Value::UNDEFINED),
                     args.get(2).copied().unwrap_or(Value::UNDEFINED),
                 )?;
-                Ok(Value::number(collation.compare(&receiver.to_string(), &other)))
+                Ok(Value::number(
+                    collation.compare(&receiver.to_string(), &other),
+                ))
             }
             Native::StringConcat => {
                 let mut text = receiver;
@@ -583,7 +593,7 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         self.require_object_coercible(p, this)?;
         let source = match self.heap.get(this) {
-            _ if self.heap.is_string(this)  => this,
+            _ if self.heap.is_string(this) => this,
             _ => {
                 let text = self.to_string(p, this)?;
                 self.heap.alloc_string(text.into())
@@ -632,10 +642,10 @@ impl<H: Host> Vm<H> {
             let separator = args.first().copied().unwrap_or(Value::UNDEFINED);
             let limit = args.get(1).copied();
             if vm.is_object_like(separator) {
-                let symbol =
-                    vm.well_known_symbols.get(WellKnownSymbol::Split).ok_or_else(|| {
-                        vm.type_error(p, "RegExp split symbol is unavailable".into())
-                    })?;
+                let symbol = vm
+                    .well_known_symbols
+                    .get(WellKnownSymbol::Split)
+                    .ok_or_else(|| vm.type_error(p, "RegExp split symbol is unavailable".into()))?;
                 let method = vm.string_protocol_method(p, separator, symbol)?;
                 if !method.is_undefined() && !method.is_null() {
                     if !vm.is_function(method) {
@@ -666,10 +676,7 @@ impl<H: Host> Vm<H> {
                 .map(|part| vm.heap.alloc_string(part))
                 .collect::<Vec<_>>();
             Ok(vm.heap.alloc(Cell::Array {
-                object: crate::heap::ArrayObject::new(
-                    Self::empty_object(vm.array_proto),
-                    values,
-                ),
+                object: crate::heap::ArrayObject::new(Self::empty_object(vm.array_proto), values),
             }))
         })
     }
@@ -689,10 +696,10 @@ impl<H: Host> Vm<H> {
         self.with_call_roots(std::iter::once(this).chain(args.iter().copied()), |vm| {
             vm.require_object_coercible(p, this)?;
             let pattern = args.first().copied().unwrap_or(Value::UNDEFINED);
-            let symbol =
-                vm.well_known_symbols.named(name).ok_or_else(|| {
-                    vm.type_error(p, "RegExp method symbol is unavailable".into())
-                })?;
+            let symbol = vm
+                .well_known_symbols
+                .named(name)
+                .ok_or_else(|| vm.type_error(p, "RegExp method symbol is unavailable".into()))?;
             if vm.is_object_like(pattern) {
                 let method = vm.string_protocol_method(p, pattern, symbol)?;
                 if !method.is_undefined() && !method.is_null() {
@@ -806,7 +813,12 @@ impl<H: Host> Vm<H> {
                             vm.type_error(p, "String replace method is not callable".into())
                         );
                     }
-                    return vm.call_protocol_method(p, method, search_value, &[this, replacement_value]);
+                    return vm.call_protocol_method(
+                        p,
+                        method,
+                        search_value,
+                        &[this, replacement_value],
+                    );
                 }
             }
             let input = vm.coerce_js_string(p, this)?;

@@ -4,7 +4,7 @@
 //! remembered, and pacing planned from the live count.
 
 use super::*;
-use crate::snapshot::{read_list, Reader, SnapshotError, SnapshotResult, Writer};
+use crate::snapshot::{Reader, SnapshotError, SnapshotResult, Writer, read_list};
 
 impl Heap {
     pub(crate) fn write_snapshot(&self, writer: &mut Writer) -> SnapshotResult<()> {
@@ -21,17 +21,27 @@ impl Heap {
                 }
             }
         }
-        write_records(writer, &self.object_records, |writer, record| record.write_snapshot(writer))?;
-        write_records(writer, &self.array_records, |writer, record| record.write_snapshot(writer))?;
-        write_records(writer, &self.function_records, |writer, record| record.write_snapshot(writer))?;
-        write_records(writer, &self.promise_records, |writer, record| record.write_snapshot(writer))?;
+        write_records(writer, &self.object_records, |writer, record| {
+            record.write_snapshot(writer)
+        })?;
+        write_records(writer, &self.array_records, |writer, record| {
+            record.write_snapshot(writer)
+        })?;
+        write_records(writer, &self.function_records, |writer, record| {
+            record.write_snapshot(writer)
+        })?;
+        write_records(writer, &self.promise_records, |writer, record| {
+            record.write_snapshot(writer)
+        })?;
         if self.await_records.live_count() != 0 {
             return Err(SnapshotError::unsupported("a suspended async function"));
         }
         if self.v128_records.live_count() != 0 {
             return Err(SnapshotError::unsupported("a Wasm vector"));
         }
-        write_records(writer, &self.iterator_records, |writer, record| record.write_snapshot(writer))?;
+        write_records(writer, &self.iterator_records, |writer, record| {
+            record.write_snapshot(writer)
+        })?;
         write_records(writer, &self.string_records, |writer, record: &JsString| {
             record.write_snapshot(writer);
             Ok(())
@@ -61,7 +71,11 @@ impl Heap {
         heap.set_memory_policy(policy);
         let slots = reader.len()?;
         for index in 0..slots {
-            let cell = if reader.bool()? { Some(Cell::read_snapshot(reader)?) } else { None };
+            let cell = if reader.bool()? {
+                Some(Cell::read_snapshot(reader)?)
+            } else {
+                None
+            };
             let live = cell.is_some();
             heap.slots.push(Slot { cell });
             if index / 64 == heap.marks.len() {
@@ -72,7 +86,8 @@ impl Heap {
                 heap.free_by_slab.push(FreeSlotBitmap::default());
             }
             if live {
-                heap.marks[index / 64].fetch_or(1 << (index % 64), std::sync::atomic::Ordering::Relaxed);
+                heap.marks[index / 64]
+                    .fetch_or(1 << (index % 64), std::sync::atomic::Ordering::Relaxed);
             } else {
                 if heap.free_by_slab[slab].is_empty() {
                     heap.free_slabs.push(slab as u32);
@@ -81,19 +96,37 @@ impl Heap {
                 heap.free_slots += 1;
             }
         }
-        read_records(reader, &mut heap.object_records, |reader| Object::read_snapshot(reader))?;
-        read_records(reader, &mut heap.array_records, |reader| ArrayObject::read_snapshot(reader))?;
-        read_records(reader, &mut heap.function_records, |reader| FunctionRecord::read_snapshot(reader))?;
-        read_records(reader, &mut heap.promise_records, |reader| PromiseCell::read_snapshot(reader))?;
-        read_records(reader, &mut heap.iterator_records, |reader| IteratorRecord::read_snapshot(reader))?;
-        read_records(reader, &mut heap.string_records, |reader| JsString::read_snapshot(reader))?;
+        read_records(reader, &mut heap.object_records, |reader| {
+            Object::read_snapshot(reader)
+        })?;
+        read_records(reader, &mut heap.array_records, |reader| {
+            ArrayObject::read_snapshot(reader)
+        })?;
+        read_records(reader, &mut heap.function_records, |reader| {
+            FunctionRecord::read_snapshot(reader)
+        })?;
+        read_records(reader, &mut heap.promise_records, |reader| {
+            PromiseCell::read_snapshot(reader)
+        })?;
+        read_records(reader, &mut heap.iterator_records, |reader| {
+            IteratorRecord::read_snapshot(reader)
+        })?;
+        read_records(reader, &mut heap.string_records, |reader| {
+            JsString::read_snapshot(reader)
+        })?;
         heap.properties = crate::value_vec::ValueArena::read_snapshot(reader)?;
         heap.roots = root::RootTable::read_snapshot(reader)?;
         let sparse = read_list(reader, |reader| {
             let array = reader.value()?;
             let length = reader.len()?;
             let values = read_list(reader, |reader| Ok((reader.len()?, reader.value()?)))?;
-            Ok((array, SparseElements { values: values.into_iter().collect(), length }))
+            Ok((
+                array,
+                SparseElements {
+                    values: values.into_iter().collect(),
+                    length,
+                },
+            ))
         })?;
         heap.sparse_arrays = (!sparse.is_empty()).then(|| Box::new(sparse.into_iter().collect()));
         heap.settle_restored_pacing();
@@ -104,8 +137,10 @@ impl Heap {
     fn settle_restored_pacing(&mut self) {
         let mut payload = 0;
         self.for_each_cell(|cell| payload += cell.payload_bytes());
-        self.array_records.for_each_live(|_, array| payload += external::array_payload_bytes(array));
-        self.string_records.for_each_live(|_, string| payload += string.flat_unit_bytes());
+        self.array_records
+            .for_each_live(|_, array| payload += external::array_payload_bytes(array));
+        self.string_records
+            .for_each_live(|_, string| payload += string.flat_unit_bytes());
         self.payload_bytes = payload;
         let legacy_live = self.slots.len() - self.free_slots;
         let live = legacy_live

@@ -197,7 +197,13 @@ const CASES: &[Case] = &[
               return chosen;
             }
         "#,
-        probes: &[("outer", true), ("other", false), ("big0", false), ("big1", false), ("big2", true)],
+        probes: &[
+            ("outer", true),
+            ("other", false),
+            ("big0", false),
+            ("big1", false),
+            ("big2", true),
+        ],
         hot: true,
     },
     Case {
@@ -392,12 +398,19 @@ const CASES: &[Case] = &[
 fn compilations(source: &str, name: &str) -> [(&'static str, crate::bytecode::ResidualProgram); 2] {
     [
         ("specialized", Engine::specialize(source, name).unwrap()),
-        ("unspecialized", Engine::specialize_unspecialized(source, name).unwrap()),
+        (
+            "unspecialized",
+            Engine::specialize_unspecialized(source, name).unwrap(),
+        ),
     ]
 }
 
 /// Whether the object `weak[label]` refers to survived the last collection.
-fn probe_alive(vm: &mut Vm<TestHost>, program: &crate::bytecode::ResidualProgram, label: &str) -> bool {
+fn probe_alive(
+    vm: &mut Vm<TestHost>,
+    program: &crate::bytecode::ResidualProgram,
+    label: &str,
+) -> bool {
     let weak = vm.intern_atom("weak");
     let weak = vm.own_property(vm.realm.globals, weak).unwrap();
     let label_atom = vm.intern_atom(label);
@@ -431,16 +444,22 @@ fn check_case(case: &Case, runs: u32) {
                 retained,
                 "{} ({compilation}, {runs} runs): while the closure lives, {label} {}",
                 case.name,
-                if retained { "must stay alive" } else { "must be collected" },
+                if retained {
+                    "must stay alive"
+                } else {
+                    "must be collected"
+                },
             );
         }
         // The kept closure still runs after the collection cleared what it cannot read.
         let kept = vm.intern_atom("kept");
         let kept = vm.own_property(vm.realm.globals, kept).unwrap();
-        vm.call_value(&program, kept, Value::UNDEFINED, &[]).unwrap();
+        vm.call_value(&program, kept, Value::UNDEFINED, &[])
+            .unwrap();
         let release = vm.intern_atom("release");
         let release = vm.own_property(vm.realm.globals, release).unwrap();
-        vm.call_value(&program, release, Value::UNDEFINED, &[]).unwrap();
+        vm.call_value(&program, release, Value::UNDEFINED, &[])
+            .unwrap();
         collect(&mut vm, &program);
         for &(label, _) in case.probes {
             assert!(

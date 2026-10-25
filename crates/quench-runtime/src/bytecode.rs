@@ -54,8 +54,16 @@ pub(crate) const LEXICAL_THIS_BINDING: &str = "\0quench:lexical-this";
 pub(crate) const UNARY_TO_STRING: u32 = oxc_ast::ast::UnaryOperator::Delete as u32 + 1;
 /// The names `typeof` yields (ECMA-262 13.5.3.1), indexed as `typeof_name_index` (vm/coercion.rs) classifies
 /// values.
-pub(crate) const TYPEOF_NAMES: [&str; 8] =
-    ["undefined", "object", "boolean", "number", "string", "bigint", "symbol", "function"];
+pub(crate) const TYPEOF_NAMES: [&str; 8] = [
+    "undefined",
+    "object",
+    "boolean",
+    "number",
+    "string",
+    "bigint",
+    "symbol",
+    "function",
+];
 /// The `Unary` operators that compare `typeof` of their operand with a name in
 /// `TYPEOF_NAMES` (`typeof x === "function"`): this plus the name's index tests equality,
 /// and that plus `TYPEOF_NAMES.len()` inequality. The comparison of two strings that
@@ -67,7 +75,15 @@ const UNARY_TYPEOF_TESTS: u32 = 2 * TYPEOF_NAMES.len() as u32;
 /// inequality; `None` when no value's `typeof` is `name`.
 pub(crate) fn typeof_test_operator(name: &str, negated: bool) -> Option<u32> {
     let index = typeof_name_index(name)? as u32;
-    Some(UNARY_TYPEOF_IS + index + if negated { TYPEOF_NAMES.len() as u32 } else { 0 })
+    Some(
+        UNARY_TYPEOF_IS
+            + index
+            + if negated {
+                TYPEOF_NAMES.len() as u32
+            } else {
+                0
+            },
+    )
 }
 
 /// The `Unary` operator giving the index in `TYPEOF_NAMES` of the name `typeof` yields for
@@ -84,7 +100,9 @@ pub(crate) fn typeof_name_index(name: &str) -> Option<usize> {
 /// The name index and negation a `UNARY_TYPEOF_IS` operator tests.
 #[inline(always)]
 pub(crate) fn typeof_test(operator: u32) -> Option<(usize, bool)> {
-    let offset = operator.checked_sub(UNARY_TYPEOF_IS).filter(|offset| *offset < UNARY_TYPEOF_TESTS)?;
+    let offset = operator
+        .checked_sub(UNARY_TYPEOF_IS)
+        .filter(|offset| *offset < UNARY_TYPEOF_TESTS)?;
     let names = TYPEOF_NAMES.len() as u32;
     Some(((offset % names) as usize, offset >= names))
 }
@@ -1493,6 +1511,9 @@ pub(crate) struct CallPlan {
     /// it kept and makes the object only at its last read (`KeptArguments::Passes`). Its
     /// frame makes the object on entry.
     pub(crate) keeps_arguments: bool,
+    /// `Function::reads_passed_arguments_only`: an environment activation keeps every value
+    /// passed after its locals, past its parameters too.
+    pub(crate) reads_passed_arguments: bool,
     /// The activation's whole state is its registers, plus the values it was passed when it
     /// forwards them: it reaches no local but a forwarded `arguments` binding, and legacy
     /// reflection, if any, reads its parameter registers or the forwarded values. A lane
@@ -1536,7 +1557,10 @@ pub(crate) struct RegisterRoots {
 
 impl RegisterRoots {
     pub(crate) fn new(covered: bool) -> Self {
-        Self { covered, masks: std::cell::OnceCell::new() }
+        Self {
+            covered,
+            masks: std::cell::OnceCell::new(),
+        }
     }
 
     pub(crate) fn covered(&self) -> bool {
@@ -1546,10 +1570,11 @@ impl RegisterRoots {
     /// The masks a collection derived so far; none until one finds the function running.
     #[cfg(feature = "profile-memory")]
     pub(crate) fn capacity_bytes(&self) -> usize {
-        self.masks.get().map_or(0, |masks| size_of_val::<[crate::compile::liveness::RegisterSet]>(masks))
+        self.masks.get().map_or(0, |masks| {
+            size_of_val::<[crate::compile::liveness::RegisterSet]>(masks)
+        })
     }
 }
-
 
 /// A function's source positions in increasing pc order, each delta-coded against the one
 /// before it as LEB128 varints: the pc advance, the line change (zigzag), then the column,
@@ -1599,7 +1624,11 @@ impl SourcePositions {
     /// Appends `position`. Compiled code orders positions by pc; a decoded table keeps any
     /// order exactly, for validation to judge.
     pub(crate) fn push(&mut self, position: SourcePosition) {
-        let previous = self.last.unwrap_or(SourcePosition { pc: 0, line: 0, column: 0 });
+        let previous = self.last.unwrap_or(SourcePosition {
+            pc: 0,
+            line: 0,
+            column: 0,
+        });
         let line_change = i64::from(position.line) - i64::from(previous.line);
         self.write(u64::from(position.pc.wrapping_sub(previous.pc)));
         self.write(zigzag(line_change));
@@ -1625,11 +1654,21 @@ impl SourcePositions {
     }
 
     pub(crate) fn iter(&self) -> SourcePositionIter<'_> {
-        self.iter_from(0, SourcePosition { pc: 0, line: 0, column: 0 })
+        self.iter_from(
+            0,
+            SourcePosition {
+                pc: 0,
+                line: 0,
+                column: 0,
+            },
+        )
     }
 
     fn iter_from(&self, offset: usize, previous: SourcePosition) -> SourcePositionIter<'_> {
-        SourcePositionIter { bytes: &self.bytes[offset..], previous }
+        SourcePositionIter {
+            bytes: &self.bytes[offset..],
+            previous,
+        }
     }
 
     /// The position in effect at `pc`: the last entry at or before it, decoded from the last
@@ -1662,7 +1701,11 @@ impl SourcePositions {
             let previous = iter.previous;
             let Some(position) = iter.next() else { break };
             if entry > 0 && entry % SOURCE_POSITION_CHECKPOINT_INTERVAL == 0 {
-                checkpoints.push(SourcePositionCheckpoint { offset, previous, pc: position.pc });
+                checkpoints.push(SourcePositionCheckpoint {
+                    offset,
+                    previous,
+                    pc: position.pc,
+                });
             }
             entry += 1;
         }
@@ -1762,19 +1805,23 @@ impl Function {
     }
 
     pub fn global_lexical_atoms(&self) -> &[Atom] {
-        self.global_declarations_or_none().map_or(&[], |declarations| &declarations.lexical)
+        self.global_declarations_or_none()
+            .map_or(&[], |declarations| &declarations.lexical)
     }
 
     pub fn global_var_atoms(&self) -> &[Atom] {
-        self.global_declarations_or_none().map_or(&[], |declarations| &declarations.var)
+        self.global_declarations_or_none()
+            .map_or(&[], |declarations| &declarations.var)
     }
 
     pub fn global_function_atoms(&self) -> &[Atom] {
-        self.global_declarations_or_none().map_or(&[], |declarations| &declarations.function)
+        self.global_declarations_or_none()
+            .map_or(&[], |declarations| &declarations.function)
     }
 
     pub fn global_annex_b_var_atoms(&self) -> &[Atom] {
-        self.global_declarations_or_none().map_or(&[], |declarations| &declarations.annex_b_var)
+        self.global_declarations_or_none()
+            .map_or(&[], |declarations| &declarations.annex_b_var)
     }
 
     /// The slots a module body's environment holds for its importers and linker: its imports
@@ -1790,7 +1837,13 @@ impl Function {
         let linked: rustc_hash::FxHashSet<&str> = imports
             .iter()
             .map(|import| import.local.as_str())
-            .chain(link_plan.locals.iter().chain(&link_plan.hoisted_functions).map(|(local, _)| local.as_str()))
+            .chain(
+                link_plan
+                    .locals
+                    .iter()
+                    .chain(&link_plan.hoisted_functions)
+                    .map(|(local, _)| local.as_str()),
+            )
             .collect();
         self.local_atoms
             .iter()
@@ -1800,7 +1853,8 @@ impl Function {
     }
 
     pub fn global_immutable_atoms(&self) -> &[Atom] {
-        self.global_declarations_or_none().map_or(&[], |declarations| &declarations.immutable)
+        self.global_declarations_or_none()
+            .map_or(&[], |declarations| &declarations.immutable)
     }
 
     /// Reusing an activation is observable while its call is protected by a handler.
@@ -1907,7 +1961,8 @@ impl Function {
         for (slot, dead_zone) in dead_zone.iter_mut().enumerate() {
             *dead_zone &= plain[slot];
         }
-        let initialized = initialization::initialized_before_reads(self, superinstructions, &dead_zone, &[]);
+        let initialized =
+            initialization::initialized_before_reads(self, superinstructions, &dead_zone, &[]);
         for (slot, plain) in plain.iter_mut().enumerate() {
             *plain &= !dead_zone[slot] || initialized[slot];
         }
@@ -2115,14 +2170,22 @@ impl Function {
     fn parameters_bind_directly<'n>(&self, name: impl Fn(usize) -> Option<&'n str>) -> bool {
         self.local_atoms[..usize::from(self.params).min(self.local_atoms.len())]
             .iter()
-            .all(|atom| usize::try_from(*atom).ok().and_then(&name).is_some_and(|name| !name.starts_with('\0')))
+            .all(|atom| {
+                usize::try_from(*atom)
+                    .ok()
+                    .and_then(&name)
+                    .is_some_and(|name| !name.starts_with('\0'))
+            })
     }
 
     /// Whether each parameter lives in its own named slot: a simple list, or a rest list that
     /// binds directly (`parameters_bind_directly`). Selective capture layouts, environment
     /// activations and promoted locals all require it, and the compiler and the validator
     /// read this one rule.
-    pub(crate) fn parameters_own_their_slots<'n>(&self, name: impl Fn(usize) -> Option<&'n str>) -> bool {
+    pub(crate) fn parameters_own_their_slots<'n>(
+        &self,
+        name: impl Fn(usize) -> Option<&'n str>,
+    ) -> bool {
         self.simple_parameters || self.rest && self.parameters_bind_directly(name)
     }
 
@@ -2130,15 +2193,20 @@ impl Function {
     /// loads and stores reach: `parameters_own_their_slots`, or a list without a rest
     /// parameter whose patterns or defaults bind its names apart, each argument then in its
     /// hidden parameter slot (`HIDDEN_PARAMETER_PREFIX`). Promoted locals require it.
-    pub(crate) fn arguments_own_their_slots<'n>(&self, name: impl Fn(usize) -> Option<&'n str>) -> bool {
+    pub(crate) fn arguments_own_their_slots<'n>(
+        &self,
+        name: impl Fn(usize) -> Option<&'n str>,
+    ) -> bool {
         self.parameters_own_their_slots(&name)
             || !self.rest
-                && self.local_atoms[..usize::from(self.params).min(self.local_atoms.len())].iter().all(|atom| {
-                    usize::try_from(*atom)
-                        .ok()
-                        .and_then(&name)
-                        .is_some_and(|name| name.starts_with(HIDDEN_PARAMETER_PREFIX))
-                })
+                && self.local_atoms[..usize::from(self.params).min(self.local_atoms.len())]
+                    .iter()
+                    .all(|atom| {
+                        usize::try_from(*atom)
+                            .ok()
+                            .and_then(&name)
+                            .is_some_and(|name| name.starts_with(HIDDEN_PARAMETER_PREFIX))
+                    })
     }
 
     /// Whether an activation can suspend: an `await`, or a `yield` of a generator.
@@ -2219,7 +2287,7 @@ impl Function {
                 && self.self_binding_slot.is_none()
                 && !self.inherited_with_scope
                 && self.local_registers.is_empty()
-                && self.arguments_slot.is_none()
+                && (self.arguments_slot.is_none() || self.reads_passed_arguments_only())
                 && self.binding_sites.is_empty()
                 && self.selective_capture_slots.is_some()
                 && self.initial_register == InitialRegister::Undefined
@@ -2243,7 +2311,9 @@ impl Function {
                             // A read whose base is a plain local reads the window's local
                             // (`lane_plain_local_operand`).
                             || (op == Op::GetField
-                                && instruction.addressed_local_slots().eq(instruction.local_field_base())))
+                                && instruction.addressed_local_slots().eq(instruction.local_field_base()))
+                            // The window keeps every value passed, which these answer.
+                            || matches!(op, Op::ArgumentsLength | Op::ArgumentGet))
                 });
             CallPlan {
                 environment_activation,
@@ -2255,6 +2325,7 @@ impl Function {
                 addresses_locals,
                 forwards_arguments,
                 keeps_arguments: kept_arguments.is_some(),
+                reads_passed_arguments: self.reads_passed_arguments_only(),
                 registers_only: (ordinary_with_rest && in_loop || constructs_frameless)
                     && self.initial_register == InitialRegister::Undefined
                     && if self.arguments_slot.is_none() {
@@ -2287,10 +2358,18 @@ impl Function {
         }
         let undefined_load = |load: &WideInstruction| {
             load.op() == Op::LoadConst
-                && matches!(constants.get(load.constant_index()), Some(Constant::Undefined))
+                && matches!(
+                    constants.get(load.constant_index()),
+                    Some(Constant::Undefined)
+                )
         };
         stores != 0
-            && match self.instructions().skip(stores).collect::<Vec<_>>().as_slice() {
+            && match self
+                .instructions()
+                .skip(stores)
+                .collect::<Vec<_>>()
+                .as_slice()
+            {
                 [completion] => {
                     (undefined_load(completion) && completion.returns_from_frame())
                         || (completion.op() == Op::Return
@@ -2307,6 +2386,28 @@ impl Function {
             }
     }
 
+    /// Whether the body reaches its `arguments` binding only by reading its length or an
+    /// element (`ArgumentsLength`, `ArgumentGet`), with no closure capturing the binding, so
+    /// the values passed answer every read: the object is unmapped, mapped onto no
+    /// parameters, or mapped without a write that could observe it (`unaliased_arguments`).
+    /// An environment activation then keeps those values after its locals.
+    pub(crate) fn reads_passed_arguments_only(&self) -> bool {
+        let Some(slot) = self.arguments_slot else {
+            return false;
+        };
+        !self.is_generator
+            && !self.is_async
+            && !(self.arguments_alias_parameters() && self.params != 0)
+            && !self.local_slot_uses_environment(usize::from(slot))
+            && !self.has_dynamic_scope_access()
+            && self.instructions().all(|instruction| {
+                matches!(instruction.op(), Op::ArgumentsLength | Op::ArgumentGet)
+                    || !instruction
+                        .addressed_local_slots()
+                        .any(|addressed| addressed == slot)
+            })
+    }
+
     /// What a derived constructor whose whole body constructs its parent and returns the
     /// receiver passes on (`SuperForwarded`): the implicit `constructor(...args) {
     /// super(...args); }`, or `constructor(a, b) { super(a, b); }` with its parameters in
@@ -2314,7 +2415,11 @@ impl Function {
     /// `\0quench:super` binding) and makes the `super` construction, then binds the
     /// receiver. Without fields or private elements of its own (`instance_initializer`), its
     /// construction is the parent's with the class as `new.target`.
-    pub(crate) fn super_forwarding(&self, atoms: &AtomTable, constants: &[Constant]) -> Option<SuperForwarded> {
+    pub(crate) fn super_forwarding(
+        &self,
+        atoms: &AtomTable,
+        constants: &[Constant],
+    ) -> Option<SuperForwarded> {
         if !self.derived_constructor
             || !self.handlers.is_empty()
             || self.arguments_slot.is_some()
@@ -2324,14 +2429,25 @@ impl Function {
         {
             return None;
         }
-        let records = self.instructions().collect::<SmallVec<[WideInstruction; 16]>>();
+        let records = self
+            .instructions()
+            .collect::<SmallVec<[WideInstruction; 16]>>();
         // The parent: the active function's [[GetPrototypeOf]], called with no receiver.
-        let parent_of = |active: &WideInstruction, base: &WideInstruction, receiver: &WideInstruction, call: &WideInstruction| {
+        let parent_of = |active: &WideInstruction,
+                         base: &WideInstruction,
+                         receiver: &WideInstruction,
+                         call: &WideInstruction| {
             active.op() == Op::LoadCapture
                 && base.op() == Op::LoadName
-                && usize::try_from(base.atom_index()).ok().and_then(|atom| atoms.get(atom)) == Some(SUPER_BASE_BINDING)
+                && usize::try_from(base.atom_index())
+                    .ok()
+                    .and_then(|atom| atoms.get(atom))
+                    == Some(SUPER_BASE_BINDING)
                 && receiver.op() == Op::LoadConst
-                && matches!(constants.get(receiver.constant_index()), Some(Constant::Undefined))
+                && matches!(
+                    constants.get(receiver.constant_index()),
+                    Some(Constant::Undefined)
+                )
                 && call.op() == Op::Call
                 && call.b() == base.result_register()
                 && call.c() == receiver.result_register()
@@ -2341,7 +2457,18 @@ impl Function {
         if self.rest {
             // The implicit constructor spreads its rest list, then returns the receiver; the
             // records past its return are unreachable.
-            let [list, active, base, receiver, call, construct, binds, completion, ..] = records.as_slice() else {
+            let [
+                list,
+                active,
+                base,
+                receiver,
+                call,
+                construct,
+                binds,
+                completion,
+                ..,
+            ] = records.as_slice()
+            else {
                 return None;
             };
             let shaped = self.params == 1
@@ -2368,17 +2495,24 @@ impl Function {
         let count = usize::from(self.params);
         let (head, tail) = records.split_at_checked(5)?;
         let (loads, tail) = tail.split_at_checked(count)?;
-        let ([active, base, receiver, parent, spare], [construct, check, binds, undefined, completion]) =
-            (head, tail)
+        let (
+            [active, base, receiver, parent, spare],
+            [construct, check, binds, undefined, completion],
+        ) = (head, tail)
         else {
             return None;
         };
         let undefined_load = |load: &WideInstruction| {
             load.op() == Op::LoadConst
                 && load.result_flags() == 0
-                && matches!(constants.get(load.constant_index()), Some(Constant::Undefined))
+                && matches!(
+                    constants.get(load.constant_index()),
+                    Some(Constant::Undefined)
+                )
         };
-        let crate::bytecode::ConstructArguments::Registers(window) = construct.construct_arguments() else {
+        let crate::bytecode::ConstructArguments::Registers(window) =
+            construct.construct_arguments()
+        else {
             return None;
         };
         let forwards_parameters = usize::from(window.count) == count
@@ -2409,13 +2543,19 @@ impl Function {
     /// `Class.create` constructor): its seven records read `this.<method>`, read `apply` from
     /// it, load `this` and the forwarded `arguments` binding into the call window, make the
     /// forwarding call, then return `undefined`. No handler covers them.
-    pub(crate) fn forwarded_this_method(&self, constants: &[Constant]) -> Option<ForwardedThisMethod> {
+    pub(crate) fn forwarded_this_method(
+        &self,
+        constants: &[Constant],
+    ) -> Option<ForwardedThisMethod> {
         if !self.handlers.is_empty() {
             return None;
         }
         let arguments_slot = self.arguments_slot?;
-        let records = self.instructions().collect::<SmallVec<[WideInstruction; 8]>>();
-        let [method, apply, this, arguments, call, undefined, completion] = records.as_slice() else {
+        let records = self
+            .instructions()
+            .collect::<SmallVec<[WideInstruction; 8]>>();
+        let [method, apply, this, arguments, call, undefined, completion] = records.as_slice()
+        else {
             return None;
         };
         let window = ImmediateLayout::call_window_base(call.imm());
@@ -2440,7 +2580,10 @@ impl Function {
             && plain_result(call)
             && undefined.op() == Op::LoadConst
             && plain_result(undefined)
-            && matches!(constants.get(undefined.constant_index()), Some(Constant::Undefined))
+            && matches!(
+                constants.get(undefined.constant_index()),
+                Some(Constant::Undefined)
+            )
             && completion.op() == Op::Return
             && completion.register_a() == undefined.result_register();
         shaped.then(|| ForwardedThisMethod {
@@ -2475,7 +2618,9 @@ impl Function {
         // that reads only `arguments.length` cannot observe the mapping.
         let reads_only_length = instructions.iter().all(|instruction| {
             instruction.op() == Op::ArgumentsLength
-                || !instruction.addressed_local_slots().any(|addressed| addressed == slot)
+                || !instruction
+                    .addressed_local_slots()
+                    .any(|addressed| addressed == slot)
         });
         if self.is_generator
             || self.is_async
@@ -2516,21 +2661,29 @@ impl Function {
         if passes.is_empty() {
             return forwarded.then_some(KeptArguments::Forwards);
         }
-        self.arguments_passed_last(&instructions, slot, &passes).then_some(KeptArguments::Passes)
+        self.arguments_passed_last(&instructions, slot, &passes)
+            .then_some(KeptArguments::Passes)
     }
 
     /// Whether no read of the `arguments` binding in local `slot`, `passes` among them, can
     /// follow any of `passes`: the object a pass makes is the binding's last read, so no
     /// later read needs it. A handler's edges are not traced, so a body with one answers
     /// `false`.
-    fn arguments_passed_last(&self, instructions: &[WideInstruction], slot: u16, passes: &[usize]) -> bool {
+    fn arguments_passed_last(
+        &self,
+        instructions: &[WideInstruction],
+        slot: u16,
+        passes: &[usize],
+    ) -> bool {
         if !self.handlers.is_empty() {
             return false;
         }
         let mut reached = vec![false; instructions.len()];
         let mut work = Vec::new();
         for &pass in passes {
-            crate::bytecode::for_each_instruction_successor(pass, instructions[pass], |next| work.push(next));
+            crate::bytecode::for_each_instruction_successor(pass, instructions[pass], |next| {
+                work.push(next)
+            });
         }
         while let Some(pc) = work.pop() {
             let Some(instruction) = instructions.get(pc) else {
@@ -2539,10 +2692,15 @@ impl Function {
             if std::mem::replace(&mut reached[pc], true) {
                 continue;
             }
-            if instruction.addressed_local_slots().any(|addressed| addressed == slot) {
+            if instruction
+                .addressed_local_slots()
+                .any(|addressed| addressed == slot)
+            {
                 return false;
             }
-            crate::bytecode::for_each_instruction_successor(pc, *instruction, |next| work.push(next));
+            crate::bytecode::for_each_instruction_successor(pc, *instruction, |next| {
+                work.push(next)
+            });
         }
         true
     }
@@ -2556,7 +2714,9 @@ impl Function {
         *self.dynamic_scope_access.get_or_init(|| {
             self.inherited_with_scope
                 || !self.binding_sites.is_empty()
-                || self.instructions().any(WideInstruction::resolves_dynamic_scope)
+                || self
+                    .instructions()
+                    .any(WideInstruction::resolves_dynamic_scope)
         })
     }
 
@@ -2707,7 +2867,12 @@ pub(crate) enum LexicalBindingKind {
 }
 
 impl LexicalBindingKind {
-    pub(crate) const ALL: [Self; 4] = [Self::Mutable, Self::Immutable, Self::FunctionName, Self::PrivateName];
+    pub(crate) const ALL: [Self; 4] = [
+        Self::Mutable,
+        Self::Immutable,
+        Self::FunctionName,
+        Self::PrivateName,
+    ];
 
     pub(crate) fn capture_prefix(self) -> &'static str {
         match self {
@@ -2848,14 +3013,17 @@ impl FieldBase {
     }
 
     pub(crate) fn local_index(self) -> Option<u16> {
-        (self.0 & Self::LOCAL_FLAG != 0
-            && self.0 & !(Self::LOCAL_FLAG | REGISTER_MASK) == 0)
+        (self.0 & Self::LOCAL_FLAG != 0 && self.0 & !(Self::LOCAL_FLAG | REGISTER_MASK) == 0)
             .then_some(self.0 & REGISTER_MASK)
     }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum FieldPart { First, Second, Sink }
+pub(crate) enum FieldPart {
+    First,
+    Second,
+    Sink,
+}
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct FieldSite {
@@ -2867,7 +3035,11 @@ pub(crate) struct FieldSite {
 }
 impl FieldSite {
     pub(crate) fn source(self, part: FieldPart) -> Option<(u32, u32)> {
-        self.sources[match part { FieldPart::First => 0, FieldPart::Second => 1, FieldPart::Sink => 2 }]
+        self.sources[match part {
+            FieldPart::First => 0,
+            FieldPart::Second => 1,
+            FieldPart::Sink => 2,
+        }]
     }
 }
 
@@ -3187,7 +3359,9 @@ impl SourceText {
         }
     }
 
-    pub(crate) fn read_snapshot(reader: &mut crate::snapshot::Reader<'_>) -> crate::snapshot::SnapshotResult<Self> {
+    pub(crate) fn read_snapshot(
+        reader: &mut crate::snapshot::Reader<'_>,
+    ) -> crate::snapshot::SnapshotResult<Self> {
         Ok(match reader.u8()? {
             0 => Self::Shared(std::sync::Arc::from(reader.str()?)),
             1 => {
@@ -3202,12 +3376,18 @@ impl SourceText {
                 // embedded text at this offset from the anchor; its edges are checked below.
                 let bytes = unsafe { std::slice::from_raw_parts(address, len) };
                 if &bytes[..head.len()] != head || &bytes[len - tail.len()..] != tail {
-                    return Err(crate::snapshot::SnapshotError("snapshot embedded text moved".into()));
+                    return Err(crate::snapshot::SnapshotError(
+                        "snapshot embedded text moved".into(),
+                    ));
                 }
                 // SAFETY: the text was a `&'static str` of this image when written.
                 Self::Static(unsafe { std::str::from_utf8_unchecked(bytes) })
             }
-            _ => return Err(crate::snapshot::SnapshotError("invalid snapshot source text".into())),
+            _ => {
+                return Err(crate::snapshot::SnapshotError(
+                    "invalid snapshot source text".into(),
+                ));
+            }
         })
     }
 }
@@ -3215,14 +3395,22 @@ impl SourceText {
 impl ProgramSource {
     pub(crate) fn write_snapshot(&self, writer: &mut crate::snapshot::Writer) {
         // `line_starts` is a memo of `text`, made again on the first line read.
-        let Self { text, base, line_offset, column_offset, line_starts: _ } = self;
+        let Self {
+            text,
+            base,
+            line_offset,
+            column_offset,
+            line_starts: _,
+        } = self;
         text.write_snapshot(writer);
         writer.u32(*base);
         writer.u32(*line_offset);
         writer.u32(*column_offset);
     }
 
-    pub(crate) fn read_snapshot(reader: &mut crate::snapshot::Reader<'_>) -> crate::snapshot::SnapshotResult<Self> {
+    pub(crate) fn read_snapshot(
+        reader: &mut crate::snapshot::Reader<'_>,
+    ) -> crate::snapshot::SnapshotResult<Self> {
         Ok(Self {
             text: SourceText::read_snapshot(reader)?,
             base: reader.u32()?,
@@ -3281,8 +3469,12 @@ impl ProgramSource {
                 .collect()
         });
         let start = *starts.get(compiled_line)? as usize;
-        let end = starts.get(compiled_line + 1).map_or(self.text.len(), |&end| end as usize);
-        let text = self.text.get(start..end)?
+        let end = starts
+            .get(compiled_line + 1)
+            .map_or(self.text.len(), |&end| end as usize);
+        let text = self
+            .text
+            .get(start..end)?
             .trim_end_matches(['\r', '\n', '\u{2028}', '\u{2029}']);
         if line != 1 {
             return Some(text);
@@ -3354,7 +3546,10 @@ pub(crate) struct EncodedRecords {
 
 impl std::fmt::Debug for EncodedRecords {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.debug_struct("EncodedRecords").field("ranges", &self.ranges.len()).finish_non_exhaustive()
+        formatter
+            .debug_struct("EncodedRecords")
+            .field("ranges", &self.ranges.len())
+            .finish_non_exhaustive()
     }
 }
 
@@ -3438,13 +3633,21 @@ impl ResidualProgram {
                 .and_then(|records| binary::decode_deferred_function(records, index));
             let function = match deferred {
                 Some(decoded) => decoded.unwrap_or_else(|error| {
-                    panic!("function {index} of {} does not decode: {error}", self.source_name)
+                    panic!(
+                        "function {index} of {} does not decode: {error}",
+                        self.source_name
+                    )
                 }),
-                None => crate::compile::replay::recompile(self, index as u32)
-                    .unwrap_or_else(|error| {
-                        panic!("function {index} of {} does not compile again: {error}", self.source_name)
-                    })
-                    .function,
+                None => {
+                    crate::compile::replay::recompile(self, index as u32)
+                        .unwrap_or_else(|error| {
+                            panic!(
+                                "function {index} of {} does not compile again: {error}",
+                                self.source_name
+                            )
+                        })
+                        .function
+                }
             };
             // As `ResidualProgram::prime_loop_decoding` primes an installed program's records.
             function.decoded.prime_loop(&function.code, &function.wide);
@@ -3475,39 +3678,49 @@ impl ResidualProgram {
     }
 
     /// The registers live at `pc` in `function`, when liveness covers it.
-    pub(crate) fn register_root_mask(&self, function: u32, pc: usize) -> Option<crate::compile::liveness::RegisterSet> {
+    pub(crate) fn register_root_mask(
+        &self,
+        function: u32,
+        pc: usize,
+    ) -> Option<crate::compile::liveness::RegisterSet> {
         self.register_root_masks(function)?.get(pc).copied()
     }
 
     /// `function`'s live register masks by pc, one past its last instruction included, when
     /// liveness covers it.
-    pub(crate) fn register_root_masks(&self, function: u32) -> Option<&[crate::compile::liveness::RegisterSet]> {
+    pub(crate) fn register_root_masks(
+        &self,
+        function: u32,
+    ) -> Option<&[crate::compile::liveness::RegisterSet]> {
         let function = self.function_get(function as usize)?;
         if !function.register_roots.covered {
             return None;
         }
-        let masks = function
-            .register_roots
-            .masks
-            .get_or_init(|| {
-                crate::compile::liveness::analyze(
-                    function,
-                    self,
-                    &self.field_sites,
-                    &self.superinstructions,
-                )
-                .expect("a covered function's liveness is derivable")
-                .into_boxed_slice()
-            });
+        let masks = function.register_roots.masks.get_or_init(|| {
+            crate::compile::liveness::analyze(
+                function,
+                self,
+                &self.field_sites,
+                &self.superinstructions,
+            )
+            .expect("a covered function's liveness is derivable")
+            .into_boxed_slice()
+        });
         Some(masks)
     }
 
     pub(crate) fn source_position(&self, function: u32, pc: u32) -> Option<SourcePosition> {
-        let position = self.function_get(function as usize)?.source_positions.at(pc)?;
+        let position = self
+            .function_get(function as usize)?
+            .source_positions
+            .at(pc)?;
         self.adjust_source_position(position)
     }
 
-    pub(crate) fn adjust_source_position(&self, mut position: SourcePosition) -> Option<SourcePosition> {
+    pub(crate) fn adjust_source_position(
+        &self,
+        mut position: SourcePosition,
+    ) -> Option<SourcePosition> {
         if let Some(source) = &self.source {
             position.line = position
                 .line
@@ -3587,7 +3800,10 @@ impl ResidualProgram {
     /// Decodes `encode_trusted`'s bytes into a program proven valid: this build's compiler
     /// output, which the host keys by build and whose checksum held.
     /// `decode_trusted`, with the program's atoms named by `intern`'s ids.
-    pub(crate) fn decode_trusted_interned(bytes: KeptBytes, intern: &mut dyn FnMut(&str) -> u32) -> Result<Self, String> {
+    pub(crate) fn decode_trusted_interned(
+        bytes: KeptBytes,
+        intern: &mut dyn FnMut(&str) -> u32,
+    ) -> Result<Self, String> {
         binary::decode_trusted_program_interned(bytes, intern)
     }
 
@@ -3653,8 +3869,8 @@ impl ResidualProgram {
 }
 mod binary;
 mod closure_reads;
-pub(crate) use closure_reads::{ClosureReads, EnvironmentDemand, FunctionReadFacts};
 pub(crate) use binary::{decode_static_module_analysis, encode_static_module_analysis};
+pub(crate) use closure_reads::{ClosureReads, EnvironmentDemand, FunctionReadFacts};
 mod disassemble;
 #[cfg(test)]
 mod tests;

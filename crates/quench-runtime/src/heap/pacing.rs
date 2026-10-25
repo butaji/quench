@@ -134,14 +134,19 @@ pub(super) struct NextCollection {
 
 impl GenerationalPacing {
     /// The state transition after each collection, and the plan for the next one.
-    pub(super) fn plan(&self, state: &mut PacingState, outcome: CollectionOutcome) -> NextCollection {
+    pub(super) fn plan(
+        &self,
+        state: &mut PacingState,
+        outcome: CollectionOutcome,
+    ) -> NextCollection {
         if outcome.full {
             // What a minor collection would have kept: the previous live weight and this
             // cycle's expected survivors. A full collection pays when it reclaims old garbage
             // beyond that. Past the survival limit the estimate measures nothing minor
             // collections could keep, and full collections are the only ones (`Regime`), so
             // the cap stays as set.
-            let survivors = (outcome.allocated as u64 * u64::from(state.survival) / u64::from(SURVIVAL_SCALE)) as usize;
+            let survivors = (outcome.allocated as u64 * u64::from(state.survival)
+                / u64::from(SURVIVAL_SCALE)) as usize;
             let expected = outcome.previous_live_weight.saturating_add(survivors);
             let reclaimed = expected.saturating_sub(outcome.live_weight);
             state.cap_backoff = if state.regime(self) == Regime::FullOnly
@@ -153,15 +158,21 @@ impl GenerationalPacing {
             };
         }
         if !outcome.full && outcome.allocated > 0 {
-            let promoted = outcome.live_weight.saturating_sub(outcome.previous_live_weight);
+            let promoted = outcome
+                .live_weight
+                .saturating_sub(outcome.previous_live_weight);
             let survival = (promoted.min(outcome.allocated) as u64 * u64::from(SURVIVAL_SCALE)
                 / outcome.allocated as u64) as u32;
             state.survival = (state.survival + survival) / 2;
         }
         let young = NextCollection {
             threshold: self.young_budget(outcome.live),
-            full: self.full_due(outcome.live_after_full, outcome.live, outcome.since_full, state.cap_backoff)
-                || self.weight_growth_due(outcome.live_weight_after_full, outcome.live_weight),
+            full: self.full_due(
+                outcome.live_after_full,
+                outcome.live,
+                outcome.since_full,
+                state.cap_backoff,
+            ) || self.weight_growth_due(outcome.live_weight_after_full, outcome.live_weight),
         };
         match state.regime(self) {
             Regime::Generational => young,
@@ -172,7 +183,10 @@ impl GenerationalPacing {
                     state.probe_in = self.probe_interval;
                 }
                 if outcome.full && state.probe_in == 0 {
-                    return NextCollection { full: false, ..young };
+                    return NextCollection {
+                        full: false,
+                        ..young
+                    };
                 }
                 // A probe runs inside the interval between full collections; it does not
                 // lengthen it.
@@ -187,7 +201,6 @@ impl GenerationalPacing {
         }
     }
 
-
     pub(super) fn young_budget(&self, live: usize) -> usize {
         self.young
             .of(live)
@@ -195,9 +208,18 @@ impl GenerationalPacing {
             .max(self.minimum_young)
     }
 
-    pub(super) fn full_due(&self, live_after_full: usize, live: usize, since_full: usize, cap_backoff: u32) -> bool {
+    pub(super) fn full_due(
+        &self,
+        live_after_full: usize,
+        live: usize,
+        since_full: usize,
+        cap_backoff: u32,
+    ) -> bool {
         live.saturating_sub(live_after_full)
-            >= self.old_growth.of(live_after_full).max(self.minimum_old_growth)
+            >= self
+                .old_growth
+                .of(live_after_full)
+                .max(self.minimum_old_growth)
             || self.allocation_cap_reached(live_after_full, since_full, cap_backoff)
     }
 
@@ -206,8 +228,16 @@ impl GenerationalPacing {
             && live_weight.saturating_sub(after_full) >= self.weight_growth.of(after_full)
     }
 
-    pub(super) fn allocation_cap_reached(&self, live_after_full: usize, since_full: usize, cap_backoff: u32) -> bool {
-        let cap = self.allocation_cap.of(live_after_full).max(self.minimum_allocation_cap);
+    pub(super) fn allocation_cap_reached(
+        &self,
+        live_after_full: usize,
+        since_full: usize,
+        cap_backoff: u32,
+    ) -> bool {
+        let cap = self
+            .allocation_cap
+            .of(live_after_full)
+            .max(self.minimum_allocation_cap);
         since_full >= cap.checked_shl(cap_backoff).unwrap_or(usize::MAX)
     }
 
@@ -234,9 +264,15 @@ impl GenerationalPacing {
             old_growth: ratio("QUENCH_GC_OLD_GROWTH", self.old_growth),
             minimum_old_growth: read("QUENCH_GC_MIN_OLD_GROWTH", self.minimum_old_growth),
             allocation_cap: ratio("QUENCH_GC_ALLOCATION_CAP", self.allocation_cap),
-            minimum_allocation_cap: read("QUENCH_GC_MIN_ALLOCATION_CAP", self.minimum_allocation_cap),
+            minimum_allocation_cap: read(
+                "QUENCH_GC_MIN_ALLOCATION_CAP",
+                self.minimum_allocation_cap,
+            ),
             productive_full: ratio("QUENCH_GC_PRODUCTIVE_FULL", self.productive_full),
-            maximum_cap_backoff: read("QUENCH_GC_MAX_CAP_BACKOFF", self.maximum_cap_backoff as usize) as u32,
+            maximum_cap_backoff: read(
+                "QUENCH_GC_MAX_CAP_BACKOFF",
+                self.maximum_cap_backoff as usize,
+            ) as u32,
             survival_limit: read("QUENCH_GC_SURVIVAL_LIMIT", self.survival_limit as usize) as u32,
             full_only_headroom: ratio("QUENCH_GC_FULL_ONLY", self.full_only_headroom),
             probe_interval: read("QUENCH_GC_PROBE_INTERVAL", self.probe_interval as usize) as u32,
@@ -495,17 +531,27 @@ mod tests {
             let mut state = PacingState::default();
             let live = 1 << 20;
             // Full collections that keep everything they were expected to keep reclaim nothing.
-            let unproductive = CollectionOutcome { full: true, since_full: 0, ..minor(live, live, 0) };
+            let unproductive = CollectionOutcome {
+                full: true,
+                since_full: 0,
+                ..minor(live, live, 0)
+            };
             for _ in 0..=pacing.maximum_cap_backoff {
                 pacing.plan(&mut state, unproductive);
             }
             assert_eq!(state.cap_backoff, pacing.maximum_cap_backoff);
-            let cap = pacing.allocation_cap.of(live).max(pacing.minimum_allocation_cap);
+            let cap = pacing
+                .allocation_cap
+                .of(live)
+                .max(pacing.minimum_allocation_cap);
             let backed_off = cap << pacing.maximum_cap_backoff;
             assert!(!pacing.allocation_cap_reached(live, backed_off - 1, state.cap_backoff));
             assert!(pacing.allocation_cap_reached(live, backed_off, state.cap_backoff));
             // A productive one restores the cap.
-            let productive = CollectionOutcome { live_weight: 0, ..unproductive };
+            let productive = CollectionOutcome {
+                live_weight: 0,
+                ..unproductive
+            };
             pacing.plan(&mut state, productive);
             assert_eq!(state.cap_backoff, 0);
         }
@@ -518,7 +564,9 @@ mod tests {
         }
     }
 
-    fn high_young_survival_switches_to_full_collections_and_probes_back_under(pacing: GenerationalPacing) {
+    fn high_young_survival_switches_to_full_collections_and_probes_back_under(
+        pacing: GenerationalPacing,
+    ) {
         let mut state = PacingState::default();
         let live = 1 << 20;
         // Young allocations die: minors.
@@ -531,9 +579,19 @@ mod tests {
         assert_eq!(state.regime(&pacing), Regime::FullOnly);
         // The next full collection keeps the interval measured from the last full one.
         let interval = pacing.full_only_headroom.of(3 * live / 2) - live / 2;
-        assert_eq!(next, NextCollection { threshold: interval.max(pacing.minimum_young), full: true });
+        assert_eq!(
+            next,
+            NextCollection {
+                threshold: interval.max(pacing.minimum_young),
+                full: true
+            }
+        );
         // After `probe_interval` full collections, a minor probes survival again.
-        let full = CollectionOutcome { full: true, since_full: 0, ..minor(live, live, 4 * live) };
+        let full = CollectionOutcome {
+            full: true,
+            since_full: 0,
+            ..minor(live, live, 4 * live)
+        };
         for _ in 1..pacing.probe_interval {
             assert!(pacing.plan(&mut state, full).full);
         }

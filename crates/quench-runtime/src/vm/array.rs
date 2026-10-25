@@ -118,7 +118,10 @@ impl<H: Host> Vm<H> {
             .checked_add(args.len())
             .filter(|length| *length as f64 <= MAX_SAFE_INTEGER)
             .ok_or_else(|| self.type_error(p, "array-like length exceeds safe integer".into()))?;
-        if self.splice_dense_elements(object, length, 0, 0, args).is_some() {
+        if self
+            .splice_dense_elements(object, length, 0, 0, args)
+            .is_some()
+        {
             return Ok(Value::number(new_length as f64));
         }
         if !args.is_empty() {
@@ -156,12 +159,18 @@ impl<H: Host> Vm<H> {
                     && elements.iter().all(|value| !value.is_deleted())
             });
         let writable_length = self
-            .property_attributes(object, super::property_key::PropertyKey::string(self.length_atom))
+            .property_attributes(
+                object,
+                super::property_key::PropertyKey::string(self.length_atom),
+            )
             .is_some_and(|attributes| attributes.writable);
         if !dense || !writable_length {
             return None;
         }
-        let elements = self.heap.array_elements_mut(object).expect("dense array guard");
+        let elements = self
+            .heap
+            .array_elements_mut(object)
+            .expect("dense array guard");
         Some(super::index::mutable_array_elements(elements).remove(0))
     }
 
@@ -281,7 +290,8 @@ impl<H: Host> Vm<H> {
         if !removed_holds_holes {
             return false;
         }
-        let Some(taken) = self.splice_dense_elements(this, length, start, delete_count, items) else {
+        let Some(taken) = self.splice_dense_elements(this, length, start, delete_count, items)
+        else {
             return false;
         };
         let Some(removed_object) = self.heap.array_mut(removed) else {
@@ -568,7 +578,9 @@ impl<H: Host> Vm<H> {
                 }
                 // Present own data elements read without observing anything, and append as
                 // the definitions would.
-                if let Some(values) = vm.present_dense_elements(item, 0..length).map(<[Value]>::to_vec)
+                if let Some(values) = vm
+                    .present_dense_elements(item, 0..length)
+                    .map(<[Value]>::to_vec)
                     && vm.append_dense_definitions(target, next, &values)
                 {
                     next += length;
@@ -642,16 +654,26 @@ impl<H: Host> Vm<H> {
             return None;
         }
         let elements = object.elements().get(range)?;
-        elements.iter().all(|value| !value.is_deleted()).then_some(elements)
+        elements
+            .iter()
+            .all(|value| !value.is_deleted())
+            .then_some(elements)
     }
 
     /// CreateDataPropertyOrThrow of `values` at indices `start..` of `array`, a dense array
     /// (`dense_array_length`) of length `start`: each definition appends a plain element,
     /// whatever its prototypes hold, as a definition consults none. `false` leaves `array`
     /// untouched.
-    pub(super) fn append_dense_definitions(&mut self, array: Value, start: usize, values: &[Value]) -> bool {
+    pub(super) fn append_dense_definitions(
+        &mut self,
+        array: Value,
+        start: usize,
+        values: &[Value],
+    ) -> bool {
         if self.dense_array_length(array) != Some(start)
-            || start.checked_add(values.len()).is_none_or(|end| end > MAX_ARRAY_LENGTH)
+            || start
+                .checked_add(values.len())
+                .is_none_or(|end| end > MAX_ARRAY_LENGTH)
         {
             return false;
         }
@@ -728,7 +750,12 @@ impl<H: Host> Vm<H> {
     /// literal is unreachable from guest code until it is complete, so no prototype observes
     /// the index, and CreateDataProperty stores the value as its own element. `false` leaves
     /// any other definition to `define_array_literal_element`.
-    pub(super) fn define_literal_element(&mut self, array: Value, index: usize, value: Value) -> bool {
+    pub(super) fn define_literal_element(
+        &mut self,
+        array: Value,
+        index: usize,
+        value: Value,
+    ) -> bool {
         let Some(length) = self.dense_array_length(array) else {
             return false;
         };
@@ -754,7 +781,10 @@ impl<H: Host> Vm<H> {
         let Some(length) = self.dense_array_length(array) else {
             return false;
         };
-        if length.checked_add(values.len()).is_none_or(|end| end > MAX_ARRAY_LENGTH) {
+        if length
+            .checked_add(values.len())
+            .is_none_or(|end| end > MAX_ARRAY_LENGTH)
+        {
             return false;
         }
         let Some(object) = self.heap.array_mut(array) else {
@@ -773,7 +803,9 @@ impl<H: Host> Vm<H> {
     /// (`inherited_index_unclaimed`), defines a writable, enumerable, configurable data
     /// element, which the hole's slot then holds.
     pub(super) fn fill_dense_hole(&mut self, this: Value, index: usize, value: Value) -> bool {
-        if self.dense_array_length(this).is_none_or(|length| index >= length)
+        if self
+            .dense_array_length(this)
+            .is_none_or(|length| index >= length)
             || !self
                 .heap
                 .array(this)
@@ -921,7 +953,9 @@ impl<H: Host> Vm<H> {
             .unwrap_or(length);
         let count = end.saturating_sub(start);
         let result = self.array_species_create(p, object, count)?;
-        if let Some(values) = self.present_dense_elements(object, start..end).map(<[Value]>::to_vec)
+        if let Some(values) = self
+            .present_dense_elements(object, start..end)
+            .map(<[Value]>::to_vec)
             && self.fill_dense_holes(result, &values)
         {
             // Each CreateDataPropertyOrThrow filled a hole; the final `length` Set still runs.

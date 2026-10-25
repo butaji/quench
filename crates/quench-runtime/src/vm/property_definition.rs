@@ -120,7 +120,11 @@ impl<H: Host> Vm<H> {
         // across whatever guest code a deferred namespace or a lazy member runs.
         let start = self.active_call_roots.len();
         self.active_call_roots.extend(
-            [target, key].into_iter().chain(record.value).chain(record.getter).chain(record.setter),
+            [target, key]
+                .into_iter()
+                .chain(record.value)
+                .chain(record.getter)
+                .chain(record.setter),
         );
         let outcome = self.define_ordinary_own_property(p, target, key, record);
         self.active_call_roots.truncate(start);
@@ -145,12 +149,7 @@ impl<H: Host> Vm<H> {
             if matches!(self.heap.get(object), Some(Cell::TypedArray { .. })) {
                 match Self::typed_array_index_key(self.atom_name(atom)) {
                     TypedArrayIndexKey::Index(index) => {
-                        return self.define_typed_array_property(
-                            p,
-                            object,
-                            index,
-                            descriptor,
-                        );
+                        return self.define_typed_array_property(p, object, index, descriptor);
                     }
                     TypedArrayIndexKey::Invalid => return Ok(false),
                     TypedArrayIndexKey::NotCanonical => {}
@@ -174,11 +173,7 @@ impl<H: Host> Vm<H> {
             if self.heap.array(object).is_some()
                 && let Some(index) = super::object_static::array_index(self.atom_name(atom))
             {
-                return self.define_array_property(
-                    object,
-                    index as usize,
-                    descriptor,
-                );
+                return self.define_array_property(object, index as usize, descriptor);
             }
             if self
                 .object_data(object)
@@ -198,8 +193,7 @@ impl<H: Host> Vm<H> {
         // A watched member (one a binding stands for, or one its initializer redefines)
         // materializes before any definition, as before a write.
         if self.watched_lazy_member(object, property)
-            || (matches!(property, PropertyKey::Symbol(_))
-                && !descriptor.replaces_kind_fields())
+            || (matches!(property, PropertyKey::Symbol(_)) && !descriptor.replaces_kind_fields())
         {
             self.materialize_lazy_data_property(p, object, property)?;
         }

@@ -1,14 +1,14 @@
 use crate::bytecode::{
-    Atom, Constant, DispatchClass, FieldBase, FieldSite, Function as BcFunction, FunctionSlot, Instr,
-    LexicalBindingKind, MethodSite, ModuleImportBinding, ModuleImportName, ModuleLinkPlan,
+    Atom, Constant, DispatchClass, FieldBase, FieldSite, Function as BcFunction, FunctionSlot,
+    Instr, LexicalBindingKind, MethodSite, ModuleImportBinding, ModuleImportName, ModuleLinkPlan,
     ModuleRequest, ModuleRequestPhase, ObjectSite, Op, Operand, Register, ResidualProgram,
     SET_THIS_REGISTER, SourcePosition, Superinstruction, WideInstruction,
 };
 use oxc_allocator::Allocator;
-use replay::SiteTable;
 use oxc_ast::ast::*;
 use oxc_parser::Parser;
 use oxc_span::{GetSpan, SourceType, Span};
+use replay::SiteTable;
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::rc::Rc;
 use std::{fmt, ops::Range};
@@ -20,21 +20,20 @@ mod arrow;
 mod ast;
 mod atoms;
 mod binding_time;
+mod call_only;
 mod capture_layout;
 #[cfg(feature = "profile-memory")]
 mod capture_profile;
-mod call_only;
 mod capture_scope;
 mod class;
 mod early;
 mod frame_registers;
-mod syntax_message;
 pub(crate) mod liveness;
 mod locals;
 mod numeric;
-pub(crate) mod regexp;
 #[cfg(feature = "profile-memory")]
 mod program_profile;
+pub(crate) mod regexp;
 #[cfg(feature = "profile-memory")]
 mod register_profile;
 pub(crate) mod replay;
@@ -42,6 +41,7 @@ mod rewrite;
 mod sequence;
 mod stack;
 mod string;
+mod syntax_message;
 mod template;
 use ast::{FunctionCompiler, StatementCompletion};
 use atoms::CompilerAtoms;
@@ -75,11 +75,14 @@ fn eval_method_body<'a, 'b>(
         _ => return None,
     };
     let body = function.body.as_deref_mut()?;
-    if !ordinary_function { return Some(body); }
+    if !ordinary_function {
+        return Some(body);
+    }
     let [Statement::ExpressionStatement(statement)] = body.statements.as_mut_slice() else {
         return None;
     };
-    let Expression::FunctionExpression(function) = statement.expression.without_parentheses_mut() else {
+    let Expression::FunctionExpression(function) = statement.expression.without_parentheses_mut()
+    else {
         return None;
     };
     function.body.as_deref_mut()
@@ -128,7 +131,11 @@ impl Diagnostic {
     }
 
     /// A parse failure, reported with V8's message at OXC's position.
-    fn parse_failure(source_name: &str, source: &str, error: &oxc_diagnostics::OxcDiagnostic) -> Self {
+    fn parse_failure(
+        source_name: &str,
+        source: &str,
+        error: &oxc_diagnostics::OxcDiagnostic,
+    ) -> Self {
         let offset = error.labels.first().map_or(0, |label| label.offset());
         Self {
             kind: DiagnosticKind::Compilation,
@@ -218,7 +225,10 @@ impl DynamicFunctionSource {
         const PARAMETER_LIST_END: &str = "\n)";
         let function_prefix = format!("{} {DYNAMIC_FUNCTION_PUBLIC_NAME}(", kind.source_prefix());
         Self {
-            text: format!("{EXPRESSION_OPEN}{}{EXPRESSION_CLOSE}", kind.source(&parameters, &body)),
+            text: format!(
+                "{EXPRESSION_OPEN}{}{EXPRESSION_CLOSE}",
+                kind.source(&parameters, &body)
+            ),
             parameter_list_end: EXPRESSION_OPEN.len()
                 + function_prefix.len()
                 + parameters.len()
@@ -238,7 +248,10 @@ impl DynamicFunctionKind {
     }
 
     pub(crate) fn source(self, parameters: &str, body: &str) -> String {
-        format!("{} {DYNAMIC_FUNCTION_PUBLIC_NAME}({parameters}\n) {{\n{body}\n}}", self.source_prefix())
+        format!(
+            "{} {DYNAMIC_FUNCTION_PUBLIC_NAME}({parameters}\n) {{\n{body}\n}}",
+            self.source_prefix()
+        )
     }
 }
 
@@ -257,7 +270,9 @@ enum ParsedProgramShape {
     /// part of its compiled text (a static body), from which they cannot compile again, or an
     /// application's entry, whose own functions mostly run.
     KeptRecords,
-    DynamicFunction { parameter_list_end: usize },
+    DynamicFunction {
+        parameter_list_end: usize,
+    },
     Eval(EvalContext, Option<Span>),
 }
 
@@ -280,17 +295,26 @@ const SINGLE_REGEXP_LITERAL_STARTS: [u8; 4] = [b'/', b'<', b'-', b'#'];
 fn may_begin_single_regexp_literal(source: &str) -> bool {
     let mut rest = source;
     loop {
-        rest = rest.trim_start_matches(|character: char| character.is_whitespace() || character == '\u{FEFF}');
+        rest = rest.trim_start_matches(|character: char| {
+            character.is_whitespace() || character == '\u{FEFF}'
+        });
         if let Some(after) = rest.strip_prefix("/*") {
-            let Some(end) = after.find("*/") else { return true };
+            let Some(end) = after.find("*/") else {
+                return true;
+            };
             rest = &after[end + "*/".len()..];
         } else if let Some(after) = rest.strip_prefix("//") {
-            let Some(end) = after.find(['\n', '\r', '\u{2028}', '\u{2029}']) else { return true };
+            let Some(end) = after.find(['\n', '\r', '\u{2028}', '\u{2029}']) else {
+                return true;
+            };
             rest = &after[end..];
         } else if let Some(after) = rest.strip_prefix('(') {
             rest = after;
         } else {
-            return rest.bytes().next().is_some_and(|first| SINGLE_REGEXP_LITERAL_STARTS.contains(&first));
+            return rest
+                .bytes()
+                .next()
+                .is_some_and(|first| SINGLE_REGEXP_LITERAL_STARTS.contains(&first));
         }
     }
 }
@@ -331,7 +355,11 @@ impl StaticModuleTextKey {
         use std::hash::{Hash, Hasher};
         let mut hasher = rustc_hash::FxHasher::default();
         source.hash(&mut hasher);
-        Self { length: source.len(), hash: hasher.finish(), name: module_name.into() }
+        Self {
+            length: source.len(),
+            hash: hasher.finish(),
+            name: module_name.into(),
+        }
     }
 }
 impl Engine {
@@ -347,7 +375,9 @@ impl Engine {
         }
         let allocator = Allocator::with_capacity(source.len());
         let parsed = Parser::new(&allocator, source, SourceType::script()).parse();
-        if stack::validate_parsed(&parsed).is_err() || !parsed.diagnostics.is_empty() { return true; }
+        if stack::validate_parsed(&parsed).is_err() || !parsed.diagnostics.is_empty() {
+            return true;
+        }
         let mut visitor = TaggedTemplate(false);
         visitor.visit_program(&parsed.program);
         visitor.0
@@ -405,13 +435,18 @@ impl Engine {
     /// A static module's link plan, when its text has no early error and the stack bounds
     /// its syntax (`static_module_analysis`).
     pub(crate) fn static_module_plan(source: &str, module_name: &str) -> Option<StaticModulePlan> {
-        Self::static_module_analysis(source, module_name).plan.clone()
+        Self::static_module_analysis(source, module_name)
+            .plan
+            .clone()
     }
 
     /// What a static module's text says before it links, from one parse and semantic check,
     /// memoized for the thread by the text and name: linking and evaluating a module asks for
     /// it several times (a module graph parsed each module three times, 12% of a Babel run).
-    pub(crate) fn static_module_analysis(source: &str, module_name: &str) -> Rc<StaticModuleAnalysis> {
+    pub(crate) fn static_module_analysis(
+        source: &str,
+        module_name: &str,
+    ) -> Rc<StaticModuleAnalysis> {
         Self::static_module_analysis_with(source, module_name, |analyze| analyze())
     }
 
@@ -436,7 +471,10 @@ impl Engine {
     }
 
     fn analyze_static_module(source: &str, module_name: &str) -> StaticModuleAnalysis {
-        let unbounded = StaticModuleAnalysis { early_error: None, plan: None };
+        let unbounded = StaticModuleAnalysis {
+            early_error: None,
+            plan: None,
+        };
         let normalized = early::normalize_hashbang(source);
         let allocator = Allocator::with_capacity(normalized.len().saturating_mul(6));
         let parsed = Parser::new(&allocator, &normalized, SourceType::mjs()).parse();
@@ -453,7 +491,10 @@ impl Engine {
             .with_check_syntax_error(true)
             .build(&parsed.program);
         if let Some(error) = semantic.diagnostics.first() {
-            return StaticModuleAnalysis { early_error: Some(error.message.to_string()), plan: None };
+            return StaticModuleAnalysis {
+                early_error: Some(error.message.to_string()),
+                plan: None,
+            };
         }
         StaticModuleAnalysis {
             early_error: None,
@@ -487,7 +528,8 @@ impl Engine {
             if matches!(
                 import.phase,
                 ModuleRequestPhase::Source | ModuleRequestPhase::Defer
-            ) || import.module_type.is_some() {
+            ) || import.module_type.is_some()
+            {
                 locals.push((local, exported));
                 continue;
             }
@@ -726,8 +768,8 @@ impl Engine {
     ) -> Result<ResidualProgram, Vec<Diagnostic>> {
         let method_source;
         let raw_source_len = source.len();
-        let ordinary_private_context = context.home_atom.is_none()
-            && context.in_function && !private_names.is_empty();
+        let ordinary_private_context =
+            context.home_atom.is_none() && context.in_function && !private_names.is_empty();
         let (source, source_type) = if context.home_atom.is_some() || ordinary_private_context {
             method_source = if private_names.is_empty() && !context.super_calls {
                 let directive = if inherited_strict {
@@ -741,7 +783,9 @@ impl Engine {
                 let source = if ordinary_private_context {
                     ordinary_source = format!("(function() {{\n{source}\n}});");
                     ordinary_source.as_str()
-                } else { source };
+                } else {
+                    source
+                };
                 eval_context_source(source, private_names, context.super_calls)
             };
             (method_source.as_str(), SourceType::script())
@@ -756,12 +800,21 @@ impl Engine {
             )
         };
         let body_span = if context.home_atom.is_some() || ordinary_private_context {
-            let suffix = if ordinary_private_context { "\n});\n}\n})" }
-                else if private_names.is_empty() && !context.super_calls { "\n}})" }
-                else { "\n}\n})" };
+            let suffix = if ordinary_private_context {
+                "\n});\n}\n})"
+            } else if private_names.is_empty() && !context.super_calls {
+                "\n}})"
+            } else {
+                "\n}\n})"
+            };
             let body_start = source.len() - suffix.len() - raw_source_len - "{\n".len();
-            Some(Span::new(body_start as u32, (body_start + "{\n".len() + raw_source_len + "\n}".len()) as u32))
-        } else { None };
+            Some(Span::new(
+                body_start as u32,
+                (body_start + "{\n".len() + raw_source_len + "\n}".len()) as u32,
+            ))
+        } else {
+            None
+        };
         Self::specialize_with_mode_and_private_names(
             source,
             name,
@@ -954,32 +1007,41 @@ impl Engine {
         let ordinary_private_context = matches!(expected_shape, ParsedProgramShape::Eval(context, _)
             if context.home_atom.is_none() && context.in_function && !private_name_overrides.is_empty());
         let wrapped_eval = matches!(expected_shape, ParsedProgramShape::Eval(context, _)
-            if context.home_atom.is_some()) || ordinary_private_context;
+            if context.home_atom.is_some())
+            || ordinary_private_context;
         let dynamic_function_shape = match expected_shape {
             ParsedProgramShape::Any | ParsedProgramShape::KeptRecords => true,
             ParsedProgramShape::Eval(_, expected_span) => {
-                !wrapped_eval || eval_method_body(&mut parsed.program, ordinary_private_context)
-                    .is_some_and(|body| Some(body.span) == expected_span)
+                !wrapped_eval
+                    || eval_method_body(&mut parsed.program, ordinary_private_context)
+                        .is_some_and(|body| Some(body.span) == expected_span)
             }
             ParsedProgramShape::DynamicFunction { parameter_list_end } => {
                 match parsed.program.body.as_mut_slice() {
-                    [Statement::ExpressionStatement(statement)] => match &mut statement.expression {
-                        Expression::ParenthesizedExpression(expression) => {
-                            match &mut expression.expression {
-                                Expression::FunctionExpression(function) => {
-                                    let valid = function.id.as_ref().is_some_and(|identifier| identifier.name == DYNAMIC_FUNCTION_PUBLIC_NAME)
-                                        && function.body.is_some()
-                                        && function.params.span.end as usize == parameter_list_end;
-                                    // The generated public source name is not a dynamic
-                                    // Function self binding. OXC still owns the grammar.
-                                    if valid { function.id = None; }
-                                    valid
+                    [Statement::ExpressionStatement(statement)] => {
+                        match &mut statement.expression {
+                            Expression::ParenthesizedExpression(expression) => {
+                                match &mut expression.expression {
+                                    Expression::FunctionExpression(function) => {
+                                        let valid =
+                                            function.id.as_ref().is_some_and(|identifier| {
+                                                identifier.name == DYNAMIC_FUNCTION_PUBLIC_NAME
+                                            }) && function.body.is_some()
+                                                && function.params.span.end as usize
+                                                    == parameter_list_end;
+                                        // The generated public source name is not a dynamic
+                                        // Function self binding. OXC still owns the grammar.
+                                        if valid {
+                                            function.id = None;
+                                        }
+                                        valid
+                                    }
+                                    _ => false,
                                 }
-                                _ => false,
                             }
+                            _ => false,
                         }
-                        _ => false,
-                    },
+                    }
                     _ => false,
                 }
             }
@@ -1007,9 +1069,9 @@ impl Engine {
         }
         let private_name_ids = private_name_ids(&semantic.semantic);
         let private_name_labels = private_name_labels(&semantic.semantic);
-        let prototype_unobservable = call_only::prototype_unobservable_functions(&semantic.semantic, &parsed.program);
-        let inherited_private_ids = if wrapped_eval
-        {
+        let prototype_unobservable =
+            call_only::prototype_unobservable_functions(&semantic.semantic, &parsed.program);
+        let inherited_private_ids = if wrapped_eval {
             let mut ids = FxHashSet::default();
             if let [Statement::ExpressionStatement(statement)] = parsed.program.body.as_slice()
                 && let Expression::ClassExpression(class) =
@@ -1129,7 +1191,10 @@ impl Engine {
             return None;
         }
         if !parsed.diagnostics.is_empty() {
-            return Some(format!("{SYNTAX_ERROR_PREFIX}{}", syntax_message::parse_failure(source, &parsed.diagnostics[0])));
+            return Some(format!(
+                "{SYNTAX_ERROR_PREFIX}{}",
+                syntax_message::parse_failure(source, &parsed.diagnostics[0])
+            ));
         }
         oxc_semantic::SemanticBuilder::new()
             .with_check_syntax_error(true)
@@ -1832,7 +1897,8 @@ impl<'a> Compiler<'a> {
                 .filter(|atom| captured.as_ref().is_some_and(|names| names.contains(*atom)))
                 .collect();
             hidden.sort_unstable();
-            function.name_bindings = crate::bytecode::NameBindings::new(deferred.direct, hidden, captured);
+            function.name_bindings =
+                crate::bytecode::NameBindings::new(deferred.direct, hidden, captured);
         }
     }
 
@@ -2042,8 +2108,10 @@ impl<'a> Compiler<'a> {
         self.method_sites.skip_to(cursors.method_sites as usize);
         self.field_sites.skip_to(cursors.field_sites as usize);
         self.object_sites.skip_to(cursors.object_sites as usize);
-        self.regexp_literal_sites.skip_to(cursors.regexp_literal_sites as usize);
-        self.literal_templates.skip_to(cursors.literal_templates as usize);
+        self.regexp_literal_sites
+            .skip_to(cursors.regexp_literal_sites as usize);
+        self.literal_templates
+            .skip_to(cursors.literal_templates as usize);
     }
 
     /// In a replay, the id of a function nested in the replayed one, past whose compilation
@@ -2070,8 +2138,10 @@ impl<'a> Compiler<'a> {
             .expect("a function's record exists once it is compiled");
         let id = id as usize;
         if self.function_exits.len() <= id {
-            self.function_exits.resize(id + 1, replay::TableCursors::default());
-            self.function_facts.resize(id + 1, capture_layout::FunctionFacts::default());
+            self.function_exits
+                .resize(id + 1, replay::TableCursors::default());
+            self.function_facts
+                .resize(id + 1, capture_layout::FunctionFacts::default());
         }
         self.function_exits[id] = self.cursors();
         self.function_facts[id] = facts;
@@ -2152,11 +2222,8 @@ impl<'a> Compiler<'a> {
             .replay_calls
             .remove(&id)
             .expect("an early-finished function has a replay call");
-        let captured = capture_layout::captured_by(
-            id as usize,
-            &self.function_facts,
-            id as usize + 1..exit,
-        );
+        let captured =
+            capture_layout::captured_by(id as usize, &self.function_facts, id as usize + 1..exit);
         let layout = capture_layout::LayoutInputs {
             captured: capture_layout::complete_captured(
                 captured,
@@ -2234,7 +2301,9 @@ impl<'a> Compiler<'a> {
             function
                 .id
                 .as_ref()
-                .filter(|id| early::function_may_reference(&function.params, body, id.name.as_str()))
+                .filter(|id| {
+                    early::function_may_reference(&function.params, body, id.name.as_str())
+                })
                 .map(|id| self.atom(id.name.as_str()))
         } else {
             None
@@ -2311,7 +2380,12 @@ impl<'a> Compiler<'a> {
             },
         );
         context.scopes = context.scopes.into_memo();
-        self.record_replay_call(id, entry, private_names, replay::ReplayCall::ObjectMethod(context));
+        self.record_replay_call(
+            id,
+            entry,
+            private_names,
+            replay::ReplayCall::ObjectMethod(context),
+        );
         id
     }
 
@@ -2341,7 +2415,12 @@ impl<'a> Compiler<'a> {
         // A decorator's expression is part of the class element's text and belongs to the
         // code around the class, so the method alone does not parse from it.
         if method.decorators.is_empty() {
-            self.record_replay_call(id, entry, private_names, replay::ReplayCall::ClassMethod(context));
+            self.record_replay_call(
+                id,
+                entry,
+                private_names,
+                replay::ReplayCall::ClassMethod(context),
+            );
         }
         id
     }
@@ -2368,7 +2447,9 @@ impl<'a> Compiler<'a> {
     fn source_delimiter(&self, start: u32, end: u32, delimiter: char) -> u32 {
         let mut cursor = start as usize;
         let end = (end as usize).min(self.text.len());
-        let mut comment = self.source_comments.partition_point(|span| span.end <= start);
+        let mut comment = self
+            .source_comments
+            .partition_point(|span| span.end <= start);
         while cursor < end {
             if let Some(span) = self.source_comments.get(comment) {
                 if span.start as usize <= cursor && cursor < span.end as usize {
@@ -2377,8 +2458,12 @@ impl<'a> Compiler<'a> {
                     continue;
                 }
             }
-            let Some(character) = self.text[cursor..end].chars().next() else { break; };
-            if character == delimiter { return cursor as u32; }
+            let Some(character) = self.text[cursor..end].chars().next() else {
+                break;
+            };
+            if character == delimiter {
+                return cursor as u32;
+            }
             cursor += character.len_utf8();
         }
         start
@@ -2415,10 +2500,15 @@ impl<'a> Compiler<'a> {
         module_goal: bool,
         inherited_strict: bool,
     ) -> Result<(Self, ModuleParts), Vec<Diagnostic>> {
-        self.source_comments = program.comments.iter().map(|comment| comment.span).collect();
+        self.source_comments = program
+            .comments
+            .iter()
+            .map(|comment| comment.span)
+            .collect();
         // One slot per source function and the root, reserved once: grown by doubling, the
         // slots of a large script stood up to twice its functions beside its tree.
-        self.functions.reserve_exact(source_function_count(program) + 1);
+        self.functions
+            .reserve_exact(source_function_count(program) + 1);
         self.module_goal = module_goal;
         let module_requests = if module_goal {
             module_requests(&program.body)
@@ -2470,7 +2560,10 @@ impl<'a> Compiler<'a> {
             None,
             FunctionOptions {
                 defaults: None,
-                directive_completion: program.directives.last().map(|directive| &directive.expression),
+                directive_completion: program
+                    .directives
+                    .last()
+                    .map(|directive| &directive.expression),
                 source_span: None,
                 name_binding: None,
                 async_function: async_module,
@@ -2715,35 +2808,52 @@ impl<'a> Compiler<'a> {
                 .iter()
                 .enumerate()
                 .map(|(id, function)| match function {
-                    Some(function) => capture_layout::InstanceInitializer::Known(function.instance_initializer),
-                    None if released.get(&id).is_some_and(|released| released.header.is_class_constructor) => {
+                    Some(function) => {
+                        capture_layout::InstanceInitializer::Known(function.instance_initializer)
+                    }
+                    None if released
+                        .get(&id)
+                        .is_some_and(|released| released.header.is_class_constructor) =>
+                    {
                         capture_layout::InstanceInitializer::Unknown
                     }
                     None => capture_layout::InstanceInitializer::Known(None),
                 })
                 .collect();
-            std::rc::Rc::new(capture_layout::closure_reads(&facts, &reachable, &initializers))
+            std::rc::Rc::new(capture_layout::closure_reads(
+                &facts,
+                &reachable,
+                &initializers,
+            ))
         });
         self.resolve_name_bindings(&mut functions, &reachable);
         let mut layout_inputs = capture_layout::inputs(&facts, &dynamic, |id| {
-            functions[id].as_ref().and_then(capture_layout::mapped_arguments)
+            functions[id]
+                .as_ref()
+                .and_then(capture_layout::mapped_arguments)
         });
         // A module body splits around the bindings its link plan addresses; one without a
         // plan keeps every binding in its environment.
         if self.module_goal
-            && let (Some(plan), Some(inputs), Some(Some(root))) =
-                (&module_link_plan, layout_inputs.first_mut(), functions.first())
+            && let (Some(plan), Some(inputs), Some(Some(root))) = (
+                &module_link_plan,
+                layout_inputs.first_mut(),
+                functions.first(),
+            )
         {
             inputs.module_root = true;
             inputs.captured.extend(
-                root.module_environment_slots(plan, &module_imports, |atom| self.atoms.get(atom as usize)),
+                root.module_environment_slots(plan, &module_imports, |atom| {
+                    self.atoms.get(atom as usize)
+                }),
             );
             inputs.captured.sort_unstable();
             inputs.captured.dedup();
         }
         // A replayable function resolves every name statically and no dynamic lookup reaches
         // its bindings, so nothing outside its own compilation and layout decides its code.
-        let mut replays: FxHashMap<u32, replay::FunctionReplay> = std::mem::take(&mut self.early_replays);
+        let mut replays: FxHashMap<u32, replay::FunctionReplay> =
+            std::mem::take(&mut self.early_replays);
         if self.replayable_source {
             for (id, (entry, call)) in std::mem::take(&mut self.replay_calls) {
                 if dynamic[id as usize] || reachable[id as usize] {
@@ -2850,12 +2960,12 @@ impl<'a> Compiler<'a> {
             // records' larger allocation.
             functions: {
                 let mut slots = Vec::with_capacity(functions.len());
-                slots.extend(functions.into_iter().enumerate().map(|(id, function)| {
-                    match function {
+                slots.extend(functions.into_iter().enumerate().map(
+                    |(id, function)| match function {
                         Some(function) => FunctionSlot::compiled(function),
                         None => FunctionSlot::released(released[&id].header),
-                    }
-                }));
+                    },
+                ));
                 slots
             },
             cache_sites: self.cache_sites,
@@ -2996,7 +3106,10 @@ impl<'a> Compiler<'a> {
     }
 
     fn constant(&mut self, value: Constant) -> u32 {
-        if let Some(index) = self.constant_index.get(ConstantKey::from(&value), &self.constants) {
+        if let Some(index) = self
+            .constant_index
+            .get(ConstantKey::from(&value), &self.constants)
+        {
             // A replay finds every constant; one at its cursor was added here at load.
             if index as usize == self.constants.len() {
                 self.constants.push(value);
@@ -3024,7 +3137,11 @@ impl<'a> Compiler<'a> {
         for value in values {
             let index = self.constants.len() as u32;
             // A replay's index already holds every constant, so it is only read.
-            if self.constant_index.get(ConstantKey::from(&value), &self.constants).is_none() {
+            if self
+                .constant_index
+                .get(ConstantKey::from(&value), &self.constants)
+                .is_none()
+            {
                 self.constant_index.insert(ConstantKey::from(&value), index);
             }
             self.constants.push(value);
@@ -3074,7 +3191,9 @@ impl<'a> Compiler<'a> {
         }
         let access = match op {
             Op::GetField if base != crate::bytecode::FieldBase::NESTED => NamedAccess::Load,
-            Op::SetField | Op::SetFieldStrict | Op::SetThisField | Op::SetThisFieldStrict => NamedAccess::Store,
+            Op::SetField | Op::SetFieldStrict | Op::SetThisField | Op::SetThisFieldStrict => {
+                NamedAccess::Store
+            }
             _ => return site,
         };
         self.name_shared_cache_site(access, imm)
@@ -3193,9 +3312,11 @@ impl<'a> Compiler<'a> {
     ) -> PromotedLocalPlan {
         let register_local_facts = early::fixed_register_local_facts(body, expression_body);
         let rebinds_parameter = |parameters: &[Atom]| {
-            parameters
-                .iter()
-                .any(|atom| register_local_facts.bound_names.contains(&self.atoms[*atom as usize]))
+            parameters.iter().any(|atom| {
+                register_local_facts
+                    .bound_names
+                    .contains(&self.atoms[*atom as usize])
+            })
         };
         // A strict `arguments` object is a copy of the values passed, which no parameter
         // write reaches; a sloppy one aliases the parameters (`Function::arguments_alias_parameters`)
@@ -3216,7 +3337,10 @@ impl<'a> Compiler<'a> {
             (_, Some((strict, _))) => strict || unaliased_arguments,
         };
         if !eligible || !register_local_facts.safe || !arguments_allow_promotion {
-            return PromotedLocalPlan { unaliased_arguments, ..Default::default() };
+            return PromotedLocalPlan {
+                unaliased_arguments,
+                ..Default::default()
+            };
         }
         let arguments_atom = self.atom("arguments");
         let mut latest_local_slot = FxHashMap::default();
@@ -3256,7 +3380,11 @@ impl<'a> Compiler<'a> {
                     .contains(&self.atoms[locals[usize::from(slot)] as usize])
             })
             .collect::<Vec<_>>();
-        PromotedLocalPlan { promoted_local_slots, clobbered_local_slots, unaliased_arguments }
+        PromotedLocalPlan {
+            promoted_local_slots,
+            clobbered_local_slots,
+            unaliased_arguments,
+        }
     }
 
     fn compile_function(
@@ -3368,13 +3496,17 @@ impl<'a> Compiler<'a> {
                 .defaults
                 .is_none_or(|formal| !FunctionCompiler::has_non_simple_parameters(formal));
         let direct_parameters = !options.rest_override
-            && options.defaults.is_none_or(FunctionCompiler::binds_parameters_directly);
+            && options
+                .defaults
+                .is_none_or(FunctionCompiler::binds_parameters_directly);
         // A list binding its names apart through patterns or defaults that reach no parameter
         // scope promotes just its hidden argument slots; its bindings, which open dead zones,
         // stay plain locals for the later promotion that tracks them (`frame_registers`).
         let hidden_parameters = !direct_parameters
             && !options.rest_override
-            && options.defaults.is_some_and(FunctionCompiler::arguments_promotable_apart);
+            && options
+                .defaults
+                .is_some_and(FunctionCompiler::arguments_promotable_apart);
         let promote_plain_locals = parent.is_some()
             && (direct_parameters || hidden_parameters)
             && !options.async_function
@@ -3393,7 +3525,11 @@ impl<'a> Compiler<'a> {
             // A nested function's own parameters and locals are its own in eval code and host
             // scripts too: names it does not declare resolve as they would without promotion.
             && !dynamic_eval;
-        let PromotedLocalPlan { promoted_local_slots, clobbered_local_slots, unaliased_arguments } = self.promoted_local_plan(
+        let PromotedLocalPlan {
+            promoted_local_slots,
+            clobbered_local_slots,
+            unaliased_arguments,
+        } = self.promoted_local_plan(
             promote_plain_locals,
             hidden_parameters.then_some(params.len()),
             Some((root_strict, &params)),
@@ -3440,7 +3576,9 @@ impl<'a> Compiler<'a> {
             // Directive expressions precede the body and contribute its initial completion.
             let initial = if let Some(directive) = options.directive_completion {
                 function.string_literal(directive)
-            } else { function.literal(Constant::Undefined) };
+            } else {
+                function.literal(Constant::Undefined)
+            };
             function.emit(Op::Move, completion, initial, 0, 0);
             function.statement_completion = StatementCompletion::Track(completion);
         }
@@ -3511,10 +3649,12 @@ impl<'a> Compiler<'a> {
             (captures_locals && function.owner.arrows_reach_arguments(id, *slot))
                 || function.dynamic_eval
                 || function.code.iter().any(|instruction| {
-                    reads_binding(instruction.op()) && instruction.local_slot() == usize::from(*slot)
+                    reads_binding(instruction.op())
+                        && instruction.local_slot() == usize::from(*slot)
                 })
                 || function.wide.iter().any(|instruction| {
-                    reads_binding(instruction.op()) && instruction.local_slot() == usize::from(*slot)
+                    reads_binding(instruction.op())
+                        && instruction.local_slot() == usize::from(*slot)
                 })
         });
         let parameter_atoms = options.defaults.map_or_else(Vec::new, |formal| {
@@ -3539,7 +3679,11 @@ impl<'a> Compiler<'a> {
             source_span: options.source_span,
             params: params.len() as u16,
             length: options.defaults.map_or_else(
-                || params.len().saturating_sub(usize::from(options.rest_override)),
+                || {
+                    params
+                        .len()
+                        .saturating_sub(usize::from(options.rest_override))
+                },
                 Self::formal_length,
             ) as u16,
             parameter_end_pc: if options.generator {
@@ -3716,11 +3860,20 @@ impl<'a> Compiler<'a> {
         // Renaming a plain slot's operations keeps it plain (validation re-derives the same
         // proof from the specialized code), so frame registers start from the same slots.
         let plain_slots = Self::specialize_plain_local_operations(function, superinstructions);
-        frame_registers::promote(function, plain_slots, superinstructions, undefined_constant, |atom| {
-            self.atoms.get(atom)
-        });
+        frame_registers::promote(
+            function,
+            plain_slots,
+            superinstructions,
+            undefined_constant,
+            |atom| self.atoms.get(atom),
+        );
         if self.mode == SpecializationMode::Enabled {
-            rewrite::coalesce_promoted_moves(function, method_sites, field_sites, superinstructions);
+            rewrite::coalesce_promoted_moves(
+                function,
+                method_sites,
+                field_sites,
+                superinstructions,
+            );
         }
         if function
             .code

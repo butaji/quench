@@ -145,7 +145,9 @@ impl<H: Host> Vm<H> {
         self.create_shape_data_property(function, name_key, name_value, FUNCTION_INFO_ATTRIBUTES)?;
         self.capture_function_name_for_atom(function, name_atom);
         if constructible {
-            let prototype = self.heap.alloc(Cell::Object(Self::empty_object(self.object_proto)));
+            let prototype = self
+                .heap
+                .alloc(Cell::Object(Self::empty_object(self.object_proto)));
             let constructor_atom = self.runtime_atoms.constructor;
             self.set_property_with_attributes(
                 prototype,
@@ -172,8 +174,10 @@ impl<H: Host> Vm<H> {
     }
 
     pub(super) fn host_function_constructible(&self, environment: Value) -> bool {
-        self.heap.environment_slot(environment, HostEnvironmentSlot::Constructible as usize)
-            .and_then(Value::as_bool) == Some(true)
+        self.heap
+            .environment_slot(environment, HostEnvironmentSlot::Constructible as usize)
+            .and_then(Value::as_bool)
+            == Some(true)
     }
 
     pub(crate) fn host_function_data(&self) -> Result<Value, JsError> {
@@ -193,7 +197,9 @@ impl<H: Host> Vm<H> {
         resource: Option<HostExecutionContext>,
         before: bool,
     ) -> Result<(), JsError> {
-        let Some(resource) = resource else { return Ok(()); };
+        let Some(resource) = resource else {
+            return Ok(());
+        };
         if !self.host.observes_promise_job_boundaries() {
             return Ok(());
         }
@@ -245,8 +251,12 @@ impl<H: Host> Vm<H> {
         let mut context = NativeContext::new(self);
         let callback = H::initialize_shadow_realm(&mut context, global)
             .map_err(|error| context.finish_error(error))?;
-        callback.map(|root| context.rooted_value(root)
-            .ok_or_else(|| JsError("Host realm formatter root expired".into())))
+        callback
+            .map(|root| {
+                context
+                    .rooted_value(root)
+                    .ok_or_else(|| JsError("Host realm formatter root expired".into()))
+            })
             .transpose()
     }
 
@@ -272,7 +282,10 @@ impl<H: Host> Vm<H> {
                     .and_then(Value::as_number)
             })
             .filter(|value| {
-                value.is_finite() && value.fract() == 0.0 && *value >= 0.0 && *value <= f64::from(u32::MAX)
+                value.is_finite()
+                    && value.fract() == 0.0
+                    && *value >= 0.0
+                    && *value <= f64::from(u32::MAX)
             })
             .map(|value| value as u32)
     }
@@ -281,7 +294,10 @@ impl<H: Host> Vm<H> {
     #[cfg(feature = "profile-lane-exits")]
     pub(super) fn host_function_name(&self, function: Value) -> Option<&'static str> {
         let index = self.host_operation_index(self.heap.function(function)?.env)?;
-        self.host.functions().get(index as usize).map(|binding| binding.name)
+        self.host
+            .functions()
+            .get(index as usize)
+            .map(|binding| binding.name)
     }
 
     fn run_host_function(&mut self, receiver: Value, args: &[Value]) -> Result<Value, JsError> {

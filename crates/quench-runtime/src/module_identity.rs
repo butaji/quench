@@ -101,11 +101,26 @@ mod tests {
     #[test]
     fn normalized_names_are_their_identity() {
         for name in [
-            "/", "/tmp/a.mjs", "a/b.js", "/tmp/./a.mjs", "/tmp/sub/../a.mjs", "/tmp//a.mjs",
-            "/tmp/a/", "./a.js", "../a.js", "", "a", "/..", "file:///tmp/a.mjs?x=/../one",
+            "/",
+            "/tmp/a.mjs",
+            "a/b.js",
+            "/tmp/./a.mjs",
+            "/tmp/sub/../a.mjs",
+            "/tmp//a.mjs",
+            "/tmp/a/",
+            "./a.js",
+            "../a.js",
+            "",
+            "a",
+            "/..",
+            "file:///tmp/a.mjs?x=/../one",
             "node:fs",
         ] {
-            assert_eq!(normalized_text(name), normalize(Path::new(name)).text(), "{name:?}");
+            assert_eq!(
+                normalized_text(name),
+                normalize(Path::new(name)).text(),
+                "{name:?}"
+            );
         }
     }
 

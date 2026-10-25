@@ -51,7 +51,9 @@ impl FunctionFacts {
                 function
                     .wide
                     .iter()
-                    .filter(|instruction| matches!(instruction.op(), Op::LoadCapture | Op::StoreCapture))
+                    .filter(|instruction| {
+                        matches!(instruction.op(), Op::LoadCapture | Op::StoreCapture)
+                    })
                     .map(|instruction| (instruction.capture_depth(), instruction.capture_slot())),
             )
             .map(|(depth, slot)| (u32::from(depth) + 1, slot))
@@ -73,7 +75,10 @@ impl FunctionFacts {
 
 /// The slots of `function`'s compiler bindings, which the runtime finds by name in its
 /// environment, so they live there whether or not a closure captures them.
-fn named_environment_slots<'f>(function: &'f Function, atoms: &'f CompilerAtoms<'_>) -> impl Iterator<Item = u16> + 'f {
+fn named_environment_slots<'f>(
+    function: &'f Function,
+    atoms: &'f CompilerAtoms<'_>,
+) -> impl Iterator<Item = u16> + 'f {
     function
         .local_atoms
         .iter()
@@ -88,14 +93,20 @@ fn named_environment_slots<'f>(function: &'f Function, atoms: &'f CompilerAtoms<
 
 /// The slots of `function`'s bindings that the runtime finds by name from outside its
 /// activation (`local_name_read_by_name`).
-fn slots_read_by_name<'f>(function: &'f Function, atoms: &'f CompilerAtoms<'_>) -> impl Iterator<Item = u16> + 'f {
+fn slots_read_by_name<'f>(
+    function: &'f Function,
+    atoms: &'f CompilerAtoms<'_>,
+) -> impl Iterator<Item = u16> + 'f {
     function
         .local_atoms
         .iter()
         .enumerate()
         .filter(|(_, atom)| {
             atoms.get(**atom as usize).is_some_and(|name| {
-                crate::bytecode::local_name_read_by_name(name, function.environment_atoms.contains(*atom))
+                crate::bytecode::local_name_read_by_name(
+                    name,
+                    function.environment_atoms.contains(*atom),
+                )
             })
         })
         .filter_map(|(slot, _)| u16::try_from(slot).ok())
@@ -123,7 +134,10 @@ pub(super) fn closure_reads(
         .iter()
         .enumerate()
         .map(|(id, function)| {
-            let initializer = initializers.get(id).copied().unwrap_or(InstanceInitializer::Unknown);
+            let initializer = initializers
+                .get(id)
+                .copied()
+                .unwrap_or(InstanceInitializer::Unknown);
             crate::bytecode::FunctionReadFacts {
                 parent: function.parent,
                 is_arrow: function.is_arrow,
@@ -143,13 +157,15 @@ pub(super) fn closure_reads(
 
 /// The slots of function `owner` that the functions in `descendants` capture, before the
 /// owner's own additions (`apply_function`).
-pub(super) fn captured_by(owner: usize, facts: &[FunctionFacts], descendants: std::ops::Range<usize>) -> Vec<u16> {
+pub(super) fn captured_by(
+    owner: usize,
+    facts: &[FunctionFacts],
+    descendants: std::ops::Range<usize>,
+) -> Vec<u16> {
     let mut captured = Vec::new();
     for id in descendants {
         for &(distance, slot) in facts[id].captures.iter() {
-            if ancestor(facts, id, distance as usize) == Some(owner)
-                && slot < facts[owner].locals
-            {
+            if ancestor(facts, id, distance as usize) == Some(owner) && slot < facts[owner].locals {
                 captured.push(slot);
             }
         }
@@ -225,8 +241,7 @@ pub(super) fn apply_function(
         // No closure of this activation can exist, and no nested function captures
         // its locals: a per-iteration or block copy of the environment is unobservable
         // under the same layout conditions that let a closure's activation split.
-        if captured.is_empty() && selective_layout_is_safe(function, id, inputs, atoms)
-        {
+        if captured.is_empty() && selective_layout_is_safe(function, id, inputs, atoms) {
             remove_unobservable_clones(function, &captured);
         }
         return;
@@ -244,9 +259,11 @@ pub(super) fn apply_function(
         // unobservable, as `Compiler::compile_function` finds for a closure-free body.
         if let Some(slot) = function.arguments_slot
             && captured.binary_search(&slot).is_err()
-            && !function
-                .instructions()
-                .any(|instruction| instruction.addressed_local_slots().any(|local| local == slot))
+            && !function.instructions().any(|instruction| {
+                instruction
+                    .addressed_local_slots()
+                    .any(|local| local == slot)
+            })
         {
             function.arguments_slot = None;
         }
@@ -322,7 +339,12 @@ fn inherited_dynamic_scope(functions: &[FunctionFacts]) -> Vec<bool> {
 
 /// Whether the function's activation may keep its uncaptured locals out of its environment:
 /// a nested function, or a module body, whose environment nothing outside it reads by name.
-fn selective_layout_is_safe(function: &Function, id: usize, inputs: &LayoutInputs, atoms: &CompilerAtoms<'_>) -> bool {
+fn selective_layout_is_safe(
+    function: &Function,
+    id: usize,
+    inputs: &LayoutInputs,
+    atoms: &CompilerAtoms<'_>,
+) -> bool {
     let nested = id != 0 && function.parent.is_some();
     let module_body = inputs.module_root && function.parent.is_none();
     (nested || module_body)
@@ -419,7 +441,9 @@ fn backward_transfers(function: &Function) -> Vec<(usize, usize)> {
 /// `pc` must leave it for an instruction before it, by a transfer from at or after `pc` to at
 /// or before it, which `backward` lists.
 fn may_repeat(backward: &[(usize, usize)], pc: usize) -> bool {
-    backward.iter().any(|&(target, source)| target <= pc && pc <= source)
+    backward
+        .iter()
+        .any(|&(target, source)| target <= pc && pc <= source)
 }
 
 fn rewrite_if_captured(instruction: &mut crate::bytecode::Instr, captured: &[u16]) {

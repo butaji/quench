@@ -416,7 +416,8 @@ impl<H: Host> Vm<H> {
     ) -> Result<bool, JsError> {
         match kind {
             crate::bytecode::LexicalBindingKind::Mutable => Ok(true),
-            crate::bytecode::LexicalBindingKind::Immutable | crate::bytecode::LexicalBindingKind::PrivateName => {
+            crate::bytecode::LexicalBindingKind::Immutable
+            | crate::bytecode::LexicalBindingKind::PrivateName => {
                 Err(self.type_error(p, "assignment to immutable binding".into()))
             }
             crate::bytecode::LexicalBindingKind::FunctionName if strict => {
@@ -499,7 +500,8 @@ impl<H: Host> Vm<H> {
             return None;
         }
         let program = self.programs.get(program_id)?;
-        program.function(super::ROOT_FUNCTION_ID as usize)
+        program
+            .function(super::ROOT_FUNCTION_ID as usize)
             .global_var_atoms()
             .contains(&atom)
             .then(|| frame.checked_sub(1))
@@ -576,7 +578,8 @@ impl<H: Host> Vm<H> {
         if let Some(value) = self.frame_binding(p, frame, slot)
             && value.is_deleted()
         {
-            let atom = p.function(self.frames[frame].function as usize)
+            let atom = p
+                .function(self.frames[frame].function as usize)
                 .local_atoms
                 .get(slot)
                 .copied()
@@ -595,7 +598,8 @@ impl<H: Host> Vm<H> {
     ) -> bool {
         let activation = &self.frames[frame];
         activation.captured
-            && p.function(activation.function as usize).local_slot_uses_environment(slot)
+            && p.function(activation.function as usize)
+                .local_slot_uses_environment(slot)
     }
 
     /// The binding a frame owns for `slot`: its environment's slot once the environment is
@@ -1620,7 +1624,9 @@ impl<H: Host> Vm<H> {
             return None;
         }
         // SAFETY: as `walked_capture_slots`: the walk ends at a live cell this collection.
-        unsafe { &*walk.cache.slots }.dense()?.dense_plain(usize::from(slot))
+        unsafe { &*walk.cache.slots }
+            .dense()?
+            .dense_plain(usize::from(slot))
     }
 
     /// `environment_capture_slots` through the walks it remembers (`capture_walks`): a walk
@@ -1648,7 +1654,13 @@ impl<H: Host> Vm<H> {
         let slots: *const crate::heap::EnvironmentSlots = slots;
         self.capture_walks[index] = CaptureWalk {
             depth,
-            cache: CaptureCache { env, captured, epoch, slots, root },
+            cache: CaptureCache {
+                env,
+                captured,
+                epoch,
+                slots,
+                root,
+            },
         };
         Some((slots, root))
     }
@@ -1668,7 +1680,6 @@ impl<H: Host> Vm<H> {
             && !cache.slots.is_null())
         .then_some((cache.slots, cache.root))
     }
-
 
     /// `direct_capture` through the frame's cached innermost slots. The cache names the
     /// environment, whether it is the frame's own, and the collection it was taken in: while
@@ -1719,9 +1730,7 @@ impl<H: Host> Vm<H> {
         }
         let env = self.capture_env(frame, depth)?;
         let Some(Cell::Environment {
-            function,
-            scope,
-            ..
+            function, scope, ..
         }) = self.heap.get(env)
         else {
             return None;
@@ -1795,14 +1804,18 @@ impl<H: Host> Vm<H> {
     /// lexical binding (`root_global_lexical_value`). `None` for any other projection or
     /// read.
     pub(super) fn plain_projected_root_binding(&self, env: Value, slot: u16) -> Option<Value> {
-        let Cell::Environment { function, scope, .. } = self.heap.get(env)? else {
+        let Cell::Environment {
+            function, scope, ..
+        } = self.heap.get(env)?
+        else {
             return None;
         };
         let owner_id = scope
             .program()
             .map_or(self.active_program, super::ProgramId::from_raw);
         let owner = self.programs.residual(owner_id)?;
-        if let Some(atom) = self.root_global_var_atom(owner, owner_id, *function, usize::from(slot)) {
+        if let Some(atom) = self.root_global_var_atom(owner, owner_id, *function, usize::from(slot))
+        {
             return self.plain_named_get(self.realm.globals, atom);
         }
         self.root_global_lexical_value(owner, *function, usize::from(slot))
@@ -1976,7 +1989,8 @@ impl<H: Host> Vm<H> {
         else {
             return false;
         };
-        direct_store_owner(p, program, *function, scope).is_some_and(owner_admits_every_direct_store)
+        direct_store_owner(p, program, *function, scope)
+            .is_some_and(owner_admits_every_direct_store)
     }
 
     fn store_environment_binding(
@@ -2023,7 +2037,8 @@ impl<H: Host> Vm<H> {
             return Ok(());
         }
         if atom.is_some_and(|atom| {
-            owner.function(function as usize)
+            owner
+                .function(function as usize)
                 .global_immutable_atoms()
                 .contains(&atom)
         }) {
@@ -2194,7 +2209,8 @@ impl<H: Host> Vm<H> {
     #[inline(always)]
     fn global_scope_names_resolve_statically(&self, p: &ResidualProgram) -> bool {
         self.frames.last().is_some_and(|frame| {
-            self.programs.unresolved_names_are_global(frame.program, frame.function)
+            self.programs
+                .unresolved_names_are_global(frame.program, frame.function)
                 && p.function_get(frame.function as usize)
                     .is_some_and(|function| function.names_resolve_statically(p))
         })
@@ -2316,10 +2332,13 @@ impl<H: Host> Vm<H> {
                 {
                     return Err(self.type_error(p, "assignment to constant binding".into()));
                 }
-                let binding =
-                    p.function(self.frames[frame_index].function as usize).local_atoms[slot];
+                let binding = p
+                    .function(self.frames[frame_index].function as usize)
+                    .local_atoms[slot];
                 if self.is_self_binding(binding) {
-                    if p.function(self.frames[frame_index].function as usize).strict {
+                    if p.function(self.frames[frame_index].function as usize)
+                        .strict
+                    {
                         return Err(
                             self.type_error(p, "assignment to function name binding".into())
                         );
@@ -2555,7 +2574,9 @@ impl NameLookup {
     }
 
     fn named<H: Host>(&self, vm: &Vm<H>) -> Option<crate::bytecode::EvalBinding> {
-        *self.named.get_or_init(|| vm.name_binding(self.frame, self.atom))
+        *self
+            .named
+            .get_or_init(|| vm.name_binding(self.frame, self.atom))
     }
 
     fn static_owner<H: Host>(&self, vm: &Vm<H>) -> Option<(Value, usize)> {
@@ -2617,5 +2638,8 @@ pub(super) fn direct_store_owner<'p>(
 /// The `Vm::capture_walks` entry a walk from `env` to `depth` uses.
 #[inline(always)]
 fn capture_walk_index(env: Value, depth: u16) -> Option<usize> {
-    Some((env.heap_index()? as usize ^ usize::from(depth) * (CAPTURE_WALKS / 2 + 1)) & (CAPTURE_WALKS - 1))
+    Some(
+        (env.heap_index()? as usize ^ usize::from(depth) * (CAPTURE_WALKS / 2 + 1))
+            & (CAPTURE_WALKS - 1),
+    )
 }

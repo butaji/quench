@@ -14,7 +14,9 @@
 //! clear_unread`): no code can read it, and its old value may be swept. An environment read
 //! whole that holds no projection is marked and traced as any other cell, without an entry.
 
-use super::{Cell, EnvironmentBindings, EnvironmentSlotState, EnvironmentSlots, FunctionKind, Heap, SlotUse};
+use super::{
+    Cell, EnvironmentBindings, EnvironmentSlotState, EnvironmentSlots, FunctionKind, Heap, SlotUse,
+};
 use crate::bytecode::{Atom, ClosureReads, EnvironmentDemand};
 use crate::value::Value;
 use smallvec::SmallVec;
@@ -42,7 +44,12 @@ const FUNCTION_LESS_LAYER: u32 = u32::MAX;
 enum EnvironmentEdge {
     /// A closure of `function` in `program` reaches the environment `distance` activations
     /// out of its own.
-    Closure { environment: Value, program: u32, function: u32, distance: u32 },
+    Closure {
+        environment: Value,
+        program: u32,
+        function: u32,
+        distance: u32,
+    },
     /// A reader of the whole scope chain reaches the environment: a frame, another cell, or
     /// a closure its table does not describe.
     Whole { environment: Value },
@@ -79,7 +86,9 @@ struct SlotSet {
 
 impl SlotSet {
     fn new(slots: usize) -> Self {
-        Self { words: smallvec::smallvec![0; slots.div_ceil(u64::BITS as usize)] }
+        Self {
+            words: smallvec::smallvec![0; slots.div_ceil(u64::BITS as usize)],
+        }
     }
 
     fn contains(&self, slot: usize) -> bool {
@@ -148,7 +157,11 @@ impl PartialEnvironment {
     fn use_of(&self, slot: usize) -> SlotUse {
         if self.read.contains(slot) {
             SlotUse::Value
-        } else if self.initialization.as_ref().is_some_and(|set| set.contains(slot)) {
+        } else if self
+            .initialization
+            .as_ref()
+            .is_some_and(|set| set.contains(slot))
+        {
             SlotUse::Initialization
         } else {
             SlotUse::Unread
@@ -177,7 +190,6 @@ pub(crate) struct EnvironmentTrace<'s> {
     last_reads: Option<(u32, Option<&'s ClosureReads>)>,
 }
 
-
 impl<'s> EnvironmentTrace<'s> {
     /// A trace through `source`.
     pub(crate) fn new(source: Option<&'s dyn ClosureReadSource>) -> Self {
@@ -200,14 +212,22 @@ impl<'s> EnvironmentTrace<'s> {
     fn insert(&mut self, index: u32, partial: PartialEnvironment) -> usize {
         let position = self.partial.len();
         self.partial.push(partial);
-        self.entries.insert(index, u32::try_from(position).expect("heap slots fit u32"));
+        self.entries
+            .insert(index, u32::try_from(position).expect("heap slots fit u32"));
         position
     }
 
     /// A function's edge to its closure environment `environment`.
-    pub(super) fn closure(&mut self, environment: Value, kind: &FunctionKind, work: &mut Vec<Value>) {
+    pub(super) fn closure(
+        &mut self,
+        environment: Value,
+        kind: &FunctionKind,
+        work: &mut Vec<Value>,
+    ) {
         match (self.source, kind) {
-            (Some(_), FunctionKind::User(program, function)) if environment.legacy_heap_index().is_some() => {
+            (Some(_), FunctionKind::User(program, function))
+                if environment.legacy_heap_index().is_some() =>
+            {
                 self.pending.push(EnvironmentEdge::Closure {
                     environment,
                     program: program.raw(),
@@ -264,7 +284,10 @@ fn read_slot(
     match slots.state(usize::from(slot)) {
         Some(EnvironmentSlotState::Owned(value)) => work.push(value),
         Some(EnvironmentSlotState::Shared(owner)) => {
-            pending.push(EnvironmentEdge::Slot { environment: owner, slot });
+            pending.push(EnvironmentEdge::Slot {
+                environment: owner,
+                slot,
+            });
         }
         None => {}
     }
@@ -281,30 +304,56 @@ fn read_initialization(
     if partial.read_initialization(usize::from(slot), slots.len())
         && let Some(EnvironmentSlotState::Shared(owner)) = slots.state(usize::from(slot))
     {
-        pending.push(EnvironmentEdge::Initialization { environment: owner, slot });
+        pending.push(EnvironmentEdge::Initialization {
+            environment: owner,
+            slot,
+        });
     }
 }
 
 impl Heap {
     /// Follows the pending environment edges of `trace`, pushing the values they read onto
     /// `work`, with the environments read whole that need no entry.
-    pub(super) fn trace_environment_edges(&self, trace: &mut EnvironmentTrace<'_>, work: &mut Vec<Value>) {
+    pub(super) fn trace_environment_edges(
+        &self,
+        trace: &mut EnvironmentTrace<'_>,
+        work: &mut Vec<Value>,
+    ) {
         while let Some(edge) = trace.pending.pop() {
             self.trace_environment_edge(trace, edge, work);
         }
     }
 
-    fn trace_environment_edge(&self, trace: &mut EnvironmentTrace<'_>, edge: EnvironmentEdge, work: &mut Vec<Value>) {
+    fn trace_environment_edge(
+        &self,
+        trace: &mut EnvironmentTrace<'_>,
+        edge: EnvironmentEdge,
+        work: &mut Vec<Value>,
+    ) {
         let environment = edge.environment();
-        let (Some(index), Some(Cell::Environment { parent, function, slots, scope })) =
-            (environment.legacy_heap_index(), self.get(environment))
+        let (
+            Some(index),
+            Some(Cell::Environment {
+                parent,
+                function,
+                slots,
+                scope,
+            }),
+        ) = (environment.legacy_heap_index(), self.get(environment))
         else {
             work.push(environment);
             return;
         };
         let (parent, function, program) = (*parent, *function, scope.program());
-        if let EnvironmentEdge::Closure { program, function: closure, distance, .. } = edge
-            && (trace.entry(index).is_some_and(|entry| trace.partial[entry].whole)
+        if let EnvironmentEdge::Closure {
+            program,
+            function: closure,
+            distance,
+            ..
+        } = edge
+            && (trace
+                .entry(index)
+                .is_some_and(|entry| trace.partial[entry].whole)
                 || !trace.followed.insert((index, program, closure, distance)))
         {
             return;
@@ -313,10 +362,16 @@ impl Heap {
         // names when the environment is the activation the table expects there, its chain
         // whole otherwise. A function-less layer passes the edge on, as captures pass it.
         let demand = match edge {
-            EnvironmentEdge::Closure { program: closure_program, function: closure, distance, .. }
-                if function != FUNCTION_LESS_LAYER =>
-            {
-                match trace.closure_reads(closure_program).map(|reads| reads.demand(closure, distance)) {
+            EnvironmentEdge::Closure {
+                program: closure_program,
+                function: closure,
+                distance,
+                ..
+            } if function != FUNCTION_LESS_LAYER => {
+                match trace
+                    .closure_reads(closure_program)
+                    .map(|reads| reads.demand(closure, distance))
+                {
                     Some(demand @ EnvironmentDemand::Slots { owner, .. })
                         if owner == function && program == Some(closure_program) =>
                     {
@@ -346,11 +401,19 @@ impl Heap {
                         .legacy_heap_index()
                         .is_some_and(|index| !Self::marked(&self.marks, index as usize))
                 };
-                if !matches!(edge, EnvironmentEdge::Closure { .. } | EnvironmentEdge::Whole { .. }) && unmarked(parent) {
-                    trace.pending.push(EnvironmentEdge::Keep { environment: parent });
+                if !matches!(
+                    edge,
+                    EnvironmentEdge::Closure { .. } | EnvironmentEdge::Whole { .. }
+                ) && unmarked(parent)
+                {
+                    trace.pending.push(EnvironmentEdge::Keep {
+                        environment: parent,
+                    });
                 }
                 if let Some(owner) = slots.default_owner().filter(|owner| unmarked(*owner)) {
-                    trace.pending.push(EnvironmentEdge::Keep { environment: owner });
+                    trace
+                        .pending
+                        .push(EnvironmentEdge::Keep { environment: owner });
                 }
                 match scope.dynamic_bindings() {
                     EnvironmentBindings::Owned(bindings) => work.extend(
@@ -361,7 +424,9 @@ impl Heap {
                     ),
                     EnvironmentBindings::Shared(owner) => {
                         if unmarked(*owner) {
-                            trace.pending.push(EnvironmentEdge::Keep { environment: *owner });
+                            trace.pending.push(EnvironmentEdge::Keep {
+                                environment: *owner,
+                            });
                         }
                     }
                 }
@@ -373,7 +438,12 @@ impl Heap {
         let pending = &mut trace.pending;
         let has_parent = parent.legacy_heap_index().is_some();
         let read_lexical_this = match edge {
-            EnvironmentEdge::Closure { program, function: closure, distance, .. } => {
+            EnvironmentEdge::Closure {
+                program,
+                function: closure,
+                distance,
+                ..
+            } => {
                 let walked = match demand {
                     Some(demand @ EnvironmentDemand::Slots { .. }) => demand.slot_count(),
                     _ => slots.len(),
@@ -404,7 +474,12 @@ impl Heap {
                             read_slot(slots, partial, slot, work, pending);
                         }
                         if has_parent {
-                            pending.push(EnvironmentEdge::Closure { environment: parent, program, function: closure, distance });
+                            pending.push(EnvironmentEdge::Closure {
+                                environment: parent,
+                                program,
+                                function: closure,
+                                distance,
+                            });
                         }
                         true
                     }
@@ -418,7 +493,9 @@ impl Heap {
                 for slot in (0..slots.len()).filter_map(|slot| u16::try_from(slot).ok()) {
                     // A projection's reads go through it, and its stores check only that it
                     // is initialized.
-                    if program.is_some_and(|program| source.slot_is_projection(program, function, slot)) {
+                    if program
+                        .is_some_and(|program| source.slot_is_projection(program, function, slot))
+                    {
                         read_initialization(slots, partial, slot, pending);
                     } else {
                         read_slot(slots, partial, slot, work, pending);
@@ -449,7 +526,9 @@ impl Heap {
                         .map(|(_, value)| *value),
                 ),
                 EnvironmentBindings::Shared(owner) => {
-                    pending.push(EnvironmentEdge::LexicalThis { environment: *owner });
+                    pending.push(EnvironmentEdge::LexicalThis {
+                        environment: *owner,
+                    });
                 }
             }
         }
@@ -460,8 +539,10 @@ impl Heap {
         let lexical_this = trace.source.map(|source| source.lexical_this());
         for (&index, &entry) in &trace.entries {
             let partial = &trace.partial[entry as usize];
-            let Some(Cell::Environment { slots, scope, .. }) =
-                self.slots.get_mut(index as usize).and_then(|slot| slot.cell.as_mut())
+            let Some(Cell::Environment { slots, scope, .. }) = self
+                .slots
+                .get_mut(index as usize)
+                .and_then(|slot| slot.cell.as_mut())
             else {
                 continue;
             };
