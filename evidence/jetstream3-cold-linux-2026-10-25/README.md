@@ -14,3 +14,5 @@ Score: JetStream's per-test Score; RSS: child `ru_maxrss` (wait4). Runner: `cli.
   ratios in `-ratios.txt`: geomean Score 0.876x, RSS 1.53x; 9 of 34 tests >=1.2x on both.
 - `paired-medians-7d1d6adfa.txt`: 5-run interleaved medians (`tools/medcmp.py`) for hash-map,
   sha256 and pbkdf2 against Bun and against 336c186e9.
+- `jit-vs-bun-jit-7d1d6adfa.txt`: quench `--jit` against Bun with its JIT (`tools/jsweep.sh`); ratios in
+  `-ratios.txt`: geomean Score 0.149x, RSS 2.88x; 0 of 34 tests >=1.2x on Score, 34 of 34 on RSS.
