@@ -111,9 +111,12 @@ and input hashes. It sets `NODE_ENV=production` for every engine. On Linux it
 records the engine process's kernel-maintained `/proc/<pid>/status` `VmHWM`,
 plus a separate 50 ms sample of summed process-tree `VmRSS`. The per-engine
 high-water mark is exact for that process; the tree estimate can miss
-short-lived descendants and counts shared pages once per process, so process-
-tree RSS remains diagnostic and cannot qualify the memory gate yet. macOS
-qualification reads process maximum RSS from `/usr/bin/time -l`. Set
+short-lived descendants and counts shared pages once per process. It also
+reports each observed descendant PID's sample count and the sum of its
+`VmHWM` with the engine's, a conservative bound over observed processes.
+Unobserved short-lived descendants can still escape both metrics, so
+process-tree RSS remains diagnostic and cannot qualify the memory gate yet.
+macOS qualification reads process maximum RSS from `/usr/bin/time -l`. Set
 `QUENCH_NODE_BIN`, `NODE_BIN` and `BUN_BIN` when the binaries are outside their
 defaults. A one-round report-generation smoke with separate process and tree
 RSS fields is in

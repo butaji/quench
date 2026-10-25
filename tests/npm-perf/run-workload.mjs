@@ -84,13 +84,16 @@ function engineSpecs() {
 function linuxProcessTreeSnapshot(rootPid) {
   const childrenByParent = new Map();
   const rssByPid = new Map();
+  const hwmByPid = new Map();
   for (const entry of fs.readdirSync("/proc")) {
     if (!/^\d+$/.test(entry)) continue;
     try {
       const status = fs.readFileSync(`/proc/${entry}/status`, "utf8");
       const parent = Number(status.match(/^PPid:\s+(\d+)$/m)?.[1]);
       const resident = Number(status.match(/^VmRSS:\s+(\d+)\s+kB$/m)?.[1] ?? 0) * 1024;
+      const highWater = Number(status.match(/^VmHWM:\s+(\d+)\s+kB$/m)?.[1] ?? 0) * 1024;
       rssByPid.set(Number(entry), resident);
+      hwmByPid.set(Number(entry), highWater);
       const children = childrenByParent.get(parent) ?? [];
       children.push(Number(entry));
       childrenByParent.set(parent, children);
@@ -107,7 +110,7 @@ function linuxProcessTreeSnapshot(rootPid) {
     const pid = pending.pop();
     if (visited.has(pid)) continue;
     visited.add(pid);
-    if (pid !== rootPid) descendants.push(pid);
+    if (pid !== rootPid) descendants.push({ pid, highWaterRssBytes: hwmByPid.get(pid) ?? 0 });
     total += rssByPid.get(pid) ?? 0;
     pending.push(...(childrenByParent.get(pid) ?? []));
   }
@@ -138,8 +141,11 @@ async function runLinuxChild(spec, env) {
     maxProcessRssBytes = Math.max(maxProcessRssBytes, linuxProcessHighWaterRssBytes(child.pid));
     const tree = linuxProcessTreeSnapshot(child.pid);
     maxRssBytes = Math.max(maxRssBytes, tree.rssBytes);
-    for (const pid of tree.descendants) {
-      descendantSamples.set(pid, (descendantSamples.get(pid) ?? 0) + 1);
+    for (const { pid, highWaterRssBytes } of tree.descendants) {
+      const observed = descendantSamples.get(pid) ?? { samples: 0, highWaterRssBytes: 0 };
+      observed.samples += 1;
+      observed.highWaterRssBytes = Math.max(observed.highWaterRssBytes, highWaterRssBytes);
+      descendantSamples.set(pid, observed);
     }
   };
   const sampler = setInterval(sample, 50);
@@ -159,7 +165,12 @@ async function runLinuxChild(spec, env) {
     maxRssBytes,
     maxProcessRssBytes,
     descendantProcessCount: descendantSamples.size,
-    maxObservedDescendantSamples: Math.max(0, ...descendantSamples.values()),
+    maxObservedDescendantSamples: Math.max(
+      0,
+      ...[...descendantSamples.values()].map(({ samples }) => samples),
+    ),
+    observedProcessTreeHwmSumBytes: maxProcessRssBytes + [...descendantSamples.values()]
+      .reduce((total, { highWaterRssBytes }) => total + highWaterRssBytes, 0),
   };
 }
 
@@ -213,6 +224,7 @@ async function runOne(spec, round) {
     ...(result.descendantProcessCount === undefined ? {} : {
       descendantProcessCount: result.descendantProcessCount,
       maxObservedDescendantSamples: result.maxObservedDescendantSamples,
+      observedProcessTreeHwmSumBytes: result.observedProcessTreeHwmSumBytes,
     }),
     wallTimeMs,
     stderr: result.stderr.replace(/__QUENCH_MAX_RSS_KB=\d+\n?/g, "").trim(),
@@ -280,6 +292,9 @@ const summaries = Object.fromEntries(specs.map(({ name }) => {
         0,
         ...rows.map(({ maxObservedDescendantSamples }) => maxObservedDescendantSamples),
       ),
+      medianObservedProcessTreeHwmSumBytes: median(
+        rows.map(({ observedProcessTreeHwmSumBytes }) => observedProcessTreeHwmSumBytes),
+      ),
     } : {}),
   }];
 }));
@@ -298,7 +313,7 @@ const report = {
   } : {}),
   host: { platform: process.platform, arch: process.arch, cpus: os.cpus().length },
   rssMeasurement: process.platform === "linux"
-    ? "kernel VmHWM maximum RSS for the engine process plus a 50 ms sampled descendant-tree RSS estimate, observed descendant count, and maximum samples per descendant (tree sampling can miss short-lived children and counts shared pages per process; not qualification-ready)"
+    ? "kernel VmHWM for the engine process plus 50 ms descendant RSS sampling and a sum of VmHWM for observed descendant PIDs (may miss short-lived children and counts shared pages per process; not qualification-ready)"
     : "maximum RSS from /usr/bin/time -l",
   inputs: {
     workloadSha256: crypto.createHash("sha256").update(source).digest("hex"),
