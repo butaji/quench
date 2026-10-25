@@ -506,6 +506,8 @@ const LENGTH_NAME: &str = "length";
 pub(super) struct FixedRegisterLocalFacts {
     /// Promotion is sound but for the body's `arguments` use, which `arguments` states.
     pub(super) safe: bool,
+    /// `safe` but for the functions and classes the body makes (`closures`).
+    body_safe: bool,
     pub(super) arguments: ArgumentsUse,
     /// Where the body first passes `arguments` as a value (`ArgumentsUse::Passes`), when no
     /// loop repeats it and no destructuring evaluates a default or key after its source, so
@@ -520,6 +522,54 @@ pub(super) struct FixedRegisterLocalFacts {
     /// A register-resident local loads as its register itself, so it stays sound only while
     /// no write can land between a read and that read's consumer within one statement.
     pub(super) nested_written_names: FxHashSet<String>,
+    /// What the functions and classes the body makes may do to its bindings
+    /// (`ClosureReach`); `None` when it makes none.
+    closures: Option<ClosureReach>,
+}
+
+/// What functions and classes nested in a body may reach of its bindings, read without
+/// resolving their own scopes: every name any of them assigns, and whether one may observe
+/// the body's `arguments` binding itself (an arrow naming `arguments`, which is the
+/// body's own) or bind dynamically (a direct eval).
+#[derive(Default)]
+struct ClosureReach {
+    assigned: FxHashSet<String>,
+    observes_arguments: bool,
+    /// How many ordinary (non-arrow) functions enclose the visit: inside one, `arguments`
+    /// is that function's own.
+    ordinary_depth: u32,
+}
+
+impl<'a> Visit<'a> for ClosureReach {
+    fn visit_identifier_reference(&mut self, identifier: &oxc_ast::ast::IdentifierReference<'a>) {
+        self.observes_arguments |= self.ordinary_depth == 0 && identifier.name == ARGUMENTS;
+    }
+
+    fn visit_simple_assignment_target(&mut self, target: &SimpleAssignmentTarget<'a>) {
+        if let SimpleAssignmentTarget::AssignmentTargetIdentifier(identifier) = target {
+            self.assigned.insert(identifier.name.to_string());
+        }
+        walk::walk_simple_assignment_target(self, target);
+    }
+
+    fn visit_assignment_target_property_identifier(
+        &mut self,
+        property: &oxc_ast::ast::AssignmentTargetPropertyIdentifier<'a>,
+    ) {
+        self.assigned.insert(property.binding.name.to_string());
+        walk::walk_assignment_target_property_identifier(self, property);
+    }
+
+    fn visit_call_expression(&mut self, call: &CallExpression<'a>) {
+        self.observes_arguments |= is_direct_eval_call(call);
+        walk::walk_call_expression(self, call);
+    }
+
+    fn visit_function(&mut self, function: &Function<'a>, flags: ScopeFlags) {
+        self.ordinary_depth += 1;
+        walk::walk_function(self, function, flags);
+        self.ordinary_depth -= 1;
+    }
 }
 
 pub(super) fn fixed_register_local_facts(
@@ -536,9 +586,19 @@ pub(super) fn fixed_register_local_facts(
         unordered: bool,
         loops: u32,
         last_references: rustc_hash::FxHashMap<String, u32>,
+        closures: Option<ClosureReach>,
     }
 
     impl Facts {
+        /// A function or class the body makes: its name, when it declares one, binds in the
+        /// body, and what it reaches of the body's bindings joins `closures`.
+        fn make_closure(&mut self, name: Option<&oxc_ast::ast::BindingIdentifier<'_>>, visit: impl FnOnce(&mut ClosureReach)) {
+            if let Some(name) = name {
+                self.bound_names.insert(name.name.to_string());
+            }
+            visit(self.closures.get_or_insert_with(ClosureReach::default));
+        }
+
         /// Visits `x = e`, `x op= e` or `x++` standing as a whole statement or for-update:
         /// the write to `x` follows every read in it, so only the operands are visited. A
         /// chain `x = y = e` of plain assignments is the same: each link writes after `e`.
@@ -744,16 +804,16 @@ pub(super) fn fixed_register_local_facts(
             walk::walk_unary_expression(self, expression);
         }
 
-        fn visit_function(&mut self, _: &Function<'a>, _: ScopeFlags) {
-            self.safe = false;
+        fn visit_function(&mut self, function: &Function<'a>, flags: ScopeFlags) {
+            self.make_closure(function.id.as_ref(), |reach| reach.visit_function(function, flags));
         }
 
-        fn visit_arrow_function_expression(&mut self, _: &ArrowFunctionExpression<'a>) {
-            self.safe = false;
+        fn visit_arrow_function_expression(&mut self, arrow: &ArrowFunctionExpression<'a>) {
+            self.make_closure(None, |reach| reach.visit_arrow_function_expression(arrow));
         }
 
-        fn visit_class(&mut self, _: &oxc_ast::ast::Class<'a>) {
-            self.safe = false;
+        fn visit_class(&mut self, class: &oxc_ast::ast::Class<'a>) {
+            self.make_closure(class.id.as_ref(), |reach| reach.visit_class(class));
         }
     }
 
@@ -766,6 +826,7 @@ pub(super) fn fixed_register_local_facts(
         unordered: false,
         loops: 0,
         last_references: rustc_hash::FxHashMap::default(),
+        closures: None,
     };
     for statement in body {
         facts.visit_statement(statement);
@@ -774,24 +835,35 @@ pub(super) fn fixed_register_local_facts(
         facts.visit_expression(expression);
     }
     FixedRegisterLocalFacts {
-        safe: facts.safe,
+        // Promotion keeps every local of a body that makes no function or class.
+        safe: facts.safe && facts.closures.is_none(),
+        body_safe: facts.safe,
         arguments: facts.arguments,
         first_pass: facts.first_pass.filter(|_| !facts.unordered),
         last_references: facts.last_references,
         bound_names: facts.bound_names,
         nested_written_names: facts.nested_written_names,
+        closures: facts.closures,
     }
 }
 
 impl FixedRegisterLocalFacts {
     /// Whether a sloppy body that rebinds no parameter cannot observe its `arguments`
-    /// mapping: it only reads the object, or it passes the object on after its last
-    /// reference to any parameter, so what writes the object's elements finds no parameter
-    /// read after it.
-    pub(super) fn arguments_mapping_unobserved(&self, parameters: impl Iterator<Item = impl AsRef<str>>) -> bool {
+    /// mapping: it only reads the object while no function it makes assigns a parameter,
+    /// or, making none, it passes the object on after its last reference to any parameter,
+    /// so what writes the object's elements finds no parameter read after it.
+    pub(super) fn arguments_mapping_unobserved(&self, mut parameters: impl Iterator<Item = impl AsRef<str>>) -> bool {
+        if !self.body_safe {
+            return false;
+        }
         match self.arguments {
-            ArgumentsUse::Reads => true,
-            ArgumentsUse::Passes => self.first_pass.is_some_and(|pass| {
+            // Only a write to a parameter could make a read differ from the value passed:
+            // the functions the body makes may not assign one, nor observe the binding.
+            ArgumentsUse::Reads => self.closures.as_ref().is_none_or(|reach| {
+                !reach.observes_arguments && parameters.all(|parameter| !reach.assigned.contains(parameter.as_ref()))
+            }),
+            // A function the body makes may read a parameter at any later time.
+            ArgumentsUse::Passes => self.closures.is_none() && self.first_pass.is_some_and(|pass| {
                 parameters.into_iter().all(|parameter| {
                     self.last_references.get(parameter.as_ref()).is_none_or(|&reference| reference < pass)
                 })
