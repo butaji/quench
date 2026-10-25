@@ -12616,11 +12616,12 @@ fn shared_osr_exits_at_effectful_calls_with_live_state_written_back() {
             }
             return allocated.index;
           }
+          globalThis.scale = 1;
           function run(callback) {
             let index = 0;
             let total = 0;
             while (index < 100) {
-              total += index;
+              total += index * scale;
               callback(index);
               index++;
             }

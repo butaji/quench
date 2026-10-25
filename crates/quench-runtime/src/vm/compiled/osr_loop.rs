@@ -1651,9 +1651,17 @@ fn admit(
             }
             admission.tagged(instruction.register_b())?;
         }
-        // The ordinary lane performs iterator-result inspection, binding lookup, call
-        // resolution, activation, allocation, GC, and throws at this exact PC.
-        Op::RequireIteratorResult | Op::LoadEnvLocal | Op::Call | Op::CallArray => {}
+        // The ordinary lane owns these VM/effectful operations. Admit their surrounding
+        // region but leave at the exact PC so it can perform binding lookup, call resolution,
+        // activation, allocation, GC, and throws with the complete interpreter state
+        // materialized.
+        Op::RequireIteratorResult
+        | Op::LoadEnvLocal
+        | Op::LoadName
+        | Op::LoadNameCall
+        | Op::LoadNameTypeof
+        | Op::Call
+        | Op::CallArray => {}
         Op::Jump => {}
         Op::JumpBinaryFalse => {
             if let Some(branch) = identity_branch(instruction, constants) {
@@ -4365,7 +4373,13 @@ impl<'a, 'b> Lowering<'a, 'b> {
                 self.body.builder.ins().store(flags(), bits, pointer, 0);
                 self.fall_through(pc)
             }
-            Op::RequireIteratorResult | Op::LoadEnvLocal | Op::Call | Op::CallArray => {
+            Op::RequireIteratorResult
+            | Op::LoadEnvLocal
+            | Op::LoadName
+            | Op::LoadNameCall
+            | Op::LoadNameTypeof
+            | Op::Call
+            | Op::CallArray => {
                 self.leave(super::RegionExit::Fallback(pc));
                 Some(())
             }
