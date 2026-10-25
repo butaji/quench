@@ -148,6 +148,14 @@ const __quenchBroadcastChannelClass = class BroadcastChannel extends EventTarget
     return `BroadcastChannel { name: '${name}', active: ${!this._closed} }`;
   }
 };
+// Node gives both the worker_threads implementation and the global constructor
+// the standard brand used by Object.prototype.toString. The worker_threads
+// export below is always this class, even if the host already supplied a
+// global BroadcastChannel constructor.
+Object.defineProperty(__quenchBroadcastChannelClass.prototype, Symbol.toStringTag, {
+  configurable: true,
+  value: "BroadcastChannel",
+});
 // Node exposes BroadcastChannel globally as well as from `worker_threads`.
 // Keep the same constructor identity so instances participate in the native
 // worker-thread bridge installed below.
@@ -157,6 +165,14 @@ if (typeof globalThis.BroadcastChannel !== "function") {
     enumerable: false,
     writable: true,
     value: __quenchBroadcastChannelClass,
+  });
+}
+// Some hosts provide BroadcastChannel before this polyfill runs. Ensure that
+// constructor has the same prototype brand as the worker_threads export.
+if (typeof globalThis.BroadcastChannel === "function") {
+  Object.defineProperty(globalThis.BroadcastChannel.prototype, Symbol.toStringTag, {
+    configurable: true,
+    value: "BroadcastChannel",
   });
 }
 Object.defineProperty(globalThis, "__quenchBroadcastChannelClass", {

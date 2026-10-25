@@ -722,7 +722,12 @@ const PROMISES_FACTORY: &str = quench_js_check::checked_js!(
           closed = true;
           closeHandle(handle);
           handle.fd = -1;
-          try { readableWebStreamController?.close(); } catch {}
+          try {
+            readableWebStreamController?.error(Object.assign(
+              new Error('The FileHandle is already closed or locked'),
+              { code: 'ERR_INVALID_STATE' },
+            ));
+          } catch {}
           handle.emit("close");
         });
         return closePromise;
@@ -757,7 +762,10 @@ const PROMISES_FACTORY: &str = quench_js_check::checked_js!(
           pull(controller) {
             readableWebStreamController = controller;
             if (closed) {
-              controller.close();
+              controller.error(Object.assign(
+                new Error('The FileHandle is already closed or locked'),
+                { code: 'ERR_INVALID_STATE' },
+              ));
               return;
             }
             const request = controller.byobRequest;
@@ -883,6 +891,11 @@ const PROMISES_FACTORY: &str = quench_js_check::checked_js!(
         }
         const source = {
           async *[Symbol.asyncIterator]() {
+            if (closed || closePromise) {
+              throw Object.assign(new Error('The FileHandle is already closed or locked'), {
+                code: 'ERR_INVALID_STATE',
+              });
+            }
             ensureOpen("read");
             if (writerActive || readableWebStreamActive) {
               throw Object.assign(new Error('The FileHandle is already locked'), { code: 'ERR_INVALID_STATE' });
