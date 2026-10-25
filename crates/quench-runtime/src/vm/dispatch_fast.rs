@@ -5102,6 +5102,36 @@ fn lane_raise<H: Host>(cx: *mut LaneContext<H>, ip: Ip, error: JsError) -> Ip {
 }
 
 script_handler! {
+    /// `DefinePropertyRecord` (`Vm::define_property_or_throw`): it can run a Proxy trap, so
+    /// publish the current PC and materialize frameless activations around the general semantic
+    /// operation. Ordinary definitions stay in the lane; abrupt completion resumes at this
+    /// exact instruction through `lane_in_place`.
+    #[inline(never)]
+    fn lane_define_property_record<>(cx, r, ip, i, view) {
+        let Some(mode) = crate::bytecode::PropertyDefinitionMode::from_word(i.imm()) else {
+            return lane_raise(
+                cx,
+                ip,
+                JsError::validation("invalid property definition mode".into()),
+            );
+        };
+        let target = r.get(i.b);
+        let key = r.get(i.c);
+        let descriptor = super::object_descriptors::PropertyDescriptorRecord::for_definition(
+            mode,
+            r.get(i.a),
+        );
+        let result = lane_in_place(cx, ip, |vm, code| {
+            vm.define_property_or_throw(code, target, key, descriptor)
+        });
+        if result.is_none() {
+            return exit(ip);
+        }
+        next!(cx, r, following(ip), Carried::script(cx))
+    }
+}
+
+script_handler! {
     /// `DefineField` (`Vm::define_field_cached`), as the general step defines it. A Proxy
     /// receiver's define runs its trap, which a frameless activation leaves to the general path.
     #[inline(never)]
@@ -14287,6 +14317,7 @@ const fn other_handler<H: Host, const BACKWARD: bool, const ACC: u8>(op: Op) -> 
         Op::SetThisField | Op::SetThisFieldStrict => Some(lane_set_this_field_own::<H>),
         Op::ToNumeric => Some(lane_to_numeric::<H>),
         Op::RequireObjectCoercible => Some(lane_require_object_coercible::<H>),
+        Op::DefinePropertyRecord => Some(lane_define_property_record::<H>),
         Op::DefineField => Some(lane_define_field::<H>),
         Op::DefinePrivateField => Some(lane_define_private_field::<H>),
         Op::CheckPrivate => Some(lane_check_private::<H>),
