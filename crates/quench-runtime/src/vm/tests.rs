@@ -13378,6 +13378,137 @@ fn shared_osr_reloads_changing_field_receivers_and_exits_before_effects() {
 
 #[test]
 #[cfg(not(quench_profiled))]
+fn shared_osr_compiles_typeof_switch_indices_and_falls_back_for_heap_values() {
+    let program = Engine::compile(crate::ExecutionRequest::script(
+        r#"
+          function classify(value) {
+            let total = 0;
+            let iteration = 0;
+            while (iteration < 8) {
+              switch (typeof value) {
+                case 'number': total += 1; break;
+                case 'object': total += 2; break;
+                case 'boolean': total += 3; break;
+                case 'undefined': total += 4; break;
+              }
+              iteration++;
+            }
+            return total;
+          }
+          let total = 0;
+          for (let call = 0; call < 200; call++) total += classify(call % 2 ? 17 : false);
+          print(total);
+          print(classify(null));
+          print(classify(undefined));
+          print(classify('heap string'));
+          print(classify({}));
+          print(classify(NaN));
+          print(classify(-0));
+          print(classify(true));
+          print(classify(1.25));
+          print(classify(Infinity));
+          print(classify(-Infinity));
+        "#,
+        "osr-typeof-switch-index.js",
+    ))
+    .unwrap();
+    let function_id = program
+        .functions
+        .iter()
+        .position(|function| {
+            function
+                .header()
+                .name
+                .is_some_and(|name| &program.atoms[name as usize] == "classify")
+        })
+        .expect("typeof switch function");
+
+    let interpreted_output = Rc::new(RefCell::new(Vec::new()));
+    let mut interpreter = Vm::new(TestHost::writing_to(interpreted_output.clone()));
+    interpreter.execute(&program).unwrap();
+
+    assert_eq!(
+        interpreted_output.borrow().as_slice(),
+        ["3200", "16", "32", "0", "16", "8", "8", "24", "8", "8", "8"],
+    );
+
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    vm.set_execution_mode(crate::ExecutionMode::Compiled);
+    vm.programs.enable_js_jit_diagnostics();
+    vm.execute(&program).unwrap();
+    assert_eq!(output.borrow().as_slice(), interpreted_output.borrow().as_slice());
+
+    let views = vm
+        .programs
+        .lane_views(super::program_store::ProgramId::MAIN)
+        .expect("main program lane views");
+    let view = views
+        .get(function_id)
+        .and_then(std::cell::OnceCell::get)
+        .expect("hot typeof switch lane view");
+    let diagnostics = view.osr_diagnostics();
+    assert_eq!(diagnostics.currently_compiled_sites, 1, "OSR diagnostics: {diagnostics:?}");
+    assert!(diagnostics.native_region_runs > 0, "OSR diagnostics: {diagnostics:?}");
+    assert_eq!(
+        diagnostics.exits, 16,
+        "only the two eight-iteration heap cases should leave at typeof: {diagnostics:?}",
+    );
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
+fn shared_osr_tagged_number_equality_keeps_boolean_negation_and_number_semantics() {
+    let program = Engine::compile(crate::ExecutionRequest::script(
+        r#"
+          function classify(value) {
+            let total = 0;
+            let iteration = 0;
+            while (iteration < 8) {
+              if (value === null) total += 100;
+              if (value === 0) total += 1;
+              if (value !== 0) total += 2;
+              iteration++;
+            }
+            return total;
+          }
+          for (let call = 0; call < 200; call++) classify(call % 2);
+          print(classify(0));
+          print(classify(-0));
+          print(classify(NaN));
+          print(classify(1.25));
+          print(classify(Infinity));
+          print(classify(false));
+          print(classify(undefined));
+          print(classify(null));
+          print(classify('0'));
+          print(classify({ valueOf() { throw 'must not coerce'; } }));
+        "#,
+        "osr-tagged-number-equality.js",
+    ))
+    .unwrap();
+    let function_id = program.functions.iter().position(|function| {
+        function.header().name.is_some_and(|name| &program.atoms[name as usize] == "classify")
+    }).unwrap();
+    let interpreted = Rc::new(RefCell::new(Vec::new()));
+    Vm::new(TestHost::writing_to(interpreted.clone())).execute(&program).unwrap();
+    assert_eq!(interpreted.borrow().as_slice(), ["8", "8", "16", "16", "16", "16", "16", "816", "16", "16"]);
+
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    vm.set_execution_mode(crate::ExecutionMode::Compiled);
+    vm.programs.enable_js_jit_diagnostics();
+    vm.execute(&program).unwrap();
+    assert_eq!(output.borrow().as_slice(), interpreted.borrow().as_slice());
+    let views = vm.programs.lane_views(super::program_store::ProgramId::MAIN).unwrap();
+    let diagnostics = views[function_id].get().unwrap().osr_diagnostics();
+    assert_eq!(diagnostics.currently_compiled_sites, 1, "{diagnostics:?}");
+    assert!(diagnostics.native_region_runs > 0, "{diagnostics:?}");
+    assert_eq!(diagnostics.exits, 0, "strict comparisons must not coerce or exit: {diagnostics:?}");
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
 fn shared_osr_compiles_loose_nullish_equality_without_coercion() {
     let program = Engine::compile(crate::ExecutionRequest::script(
         r#"
