@@ -501,6 +501,20 @@ const RELEASE_REFAULT_COST: std::time::Duration = std::time::Duration::from_micr
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 const BUDGET_RELEASE_TIME_DIVISOR: u32 = 10;
 
+/// Releases over the budget a run may spend before its elapsed time has earned them
+/// (`BUDGET_RELEASE_TIME_DIVISOR`): its warm-up specializes the functions it first calls, and
+/// with only the time-earned budget a run 12 ms in had about three, so the specialization's
+/// code built up beside the heap and set the peak whenever no collection released it first
+/// (V8-v7 RayTrace's high runs: 1.9-2.0 MB of file pages at 12-13 ms, against about 1.3 MB
+/// at a later peak). V8-v7 without JIT, 15 interleaved runs of one bolted static binary,
+/// worst max RSS against none (x86_64 VM, 2026-10-25): RayTrace 2892 -> 2704 KiB, Crypto
+/// 3228 -> 3060, Richards 2728 -> 2464, NavierStokes 3980 -> 3928, RegExp 5512 -> 5492,
+/// DeltaBlue 2764 -> 2772; medians equal or lower, scores within noise. 16 and 24 left
+/// RayTrace and Crypto worse. The releases cost a short npm scenario the most: Acorn 138 ->
+/// 165 ms, ESLint 323 -> 341, Ajv 282 -> 305, TypeScript 410 -> 413.
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+const MEMORY_FIRST_START_RELEASES: u32 = 40;
+
 /// When the first budget check ran, and the releases over the budget since.
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 static BUDGET_RELEASES: std::sync::Mutex<Option<(std::time::Instant, u32)>> = std::sync::Mutex::new(None);
@@ -509,7 +523,8 @@ static BUDGET_RELEASES: std::sync::Mutex<Option<(std::time::Instant, u32)>> = st
 impl CompileRelease {
     /// Whether a first call releases inside its interval: the resident file pages passed
     /// `MEMORY_FIRST_RESIDENT_FILE_BUDGET`, and the releases over it so far leave room in
-    /// the run's time (`BUDGET_RELEASE_TIME_DIVISOR`).
+    /// the run's time (`BUDGET_RELEASE_TIME_DIVISOR`) beyond the start's allowance
+    /// (`MEMORY_FIRST_START_RELEASES`).
     fn over_budget(self) -> bool {
         let returns_pages = crate::shared_run::process_memory_policy()
             .is_some_and(|policy| policy.resident_release_interval().is_zero());
@@ -520,7 +535,7 @@ impl CompileRelease {
             return false;
         };
         let (started, count) = releases.get_or_insert_with(|| (std::time::Instant::now(), 0));
-        let allowed = started.elapsed() / BUDGET_RELEASE_TIME_DIVISOR;
+        let allowed = started.elapsed() / BUDGET_RELEASE_TIME_DIVISOR + RELEASE_REFAULT_COST * MEMORY_FIRST_START_RELEASES;
         if RELEASE_REFAULT_COST * (*count + 1) > allowed
             || resident_file_bytes().is_none_or(|bytes| bytes <= MEMORY_FIRST_RESIDENT_FILE_BUDGET)
         {
