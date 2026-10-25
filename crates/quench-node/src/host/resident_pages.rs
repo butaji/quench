@@ -941,3 +941,61 @@ mod tests {
         assert_eq!(runs, [(start, start + page), (start + 2 * page, start + 3 * page)]);
     }
 }
+
+/// A native compilation's boundaries (`Host::before_native_compilation` and
+/// `Host::after_native_compilation`).
+#[derive(Clone, Copy)]
+pub enum NativeCompilation {
+    /// The program's pages leave before the code generator's join them.
+    Before,
+    /// The code generator's pages, and the allocator pages its scratch memory freed, leave
+    /// before the program runs on.
+    After,
+}
+
+/// The native compilations whose boundaries release unpaced under a policy that keeps pages
+/// resident across collections (throughput). Later ones release at most once per
+/// `LOAD_RELEASE_INTERVAL`. Releasing at every boundary made npm `--jit` runs refault their
+/// hot code after each compilation (whatwg-url: 7.5K -> 18.8K faults vs no-JIT). Paced after
+/// the first two (TOD-180, plain release build, interleaved): whatwg-url 126 -> 102 ms, axios
+/// 123 -> 113, semver 121 -> 110, schema-utils 242 -> 222; releasing around the first eight
+/// still cost V8-v7 NavierStokes `--jit` 1.6 MB. Memory-first releases at every boundary.
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+const UNPACED_NATIVE_COMPILATIONS: u32 = 2;
+
+/// The host's action at a native compilation's boundary: the read-only pages leave, paced by
+/// the process's memory policy (`UNPACED_NATIVE_COMPILATIONS`), and after it the allocator's
+/// free pages always do.
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+pub fn at_native_compilation(boundary: NativeCompilation) {
+    /// Native compilations started, and when a paced boundary last released.
+    static PACED: std::sync::Mutex<(u32, Option<std::time::Instant>)> = std::sync::Mutex::new((0, None));
+    let returns_pages = crate::shared_run::process_memory_policy()
+        .is_some_and(quench_runtime::MemoryPolicy::returns_pages_at_collections);
+    let release = returns_pages
+        || PACED.lock().is_ok_and(|mut paced| {
+            let (started, last) = &mut *paced;
+            if matches!(boundary, NativeCompilation::Before) {
+                *started = started.saturating_add(1);
+            }
+            let due = *started <= UNPACED_NATIVE_COMPILATIONS
+                || last.is_none_or(|last| last.elapsed() >= LOAD_RELEASE_INTERVAL);
+            if due {
+                *last = Some(std::time::Instant::now());
+            }
+            due
+        });
+    if release {
+        release_read_only_pages();
+    }
+    if matches!(boundary, NativeCompilation::After) {
+        release_free_heap_pages();
+    }
+}
+
+#[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
+pub fn at_native_compilation(boundary: NativeCompilation) {
+    if matches!(boundary, NativeCompilation::After) {
+        release_free_heap_pages();
+    }
+}
