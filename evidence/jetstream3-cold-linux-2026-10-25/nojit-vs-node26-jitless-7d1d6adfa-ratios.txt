@@ -1,0 +1,28 @@
+validatorjs                     48.47   142.09 score x0.341 rss x2.19 <
+sync-fs                         11.90    32.81 score x0.363 rss x6.94 <
+doxbee-async                    45.56   117.83 score x0.387 rss x3.23 <
+web-ssr                         23.15    58.32 score x0.397 rss x1.75 <
+doxbee-promise                  36.95    90.98 score x0.406 rss x3.13 <
+async-fs                        20.62    50.42 score x0.409 rss x7.39 <
+chai-wtb                        17.75    43.29 score x0.410 rss x3.73 <
+babel-wtb                        9.98    23.73 score x0.421 rss x2.34 <
+postcss-wtb                      3.38     7.62 score x0.444 rss x3.70 <
+babel-minify-wtb                 7.75    16.32 score x0.475 rss x3.14 <
+lazy-collections                19.37    36.53 score x0.530 rss x10.79 <
+typescript-lib                   0.36     0.66 score x0.545 rss x1.57 <
+js-tokens                       24.35    42.19 score x0.577 rss x3.34 <
+UniPoker                        28.03    42.88 score x0.654 rss x2.60 <
+json-stringify-inspector       272.68   391.04 score x0.697 rss x2.34 <
+bigint-noble-ed25519            17.23    24.56 score x0.702 rss x4.31 <
+prettier-wtb                     5.78     7.85 score x0.736 rss x4.47 <
+espree-wtb                       4.18     5.67 score x0.737 rss x4.51 <
+babylon-wtb                      4.89     6.62 score x0.739 rss x4.62 <
+esprima-next-wtb                 5.24     7.02 score x0.746 rss x5.14 <
+acorn-wtb                        3.20     4.17 score x0.767 rss x3.57 <
+json-parse-inspector           152.33   166.01 score x0.918 rss x2.57 <
+stanford-crypto-sha256          44.86    38.99 score x1.151 rss x2.93 <
+hash-map                        27.80    22.43 score x1.239 rss x5.73
+stanford-crypto-pbkdf2          51.66    39.51 score x1.308 rss x3.18
+stanford-crypto-aes             43.27    25.96 score x1.667 rss x1.61
+geomean score x0.620 rss x3.47 n=26 score>=1.2: 3 rss>=1.2: 26 both: 3
+failed: ['source-map-wtb', 'sqlite3-wasm', 'zlib-wasm', 'HashSet-wasm', 'gcc-loops-wasm', 'quicksort-wasm', 'tsf-wasm', 'argon2-wasm']
