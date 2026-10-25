@@ -103,6 +103,10 @@ pub(super) struct LoopSite {
     /// Observe backedge work for the JS function tier when OSR rejected this loop. These
     /// sites never attempt native loop code; the shared function compiler owns promotion.
     promotion_only: bool,
+    /// First analysis failure, when admission did not produce a region.
+    analysis_failure: Option<super::compiled::RegionAnalysisFailure>,
+    /// Static effectful calls that leave native code at their exact PC.
+    call_boundary_pcs: Option<Box<[u32]>>,
     /// The admitted region; a loop whose calls run inlined makes its region once it is hot
     /// (`lane_inlining_region`), when its callees are known.
     region: std::cell::OnceCell<super::compiled::LoopRegion>,
@@ -126,6 +130,7 @@ pub(super) struct LoopSite {
     declines: std::cell::Cell<u32>,
     /// Whether this VM requested OSR diagnostics when its lane view was derived.
     diagnostics: bool,
+    lane_backedge_count: std::cell::Cell<u64>,
     native_entry_attempts: std::cell::Cell<u64>,
     native_region_runs: std::cell::Cell<u64>,
     entry_guard_misses: std::cell::Cell<u64>,
@@ -134,6 +139,15 @@ pub(super) struct LoopSite {
     compile_attempts: std::cell::Cell<u64>,
     compile_successes: std::cell::Cell<u64>,
     tier: std::cell::RefCell<LoopTier>,
+}
+
+impl LoopSite {
+    fn is_admitted(&self) -> bool {
+        !self.promotion_only
+            && self.analysis_failure.is_none_or(|failure| {
+                failure.reason == super::compiled::RegionRejection::UnsupportedInstruction(Op::Call)
+            })
+    }
 }
 
 /// A loop site's compilations: the current code, if any, and the values earlier code found
@@ -231,14 +245,77 @@ pub(super) struct OsrDiagnostics {
     pub(super) exits: u64,
     pub(super) widenings: u64,
     pub(super) analysis_rejections: Vec<(super::compiled::RegionRejection, usize)>,
+    pub(super) sites: Vec<OsrSiteDiagnostics>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum OsrSiteStatus {
+    Admitted,
+    CallBoundary,
+    PromotionOnly,
+    Rejected,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct OsrSiteDiagnostics {
+    pub(super) header_pc: u32,
+    pub(super) backedge_pc: u32,
+    pub(super) status: OsrSiteStatus,
+    pub(super) failure: Option<super::compiled::RegionAnalysisFailure>,
+    pub(super) admitted: bool,
+    pub(super) deferred_call: bool,
+    pub(super) tier_threshold_reached: bool,
+    pub(super) lane_backedge_count: u64,
+    pub(super) analysis_rejection: Option<super::compiled::RegionRejection>,
+    pub(super) call_boundary_pcs: Vec<u32>,
+    pub(super) compile_attempts: u64,
+    pub(super) compile_successes: u64,
+    pub(super) native_entry_attempts: u64,
+    pub(super) native_region_runs: u64,
+    pub(super) entry_guard_misses: u64,
+    pub(super) exits: u64,
+    pub(super) widenings: u64,
 }
 
 impl LaneView {
     /// OSR tier coverage and outcomes, for opt-in JIT diagnostics.
     pub(super) fn osr_diagnostics(&self) -> OsrDiagnostics {
+        let mut sites = self.loops.iter().map(|site| OsrSiteDiagnostics {
+            header_pc: site.header,
+            backedge_pc: site.backedge,
+            status: if site.promotion_only {
+                OsrSiteStatus::PromotionOnly
+            } else if site.analysis_failure.is_some_and(|failure| {
+                failure.reason == super::compiled::RegionRejection::UnsupportedInstruction(Op::Call)
+            }) {
+                OsrSiteStatus::CallBoundary
+            } else if site.analysis_failure.is_some() {
+                OsrSiteStatus::Rejected
+            } else {
+                OsrSiteStatus::Admitted
+            },
+            failure: site.analysis_failure,
+            call_boundary_pcs: site.call_boundary_pcs.as_deref().unwrap_or_default().to_vec(),
+            admitted: site.is_admitted(),
+            deferred_call: site.call_boundary_pcs.as_deref().is_some_and(|pcs| !pcs.is_empty())
+                || site.analysis_failure.is_some_and(|failure| {
+                    failure.reason == super::compiled::RegionRejection::UnsupportedInstruction(Op::Call)
+                }),
+            tier_threshold_reached: site.taken.get() >= LOOP_TIER_THRESHOLD,
+            lane_backedge_count: site.lane_backedge_count.get(),
+            analysis_rejection: site.analysis_failure.map(|failure| failure.reason),
+            compile_attempts: u64::from(site.compile_attempts.get()),
+            compile_successes: u64::from(site.compile_successes.get()),
+            native_entry_attempts: site.native_entry_attempts.get(),
+            native_region_runs: site.native_region_runs.get(),
+            entry_guard_misses: site.entry_guard_misses.get(),
+            exits: u64::from(site.native_exits.get()),
+            widenings: u64::from(site.widenings.get()),
+        }).collect::<Vec<_>>();
+        sites.sort_unstable_by_key(|site| (site.header_pc, site.backedge_pc));
         OsrDiagnostics {
             plain_backward_jump_sites: self.plain_backward_jump_sites,
-            admitted_sites: self.loops.iter().filter(|site| !site.promotion_only).count(),
+            admitted_sites: self.loops.iter().filter(|site| site.is_admitted()).count(),
             promotion_only_sites: self.loops.iter().filter(|site| site.promotion_only).count(),
             compile_attempts: self.loops.iter().map(|site| site.compile_attempts.get()).sum(),
             compile_successes: self.loops.iter().map(|site| site.compile_successes.get()).sum(),
@@ -269,6 +346,7 @@ impl LaneView {
                 .as_deref()
                 .unwrap_or_default()
                 .to_vec(),
+            sites,
         }
     }
 }
@@ -5851,6 +5929,10 @@ script_handler! {
     /// instruction outside its subset; a run its entry guards decline takes the jump.
     fn lane_loop_jump<>(cx, r, ip, i, view) {
         let site = i.loop_site();
+        if site.diagnostics {
+            site.lane_backedge_count
+                .set(site.lane_backedge_count.get().saturating_add(1));
+        }
         // SAFETY: the site records the distance to a validated jump target.
         let header = unsafe { ip.byte_offset(site.jump) };
         // SAFETY: the region carries its validated header and latch PCs, and
@@ -5892,6 +5974,12 @@ script_handler! {
         }
         if site.taken.get() < LOOP_TIER_THRESHOLD {
             site.taken.set(site.taken.get() + 1);
+            next!(cx, r, header, Carried::script(cx))
+        }
+        if site.analysis_failure.is_some_and(|failure| {
+            failure.reason != super::compiled::RegionRejection::UnsupportedInstruction(Op::Call)
+        }) {
+            lane_loop_retire::<H>(cx, ip, site);
             next!(cx, r, header, Carried::script(cx))
         }
         // SAFETY: the lane's VM is live, and nothing borrows it across the read.
@@ -15842,7 +15930,7 @@ fn install_loop_sites<'live, H: Host>(
         .filter(|pc| records[*pc].handler == backward && decoded[*pc].op() == Op::Jump && !fused_into(*pc))
         .filter_map(|pc| {
             let header = decoded[pc].jump_target();
-            let (region, promotion_only) = match super::compiled::analyze_osr_region(
+            let (region, promotion_only, analysis_failure, call_boundary_pcs) = match super::compiled::analyze_osr_region_detailed(
                 function,
                 decoded,
                 constants,
@@ -15851,12 +15939,24 @@ fn install_loop_sites<'live, H: Host>(
                 header,
                 pc as u32,
             ) {
-                Ok(region) => (std::cell::OnceCell::from(region), false),
-                // A call may run inlined: the site makes its region once it is hot.
-                Err(super::compiled::RegionRejection::UnsupportedInstruction(Op::Call)) if live().is_some() => {
-                    (std::cell::OnceCell::new(), false)
+                Ok(region) => {
+                    let call_boundary_pcs = if diagnostics { region.call_boundary_pcs() } else { Vec::new() };
+                    (std::cell::OnceCell::from(region), false, None, call_boundary_pcs)
                 }
-                Err(reason) => {
+                // A call may run inlined: the site makes its region once it is hot.
+                Err(failure)
+                    if failure.reason == super::compiled::RegionRejection::UnsupportedInstruction(Op::Call)
+                        && live().is_some() =>
+                {
+                    (
+                        std::cell::OnceCell::new(),
+                        false,
+                        Some(failure),
+                        diagnostics.then(|| vec![failure.pc]).unwrap_or_default(),
+                    )
+                }
+                Err(failure) => {
+                    let reason = failure.reason;
                     if diagnostics {
                         if let Some((_, count)) =
                             rejections.iter_mut().find(|(existing, _)| *existing == reason)
@@ -15867,9 +15967,13 @@ fn install_loop_sites<'live, H: Host>(
                         }
                     }
                     if !general_dispatch {
-                        return None;
+                        if !diagnostics {
+                            return None;
+                        }
+                        (std::cell::OnceCell::new(), false, Some(failure), Vec::new())
+                    } else {
+                        (std::cell::OnceCell::new(), true, Some(failure), Vec::new())
                     }
-                    (std::cell::OnceCell::new(), true)
                 }
             };
             Some((
@@ -15877,6 +15981,8 @@ fn install_loop_sites<'live, H: Host>(
                 LoopSite {
                     function: function_id,
                     promotion_only,
+                    analysis_failure,
+                    call_boundary_pcs: diagnostics.then(|| call_boundary_pcs.into_boxed_slice()),
                     region,
                     header,
                     backedge: pc as u32,
@@ -15887,6 +15993,7 @@ fn install_loop_sites<'live, H: Host>(
                     exits: std::cell::Cell::new(0),
                     declines: std::cell::Cell::new(0),
                     diagnostics,
+                    lane_backedge_count: std::cell::Cell::new(0),
                     native_entry_attempts: std::cell::Cell::new(0),
                     native_region_runs: std::cell::Cell::new(0),
                     entry_guard_misses: std::cell::Cell::new(0),

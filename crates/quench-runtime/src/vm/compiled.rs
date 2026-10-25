@@ -51,7 +51,7 @@ use std::rc::{Rc, Weak};
 mod osr_loop;
 pub(super) use osr_loop::{
     ArrayUse, FieldReceiver, FieldUse, InlineCallee, InlineFrame, LoopEntry, LoopOutcome, LoopRegion, NativeFieldLoad,
-    Observation, RegionRejection, Widening,
+    Observation, RegionAnalysisFailure, RegionRejection, Widening,
 };
 
 #[derive(Clone, Copy)]
@@ -5095,7 +5095,8 @@ pub(super) fn analyze_inlining_osr_region<'a>(
 }
 
 /// Analyze a loop candidate through the shared region compiler's OSR mode.
-pub(super) fn analyze_osr_region(
+/// Analyze a loop candidate and preserve the function PC that blocked admission.
+pub(super) fn analyze_osr_region_detailed(
     function: &Function,
     decoded: &[WideInstruction],
     constants: &[crate::value::Value],
@@ -5103,7 +5104,7 @@ pub(super) fn analyze_osr_region(
     live: Option<&crate::compile::liveness::RegisterMasks>,
     header: u32,
     backedge: u32,
-) -> Result<LoopRegion, RegionRejection> {
+) -> Result<LoopRegion, RegionAnalysisFailure> {
     osr_loop::region(function, decoded, constants, sites, live, header, backedge)
 }
 

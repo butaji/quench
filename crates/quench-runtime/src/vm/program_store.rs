@@ -3173,7 +3173,7 @@ impl Drop for ProgramStore {
             }
             let _ = write!(
                 stderr,
-                ",\"status\":\"{status}\",\"parameter_count\":{},\"instruction_count\":{},\"entries\":{},\"lane_entries\":{},\"numeric_entries\":{},\"promotions\":{},\"compile_attempts\":{},\"compile_successes\":{},\"general_dispatch_compile_attempts\":{},\"general_dispatch_compile_successes\":{},\"general_artifact_cache_hits\":{},\"general_artifact_cache_misses\":{},\"compile_ns\":{},\"native_entries\":{},\"native_entry_coverage_ppm\":{},\"all_entry_native_coverage_ppm\":{},\"field_cache_probes\":{},\"field_cache_hits\":{},\"field_store_cache_probes\":{},\"field_store_cache_hits\":{},\"field_return_candidate_entries\":{},\"field_return_fixed_this_entries\":{},\"field_return_fast_entries\":{},\"field_increment_candidate_entries\":{},\"field_increment_fixed_this_entries\":{},\"field_increment_fast_entries\":{},\"numeric_find_fast_entries\":{},\"fallback_entries\":{},\"interpreter_completions\":{},\"interpreter_inclusive_ns\":{},\"general_dispatch_work\":{},\"general_dispatch_work_required\":{},\"guard_census\":{{\"conditional_branch_sites\":{},\"typeof_operations\":{},\"strict_comparison_sites\":{},\"relational_comparison_sites\":{}}},\"osr\":{{\"plain_backward_jump_sites\":{},\"admitted_sites\":{},\"promotion_only_sites\":{},\"compile_attempts\":{},\"compile_successes\":{},\"currently_compiled_sites\":{},\"native_entry_attempts\":{},\"native_region_runs\":{},\"entry_guard_misses\":{},\"exits\":{},\"widenings\":{}}},\"call_sites\":[",
+                ",\"status\":\"{status}\",\"parameter_count\":{},\"instruction_count\":{},\"entries\":{},\"lane_entries\":{},\"numeric_entries\":{},\"promotions\":{},\"compile_attempts\":{},\"compile_successes\":{},\"general_dispatch_compile_attempts\":{},\"general_dispatch_compile_successes\":{},\"general_artifact_cache_hits\":{},\"general_artifact_cache_misses\":{},\"compile_ns\":{},\"native_entries\":{},\"native_entry_coverage_ppm\":{},\"all_entry_native_coverage_ppm\":{},\"field_cache_probes\":{},\"field_cache_hits\":{},\"field_store_cache_probes\":{},\"field_store_cache_hits\":{},\"field_return_candidate_entries\":{},\"field_return_fixed_this_entries\":{},\"field_return_fast_entries\":{},\"field_increment_candidate_entries\":{},\"field_increment_fixed_this_entries\":{},\"field_increment_fast_entries\":{},\"numeric_find_fast_entries\":{},\"fallback_entries\":{},\"interpreter_completions\":{},\"interpreter_inclusive_ns\":{},\"general_dispatch_work\":{},\"general_dispatch_work_required\":{},\"guard_census\":{{\"conditional_branch_sites\":{},\"typeof_operations\":{},\"strict_comparison_sites\":{},\"relational_comparison_sites\":{}}},\"osr\":{{\"plain_backward_jump_sites\":{},\"admitted_sites\":{},\"promotion_only_sites\":{},\"compile_attempts\":{},\"compile_successes\":{},\"currently_compiled_sites\":{},\"native_entry_attempts\":{},\"native_region_runs\":{},\"entry_guard_misses\":{},\"exits\":{},\"widenings\":{},\"sites\":[",
                 counters.parameter_count,
                 counters.instruction_count,
                 counters.entries,
@@ -3222,6 +3222,66 @@ impl Drop for ProgramStore {
                 osr.exits,
                 osr.widenings,
             );
+            for (index, site) in osr.sites.iter().enumerate() {
+                if index != 0 {
+                    let _ = write!(stderr, ",");
+                }
+                let status = match site.status {
+                    super::dispatch_fast::OsrSiteStatus::Admitted => "admitted",
+                    super::dispatch_fast::OsrSiteStatus::CallBoundary => "call-boundary",
+                    super::dispatch_fast::OsrSiteStatus::PromotionOnly => "promotion-only",
+                    super::dispatch_fast::OsrSiteStatus::Rejected => "rejected",
+                };
+                let _ = write!(
+                    stderr,
+                    "{{\"header_pc\":{},\"backedge_pc\":{},\"status\":\"{}\",\"admitted\":{},\"deferred_call\":{},\"tier_threshold_reached\":{},\"lane_backedge_count\":{}",
+                    site.header_pc,
+                    site.backedge_pc,
+                    status,
+                    site.admitted,
+                    site.deferred_call,
+                    site.tier_threshold_reached,
+                    site.lane_backedge_count,
+                );
+                let _ = write!(stderr, ",\"call_boundary_pcs\":[");
+                for (boundary_index, pc) in site.call_boundary_pcs.iter().enumerate() {
+                    if boundary_index != 0 {
+                        let _ = write!(stderr, ",");
+                    }
+                    let _ = write!(stderr, "{pc}");
+                }
+                let _ = write!(stderr, "],\"failure_pc\":");
+                if let Some(failure) = site.failure {
+                    let _ = write!(stderr, "{},\"failure_reason\":", failure.pc);
+                    let name = match failure.reason {
+                        super::compiled::RegionRejection::RegionTooLarge => "region-too-large",
+                        super::compiled::RegionRejection::UnsupportedInstruction(op) => {
+                            crate::bytecode::Op::NAMES.get(op as usize).copied().unwrap_or("unknown-opcode")
+                        }
+                        super::compiled::RegionRejection::RegisterLimit => "register-limit",
+                        super::compiled::RegionRejection::CaptureLimit => "capture-limit",
+                        super::compiled::RegionRejection::ArrayLimit => "array-limit",
+                        super::compiled::RegionRejection::FieldLimit => "field-limit",
+                        super::compiled::RegionRejection::FieldStoreLimit => "field-store-limit",
+                        super::compiled::RegionRejection::FieldMutation => "field-mutation",
+                    };
+                    let _ = write_json_string(&mut stderr, name);
+                } else {
+                    let _ = write!(stderr, "null,\"failure_reason\":null");
+                }
+                let _ = write!(
+                    stderr,
+                    ",\"compile_attempts\":{},\"compile_successes\":{},\"native_entry_attempts\":{},\"native_region_runs\":{},\"entry_guard_misses\":{},\"exits\":{},\"widenings\":{}}}",
+                    site.compile_attempts,
+                    site.compile_successes,
+                    site.native_entry_attempts,
+                    site.native_region_runs,
+                    site.entry_guard_misses,
+                    site.exits,
+                    site.widenings,
+                );
+            }
+            let _ = write!(stderr, "]}},\"call_sites\":[");
             for (site_index, site) in counters.call_sites.iter().enumerate() {
                 if site_index != 0 {
                     let _ = write!(stderr, ",");

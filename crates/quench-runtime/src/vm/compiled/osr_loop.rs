@@ -204,6 +204,15 @@ impl LoopRegion {
     pub(crate) fn is_dynamic_field(&self, index: usize) -> bool {
         self.dynamic_field_reads.values().any(|field| *field == index)
     }
+
+    pub(crate) fn call_boundary_pcs(&self) -> Vec<u32> {
+        self.instructions
+            .iter()
+            .enumerate()
+            .filter(|(_, instruction)| matches!(instruction.op(), Op::Call | Op::CallArray))
+            .map(|(offset, _)| self.header.saturating_add(offset as u32))
+            .collect()
+    }
 }
 
 /// Why a backward jump was excluded from OSR before native code generation.
@@ -217,6 +226,23 @@ pub(crate) enum RegionRejection {
     FieldLimit,
     FieldStoreLimit,
     FieldMutation,
+}
+
+/// A loop analysis failure attributed to the function PC whose requirement blocked it.
+/// Limits that apply to the whole region point at its backedge.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct RegionAnalysisFailure {
+    pub(crate) reason: RegionRejection,
+    pub(crate) pc: u32,
+}
+
+impl RegionAnalysisFailure {
+    fn at(reason: RegionRejection, header: u32, offset: usize) -> Self {
+        Self {
+            reason,
+            pc: header.saturating_add(u32::try_from(offset).unwrap_or(u32::MAX)),
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -424,12 +450,22 @@ fn identity_branch(instruction: WideInstruction, constants: &[Value]) -> Option<
 /// Registers whose bytecode definitions must stay tagged because a nullish comparison
 /// branch observes them. Propagate that fact along moves and through constants; other
 /// definitions need a general value denotation before they can be admitted.
+#[cfg(test)]
 fn tagged_registers(
     instructions: &[WideInstruction],
     constants: &[Value],
     held: &std::collections::BTreeSet<Register>,
     header: u32,
 ) -> Option<std::collections::BTreeSet<Register>> {
+    tagged_registers_with_failure(instructions, constants, held, header).ok()
+}
+
+fn tagged_registers_with_failure(
+    instructions: &[WideInstruction],
+    constants: &[Value],
+    held: &std::collections::BTreeSet<Register>,
+    header: u32,
+) -> Result<std::collections::BTreeSet<Register>, usize> {
     let mut tagged: std::collections::BTreeSet<Register> = instructions
         .iter()
         .filter_map(|instruction| identity_branch(*instruction, constants).map(|branch| branch.register))
@@ -470,7 +506,7 @@ fn tagged_registers(
                                 "QUENCH_JS_JIT_OSR_TAGGED_REJECT header={header} offset={offset} reason=missing_constant result={result}"
                             );
                         }
-                        return None;
+                        return Err(offset);
                     }
                 }
                 // A cached field's value, which the entry record carries tagged.
@@ -482,12 +518,12 @@ fn tagged_registers(
                             instruction.op()
                         );
                     }
-                    return None;
+                    return Err(offset);
                 }
             }
         }
         if tagged.len() == before {
-            return Some(tagged);
+            return Ok(tagged);
         }
     }
 }
@@ -1345,10 +1381,13 @@ pub(super) fn region(
     live: Option<&crate::compile::liveness::RegisterMasks>,
     header: u32,
     backedge: u32,
-) -> Result<LoopRegion, RegionRejection> {
+) -> Result<LoopRegion, RegionAnalysisFailure> {
     let (start, end) = (header as usize, backedge as usize);
     if start > end || end >= decoded.len() || end - start >= MAX_REGION_INSTRUCTIONS {
-        return Err(RegionRejection::RegionTooLarge);
+        return Err(RegionAnalysisFailure {
+            reason: RegionRejection::RegionTooLarge,
+            pc: backedge,
+        });
     }
     let header_live = live.and_then(|live| live.get(start));
     admit_region(
@@ -1377,17 +1416,17 @@ fn admit_region(
     header_live: Option<RegisterSet>,
     header: u32,
     objects: &std::collections::BTreeSet<Register>,
-) -> Result<LoopRegion, RegionRejection> {
+) -> Result<LoopRegion, RegionAnalysisFailure> {
     let backedge = header + instructions.len() as u32 - 1;
     let paths = held_registers(&instructions, sites, header_live, objects);
-    let mut tagged = match tagged_registers(
+    let mut tagged = match tagged_registers_with_failure(
         &instructions,
         constants,
         &objects.iter().chain(paths.keys()).copied().collect(),
         header,
     ) {
-        Some(tagged) => tagged,
-        None => {
+        Ok(tagged) => tagged,
+        Err(failure_offset) => {
             if std::env::var_os("QUENCH_JS_JIT_TRACE_OSR_REJECT").is_some() {
                 for (offset, instruction) in instructions.iter().copied().enumerate().filter(|(_, instruction)| {
                     instruction.op() == Op::JumpBinaryFalse
@@ -1407,7 +1446,11 @@ fn admit_region(
                     );
                 }
             }
-            return Err(RegionRejection::UnsupportedInstruction(Op::JumpBinaryFalse));
+            return Err(RegionAnalysisFailure::at(
+                RegionRejection::UnsupportedInstruction(Op::JumpBinaryFalse),
+                header,
+                failure_offset,
+            ));
         }
     };
     tagged.extend(paths.keys().copied());
@@ -1430,7 +1473,13 @@ fn admit_region(
         .collect();
     for (offset, instruction) in instructions.iter().copied().enumerate() {
         if instruction.op() == Op::GetField {
-            let path = field_path(instruction, sites, &paths).ok_or(RegionRejection::UnsupportedInstruction(Op::GetField))?;
+            let path = field_path(instruction, sites, &paths).ok_or_else(|| {
+                RegionAnalysisFailure::at(
+                    RegionRejection::UnsupportedInstruction(Op::GetField),
+                    header,
+                    offset,
+                )
+            })?;
             let index = intern_field(&mut admission.fields, &path, tagged.contains(&instruction.result_register()));
             field_reads.insert(offset as u32, index);
             if path.steps.len() == 1
@@ -1448,7 +1497,11 @@ fn admit_region(
         }
         if matches!(instruction.op(), Op::SetField | Op::SetFieldStrict) {
             if instruction.result_flags() != 0 || instruction.returns_from_frame() {
-                return Err(RegionRejection::UnsupportedInstruction(instruction.op()));
+                return Err(RegionAnalysisFailure::at(
+                    RegionRejection::UnsupportedInstruction(instruction.op()),
+                    header,
+                    offset,
+                ));
             }
             let receiver = instruction.register_b();
             let atom = instruction.atom_index();
@@ -1464,7 +1517,7 @@ fn admit_region(
                         "QUENCH_JS_JIT_OSR_FIELD_REJECT header={header} reason=read_after_or_before_store atom={atom} read_offset={read_offset} store_offset={offset} receiver={receiver}"
                     );
                 }
-                return Err(RegionRejection::FieldMutation);
+                return Err(RegionAnalysisFailure::at(RegionRejection::FieldMutation, header, offset));
             }
             // The slot pointer is captured at entry. The receiver must therefore stay in its
             // tagged register for the entire region.
@@ -1477,7 +1530,7 @@ fn admit_region(
                         "QUENCH_JS_JIT_OSR_FIELD_REJECT header={header} reason=store_receiver_redefined atom={atom} write_offset={write_offset} store_offset={offset} receiver={receiver}"
                     );
                 }
-                return Err(RegionRejection::FieldMutation);
+                return Err(RegionAnalysisFailure::at(RegionRejection::FieldMutation, header, offset));
             }
             let site = FieldStore { receiver, atom, cache_site };
             let index = field_store_sites.iter().position(|existing| *existing == site).unwrap_or_else(|| {
@@ -1497,7 +1550,11 @@ fn admit_region(
                 .find(|candidate| candidate.defined_register() == Some(callee_register))
                 .is_some_and(|definition| definition.op() == Op::GetField)
             {
-                return Err(RegionRejection::UnsupportedInstruction(instruction.op()));
+                return Err(RegionAnalysisFailure::at(
+                    RegionRejection::UnsupportedInstruction(instruction.op()),
+                    header,
+                    offset,
+                ));
             }
         }
         if let Some(register) = object_reads(instruction).filter(|register| paths.contains_key(register)) {
@@ -1530,7 +1587,11 @@ fn admit_region(
                     constant.flatten(),
                 );
             }
-            return Err(RegionRejection::UnsupportedInstruction(instruction.op()));
+            return Err(RegionAnalysisFailure::at(
+                RegionRejection::UnsupportedInstruction(instruction.op()),
+                header,
+                offset,
+            ));
         }
     }
     let held: std::collections::BTreeMap<Register, (FieldPath, usize)> = paths
@@ -1548,10 +1609,10 @@ fn admit_region(
         identity_branches.insert(header + offset as u32, branch);
     }
     if admission.fields.len() > MAX_REGION_FIELDS {
-        return Err(RegionRejection::FieldLimit);
+        return Err(RegionAnalysisFailure { reason: RegionRejection::FieldLimit, pc: backedge });
     }
     if field_store_sites.len() > MAX_REGION_FIELD_STORES {
-        return Err(RegionRejection::FieldStoreLimit);
+        return Err(RegionAnalysisFailure { reason: RegionRejection::FieldStoreLimit, pc: backedge });
     }
     // Entry-snapshot reads require a stable receiver. Direct one-step reads can instead
     // probe the current receiver at each instruction; nested paths, held paths, and
@@ -1575,15 +1636,15 @@ fn admit_region(
                 field.receiver,
             );
         }
-        return Err(RegionRejection::FieldMutation);
+        return Err(RegionAnalysisFailure::at(RegionRejection::FieldMutation, header, write_offset));
     }
     if admission.roles.keys().any(|register| usize::from(*register) >= registers)
         || admission.roles.len() > MAX_REGION_REGISTERS
     {
-        return Err(RegionRejection::RegisterLimit);
+        return Err(RegionAnalysisFailure { reason: RegionRejection::RegisterLimit, pc: backedge });
     }
     if admission.captures.len() > MAX_REGION_CAPTURES {
-        return Err(RegionRejection::CaptureLimit);
+        return Err(RegionAnalysisFailure { reason: RegionRejection::CaptureLimit, pc: backedge });
     }
     let numbers = admission
         .roles
@@ -1616,7 +1677,7 @@ fn admit_region(
         arrays.push(ArrayUse { register: *register, written: *written, field: Some(held[register].1) });
     }
     if arrays.len() > MAX_REGION_ARRAYS {
-        return Err(RegionRejection::ArrayLimit);
+        return Err(RegionAnalysisFailure { reason: RegionRejection::ArrayLimit, pc: backedge });
     }
     Ok(LoopRegion {
         header,
