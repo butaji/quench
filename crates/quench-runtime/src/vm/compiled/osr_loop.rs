@@ -4144,7 +4144,13 @@ impl<'a, 'b> Lowering<'a, 'b> {
                 let representation = element_representation(&instruction, self.observation);
                 let current = self.body.builder.current_block().expect("lowering inside a block");
                 let chain = self.chain(current);
-                let read = (base, self.body.builder.func.dfg.resolve_aliases(key.value), representation);
+                // Two reads of one key definition key alike (`int32_key`).
+                let dfg = &self.body.builder.func.dfg;
+                let key_value = match key.representation {
+                    Representation::Int32 => int32_key(dfg, key.value),
+                    _ => dfg.resolve_aliases(key.value),
+                };
+                let read = (base, key_value, representation);
                 if let Some((value, computed, stores)) = self.element_reads.get(&read).copied()
                     && computed == chain
                     && stores == self.element_stores
