@@ -160,6 +160,32 @@ const SERVER_CLOSE_FACTORY: &str = r#"((closeOperation) => function(callback) {
 /// writable length reaches it.
 pub(super) const RESPONSE_HIGH_WATER_MARK: usize = 64 * 1024;
 
+/// A ServerResponse's `statusCode` until the application sets one (Node's `ServerResponse`).
+pub(super) const DEFAULT_STATUS: u16 = 200;
+
+/// The guest function a parsed server request enters JavaScript through: it makes the
+/// IncomingMessage (`incoming::CREATE_FACTORY`'s leading arguments, from the head through the
+/// exchange id) and its ServerResponse, publishes the request start to the subscribers the host
+/// passes (Node's `onRequestStartChannel`, only when the channel has subscribers), then emits
+/// `request` on the server, as Node's `parserOnIncoming` does within one parser callback.
+const REQUEST_DISPATCH_FACTORY: &str = quench_js_check::checked_js!(
+    r#"(createIncoming, ServerResponse) => {
+  'use strict';
+  return function dispatchRequest(method, url, statusCode, statusMessage, httpVersion, httpVersionMajor, httpVersionMinor, rawHeaders, socket, complete, body, open, exchange, responseId, responseStatus, server, startSubscribers, startChannel) {
+    const request = createIncoming(method, url, statusCode, statusMessage, httpVersion, httpVersionMajor, httpVersionMinor, rawHeaders, socket, complete, body, open, exchange, true);
+    const response = new ServerResponse(responseId, responseStatus, request, server, socket);
+    if (startSubscribers !== undefined) {
+      const message = { request, response, socket, server };
+      for (let index = 0; index < startSubscribers.length; index++) {
+        const subscriber = startSubscribers[index];
+        subscriber(message, startChannel);
+      }
+    }
+    server.emit("request", request, response);
+  };
+}"#
+);
+
 const RESPONSE_FACTORY: &str = r#"((Stream, setHeaderOperation, getHeaderOperation, getHeadersOperation, removeHeaderOperation, write, finish, writeHeadOperation, destroyOperation, initializeResponse, nextTick, codes) => {
   const kExchange = Symbol("kResponseExchange");
   const kFinished = Symbol("kResponseFinished");
@@ -442,7 +468,6 @@ pub(crate) fn module(context: &mut Context<'_>) -> Result<RootId, RootedError> {
     let key = context.string_rooted("prototype");
     let prototype = context.get_property_rooted(response_factory, key)?;
     set(context, prototype, "_send", send)?;
-    let response_factory = context.retain(response_factory)?;
     let global = context.global_root()?;
     let emitter_key = context.string_rooted("__nodeEventEmitter");
     let emitter = context.get_property_rooted(global, emitter_key)?;
@@ -478,6 +503,11 @@ pub(crate) fn module(context: &mut Context<'_>) -> Result<RootId, RootedError> {
             client_exchange,
         ],
     )?;
+    let request_dispatch =
+        context.evaluate_script_rooted(REQUEST_DISPATCH_FACTORY, "node:http/request-dispatch.js")?;
+    let request_dispatch =
+        context.call_rooted(request_dispatch, undefined, &[incoming_factory, response_factory])?;
+    let request_dispatch = context.retain(request_dispatch)?;
     let incoming_factory = context.retain(incoming_factory)?;
 
     let initialize_server =
@@ -555,7 +585,7 @@ pub(crate) fn module(context: &mut Context<'_>) -> Result<RootId, RootedError> {
         .shared_state()
         .borrow_mut()
         .http
-        .response_factory = Some(response_factory);
+        .request_dispatch = Some(request_dispatch);
     context
         .host_mut()
         .shared_state()
@@ -1349,7 +1379,7 @@ fn response_status(
         .get(&id)
         .is_some_and(|response| response.lifecycle == super::state::ResponseLifecycle::Open);
     if !open {
-        return Ok((200, Vec::new()));
+        return Ok((DEFAULT_STATUS, Vec::new()));
     }
     let response = argument(context, response);
     let status = argument(context, status);
