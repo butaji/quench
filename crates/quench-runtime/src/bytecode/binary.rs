@@ -1176,6 +1176,7 @@ fn read_function(input: &mut BinaryReader<'_>) -> Result<Function, String> {
             dynamic_scope_access: Default::default(),
             js_tier_candidate: Default::default(),
             call_plan: Default::default(),
+            initializer: Default::default(),
             handlers: handlers.into(),
             register_roots,
             undefined_register,

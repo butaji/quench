@@ -1005,7 +1005,7 @@ impl<H: Host> Vm<H> {
                 self.read(f, i.register_b()),
                 self.read(f, i.register_c()),
             )?,
-            Op::ToPropertyKey | Op::GetIterator | Op::AppendArray => {
+            Op::ToPropertyKey | Op::GetIterator | Op::IteratorClose | Op::AppendArray => {
                 let [a, b] = value_step_operands(i).map(|register| register.map(|register| self.read(f, register)));
                 if let Some(value) = self.value_step(p, i, a, b)? {
                     self.write(f, i.result_register(), value);
@@ -1020,10 +1020,6 @@ impl<H: Host> Vm<H> {
                 }
             }
             Op::SuperCallCheck => self.check_super_call(p)?,
-            Op::IteratorClose => {
-                let result = self.iterator_close(p, self.read(f, i.register_b()))?;
-                self.write(f, i.result_register(), result);
-            }
             Op::IteratorCleanupPush => self.frames[f].active_iterators.push(ActiveIterator {
                 iterator: i.register_a(),
                 done: i.register_b(),
@@ -1856,7 +1852,7 @@ pub(super) fn value_step_operands(i: WideInstruction) -> [Option<crate::bytecode
 }
 
 impl<H: Host> Vm<H> {
-    /// `ToPropertyKey`, `GetIterator` or `AppendArray` of its operand values
+    /// `ToPropertyKey`, `GetIterator`, `IteratorClose` or `AppendArray` of its operand values
     /// (`value_step_operands`): the value it writes to its result register, if any. The
     /// general step and a frameless activation's (`lane_step_beside_activations`) share it.
     pub(super) fn value_step(
@@ -1870,6 +1866,7 @@ impl<H: Host> Vm<H> {
         match i.op() {
             Op::ToPropertyKey => self.to_property_key(p, operand).map(Some),
             Op::GetIterator => self.get_iterator(p, operand).map(Some),
+            Op::IteratorClose => self.iterator_close(p, operand).map(Some),
             Op::AppendArray => {
                 let array = a.expect("AppendArray names its array");
                 self.append_array_literal_holes(array, i.array_length())?;
