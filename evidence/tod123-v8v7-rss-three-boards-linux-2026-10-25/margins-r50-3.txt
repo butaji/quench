@@ -1,0 +1,18 @@
+board-r50-3.json
+  richards       quench        median   2200 worst   2328 target   2672 margin    472 PASS  worst-margin    344 ok
+  richards       quench --jit  median   2064 worst   2080 target   2672 margin    608 PASS  worst-margin    592 ok
+  deltablue      quench        median   2332 worst   2440 target   2908 margin    576 PASS  worst-margin    468 ok
+  deltablue      quench --jit  median   2392 worst   2396 target   2908 margin    516 PASS  worst-margin    512 ok
+  crypto         quench        median   2524 worst   2576 target   2803 margin    279 PASS  worst-margin    227 ok
+  crypto         quench --jit  median   2520 worst   2528 target   2803 margin    283 PASS  worst-margin    275 ok
+  raytrace       quench        median   2372 worst   2380 target   2649 margin    277 PASS  worst-margin    269 ok
+  raytrace       quench --jit  median   2372 worst   2584 target   2649 margin    277 PASS  worst-margin     65 ok
+  earley-boyer   quench        median   5688 worst   5976 target  13068 margin   7380 PASS  worst-margin   7092 ok
+  earley-boyer   quench --jit  median   5752 worst   5880 target  13068 margin   7316 PASS  worst-margin   7188 ok
+  regexp         quench        median   4820 worst   4820 target   5315 margin    495 PASS  worst-margin    495 ok
+  regexp         quench --jit  median   4944 worst   4948 target   5315 margin    371 PASS  worst-margin    367 ok
+  splay          quench        median  31328 worst  31332 target  49856 margin  18528 PASS  worst-margin  18524 ok
+  splay          quench --jit  median  31344 worst  31344 target  49856 margin  18512 PASS  worst-margin  18512 ok
+  navier-stokes  quench        median   3468 worst   3468 target   3961 margin    493 PASS  worst-margin    493 ok
+  navier-stokes  quench --jit  median   3604 worst   3604 target   3961 margin    357 PASS  worst-margin    357 ok
+  fails 0
