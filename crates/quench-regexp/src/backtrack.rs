@@ -171,8 +171,10 @@ enum Beyond {
         value: u32,
         unicode: bool,
     },
+    /// Boxed: a class past ASCII that is not plain ranges is rare, and inline it had made
+    /// every `Beyond`, and so every match set, 16 bytes larger.
     Class {
-        class: ClassExpr,
+        class: Box<ClassExpr>,
         ignore_case: bool,
         unicode: bool,
     },
@@ -252,7 +254,7 @@ impl Beyond {
             });
         if !plain {
             return Self::Class {
-                class: class.clone(),
+                class: Box::new(class.clone()),
                 ignore_case,
                 unicode,
             };
@@ -586,7 +588,10 @@ pub(crate) struct Program {
     /// For an `anchored` pattern, a superset of the units its match consumes first at the
     /// subject's start (`anchored_first_units`), so a search whose first unit is outside it
     /// fails without a run; `None` where no such set is known.
-    anchored_first: Option<MatchSet>,
+    /// Boxed, as only anchored patterns have one and each program carries the field (with
+    /// `Beyond::Class` boxed, V8-v7 RegExp's 237 patterns: 309 -> 285 KiB live, `Regex` 464 ->
+    /// 400 bytes; x86_64, 2026-10-25).
+    anchored_first: Option<Box<MatchSet>>,
     /// The length of `prefix` when it is the whole pattern and the pattern has no captures:
     /// an ASCII subject's match is then where the search finds it, with no run. A folded
     /// prefix holds this only in an ASCII subject, whose units have no other case forms
@@ -1400,7 +1405,7 @@ impl Program {
             anchored_first: anchored
                 .then(|| anchored_first_units(expr, flags))
                 .flatten()
-                .map(MatchSet::from),
+                .map(|units| Box::new(MatchSet::from(units))),
             scan: starts.as_ref().map_or(AsciiScan::Nothing, |starts| AsciiScan::of(starts.units.ascii)),
             starts: starts.map(MatchStarts::from),
             literal_length: (whole_literal && capture_count == 0 && !prefix.is_empty()).then_some(prefix.len()),
@@ -2090,7 +2095,7 @@ mod tests {
                     for ignore_case in [false, true] {
                         for unicode in [false, true] {
                             let class = ClassExpr { negative, kind, items: items().into_iter().skip(take % 3).take(take).collect() };
-                            let beyond = Beyond::Class { class, ignore_case, unicode };
+                            let beyond = Beyond::Class { class: Box::new(class), ignore_case, unicode };
                             let each = (0..ASCII_UNITS)
                                 .filter(|unit| beyond.matches(*unit))
                                 .fold(0u128, |bits, unit| bits | 1 << unit);
