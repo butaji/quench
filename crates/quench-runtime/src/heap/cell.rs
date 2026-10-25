@@ -926,6 +926,7 @@ impl Native {
                 | Self::FinalizationRegistryRegister
                 | Self::TypedArrayToStringTag
                 | Self::FunctionBind
+                | Self::Array
         )
     }
 
