@@ -6290,7 +6290,14 @@ fn lane_loop_run<H: Host>(
         site.native_entry_attempts
             .set(site.native_entry_attempts.get().saturating_add(1));
         match outcome {
-            LoopOutcome::NotEntered(_) => {
+            LoopOutcome::NotEntered(widening) => {
+                if std::env::var_os("QUENCH_JS_JIT_TRACE_OSR_REJECT").is_some() {
+                    eprintln!(
+                        "QUENCH_JS_JIT_OSR_ENTRY_MISS function={} header={} widening={widening:?}",
+                        site.function,
+                        site.header,
+                    );
+                }
                 site.entry_guard_misses
                     .set(site.entry_guard_misses.get().saturating_add(1));
             }

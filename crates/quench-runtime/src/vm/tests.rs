@@ -12088,6 +12088,70 @@ fn shared_osr_reports_pino_like_deferred_calls_per_site_with_gc_and_throw() {
 
 #[test]
 #[cfg(not(quench_profiled))]
+fn shared_osr_moves_tagged_array_values_before_effectful_calls() {
+    // Copying the array into a callback argument is a tagged Move; its call is an exact-PC
+    // boundary, so the callback may mutate the array before the next native entry reloads it.
+    let source = r#"
+      let calls = 0;
+      function effect(array) {
+        calls++;
+        if (calls === 1001) array[0] = 100;
+      }
+      function run(array, callback) {
+        for (let index = 0; index < 2000; index++) {
+          const alias = array;
+          callback(alias);
+        }
+        return array[0];
+      }
+      const values = [1, 1];
+      let result = 0;
+      for (let repeat = 0; repeat < 25; repeat++) result = run(values, effect);
+      print(result + " " + calls);
+    "#;
+    let program = Engine::specialize(source, "osr-tagged-array-move-call-boundary.js").unwrap();
+    let function_id = program
+        .functions
+        .iter()
+        .position(|function| {
+            function
+                .header()
+                .name
+                .is_some_and(|name| &program.atoms[name as usize] == "run")
+        })
+        .unwrap();
+
+    let interpreted_output = Rc::new(RefCell::new(Vec::new()));
+    Vm::new(TestHost::writing_to(interpreted_output.clone()))
+        .execute(&program)
+        .unwrap();
+
+    let compiled_output = Rc::new(RefCell::new(Vec::new()));
+    let mut compiled = Vm::new(TestHost::writing_to(compiled_output.clone()));
+    compiled.set_memory_policy(crate::MemoryPolicy::Throughput);
+    compiled.set_execution_mode(crate::ExecutionMode::Compiled);
+    compiled.programs.enable_js_jit_diagnostics();
+    compiled.execute(&program).unwrap();
+    assert_eq!(compiled_output.borrow().as_slice(), interpreted_output.borrow().as_slice());
+    assert_eq!(compiled_output.borrow().as_slice(), ["100 50000"]);
+
+    let view = compiled
+        .programs
+        .lane_views(super::program_store::ProgramId::MAIN)
+        .unwrap()
+        .get(function_id)
+        .and_then(std::cell::OnceCell::get)
+        .expect("hot tagged-Move callback loop lane view");
+    let osr = view.osr_diagnostics();
+    assert_eq!(osr.sites.len(), 1, "one loop must have one OSR site: {osr:?}");
+    let site = &osr.sites[0];
+    assert!(site.admitted && site.deferred_call, "the call is a resumable exact-PC boundary: {site:?}");
+    assert!(site.compile_attempts > 0 && site.native_region_runs > 0 && site.exits > 0, "tagged Move should run natively before its call: {site:?}");
+    assert_eq!(site.call_boundary_pcs.len(), 1, "one dynamic callback site: {site:?}");
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
 fn shared_osr_exact_effect_exit_preserves_prefix_across_gc_and_throw() {
     // The hot loop has a long numeric prefix and one call site whose callee collects and
     // throws a unique object. An exact-PC exit must preserve the numeric prefix, run the
