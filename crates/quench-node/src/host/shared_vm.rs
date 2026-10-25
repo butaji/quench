@@ -1147,6 +1147,10 @@ impl quench_runtime::Host for NodeHost {
         false
     }
 
+    fn nonextensible_applies_to_private(&self) -> bool {
+        false
+    }
+
     /// Node agents (the main thread and workers) may block in `Atomics.wait`.
     fn can_block(&self) -> bool {
         true
