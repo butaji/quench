@@ -2404,6 +2404,17 @@ impl ProgramStore {
     }
 
     /// A program's lane views by function, derived on first use.
+    /// What a lane running program `id` reads of it, from one look at its entry: its
+    /// residual, lane views (`lane_views`) and constants (`constants`).
+    #[inline]
+    pub(super) fn lane_program(
+        &self,
+        id: ProgramId,
+    ) -> Option<(&ResidualProgram, &[std::cell::OnceCell<super::dispatch_fast::LaneView>], &[Value])> {
+        let entry = self.entry(id)?;
+        Some((&entry.residual, entry.lane_views.of(&entry.residual), entry.constants.as_slice()))
+    }
+
     pub(super) fn lane_views(
         &self,
         id: ProgramId,

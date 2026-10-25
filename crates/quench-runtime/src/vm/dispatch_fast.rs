@@ -11567,13 +11567,11 @@ fn lane_script_target<H: Host>(cx: *mut LaneContext<H>, callee: Value) -> Option
 #[inline(always)]
 fn lane_enter_program<H: Host>(cx: *mut LaneContext<H>, program: ProgramId) {
     let vm = unsafe { vm(cx) };
-    let Some(code) = vm.programs.residual(program) else {
+    let Some((code, views, constants)) = vm.programs.lane_program(program) else {
         unreachable!("a lane target names a program the store holds");
     };
-    let code = std::ptr::from_ref(code);
-    let views = vm.programs.lane_views(program).map_or(&[][..], |views| views) as *const _;
-    let constants = std::ptr::from_ref(vm.programs.constants(program));
-    vm.set_active_program(program);
+    let (code, views, constants) = (std::ptr::from_ref(code), views as *const _, std::ptr::from_ref(constants));
+    vm.activate_program(program, constants);
     // SAFETY: the context outlives the lane run; the store keeps the program's residual,
     // views and constants for it.
     unsafe {
