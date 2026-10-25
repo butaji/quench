@@ -2304,27 +2304,25 @@ impl<H: Host> Vm<H> {
         let meta = match self.programs.regexp_literal_meta(program, site_index) {
             Some(meta) => meta,
             None => {
-                let flags = self.heap.string(flags_text).expect("checked above").host_string().to_owned();
-                let meta = self
-                    .cached_regexp_matcher(&source, &flags, PatternValidity::EarlyChecked)
-                    .map(|matcher| {
-                        Rc::new(crate::heap::RegExpMeta {
-                            source: source.clone(),
-                            flags: RegExpFlags::validated(&flags),
-                            legacy_constructor: owner,
-                            matcher: crate::heap::RegExpMatcher::compiled(matcher),
-                        })
-                    })
-                    .map_err(|error| Rc::<str>::from(error.to_string()));
-                if !self.programs.cache_regexp_literal_meta(program, site_index, meta.clone()) {
+                let flags = self.heap.string(flags_text).expect("checked above").host_string();
+                // The compiler checked the literal's pattern and flags (early errors), so its
+                // matcher compiles on the first match (`Vm::regexp_matcher`), as a snapshot's
+                // patterns do: a module evaluates every literal it holds, and most never run
+                // (tr46's 34 Unicode classes were 3.3% of the whatwg-url npm scenario).
+                let meta = Rc::new(crate::heap::RegExpMeta {
+                    source: source.clone(),
+                    flags: RegExpFlags::validated(flags),
+                    legacy_constructor: owner,
+                    matcher: crate::heap::RegExpMatcher::default(),
+                });
+                if !self.programs.cache_regexp_literal_meta(program, site_index, Rc::clone(&meta)) {
                     return Err(JsError::validation(
                         "RegExp literal cache site is invalid".into(),
                     ));
                 }
                 meta
             }
-        }
-        .map_err(|message| JsError(message.to_string().into()))?;
+        };
         // A site's record names the realm it was first evaluated in; another realm's
         // evaluation owns a record of its own.
         let meta = if meta.legacy_constructor.constructor() == constructor {

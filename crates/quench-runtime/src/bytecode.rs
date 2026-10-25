@@ -1581,12 +1581,13 @@ pub(crate) const HIDDEN_PARAMETER_PREFIX: &str = "\0quench:param:";
 /// call, which the compiler derives once from the same liveness (`liveness::mark_register_roots`);
 /// and the per-pc live register masks the collector scans, derived when a collection first
 /// finds the function on the stack. Most of a program's functions never run during a
-/// collection, so their masks are never built.
+/// collection, so their masks are never built. The loop tier's regions share them
+/// (`osr_loop::LoopRegion::live`) rather than copying a function's masks for each loop.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct RegisterRoots {
     covered: bool,
     dead_call_results: Box<[u32]>,
-    masks: std::cell::OnceCell<crate::compile::liveness::RegisterMasks>,
+    masks: std::cell::OnceCell<std::rc::Rc<crate::compile::liveness::RegisterMasks>>,
 }
 
 impl RegisterRoots {
@@ -1615,7 +1616,7 @@ impl RegisterRoots {
     /// The masks a collection derived so far; none until one finds the function running.
     #[cfg(feature = "profile-memory")]
     pub(crate) fn capacity_bytes(&self) -> usize {
-        self.masks.get().map_or(0, crate::compile::liveness::RegisterMasks::bytes)
+        self.masks.get().map_or(0, |masks| masks.bytes())
     }
 }
 
@@ -3701,6 +3702,14 @@ impl ResidualProgram {
     /// `function`'s live register masks by pc, one past its last instruction included, when
     /// liveness covers it.
     pub(crate) fn register_root_masks(&self, function: u32) -> Option<&crate::compile::liveness::RegisterMasks> {
+        self.shared_register_root_masks(function).map(|masks| &**masks)
+    }
+
+    /// `register_root_masks`, as the shared derivation the loop tier's regions hold.
+    pub(crate) fn shared_register_root_masks(
+        &self,
+        function: u32,
+    ) -> Option<&std::rc::Rc<crate::compile::liveness::RegisterMasks>> {
         let function = self.function_get(function as usize)?;
         if !function.register_roots.covered {
             return None;
@@ -3715,7 +3724,7 @@ impl ResidualProgram {
                     &self.field_sites,
                     &self.superinstructions,
                 )
-                .map(crate::compile::liveness::RegisterMasks::new)
+                .map(|masks| std::rc::Rc::new(crate::compile::liveness::RegisterMasks::new(masks)))
                 .expect("a covered function's liveness is derivable")
             });
         Some(masks)

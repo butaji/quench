@@ -9021,7 +9021,7 @@ fn regexp_literal_sites_share_matchers_but_create_fresh_objects() {
     vm.execute(&program).unwrap();
     assert_eq!(
         vm.programs
-            .compiled_regexp_literal_count(super::program_store::ProgramId::MAIN),
+            .regexp_literal_record_count(super::program_store::ProgramId::MAIN),
         1
     );
 }
