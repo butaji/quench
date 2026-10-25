@@ -9785,7 +9785,7 @@ fn compile_built(
 const BUILT_FUNCTIONS_QUEUED_PER_WORKER: usize = 2;
 
 /// Each of `count` functions' compiled body, by index, from the built functions `build`
-/// yields in index order: the building stays on this thread, which owns the VM, and the
+/// yields in any order: the building stays on this thread, which owns the VM, and the
 /// compiling, which needs only the function and the target, runs on one worker per
 /// available CPU. `None` when any function fails to build or compile, as the sequential
 /// artifact fails.
@@ -12260,7 +12260,11 @@ impl<H: Host> Vm<H> {
                 .map(|aligned| aligned / FUNCTION_ALIGNMENT * FUNCTION_ALIGNMENT)?
                 .checked_add(appended)
         };
-        let build = (0..count).filter(|&index| plans[index].is_some()).map(|index| {
+        // Largest first: the longest compile starts at once and the rest fill around it, so
+        // the slowest function does not finish last on one worker (bodies are placed by index).
+        let mut build_order: Vec<usize> = (0..count).filter(|&index| plans[index].is_some()).collect();
+        build_order.sort_by_key(|&index| std::cmp::Reverse(code.function(index).code.len()));
+        let build = build_order.into_iter().map(|index| {
             let full_plan = full_plans[index].as_ref()?;
             let body_build_started = diagnostics_enabled.then(std::time::Instant::now);
             let body_memory_before = body_build_started.and_then(|_| jit_memory_snapshot());
