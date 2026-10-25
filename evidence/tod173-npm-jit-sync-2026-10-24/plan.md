@@ -2,7 +2,7 @@
 
 ## Acceptance gates
 
-For each of the 10 npm workloads, in both no-JIT and JIT modes, Quench must be at least 1.20x the fastest peer's throughput and use at most 0.80x the largest peer RSS. A package/mode row passes only when both gates pass. Do not train PGO on the scored npm workloads.
+For each of the 10 npm workloads, in both no-JIT and JIT modes, Quench must be at least 1.20x each available peer's throughput and use at most 0.80x each peer's maximum RSS. A package/mode row passes only when both gates pass for all available peers. RSS must use a platform-qualified sampler. Do not train PGO on the scored npm workloads.
 
 ## Work sequence
 
