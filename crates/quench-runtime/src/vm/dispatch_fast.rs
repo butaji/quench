@@ -2566,7 +2566,7 @@ fn lane_step_beside_activations<H: Host>(cx: *mut LaneContext<H>, r: Registers, 
     let (code, pc) = unsafe { (&*(*cx).code, ip.offset_from((*cx).base) as usize) };
     let body = code.function(function as usize);
     let instruction = decoded_instruction(body, body.code[pc]);
-    if !matches!(instruction.op(), Op::ToPropertyKey | Op::GetIterator | Op::AppendArray) {
+    if !matches!(instruction.op(), Op::ToPropertyKey | Op::GetIterator | Op::IteratorClose | Op::AppendArray) {
         return exit(ip);
     }
     let [a, b] = super::dispatch::value_step_operands(instruction).map(|register| register.map(|register| r.get(register)));
@@ -3516,6 +3516,7 @@ fn lane_set_index_slot_store<H: Host>(vm: &mut Vm<H>, ip: Ip, object: Value, key
         && !vm.try_append_dense_element(object, key, value)
         && !vm.try_fill_dense_hole(object, key, value)
         && !vm.try_site_symbol_set(ip.addr(), object, key, value)
+        && !vm.try_host_private_symbol_set(object, key, value)
         && !lane_typed_array_store(ip, vm, object, key, value)
         && !lane_string_key_store(ip, vm, object, key, value)
         && !key
@@ -10316,8 +10317,9 @@ script_handler! {
 
 script_handler! {
     /// `new Array(...values)` of an intrinsic `Array`, which allocates without running guest
-    /// code: the array of the values passed, with the callee's own `prototype`. One Number
-    /// argument (a length), and any other construction, take the general path.
+    /// code: the array of the values passed, or for one Number argument the array of that
+    /// length (`Vm::array_of_length`), with the callee's own `prototype`. An invalid length,
+    /// and any other construction, take the general path.
     #[inline(never)]
     fn lane_native_construct<>(cx, r, ip, i, view) {
         let vm = unsafe { vm(cx) };
@@ -10367,12 +10369,16 @@ script_handler! {
         let argc = usize::from(ImmediateLayout::argument_count(i.imm()));
         // SAFETY: the construction's window is registers of the running function.
         let args = unsafe { std::slice::from_raw_parts(r.0.add(usize::from(i.c)), argc) };
-        if let [length] = args
-            && length.as_number().is_some()
-        {
-            return exit(ip);
-        }
-        let array = lane_new_array(vm, prototype, args);
+        let array = match args {
+            [length] if let Some(length) = length.as_number() => {
+                // An invalid length throws its RangeError on the general path.
+                let Some(array) = vm.array_of_length(prototype, length) else {
+                    return exit(ip);
+                };
+                array
+            }
+            _ => lane_new_array(vm, prototype, args),
+        };
         note_allocation(vm);
         if returns {
             let Some(resumed) = lane_complete_activation(cx, array) else {

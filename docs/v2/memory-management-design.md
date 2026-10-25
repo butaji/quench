@@ -315,7 +315,20 @@ production` (non-PGO static, link order and BOLT profile retrained on that binar
 about 550 KiB higher. The retrained link order carried the last step: pinned RayTrace 2796 →
 2684 KiB, Crypto `--jit` 3068 → 2816 against the committed order. Score against Node
 `--jitless` stays behind on RayTrace, EarleyBoyer, RegExp and DeltaBlue
-(TOD-197 (s4-proof)).
+(TOD-197 (s4-proof)). Re-qualified at trunk `9d19ce8fd2` with the board's pinned round
+(`--rss-cpu`, every engine pinned): 16 of 16 rows pass unpinned (0.42–0.92) and pinned
+(0.43–0.98; RayTrace 0.94, Crypto `--jit` 0.98) (TOD-197 (requalify-9d19ce8fd2)).
+Under MemoryFirst the preloaded startup snapshot is never restored automatically: it keeps
+every preloaded builtin resident, and a scan that took a comment's `require` for a module
+load had tripled DeltaBlue and Crypto (2852 → 9112 KiB pinned).
+
+MemoryFirst's Score cost is the code release at collections. Without it, RayTrace gains
++28% Score for +192 KiB and EarleyBoyer +9 to +20% for +260 to +312 KiB; elsewhere the
+gain is at most 13% for +250 to +1000 KiB. Releasing once per collection gains no Score
+anywhere. RayTrace, which would gain most, has no RSS margin left, and no program
+behaviour (code share of RSS, release rate) separates it from the rows that do have margin.
+Recovering its Score needs less code touched per collection, not a different release policy
+(TOD-197 (memory-first-cost-split)).
 
 ### 8.1 What is in force
 
@@ -366,6 +379,9 @@ about 550 KiB higher. The retrained link order carried the last step: pinned Ray
 | Hot-set gate on the collection-boundary code release (release only once file pages pass the last measured hot set by 32–256 KiB, measured over 2 or 4 collections), on the static PGO + BOLT binary | Richards worst no-JIT 2188 → 2760–2972 KiB, `--jit` 2428 → 2796–3008, Score −4 to +7%: on a small program the gate never fires, so every touched code page stays | TOD-197 (gate-pgo-bolt) |
 | First-call release interval 5 / 20 / 100 ms × resident-file budget 512K / 1M / off (one PGO + BOLT binary, 16 rows × 9 runs) | Budget off: Crypto, NavierStokes and RayTrace up to 15% over; every arm's Score geomean within ±1%; 1M at 21 runs: RayTrace tail −60 KiB, Crypto and Richards higher | TOD-197 (release-knob-grid) |
 | Memory-first memos at a quarter of their entries | Richards −128 KiB, RayTrace and DeltaBlue worst unchanged, DeltaBlue `--jit` Score −6 to −9% (21 runs) | TOD-197 (memo-quarter), branch `gc-memo-fit` |
+| Release the code pages once per MemoryFirst collection (at its start only, or its end only), on the qualification binary | Score within noise on every row; pinned max RSS +60 KiB on RayTrace, +160 on DeltaBlue, +60 to +250 elsewhere | TOD-197 (memory-first-cost-split) |
+| Map the code pages present at a collection's start back in batches (`MADV_POPULATE_READ`) after its end release, instead of refaulting them | Score −1% to −12%, pinned max RSS +200 to +490 KiB on six fixtures: the next release counts every repopulated page, touched or not, and reading the page map costs more than the faults it saves | TOD-197 (repopulate-rejected) |
+| Lane views boxed per function, or made in groups of eight functions | Boxed: fastify (JSON over HTTP) pinned −0.9 MB under MemoryFirst, but RayTrace +128 KiB. Grouped: fastify −0.1 MB under MemoryFirst and +0.3 under Throughput, since the views a server runs span most groups | TOD-167 (lane-view-table), branch `gc-lane-view-box` |
 | Headerless payload space for string buffers | Exact census of RegExp: only 5,659 strings own a buffer; at most about 191 KiB of overhead to remove, under half the gap | TOD-137 (string-payload) |
 
 ### 8.3 Where the peak is now (MemoryFirst, no JIT)
