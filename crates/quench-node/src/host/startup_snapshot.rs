@@ -218,14 +218,17 @@ const SNAPSHOT_OFF: &str = "off";
 /// Whether an eligible process boots from a snapshot (`SNAPSHOT_ENV`).
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum SnapshotUse {
-    /// When its entry loads modules (`EntryLoading::Modules`). A program that loads modules
+    /// For an inline entry, always; for a file, when it loads modules
+    /// (`EntryLoading::Modules`). A program that loads modules
     /// spends most of its start loading the builtins the snapshot holds (npm scenarios, x86_64
     /// 4 vCPU, pinned, median of 7, 2026-10-25, without -> with: lodash 67 -> 30 ms, express
     /// 123 -> 80, zod 85 -> 53, axios 132 -> 87, playwright 428 -> 382). A script that names no
     /// module boots without one: a fresh boot loads only what it uses, while a restored
     /// `Preloaded` realm keeps every preloaded builtin resident (V8-v7 max RSS, without ->
     /// with: RegExp 12.3 -> 17.1 MB, Splay 32.6 -> 39.0, EarleyBoyer 12.3 -> 15.9; a one-line
-    /// `console.log` 12.9M -> 23.6M instructions).
+    /// `console.log` 12.9M -> 23.6M instructions). An inline entry boots in full without one,
+    /// whatever it names (`quench -e 'console.log(42)'`, the child the tinyexec and execa npm
+    /// scenarios spawn: 27.4 -> 15.4 ms; the same line from a file 9.4 ms fresh).
     Auto,
     Always,
     Never,
@@ -240,9 +243,11 @@ impl SnapshotUse {
         }
     }
 
-    fn restores(self, loading: entry_graph::EntryLoading) -> bool {
+    fn restores(self, entry: &SnapshotEntry<'_>, loading: entry_graph::EntryLoading) -> bool {
         match self {
-            Self::Auto => loading == entry_graph::EntryLoading::Modules,
+            Self::Auto => {
+                matches!(entry, SnapshotEntry::Inline(_)) || loading == entry_graph::EntryLoading::Modules
+            }
             Self::Always => true,
             Self::Never => false,
         }
@@ -372,7 +377,7 @@ pub(crate) fn snapshot_path(
         SnapshotEntry::File(path) => entry_graph::entry_loading(path),
         SnapshotEntry::Inline(source) => entry_graph::inline_entry_loading(source),
     };
-    if !snapshot_use.restores(loading) {
+    if !snapshot_use.restores(&entry, loading) {
         return None;
     }
     // Each build's snapshots share a directory, which a builder of another build removes.
@@ -508,6 +513,19 @@ fn remove_unfinished_writes(path: &std::path::Path) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn by_default_inline_entries_and_files_that_load_modules_restore() {
+        use entry_graph::EntryLoading;
+        let file = SnapshotEntry::File(std::path::Path::new("/app/main.js"));
+        let inline = SnapshotEntry::Inline("console.log(42)");
+        for loading in [EntryLoading::SelfContained, EntryLoading::Console, EntryLoading::Modules] {
+            assert!(SnapshotUse::Auto.restores(&inline, loading));
+            assert_eq!(SnapshotUse::Auto.restores(&file, loading), loading == EntryLoading::Modules);
+            assert!(SnapshotUse::Always.restores(&file, loading));
+            assert!(!SnapshotUse::Never.restores(&inline, loading));
+        }
+    }
 
     #[test]
     fn a_failed_build_keeps_its_lock_and_leaves_no_unfinished_write() {
