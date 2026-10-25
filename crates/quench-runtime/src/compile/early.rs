@@ -542,7 +542,39 @@ pub(super) fn fixed_register_local_facts(
         /// Visits `x = e`, `x op= e` or `x++` standing as a whole statement or for-update:
         /// the write to `x` follows every read in it, so only the operands are visited. A
         /// chain `x = y = e` of plain assignments is the same: each link writes after `e`.
+        /// So is each part of a statement-level comma sequence, conditional or logical
+        /// expression whose value nothing reads: every earlier part's reads are consumed
+        /// before the next part runs (minifiers fold statements into these forms).
         fn statement_level_write<'a>(&mut self, expression: &Expression<'a>) -> bool {
+            let statement_level = |facts: &mut Self, part: &Expression<'a>| {
+                if !facts.statement_level_write(part) {
+                    facts.visit_expression(part);
+                }
+            };
+            match expression {
+                Expression::ParenthesizedExpression(parenthesized) => {
+                    statement_level(self, &parenthesized.expression);
+                    return true;
+                }
+                Expression::SequenceExpression(sequence) => {
+                    for part in &sequence.expressions {
+                        statement_level(self, part);
+                    }
+                    return true;
+                }
+                Expression::ConditionalExpression(conditional) => {
+                    self.visit_expression(&conditional.test);
+                    statement_level(self, &conditional.consequent);
+                    statement_level(self, &conditional.alternate);
+                    return true;
+                }
+                Expression::LogicalExpression(logical) => {
+                    self.visit_expression(&logical.left);
+                    statement_level(self, &logical.right);
+                    return true;
+                }
+                _ => {}
+            }
             let target = match expression {
                 Expression::AssignmentExpression(assignment) => match &assignment.left {
                     oxc_ast::ast::AssignmentTarget::AssignmentTargetIdentifier(target) => {
