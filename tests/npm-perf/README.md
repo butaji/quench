@@ -108,14 +108,16 @@ The rows run `quench-node`, Node with `--jitless`, and Bun with
 `process.execArgv` confirms `--jitless`. The runner compares deterministic
 outputs and records guest throughput, elapsed time, RSS, versions, commands
 and input hashes. It sets `NODE_ENV=production` for every engine. On Linux it
-records the engine process's kernel-maintained `/proc/<pid>/status` `VmHWM`,
-plus a separate 50 ms sample of summed process-tree `VmRSS`. The per-engine
-high-water mark is exact for that process; the tree estimate can miss
-short-lived descendants and counts shared pages once per process. It also
-reports each observed descendant PID's sample count and the sum of its
-`VmHWM` with the engine's, a conservative bound over observed processes.
-Unobserved short-lived descendants can still escape both metrics, so
-process-tree RSS remains diagnostic and cannot qualify the memory gate yet.
+records the engine process's kernel-maintained `/proc/<pid>/status` `VmHWM`
+with a default 5 ms sampling interval, plus a sample of summed process-tree
+`VmRSS`. Set `QUENCH_NPM_PERF_RSS_SAMPLE_MS` to change the interval. The
+per-engine high-water mark is exact when the process remains alive long enough
+to sample; the tree estimate can miss shorter-lived descendants and counts
+shared pages once per process. It also reports each observed descendant PID's
+sample count and the sum of its `VmHWM` with the engine's, a conservative bound
+over observed processes. Unobserved short-lived descendants can still escape
+both metrics, so process-tree RSS remains diagnostic and cannot qualify the
+memory gate yet.
 macOS qualification reads process maximum RSS from `/usr/bin/time -l`. Set
 `QUENCH_NODE_BIN`, `NODE_BIN` and `BUN_BIN` when the binaries are outside their
 defaults. A one-round report-generation smoke with separate process and tree
