@@ -1056,3 +1056,10 @@ built from the field-store implementation before the final descriptor-guard
 tightening. This was a diagnostic screen, not qualification. The ten-package
 goal remains open: no package/mode is claimed to have both the throughput and
 maximum-RSS margins.
+
+The follow-up shared JIT change also permits stores of unchanged tagged entry
+values, applying the owner write barrier before native execution. Its regression
+proves a reference-valued field-store loop compiles and runs natively. This is
+not yet package-screened: the preceding three-workload report used a binary
+from before the tagged-store extension, and the measured packages had no numeric
+field-store regions. No package win is inferred from the new capability.
