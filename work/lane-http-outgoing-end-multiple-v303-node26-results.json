@@ -1,0 +1,28 @@
+{
+  "schema_version": 2,
+  "inventory_hash": "7cc9b101dd4606f0",
+  "timeout_secs": 60,
+  "jobs": 1,
+  "node_version": "v26.12.1",
+  "runtime_commit": "e0d42d2c0aaff417c7830436b6d7964a63856e44",
+  "tests_node_commit": "unknown",
+  "platform": "linux-x86_64",
+  "results": [
+    {
+      "fixture": "/workspace/work/node-stable-release/node-v26.12.1/test/parallel/test-http-outgoing-end-multiple.js",
+      "status": "pass",
+      "observation": {
+        "Ok": {
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "pass"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    }
+  ]
+}

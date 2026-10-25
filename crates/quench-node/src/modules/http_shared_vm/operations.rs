@@ -733,12 +733,12 @@ const RESPONSE_FACTORY: &str = r#"((Writable, OutgoingMessage, setHeaderOperatio
             response.statusMessage, response, undefined);
         } catch (error) {
           for (let callbackIndex = first; callbackIndex < index; callbackIndex++) {
-            writes[callbackIndex].callback(error);
+            writes[callbackIndex].callback?.(error);
           }
           continue;
         }
         for (let callbackIndex = first; callbackIndex < index; callbackIndex++) {
-          writes[callbackIndex].callback();
+          writes[callbackIndex].callback?.();
         }
       }
     };
@@ -766,12 +766,13 @@ const RESPONSE_FACTORY: &str = r#"((Writable, OutgoingMessage, setHeaderOperatio
         const bytes = typeof chunk === 'string'
           ? Buffer.from(chunk, encoding || 'utf8')
           : Buffer.from(chunk);
-        pendingResponseWrites.push({ chunk: bytes, explicit: !ending, callback });
+        pendingResponseWrites.push({ chunk: bytes, explicit: !ending, callback: ending ? null : callback });
         response.headersSent = true;
         if (!responseWriteFlushScheduled) {
           responseWriteFlushScheduled = true;
           process.nextTick(flushResponseWrites);
         }
+        if (ending) callback();
       },
       final(callback) {
         try {
@@ -865,7 +866,7 @@ const RESPONSE_FACTORY: &str = r#"((Writable, OutgoingMessage, setHeaderOperatio
     if (writableLengthGetter) {
       Object.defineProperty(response, 'writableLength', {
         configurable: true,
-        get() { return writableLengthGetter.call(response) + pendingChunkBytes + chunkFramingLength; },
+        get() { return writableLengthGetter.call(response) + chunkFramingLength; },
       });
     }
     const writeChunk = writeStream;

@@ -1,0 +1,109 @@
+{
+  "schema_version": 2,
+  "inventory_hash": "2b9bf0963c2cfa72",
+  "timeout_secs": 60,
+  "jobs": 5,
+  "node_version": "v26.12.1",
+  "runtime_commit": "e0d42d2c0aaff417c7830436b6d7964a63856e44",
+  "tests_node_commit": "unknown",
+  "platform": "linux-x86_64",
+  "results": [
+    {
+      "fixture": "/workspace/work/node-stable-release/node-v26.12.1/test/parallel/test-event-capture-rejections.js",
+      "status": "pass",
+      "observation": {
+        "Ok": {
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "pass"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/workspace/work/node-stable-release/node-v26.12.1/test/parallel/test-http-outgoing-message-capture-rejection.js",
+      "status": "pass",
+      "observation": {
+        "Ok": {
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "pass"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/workspace/work/node-stable-release/node-v26.12.1/test/parallel/test-http-server-capture-rejections.js",
+      "status": "fail",
+      "observation": {
+        "Ok": {
+          "exit_code": 1,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "fail",
+            "reason": "node:bootstrap/event-emitter.js:24\n      if (error instanceof Error) throw error;\n                                  ^\n\nError: kaboom\n    at Object.<anonymous> (/workspace/work/node-stable-release/node-v26.12.1/test/parallel/test-http-server-capture-rejections.js:14:11)\n    at Server.<anonymous> (/workspace/work/node-stable-release/node-v26.12.1/test/common/index.js:512:15)\n    at emit (eval at <anonymous>, <anonymous>:14:49)\n    at emitServerEvent (eval at <anonymous> (/workspace/work/node-stable-release/node-v26.12.1/test/common/index.js:27:13), <anonymous>:484:20)\n\nNode.js v26.12.1"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/workspace/work/node-stable-release/node-v26.12.1/test/parallel/test-http2-capture-rejection.js",
+      "status": "pass",
+      "observation": {
+        "Ok": {
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "pass"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/workspace/work/node-stable-release/node-v26.12.1/test/parallel/test-net-server-capture-rejection.js",
+      "status": "pass",
+      "observation": {
+        "Ok": {
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "pass"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/workspace/work/node-stable-release/node-v26.12.1/test/parallel/test-tls-server-capture-rejection.js",
+      "status": "pass",
+      "observation": {
+        "Ok": {
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "pass"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    }
+  ]
+}
