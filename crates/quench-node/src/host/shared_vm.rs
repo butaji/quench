@@ -530,6 +530,7 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "http2SubmitPushPromise" (3) => crate::modules::http2_shared_vm::submit_push_promise,
         method "http2CloseSession" (1) => crate::modules::http2_shared_vm::close_session,
         method "httpClientResponseDestroy" (1) => crate::modules::http_shared_vm::client_response_destroy,
+        method "httpClientResponseIgnoreError" (0) => crate::modules::http_shared_vm::client_response_ignore_error,
         method "httpResponseSetHeader" (4) => crate::modules::http_shared_vm::response_set_header,
         method "httpResponseGetHeader" (2) => crate::modules::http_shared_vm::response_get_header,
         method "httpResponseRemoveHeader" (2) => crate::modules::http_shared_vm::response_remove_header,

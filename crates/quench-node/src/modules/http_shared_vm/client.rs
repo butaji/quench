@@ -983,17 +983,21 @@ const REQUEST_FUNCTION: &str = r#"((Writable, Readable, create, write, setHeader
       if (request.socket) delete request.socket.__quenchHttpRequestWritePending;
     });
     const emitRequest = request.emit.bind(request);
-    if (agentPool) {
-      // Writable's own close can precede the HTTP response end. Keep it
-      // private until the Agent has released or handed off the socket.
-      request.emit = (event, ...args) => {
-        if (event === 'close' && !request.__quenchCloseReady) {
+    // Writable's own close can precede the HTTP response end, and a terminal
+    // response error can race the response-close settlement callback. Gate
+    // every request close through one idempotent transition, with or without
+    // an Agent, so those paths cannot emit duplicate `close` events.
+    request.emit = (event, ...args) => {
+      if (event === 'close') {
+        if (request._httpCloseEmitted) return true;
+        if (!request.__quenchCloseReady) {
           request.__quenchClosePending = true;
           return true;
         }
-        return emitRequest(event, ...args);
-      };
-    }
+        request._httpCloseEmitted = true;
+      }
+      return emitRequest(event, ...args);
+    };
     request.__quenchEmitClose = () => {
       if (request._httpCloseEmitted) return;
       // The native parser calls this as soon as it pushes response EOF, before
@@ -1128,6 +1132,10 @@ const REQUEST_FUNCTION: &str = r#"((Writable, Readable, create, write, setHeader
           responseEnded = true;
           settleAgentRequest();
         });
+        response.once('close', () => {
+          responseEnded = true;
+          settleAgentRequest();
+        });
         request.once('finish', settleAgentRequest);
       });
     }
@@ -1143,6 +1151,7 @@ const REQUEST_FUNCTION: &str = r#"((Writable, Readable, create, write, setHeader
           process.nextTick(request.__quenchEmitClose);
         };
         response.once('end', () => { responseEnded = true; emitResponseClose(); });
+        response.once('close', () => { responseEnded = true; emitResponseClose(); });
         request.once('finish', emitResponseClose);
       });
     }

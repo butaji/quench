@@ -238,6 +238,24 @@ const MODULE_FACTORY: &str = r#"((initializeServer, EventEmitter, requestFunctio
   }
   Object.setPrototypeOf(Server, EventEmitter);
   Object.setPrototypeOf(Server.prototype, EventEmitter.prototype);
+  Server.prototype[EventEmitter.captureRejectionSymbol] = function httpServerCaptureRejection(error, event, ...args) {
+    if (event === 'request') {
+      const response = args[1];
+      if (!response.headersSent && !response.writableEnded) {
+        for (const name of response.getHeaderNames()) response.removeHeader(name);
+        response.statusCode = 500;
+        response.end('Internal Server Error');
+      } else {
+        response.destroy();
+      }
+      return;
+    }
+    if (event === 'connection') {
+      args[0]?.destroy(error);
+      return;
+    }
+    this.emit('error', error);
+  };
   if (typeof Symbol.asyncDispose === "symbol") {
     Object.defineProperty(Server.prototype, Symbol.asyncDispose, {
       configurable: true,
@@ -1654,9 +1672,8 @@ pub(crate) fn module(context: &mut Context<'_>) -> Result<RootId, RootedError> {
     // during initialization, so loading it while this builtin is being
     // constructed would create a partial module cycle. Defer the load until
     // one of these properties is actually read.
-    let initialize_fetch = context.host_function(crate::host::shared_vm::operation(
-        "webFetchInitialize",
-    ))?;
+    let initialize_fetch =
+        context.host_function(crate::host::shared_vm::operation("webFetchInitialize"))?;
     let global = context.global_root()?;
     let install_websocket_getters = context.evaluate_script_rooted(
         r#"(module, initializeFetch, global) => {
@@ -2872,9 +2889,10 @@ pub(crate) fn response_finish(
             .connections
             .get(&socket)
             .and_then(|connection| {
-                host.http.servers.get(&connection.server).map(|server| {
-                    (server.closing, connection.peer_ended, Some(server.root))
-                })
+                host.http
+                    .servers
+                    .get(&connection.server)
+                    .map(|server| (server.closing, connection.peer_ended, Some(server.root)))
             })
             .unwrap_or((false, false, None))
     };
@@ -2882,7 +2900,10 @@ pub(crate) fn response_finish(
         let property = context.string_rooted("httpAllowHalfOpen");
         let value = context.get_property_rooted(server_root, property)?;
         context.release_root(property);
-        let allow = context.rooted_value(value).and_then(Value::as_bool).unwrap_or(false);
+        let allow = context
+            .rooted_value(value)
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
         context.release_root(value);
         allow
     } else {
@@ -3019,16 +3040,17 @@ pub(crate) fn response_destroy(
     let id = argument_id(context, args.first().copied())?;
     let shared_state = context.host_mut().shared_state();
     let mut host = shared_state.borrow_mut();
-    let (socket, async_id) = {
+    let (socket, async_id, reset_transport) = {
         let Some(response) = host.http.responses.remove(&id) else {
             return Ok(context.undefined());
         };
         let mut response = response;
+        let reset_transport = response.lifecycle == super::state::ResponseLifecycle::HeadersSent;
         if !response.lifecycle.destroy() {
             host.http.responses.insert(id, response);
             return Ok(context.undefined());
         }
-        (response.socket, response.async_id)
+        (response.socket, response.async_id, reset_transport)
     };
     let server_id = host
         .http
@@ -3039,6 +3061,9 @@ pub(crate) fn response_destroy(
         if let Some(server) = host.http.servers.get_mut(&server_id) {
             server.connections.remove(&socket);
         }
+    }
+    if reset_transport {
+        let _ = net_shared_vm::reset_socket(&host.tcp, socket);
     }
     net_shared_vm::close_socket(&mut host.tcp, socket);
     drop(host);

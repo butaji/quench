@@ -26,6 +26,14 @@ pub(crate) use operations::{
 };
 pub(crate) use state::State;
 
+pub(crate) fn client_response_ignore_error(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    _: &[RootId],
+) -> Result<RootId, RootedError> {
+    Ok(context.undefined())
+}
+
 pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
     operations::module(context)
 }

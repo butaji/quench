@@ -1612,7 +1612,7 @@ pub(crate) fn poll(
             }
             net_shared_vm::TransportEvent::CloseCompleted { socket } => {
                 cancel_native_requests(runtime, program, shared_state, socket, -libc::ECANCELED)?;
-                let (server_connection, contexts) = {
+                let (server_connection, client, contexts) = {
                     let mut host = shared_state.borrow_mut();
                     let connection = host.http.connections.remove(&socket);
                     let server_connection = connection.map(|connection| {
@@ -1625,6 +1625,7 @@ pub(crate) fn poll(
                             connection.request_root,
                         )
                     });
+                    let client = host.http.clients.remove(&socket);
                     let contexts = host
                         .http
                         .responses
@@ -1636,8 +1637,12 @@ pub(crate) fn poll(
                     for (id, _) in &contexts {
                         host.http.responses.remove(id);
                     }
-                    (server_connection, contexts)
+                    (server_connection, client, contexts)
                 };
+                if let Some(client) = client {
+                    fail_client_exchange(runtime, program, shared_state, client, "socket hang up")?;
+                    progressed = true;
+                }
                 for (_, async_id) in contexts {
                     crate::modules::async_hooks_shared_vm::clear_context(
                         runtime,
@@ -1772,11 +1777,15 @@ pub(crate) fn poll(
                     .map(crate::modules::util_system_error_shared_vm::system_error_name)
                     .unwrap_or_else(|| "EIO".to_owned());
                 let message = format!("{syscall} {code}");
-                let net_root = shared_state
-                    .borrow()
-                    .net_sockets
-                    .get(&socket)
-                    .map(|socket| socket.root);
+                // HTTP owns the request-level failure while its response
+                // parser is live. Routing the same transport error only to
+                // net.Socket loses ClientRequest's error/close transition.
+                let net_root = {
+                    let host = shared_state.borrow();
+                    (!host.http.clients.contains_key(&socket))
+                        .then(|| host.net_sockets.get(&socket).map(|socket| socket.root))
+                        .flatten()
+                };
                 if let Some(net_root) = net_root {
                     if let Some(stack) = ssl_error.and_then(|error| error.ssl_error()) {
                         shared_state
@@ -2060,6 +2069,40 @@ fn deliver_client_response_head(
             return Err(message);
         }
     };
+    // Incomplete client responses are reported through the owning request's
+    // abort lifecycle. Consume the internal response error while allowing any
+    // user error listeners to observe it as well.
+    let error_listener = runtime
+        .host_function(crate::host::shared_vm::operation("httpClientResponseIgnoreError"))
+        .map_err(|error| error.to_string())?;
+    let on_key = runtime.string_rooted("on");
+    let on = runtime
+        .get_property_rooted(readable, on_key)
+        .map_err(|error| error.to_string())?;
+    runtime.release_root(on_key);
+    let error_event = runtime.string_rooted("error");
+    let installed = runtime.call_rooted(on, readable, &[error_event, error_listener]);
+    runtime.release_root(error_event);
+    runtime.release_root(error_listener);
+    runtime.release_root(on);
+    match installed {
+        Ok(installed) => {
+            runtime.release_root(installed);
+        }
+        Err(error) => {
+            let message = runtime.format_error(program, &error.error);
+            if let Some(exception) = error.exception {
+                runtime.release_root(exception);
+            }
+            runtime.release_root(readable);
+            runtime.release_root(response);
+            runtime.release_root(body);
+            runtime.release_root(open);
+            runtime.release_root(exchange_id);
+            runtime.release_root(undefined);
+            return Err(message);
+        }
+    }
     let request_response = duplicate_root(runtime, readable)?;
     set_named(runtime, request_root, "res", request_response)?;
     let emitted = {
@@ -2348,11 +2391,26 @@ fn fail_client_exchange_with_code(
             return Err(message);
         }
     };
-    let stream = client.response_root.unwrap_or(client.request_root);
     let result = {
         let _scope =
             crate::modules::async_hooks_shared_vm::enter_context(shared_state, client.async_id);
-        destroy_stream_with_error(runtime, program, stream, error)
+        let mut failure = None;
+        if let Some(response) = client.response_root {
+            if let Err(message) = destroy_stream_with_error(runtime, program, response, error) {
+                failure = Some(message);
+            }
+        }
+        // A response can already have been delivered when the transport
+        // fails before its message is complete. Node reports that terminal
+        // reset on ClientRequest as well as terminating the IncomingMessage;
+        // destroying only the response leaves request-level listeners waiting
+        // forever (and hides ECONNRESET from the request owner).
+        if let Err(message) =
+            destroy_stream_with_error(runtime, program, client.request_root, error)
+        {
+            failure.get_or_insert(message);
+        }
+        failure.map_or(Ok(()), Err)
     };
     runtime.release_root(error);
     // HTTP's parser owns the exchange, but the public net.Socket still owns
