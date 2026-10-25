@@ -1,0 +1,1 @@
+{"workload":"pino-json-logger","package":"pino@10.4.0","rounds":5000,"warmups":250,"cases":["structured-json","request-serializer","redaction"],"bytes":1162644,"checksum":426284,"elapsedMs":90,"operationsPerSecond":55555.555555555555}
