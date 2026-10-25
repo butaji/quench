@@ -682,6 +682,18 @@ impl<H: Host> Vm<H> {
         self.construct_value_with_new_target(p, callee, callee, args)
     }
 
+    /// Whether `callee` is a native whose construction may run beside a lane's frameless
+    /// activations (`DeferredLaneCall`): any but a host function, a bound function and an
+    /// error constructor, which captures the stack its frames make.
+    pub(super) fn constructs_beside_activations(&self, callee: Value) -> bool {
+        matches!(
+            self.heap.function(callee),
+            Some(FunctionRecord { kind: FunctionKind::Native(native), .. })
+                if !matches!(native, Native::HostFunction | Native::FunctionBoundCall)
+                    && !native.is_error_constructor()
+        )
+    }
+
     pub(super) fn construct_value_with_new_target(
         &mut self,
         p: &ResidualProgram,
@@ -689,8 +701,11 @@ impl<H: Host> Vm<H> {
         new_target: Value,
         args: &[Value],
     ) -> Result<Value, JsError> {
-        // Guest code observes the frame stack.
-        self.materialize_deferred_lane();
+        // Guest code observes the frame stack; a native's construction reaches it only through
+        // the calls, errors and collections that make deferred activations frames first.
+        if !self.constructs_beside_activations(callee) {
+            self.materialize_deferred_lane();
+        }
         self.with_call_roots(
             std::iter::once(callee)
                 .chain(std::iter::once(new_target))
