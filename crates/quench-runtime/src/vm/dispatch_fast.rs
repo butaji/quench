@@ -109,6 +109,11 @@ pub(super) struct LoopSite {
     /// The loop's header and backward jump PCs.
     header: u32,
     backedge: u32,
+    /// Static analyzer result, retained for per-site diagnostics.
+    analysis_rejection: Option<super::compiled::RegionRejection>,
+    deferred_call: bool,
+    /// Diagnostic-only rejected sites never enter native loop code.
+    osr_enabled: bool,
     jump: isize,
     /// Backward jumps taken before the region compiles, up to `LOOP_TIER_THRESHOLD`.
     taken: std::cell::Cell<u32>,
@@ -214,6 +219,26 @@ pub(super) struct OsrDiagnostics {
     pub(super) exits: u64,
     pub(super) widenings: u64,
     pub(super) analysis_rejections: Vec<(super::compiled::RegionRejection, usize)>,
+    pub(super) sites: Vec<OsrSiteDiagnostics>,
+}
+
+#[derive(Debug)]
+pub(super) struct OsrSiteDiagnostics {
+    pub(super) header_pc: u32,
+    pub(super) backedge_pc: u32,
+    pub(super) admitted: bool,
+    pub(super) promotion_only: bool,
+    pub(super) deferred_call: bool,
+    pub(super) analysis_rejection: Option<super::compiled::RegionRejection>,
+    pub(super) backedge_count: u32,
+    pub(super) tier_threshold_reached: bool,
+    pub(super) compile_attempts: u64,
+    pub(super) compile_successes: u64,
+    pub(super) native_entry_attempts: u64,
+    pub(super) native_region_runs: u64,
+    pub(super) entry_guard_misses: u64,
+    pub(super) native_exits: u64,
+    pub(super) widenings: u64,
 }
 
 impl LaneView {
@@ -221,7 +246,11 @@ impl LaneView {
     pub(super) fn osr_diagnostics(&self) -> OsrDiagnostics {
         OsrDiagnostics {
             plain_backward_jump_sites: self.plain_backward_jump_sites,
-            admitted_sites: self.loops.iter().filter(|site| !site.promotion_only).count(),
+            admitted_sites: self
+                .loops
+                .iter()
+                .filter(|site| site.osr_enabled && !site.promotion_only)
+                .count(),
             promotion_only_sites: self.loops.iter().filter(|site| site.promotion_only).count(),
             compile_attempts: self.loops.iter().map(|site| site.compile_attempts.get()).sum(),
             compile_successes: self.loops.iter().map(|site| site.compile_successes.get()).sum(),
@@ -252,6 +281,27 @@ impl LaneView {
                 .as_deref()
                 .unwrap_or_default()
                 .to_vec(),
+            sites: self
+                .loops
+                .iter()
+                .map(|site| OsrSiteDiagnostics {
+                    header_pc: site.header,
+                    backedge_pc: site.backedge,
+                    admitted: site.osr_enabled && !site.promotion_only,
+                    promotion_only: site.promotion_only,
+                    deferred_call: site.deferred_call,
+                    analysis_rejection: site.analysis_rejection,
+                    backedge_count: site.taken.get(),
+                    tier_threshold_reached: site.taken.get() >= LOOP_TIER_THRESHOLD,
+                    compile_attempts: site.compile_attempts.get(),
+                    compile_successes: site.compile_successes.get(),
+                    native_entry_attempts: site.native_entry_attempts.get(),
+                    native_region_runs: site.native_region_runs.get(),
+                    entry_guard_misses: site.entry_guard_misses.get(),
+                    native_exits: site.native_exits.get(),
+                    widenings: site.widenings.get(),
+                })
+                .collect(),
         }
     }
 }
@@ -5804,6 +5854,11 @@ script_handler! {
         if below_floor() {
             return lane_safepoint::<H>(ip, header);
         }
+        // Rejected and promotion-only loops only get site-local backedge counts in opt-in
+        // diagnostic runs. They remain on the interpreter path.
+        if site.diagnostics && (!site.osr_enabled || site.promotion_only) {
+            site.taken.set(site.taken.get().saturating_add(1));
+        }
         // Keep the ordinary interpreter and JIT-off lane free of tier metadata
         // lookups. Only the opt-in shared JS baseline observes loop work here.
         let runtime = unsafe { vm(cx) };
@@ -5832,7 +5887,7 @@ script_handler! {
                 return exit(header);
             }
         }
-        if site.promotion_only {
+        if site.promotion_only || !site.osr_enabled {
             next!(cx, r, header, Carried::script(cx))
         }
         if site.taken.get() < LOOP_TIER_THRESHOLD {
@@ -15555,7 +15610,8 @@ fn install_loop_sites<H: Host>(
         .filter(|pc| records[*pc].handler == backward && decoded[*pc].op() == Op::Jump && !fused_into(*pc))
         .filter_map(|pc| {
             let header = decoded[pc].jump_target();
-            let (region, promotion_only) = match super::compiled::analyze_osr_region(
+            let (region, promotion_only, analysis_rejection, deferred_call, osr_enabled) =
+                match super::compiled::analyze_osr_region(
                 function,
                 decoded,
                 constants,
@@ -15564,10 +15620,10 @@ fn install_loop_sites<H: Host>(
                 header,
                 pc as u32,
             ) {
-                Ok(region) => (std::cell::OnceCell::from(region), false),
+                Ok(region) => (std::cell::OnceCell::from(region), false, None, false, true),
                 // A call may run inlined: the site makes its region once it is hot.
                 Err(super::compiled::RegionRejection::UnsupportedInstruction(Op::Call)) if live.is_some() => {
-                    (std::cell::OnceCell::new(), false)
+                    (std::cell::OnceCell::new(), false, None, true, true)
                 }
                 Err(reason) => {
                     if diagnostics {
@@ -15579,10 +15635,16 @@ fn install_loop_sites<H: Host>(
                             rejections.push((reason, 1));
                         }
                     }
-                    if !general_dispatch {
+                    if !general_dispatch && !diagnostics {
                         return None;
                     }
-                    (std::cell::OnceCell::new(), true)
+                    (
+                        std::cell::OnceCell::new(),
+                        general_dispatch,
+                        Some(reason),
+                        false,
+                        false,
+                    )
                 }
             };
             Some((
@@ -15593,6 +15655,9 @@ fn install_loop_sites<H: Host>(
                     region,
                     header,
                     backedge: pc as u32,
+                    analysis_rejection,
+                    deferred_call,
+                    osr_enabled,
                     jump: records[pc].jump(),
                     taken: std::cell::Cell::new(0),
                     exits: std::cell::Cell::new(0),
