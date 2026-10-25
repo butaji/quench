@@ -5101,7 +5101,7 @@ pub(super) fn analyze_osr_region_detailed(
     decoded: &[WideInstruction],
     constants: &[crate::value::Value],
     sites: &[crate::bytecode::FieldSite],
-    live: Option<&crate::compile::liveness::RegisterMasks>,
+    live: Option<&std::rc::Rc<crate::compile::liveness::RegisterMasks>>,
     header: u32,
     backedge: u32,
 ) -> Result<LoopRegion, RegionAnalysisFailure> {
