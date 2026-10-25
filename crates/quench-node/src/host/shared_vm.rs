@@ -1101,15 +1101,14 @@ impl quench_runtime::Host for NodeHost {
     /// NavierStokes `--jit` under MemoryFirst, plain x86_64 build, 2026-10-22: max RSS
     /// 10.84-10.94 -> 8.80-8.89 MB, Score within noise).
     fn before_native_compilation(&mut self) {
-        crate::host::resident_pages::release_read_only_pages();
+        crate::host::resident_pages::at_native_compilation(crate::host::resident_pages::NativeCompilation::Before);
     }
 
     /// The code generator's pages, and the allocator's pages its scratch memory freed, leave
     /// the resident set before the program runs on (V8-v7 Crypto `--jit` under MemoryFirst,
     /// plain x86_64 build, 2026-10-22: max RSS 6.82-6.84 -> 5.91 MB with the release before).
     fn after_native_compilation(&mut self) {
-        crate::host::resident_pages::release_read_only_pages();
-        crate::host::resident_pages::release_free_heap_pages();
+        crate::host::resident_pages::at_native_compilation(crate::host::resident_pages::NativeCompilation::After);
     }
 
     /// Snapshots and compile-cache entries are tracked read-only mappings
