@@ -8,9 +8,10 @@ pub use embedding::RootedError;
 mod native;
 pub(crate) use native::CompiledScriptState;
 pub use native::{
-    BufferStorage, BuiltinBrand, DescriptorFields, ValueType, BuiltinData, CollectionPreview, PromiseSnapshot, HostFunction, HostFunctionId, HostWeakRoot, PreparedScript, NativeArithmetic,
-    CompiledScript, NativeContext, RootScopeMark, RootedIterator, ErrorSourcePosition, SourceStackFrame, SynchronousModule,
-    DeserializerDelegate, SerializerDelegate,
+    BufferStorage, BuiltinBrand, BuiltinData, CollectionPreview, CompiledScript, DescriptorFields,
+    DeserializerDelegate, ErrorSourcePosition, HostFunction, HostFunctionId, HostWeakRoot,
+    NativeArithmetic, NativeContext, PreparedScript, PromiseSnapshot, RootScopeMark,
+    RootedIterator, SerializerDelegate, SourceStackFrame, SynchronousModule, ValueType,
 };
 
 /// The syntax context used when compiling source. Script and Module use
@@ -98,9 +99,15 @@ impl<H: Host> Runtime<H> {
     }
 
     /// Construct the Vm on this thread with an owned cancellation authority.
-    pub fn new_with_execution_interrupt(host:H,interrupt:crate::ExecutionInterrupt)->Self { Self { vm:Vm::new_with_execution_interrupt(host,interrupt) } }
+    pub fn new_with_execution_interrupt(host: H, interrupt: crate::ExecutionInterrupt) -> Self {
+        Self {
+            vm: Vm::new_with_execution_interrupt(host, interrupt),
+        }
+    }
 
-    pub fn execution_interrupt_handle(&self)->crate::ExecutionInterrupt { self.vm.execution_interrupt_handle() }
+    pub fn execution_interrupt_handle(&self) -> crate::ExecutionInterrupt {
+        self.vm.execution_interrupt_handle()
+    }
 
     pub fn execution_mode(&self) -> crate::ExecutionMode {
         self.vm.execution_mode()
@@ -123,7 +130,9 @@ impl<H: Host> Runtime<H> {
     }
 
     fn execute_value(&mut self, program: &ResidualProgram) -> Result<Value, JsError> {
-        program.validate_unless_proven().map_err(JsError::validation)?;
+        program
+            .validate_unless_proven()
+            .map_err(JsError::validation)?;
         self.vm.execute(program)
     }
 
@@ -140,7 +149,9 @@ impl<H: Host> Runtime<H> {
         scripts: &[(&str, &str)],
         program: &ResidualProgram,
     ) -> Result<(), JsError> {
-        program.validate_unless_proven().map_err(JsError::validation)?;
+        program
+            .validate_unless_proven()
+            .map_err(JsError::validation)?;
         self.vm.execute_after_scripts(scripts, program).map(drop)
     }
 
@@ -170,7 +181,9 @@ impl<H: Host> Runtime<H> {
         let program = Engine::compile(request)?;
         if program.validate().is_ok() {
             let bytes = program.encode_trusted();
-            self.vm.host.keep_compiled_program(&program.source_name, &parts, &bytes);
+            self.vm
+                .host
+                .keep_compiled_program(&program.source_name, &parts, &bytes);
             program.validated.establish();
         }
         Ok(program)
@@ -184,8 +197,12 @@ impl<H: Host> Runtime<H> {
         program: &ResidualProgram,
         write_host: impl FnOnce(&H, &mut crate::SnapshotWriter<'_>) -> Result<(), String>,
     ) -> Result<Vec<u8>, String> {
-        program.validate_unless_proven().map_err(|error| error.to_string())?;
-        self.vm.initialize_for_snapshot(program).map_err(|error| error.to_string())?;
+        program
+            .validate_unless_proven()
+            .map_err(|error| error.to_string())?;
+        self.vm
+            .initialize_for_snapshot(program)
+            .map_err(|error| error.to_string())?;
         // A restored heap starts as a full collection leaves it, every cell old: garbage the
         // snapshot kept would stay until the next full collection.
         self.vm.collect_now(program);
@@ -201,8 +218,12 @@ impl<H: Host> Runtime<H> {
         entry: &ResidualProgram,
         read_host: impl FnOnce(&mut H, &mut crate::SnapshotReader<'_, '_>) -> Result<(), String>,
     ) -> Result<ResidualProgram, String> {
-        entry.validate_unless_proven().map_err(|error| error.to_string())?;
-        self.vm.restore_snapshot(snapshot, entry, read_host).map_err(|error| error.0)
+        entry
+            .validate_unless_proven()
+            .map_err(|error| error.to_string())?;
+        self.vm
+            .restore_snapshot(snapshot, entry, read_host)
+            .map_err(|error| error.0)
     }
 
     /// `execute_deferred_jobs` for a restored runtime (`restore_snapshot`).
@@ -211,7 +232,9 @@ impl<H: Host> Runtime<H> {
     }
 
     pub fn execute_deferred_jobs(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
-        program.validate_unless_proven().map_err(JsError::validation)?;
+        program
+            .validate_unless_proven()
+            .map_err(JsError::validation)?;
         self.vm.execute_deferred_jobs(program).map(drop)
     }
 
@@ -227,7 +250,9 @@ impl<H: Host> Runtime<H> {
 
     /// Drain VM jobs at a host-selected checkpoint, including module jobs.
     pub fn run_host_jobs(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
-        program.validate_unless_proven().map_err(JsError::validation)?;
+        program
+            .validate_unless_proven()
+            .map_err(JsError::validation)?;
         self.vm.drain_host_jobs(program).map(drop)
     }
 
@@ -257,7 +282,9 @@ impl<H: Host> Runtime<H> {
 
     /// Finish profiling and execution reporting after deferred host work.
     pub fn finish_deferred_execution(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
-        program.validate_unless_proven().map_err(JsError::validation)?;
+        program
+            .validate_unless_proven()
+            .map_err(JsError::validation)?;
         self.vm.finish_deferred_execution(program);
         Ok(())
     }
@@ -518,7 +545,9 @@ impl<H: Host> Runtime<H> {
     }
 
     fn run_jobs_value(&mut self, program: &ResidualProgram) -> Result<Value, JsError> {
-        program.validate_unless_proven().map_err(JsError::validation)?;
+        program
+            .validate_unless_proven()
+            .map_err(JsError::validation)?;
         self.vm.drain_jobs(program)
     }
 
@@ -540,7 +569,9 @@ impl<H: Host> Runtime<H> {
     /// Force the VM's named GC safepoint. The residual program supplies the
     /// frame root maps used when a host asks for collection between calls.
     pub fn collect(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
-        program.validate_unless_proven().map_err(JsError::validation)?;
+        program
+            .validate_unless_proven()
+            .map_err(JsError::validation)?;
         self.vm.collect_now(program);
         Ok(())
     }
@@ -549,7 +580,9 @@ impl<H: Host> Runtime<H> {
     /// makes one due, as at a back edge. A host's event-loop turn, which may run no guest
     /// loop, names it so a due collection does not wait for one.
     pub fn collect_if_due(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
-        program.validate_unless_proven().map_err(JsError::validation)?;
+        program
+            .validate_unless_proven()
+            .map_err(JsError::validation)?;
         self.vm.maybe_collect(program);
         Ok(())
     }
@@ -583,8 +616,6 @@ pub enum RuntimeError {
 mod tests {
     use super::*;
     use crate::test_host::TestHost;
-
-
 
     fn assert_output_in_execution_modes(source: &str, expected: &[&str]) {
         for (mode, compile) in [
@@ -1589,7 +1620,16 @@ var x="outer";async function asyncRun(){with({x:"inner"}){await 0;$262.gc();prin
             print(new Bytes([1,2,3]).join(','));
             print(new List('a','b').join(','));
             "#,
-            &["0,false,false,true","0,false,false,true","0,false,false,true","0,false,false,true","1,2,3","true","1,2,3","a,b"],
+            &[
+                "0,false,false,true",
+                "0,false,false,true",
+                "0,false,false,true",
+                "0,false,false,true",
+                "1,2,3",
+                "true",
+                "1,2,3",
+                "a,b",
+            ],
         );
     }
 
@@ -1620,8 +1660,14 @@ var x="outer";async function asyncRun(){with({x:"inner"}){await 0;$262.gc();prin
             print(JSON.stringify(Object.getOwnPropertyDescriptor(ArityDerived, 'length')));
             "#,
             &[
-                "true", "true", "42", "true", "true", "42",
-                "[0,2,0,0,0]", "[1,2]",
+                "true",
+                "true",
+                "42",
+                "true",
+                "true",
+                "42",
+                "[0,2,0,0,0]",
+                "[1,2]",
                 r#"{"value":0,"writable":false,"enumerable":false,"configurable":true}"#,
             ],
         );
@@ -2132,14 +2178,20 @@ checkSources().then(()=>print('done'),e=>{print('unexpected');print(e);});
             ),
         ];
         let modules = |host: TestHost| {
-            host
-                .with_modules(|specifier: &str| -> Result<Option<crate::ModuleSource>, crate::ModuleLoadError> {
-                let file = specifier.rsplit('/').next().unwrap();
-                Ok(MODULES
-                    .iter()
-                    .find(|(name, _)| *name == file)
-                    .map(|(_, source)| crate::host::ModuleSource::text(format!("task20-module-source-fixtures/{file}"), *source)))
-            })
+            host.with_modules(
+                |specifier: &str| -> Result<Option<crate::ModuleSource>, crate::ModuleLoadError> {
+                    let file = specifier.rsplit('/').next().unwrap();
+                    Ok(MODULES
+                        .iter()
+                        .find(|(name, _)| *name == file)
+                        .map(|(_, source)| {
+                            crate::host::ModuleSource::text(
+                                format!("task20-module-source-fixtures/{file}"),
+                                *source,
+                            )
+                        }))
+                },
+            )
         };
         for compile in [
             Engine::specialize as fn(&str, &str) -> _,
@@ -4925,29 +4977,82 @@ print((function* generatorCaller() { yield leaf(); })().next().value === null);
         "#;
         const MODULES: &[(&str, &str)] = &[
             ("entry.mjs", SOURCE),
-            ("a.mjs", include_str!("../../../tests/npm-top300/regressions/esm-graph/a.mjs")),
-            ("b.mjs", include_str!("../../../tests/npm-top300/regressions/esm-graph/b.mjs")),
-            ("alias.mjs", include_str!("../../../tests/npm-top300/regressions/esm-graph/alias.mjs")),
-            ("barrel.mjs", include_str!("../../../tests/npm-top300/regressions/esm-graph/barrel.mjs")),
-            ("config.json", include_str!("../../../tests/npm-top300/regressions/esm-graph/config.json")),
-            ("missing-export.mjs", "import { missing } from './effect.mjs';"),
+            (
+                "a.mjs",
+                include_str!("../../../tests/npm-top300/regressions/esm-graph/a.mjs"),
+            ),
+            (
+                "b.mjs",
+                include_str!("../../../tests/npm-top300/regressions/esm-graph/b.mjs"),
+            ),
+            (
+                "alias.mjs",
+                include_str!("../../../tests/npm-top300/regressions/esm-graph/alias.mjs"),
+            ),
+            (
+                "barrel.mjs",
+                include_str!("../../../tests/npm-top300/regressions/esm-graph/barrel.mjs"),
+            ),
+            (
+                "config.json",
+                include_str!("../../../tests/npm-top300/regressions/esm-graph/config.json"),
+            ),
+            (
+                "missing-export.mjs",
+                "import { missing } from './effect.mjs';",
+            ),
             ("syntax-failure.mjs", "export const = 1;"),
-            ("evaluation-failure.mjs", "globalThis.evaluationEffects = (globalThis.evaluationEffects || 0) + 1; throw new Error('evaluation');"),
-            ("effect.mjs", "globalThis.failureEffects = (globalThis.failureEffects || 0) + 1; export const value = 43;"),
+            (
+                "evaluation-failure.mjs",
+                "globalThis.evaluationEffects = (globalThis.evaluationEffects || 0) + 1; throw new Error('evaluation');",
+            ),
+            (
+                "effect.mjs",
+                "globalThis.failureEffects = (globalThis.failureEffects || 0) + 1; export const value = 43;",
+            ),
         ];
         let modules = |host: TestHost| {
-            host.without_globals()
-                .with_modules(|specifier: &str| -> Result<Option<crate::ModuleSource>, crate::ModuleLoadError> {
-                let name = specifier.rsplit('/').next().unwrap();
-                Ok(MODULES.iter().find(|(candidate, _)| *candidate == name).map(|(_, source)| crate::ModuleSource::text(format!("cyclic-module-graph/{name}"), *source)))
-            })
+            host.without_globals().with_modules(
+                |specifier: &str| -> Result<Option<crate::ModuleSource>, crate::ModuleLoadError> {
+                    let name = specifier.rsplit('/').next().unwrap();
+                    Ok(MODULES
+                        .iter()
+                        .find(|(candidate, _)| *candidate == name)
+                        .map(|(_, source)| {
+                            crate::ModuleSource::text(
+                                format!("cyclic-module-graph/{name}"),
+                                *source,
+                            )
+                        }))
+                },
+            )
         };
-        for compile in [Engine::specialize_module as fn(&str, &str) -> _, Engine::specialize_module_unspecialized] {
+        for compile in [
+            Engine::specialize_module as fn(&str, &str) -> _,
+            Engine::specialize_module_unspecialized,
+        ] {
             let view = TestHost::default().with_test262();
             let mut runtime = Runtime::new(modules(view.clone()));
             let program = compile(SOURCE, "cyclic-module-graph/entry.mjs").unwrap();
             runtime.execute(&program).unwrap();
-            assert_eq!(view.lines().as_slice(), &["true", "[\"b\",\"a\"]", "1", "true", "true", "true", "2:2:2", "2", "true", "true", "true", "true", "true"]);
+            assert_eq!(
+                view.lines().as_slice(),
+                &[
+                    "true",
+                    "[\"b\",\"a\"]",
+                    "1",
+                    "true",
+                    "true",
+                    "true",
+                    "2:2:2",
+                    "2",
+                    "true",
+                    "true",
+                    "true",
+                    "true",
+                    "true"
+                ]
+            );
         }
     }
 
@@ -4968,33 +5073,75 @@ print((function* generatorCaller() { yield leaf(); })().next().value === null);
         "#;
         const MODULES: &[(&str, &str)] = &[
             ("setup.mjs", "globalThis.log = [];"),
-            ("deferred.mjs", "import './async.mjs'; log.push('deferred'); export const value = 1;"),
-            ("async.mjs", "log.push('async start'); await 0; log.push('async end');"),
-            ("deferred-self.mjs", "import defer * as self from './deferred-self.mjs'; try { self.value; } catch (error) { globalThis.selfAccess = error instanceof TypeError; } export const value = 2;"),
-            ("source-1.mjs", "import source source from '<source>'; export { source };"),
-            ("source-2.mjs", "import source source from '<source>'; export { source };"),
-            ("source-reexport.mjs", "export * from './source-1.mjs'; export * from './source-2.mjs';"),
-            ("harness-reader.mjs", "export const harness = typeof harnessGlobal;"),
+            (
+                "deferred.mjs",
+                "import './async.mjs'; log.push('deferred'); export const value = 1;",
+            ),
+            (
+                "async.mjs",
+                "log.push('async start'); await 0; log.push('async end');",
+            ),
+            (
+                "deferred-self.mjs",
+                "import defer * as self from './deferred-self.mjs'; try { self.value; } catch (error) { globalThis.selfAccess = error instanceof TypeError; } export const value = 2;",
+            ),
+            (
+                "source-1.mjs",
+                "import source source from '<source>'; export { source };",
+            ),
+            (
+                "source-2.mjs",
+                "import source source from '<source>'; export { source };",
+            ),
+            (
+                "source-reexport.mjs",
+                "export * from './source-1.mjs'; export * from './source-2.mjs';",
+            ),
+            (
+                "harness-reader.mjs",
+                "export const harness = typeof harnessGlobal;",
+            ),
         ];
         let modules = |host: TestHost| {
-            host
-                .with_modules(|specifier: &str| -> Result<Option<crate::ModuleSource>, crate::ModuleLoadError> {
-                if specifier == "<source>" {
-                    return Ok(Some(crate::ModuleSource::text(specifier, "")));
-                }
-                let name = specifier.rsplit('/').next().unwrap();
-                Ok(MODULES.iter().find(|(candidate, _)| *candidate == name).map(|(_, source)| crate::ModuleSource::text(format!("deferred-module-graph/{name}"), *source)))
-            })
-                .with_module_sources(|module: &crate::ModuleSource| { module.name == "<source>" })
+            host.with_modules(
+                |specifier: &str| -> Result<Option<crate::ModuleSource>, crate::ModuleLoadError> {
+                    if specifier == "<source>" {
+                        return Ok(Some(crate::ModuleSource::text(specifier, "")));
+                    }
+                    let name = specifier.rsplit('/').next().unwrap();
+                    Ok(MODULES
+                        .iter()
+                        .find(|(candidate, _)| *candidate == name)
+                        .map(|(_, source)| {
+                            crate::ModuleSource::text(
+                                format!("deferred-module-graph/{name}"),
+                                *source,
+                            )
+                        }))
+                },
+            )
+            .with_module_sources(|module: &crate::ModuleSource| module.name == "<source>")
         };
-        for compile in [Engine::specialize_module as fn(&str, &str) -> _, Engine::specialize_module_unspecialized] {
+        for compile in [
+            Engine::specialize_module as fn(&str, &str) -> _,
+            Engine::specialize_module_unspecialized,
+        ] {
             let view = TestHost::default().with_test262();
             let mut runtime = Runtime::new(modules(view.clone()));
             let program = compile(SOURCE, "deferred-module-graph/entry.mjs").unwrap();
             runtime
                 .execute_after_scripts(&[("function harnessGlobal() {}", "harness.js")], &program)
                 .unwrap();
-            assert_eq!(view.lines().as_slice(), &["3", "async start,async end,entry,deferred", "true", "true", "function"]);
+            assert_eq!(
+                view.lines().as_slice(),
+                &[
+                    "3",
+                    "async start,async end,entry,deferred",
+                    "true",
+                    "true",
+                    "function"
+                ]
+            );
         }
     }
 
@@ -5029,11 +5176,15 @@ print((function* generatorCaller() { yield leaf(); })().next().value === null);
             print(Object.getOwnPropertyDescriptor(ns, Symbol.toStringTag).writable);
         "#;
         let modules = |host: TestHost| {
-            host.without_globals()
-                .with_modules(|specifier: &str| -> Result<Option<crate::ModuleSource>, crate::ModuleLoadError> {
-                assert_eq!(specifier, "./integrity-dependency.mjs");
-                Ok(Some(crate::host::ModuleSource::text("integrity-dependency.mjs", DEPENDENCY)))
-            })
+            host.without_globals().with_modules(
+                |specifier: &str| -> Result<Option<crate::ModuleSource>, crate::ModuleLoadError> {
+                    assert_eq!(specifier, "./integrity-dependency.mjs");
+                    Ok(Some(crate::host::ModuleSource::text(
+                        "integrity-dependency.mjs",
+                        DEPENDENCY,
+                    )))
+                },
+            )
         };
         for compile in [
             Engine::specialize_module as fn(&str, &str) -> _,
@@ -5111,11 +5262,15 @@ print((function* generatorCaller() { yield leaf(); })().next().value === null);
             print(JSON.stringify(Object.keys({'2':1,z:1,'10':1,a:1})));
         "#;
         let modules = |host: TestHost| {
-            host.without_globals()
-                .with_modules(|specifier: &str| -> Result<Option<crate::ModuleSource>, crate::ModuleLoadError> {
-                assert_eq!(specifier, "./ordered-namespace.mjs");
-                Ok(Some(crate::host::ModuleSource::text("ordered-namespace.mjs", DEPENDENCY)))
-            })
+            host.without_globals().with_modules(
+                |specifier: &str| -> Result<Option<crate::ModuleSource>, crate::ModuleLoadError> {
+                    assert_eq!(specifier, "./ordered-namespace.mjs");
+                    Ok(Some(crate::host::ModuleSource::text(
+                        "ordered-namespace.mjs",
+                        DEPENDENCY,
+                    )))
+                },
+            )
         };
         for compile in [
             Engine::specialize_module as fn(&str, &str) -> _,
@@ -10144,7 +10299,14 @@ mod promise_tests;
 /// excerpts discount. `None` past the compiler's position range.
 pub fn wrapper_origin(prefix: &str) -> Option<(u32, u32)> {
     let lines = u32::try_from(prefix.bytes().filter(|byte| *byte == b'\n').count()).ok()?;
-    let columns =
-        u32::try_from(prefix.rsplit('\n').next().unwrap_or("").encode_utf16().count()).ok()?;
+    let columns = u32::try_from(
+        prefix
+            .rsplit('\n')
+            .next()
+            .unwrap_or("")
+            .encode_utf16()
+            .count(),
+    )
+    .ok()?;
     Some((lines, columns))
 }

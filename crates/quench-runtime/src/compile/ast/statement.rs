@@ -110,7 +110,10 @@ impl FunctionCompiler<'_, '_> {
                 // A host wrapper is a script of one function expression, which the host
                 // calls as soon as the script runs.
                 if self.function_id == crate::vm::ROOT_FUNCTION_ID
-                    && matches!(item.expression.without_parentheses(), Expression::FunctionExpression(_))
+                    && matches!(
+                        item.expression.without_parentheses(),
+                        Expression::FunctionExpression(_)
+                    )
                 {
                     self.owner.note_invoked_callee(&item.expression);
                 }
@@ -401,10 +404,16 @@ impl FunctionCompiler<'_, '_> {
             }
             _ => {
                 let debug_name = if !Self::anonymous_function_definition(initializer) {
-                    if let BindingPattern::BindingIdentifier(identifier) = binding { Some(self.owner.atom(identifier.name.as_str())) } else { None }
-                } else { None };
+                    if let BindingPattern::BindingIdentifier(identifier) = binding {
+                        Some(self.owner.atom(identifier.name.as_str()))
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
                 self.expression_with_debug_name(initializer, debug_name)
-            },
+            }
         };
         if Self::anonymous_function_definition(initializer)
             && let BindingPattern::BindingIdentifier(identifier) = binding
@@ -592,7 +601,13 @@ impl FunctionCompiler<'_, '_> {
             Some(argument) => {
                 let input = self.typeof_operand(argument);
                 let index = self.reg();
-                self.emit(Op::Unary, index, input, 0, crate::bytecode::UNARY_TYPEOF_INDEX);
+                self.emit(
+                    Op::Unary,
+                    index,
+                    input,
+                    0,
+                    crate::bytecode::UNARY_TYPEOF_INDEX,
+                );
                 index
             }
             None => self.expression(&item.discriminant),
@@ -624,7 +639,8 @@ impl FunctionCompiler<'_, '_> {
                         None => Operand::register(self.expression(test)),
                     },
                 };
-                let discriminant = discriminant.expect("a case with a test loaded the discriminant");
+                let discriminant =
+                    discriminant.expect("a case with a test loaded the discriminant");
                 // `!(d !== t)` is exactly `d === t`: one fused test selects the clause.
                 Some(self.emit(
                     Op::JumpBinaryFalse,

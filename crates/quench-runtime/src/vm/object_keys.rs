@@ -73,9 +73,13 @@ impl<H: Host> Vm<H> {
     /// Whether `object`'s string keys all live in its shape: no Proxy, array, typed array or
     /// module namespace.
     fn shape_lists_enumerable_keys(&self, object: Value) -> bool {
-        !matches!(self.heap.get(object), Some(Cell::Proxy { .. } | Cell::TypedArray { .. }))
-            && self.heap.array(object).is_none()
-            && self.object_data(object).is_some_and(|data| !data.is_module_namespace())
+        !matches!(
+            self.heap.get(object),
+            Some(Cell::Proxy { .. } | Cell::TypedArray { .. })
+        ) && self.heap.array(object).is_none()
+            && self
+                .object_data(object)
+                .is_some_and(|data| !data.is_module_namespace())
     }
 
     fn shape_enumerable_key_walk(&self, object: Value) -> Option<Vec<Atom>> {
@@ -98,7 +102,11 @@ impl<H: Host> Vm<H> {
     /// (`shape_enumerable_slots`), all data properties: each value is a slot read, observing
     /// nothing. Each item is kept in the call roots while the next allocates. `None` leaves
     /// keys, accessors and every other object to the general path.
-    fn shape_enumerable_data_items(&mut self, object: Value, kind: EnumerableOwnPropertyKind) -> Option<Value> {
+    fn shape_enumerable_data_items(
+        &mut self,
+        object: Value,
+        kind: EnumerableOwnPropertyKind,
+    ) -> Option<Value> {
         if kind == EnumerableOwnPropertyKind::Key {
             return None;
         }
@@ -123,7 +131,10 @@ impl<H: Host> Vm<H> {
                     let key = self.atom_string(atom);
                     self.active_call_roots.push(key);
                     self.heap.alloc(Cell::Array {
-                        object: crate::heap::ArrayObject::new(Self::empty_object(self.array_proto), vec![key, value]),
+                        object: crate::heap::ArrayObject::new(
+                            Self::empty_object(self.array_proto),
+                            vec![key, value],
+                        ),
                     })
                 }
                 _ => value,
@@ -217,7 +228,6 @@ impl<H: Host> Vm<H> {
         outcome
     }
 
-
     pub(super) fn object_names(
         &mut self,
         p: &ResidualProgram,
@@ -229,10 +239,7 @@ impl<H: Host> Vm<H> {
             .filter(|key| self.heap.is_string(*key))
             .collect::<Vec<_>>();
         Ok(self.heap.alloc(Cell::Array {
-            object: crate::heap::ArrayObject::new(
-                Self::empty_object(self.array_proto),
-                values,
-            ),
+            object: crate::heap::ArrayObject::new(Self::empty_object(self.array_proto), values),
         }))
     }
 }

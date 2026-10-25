@@ -265,7 +265,9 @@ impl FunctionCompiler<'_, '_> {
                 start: *start,
                 end: *end,
                 target,
-                slot: self.local_slot(error_atom).map(crate::bytecode::ThrownValueSlot::Local),
+                slot: self
+                    .local_slot(error_atom)
+                    .map(crate::bytecode::ThrownValueSlot::Local),
                 return_target: None,
                 return_slot: None,
                 with_depth: self.with_depth,

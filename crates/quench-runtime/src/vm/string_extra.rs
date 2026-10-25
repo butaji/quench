@@ -228,10 +228,7 @@ pub(super) fn decode_uri(
 
 /// ASCII strings are Quench's common representation for escaped URI input. Keep this loop on
 /// bytes: the general `Units` accessor has to branch on ASCII vs UTF-16 for every code unit.
-fn decode_uri_ascii(
-    bytes: &[u8],
-    component: bool,
-) -> Result<super::wtf16::JsString, &'static str> {
+fn decode_uri_ascii(bytes: &[u8], component: bool) -> Result<super::wtf16::JsString, &'static str> {
     // Each escaped input byte occupies three ASCII bytes, and decoding never expands the
     // resulting UTF-16 code-unit count past the encoded byte count. This avoids reserving six
     // times the result size for the common percent-encoded astral text while keeping one

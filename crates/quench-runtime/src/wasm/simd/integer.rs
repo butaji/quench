@@ -118,7 +118,9 @@ impl<const WIDTH: u32> Lanes<WIDTH> {
         Some(match op {
             Binary::ShiftLeft => self.map(value, 0, |a, _| a << count),
             Binary::ShiftRightUnsigned => self.map(value, 0, |a, _| a >> count),
-            Binary::ShiftRightSigned => self.map(value, 0, |a, _| (signed(a, WIDTH) >> count) as u64),
+            Binary::ShiftRightSigned => {
+                self.map(value, 0, |a, _| (signed(a, WIDTH) >> count) as u64)
+            }
             _ => return None,
         })
     }
@@ -129,10 +131,22 @@ impl<const WIDTH: u32> Lanes<WIDTH> {
 macro_rules! by_width {
     ($width:expr, |$lanes:ident| $operation:expr) => {
         match $width {
-            8 => { let $lanes = Lanes::<8>; $operation }
-            16 => { let $lanes = Lanes::<16>; $operation }
-            32 => { let $lanes = Lanes::<32>; $operation }
-            64 => { let $lanes = Lanes::<64>; $operation }
+            8 => {
+                let $lanes = Lanes::<8>;
+                $operation
+            }
+            16 => {
+                let $lanes = Lanes::<16>;
+                $operation
+            }
+            32 => {
+                let $lanes = Lanes::<32>;
+                $operation
+            }
+            64 => {
+                let $lanes = Lanes::<64>;
+                $operation
+            }
             _ => None,
         }
     };
@@ -367,21 +381,44 @@ mod tests {
             state ^= state << 17;
             state
         };
-        let binaries = [Binary::Add, Binary::Subtract, Binary::Multiply, Binary::And, Binary::Or, Binary::Xor];
-        let shifts = [Binary::ShiftLeft, Binary::ShiftRightUnsigned, Binary::ShiftRightSigned];
+        let binaries = [
+            Binary::Add,
+            Binary::Subtract,
+            Binary::Multiply,
+            Binary::And,
+            Binary::Or,
+            Binary::Xor,
+        ];
+        let shifts = [
+            Binary::ShiftLeft,
+            Binary::ShiftRightUnsigned,
+            Binary::ShiftRightSigned,
+        ];
         for _ in 0..200 {
             let left = u128::from(next()) << 64 | u128::from(next());
             let right = u128::from(next()) << 64 | u128::from(next());
             let count = (next() % 200) as u32;
             for width in [8, 16, 32, 64] {
                 for op in binaries {
-                    let expected = map_lanes(left, Some(right), width, |a, b| binary_lane(a, b.unwrap(), width, op));
-                    assert_eq!(binary(left, right, width, op), expected, "{op:?} width {width}");
+                    let expected = map_lanes(left, Some(right), width, |a, b| {
+                        binary_lane(a, b.unwrap(), width, op)
+                    });
+                    assert_eq!(
+                        binary(left, right, width, op),
+                        expected,
+                        "{op:?} width {width}"
+                    );
                 }
                 for op in shifts {
                     let lane_count = u64::from(count % width);
-                    let expected = map_lanes(left, None, width, |bits, _| binary_lane(bits, lane_count, width, op));
-                    assert_eq!(shift(left, count, width, op), expected, "{op:?} width {width}");
+                    let expected = map_lanes(left, None, width, |bits, _| {
+                        binary_lane(bits, lane_count, width, op)
+                    });
+                    assert_eq!(
+                        shift(left, count, width, op),
+                        expected,
+                        "{op:?} width {width}"
+                    );
                 }
             }
         }

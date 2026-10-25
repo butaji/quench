@@ -170,9 +170,7 @@ impl<H: Host> Vm<H> {
         let day = self.plain_date_integer(p, args.get(2).copied().unwrap_or(Value::UNDEFINED))?;
         let calendar = match args.get(3).copied().unwrap_or(Value::UNDEFINED) {
             value if value.is_undefined() => "iso8601".to_owned(),
-            value if self.heap.is_string(value) => {
-                self.to_string(p, value)?.to_string()
-            }
+            value if self.heap.is_string(value) => self.to_string(p, value)?.to_string(),
             _ => return Err(self.type_error(p, "Invalid calendar".into())),
         };
         let calendar = quench_intl::calendar_alias(&calendar);
@@ -337,9 +335,7 @@ impl<H: Host> Vm<H> {
                     )),
                     Native::TemporalPlainDateEraGetter => calendar_fields
                         .and_then(|fields| fields.era)
-                        .map_or(Value::UNDEFINED, |era| {
-                            self.heap.alloc_string(era.into())
-                        }),
+                        .map_or(Value::UNDEFINED, |era| self.heap.alloc_string(era.into())),
                     Native::TemporalPlainDateEraYearGetter => calendar_fields
                         .and_then(|fields| fields.era_year)
                         .map_or(Value::UNDEFINED, |year| Value::number(f64::from(year))),
@@ -494,8 +490,7 @@ impl<H: Host> Vm<H> {
         if !matches!(overflow.as_str(), "constrain" | "reject") {
             return Err(self.range_error(p, "Invalid overflow".into()));
         }
-        let month_code_value =
-            month_code_text.map(|value| self.heap.alloc_string(value.into()));
+        let month_code_value = month_code_text.map(|value| self.heap.alloc_string(value.into()));
         let month_code = month_code_value
             .map(|value| {
                 self.plain_date_month_code(p, value, &calendar, year, overflow == "constrain")
@@ -543,7 +538,7 @@ impl<H: Host> Vm<H> {
         let (year, month, day, _) = self.temporal_plain_date_slots(p, this)?;
         let calendar = args.first().copied().unwrap_or(Value::UNDEFINED);
         let calendar = match self.heap.get(calendar) {
-            _ if let Some(value) = self.heap.string(calendar)  => {
+            _ if let Some(value) = self.heap.string(calendar) => {
                 let text = value.host_string();
                 temporal_date_parse::calendar_identifier_from_string(text)
                     .ok_or_else(|| self.range_error(p, "Invalid calendar".into()))?
@@ -710,7 +705,7 @@ impl<H: Host> Vm<H> {
         let calendar = self.get_property(p, value, calendar_atom)?;
         let calendar = match self.heap.get(calendar) {
             None if calendar.is_undefined() => "iso8601".to_owned(),
-            _ if let Some(value) = self.heap.string(calendar)  => {
+            _ if let Some(value) = self.heap.string(calendar) => {
                 let value = value.host_string();
                 temporal_date_parse::calendar_identifier_from_string(value)
                     .ok_or_else(|| self.range_error(p, "Invalid calendar".into()))?
@@ -946,8 +941,7 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         let left = self.temporal_plain_date_slots(p, this)?;
         let native_temporal_plain_date = self.native_value(Native::TemporalPlainDate);
-        let right_value =
-            self.temporal_plain_date_from(p, native_temporal_plain_date, args)?;
+        let right_value = self.temporal_plain_date_from(p, native_temporal_plain_date, args)?;
         let right = self.temporal_plain_date_slots(p, right_value)?;
         Ok(if left == right {
             Value::TRUE

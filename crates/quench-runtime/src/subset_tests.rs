@@ -364,7 +364,9 @@ fn nested_class_in_computed_key_keeps_outer_private_names() {
 #[test]
 fn generator_return_inside_loop_head_pattern_closes_pattern_iterator() {
     assert_eq!(
-        output("var log = []; function source(name) { return { [Symbol.iterator]() { return { next() { log.push(name + ':next'); return { done: false }; }, return() { log.push(name + ':return'); return {}; } }; } }; } function* plain() { for ([ {} = yield ] of [source('a')]) {} } var g = plain(); g.next(); print(JSON.stringify(g.return(7)) + ' ' + log.join()); log = []; function* guarded() { try { for (var [ x = yield ] of [source('b')]) {} } finally { log.push('finally'); } } g = guarded(); g.next(); print(JSON.stringify(g.return(8)) + ' ' + log.join()); "),
+        output(
+            "var log = []; function source(name) { return { [Symbol.iterator]() { return { next() { log.push(name + ':next'); return { done: false }; }, return() { log.push(name + ':return'); return {}; } }; } }; } function* plain() { for ([ {} = yield ] of [source('a')]) {} } var g = plain(); g.next(); print(JSON.stringify(g.return(7)) + ' ' + log.join()); log = []; function* guarded() { try { for (var [ x = yield ] of [source('b')]) {} } finally { log.push('finally'); } } g = guarded(); g.next(); print(JSON.stringify(g.return(8)) + ' ' + log.join()); "
+        ),
         [
             "{\"value\":7,\"done\":true} a:next,a:return",
             "{\"value\":8,\"done\":true} b:next,b:return,finally"
@@ -375,7 +377,9 @@ fn generator_return_inside_loop_head_pattern_closes_pattern_iterator() {
 #[test]
 fn nested_direct_eval_vars_belong_to_the_calling_function() {
     assert_eq!(
-        output("function u(code) { return eval(code); } u(\"eval('var z = 2;')\"); function v() { eval(\"eval('var y = 3;')\"); return typeof y; } function w() { 'use strict'; eval(\"eval('var x = 1;')\"); return typeof x; } print([typeof z, 'z' in globalThis, v(), typeof y, w()].join()); "),
+        output(
+            "function u(code) { return eval(code); } u(\"eval('var z = 2;')\"); function v() { eval(\"eval('var y = 3;')\"); return typeof y; } function w() { 'use strict'; eval(\"eval('var x = 1;')\"); return typeof x; } print([typeof z, 'z' in globalThis, v(), typeof y, w()].join()); "
+        ),
         ["undefined,false,number,undefined,undefined"]
     );
 }
@@ -383,7 +387,9 @@ fn nested_direct_eval_vars_belong_to_the_calling_function() {
 #[test]
 fn private_members_resolve_on_branded_proxy_receivers() {
     assert_eq!(
-        output("class Base { constructor() { return new Proxy(this, {}); } } class F extends Base { #x = 1; t() { return this.#x; } } class M extends Base { #m() { return 2; } t() { return this.#m(); } } class G extends Base { get #g() { return 3; } t() { return this.#g; } } print([F, M, G].map(C => new C().t()).join(' '));"),
+        output(
+            "class Base { constructor() { return new Proxy(this, {}); } } class F extends Base { #x = 1; t() { return this.#x; } } class M extends Base { #m() { return 2; } t() { return this.#m(); } } class G extends Base { get #g() { return 3; } t() { return this.#g; } } print([F, M, G].map(C => new C().t()).join(' '));"
+        ),
         ["1 2 3"]
     );
 }
@@ -391,7 +397,9 @@ fn private_members_resolve_on_branded_proxy_receivers() {
 #[test]
 fn shared_atomics_round_trip_negative_bigints() {
     assert_eq!(
-        output("const view = new BigInt64Array(new SharedArrayBuffer(16)); view[0] = -5n; const old = Atomics.add(view, 0, 2n); print([old, view[0], Atomics.exchange(view, 1, -1n), view[1]].join());"),
+        output(
+            "const view = new BigInt64Array(new SharedArrayBuffer(16)); view[0] = -5n; const old = Atomics.add(view, 0, 2n); print([old, view[0], Atomics.exchange(view, 1, -1n), view[1]].join());"
+        ),
         ["-5,-3,0,-1"]
     );
 }
@@ -401,7 +409,9 @@ fn shared_atomics_round_trip_negative_bigints() {
 #[test]
 fn awaited_rejections_reach_handlers_with_their_registers() {
     assert_eq!(
-        output("async function f() { var err = {}; try { await Promise.reject(err); } catch (e) { print(e === err); } } f();"),
+        output(
+            "async function f() { var err = {}; try { await Promise.reject(err); } catch (e) { print(e === err); } } f();"
+        ),
         ["true"]
     );
 }
@@ -410,7 +420,9 @@ fn awaited_rejections_reach_handlers_with_their_registers() {
 #[test]
 fn proxy_iterators_close_through_their_get_trap() {
     assert_eq!(
-        output("const log = []; const it = new Proxy({ next() { return { done: false, value: 1 }; } }, { get(t, k) { log.push(String(k)); return t[k]; } }); const [a] = { [Symbol.iterator]() { return it; } }; print(log.join());"),
+        output(
+            "const log = []; const it = new Proxy({ next() { return { done: false, value: 1 }; } }, { get(t, k) { log.push(String(k)); return t[k]; } }); const [a] = { [Symbol.iterator]() { return it; } }; print(log.join());"
+        ),
         ["next,return"]
     );
 }
@@ -420,7 +432,9 @@ fn proxy_iterators_close_through_their_get_trap() {
 #[test]
 fn regexp_split_observes_exec_replaced_by_its_limit() {
     assert_eq!(
-        output("const r = /a/[Symbol.split]('abba', { valueOf() { RegExp.prototype.exec = () => null; return 100; } }); print(r.length);"),
+        output(
+            "const r = /a/[Symbol.split]('abba', { valueOf() { RegExp.prototype.exec = () => null; return 100; } }); print(r.length);"
+        ),
         ["1"]
     );
 }
@@ -451,10 +465,18 @@ fn strict_global_assignment_keeps_enclosing_locals_in_registers() {
     let layout = "(function () { 'use strict'; for (var i = 0; i < 3; ++i) {} function g() { undeclared = 1; } return g; })";
     let program = Engine::specialize(layout, "strict-global.js").unwrap();
     let outer = program.disassemble();
-    let outer = outer.split("\nfunction 2 ").next().unwrap().split("\nfunction 1 ").nth(1).unwrap();
+    let outer = outer
+        .split("\nfunction 2 ")
+        .next()
+        .unwrap()
+        .split("\nfunction 1 ")
+        .nth(1)
+        .unwrap();
     assert!(!outer.contains("EnvLocal"), "{outer}");
     assert_eq!(
-        output("(function () { 'use strict'; for (var i = 0; i < 3; ++i) {} function g() { undeclared = 1; } try { g(); } catch (e) { print(e.constructor.name + ':' + i); } })();"),
+        output(
+            "(function () { 'use strict'; for (var i = 0; i < 3; ++i) {} function g() { undeclared = 1; } try { g(); } catch (e) { print(e.constructor.name + ':' + i); } })();"
+        ),
         ["ReferenceError:3"]
     );
     assert_eq!(

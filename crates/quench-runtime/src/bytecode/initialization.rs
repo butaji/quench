@@ -4,8 +4,8 @@
 //! be read and written as a plain frame local.
 
 use super::{
-    ControlEdge, FieldLayout, Function, ImmediateRole, InstructionField, Op, Operand,
-    OperandKind, Superinstruction, WideInstruction,
+    ControlEdge, FieldLayout, Function, ImmediateRole, InstructionField, Op, Operand, OperandKind,
+    Superinstruction, WideInstruction,
 };
 
 /// How one instruction member touches a local slot.
@@ -29,7 +29,10 @@ struct Rows {
 
 impl Rows {
     fn new(points: usize, words: usize) -> Self {
-        Self { words, bits: vec![0; points * words] }
+        Self {
+            words,
+            bits: vec![0; points * words],
+        }
     }
 
     fn row(&self, point: usize) -> &[u64] {
@@ -101,20 +104,24 @@ pub(crate) fn initialized_before_reads(
             let mut pc = start;
             while let Some(&instruction) = decoded.get(pc) {
                 abrupt.copy_from_slice(&state);
-                let mut apply = |slot: usize, access: Access, state: &mut [u64], abrupt: &mut [u64]| {
-                    let Some(Some(index)) = dense.get(slot).copied() else {
-                        return;
+                let mut apply =
+                    |slot: usize, access: Access, state: &mut [u64], abrupt: &mut [u64]| {
+                        let Some(Some(index)) = dense.get(slot).copied() else {
+                            return;
+                        };
+                        let (word, bit) = (
+                            index / u64::BITS as usize,
+                            1 << (index % u64::BITS as usize),
+                        );
+                        match access {
+                            Access::Uninitialize => state[word] |= bit,
+                            Access::Initialize => state[word] &= !bit,
+                            Access::Read if state[word] & bit != 0 => proven[slot] = false,
+                            Access::Read => {}
+                            Access::Opaque => proven[slot] = false,
+                        }
+                        abrupt[word] |= state[word];
                     };
-                    let (word, bit) = (index / u64::BITS as usize, 1 << (index % u64::BITS as usize));
-                    match access {
-                        Access::Uninitialize => state[word] |= bit,
-                        Access::Initialize => state[word] &= !bit,
-                        Access::Read if state[word] & bit != 0 => proven[slot] = false,
-                        Access::Read => {}
-                        Access::Opaque => proven[slot] = false,
-                    }
-                    abrupt[word] |= state[word];
-                };
                 match instruction.op().immediate_role() {
                     ImmediateRole::SuperinstructionIndex => {
                         for member in superinstructions[instruction.superinstruction_index()].code {
@@ -125,9 +132,11 @@ pub(crate) fn initialized_before_reads(
                                     apply(slot, Access::Opaque, &mut state, &mut abrupt);
                                 }
                             } else {
-                                accesses(member.as_wide(), uninitialized_at_entry, |slot, access| {
-                                    apply(slot, access, &mut state, &mut abrupt)
-                                });
+                                accesses(
+                                    member.as_wide(),
+                                    uninitialized_at_entry,
+                                    |slot, access| apply(slot, access, &mut state, &mut abrupt),
+                                );
                             }
                         }
                     }
@@ -202,11 +211,19 @@ impl BasicBlocks {
         let count = starts.len();
         // The function's end is a join point no instruction follows.
         starts.retain(|&pc| pc < end);
-        Self { starts, block_at, count }
+        Self {
+            starts,
+            block_at,
+            count,
+        }
     }
 
     fn at(&self, pc: usize) -> Option<usize> {
-        self.block_at.get(pc).copied().flatten().map(|block| block as usize)
+        self.block_at
+            .get(pc)
+            .copied()
+            .flatten()
+            .map(|block| block as usize)
     }
 
     /// Whether control from `pc` to `successor` stays inside `pc`'s block.
@@ -216,7 +233,11 @@ impl BasicBlocks {
 }
 
 /// The local slots `instruction` touches, in execution order.
-fn accesses(instruction: WideInstruction, uninitialized_at_entry: &[bool], mut access: impl FnMut(usize, Access)) {
+fn accesses(
+    instruction: WideInstruction,
+    uninitialized_at_entry: &[bool],
+    mut access: impl FnMut(usize, Access),
+) {
     for &field in InstructionField::ALL {
         if matches!(
             instruction.op().field_layout(field),

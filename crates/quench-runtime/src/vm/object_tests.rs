@@ -1,11 +1,8 @@
-use super::*;
 use super::site_table::SiteTable;
+use super::*;
 use crate::Engine;
 use crate::test_host::TestHost;
 use std::{cell::RefCell, rc::Rc};
-
-
-
 
 fn field_cache_entries<H: Host>(
     vm: &Vm<H>,
@@ -207,7 +204,9 @@ fn spread_sources_stay_rooted_through_the_loop_that_reuses_them() {
         .enumerate()
         .find(|(_, instruction)| instruction.op() == Op::AppendArray)
         .unwrap();
-    let register = spread.optional_register_b().expect("spread source register");
+    let register = spread
+        .optional_register_b()
+        .expect("spread source register");
     let (back_edge, head) = function
         .code
         .iter()
@@ -224,7 +223,11 @@ fn spread_sources_stay_rooted_through_the_loop_that_reuses_them() {
         .unwrap();
     for pc in head..=back_edge {
         let root_map = program.register_root_mask(function_id as u32, pc).unwrap();
-        assert_ne!(root_map & (1 << register), 0, "pc {pc} drops register {register}");
+        assert_ne!(
+            root_map & (1 << register),
+            0,
+            "pc {pc} drops register {register}"
+        );
     }
 }
 
@@ -241,10 +244,19 @@ fn call_spread_sources_stay_rooted_through_the_loop() {
         .functions
         .iter()
         .enumerate()
-        .find(|(_, function)| function.name.is_some_and(|name| &program.atoms[name as usize] == "parse"))
+        .find(|(_, function)| {
+            function
+                .name
+                .is_some_and(|name| &program.atoms[name as usize] == "parse")
+        })
         .unwrap();
-    let (call_pc, call) =
-        function.code.iter().copied().enumerate().find(|(_, instruction)| instruction.op() == Op::CallSpread).unwrap();
+    let (call_pc, call) = function
+        .code
+        .iter()
+        .copied()
+        .enumerate()
+        .find(|(_, instruction)| instruction.op() == Op::CallSpread)
+        .unwrap();
     let window = call.call_window().base;
     let copy = function.code[..call_pc]
         .iter()
@@ -252,8 +264,13 @@ fn call_spread_sources_stay_rooted_through_the_loop() {
         .find(|instruction| instruction.op() == Op::Move && instruction.result_register() == window)
         .expect("the call window's copy of the source");
     let source_register = copy.register_b();
-    let call_roots = program.register_root_mask(function_id as u32, call_pc).unwrap();
-    assert!(crate::compile::liveness::register_in(call_roots, window as usize), "the call drops its window register {window}");
+    let call_roots = program
+        .register_root_mask(function_id as u32, call_pc)
+        .unwrap();
+    assert!(
+        crate::compile::liveness::register_in(call_roots, window as usize),
+        "the call drops its window register {window}"
+    );
     let (back_edge, head) = function
         .code
         .iter()
@@ -265,7 +282,10 @@ fn call_spread_sources_stay_rooted_through_the_loop() {
         .unwrap();
     for pc in head..=back_edge {
         let root_map = program.register_root_mask(function_id as u32, pc).unwrap();
-        assert!(crate::compile::liveness::register_in(root_map, source_register as usize), "pc {pc} drops register {source_register}");
+        assert!(
+            crate::compile::liveness::register_in(root_map, source_register as usize),
+            "pc {pc} drops register {source_register}"
+        );
     }
 }
 
@@ -309,11 +329,7 @@ fn static_three_field_object_literals_share_the_shape_site() {
         assert_eq!(window.count, 3, "{mode}");
         let root_map = program.register_root_mask(function_id as u32, pc).unwrap();
         for register in window.base..window.base + window.count {
-            assert_ne!(
-                root_map & (1 << register),
-                0,
-                "{mode}: register {register}"
-            );
+            assert_ne!(root_map & (1 << register), 0, "{mode}: register {register}");
         }
         assert_eq!(
             program.object_sites[instruction.object_site_index()]
@@ -1149,7 +1165,8 @@ fn getter_only_accessors_keep_their_getters_in_slots_and_share_shapes() {
                  Object.defineProperty(o, key, {{ get: function () {{ return i; }} }}); }}"
             );
             let mut vm = Vm::new(TestHost::default());
-            vm.execute(&compile(&source, "slot-getter-shapes.js").unwrap()).unwrap();
+            vm.execute(&compile(&source, "slot-getter-shapes.js").unwrap())
+                .unwrap();
             vm.shapes.len()
         };
         assert_eq!(layout_shapes(64), layout_shapes(1), "{mode}");
@@ -1171,7 +1188,8 @@ fn only_arrow_closures_keep_their_creator_s_implicit_bindings() {
     "#;
     let output = Rc::new(RefCell::new(Vec::new()));
     let mut vm = Vm::new(TestHost::writing_to(output.clone()));
-    vm.execute(&Engine::specialize(source, "implicit-bindings.js").unwrap()).unwrap();
+    vm.execute(&Engine::specialize(source, "implicit-bindings.js").unwrap())
+        .unwrap();
     assert_eq!(
         output.borrow().as_slice(),
         ["1 outer inner evaluated undefined,false undefined,true"]
@@ -1208,12 +1226,24 @@ fn field_cache_invalidation_resets_every_written_site() {
     vm.field_cache_writes = Some(Vec::new());
     let record = |vm: &mut Vm<TestHost>, site: usize| {
         for receiver in 1..=3 {
-            vm.record_field_cache(site, FieldCache { receiver, holder: NO_FIELD_HOLDER, slot: 0 });
+            vm.record_field_cache(
+                site,
+                FieldCache {
+                    receiver,
+                    holder: NO_FIELD_HOLDER,
+                    slot: 0,
+                },
+            );
         }
     };
     let all_empty = |vm: &Vm<TestHost>| {
-        vm.field_caches.iter().all(|cache| cache.receiver == EMPTY_CACHE.receiver)
-            && vm.megamorphic_field_indices.iter().all(|index| index == NO_MEGAMORPHIC_FIELD)
+        vm.field_caches
+            .iter()
+            .all(|cache| cache.receiver == EMPTY_CACHE.receiver)
+            && vm
+                .megamorphic_field_indices
+                .iter()
+                .all(|index| index == NO_MEGAMORPHIC_FIELD)
     };
     // Few writes reset one by one; more than the sparse share overflow to a full reset.
     for written in [vec![3, 40], (0..SITES).collect::<Vec<_>>()] {
@@ -1221,7 +1251,10 @@ fn field_cache_invalidation_resets_every_written_site() {
             record(&mut vm, site);
         }
         assert!(!all_empty(&vm));
-        assert_eq!(vm.field_cache_writes.is_none(), written.len() > SITES / super::FIELD_CACHE_SPARSE_RESET_SHARE);
+        assert_eq!(
+            vm.field_cache_writes.is_none(),
+            written.len() > SITES / super::FIELD_CACHE_SPARSE_RESET_SHARE
+        );
         vm.invalidate_field_caches();
         assert!(all_empty(&vm), "{} written sites reset", written.len());
         assert_eq!(vm.field_cache_writes.as_deref(), Some(&[][..]));

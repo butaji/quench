@@ -22,7 +22,9 @@ pub(super) struct EnumerableKeyMemo {
 /// enumerates a shape costs no entries.
 impl Default for EnumerableKeyMemo {
     fn default() -> Self {
-        Self { entries: RefCell::default() }
+        Self {
+            entries: RefCell::default(),
+        }
     }
 }
 
@@ -47,6 +49,9 @@ impl EnumerableKeyMemo {
     }
 
     pub(super) fn clear(&self) {
-        self.entries.borrow_mut().iter_mut().for_each(|entry| *entry = None);
+        self.entries
+            .borrow_mut()
+            .iter_mut()
+            .for_each(|entry| *entry = None);
     }
 }

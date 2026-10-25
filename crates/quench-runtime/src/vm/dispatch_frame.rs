@@ -121,11 +121,17 @@ impl<H: Host> Vm<H> {
         lane: bool,
     ) -> GeneralCodeCursor {
         let admitted = lane && self.lane_admits(program);
-        let view = if admitted { self.entry_lane_view(program_id, function) } else { std::ptr::null() };
+        let view = if admitted {
+            self.entry_lane_view(program_id, function)
+        } else {
+            std::ptr::null()
+        };
         GeneralCodeCursor {
             lane: view,
             // A JavaScript activation deferred its view; a loop that turns hot derives it.
-            back_edges: (admitted && view.is_null() && program.kind != crate::bytecode::ProgramKind::Wasm)
+            back_edges: (admitted
+                && view.is_null()
+                && program.kind != crate::bytecode::ProgramKind::Wasm)
                 .then_some(0),
             ..GeneralCodeCursor::new(program_id, program, function)
         }
@@ -169,12 +175,8 @@ impl<H: Host> Vm<H> {
             .function_get(function as usize)
             .map_or(0, |body| body.code.len());
         let work = source_pc.saturating_sub(target_pc).saturating_add(1);
-        self.programs.note_js_general_dispatch_backedge(
-            program_id,
-            function,
-            work,
-            instructions,
-        );
+        self.programs
+            .note_js_general_dispatch_backedge(program_id, function, work, instructions);
     }
 
     pub(super) fn call_this_value(&mut self, this: Value, strict: bool) -> Result<Value, JsError> {
@@ -304,9 +306,8 @@ impl<H: Host> Vm<H> {
         // An in-loop activation grows the frame stack, not the native stack, so it counts
         // against the live guest-call budget.
         let function = &p.function(id as usize);
-        let frame_storage_bytes = (usize::from(function.locals)
-            + usize::from(function.registers))
-        .saturating_mul(std::mem::size_of::<Value>());
+        let frame_storage_bytes = (usize::from(function.locals) + usize::from(function.registers))
+            .saturating_mul(std::mem::size_of::<Value>());
         let call_guard = crate::stack::GuestCallGuard::enter_with_storage(frame_storage_bytes)
             .map_err(|()| JsError::wasm_trap_error(crate::WasmTrap::CallStackExhausted))?;
         let program = self.active_program;
@@ -358,8 +359,8 @@ impl<H: Host> Vm<H> {
     ) -> crate::stack::GuestCallGuard {
         let function = p.function(id as usize);
         debug_assert_eq!(function.locals, 0);
-        let frame_storage_bytes = usize::from(function.registers)
-            .saturating_mul(std::mem::size_of::<Value>());
+        let frame_storage_bytes =
+            usize::from(function.registers).saturating_mul(std::mem::size_of::<Value>());
         // Lane admission reserves these bytes before it stores the activation. Materializing
         // the lane transfers that reservation to the frame's weighted guest-call guard.
         let call_guard = crate::stack::GuestCallGuard::enter_with_storage(frame_storage_bytes)
@@ -551,7 +552,11 @@ impl<H: Host> Vm<H> {
         frame.with_base = self.with_stack.len();
         if self.with_scope_entered {
             self.with_stack
-                .extend(self.captured_with_objects_for_function(parent, function.inherited_with_scope, p.kind));
+                .extend(self.captured_with_objects_for_function(
+                    parent,
+                    function.inherited_with_scope,
+                    p.kind,
+                ));
         }
         // A `new.target` set for this activation has no observable binding to land in.
         if self.take_construction_target(context).is_some() {
@@ -581,7 +586,10 @@ impl<H: Host> Vm<H> {
         // activation cannot fail; the registers below replace what it placed in them.
         self.activate_user_frame(p, id, env, this, passed, context)
             .expect("a frameless activation's frame activates without error");
-        let frame = self.frames.last_mut().expect("the activation pushed a frame");
+        let frame = self
+            .frames
+            .last_mut()
+            .expect("the activation pushed a frame");
         frame.registers.copy_from_slice(registers);
     }
 
@@ -618,7 +626,11 @@ impl<H: Host> Vm<H> {
         frame.env = parent;
         let arrow = function.is_arrow;
         let derived = function.derived_constructor;
-        let captured_this = if arrow { self.captured_lexical_this(parent) } else { None };
+        let captured_this = if arrow {
+            self.captured_lexical_this(parent)
+        } else {
+            None
+        };
         let this = if derived {
             Value::DELETED
         } else {
@@ -640,12 +652,18 @@ impl<H: Host> Vm<H> {
         frame.with_base = self.with_stack.len();
         if self.with_scope_entered {
             self.with_stack
-                .extend(self.captured_with_objects_for_function(parent, function.inherited_with_scope, p.kind));
+                .extend(self.captured_with_objects_for_function(
+                    parent,
+                    function.inherited_with_scope,
+                    p.kind,
+                ));
         }
         if id == super::ROOT_FUNCTION_ID {
             self.bind_module_imports(&mut frame)?;
         }
-        let new_target = self.take_construction_target(context).unwrap_or(Value::UNDEFINED);
+        let new_target = self
+            .take_construction_target(context)
+            .unwrap_or(Value::UNDEFINED);
         self.initialize_activation_bindings(
             &mut frame,
             arrow,
@@ -707,7 +725,11 @@ impl<H: Host> Vm<H> {
         frame.env = parent;
         let arrow = function.is_arrow;
         let derived = function.derived_constructor;
-        let captured_this = if arrow { self.captured_lexical_this(parent) } else { None };
+        let captured_this = if arrow {
+            self.captured_lexical_this(parent)
+        } else {
+            None
+        };
         let this = if derived {
             Value::DELETED
         } else {
@@ -723,8 +745,14 @@ impl<H: Host> Vm<H> {
         frame.captured = false;
         frame.with_base = self.with_stack.len();
         self.with_stack
-            .extend(self.captured_with_objects_for_function(parent, function.inherited_with_scope, p.kind));
-        let new_target = self.take_construction_target(context).unwrap_or(Value::UNDEFINED);
+            .extend(self.captured_with_objects_for_function(
+                parent,
+                function.inherited_with_scope,
+                p.kind,
+            ));
+        let new_target = self
+            .take_construction_target(context)
+            .unwrap_or(Value::UNDEFINED);
         self.initialize_activation_bindings(
             &mut frame,
             arrow,
@@ -901,8 +929,12 @@ impl<H: Host> Vm<H> {
         }
         // The realm's template gives the whole object at once; the first one of a realm
         // defines its properties one by one, which records the template.
-        if let Some((shape, properties)) = self.arguments_template_properties(context.callee(), args, mapped)? {
-            return Ok(self.heap.alloc_array_with_properties(array, shape, &properties));
+        if let Some((shape, properties)) =
+            self.arguments_template_properties(context.callee(), args, mapped)?
+        {
+            return Ok(self
+                .heap
+                .alloc_array_with_properties(array, shape, &properties));
         }
         let arguments = self.heap.alloc(Cell::Array { object: array });
         self.initialize_arguments_object(arguments, context.callee(), args, mapped)?;
@@ -966,7 +998,9 @@ impl<H: Host> Vm<H> {
         let mut properties = [Value::UNDEFINED; ARGUMENTS_OBJECT_PROPERTY_COUNT];
         properties[template.length_slot] = Value::number(args.len() as f64);
         properties[template.callee_slot] = if expose_callee {
-            callable.ok_or_else(|| JsError::validation("arguments object requires callable identity".into()))?
+            callable.ok_or_else(|| {
+                JsError::validation("arguments object requires callable identity".into())
+            })?
         } else {
             Value::UNDEFINED
         };
@@ -982,7 +1016,9 @@ impl<H: Host> Vm<H> {
         expose_callee: bool,
     ) -> Result<(), JsError> {
         let template_key = (self.realm.globals, expose_callee);
-        if let Some((shape, properties)) = self.arguments_template_properties(callable, args, expose_callee)? {
+        if let Some((shape, properties)) =
+            self.arguments_template_properties(callable, args, expose_callee)?
+        {
             self.object_data_mut(arguments)
                 .expect("arguments object is an array")
                 .set_arguments_object();
@@ -1133,8 +1169,14 @@ impl<H: Host> Vm<H> {
                 let mut pending = captured.iter().copied().peekable();
                 crate::heap::EnvironmentSlots::from_values(state.locals.iter_mut().enumerate().map(
                     |(slot, value)| {
-                        while pending.next_if(|captured| usize::from(*captured) < slot).is_some() {}
-                        if pending.next_if(|captured| usize::from(*captured) == slot).is_some() {
+                        while pending
+                            .next_if(|captured| usize::from(*captured) < slot)
+                            .is_some()
+                        {}
+                        if pending
+                            .next_if(|captured| usize::from(*captured) == slot)
+                            .is_some()
+                        {
                             std::mem::replace(value, Value::DELETED)
                         } else {
                             Value::DELETED
@@ -1143,7 +1185,8 @@ impl<H: Host> Vm<H> {
                 ))
             }
             None => {
-                let slots = crate::heap::EnvironmentSlots::from_values(state.locals.iter().copied());
+                let slots =
+                    crate::heap::EnvironmentSlots::from_values(state.locals.iter().copied());
                 state.locals.clear();
                 slots
             }
@@ -1189,9 +1232,8 @@ impl<H: Host> Vm<H> {
             .environment_bindings(source)
             .is_some_and(Vec::is_empty)
             && self.programs.residual(program).is_some_and(|p| {
-                p.function_get(function as usize).is_some_and(|function| {
-                    function.names_resolve_statically(&p)
-                })
+                p.function_get(function as usize)
+                    .is_some_and(|function| function.names_resolve_statically(&p))
             });
         let owner = if never_binds_dynamically {
             None
@@ -1462,10 +1504,24 @@ impl<H: Host> Vm<H> {
             // call, or at the residual `current_program` keeps alive until it is replaced,
             // and it is re-derived at that replacement.
             let p = unsafe { &*executing_residual };
-            if let Err(error)=self.check_execution_interrupt() {
-                let mut executing = ExecutingProgram { id: executing_program, retained: current_program.take() };
-                return self.unwind_general_loop(entry_program,frame,pc,pc as u32,error,pending_calls,&mut cursor,&mut executing,fast_lane)
-                    .map(|_|unreachable!("host termination cannot select a guest handler"));
+            if let Err(error) = self.check_execution_interrupt() {
+                let mut executing = ExecutingProgram {
+                    id: executing_program,
+                    retained: current_program.take(),
+                };
+                return self
+                    .unwind_general_loop(
+                        entry_program,
+                        frame,
+                        pc,
+                        pc as u32,
+                        error,
+                        pending_calls,
+                        &mut cursor,
+                        &mut executing,
+                        fast_lane,
+                    )
+                    .map(|_| unreachable!("host termination cannot select a guest handler"));
             }
             // A supported native function still returns through the ordinary
             // Return instruction, preserving the dispatch loop's frame and
@@ -1524,7 +1580,10 @@ impl<H: Host> Vm<H> {
                 }
             }
             if native_step.is_none() && Self::lane_runs(cursor.lane, pc) {
-                let mut executing = ExecutingProgram { id: executing_program, retained: current_program.take() };
+                let mut executing = ExecutingProgram {
+                    id: executing_program,
+                    retained: current_program.take(),
+                };
                 pc = self.run_fast_lane(
                     p,
                     cursor.program,
@@ -1563,26 +1622,64 @@ impl<H: Host> Vm<H> {
                 {
                     super::lane_exits::record(instruction.op());
                     if matches!(instruction.op(), Op::Call | Op::Construct) {
-                        let callee = self.frames[frame].registers.get(usize::from(instruction.register_b())).copied();
+                        let callee = self.frames[frame]
+                            .registers
+                            .get(usize::from(instruction.register_b()))
+                            .copied();
                         let detail = match callee.and_then(|callee| self.heap.function(callee)) {
-                            Some(crate::heap::FunctionRecord { kind: FunctionKind::Native(native @ (crate::heap::Native::FunctionBoundCall | crate::heap::Native::FunctionCall)), .. }) => {
-                                let receiver = self.frames[frame].registers.get(usize::from(instruction.register_c())).copied().unwrap_or(Value::UNDEFINED);
-                                let target = callee.and_then(|callee| self.forwarded_call(callee, receiver, &[])).map(|(target, _, _)| target);
-                                let described = match target.and_then(|target| self.heap.function(target)) {
-                                    Some(crate::heap::FunctionRecord { kind: FunctionKind::Native(target), .. }) => format!("native {target:?}"),
-                                    Some(crate::heap::FunctionRecord { kind: FunctionKind::User(program, id), .. }) => {
-                                        let name = self.programs.residual(*program).and_then(|code| {
-                                            let body = code.function_get(*id as usize)?;
-                                            Some(format!("{} same_program={} registers_only={}", body.name.map(|a| code.atoms[a as usize].to_string()).unwrap_or_default(), *program == cursor.program, body.call_plan(code).registers_only))
-                                        });
+                            Some(crate::heap::FunctionRecord {
+                                kind:
+                                    FunctionKind::Native(
+                                        native @ (crate::heap::Native::FunctionBoundCall
+                                        | crate::heap::Native::FunctionCall),
+                                    ),
+                                ..
+                            }) => {
+                                let receiver = self.frames[frame]
+                                    .registers
+                                    .get(usize::from(instruction.register_c()))
+                                    .copied()
+                                    .unwrap_or(Value::UNDEFINED);
+                                let target = callee
+                                    .and_then(|callee| self.forwarded_call(callee, receiver, &[]))
+                                    .map(|(target, _, _)| target);
+                                let described = match target
+                                    .and_then(|target| self.heap.function(target))
+                                {
+                                    Some(crate::heap::FunctionRecord {
+                                        kind: FunctionKind::Native(target),
+                                        ..
+                                    }) => format!("native {target:?}"),
+                                    Some(crate::heap::FunctionRecord {
+                                        kind: FunctionKind::User(program, id),
+                                        ..
+                                    }) => {
+                                        let name =
+                                            self.programs.residual(*program).and_then(|code| {
+                                                let body = code.function_get(*id as usize)?;
+                                                Some(format!(
+                                                    "{} same_program={} registers_only={}",
+                                                    body.name
+                                                        .map(|a| code.atoms[a as usize].to_string())
+                                                        .unwrap_or_default(),
+                                                    *program == cursor.program,
+                                                    body.call_plan(code).registers_only
+                                                ))
+                                            });
                                         format!("user {}", name.unwrap_or_default())
                                     }
                                     None => "unforwarded".into(),
                                 };
                                 format!("native {native:?} -> {described}")
                             }
-                            Some(crate::heap::FunctionRecord { kind: FunctionKind::Native(native), .. }) => format!("native {native:?}"),
-                            Some(crate::heap::FunctionRecord { kind: FunctionKind::User(program, id), .. }) => {
+                            Some(crate::heap::FunctionRecord {
+                                kind: FunctionKind::Native(native),
+                                ..
+                            }) => format!("native {native:?}"),
+                            Some(crate::heap::FunctionRecord {
+                                kind: FunctionKind::User(program, id),
+                                ..
+                            }) => {
                                 let plan = self.programs.residual(*program).and_then(|code| {
                                     let body = code.function_get(*id as usize)?;
                                     Some(format!("user {} same_program={} pc={pc} registers_only={} async={} gen={} class={} self={} args={:?}", body.name.map(|a| code.atoms[a as usize].to_string()).unwrap_or_default(), *program == cursor.program, body.call_plan(code).registers_only, body.is_async, body.is_generator, body.is_class_constructor, body.self_binding_slot.is_some(), body.arguments_slot.is_some()))
@@ -1591,40 +1688,107 @@ impl<H: Host> Vm<H> {
                             }
                             None => "not a function".into(),
                         };
-                        let caller = p.function_get(self.frames[frame].function as usize).map(|f| (f.is_async, Self::lane_runs(cursor.lane, pc), self.frames.len() - 1 - frame, pending_calls.len()));
-                        super::lane_exits::record_detail(format!("{:?} {detail} caller(async,arrow,depth,pending)={caller:?}", instruction.op()));
+                        let caller =
+                            p.function_get(self.frames[frame].function as usize)
+                                .map(|f| {
+                                    (
+                                        f.is_async,
+                                        Self::lane_runs(cursor.lane, pc),
+                                        self.frames.len() - 1 - frame,
+                                        pending_calls.len(),
+                                    )
+                                });
+                        super::lane_exits::record_detail(format!(
+                            "{:?} {detail} caller(async,arrow,depth,pending)={caller:?}",
+                            instruction.op()
+                        ));
                     }
-                    if matches!(instruction.op(), Op::CloneEnv | Op::Return | Op::GetField | Op::GetIndex | Op::SetIndex | Op::LoadName | Op::SetFieldStrict | Op::SetField | Op::SetThisFieldStrict | Op::SetThisField | Op::LoadNameCall | Op::PrivateIn | Op::Binary | Op::JumpBinaryFalse) {
+                    if matches!(
+                        instruction.op(),
+                        Op::CloneEnv
+                            | Op::Return
+                            | Op::GetField
+                            | Op::GetIndex
+                            | Op::SetIndex
+                            | Op::LoadName
+                            | Op::SetFieldStrict
+                            | Op::SetField
+                            | Op::SetThisFieldStrict
+                            | Op::SetThisField
+                            | Op::LoadNameCall
+                            | Op::PrivateIn
+                            | Op::Binary
+                            | Op::JumpBinaryFalse
+                    ) {
                         let function = p.function_get(self.frames[frame].function as usize);
-                        let name = function.and_then(|f| f.name).map(|a| p.atoms[a as usize].to_string()).unwrap_or_default();
-                        let span = function.map(|f| format!("{:?}", f.source_span)).unwrap_or_default();
+                        let name = function
+                            .and_then(|f| f.name)
+                            .map(|a| p.atoms[a as usize].to_string())
+                            .unwrap_or_default();
+                        let span = function
+                            .map(|f| format!("{:?}", f.source_span))
+                            .unwrap_or_default();
                         // A store names its cache site and field, which tell a shared overflow site
                         // (`SHARED_UNCACHED_SITE`) from a polymorphic one.
-                        let store = matches!(instruction.op(), Op::SetFieldStrict | Op::SetField | Op::SetThisFieldStrict | Op::SetThisField)
-                            .then(|| format!(" site={} field={}", instruction.c(), &p.atoms[instruction.imm() as usize]))
-                            .or_else(|| {
-                                matches!(instruction.op(), Op::LoadName | Op::LoadNameCall)
-                                    .then(|| format!(" name={}", &p.atoms[instruction.imm() as usize]))
-                            })
-                            .unwrap_or_default();
-                        super::lane_exits::record_detail(format!("{:?} in {name} {span} pc={pc} lane={}{store}", instruction.op(), Self::lane_runs(cursor.lane, pc)));
+                        let store = matches!(
+                            instruction.op(),
+                            Op::SetFieldStrict
+                                | Op::SetField
+                                | Op::SetThisFieldStrict
+                                | Op::SetThisField
+                        )
+                        .then(|| {
+                            format!(
+                                " site={} field={}",
+                                instruction.c(),
+                                &p.atoms[instruction.imm() as usize]
+                            )
+                        })
+                        .or_else(|| {
+                            matches!(instruction.op(), Op::LoadName | Op::LoadNameCall)
+                                .then(|| format!(" name={}", &p.atoms[instruction.imm() as usize]))
+                        })
+                        .unwrap_or_default();
+                        super::lane_exits::record_detail(format!(
+                            "{:?} in {name} {span} pc={pc} lane={}{store}",
+                            instruction.op(),
+                            Self::lane_runs(cursor.lane, pc)
+                        ));
                     }
                     // A `Return` exit of the loop's own entry frame: which native's call into
                     // JavaScript started this nested run.
                     if instruction.op() == Op::Return && pending_calls.is_empty() {
-                        let starter = self.realm.promise.active_native.last().map(|activation| activation.callable);
-                        let described = match starter.and_then(|callable| self.heap.function(callable)) {
-                            Some(crate::heap::FunctionRecord { kind: FunctionKind::Native(native), .. }) => {
-                                let name = starter
-                                    .and_then(|callable| self.own_property(callable, self.runtime_atoms.name))
-                                    .and_then(|name| self.heap.string(name).map(|text| text.to_string()))
-                                    .unwrap_or_default();
-                                format!("{native:?} {name}")
-                            }
-                            Some(crate::heap::FunctionRecord { kind: FunctionKind::User(..), .. }) => "user".into(),
-                            None => "none".into(),
-                        };
-                        super::lane_exits::record_detail(format!("Return nested run started by {described}"));
+                        let starter = self
+                            .realm
+                            .promise
+                            .active_native
+                            .last()
+                            .map(|activation| activation.callable);
+                        let described =
+                            match starter.and_then(|callable| self.heap.function(callable)) {
+                                Some(crate::heap::FunctionRecord {
+                                    kind: FunctionKind::Native(native),
+                                    ..
+                                }) => {
+                                    let name = starter
+                                        .and_then(|callable| {
+                                            self.own_property(callable, self.runtime_atoms.name)
+                                        })
+                                        .and_then(|name| {
+                                            self.heap.string(name).map(|text| text.to_string())
+                                        })
+                                        .unwrap_or_default();
+                                    format!("{native:?} {name}")
+                                }
+                                Some(crate::heap::FunctionRecord {
+                                    kind: FunctionKind::User(..),
+                                    ..
+                                }) => "user".into(),
+                                None => "none".into(),
+                            };
+                        super::lane_exits::record_detail(format!(
+                            "Return nested run started by {described}"
+                        ));
                     }
                     if instruction.op() == Op::GetField
                         && let Some(lookup) = instruction.field_lookup()
@@ -1632,22 +1796,48 @@ impl<H: Host> Vm<H> {
                         let (base, atoms) = match lookup {
                             crate::bytecode::FieldLookup::Site(site) => {
                                 let site = p.field_sites[site];
-                                (site.base, [Some(site.first.0), site.second.map(|second| second.0)])
+                                (
+                                    site.base,
+                                    [Some(site.first.0), site.second.map(|second| second.0)],
+                                )
                             }
-                            crate::bytecode::FieldLookup::Atom { atom, base, .. } => (base, [Some(atom), None]),
+                            crate::bytecode::FieldLookup::Atom { atom, base, .. } => {
+                                (base, [Some(atom), None])
+                            }
                         };
-                        let names = atoms.iter().flatten().map(|atom| p.atoms[*atom as usize].to_string()).collect::<Vec<_>>().join(".");
+                        let names = atoms
+                            .iter()
+                            .flatten()
+                            .map(|atom| p.atoms[*atom as usize].to_string())
+                            .collect::<Vec<_>>()
+                            .join(".");
                         let base = self.resolve_field_base(p, frame, base).ok();
-                        let kind = base.and_then(|base| self.heap.get(base)).map_or("immediate", |cell| cell.profile_variant_name());
+                        let kind = base
+                            .and_then(|base| self.heap.get(base))
+                            .map_or("immediate", |cell| cell.profile_variant_name());
                         super::lane_exits::record_detail(format!("GetField {names} on {kind}"));
                     }
-                    if matches!(instruction.op(), Op::GetIndex | Op::SetIndex | Op::DefineArrayElement) {
+                    if matches!(
+                        instruction.op(),
+                        Op::GetIndex | Op::SetIndex | Op::DefineArrayElement
+                    ) {
                         let (base, key) = match instruction.op() {
-                            Op::GetIndex => (self.inert_operand(frame, instruction.operand_b()), self.inert_operand(frame, instruction.operand_c())),
-                            Op::SetIndex => (Some(self.read(frame, instruction.register_b())), Some(self.read(frame, instruction.register_c()))),
+                            Op::GetIndex => (
+                                self.inert_operand(frame, instruction.operand_b()),
+                                self.inert_operand(frame, instruction.operand_c()),
+                            ),
+                            Op::SetIndex => (
+                                Some(self.read(frame, instruction.register_b())),
+                                Some(self.read(frame, instruction.register_c())),
+                            ),
                             _ => {
                                 let registers = &self.frames[frame].registers;
-                                (registers.get(usize::from(instruction.a())).copied(), registers.get(usize::from(instruction.register_b())).copied())
+                                (
+                                    registers.get(usize::from(instruction.a())).copied(),
+                                    registers
+                                        .get(usize::from(instruction.register_b()))
+                                        .copied(),
+                                )
                             }
                         };
                         let describe = |value: Option<Value>| match value {
@@ -1657,7 +1847,9 @@ impl<H: Host> Vm<H> {
                             Some(v) if self.heap.string(v).is_some() => {
                                 let text = self.heap.string(v).unwrap();
                                 match self.lookup_js_atom(text) {
-                                    Some(atom) => format!("str(plain_key={})", self.plain_named_key(atom)),
+                                    Some(atom) => {
+                                        format!("str(plain_key={})", self.plain_named_key(atom))
+                                    }
                                     None => "str(new)".into(),
                                 }
                             }
@@ -1666,22 +1858,43 @@ impl<H: Host> Vm<H> {
                                 Some(Cell::Symbol(symbol)) => format!("symbol {:?}", symbol.kind),
                                 _ if self.heap.ordinary_object(v).is_some() => {
                                     let data = self.heap.ordinary_object(v).unwrap();
-                                    format!("ordinary(ext={} side={} nullproto={} dict={})", data.is_extensible(), data.has_side_descriptors(), data.proto().is_null(), self.shape_is_dictionary(data.shape()))
+                                    format!(
+                                        "ordinary(ext={} side={} nullproto={} dict={})",
+                                        data.is_extensible(),
+                                        data.has_side_descriptors(),
+                                        data.proto().is_null(),
+                                        self.shape_is_dictionary(data.shape())
+                                    )
                                 }
                                 Some(cell) => format!("cell {}", cell.profile_variant_name()),
                                 None => "other".into(),
                             },
                         };
-                        let dense = base.and_then(|base| self.heap.array(base)).map(|array| (array.elements().len(), array.has_indexed_descriptors(), array.is_frozen()));
-                        super::lane_exits::record_detail(format!("{:?} kinds base={} key={} array={dense:?}", instruction.op(), describe(base), describe(key)));
+                        let dense = base.and_then(|base| self.heap.array(base)).map(|array| {
+                            (
+                                array.elements().len(),
+                                array.has_indexed_descriptors(),
+                                array.is_frozen(),
+                            )
+                        });
+                        super::lane_exits::record_detail(format!(
+                            "{:?} kinds base={} key={} array={dense:?}",
+                            instruction.op(),
+                            describe(base),
+                            describe(key)
+                        ));
                     }
                     if matches!(instruction.op(), Op::JumpBinaryFalse | Op::Binary) {
                         let constants = self.programs.constants(cursor.program);
                         let registers = &self.frames[frame].registers;
                         let kind = |operand: crate::bytecode::Operand| {
                             let value = match operand.kind() {
-                                Some(crate::bytecode::OperandKind::Register) => registers.get(usize::from(operand.payload())).copied(),
-                                Some(crate::bytecode::OperandKind::Constant) => constants.get(usize::from(operand.payload())).copied(),
+                                Some(crate::bytecode::OperandKind::Register) => {
+                                    registers.get(usize::from(operand.payload())).copied()
+                                }
+                                Some(crate::bytecode::OperandKind::Constant) => {
+                                    constants.get(usize::from(operand.payload())).copied()
+                                }
                                 _ => None,
                             };
                             match value {
@@ -1692,13 +1905,17 @@ impl<H: Host> Vm<H> {
                                 Some(v) if v.is_null() => "null",
                                 Some(v) if v.as_bool().is_some() => "bool",
                                 Some(v) => match self.heap.get(v) {
-                                    _ if self.heap.is_string(v)  => "str",
+                                    _ if self.heap.is_string(v) => "str",
                                     Some(Cell::BigInt(_)) => "bigint",
                                     _ => "obj",
                                 },
                             }
                         };
-                        let operator = if instruction.op() == Op::Binary { instruction.binary_operator() } else { u32::from(instruction.a()) };
+                        let operator = if instruction.op() == Op::Binary {
+                            instruction.binary_operator()
+                        } else {
+                            u32::from(instruction.a())
+                        };
                         super::lane_exits::record_detail(format!(
                             "{:?} op{operator} {} {}",
                             instruction.op(),
@@ -1711,7 +1928,9 @@ impl<H: Host> Vm<H> {
                 // same frame slot; the active frame's PC slot and register file follow it.
                 published_pc = &mut self.frames[frame].pc;
                 self.active_registers = self.frames[frame].registers.as_mut_ptr();
-                if self.frames[frame].function != cursor.function || executing_program != cursor.program {
+                if self.frames[frame].function != cursor.function
+                    || executing_program != cursor.program
+                {
                     cursor = self.general_cursor(
                         executing_program,
                         // SAFETY: as for `p` at the top of the loop.
@@ -1765,128 +1984,104 @@ impl<H: Host> Vm<H> {
             let step = if let Some(step) = native_step {
                 step.result
             } else {
-            #[cfg(feature = "profile-memory")]
-            self.heap.set_memory_allocation_site(
-                cursor.program.raw(),
-                cursor.function,
-                instruction_pc,
-            );
-            if self.programs.js_jit_diagnostics_enabled() {
-                self.programs.record_js_jit_general_dispatch_opcode(
-                    cursor.program,
+                #[cfg(feature = "profile-memory")]
+                self.heap.set_memory_allocation_site(
+                    cursor.program.raw(),
                     cursor.function,
+                    instruction_pc,
+                );
+                if self.programs.js_jit_diagnostics_enabled() {
+                    self.programs.record_js_jit_general_dispatch_opcode(
+                        cursor.program,
+                        cursor.function,
+                        ins.op(),
+                    );
+                }
+                #[cfg(feature = "profile-lane-exits")]
+                super::lane_exits::count_general(
+                    || {
+                        let body = p.function_get(cursor.function as usize);
+                        format!(
+                            "{} {} @{:?}",
+                            p.source_name,
+                            body.and_then(|body| body.name)
+                                .map(|atom| p.atoms[atom as usize].to_string())
+                                .unwrap_or_default(),
+                            body.and_then(|body| body.source_span)
+                                .map(|span| span.start),
+                        )
+                    },
+                    (cursor.program.raw(), cursor.function),
                     ins.op(),
                 );
-            }
-            #[cfg(feature = "profile-lane-exits")]
-            super::lane_exits::count_general(
-                || {
-                    let body = p.function_get(cursor.function as usize);
-                    format!(
-                        "{} {} @{:?}",
-                        p.source_name,
-                        body.and_then(|body| body.name).map(|atom| p.atoms[atom as usize].to_string()).unwrap_or_default(),
-                        body.and_then(|body| body.source_span).map(|span| span.start),
-                    )
-                },
-                (cursor.program.raw(), cursor.function),
-                ins.op(),
-            );
-            pc += 1;
-            #[cfg(feature = "profile-aggregate")]
-            self.profile.opcode(
-                ins.op() as usize,
-                frame,
-                cursor.program.raw(),
-                cursor.function,
-                instruction_pc,
-            );
-            #[cfg(feature = "profile-aggregate")]
-            self.profile.object_literal_instruction(
-                cursor.program.raw(),
-                cursor.function,
-                instruction_pc,
-                ins.op(),
-            );
-            #[cfg(not(feature = "profile-aggregate"))]
-            self.profile.opcode(ins.op() as usize);
-            // Register/local moves and field cache hits cannot allocate, collect or throw, so they
-            // need neither the published root-map PC nor the general step result.
-            match ins.op() {
-                Op::LoadLocalPlain => {
-                    // SAFETY: validated bytecode bounds the slot by Function.locals.
-                    let value = unsafe { self.read_validated_local(frame, ins.local_slot()) };
-                    self.write(frame, ins.result_register(), value);
-                    continue;
-                }
-                Op::StoreLocalPlain => {
-                    let value = self.read(frame, ins.register_a());
-                    // SAFETY: validated bytecode bounds the slot by Function.locals.
-                    unsafe { self.write_validated_local(frame, ins.local_slot(), value) };
-                    if let Some(register) = ins.optional_register_b() {
-                        self.write(frame, register, value);
-                    }
-                    continue;
-                }
-                Op::Move => {
-                    self.write(
-                        frame,
-                        ins.result_register(),
-                        self.read(frame, ins.register_b()),
-                    );
-                    continue;
-                }
-                Op::LoadConst => {
-                    if let Some(value) = self.active_constant(ins.constant_index()) {
+                pc += 1;
+                #[cfg(feature = "profile-aggregate")]
+                self.profile.opcode(
+                    ins.op() as usize,
+                    frame,
+                    cursor.program.raw(),
+                    cursor.function,
+                    instruction_pc,
+                );
+                #[cfg(feature = "profile-aggregate")]
+                self.profile.object_literal_instruction(
+                    cursor.program.raw(),
+                    cursor.function,
+                    instruction_pc,
+                    ins.op(),
+                );
+                #[cfg(not(feature = "profile-aggregate"))]
+                self.profile.opcode(ins.op() as usize);
+                // Register/local moves and field cache hits cannot allocate, collect or throw, so they
+                // need neither the published root-map PC nor the general step result.
+                match ins.op() {
+                    Op::LoadLocalPlain => {
+                        // SAFETY: validated bytecode bounds the slot by Function.locals.
+                        let value = unsafe { self.read_validated_local(frame, ins.local_slot()) };
                         self.write(frame, ins.result_register(), value);
                         continue;
                     }
-                }
-                Op::LoadCapture => {
-                    if let Some(value) =
-                        self.cached_direct_capture(frame, ins.capture_depth(), ins.capture_slot())
-                    {
-                        self.write(frame, ins.result_register(), value);
+                    Op::StoreLocalPlain => {
+                        let value = self.read(frame, ins.register_a());
+                        // SAFETY: validated bytecode bounds the slot by Function.locals.
+                        unsafe { self.write_validated_local(frame, ins.local_slot(), value) };
+                        if let Some(register) = ins.optional_register_b() {
+                            self.write(frame, register, value);
+                        }
                         continue;
                     }
-                }
-                Op::JumpFalse | Op::JumpTrue => {
-                    // ToBoolean runs no guest code.
-                    let value = self.read(frame, ins.register_a());
-                    let truthy = self.truthy(value);
-                    #[cfg(feature = "profile-aggregate")]
-                    self.profile
-                        .branch_value(value.profile_kind() as usize, truthy);
-                    if truthy == (ins.op() == Op::JumpTrue) {
-                        pc = ins.jump_target() as usize;
-                        if pc <= instruction_pc {
-                            self.note_back_edge(&mut cursor);
-                            self.note_js_general_dispatch_backedge(
-                                p,
-                                frame,
-                                instruction_pc,
-                                pc,
-                            );
+                    Op::Move => {
+                        self.write(
+                            frame,
+                            ins.result_register(),
+                            self.read(frame, ins.register_b()),
+                        );
+                        continue;
+                    }
+                    Op::LoadConst => {
+                        if let Some(value) = self.active_constant(ins.constant_index()) {
+                            self.write(frame, ins.result_register(), value);
+                            continue;
                         }
                     }
-                    continue;
-                }
-                Op::JumpBinaryFalse => {
-                    let operator = ins.binary_operator_field();
-                    if let (Some(left), Some(right)) = (
-                        self.inert_operand(frame, ins.operand_b()),
-                        self.inert_operand(frame, ins.operand_c()),
-                    ) && let Some(truthy) = self
-                        .number_comparison_truthy(operator, left, right)
-                        .or_else(|| self.identity_equality(operator, left, right))
-                        .or_else(|| self.instanceof_truthy(operator, left, right))
-                    {
-                        self.profile.binary(
-                            operator as usize,
-                            ins.operand_b().0,
-                            ins.operand_c().0,
-                        );
-                        if !truthy {
+                    Op::LoadCapture => {
+                        if let Some(value) = self.cached_direct_capture(
+                            frame,
+                            ins.capture_depth(),
+                            ins.capture_slot(),
+                        ) {
+                            self.write(frame, ins.result_register(), value);
+                            continue;
+                        }
+                    }
+                    Op::JumpFalse | Op::JumpTrue => {
+                        // ToBoolean runs no guest code.
+                        let value = self.read(frame, ins.register_a());
+                        let truthy = self.truthy(value);
+                        #[cfg(feature = "profile-aggregate")]
+                        self.profile
+                            .branch_value(value.profile_kind() as usize, truthy);
+                        if truthy == (ins.op() == Op::JumpTrue) {
                             pc = ins.jump_target() as usize;
                             if pc <= instruction_pc {
                                 self.note_back_edge(&mut cursor);
@@ -1900,191 +2095,217 @@ impl<H: Host> Vm<H> {
                         }
                         continue;
                     }
-                }
-                // A cached own-data store writes a slot in place: it neither allocates nor throws.
-                Op::SetField | Op::SetFieldStrict => {
-                    if self.cached_field_write_hit(
-                        p,
-                        self.read(frame, ins.register_b()),
-                        ins.atom_index(),
-                        self.read(frame, ins.register_a()),
-                        ins.cache_site_index(),
-                    ) {
-                        continue;
-                    }
-                }
-                // `this.x = v` with an authoritative `this` is the same cached write.
-                Op::SetThisField | Op::SetThisFieldStrict if self.frames[frame].fixed_this => {
-                    if self.cached_field_write_hit(
-                        p,
-                        self.frames[frame].this,
-                        ins.atom_index(),
-                        self.read(frame, ins.register_a()),
-                        ins.cache_site_index(),
-                    ) {
-                        continue;
-                    }
-                }
-                // Number arithmetic on register or constant operands runs no guest code,
-                // allocates nothing and cannot throw.
-                Op::Binary | Op::NumericAdd | Op::NumericMultiply
-                    if !ins.returns_from_frame()
-                        && let (Some(left), Some(right)) = (
+                    Op::JumpBinaryFalse => {
+                        let operator = ins.binary_operator_field();
+                        if let (Some(left), Some(right)) = (
                             self.inert_operand(frame, ins.operand_b()),
                             self.inert_operand(frame, ins.operand_c()),
-                        )
-                        && let Some(value) =
-                            self.number_binary(ins.binary_operator(), left, right) =>
-                {
-                    self.profile.binary(
-                        ins.binary_operator() as usize,
-                        ins.operand_b().0,
-                        ins.operand_c().0,
-                    );
-                    if let Some(local) = ins.numeric_local_target() {
-                        self.frames[frame].locals[usize::from(local)] = value;
-                        self.profile.virtual_opcode(
-                            self.frames[frame].program.raw(),
-                            Op::StoreLocalPlain as usize,
-                        );
-                    } else {
-                        self.write(frame, ins.result_register(), value);
-                    }
-                    continue;
-                }
-                // Equality decided without conversion, and instanceof reduced to a prototype
-                // walk, run no guest code either.
-                Op::Binary
-                    if !ins.returns_from_frame()
-                        && ins.numeric_local_target().is_none()
-                        && let (Some(left), Some(right)) = (
-                            self.inert_operand(frame, ins.operand_b()),
-                            self.inert_operand(frame, ins.operand_c()),
-                        )
-                        && let Some(equal) = self
-                            .identity_equality(ins.binary_operator(), left, right)
-                            .or_else(|| {
-                                self.instanceof_truthy(ins.binary_operator(), left, right)
-                            }) =>
-                {
-                    self.write(
-                        frame,
-                        ins.result_register(),
-                        if equal { Value::TRUE } else { Value::FALSE },
-                    );
-                    continue;
-                }
-                // A field cache hit reads a data slot, and an array's length is an own data
-                // property: neither allocates nor throws. Anything else takes the general path.
-                // `this` is a base once the activation fixed it, as for `SetThisField`.
-                Op::GetField
-                    if ins.result_flags() == 0
-                        && let Some(crate::bytecode::FieldLookup::Atom {
-                            atom,
-                            base,
-                            cache_site,
-                        }) = ins.field_lookup()
-                        && let Some(object) = match base.register_index() {
-                            Some(register) => Some(self.read(frame, register)),
-                            // A local base (`FieldBase::local`) is the general path's read.
-                            None if base.local_index().is_some() => None,
-                            None => self.frames[frame]
-                                .fixed_this
-                                .then(|| self.frames[frame].this),
-                        } =>
-                {
-                    let value = match self.cached_field_hit(p, object, cache_site) {
-                        super::object::FieldCacheProbe::Hit(value) => Some(value),
-                        super::object::FieldCacheProbe::Ineligible => {
-                            self.array_length_field(object, atom)
+                        ) && let Some(truthy) = self
+                            .number_comparison_truthy(operator, left, right)
+                            .or_else(|| self.identity_equality(operator, left, right))
+                            .or_else(|| self.instanceof_truthy(operator, left, right))
+                        {
+                            self.profile.binary(
+                                operator as usize,
+                                ins.operand_b().0,
+                                ins.operand_c().0,
+                            );
+                            if !truthy {
+                                pc = ins.jump_target() as usize;
+                                if pc <= instruction_pc {
+                                    self.note_back_edge(&mut cursor);
+                                    self.note_js_general_dispatch_backedge(
+                                        p,
+                                        frame,
+                                        instruction_pc,
+                                        pc,
+                                    );
+                                }
+                            }
+                            continue;
                         }
-                        super::object::FieldCacheProbe::OrdinaryMiss => None,
-                    };
-                    if let Some(value) = value {
+                    }
+                    // A cached own-data store writes a slot in place: it neither allocates nor throws.
+                    Op::SetField | Op::SetFieldStrict => {
+                        if self.cached_field_write_hit(
+                            p,
+                            self.read(frame, ins.register_b()),
+                            ins.atom_index(),
+                            self.read(frame, ins.register_a()),
+                            ins.cache_site_index(),
+                        ) {
+                            continue;
+                        }
+                    }
+                    // `this.x = v` with an authoritative `this` is the same cached write.
+                    Op::SetThisField | Op::SetThisFieldStrict if self.frames[frame].fixed_this => {
+                        if self.cached_field_write_hit(
+                            p,
+                            self.frames[frame].this,
+                            ins.atom_index(),
+                            self.read(frame, ins.register_a()),
+                            ins.cache_site_index(),
+                        ) {
+                            continue;
+                        }
+                    }
+                    // Number arithmetic on register or constant operands runs no guest code,
+                    // allocates nothing and cannot throw.
+                    Op::Binary | Op::NumericAdd | Op::NumericMultiply
+                        if !ins.returns_from_frame()
+                            && let (Some(left), Some(right)) = (
+                                self.inert_operand(frame, ins.operand_b()),
+                                self.inert_operand(frame, ins.operand_c()),
+                            )
+                            && let Some(value) =
+                                self.number_binary(ins.binary_operator(), left, right) =>
+                    {
+                        self.profile.binary(
+                            ins.binary_operator() as usize,
+                            ins.operand_b().0,
+                            ins.operand_c().0,
+                        );
+                        if let Some(local) = ins.numeric_local_target() {
+                            self.frames[frame].locals[usize::from(local)] = value;
+                            self.profile.virtual_opcode(
+                                self.frames[frame].program.raw(),
+                                Op::StoreLocalPlain as usize,
+                            );
+                        } else {
+                            self.write(frame, ins.result_register(), value);
+                        }
+                        continue;
+                    }
+                    // Equality decided without conversion, and instanceof reduced to a prototype
+                    // walk, run no guest code either.
+                    Op::Binary
+                        if !ins.returns_from_frame()
+                            && ins.numeric_local_target().is_none()
+                            && let (Some(left), Some(right)) = (
+                                self.inert_operand(frame, ins.operand_b()),
+                                self.inert_operand(frame, ins.operand_c()),
+                            )
+                            && let Some(equal) = self
+                                .identity_equality(ins.binary_operator(), left, right)
+                                .or_else(|| {
+                                    self.instanceof_truthy(ins.binary_operator(), left, right)
+                                }) =>
+                    {
+                        self.write(
+                            frame,
+                            ins.result_register(),
+                            if equal { Value::TRUE } else { Value::FALSE },
+                        );
+                        continue;
+                    }
+                    // A field cache hit reads a data slot, and an array's length is an own data
+                    // property: neither allocates nor throws. Anything else takes the general path.
+                    // `this` is a base once the activation fixed it, as for `SetThisField`.
+                    Op::GetField
+                        if ins.result_flags() == 0
+                            && let Some(crate::bytecode::FieldLookup::Atom {
+                                atom,
+                                base,
+                                cache_site,
+                            }) = ins.field_lookup()
+                            && let Some(object) = match base.register_index() {
+                                Some(register) => Some(self.read(frame, register)),
+                                // A local base (`FieldBase::local`) is the general path's read.
+                                None if base.local_index().is_some() => None,
+                                None => self.frames[frame]
+                                    .fixed_this
+                                    .then(|| self.frames[frame].this),
+                            } =>
+                    {
+                        let value = match self.cached_field_hit(p, object, cache_site) {
+                            super::object::FieldCacheProbe::Hit(value) => Some(value),
+                            super::object::FieldCacheProbe::Ineligible => {
+                                self.array_length_field(object, atom)
+                            }
+                            super::object::FieldCacheProbe::OrdinaryMiss => None,
+                        };
+                        if let Some(value) = value {
+                            self.write(frame, ins.result_register(), value);
+                            continue;
+                        }
+                    }
+                    // A present dense array element is a data property (accessor indices are
+                    // stored as holes): reading it, or replacing it in an array without indexed
+                    // descriptors or frozen state, runs no guest code and cannot throw.
+                    Op::GetIndex
+                        if let (Some(base), Some(key)) = (
+                            self.inert_operand(frame, ins.operand_b()),
+                            self.inert_operand(frame, ins.operand_c()),
+                        ) && let Some(value) = self.dense_array_element(base, key) =>
+                    {
                         self.write(frame, ins.result_register(), value);
                         continue;
                     }
-                }
-                // A present dense array element is a data property (accessor indices are
-                // stored as holes): reading it, or replacing it in an array without indexed
-                // descriptors or frozen state, runs no guest code and cannot throw.
-                Op::GetIndex
-                    if let (Some(base), Some(key)) = (
-                        self.inert_operand(frame, ins.operand_b()),
-                        self.inert_operand(frame, ins.operand_c()),
-                    ) && let Some(value) = self.dense_array_element(base, key) =>
-                {
-                    self.write(frame, ins.result_register(), value);
-                    continue;
-                }
-                Op::SetIndex => {
-                    let (object, key) = (
-                        self.read(frame, ins.register_b()),
-                        self.read(frame, ins.register_c()),
-                    );
-                    if self.try_replace_dense_element(
-                        object,
-                        key,
-                        self.read(frame, ins.register_a()),
-                    ) {
+                    Op::SetIndex => {
+                        let (object, key) = (
+                            self.read(frame, ins.register_b()),
+                            self.read(frame, ins.register_c()),
+                        );
+                        if self.try_replace_dense_element(
+                            object,
+                            key,
+                            self.read(frame, ins.register_a()),
+                        ) {
+                            continue;
+                        }
+                    }
+                    // Number increments and conversions of Numbers run no guest code, allocate
+                    // nothing and cannot throw.
+                    Op::IncDec
+                        if let Some(value) = super::dispatch::number_increment(
+                            self.read(frame, ins.register_b()),
+                            ins.boolean_flag().expect("validated boolean immediate"),
+                        ) =>
+                    {
+                        self.write(frame, ins.result_register(), value);
                         continue;
                     }
-                }
-                // Number increments and conversions of Numbers run no guest code, allocate
-                // nothing and cannot throw.
-                Op::IncDec
-                    if let Some(value) = super::dispatch::number_increment(
-                        self.read(frame, ins.register_b()),
-                        ins.boolean_flag().expect("validated boolean immediate"),
-                    ) =>
-                {
-                    self.write(frame, ins.result_register(), value);
-                    continue;
-                }
-                Op::ToNumeric if self.read(frame, ins.register_b()).as_number().is_some() => {
-                    self.write(
-                        frame,
-                        ins.result_register(),
-                        self.read(frame, ins.register_b()),
-                    );
-                    continue;
-                }
-                // A back edge collects only once the allocation threshold is reached.
-                Op::Jump if !self.heap.should_collect() => {
-                    pc = ins.jump_target() as usize;
-                    if pc <= instruction_pc {
-                        self.note_back_edge(&mut cursor);
-                        self.note_js_general_dispatch_backedge(
-                            p,
+                    Op::ToNumeric if self.read(frame, ins.register_b()).as_number().is_some() => {
+                        self.write(
                             frame,
-                            instruction_pc,
-                            pc,
+                            ins.result_register(),
+                            self.read(frame, ins.register_b()),
                         );
+                        continue;
                     }
-                    continue;
-                }
-                _ => {}
-            }
-            // GC inside a getter or native operation needs this instruction's root map.
-            // SAFETY: `frame` names the active activation, which stays on the frame stack
-            // for every iteration that dispatches it.
-            debug_assert!(std::ptr::eq(published_pc, &self.frames[frame].pc));
-            unsafe { *published_pc = instruction_pc };
-            self.frames[frame].pc_is_resume = false;
-            // Returns and inline calls produce their step result here rather than through the
-            // general `step` dispatch.
-            match ins.op() {
-                // A call the lane made returned its callee's completion from this frame.
-                _ if let Some(value) = self.lane_returned.take() => Ok(StepResult::Return(value)),
-                Op::Return => Ok(StepResult::Return(self.read(frame, ins.register_a()))),
-                Op::Call if allow_inline_calls => {
-                    match self.try_inline_user_call(p, frame, ins, pc) {
-                        Some(result) => result,
-                        None => self.step(p, frame, ins, &mut pc, allow_inline_calls),
+                    // A back edge collects only once the allocation threshold is reached.
+                    Op::Jump if !self.heap.should_collect() => {
+                        pc = ins.jump_target() as usize;
+                        if pc <= instruction_pc {
+                            self.note_back_edge(&mut cursor);
+                            self.note_js_general_dispatch_backedge(p, frame, instruction_pc, pc);
+                        }
+                        continue;
                     }
+                    _ => {}
                 }
-                _ => self.step(p, frame, ins, &mut pc, allow_inline_calls),
-            }
+                // GC inside a getter or native operation needs this instruction's root map.
+                // SAFETY: `frame` names the active activation, which stays on the frame stack
+                // for every iteration that dispatches it.
+                debug_assert!(std::ptr::eq(published_pc, &self.frames[frame].pc));
+                unsafe { *published_pc = instruction_pc };
+                self.frames[frame].pc_is_resume = false;
+                // Returns and inline calls produce their step result here rather than through the
+                // general `step` dispatch.
+                match ins.op() {
+                    // A call the lane made returned its callee's completion from this frame.
+                    _ if let Some(value) = self.lane_returned.take() => {
+                        Ok(StepResult::Return(value))
+                    }
+                    Op::Return => Ok(StepResult::Return(self.read(frame, ins.register_a()))),
+                    Op::Call if allow_inline_calls => {
+                        match self.try_inline_user_call(p, frame, ins, pc) {
+                            Some(result) => result,
+                            None => self.step(p, frame, ins, &mut pc, allow_inline_calls),
+                        }
+                    }
+                    _ => self.step(p, frame, ins, &mut pc, allow_inline_calls),
+                }
             };
             match step {
                 Ok(StepResult::Return(mut value)) => {
@@ -2104,73 +2325,76 @@ impl<H: Host> Vm<H> {
                     }
                     let mut settle_error = None;
                     loop {
-                    if let Some(mut pending) = pending_calls.pop() {
-                        debug_assert_eq!(frame, pending.caller + 1);
-                        let completed_frame = self.frames.pop().unwrap();
-                        self.finish_frame_scopes(&completed_frame);
-                        // JavaScript in-loop pushes exclude the script root. Wasm calls
-                        // share this return path and may enter defined function zero.
-                        debug_assert!(
-                            completed_frame.function != super::ROOT_FUNCTION_ID
-                                || self
-                                    .programs
-                                    .wasm_function_signature(
-                                        completed_frame.program,
-                                        completed_frame.function,
-                                    )
-                                    .is_some()
-                        );
-                        self.pool_frame(completed_frame);
-                        frame = pending.caller;
-                        if let Some(saved) = pending.caller_program.take() {
-                            executing_program = saved.id;
-                            current_program = saved.retained;
-                            executing_residual = current_program.as_deref().unwrap_or(entry_program);
-                            self.set_active_program(executing_program);
-                        }
-                        self.active_registers = self.frames[frame].registers.as_mut_ptr();
-                        // [[Construct]] of an ordinary constructor yields its returned object,
-                        // otherwise the receiver it allocated.
-                        value = match pending.construct_this {
-                            Some(this) if !self.is_object_like(value) => this,
-                            _ => value,
-                        };
-                        if let Some(root) = pending.settles {
-                            let promise = self.release_settled_call_root(root);
-                            // SAFETY: as for `p` at the top of the loop.
-                            let caller_code = unsafe { &*executing_residual };
-                            if let Err(error) = self.promise_resolve_value(caller_code, promise, value) {
-                                settle_error = Some((pending.call_pc, error));
+                        if let Some(mut pending) = pending_calls.pop() {
+                            debug_assert_eq!(frame, pending.caller + 1);
+                            let completed_frame = self.frames.pop().unwrap();
+                            self.finish_frame_scopes(&completed_frame);
+                            // JavaScript in-loop pushes exclude the script root. Wasm calls
+                            // share this return path and may enter defined function zero.
+                            debug_assert!(
+                                completed_frame.function != super::ROOT_FUNCTION_ID
+                                    || self
+                                        .programs
+                                        .wasm_function_signature(
+                                            completed_frame.program,
+                                            completed_frame.function,
+                                        )
+                                        .is_some()
+                            );
+                            self.pool_frame(completed_frame);
+                            frame = pending.caller;
+                            if let Some(saved) = pending.caller_program.take() {
+                                executing_program = saved.id;
+                                current_program = saved.retained;
+                                executing_residual =
+                                    current_program.as_deref().unwrap_or(entry_program);
+                                self.set_active_program(executing_program);
                             }
-                            value = promise;
-                        }
-                        pc = self.frames[frame].pc;
-                        cursor = pending.caller_cursor.unwrap_or_else(|| {
-                            self.general_cursor(
-                                executing_program,
+                            self.active_registers = self.frames[frame].registers.as_mut_ptr();
+                            // [[Construct]] of an ordinary constructor yields its returned object,
+                            // otherwise the receiver it allocated.
+                            value = match pending.construct_this {
+                                Some(this) if !self.is_object_like(value) => this,
+                                _ => value,
+                            };
+                            if let Some(root) = pending.settles {
+                                let promise = self.release_settled_call_root(root);
                                 // SAFETY: as for `p` at the top of the loop.
-                                unsafe { &*executing_residual },
-                                self.frames[frame].function,
-                                fast_lane,
-                            )
-                        });
-                        published_pc = &mut self.frames[frame].pc;
-                        drop(pending.call_guard);
-                        if let Some((call_pc, error)) = settle_error.take() {
-                            unwind_at!(call_pc, error);
+                                let caller_code = unsafe { &*executing_residual };
+                                if let Err(error) =
+                                    self.promise_resolve_value(caller_code, promise, value)
+                                {
+                                    settle_error = Some((pending.call_pc, error));
+                                }
+                                value = promise;
+                            }
+                            pc = self.frames[frame].pc;
+                            cursor = pending.caller_cursor.unwrap_or_else(|| {
+                                self.general_cursor(
+                                    executing_program,
+                                    // SAFETY: as for `p` at the top of the loop.
+                                    unsafe { &*executing_residual },
+                                    self.frames[frame].function,
+                                    fast_lane,
+                                )
+                            });
+                            published_pc = &mut self.frames[frame].pc;
+                            drop(pending.call_guard);
+                            if let Some((call_pc, error)) = settle_error.take() {
+                                unwind_at!(call_pc, error);
+                                break;
+                            }
+                            if pending.returns {
+                                continue;
+                            }
+                            self.write(frame, pending.destination, value);
                             break;
                         }
-                        if pending.returns {
-                            continue;
-                        }
-                        self.write(frame, pending.destination, value);
-                        break;
+                        self.frames[frame].pc = pc;
+                        self.frames[frame].pc_is_resume = true;
+                        return Ok(FrameOutcome::Complete(value));
                     }
-                    self.frames[frame].pc = pc;
-                    self.frames[frame].pc_is_resume = true;
-                    return Ok(FrameOutcome::Complete(value));
-                    }
-                },
+                }
                 Ok(StepResult::Continue) => {}
                 Ok(StepResult::PushFrame {
                     destination,
@@ -2184,9 +2408,10 @@ impl<H: Host> Vm<H> {
                     let caller_program = if callee_program == executing_program {
                         None
                     } else {
-                        let retained = self.programs.get(callee_program).ok_or_else(|| {
-                            JsError::validation("missing callee program".into())
-                        })?;
+                        let retained = self
+                            .programs
+                            .get(callee_program)
+                            .ok_or_else(|| JsError::validation("missing callee program".into()))?;
                         let saved = SavedProgram {
                             id: executing_program,
                             retained: current_program.replace(retained),
@@ -2356,7 +2581,9 @@ impl<H: Host> Vm<H> {
         throwing_pc: u32,
         error: JsError,
     ) -> Result<usize, JsError> {
-        if error.is_execution_terminated() { return Err(error); }
+        if error.is_execution_terminated() {
+            return Err(error);
+        }
         let wasm = program.kind == crate::bytecode::ProgramKind::Wasm;
         // Wasm catches Wasm exceptions and JavaScript ones (`catch_all`, or
         // `WebAssembly.JSTag`), never a trap or a link failure.

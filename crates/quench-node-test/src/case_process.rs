@@ -99,7 +99,8 @@ pub fn worker_entry(arguments: &[String]) -> Option<ExitCode> {
                     use std::os::unix::process::CommandExt;
                     let current = std::env::current_exe().and_then(std::fs::canonicalize);
                     let selected = std::fs::canonicalize(&executable);
-                    if matches!((&current, &selected), (Ok(current), Ok(selected)) if current == selected) {
+                    if matches!((&current, &selected), (Ok(current), Ok(selected)) if current == selected)
+                    {
                         eprintln!("{NODE_TEST_EXECUTABLE_ENV} must select a distinct CLI");
                         return Some(ExitCode::from(2));
                     }
@@ -349,13 +350,19 @@ const NANOS_PER_MICRO: u32 = 1_000;
 
 /// Reap `child` if it has exited, recording its peak RSS.
 #[cfg(target_os = "linux")]
-fn try_wait(child: &mut std::process::Child, usage: &mut Option<ResourceUsage>) -> std::io::Result<Option<std::process::ExitStatus>> {
+fn try_wait(
+    child: &mut std::process::Child,
+    usage: &mut Option<ResourceUsage>,
+) -> std::io::Result<Option<std::process::ExitStatus>> {
     reap(child, libc::WNOHANG, usage)
 }
 
 /// Reap `child`, blocking until it exits, recording its peak RSS.
 #[cfg(target_os = "linux")]
-fn wait(child: &mut std::process::Child, usage: &mut Option<ResourceUsage>) -> std::io::Result<std::process::ExitStatus> {
+fn wait(
+    child: &mut std::process::Child,
+    usage: &mut Option<ResourceUsage>,
+) -> std::io::Result<std::process::ExitStatus> {
     loop {
         if let Some(status) = reap(child, 0, usage)? {
             return Ok(status);
@@ -364,7 +371,11 @@ fn wait(child: &mut std::process::Child, usage: &mut Option<ResourceUsage>) -> s
 }
 
 #[cfg(target_os = "linux")]
-fn reap(child: &mut std::process::Child, options: libc::c_int, observed: &mut Option<ResourceUsage>) -> std::io::Result<Option<std::process::ExitStatus>> {
+fn reap(
+    child: &mut std::process::Child,
+    options: libc::c_int,
+    observed: &mut Option<ResourceUsage>,
+) -> std::io::Result<Option<std::process::ExitStatus>> {
     use std::os::unix::process::ExitStatusExt;
     let mut status = 0;
     // SAFETY: zeroed rusage is a valid output buffer for wait4.
@@ -378,22 +389,30 @@ fn reap(child: &mut std::process::Child, options: libc::c_int, observed: &mut Op
             let time = |time: libc::timeval| {
                 Duration::new(time.tv_sec as u64, (time.tv_usec as u32) * NANOS_PER_MICRO)
             };
-            *observed = u64::try_from(usage.ru_maxrss).ok().map(|kib| ResourceUsage {
-                peak_rss_bytes: kib * MAXRSS_UNIT_BYTES,
-                cpu: time(usage.ru_utime) + time(usage.ru_stime),
-            });
+            *observed = u64::try_from(usage.ru_maxrss)
+                .ok()
+                .map(|kib| ResourceUsage {
+                    peak_rss_bytes: kib * MAXRSS_UNIT_BYTES,
+                    cpu: time(usage.ru_utime) + time(usage.ru_stime),
+                });
             Ok(Some(std::process::ExitStatus::from_raw(status)))
         }
     }
 }
 
 #[cfg(not(target_os = "linux"))]
-fn try_wait(child: &mut std::process::Child, _: &mut Option<ResourceUsage>) -> std::io::Result<Option<std::process::ExitStatus>> {
+fn try_wait(
+    child: &mut std::process::Child,
+    _: &mut Option<ResourceUsage>,
+) -> std::io::Result<Option<std::process::ExitStatus>> {
     child.try_wait()
 }
 
 #[cfg(not(target_os = "linux"))]
-fn wait(child: &mut std::process::Child, _: &mut Option<ResourceUsage>) -> std::io::Result<std::process::ExitStatus> {
+fn wait(
+    child: &mut std::process::Child,
+    _: &mut Option<ResourceUsage>,
+) -> std::io::Result<std::process::ExitStatus> {
     child.wait()
 }
 

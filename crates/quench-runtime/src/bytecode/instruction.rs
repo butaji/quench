@@ -50,7 +50,8 @@ impl WideInstruction {
         match self.op() {
             Op::ResolveName => self.boolean_field(InstructionField::B) != Some(true),
             op if op.is_call_with_eval_flags() => {
-                ImmediateLayout::direct_eval(self.imm()) || ImmediateLayout::parameter_eval(self.imm())
+                ImmediateLayout::direct_eval(self.imm())
+                    || ImmediateLayout::parameter_eval(self.imm())
             }
             _ => false,
         }

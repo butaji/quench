@@ -74,18 +74,27 @@ impl<H: Host> Vm<H> {
         let key = PropertyKey::symbol(self.well_known_symbols.get(WellKnownSymbol::Species)?);
         if let Some(slot) = self.property_shape_slot(shape, key)
             && !self.shape_is_dictionary(shape)
-            && self.shape_slot_attributes(shape, slot).is_some_and(ShapeAttributes::slot_getter)
+            && self
+                .shape_slot_attributes(shape, slot)
+                .is_some_and(ShapeAttributes::slot_getter)
         {
-            self.species_slot_proof.set(Some(SpeciesSlotProof { shape, epoch, slot }));
+            self.species_slot_proof
+                .set(Some(SpeciesSlotProof { shape, epoch, slot }));
         }
         self.property_attributes(constructor, key)
             .and_then(|attributes| attributes.getter.filter(|_| attributes.accessor))
     }
 
-    pub(super) fn diagnostic_own_property(&self, object: Value, key: PropertyKey) -> DiagnosticProperty {
+    pub(super) fn diagnostic_own_property(
+        &self,
+        object: Value,
+        key: PropertyKey,
+    ) -> DiagnosticProperty {
         if self.default_function_name_info(object, key)
             || self.proxy_parts(object).is_some()
-            || self.property_attributes(object, key).is_some_and(|attributes| attributes.accessor)
+            || self
+                .property_attributes(object, key)
+                .is_some_and(|attributes| attributes.accessor)
         {
             return DiagnosticProperty::Blocked;
         }
@@ -98,7 +107,11 @@ impl<H: Host> Vm<H> {
     }
 
     /// Inspect data properties for diagnostics without invoking accessors or Proxy traps.
-    pub(super) fn diagnostic_data_property(&self, mut object: Value, key: PropertyKey) -> Option<Value> {
+    pub(super) fn diagnostic_data_property(
+        &self,
+        mut object: Value,
+        key: PropertyKey,
+    ) -> Option<Value> {
         loop {
             let data = self.object_data(object)?;
             match self.diagnostic_own_property(object, key) {
@@ -107,19 +120,35 @@ impl<H: Host> Vm<H> {
                 DiagnosticProperty::Absent => {}
             }
             object = data.proto();
-            if object.is_null() { return None; }
+            if object.is_null() {
+                return None;
+            }
         }
     }
 
-    pub(super) fn nullish_property_error(&mut self, p: &ResidualProgram, object: Value, property: Option<&str>) -> JsError {
-        let kind = if object.is_null() { "null" } else { "undefined" };
-        let message = match property { Some(property) => format!("Cannot read properties of {kind} (reading '{property}')"), None => format!("Cannot read properties of {kind}") };
+    pub(super) fn nullish_property_error(
+        &mut self,
+        p: &ResidualProgram,
+        object: Value,
+        property: Option<&str>,
+    ) -> JsError {
+        let kind = if object.is_null() {
+            "null"
+        } else {
+            "undefined"
+        };
+        let message = match property {
+            Some(property) => format!("Cannot read properties of {kind} (reading '{property}')"),
+            None => format!("Cannot read properties of {kind}"),
+        };
         self.type_error(p, message)
     }
 
     pub(super) fn module_binding_value(&self, object: Value, atom: Atom) -> Option<Value> {
         let (program, slot) = self.object_data(object)?.module_binding(atom)?;
-        if let Some(value) = self.module_import_value(program, super::ROOT_FUNCTION_ID, usize::from(slot)) {
+        if let Some(value) =
+            self.module_import_value(program, super::ROOT_FUNCTION_ID, usize::from(slot))
+        {
             return Some(value);
         }
         let environment = self.programs.module_environment(program)?;
@@ -161,9 +190,7 @@ impl<H: Host> Vm<H> {
         property: PropertyKey,
     ) -> Result<Value, JsError> {
         match property {
-            PropertyKey::String(atom) if !self.is_private_name(atom) => {
-                Ok(self.atom_string(atom))
-            }
+            PropertyKey::String(atom) if !self.is_private_name(atom) => Ok(self.atom_string(atom)),
             PropertyKey::Symbol(key) => Ok(key),
             PropertyKey::String(_) | PropertyKey::Private(_) => {
                 Err(self.type_error(p, "private member is not present on this object".into()))
@@ -317,13 +344,25 @@ impl<H: Host> Vm<H> {
                 let receiver = self.heap.root_value(receiver).unwrap();
                 let value = self.heap.root_value(value).unwrap();
                 if let Some((inner, handler)) = self.proxy_parts(delegate_target) {
-                    return self.proxy_set_mode(p, inner, handler, receiver, property, value, strict);
+                    return self
+                        .proxy_set_mode(p, inner, handler, receiver, property, value, strict);
                 }
                 return match property {
                     PropertyKey::String(atom) => {
-                        let written = self.set_property_with_receiver(p, delegate_target, atom, value, receiver)?;
+                        let written = self.set_property_with_receiver(
+                            p,
+                            delegate_target,
+                            atom,
+                            value,
+                            receiver,
+                        )?;
                         if !written && strict {
-                            return Err(self.rejected_assignment_error(p, self.heap.root_value(target).unwrap(), atom, true));
+                            return Err(self.rejected_assignment_error(
+                                p,
+                                self.heap.root_value(target).unwrap(),
+                                atom,
+                                true,
+                            ));
                         }
                         Ok(written)
                     }
@@ -354,7 +393,10 @@ impl<H: Host> Vm<H> {
             if !self.truthy(result) {
                 if strict {
                     let property = self.detail_string(self.heap.root_value(key).unwrap());
-                    return Err(self.type_error(p, format!("'set' on proxy: trap returned falsish for property '{property}'")));
+                    return Err(self.type_error(
+                        p,
+                        format!("'set' on proxy: trap returned falsish for property '{property}'"),
+                    ));
                 }
                 return Ok(false);
             }
@@ -399,14 +441,20 @@ impl<H: Host> Vm<H> {
         receiver: Value,
     ) -> Result<Value, JsError> {
         if self.is_host_private_symbol(key) {
-            if matches!(self.heap.get(object), Some(Cell::Proxy { .. })) { return Ok(Value::UNDEFINED); }
-            let Some((value, attributes)) = self.ordinary_own_property(p, object, key)? else { return Ok(Value::UNDEFINED); };
+            if matches!(self.heap.get(object), Some(Cell::Proxy { .. })) {
+                return Ok(Value::UNDEFINED);
+            }
+            let Some((value, attributes)) = self.ordinary_own_property(p, object, key)? else {
+                return Ok(Value::UNDEFINED);
+            };
             return if attributes.accessor {
                 match attributes.getter.filter(|value| !value.is_undefined()) {
                     Some(getter) => self.call_value(p, getter, receiver, &[]),
                     None => Ok(Value::UNDEFINED),
                 }
-            } else { Ok(value) };
+            } else {
+                Ok(value)
+            };
         }
         if object == receiver
             && let Some(value) = self.plain_property_get(object, PropertyKey::symbol(key))
@@ -455,7 +503,7 @@ impl<H: Host> Vm<H> {
         self.get_property_with_receiver(p, object, atom, object)
     }
 
-/// `[[Get]]` of a string key along a chain of ordinary objects, decided by shape facts
+    /// `[[Get]]` of a string key along a chain of ordinary objects, decided by shape facts
     /// alone: the nearest data property's value, or `undefined` past the chain's end. `None`
     /// leaves accessors (lazy properties among them), exotic and namespace objects, Proxies
     /// and private, index, `length` or legacy function keys to the general path.
@@ -516,11 +564,19 @@ impl<H: Host> Vm<H> {
         if !self.ordinary_index_chain(object) {
             return None;
         }
-        self.plain_property_get(object, PropertyKey::string(self.lookup_array_index_atom(index)?))
+        self.plain_property_get(
+            object,
+            PropertyKey::string(self.lookup_array_index_atom(index)?),
+        )
     }
 
     /// `set_plain_named_property` of array index `index` on a chain `plain_index_get` reads.
-    pub(super) fn set_plain_index_property(&mut self, object: Value, index: usize, value: Value) -> Option<()> {
+    pub(super) fn set_plain_index_property(
+        &mut self,
+        object: Value,
+        index: usize,
+        value: Value,
+    ) -> Option<()> {
         if !self.ordinary_index_chain(object) {
             return None;
         }
@@ -582,7 +638,12 @@ impl<H: Host> Vm<H> {
     /// A keyed `[[Set]]` of a string naming an existing atom, made as
     /// `set_plain_named_property` makes the named one; `false` leaves the write, and any key
     /// that function refuses, to the general path, which interns a new name.
-    pub(super) fn try_plain_string_key_set(&mut self, object: Value, key: Value, value: Value) -> bool {
+    pub(super) fn try_plain_string_key_set(
+        &mut self,
+        object: Value,
+        key: Value,
+        value: Value,
+    ) -> bool {
         let Some(atom) = self.lookup_string_atom(key) else {
             return false;
         };
@@ -632,10 +693,17 @@ impl<H: Host> Vm<H> {
     /// A symbol-keyed read at lane site `site` (a record's address) of the own data slot its
     /// site entry names for `object`'s shape (`SymbolLoadProofs::site_own_slot`).
     #[inline(always)]
-    pub(super) fn site_symbol_own_read(&self, site: usize, object: Value, key: Value) -> Option<Value> {
+    pub(super) fn site_symbol_own_read(
+        &self,
+        site: usize,
+        object: Value,
+        key: Value,
+    ) -> Option<Value> {
         let data = self.heap.ordinary_object(object)?;
         let epoch = crate::heap::prototype_layout_epoch();
-        let slot = self.symbol_load_proofs.site_own_slot(site, data.shape(), key, epoch)?;
+        let slot = self
+            .symbol_load_proofs
+            .site_own_slot(site, data.shape(), key, epoch)?;
         // SAFETY: the entry copies a proof's own data slot of this shape.
         Some(unsafe { self.heap.property_get_unchecked(data, slot as usize) })
     }
@@ -648,7 +716,8 @@ impl<H: Host> Vm<H> {
         }
         if let Some(data) = self.heap.ordinary_object(object) {
             let epoch = crate::heap::prototype_layout_epoch();
-            self.symbol_load_proofs.record_site_own_slot(site, data.shape(), key, epoch);
+            self.symbol_load_proofs
+                .record_site_own_slot(site, data.shape(), key, epoch);
         }
     }
 
@@ -678,17 +747,23 @@ impl<H: Host> Vm<H> {
             Some(SymbolLoadAnswer::Own(slot)) => {
                 return Some(unsafe { self.heap.property_get_unchecked(data, slot as usize) });
             }
-            Some(SymbolLoadAnswer::Inherited { prototype, holder, slot })
-                if inherits && data.proto() == prototype =>
-            {
+            Some(SymbolLoadAnswer::Inherited {
+                prototype,
+                holder,
+                slot,
+            }) if inherits && data.proto() == prototype => {
                 let holder = self.heap.ordinary_object(holder)?;
                 // SAFETY: the proof keeps the holder and the shape its slot was recorded in.
                 return unsafe { self.heap.property_get_shaped(holder, slot as usize) };
             }
-            Some(SymbolLoadAnswer::Absent { prototype }) if inherits && data.proto() == prototype => {
+            Some(SymbolLoadAnswer::Absent { prototype })
+                if inherits && data.proto() == prototype =>
+            {
                 return Some(Value::UNDEFINED);
             }
-            Some(SymbolLoadAnswer::Getter { prototype, .. }) if inherits && data.proto() == prototype => {
+            Some(SymbolLoadAnswer::Getter { prototype, .. })
+                if inherits && data.proto() == prototype =>
+            {
                 return None;
             }
             _ => {}
@@ -702,10 +777,15 @@ impl<H: Host> Vm<H> {
         use super::symbol_load_proof::SymbolLoadAnswer;
         let data = self.heap.ordinary_object(object)?;
         let epoch = crate::heap::prototype_layout_epoch();
-        match self.symbol_load_proofs.answer(data.shape(), PropertyKey::symbol(key), epoch)? {
-            SymbolLoadAnswer::Getter { prototype, holder, slot }
-                if !data.has_side_descriptors() && data.proto() == prototype =>
-            {
+        match self
+            .symbol_load_proofs
+            .answer(data.shape(), PropertyKey::symbol(key), epoch)?
+        {
+            SymbolLoadAnswer::Getter {
+                prototype,
+                holder,
+                slot,
+            } if !data.has_side_descriptors() && data.proto() == prototype => {
                 self.slot_attributes(self.heap.ordinary_object(holder)?, slot as usize)?
                     .getter
             }
@@ -746,8 +826,14 @@ impl<H: Host> Vm<H> {
             if let Some(slot) = self.property_shape_slot(link_shape, symbol) {
                 let accessors = self.shape_may_have_accessors(link_shape);
                 if accessors && self.slot_attributes(link, slot)?.accessor {
-                    if depth > 0 && let Ok(slot) = u32::try_from(slot) {
-                        let getter = SymbolLoadAnswer::Getter { prototype, holder: current, slot };
+                    if depth > 0
+                        && let Ok(slot) = u32::try_from(slot)
+                    {
+                        let getter = SymbolLoadAnswer::Getter {
+                            prototype,
+                            holder: current,
+                            slot,
+                        };
                         self.prove_symbol_chain(shape, key, epoch, prototype, depth, getter);
                     }
                     return None;
@@ -762,7 +848,11 @@ impl<H: Host> Vm<H> {
                 let answer = if depth == 0 {
                     SymbolLoadAnswer::Own(slot)
                 } else {
-                    SymbolLoadAnswer::Inherited { prototype, holder: current, slot }
+                    SymbolLoadAnswer::Inherited {
+                        prototype,
+                        holder: current,
+                        slot,
+                    }
                 };
                 break (answer, value);
             }
@@ -824,7 +914,9 @@ impl<H: Host> Vm<H> {
         loop {
             let data = match self.heap.ordinary_object(current) {
                 Some(data) => data,
-                None if symbol && self.heap.array(current).is_some() => self.heap.object(current)?,
+                None if symbol && self.heap.array(current).is_some() => {
+                    self.heap.object(current)?
+                }
                 None => return None,
             };
             if data.is_module_namespace() || data.deferred_module().is_some() {
@@ -832,7 +924,9 @@ impl<H: Host> Vm<H> {
             }
             let shape = data.shape();
             if let Some(slot) = self.property_shape_slot(shape, key) {
-                if self.shape_may_have_accessors(shape) && self.slot_attributes(data, slot)?.accessor {
+                if self.shape_may_have_accessors(shape)
+                    && self.slot_attributes(data, slot)?.accessor
+                {
                     return None;
                 }
                 return self.heap.property_get(data, slot).map(Some);
@@ -928,7 +1022,9 @@ impl<H: Host> Vm<H> {
         )?;
         if private_name {
             self.check_private_brand(p, private_target, atom)?;
-            if let Some(value) = self.private_field_value(p, private_target, atom) { return Ok(value); }
+            if let Some(value) = self.private_field_value(p, private_target, atom) {
+                return Ok(value);
+            }
         }
         loop {
             self.evaluate_deferred_namespace_for_key(
@@ -1014,10 +1110,11 @@ impl<H: Host> Vm<H> {
                     Some(Cell::ArrayBuffer { object: x, .. }) => object = x.proto(),
                     Some(Cell::TypedArray { object: x, .. }) => object = x.proto(),
                     Some(Cell::DataView { object: x, .. }) => object = x.proto(),
-                    _ if let Some(v) = self.heap.string(object)  => {
+                    _ if let Some(v) = self.heap.string(object) => {
                         let length = v.len();
                         if self.atom_class(atom).contains(AtomClass::ARRAY_INDEX)
-                            && let Some(index) = super::object_static::array_index(self.atom_name(atom))
+                            && let Some(index) =
+                                super::object_static::array_index(self.atom_name(atom))
                             && let Some(unit) = self.string_index_value(object, index as usize)
                         {
                             return Ok(unit);
@@ -1036,9 +1133,7 @@ impl<H: Host> Vm<H> {
                             "description" => {
                                 return Ok(description
                                     .as_ref()
-                                    .map(|value| {
-                                        self.heap.alloc_string(value.as_ref().into())
-                                    })
+                                    .map(|value| self.heap.alloc_string(value.as_ref().into()))
                                     .unwrap_or(Value::UNDEFINED));
                             }
                             "toString" => return Ok(self.native_value(Native::SymbolToString)),
@@ -1107,9 +1202,15 @@ impl<H: Host> Vm<H> {
     /// The value of private field `atom` of `target` under the running frame's home for the
     /// name. A target without the field, or whose element is a method or accessor, answers
     /// `None`, leaving the access to the general path, which throws or calls it.
-    pub(super) fn private_field_value(&mut self, p: &ResidualProgram, target: Value, atom: Atom) -> Option<Value> {
+    pub(super) fn private_field_value(
+        &mut self,
+        p: &ResidualProgram,
+        target: Value,
+        atom: Atom,
+    ) -> Option<Value> {
         let home = self.private_name_home(p, atom)?;
-        self.object_data(target)?.private_field(PrivateBrand { home, name: atom })
+        self.object_data(target)?
+            .private_field(PrivateBrand { home, name: atom })
     }
 
     /// The private brand of `atom` that function `function` of the running program, whose
@@ -1125,10 +1226,20 @@ impl<H: Host> Vm<H> {
         function: u32,
         atom: Atom,
     ) -> Option<PrivateBrand> {
-        let body = p.function_get(function as usize).filter(|body| body.binding_sites.is_empty())?;
-        let key = PrivateHomeKey { environment, program: self.active_program, function, name: atom };
+        let body = p
+            .function_get(function as usize)
+            .filter(|body| body.binding_sites.is_empty())?;
+        let key = PrivateHomeKey {
+            environment,
+            program: self.active_program,
+            function,
+            name: atom,
+        };
         if let Some(home) = self.private_homes.get(&key) {
-            return Some(PrivateBrand { home: *home, name: atom });
+            return Some(PrivateBrand {
+                home: *home,
+                name: atom,
+            });
         }
         let binding = body
             .name_bindings
@@ -1138,7 +1249,10 @@ impl<H: Host> Vm<H> {
             return None;
         };
         let (slots, root) = self.environment_capture_slots(environment, false, depth)?;
-        Some(PrivateBrand { home: self.owned_capture(slots, root, slot)?, name: atom })
+        Some(PrivateBrand {
+            home: self.owned_capture(slots, root, slot)?,
+            name: atom,
+        })
     }
 
     /// The private brand of `atom` at lane site `site` of `function`, whose frame captures
@@ -1160,12 +1274,18 @@ impl<H: Host> Vm<H> {
             return Some(PrivateBrand { home, name: atom });
         }
         let brand = if frame {
-            PrivateBrand { home: self.private_name_home(p, atom)?, name: atom }
+            PrivateBrand {
+                home: self.private_name_home(p, atom)?,
+                name: atom,
+            }
         } else {
             self.memoized_private_brand(p, environment, function, atom)?
         };
-        if p.function_get(function as usize).is_some_and(|body| body.binding_sites.is_empty()) {
-            self.private_site_homes.record(site, environment, epoch, brand.home);
+        if p.function_get(function as usize)
+            .is_some_and(|body| body.binding_sites.is_empty())
+        {
+            self.private_site_homes
+                .record(site, environment, epoch, brand.home);
         }
         Some(brand)
     }
@@ -1203,7 +1323,8 @@ impl<H: Host> Vm<H> {
                 return None;
             }
         };
-        self.private_site_homes.record_element(site, epoch, brand.home, element);
+        self.private_site_homes
+            .record_element(site, epoch, brand.home, element);
         Some(element)
     }
 
@@ -1223,25 +1344,49 @@ impl<H: Host> Vm<H> {
     /// The store of private field `atom` of `target` under the running frame's home for the
     /// name: `false` for a target without the field, or whose element is a method or
     /// accessor, which the general path throws for or calls.
-    pub(super) fn set_private_field_value(&mut self, p: &ResidualProgram, target: Value, atom: Atom, value: Value) -> bool {
-        let Some(home) = self.private_name_home(p, atom) else { return false; };
-        self.object_data_mut(target).is_some_and(|object| object.set_private_field(PrivateBrand { home, name: atom }, value))
+    pub(super) fn set_private_field_value(
+        &mut self,
+        p: &ResidualProgram,
+        target: Value,
+        atom: Atom,
+        value: Value,
+    ) -> bool {
+        let Some(home) = self.private_name_home(p, atom) else {
+            return false;
+        };
+        self.object_data_mut(target).is_some_and(|object| {
+            object.set_private_field(PrivateBrand { home, name: atom }, value)
+        })
     }
 
-    pub(super) fn initialize_private_field(&mut self, p: &ResidualProgram, target: Value, home: Value, atom: Atom, value: Value) -> Result<(), JsError> {
+    pub(super) fn initialize_private_field(
+        &mut self,
+        p: &ResidualProgram,
+        target: Value,
+        home: Value,
+        atom: Atom,
+        value: Value,
+    ) -> Result<(), JsError> {
         let Some(extensible) = self.object_data(target).map(Object::is_extensible) else {
             return Err(self.type_error(p, "Cannot add private field to a non-object".into()));
         };
         if !extensible {
-            return Err(self.type_error(p, "Cannot add private field to a non-extensible object".into()));
+            return Err(self.type_error(
+                p,
+                "Cannot add private field to a non-extensible object".into(),
+            ));
         }
         if let Some(object) = self.object_data_mut(target)
             && object.initialize_private_field(PrivateBrand { home, name: atom }, value)
         {
             return Ok(());
         }
-        let name = crate::bytecode::private_identity_label(self.atom_name(atom)).unwrap_or_else(|| self.atom_name(atom).to_owned());
-        Err(self.type_error(p, format!("Cannot initialize #{name} twice on the same object")))
+        let name = crate::bytecode::private_identity_label(self.atom_name(atom))
+            .unwrap_or_else(|| self.atom_name(atom).to_owned());
+        Err(self.type_error(
+            p,
+            format!("Cannot initialize #{name} twice on the same object"),
+        ))
     }
 
     pub(super) fn check_private_brand(
@@ -1354,7 +1499,10 @@ impl<H: Host> Vm<H> {
                     .function_get(*function as usize)
                     .into_iter()
                     .flat_map(|metadata| metadata.local_atoms.iter().copied())
-                    .filter(|atom| self.atom_name(*atom).starts_with(crate::bytecode::HOME_BINDING_PREFIX))
+                    .filter(|atom| {
+                        self.atom_name(*atom)
+                            .starts_with(crate::bytecode::HOME_BINDING_PREFIX)
+                    })
                     .collect::<Vec<_>>();
                 for atom in home_atoms.iter().chain(&visible_homes) {
                     if homes.iter().any(|(candidate, _)| candidate == atom) {
@@ -1390,7 +1538,9 @@ impl<H: Host> Vm<H> {
         proxy: Value,
         atom: Atom,
     ) -> Result<Value, JsError> {
-        if let Some(value) = self.private_field_value(p, proxy, atom) { return Ok(value); }
+        if let Some(value) = self.private_field_value(p, proxy, atom) {
+            return Ok(value);
+        }
         let Some(home) = self.private_brand_home(p, proxy, atom) else {
             return Err(self.type_error(p, "private member is not present on this object".into()));
         };

@@ -52,9 +52,9 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         let Some(Cell::WasmException { payload, .. }) = self.heap.get(exception) else {
             // `WebAssembly.JSTag`'s one `externref` parameter is the thrown value itself.
-            return (index == 0)
-                .then_some(exception)
-                .ok_or_else(|| JsError::validation("Wasm exception payload index out of bounds".into()));
+            return (index == 0).then_some(exception).ok_or_else(|| {
+                JsError::validation("Wasm exception payload index out of bounds".into())
+            });
         };
         payload
             .get(index as usize)

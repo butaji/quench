@@ -101,7 +101,9 @@ pub(super) fn derive_shape_lookup_index(shapes: &[Shape], shape: u32) -> ShapeLo
                     attributes.insert(slot, value);
                 }
             }
-            ShapeTransition::FunctionName { .. } | ShapeTransition::FunctionNameReconfigured | ShapeTransition::FunctionLengthReconfigured
+            ShapeTransition::FunctionName { .. }
+            | ShapeTransition::FunctionNameReconfigured
+            | ShapeTransition::FunctionLengthReconfigured
             | ShapeTransition::Constructed { .. }
             | ShapeTransition::Root
             | ShapeTransition::Vacant
@@ -210,7 +212,11 @@ impl<H: Host> Vm<H> {
         if self.shapes[shape as usize].storage_len() >= SHAPE_INDEX_WALK_DISTANCE
             && self
                 .transitions
-                .get(&self.shapes, shape, ShapeTransitionKey::Add(key, DEFAULT_DATA_ATTRIBUTES))
+                .get(
+                    &self.shapes,
+                    shape,
+                    ShapeTransitionKey::Add(key, DEFAULT_DATA_ATTRIBUTES),
+                )
                 .is_some()
         {
             return None;
@@ -229,7 +235,9 @@ impl<H: Host> Vm<H> {
                     ..
                 } if candidate == key => break Some(slot as usize),
                 ShapeTransition::Delete { key: candidate, .. } if candidate == key => break None,
-                ShapeTransition::FunctionName { .. } | ShapeTransition::FunctionNameReconfigured | ShapeTransition::FunctionLengthReconfigured
+                ShapeTransition::FunctionName { .. }
+                | ShapeTransition::FunctionNameReconfigured
+                | ShapeTransition::FunctionLengthReconfigured
                 | ShapeTransition::Constructed { .. }
                 | ShapeTransition::Root
                 | ShapeTransition::Add { .. }
@@ -272,9 +280,15 @@ impl<H: Host> Vm<H> {
     }
     /// The attributes of `object`'s shape-held property at `slot`, its getter read from the
     /// slot when the shape keeps it there (`SLOT_GETTER`).
-    pub(super) fn slot_attributes(&self, object: &Object, slot: usize) -> Option<PropertyAttributes> {
+    pub(super) fn slot_attributes(
+        &self,
+        object: &Object,
+        slot: usize,
+    ) -> Option<PropertyAttributes> {
         let attributes = self.shape_slot_attributes(object.shape(), slot)?;
-        Some(attributes.attributes(&self.shape_accessors, || self.heap.property_get(object, slot)))
+        Some(attributes.attributes(&self.shape_accessors, || {
+            self.heap.property_get(object, slot)
+        }))
     }
     /// `object`'s data value at `slot`, as a raw read sees it: `undefined` for an accessor,
     /// whose slot holds its getter or nothing.
@@ -300,7 +314,9 @@ impl<H: Host> Vm<H> {
                     .unwrap_or(DEFAULT_SHAPE_ATTRIBUTES),
             );
         }
-        let memo_slot = u32::try_from(slot).ok().filter(|_| !self.shape_is_dictionary(shape));
+        let memo_slot = u32::try_from(slot)
+            .ok()
+            .filter(|_| !self.shape_is_dictionary(shape));
         if let Some(memo_slot) = memo_slot
             && let Some(attributes) = self.shape_attribute_memo.get(shape, memo_slot)
         {
@@ -308,7 +324,8 @@ impl<H: Host> Vm<H> {
         }
         let attributes = self.walked_shape_attribute(shape, slot);
         if let Some(memo_slot) = memo_slot {
-            self.shape_attribute_memo.record(shape, memo_slot, attributes);
+            self.shape_attribute_memo
+                .record(shape, memo_slot, attributes);
         }
         attributes
     }
@@ -334,7 +351,9 @@ impl<H: Host> Vm<H> {
                 ShapeTransition::Delete {
                     slot: candidate, ..
                 } if candidate as usize == slot => return Some(DEFAULT_SHAPE_ATTRIBUTES),
-                ShapeTransition::FunctionName { .. } | ShapeTransition::FunctionNameReconfigured | ShapeTransition::FunctionLengthReconfigured
+                ShapeTransition::FunctionName { .. }
+                | ShapeTransition::FunctionNameReconfigured
+                | ShapeTransition::FunctionLengthReconfigured
                 | ShapeTransition::Constructed { .. }
                 | ShapeTransition::Root
                 | ShapeTransition::Add { .. }
@@ -398,7 +417,9 @@ impl<H: Host> Vm<H> {
     /// Whether `to` is `from` extended by one appended property slot: the shape an add of
     /// one new data property makes, which `Heap::property_add` can apply directly.
     pub(super) fn shape_appends_one_slot(&self, from: u32, to: u32) -> bool {
-        let (Some(from_shape), Some(to_shape)) = (self.shapes.get(from as usize), self.shapes.get(to as usize)) else {
+        let (Some(from_shape), Some(to_shape)) =
+            (self.shapes.get(from as usize), self.shapes.get(to as usize))
+        else {
             return false;
         };
         to_shape.parent == from
@@ -464,8 +485,15 @@ impl<H: Host> Vm<H> {
     /// `object`'s attributes for `key` in the descriptor table, which an object only has
     /// entries in once marked (`Object::has_side_descriptors`); any other value is looked up.
     #[inline(always)]
-    pub(super) fn side_descriptor(&self, object: Value, key: PropertyKey) -> Option<PropertyAttributes> {
-        if self.object_data(object).is_some_and(|data| !data.has_side_descriptors()) {
+    pub(super) fn side_descriptor(
+        &self,
+        object: Value,
+        key: PropertyKey,
+    ) -> Option<PropertyAttributes> {
+        if self
+            .object_data(object)
+            .is_some_and(|data| !data.has_side_descriptors())
+        {
             return None;
         }
         self.descriptors.get(&(object, key)).copied()
@@ -480,9 +508,10 @@ impl<H: Host> Vm<H> {
         attributes: PropertyAttributes,
     ) {
         let (length, index) = match key {
-            PropertyKey::String(atom) => {
-                (atom == self.length_atom, self.atom_class(atom).contains(AtomClass::ARRAY_INDEX))
-            }
+            PropertyKey::String(atom) => (
+                atom == self.length_atom,
+                self.atom_class(atom).contains(AtomClass::ARRAY_INDEX),
+            ),
             _ => (false, false),
         };
         if let Some(data) = self.object_data_mut(object) {
@@ -510,7 +539,8 @@ impl<H: Host> Vm<H> {
         if self.lacks_own_index(holder, index) {
             return None;
         }
-        let named = atom.and_then(|atom| self.property_attributes(holder, PropertyKey::string(atom)));
+        let named =
+            atom.and_then(|atom| self.property_attributes(holder, PropertyKey::string(atom)));
         if self.own_element_present(holder, index) {
             let attributes = named.unwrap_or(DEFAULT_PROPERTY_ATTRIBUTES);
             let frozen = self.object_data(holder).is_some_and(Object::is_frozen);
@@ -527,7 +557,8 @@ impl<H: Host> Vm<H> {
     /// it: no element there, no index-keyed descriptor and no index name among its shape's
     /// keys.
     fn lacks_own_index(&self, holder: Value, index: usize) -> bool {
-        self.object_data(holder).is_some_and(|data| self.object_lacks_own_index(holder, data, index))
+        self.object_data(holder)
+            .is_some_and(|data| self.object_lacks_own_index(holder, data, index))
     }
 
     /// `lacks_own_index` of a holder whose object `data` the caller has read.
@@ -579,7 +610,8 @@ impl<H: Host> Vm<H> {
         while let Some(holder) = current.filter(|value| !value.is_null()) {
             // A direct object or array record is neither a Proxy nor a typed array, whose
             // cells only a slot holds.
-            let record = holder.direct_object_index().is_some() || holder.direct_array_index().is_some();
+            let record =
+                holder.direct_object_index().is_some() || holder.direct_array_index().is_some();
             if !record
                 && matches!(
                     self.heap.get(holder),
@@ -611,7 +643,10 @@ impl<H: Host> Vm<H> {
     pub(super) fn inherited_index_absent(&self, object: Value, index: usize) -> bool {
         let mut current = self.object_data(object).map(|data| data.proto());
         while let Some(holder) = current.filter(|value| !value.is_null()) {
-            if matches!(self.heap.get(holder), Some(Cell::Proxy { .. } | Cell::TypedArray { .. })) {
+            if matches!(
+                self.heap.get(holder),
+                Some(Cell::Proxy { .. } | Cell::TypedArray { .. })
+            ) {
                 return false;
             }
             let Some(data) = self.object_data(holder) else {
@@ -650,7 +685,10 @@ impl<H: Host> Vm<H> {
     pub(super) fn prototypes_hold_no_index(&self, object: Value) -> bool {
         let mut current = self.object_data(object).map(|data| data.proto());
         while let Some(holder) = current.filter(|value| !value.is_null()) {
-            if matches!(self.heap.get(holder), Some(Cell::Proxy { .. } | Cell::TypedArray { .. })) {
+            if matches!(
+                self.heap.get(holder),
+                Some(Cell::Proxy { .. } | Cell::TypedArray { .. })
+            ) {
                 return false;
             }
             let Some(data) = self.object_data(holder) else {
@@ -681,7 +719,8 @@ impl<H: Host> Vm<H> {
         attributes: PropertyAttributes,
     ) {
         if let Some((shape, slot)) = self.object_property_slot(object, key) {
-            let current = self.slot_attributes(self.object_data(object).expect("shaped object"), slot);
+            let current =
+                self.slot_attributes(self.object_data(object).expect("shaped object"), slot);
             if current == Some(attributes) {
                 return;
             }
@@ -766,8 +805,15 @@ impl<H: Host> Vm<H> {
     }
     pub(super) fn remove_property_attributes(&mut self, object: Value, key: PropertyKey) {
         if let Some((shape, slot)) = self.object_property_slot(object, key) {
-            let current = self.slot_attributes(self.object_data(object).expect("shaped object"), slot);
-            self.store_accessor_slot(object, slot, current, DEFAULT_PROPERTY_ATTRIBUTES, DEFAULT_SHAPE_ATTRIBUTES);
+            let current =
+                self.slot_attributes(self.object_data(object).expect("shaped object"), slot);
+            self.store_accessor_slot(
+                object,
+                slot,
+                current,
+                DEFAULT_PROPERTY_ATTRIBUTES,
+                DEFAULT_SHAPE_ATTRIBUTES,
+            );
             let next_id = self.append_cached_shape_transition(
                 shape,
                 ShapeTransition::Descriptor {
@@ -798,7 +844,9 @@ impl<H: Host> Vm<H> {
         recorded: ShapeAttributes,
     ) {
         let value = if recorded.slot_getter() {
-            attributes.getter.expect("a slot getter record has a getter")
+            attributes
+                .getter
+                .expect("a slot getter record has a getter")
         } else if attributes.accessor || current.is_some_and(|current| current.accessor) {
             Value::UNDEFINED
         } else {
@@ -813,7 +861,8 @@ impl<H: Host> Vm<H> {
                     let site = site as usize;
                     self.field_caches.set(site, EMPTY_CACHE);
                     self.field_add_indices.set(site, NO_FIELD_ADD_SET);
-                    self.megamorphic_field_indices.set(site, NO_MEGAMORPHIC_FIELD);
+                    self.megamorphic_field_indices
+                        .set(site, NO_MEGAMORPHIC_FIELD);
                     self.inherited_field_indices.set(site, NO_INHERITED_FIELD);
                 }
                 sites.clear();
@@ -1055,11 +1104,12 @@ impl<H: Host> Vm<H> {
         let mut values: Vec<Value> = Vec::new();
         for step in steps.iter().copied() {
             let value = match step {
-                crate::bytecode::LiteralStep::Constant(index) => {
-                    self.programs.constant(program_id, index as usize).ok_or_else(|| {
+                crate::bytecode::LiteralStep::Constant(index) => self
+                    .programs
+                    .constant(program_id, index as usize)
+                    .ok_or_else(|| {
                         JsError::validation("literal constant is outside program".into())
-                    })?
-                }
+                    })?,
                 crate::bytecode::LiteralStep::Array(count) => {
                     let elements = values.split_off(values.len() - count as usize);
                     self.heap.alloc(Cell::Array {
@@ -1084,7 +1134,9 @@ impl<H: Host> Vm<H> {
             };
             values.push(value);
         }
-        Ok(values.pop().expect("a validated template leaves its literal"))
+        Ok(values
+            .pop()
+            .expect("a validated template leaves its literal"))
     }
 
     /// Walks a literal site's transitions from the empty shape, recording the result when
@@ -1101,20 +1153,28 @@ impl<H: Host> Vm<H> {
     /// The shape an empty object reaches by adding `atoms` as data properties in order: the
     /// transitions an object literal with those keys walks.
     pub(super) fn literal_shape(&mut self, atoms: &[Atom]) -> u32 {
-        atoms
-            .iter()
-            .fold(EMPTY_SHAPE, |shape, atom| self.transition_shape(shape, *atom))
+        atoms.iter().fold(EMPTY_SHAPE, |shape, atom| {
+            self.transition_shape(shape, *atom)
+        })
     }
     /// A user function's own data `length`, as its closure's shape holds it: `None` for a
     /// native or bound function, whose `length` other paths answer, a shape with getter slots
     /// or an object with side descriptors (which may make it an accessor), and a deleted
     /// `length` (`Function.prototype`'s answers then).
     pub(super) fn plain_function_length(&self, value: Value) -> Option<Value> {
-        if !matches!(self.heap.function(value), Some(FunctionRecord { kind: FunctionKind::User(..), .. })) {
+        if !matches!(
+            self.heap.function(value),
+            Some(FunctionRecord {
+                kind: FunctionKind::User(..),
+                ..
+            })
+        ) {
             return None;
         }
         let object = self.object_data(value)?;
-        if object.has_side_descriptors() || self.shapes[object.shape() as usize].facts.slot_getters() {
+        if object.has_side_descriptors()
+            || self.shapes[object.shape() as usize].facts.slot_getters()
+        {
             return None;
         }
         let slot = self.shape_slot(object.shape(), self.length_atom)?;
@@ -1187,14 +1247,16 @@ impl<H: Host> Vm<H> {
         let Some(frame) = self.frames.last() else {
             return;
         };
-        let (field_site, part) = frame.source_field.map_or((u32::MAX, 3), |(field_site, part)| {
-            let part = match part {
-                crate::bytecode::FieldPart::First => 0,
-                crate::bytecode::FieldPart::Second => 1,
-                crate::bytecode::FieldPart::Sink => 2,
-            };
-            (field_site as u32, part)
-        });
+        let (field_site, part) = frame
+            .source_field
+            .map_or((u32::MAX, 3), |(field_site, part)| {
+                let part = match part {
+                    crate::bytecode::FieldPart::First => 0,
+                    crate::bytecode::FieldPart::Second => 1,
+                    crate::bytecode::FieldPart::Sink => 2,
+                };
+                (field_site as u32, part)
+            });
         super::lane_exits::field_probe(
             frame.program.raw(),
             frame.function,
@@ -1283,11 +1345,20 @@ impl<H: Host> Vm<H> {
     /// The field cache entry of the active program's `site`.
     #[inline(always)]
     pub(super) fn field_cache_entry(&self, site: u16) -> FieldCache {
-        debug_assert_eq!(self.active_field_entries, self.field_caches.entries_from(self.active_cache_layout().field_base));
+        debug_assert_eq!(
+            self.active_field_entries,
+            self.field_caches
+                .entries_from(self.active_cache_layout().field_base)
+        );
         debug_assert!(self.field_cache_index(site) < self.field_caches.len());
         // SAFETY: `active_field_entries` is re-derived whenever the active program or the
         // table changes, and the active program's layout reserves every compiler-emitted site.
-        unsafe { super::site_table::SiteTable::<FieldCache>::load_from(self.active_field_entries, usize::from(site)) }
+        unsafe {
+            super::site_table::SiteTable::<FieldCache>::load_from(
+                self.active_field_entries,
+                usize::from(site),
+            )
+        }
     }
 
     /// The value the field cache entry `cache` proves for the direct object `object`: its own
@@ -1301,7 +1372,9 @@ impl<H: Host> Vm<H> {
         if cache.holder == NO_FIELD_HOLDER {
             return self.own_field_entry_hit(cache, receiver);
         }
-        let holder = self.heap.object_record_by_id(receiver.proto_link().object_record_id()?);
+        let holder = self
+            .heap
+            .object_record_by_id(receiver.proto_link().object_record_id()?);
         if cache.receiver != receiver.exact_shape()
             || holder.is_module_namespace()
             || cache.holder != holder.exact_shape()
@@ -1342,7 +1415,10 @@ impl<H: Host> Vm<H> {
         }
         // SAFETY: a matching exact shape proves the cached slot layout outside dictionary
         // storage (`Object::exact_shape`).
-        if !unsafe { self.heap.record_property_set_flat::<LOGS>(record_id, cache.slot as usize, value) } {
+        if !unsafe {
+            self.heap
+                .record_property_set_flat::<LOGS>(record_id, cache.slot as usize, value)
+        } {
             return false;
         }
         self.profile.field_cache_hit(0, 0);
@@ -1381,14 +1457,22 @@ impl<H: Host> Vm<H> {
     /// (`Heap::record_property_add_moving`) and may allocate. `false` changes nothing and
     /// leaves the add to `primary_field_add_hit`.
     #[inline(always)]
-    pub(super) fn proved_field_add_hit(&mut self, object: Value, atom: Atom, value: Value, site: u16) -> bool {
+    pub(super) fn proved_field_add_hit(
+        &mut self,
+        object: Value,
+        atom: Atom,
+        value: Value,
+        site: u16,
+    ) -> bool {
         let Some(record_id) = object.direct_object_index() else {
             return false;
         };
         let receiver = self.heap.object_record_by_id(record_id);
         // The exact shape matches an entry's source, which is never a dictionary's, only
         // outside dictionary storage (`Object::exact_shape`).
-        let Some((_, cache)) = self.field_add_entry(self.field_cache_index(site), receiver.exact_shape(), atom) else {
+        let Some((_, cache)) =
+            self.field_add_entry(self.field_cache_index(site), receiver.exact_shape(), atom)
+        else {
             return false;
         };
         let (target_shape, slot) = (cache.target_shape, usize::from(cache.slot));
@@ -1399,9 +1483,12 @@ impl<H: Host> Vm<H> {
             return false;
         }
         if !(receiver.admits_plain_append(slot, value)
-            && self.heap.record_property_append_plain(record_id, slot, value, target_shape))
+            && self
+                .heap
+                .record_property_append_plain(record_id, slot, value, target_shape))
         {
-            self.heap.record_property_add_moving(object, slot, value, target_shape);
+            self.heap
+                .record_property_add_moving(object, slot, value, target_shape);
         }
         self.profile.field_cache_hit(0, 0);
         true
@@ -1501,8 +1588,11 @@ impl<H: Host> Vm<H> {
     ) -> Option<Value> {
         debug_assert!(self.lane_admits(p));
         let (receiver, function_receiver) = self.inherited_receiver(object)?;
-        let (hit, proof) =
-            self.cached_inherited_field_value(self.field_cache_index(site), receiver, function_receiver)?;
+        let (hit, proof) = self.cached_inherited_field_value(
+            self.field_cache_index(site),
+            receiver,
+            function_receiver,
+        )?;
         if let Some(proof) = proof {
             self.prove_inherited_chain(proof);
         }
@@ -1525,7 +1615,10 @@ impl<H: Host> Vm<H> {
         debug_assert!(self.lane_admits(p));
         let (receiver, function_receiver) = self.inherited_receiver(object)?;
         // SAFETY: as for `cached_inherited_field_value`.
-        let index = unsafe { self.inherited_field_indices.get_unchecked(self.field_cache_index(site)) };
+        let index = unsafe {
+            self.inherited_field_indices
+                .get_unchecked(self.field_cache_index(site))
+        };
         if index == NO_INHERITED_FIELD {
             return None;
         }
@@ -1557,18 +1650,24 @@ impl<H: Host> Vm<H> {
     fn inherited_receiver(&self, value: Value) -> Option<(&Object, bool)> {
         match value.direct_object_index() {
             Some(record_id) => Some((self.heap.object_record_by_id(record_id), false)),
-            None => self.heap.function(value).map(|function| (&function.object, true)),
+            None => self
+                .heap
+                .function(value)
+                .map(|function| (&function.object, true)),
         }
     }
 
     /// Whether the site has an inherited entry (`inherited_field_hit`).
     pub(super) fn field_site_inherited(&self, site: u16) -> bool {
-        self.inherited_field_indices.get(self.field_cache_index(site)) != NO_INHERITED_FIELD
+        self.inherited_field_indices
+            .get(self.field_cache_index(site))
+            != NO_INHERITED_FIELD
     }
 
     /// Whether a read at the site met an accessor it cached (`cached_field_getter`).
     pub(super) fn field_site_getter(&self, site: u16) -> bool {
-        self.accessor_field_caches.contains_key(&self.field_cache_index(site))
+        self.accessor_field_caches
+            .contains_key(&self.field_cache_index(site))
     }
 
     /// Whether the site's primary entry names a prototype holder (`primary_holder_field_hit`).
@@ -1637,7 +1736,10 @@ impl<H: Host> Vm<H> {
                 && let Some(entry) = set.get(shape, NO_FIELD_HOLDER)
             {
                 // SAFETY: as for `cached_field_hit`.
-                let value = unsafe { self.heap.property_get_flat(receiver, usize::from(entry.slot)) };
+                let value = unsafe {
+                    self.heap
+                        .property_get_flat(receiver, usize::from(entry.slot))
+                };
                 self.profile.field_cache_hit(2, 0);
                 return Some(value);
             }
@@ -1657,7 +1759,10 @@ impl<H: Host> Vm<H> {
             }
             if entry.holder == NO_FIELD_HOLDER {
                 // SAFETY: as for `cached_field_hit`.
-                let value = unsafe { self.heap.property_get_flat(receiver, usize::from(entry.slot)) };
+                let value = unsafe {
+                    self.heap
+                        .property_get_flat(receiver, usize::from(entry.slot))
+                };
                 self.profile.field_cache_hit(2, 0);
                 return Some(value);
             }
@@ -1707,7 +1812,9 @@ impl<H: Host> Vm<H> {
     /// Whether the site's shapes moved to megamorphic entries, inline or hashed:
     /// `polymorphic_field_hit` then sees every entry the site has recorded.
     pub(super) fn field_site_polymorphic(&self, site: u16) -> bool {
-        self.megamorphic_field_indices.get(self.field_cache_index(site)) != NO_MEGAMORPHIC_FIELD
+        self.megamorphic_field_indices
+            .get(self.field_cache_index(site))
+            != NO_MEGAMORPHIC_FIELD
     }
 
     /// An own-data slot from a site's inline megamorphic entries; the hashed overflow is
@@ -1811,7 +1918,11 @@ impl<H: Host> Vm<H> {
             // slot forms' (`shape_property_lookup`).
             Some(HeapReference::FunctionRecord(_) | HeapReference::IteratorRecord(_)) => {
                 let lookup = if self.specialized && p.specialized {
-                    self.receiver_field_cache_read(self.shape_property_lookup(object, atom), atom, site)
+                    self.receiver_field_cache_read(
+                        self.shape_property_lookup(object, atom),
+                        atom,
+                        site,
+                    )
                 } else {
                     FieldCacheRead::Generic
                 };
@@ -2033,7 +2144,11 @@ impl<H: Host> Vm<H> {
 
     /// `cached_ordinary_holder_field_value` of the site entry `cache`.
     #[inline(always)]
-    fn ordinary_holder_entry_value(&self, cache: FieldCache, receiver: &Object) -> Option<FieldCacheHit> {
+    fn ordinary_holder_entry_value(
+        &self,
+        cache: FieldCache,
+        receiver: &Object,
+    ) -> Option<FieldCacheHit> {
         if cache.holder == NO_FIELD_HOLDER || cache.receiver != receiver.exact_shape() {
             return None;
         }
@@ -2160,7 +2275,8 @@ impl<H: Host> Vm<H> {
                         self.atom_name(atom),
                         self.heap.function(object).is_some(),
                         self.shape_property_lookup(object, atom).is_some(),
-                        self.object_data(object).is_some_and(|data| self.shape_is_dictionary(data.shape())),
+                        self.object_data(object)
+                            .is_some_and(|data| self.shape_is_dictionary(data.shape())),
                     ));
                 }
                 match getter {
@@ -2248,7 +2364,10 @@ impl<H: Host> Vm<H> {
         let mut link = prototype;
         for _ in 0..depth {
             self.heap.mark_prototype(link);
-            link = self.heap.ordinary_object(link).map_or(Value::NULL, Object::proto);
+            link = self
+                .heap
+                .ordinary_object(link)
+                .map_or(Value::NULL, Object::proto);
         }
         // Marking a link that was no prototype yet leaves the epoch where it was.
         if crate::heap::prototype_layout_epoch() != epoch {
@@ -2270,7 +2389,10 @@ impl<H: Host> Vm<H> {
     /// replaced, and a full site drops its oldest.
     fn record_accessor_entry(&mut self, site: usize, entry: AccessorFieldCache) {
         let entries = self.accessor_field_caches.entry(site).or_default();
-        if let Some(existing) = entries.iter_mut().find(|cached| cached.receiver == entry.receiver) {
+        if let Some(existing) = entries
+            .iter_mut()
+            .find(|cached| cached.receiver == entry.receiver)
+        {
             *existing = entry;
             return;
         }
@@ -2282,12 +2404,19 @@ impl<H: Host> Vm<H> {
 
     /// The getter a field read of `atom` at cache index `site` calls on `object`, when the
     /// site's recorded accessor still answers it (`record_accessor_field_cache`).
-    pub(super) fn cached_field_getter(&self, object: Value, atom: Atom, site: usize) -> Option<Value> {
+    pub(super) fn cached_field_getter(
+        &self,
+        object: Value,
+        atom: Atom,
+        site: usize,
+    ) -> Option<Value> {
         let entries = self.accessor_field_caches.get(&site)?;
         let receiver = self.shape_property_lookup(object, atom)?;
         let epoch = crate::heap::prototype_layout_epoch();
         let cache = entries.iter().find(|cache| {
-            receiver.shape() == cache.receiver && receiver.proto() == cache.prototype && epoch == cache.epoch
+            receiver.shape() == cache.receiver
+                && receiver.proto() == cache.prototype
+                && epoch == cache.epoch
         })?;
         let holder = if cache.holder == OWN_ACCESSOR {
             if receiver.has_side_descriptors() {
@@ -2297,7 +2426,8 @@ impl<H: Host> Vm<H> {
         } else {
             self.heap.ordinary_object(cache.holder)?
         };
-        self.slot_attributes(holder, usize::from(cache.slot))?.getter
+        self.slot_attributes(holder, usize::from(cache.slot))?
+            .getter
     }
 
     /// What native accessor `getter` returns for `this` where its call is a read of the
@@ -2306,7 +2436,11 @@ impl<H: Host> Vm<H> {
     /// Set's size accessors. `None`
     /// for any other getter or receiver, whose call the general path makes.
     pub(super) fn pure_native_getter_value(&self, getter: Value, this: Value) -> Option<Value> {
-        let Some(FunctionRecord { kind: FunctionKind::Native(native), .. }) = self.heap.function(getter) else {
+        let Some(FunctionRecord {
+            kind: FunctionKind::Native(native),
+            ..
+        }) = self.heap.function(getter)
+        else {
             return None;
         };
         match *native {
@@ -2319,7 +2453,11 @@ impl<H: Host> Vm<H> {
                 if self.array_buffer_out_of_bounds(buffer, offset, length) {
                     return None;
                 }
-                let value = if *native == Native::DataViewByteLengthGetter { length } else { offset };
+                let value = if *native == Native::DataViewByteLengthGetter {
+                    length
+                } else {
+                    offset
+                };
                 Some(Value::number(value as f64))
             }
             Native::MapSizeGetter => match self.heap.get(this) {
@@ -2344,8 +2482,11 @@ impl<H: Host> Vm<H> {
         site: usize,
     ) -> Option<Value> {
         let receiver = self.shape_property_lookup(object, atom)?;
-        let function_receiver = object.direct_object_index().is_none() && self.heap.function(object).is_some();
-        if let Some((hit, proof)) = self.cached_inherited_field_value(site, receiver, function_receiver) {
+        let function_receiver =
+            object.direct_object_index().is_none() && self.heap.function(object).is_some();
+        if let Some((hit, proof)) =
+            self.cached_inherited_field_value(site, receiver, function_receiver)
+        {
             if let Some(proof) = proof {
                 self.prove_inherited_chain(proof);
             }
@@ -2494,7 +2635,8 @@ impl<H: Host> Vm<H> {
         let mut holder = None;
         let mut holder_value = Value::UNDEFINED;
         for &shape in &cache.prototype_shapes[..usize::from(cache.depth)] {
-            let Some(data) = self.inherited_chain_link(prototype, cache.atom, cache.function_links) else {
+            let Some(data) = self.inherited_chain_link(prototype, cache.atom, cache.function_links)
+            else {
                 return None;
             };
             if data.shape() != shape || data.is_module_namespace() || data.is_arguments_object() {
@@ -2506,9 +2648,9 @@ impl<H: Host> Vm<H> {
         }
         let value = match cache.answer {
             // SAFETY: the holder's shape was recorded together with this data slot.
-            InheritedFieldAnswer::Slot(slot) => unsafe {
-                self.heap.property_get_shaped(holder?, usize::from(slot))
-            }?,
+            InheritedFieldAnswer::Slot(slot) => {
+                unsafe { self.heap.property_get_shaped(holder?, usize::from(slot)) }?
+            }
             // Every recorded shape lacks the name, and the chain still ends here.
             InheritedFieldAnswer::Absent if prototype.is_null() => Value::UNDEFINED,
             InheritedFieldAnswer::Absent => return None,
@@ -2561,7 +2703,12 @@ impl<H: Host> Vm<H> {
     /// (`function_links_answer`), as Node's classes inherit from their parent constructors
     /// (`Readable` from `Stream`).
     #[inline(always)]
-    fn inherited_chain_link(&self, value: Value, atom: Atom, function_links: bool) -> Option<&Object> {
+    fn inherited_chain_link(
+        &self,
+        value: Value,
+        atom: Atom,
+        function_links: bool,
+    ) -> Option<&Object> {
         if !function_links && self.heap.function(value).is_some() {
             return None;
         }
@@ -2707,7 +2854,9 @@ impl<H: Host> Vm<H> {
         let _stack = self.enter_stack()?;
         if self.is_private_name(atom) {
             self.check_private_brand(p, target, atom)?;
-            if self.set_private_field_value(p, target, atom, value) { return Ok(true); }
+            if self.set_private_field_value(p, target, atom, value) {
+                return Ok(true);
+            }
         }
         let typed_array_index = if matches!(self.heap.get(target), Some(Cell::TypedArray { .. })) {
             match Self::typed_array_index_key(self.atom_name(atom)) {
@@ -2798,7 +2947,9 @@ impl<H: Host> Vm<H> {
                 self.own_index_attributes(current, index as usize, Some(atom))
             } else {
                 self.property_attributes(current, PropertyKey::string(atom))
-                    .filter(|attributes| self.own_property(current, atom).is_some() || attributes.accessor)
+                    .filter(|attributes| {
+                        self.own_property(current, atom).is_some() || attributes.accessor
+                    })
             };
             if let Some(attributes) = held {
                 found = Some((current, attributes));
@@ -2977,8 +3128,12 @@ impl<H: Host> Vm<H> {
                     self.heap.root_value(value).unwrap(),
                 )
             } else {
-                if self.descriptor_field(p, current, self.runtime_atoms.get)?.is_some()
-                    || self.descriptor_field(p, current, self.runtime_atoms.set)?.is_some()
+                if self
+                    .descriptor_field(p, current, self.runtime_atoms.get)?
+                    .is_some()
+                    || self
+                        .descriptor_field(p, current, self.runtime_atoms.set)?
+                        .is_some()
                     || !self.descriptor_flag(current, self.runtime_atoms.writable)
                 {
                     return Ok(false);
@@ -3139,7 +3294,11 @@ impl<H: Host> Vm<H> {
         let Some(number) = old.as_number() else {
             return false;
         };
-        let next = Value::number(if decrement { number - 1.0 } else { number + 1.0 });
+        let next = Value::number(if decrement {
+            number - 1.0
+        } else {
+            number + 1.0
+        });
         // A matching successful strict store cache proves this same shape has an own
         // writable data property at the field slot. The store helper rechecks that guard.
         self.cached_field_store_hit(p, object, atom, next, write_site)
@@ -3223,7 +3382,9 @@ impl<H: Host> Vm<H> {
             let key = self.atom_name(atom).to_owned();
             return Err(self.nullish_assignment_error(p, object, &key));
         }
-        if self.is_private_name(atom) && self.set_private_field_value(p, object, atom, value) { return Ok(()); }
+        if self.is_private_name(atom) && self.set_private_field_value(p, object, atom, value) {
+            return Ok(());
+        }
         if let Some((target, handler)) = self.proxy_parts(object) {
             if self.is_private_name(atom) {
                 if self.own_property(object, atom).is_none() {
@@ -3237,8 +3398,15 @@ impl<H: Host> Vm<H> {
                 }
                 return self.set_shape_property(object, PropertyKey::string(atom), value);
             }
-            let written =
-                self.proxy_set_mode(p, target, handler, object, PropertyKey::string(atom), value, strict)?;
+            let written = self.proxy_set_mode(
+                p,
+                target,
+                handler,
+                object,
+                PropertyKey::string(atom),
+                value,
+                strict,
+            )?;
             return if written || !strict {
                 Ok(())
             } else {
@@ -3382,7 +3550,8 @@ impl<H: Host> Vm<H> {
         let index = self.field_add_indices.get(site);
         if index == NO_FIELD_ADD_SET {
             self.note_field_cache_write(site);
-            self.field_add_indices.set(site, self.field_add_sets.len() as u32);
+            self.field_add_indices
+                .set(site, self.field_add_sets.len() as u32);
             self.field_add_sets.push(FieldAddCacheSet::EMPTY);
         }
         let index = self.field_add_indices.get(site) as usize;
@@ -3415,7 +3584,12 @@ impl<H: Host> Vm<H> {
     /// The add entry of cache site index `site` for receivers of `shape` adding `atom`, with
     /// the index of the site's set.
     #[inline(always)]
-    fn field_add_entry(&self, site: usize, shape: u32, atom: Atom) -> Option<(usize, &FieldAddCache)> {
+    fn field_add_entry(
+        &self,
+        site: usize,
+        shape: u32,
+        atom: Atom,
+    ) -> Option<(usize, &FieldAddCache)> {
         // SAFETY: compiler-produced sites index exactly-sized cache vectors; every non-sentinel
         // index was installed together with its set.
         let set = unsafe { self.field_add_indices.get_unchecked(site) };
@@ -3423,7 +3597,10 @@ impl<H: Host> Vm<H> {
             return None;
         }
         let set = set as usize;
-        Some((set, unsafe { self.field_add_sets.get_unchecked(set) }.find(shape, atom)?))
+        Some((
+            set,
+            unsafe { self.field_add_sets.get_unchecked(set) }.find(shape, atom)?,
+        ))
     }
 
     /// Adds `atom` to `object` of `shape` at `slot` by a cached transition to `target_shape`.
@@ -3438,7 +3615,8 @@ impl<H: Host> Vm<H> {
         value: Value,
     ) {
         debug_assert_eq!(slot as usize, self.shapes[shape as usize].storage_len());
-        self.heap.record_property_add_at(object, usize::from(slot), value, target_shape);
+        self.heap
+            .record_property_add_at(object, usize::from(slot), value, target_shape);
         if self.method_caches_may_name(atom) {
             self.invalidate_method_caches_for_prototype_add(object, atom);
         }
@@ -3496,7 +3674,11 @@ impl<H: Host> Vm<H> {
     /// The prototype shapes a cached add of `key` to `object` must find again, as the depth and
     /// shape fields of a `FieldAddCache`; `None` when a link is exotic, a dictionary, or holds
     /// `key` as an accessor or read-only.
-    pub(super) fn add_prototype_guard(&self, object: Value, key: PropertyKey) -> Option<FieldAddCache> {
+    pub(super) fn add_prototype_guard(
+        &self,
+        object: Value,
+        key: PropertyKey,
+    ) -> Option<FieldAddCache> {
         let mut prototype = self.object_data(object)?.proto();
         let mut guard = FieldAddCache::EMPTY;
         while !prototype.is_null() {
@@ -3530,7 +3712,13 @@ impl<H: Host> Vm<H> {
     /// any of them advances the epoch and retires the proof.
     #[cold]
     #[inline(never)]
-    fn prove_field_add_chain(&mut self, set: usize, shape: u32, atom: Atom, link: ProtoLink) -> bool {
+    fn prove_field_add_chain(
+        &mut self,
+        set: usize,
+        shape: u32,
+        atom: Atom,
+        link: ProtoLink,
+    ) -> bool {
         let Some(cache) = self.field_add_sets[set].find(shape, atom).copied() else {
             return false;
         };
@@ -3573,7 +3761,10 @@ impl<H: Host> Vm<H> {
         };
         // Entries record no dictionary source, which `exact_shape` never names.
         let (shape, link) = (data.exact_shape(), data.proto_link());
-        if !data.admits_cached_add() || data.has_side_descriptors() || !self.field_add_atom_eligible(atom) {
+        if !data.admits_cached_add()
+            || data.has_side_descriptors()
+            || !self.field_add_atom_eligible(atom)
+        {
             return false;
         }
         let index = keyed_add_index(shape, atom);
@@ -3596,19 +3787,35 @@ impl<H: Host> Vm<H> {
 
     /// The source shape and prototype proof a keyed add of `atom` to `object` would record
     /// (`record_keyed_add`), taken before the add.
-    pub(super) fn keyed_add_guard(&self, object: Value, atom: Atom) -> Option<(u32, FieldAddCache)> {
+    pub(super) fn keyed_add_guard(
+        &self,
+        object: Value,
+        atom: Atom,
+    ) -> Option<(u32, FieldAddCache)> {
         let data = self.heap.object_record(object)?;
         let shape = data.shape();
-        if self.shape_is_dictionary(shape) || self.shape_slot(shape, atom).is_some() || !self.field_add_atom_eligible(atom) {
+        if self.shape_is_dictionary(shape)
+            || self.shape_slot(shape, atom).is_some()
+            || !self.field_add_atom_eligible(atom)
+        {
             return None;
         }
-        Some((shape, self.add_prototype_guard(object, PropertyKey::string(atom))?))
+        Some((
+            shape,
+            self.add_prototype_guard(object, PropertyKey::string(atom))?,
+        ))
     }
 
     /// Remembers the add of `atom` that moved `object` from `shape`, proved by `guard`
     /// (`keyed_add_guard`), as `keyed_add_hit` replays it: an append at the source shape's
     /// end to a non-dictionary shape.
-    pub(super) fn record_keyed_add(&mut self, object: Value, atom: Atom, shape: u32, guard: FieldAddCache) {
+    pub(super) fn record_keyed_add(
+        &mut self,
+        object: Value,
+        atom: Atom,
+        shape: u32,
+        guard: FieldAddCache,
+    ) {
         let Some(target_shape) = self.heap.object_record(object).map(Object::shape) else {
             return;
         };
@@ -3624,8 +3831,13 @@ impl<H: Host> Vm<H> {
         let Ok(slot) = u16::try_from(slot) else {
             return;
         };
-        self.keyed_adds[keyed_add_index(shape, atom)] =
-            FieldAddCache { atom, source_shape: shape, target_shape, slot, ..guard };
+        self.keyed_adds[keyed_add_index(shape, atom)] = FieldAddCache {
+            atom,
+            source_shape: shape,
+            target_shape,
+            slot,
+            ..guard
+        };
     }
 
     /// Marks the `depth` links of the chain from `proto` as prototypes, so a later change to
@@ -3634,7 +3846,10 @@ impl<H: Host> Vm<H> {
         let mut link = proto;
         for _ in 0..depth {
             self.heap.mark_prototype(link);
-            link = self.heap.object_record(link).map_or(Value::NULL, Object::proto);
+            link = self
+                .heap
+                .object_record(link)
+                .map_or(Value::NULL, Object::proto);
         }
     }
 
@@ -3749,7 +3964,15 @@ impl<H: Host> Vm<H> {
             };
         }
         let written = if let Some((target, handler)) = self.proxy_parts(object) {
-            self.proxy_set_mode(p, target, handler, object, PropertyKey::string(atom), value, strict)?
+            self.proxy_set_mode(
+                p,
+                target,
+                handler,
+                object,
+                PropertyKey::string(atom),
+                value,
+                strict,
+            )?
         } else {
             self.set_property_with_receiver(p, object, atom, value, object)?
         };
@@ -3857,7 +4080,8 @@ impl<H: Host> Vm<H> {
             .push(FieldCacheSet::with_pair(entry, cache));
         // SAFETY: compiler-produced sites index exactly-sized cache vectors.
         unsafe {
-            self.megamorphic_field_indices.set_unchecked(site, table_index);
+            self.megamorphic_field_indices
+                .set_unchecked(site, table_index);
         }
     }
     #[inline(always)]
@@ -3907,7 +4131,11 @@ impl<H: Host> Vm<H> {
         };
         self.append_cached_shape_transition(shape, transition)
     }
-    pub(super) fn append_cached_shape_transition(&mut self, shape: u32, transition: ShapeTransition) -> u32 {
+    pub(super) fn append_cached_shape_transition(
+        &mut self,
+        shape: u32,
+        transition: ShapeTransition,
+    ) -> u32 {
         let key = transition.cache_key();
         if let Some(key) = key {
             let last = self.shapes[shape as usize].last_child.get();
@@ -3933,11 +4161,18 @@ impl<H: Host> Vm<H> {
                 .checked_add(1)
                 .filter(|length| u32::try_from(*length).is_ok())
                 .expect("object property storage exhausted"),
-            ShapeTransition::Descriptor { .. } | ShapeTransition::Delete { .. } | ShapeTransition::FunctionName { .. } | ShapeTransition::FunctionNameReconfigured | ShapeTransition::FunctionLengthReconfigured | ShapeTransition::Constructed { .. } => storage_len,
+            ShapeTransition::Descriptor { .. }
+            | ShapeTransition::Delete { .. }
+            | ShapeTransition::FunctionName { .. }
+            | ShapeTransition::FunctionNameReconfigured
+            | ShapeTransition::FunctionLengthReconfigured
+            | ShapeTransition::Constructed { .. } => storage_len,
             ShapeTransition::Root
             | ShapeTransition::Vacant
             | ShapeTransition::Dictionary { .. } => {
-                unreachable!("cached shape transitions are adds, deletions, descriptors or metadata")
+                unreachable!(
+                    "cached shape transitions are adds, deletions, descriptors or metadata"
+                )
             }
         };
         let mut next = self.append_shape(shape, transition, next_storage_len);
@@ -3964,9 +4199,20 @@ impl<H: Host> Vm<H> {
     /// The shape `object` had before `shape` added `key` at `slot`, its last slot, when
     /// deleting `key` can return the object to it: a plain add from an ordinary shape, and
     /// storage that the shorter length still describes (`ValueArena::drops_last_in_place`).
-    fn shape_before_last_add(&self, object: Value, shape: u32, key: PropertyKey, slot: usize) -> Option<u32> {
+    fn shape_before_last_add(
+        &self,
+        object: Value,
+        shape: u32,
+        key: PropertyKey,
+        slot: usize,
+    ) -> Option<u32> {
         let entry = &self.shapes[shape as usize];
-        let ShapeTransition::Add { key: added, slot: added_slot, .. } = entry.transition else {
+        let ShapeTransition::Add {
+            key: added,
+            slot: added_slot,
+            ..
+        } = entry.transition
+        else {
             return None;
         };
         let parent = entry.parent;
@@ -3974,7 +4220,10 @@ impl<H: Host> Vm<H> {
             && added_slot as usize == slot
             && self.shape_appends_one_slot(parent, shape)
             && self.object_data(object).is_some_and(|data| {
-                crate::value_vec::ValueArena::drops_last_in_place(data.properties(), entry.storage_len())
+                crate::value_vec::ValueArena::drops_last_in_place(
+                    data.properties(),
+                    entry.storage_len(),
+                )
             }))
         .then_some(parent)
     }

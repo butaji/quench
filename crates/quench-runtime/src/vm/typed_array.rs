@@ -22,7 +22,9 @@ struct TypedArrayGeometryProof {
 }
 
 #[derive(Default)]
-pub(super) struct TypedArrayGeometryProofs([std::cell::Cell<Option<TypedArrayGeometryProof>>; TYPED_ARRAY_GEOMETRY_ENTRIES]);
+pub(super) struct TypedArrayGeometryProofs(
+    [std::cell::Cell<Option<TypedArrayGeometryProof>>; TYPED_ARRAY_GEOMETRY_ENTRIES],
+);
 
 impl<H: Host> Vm<H> {
     /// A read of a geometry name (`AtomClass::VIRTUAL_FIELD`) from typed array `object`
@@ -45,7 +47,11 @@ impl<H: Host> Vm<H> {
         let epoch = crate::heap::prototype_layout_epoch();
         let index = atom as usize % TYPED_ARRAY_GEOMETRY_ENTRIES;
         let getter = match self.typed_array_geometry.0[index].get() {
-            Some(proof) if proof.prototype == prototype && proof.atom == atom && proof.epoch == epoch => proof.getter,
+            Some(proof)
+                if proof.prototype == prototype && proof.atom == atom && proof.epoch == epoch =>
+            {
+                proof.getter
+            }
             _ => {
                 let (getter, depth) = self.typed_array_geometry_getter(prototype, atom)?;
                 // Every link up to the holder becomes a prototype first, so a later change to
@@ -53,10 +59,18 @@ impl<H: Host> Vm<H> {
                 let mut link = prototype;
                 for _ in 0..depth {
                     self.heap.mark_prototype(link);
-                    link = self.heap.ordinary_object(link).map_or(Value::NULL, Object::proto);
+                    link = self
+                        .heap
+                        .ordinary_object(link)
+                        .map_or(Value::NULL, Object::proto);
                 }
                 if crate::heap::prototype_layout_epoch() == epoch {
-                    self.typed_array_geometry.0[index].set(Some(TypedArrayGeometryProof { prototype, atom, epoch, getter }));
+                    self.typed_array_geometry.0[index].set(Some(TypedArrayGeometryProof {
+                        prototype,
+                        atom,
+                        epoch,
+                        getter,
+                    }));
                 }
                 getter
             }
@@ -82,7 +96,11 @@ impl<H: Host> Vm<H> {
                     return None;
                 }
                 let attributes = self.slot_attributes(data, slot)?;
-                return attributes.accessor.then_some(attributes.getter).flatten().map(|getter| (getter, depth));
+                return attributes
+                    .accessor
+                    .then_some(attributes.getter)
+                    .flatten()
+                    .map(|getter| (getter, depth));
             }
             link = data.proto();
         }
@@ -91,7 +109,10 @@ impl<H: Host> Vm<H> {
 
     /// `ArrayBuffer.isView(value)`: whether `value` is a typed array or a DataView.
     pub(super) fn is_array_buffer_view(&self, value: Value) -> bool {
-        matches!(self.heap.get(value), Some(Cell::TypedArray { .. } | Cell::DataView { .. }))
+        matches!(
+            self.heap.get(value),
+            Some(Cell::TypedArray { .. } | Cell::DataView { .. })
+        )
     }
 
     pub(super) fn maybe_call_typed_array_native(
@@ -430,7 +451,8 @@ impl<H: Host> Vm<H> {
                         let Some(Cell::ArrayBuffer { bytes, .. }) = self.heap.get(buffer) else {
                             unreachable!("validated typed array backing buffer");
                         };
-                        let source_bytes = bytes.read()[source_offset..source_offset + byte_count].to_vec();
+                        let source_bytes =
+                            bytes.read()[source_offset..source_offset + byte_count].to_vec();
                         let Some(Cell::ArrayBuffer { bytes, .. }) =
                             self.heap.get_mut(target_buffer)
                         else {

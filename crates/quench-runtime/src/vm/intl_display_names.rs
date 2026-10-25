@@ -166,11 +166,8 @@ impl<H: Host> Vm<H> {
             return Err(self.range_error(p, "invalid code".into()));
         }
         let fallback = self.display_names_slot(p, this, DISPLAY_NAMES_FALLBACK_SLOT)?;
-        Ok(
-            display_name_value(&code, &kind, locale, &fallback).map_or(Value::UNDEFINED, |name| {
-                self.heap.alloc_string(name.into())
-            }),
-        )
+        Ok(display_name_value(&code, &kind, locale, &fallback)
+            .map_or(Value::UNDEFINED, |name| self.heap.alloc_string(name.into())))
     }
 
     fn display_names_resolved_options(

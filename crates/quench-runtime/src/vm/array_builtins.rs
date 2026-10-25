@@ -189,7 +189,10 @@ impl<H: Host> Vm<H> {
 
     pub(super) fn install_array_species(&mut self) -> Result<(), JsError> {
         let array = self.native_value(Native::Array);
-        let species = self.well_known_symbols.get(WellKnownSymbol::Species).unwrap();
+        let species = self
+            .well_known_symbols
+            .get(WellKnownSymbol::Species)
+            .unwrap();
         let getter = self.native_value(Native::ArraySpecies);
         self.set_builtin_function_name(getter, "get [Symbol.species]")?;
         self.set_symbol_property(array, species, Value::UNDEFINED)?;
@@ -233,7 +236,10 @@ impl<H: Host> Vm<H> {
             let atom = self.intern_atom(name);
             self.set_property(unscopables, atom, Value::TRUE)?;
         }
-        let symbol = self.well_known_symbols.get(WellKnownSymbol::Unscopables).unwrap();
+        let symbol = self
+            .well_known_symbols
+            .get(WellKnownSymbol::Unscopables)
+            .unwrap();
         self.set_symbol_property(array_proto, symbol, unscopables)?;
         self.set_property_attributes(
             array_proto,

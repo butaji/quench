@@ -29,7 +29,10 @@ impl<H: Host> Vm<H> {
         let covered = frame.registers.len().min(RegisterSet::BITS as usize);
         let (low, high) = frame.registers.split_at_mut(covered);
         high.fill(Value::UNDEFINED);
-        let mut dead = !mask & RegisterSet::MAX.checked_shr(RegisterSet::BITS - covered as u32).unwrap_or(0);
+        let mut dead = !mask
+            & RegisterSet::MAX
+                .checked_shr(RegisterSet::BITS - covered as u32)
+                .unwrap_or(0);
         // Dead registers come in runs (a statement's temporaries), each cleared as one span.
         while dead != 0 {
             let start = dead.trailing_zeros();
@@ -57,7 +60,10 @@ impl<H: Host> Vm<H> {
         // Init observers run before the async frame exists. Keep its incoming
         // closure environment, receiver and arguments alive across that callback.
         let promise = self.with_call_roots(
-            [env, this].into_iter().chain(args.iter().copied()).chain(context.callee()),
+            [env, this]
+                .into_iter()
+                .chain(args.iter().copied())
+                .chain(context.callee()),
             |vm| vm.promise_object(),
         )?;
         self.with_call_roots([promise], |vm| {
@@ -119,7 +125,10 @@ impl<H: Host> Vm<H> {
     /// The promise an async call pushed in place settles (`PendingGeneralCall::settles`),
     /// unrooted now that the call completes.
     pub(super) fn release_settled_call_root(&mut self, root: crate::heap::RootId) -> Value {
-        let promise = self.heap.root_value(root).expect("a settling call roots its promise");
+        let promise = self
+            .heap
+            .root_value(root)
+            .expect("a settling call roots its promise");
         self.heap.release_root(root);
         promise
     }
@@ -151,11 +160,28 @@ impl<H: Host> Vm<H> {
         // The window is read after the promise, whose observers may run guest code.
         let arguments: *const [Value] = self.register_window(f, i.call_window());
         // SAFETY: see `push_general_user_frame`; the window outlives callee setup.
-        let pushed = self.push_in_loop_call(p, f, pc, target, callee, this, unsafe { &*arguments }, destination);
+        let pushed = self.push_in_loop_call(
+            p,
+            f,
+            pc,
+            target,
+            callee,
+            this,
+            unsafe { &*arguments },
+            destination,
+        );
         Some(match pushed {
-            Some(Ok(StepResult::PushFrame { destination, call_guard, construct_this, .. })) => {
-                Ok(StepResult::PushFrame { destination, call_guard, construct_this, settles: Some(root) })
-            }
+            Some(Ok(StepResult::PushFrame {
+                destination,
+                call_guard,
+                construct_this,
+                ..
+            })) => Ok(StepResult::PushFrame {
+                destination,
+                call_guard,
+                construct_this,
+                settles: Some(root),
+            }),
             Some(Err(error)) => {
                 let promise = self.release_settled_call_root(root);
                 self.reject_settled_call(p, promise, error).map(|()| {
@@ -210,12 +236,21 @@ impl<H: Host> Vm<H> {
             && !self.is_promise(source)
             && !self.is_object_like(source)
         {
-            self.with_call_roots([Some(source), Some(promise), generator].into_iter().flatten(), |vm| {
-                let parent = vm.promise_record(promise).and_then(|record| record.host_context.get());
-                let awaited = vm.promise_object_with_parent(parent)?;
-                vm.with_call_roots([awaited], |vm| vm.promise_resolve_value(p, awaited, source))?;
-                Ok(awaited)
-            })?
+            self.with_call_roots(
+                [Some(source), Some(promise), generator]
+                    .into_iter()
+                    .flatten(),
+                |vm| {
+                    let parent = vm
+                        .promise_record(promise)
+                        .and_then(|record| record.host_context.get());
+                    let awaited = vm.promise_object_with_parent(parent)?;
+                    vm.with_call_roots([awaited], |vm| {
+                        vm.promise_resolve_value(p, awaited, source)
+                    })?;
+                    Ok(awaited)
+                },
+            )?
         } else {
             source
         };
@@ -224,7 +259,8 @@ impl<H: Host> Vm<H> {
         let next = if self.host.observes_promise_lifecycle() {
             self.with_call_roots([source], |vm| {
                 vm.promise_object_with_parent(
-                    vm.promise_record(source).and_then(|record| record.host_context.get()),
+                    vm.promise_record(source)
+                        .and_then(|record| record.host_context.get()),
                 )
             })?
         } else {
@@ -244,7 +280,13 @@ impl<H: Host> Vm<H> {
             on_fulfilled: state,
             on_rejected: state,
             next,
-            execution_context: self.host.capture_job_context(self.promise_record(next).and_then(|record| record.host_context.get())).into(),
+            execution_context: self
+                .host
+                .capture_job_context(
+                    self.promise_record(next)
+                        .and_then(|record| record.host_context.get()),
+                )
+                .into(),
         };
         if source_state == PromiseState::Pending {
             self.promise_record_mut(source)
@@ -313,7 +355,8 @@ impl<H: Host> Vm<H> {
                     let result = self.iterator_result(value, false)?;
                     return self.promise_resolve_value(p, resume.promise, result);
                 }
-                self.generator_record_mut(generator).and_then(|record| record.continuation.take())
+                self.generator_record_mut(generator)
+                    .and_then(|record| record.continuation.take())
             }
             (continuation, _) => continuation,
         };

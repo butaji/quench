@@ -10,10 +10,7 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         let Some(keys) = keys else {
             return Ok(self.heap.alloc(Cell::Array {
-                object: crate::heap::ArrayObject::new(
-                    Self::empty_object(self.array_proto),
-                    values,
-                ),
+                object: crate::heap::ArrayObject::new(Self::empty_object(self.array_proto), values),
             }));
         };
         let result = self
@@ -32,13 +29,14 @@ impl<H: Host> Vm<H> {
         Ok(result)
     }
 
-    pub(super) fn aggregate_error(&mut self, p: &ResidualProgram, errors: Vec<Value>) -> Result<Value, JsError> {
+    pub(super) fn aggregate_error(
+        &mut self,
+        p: &ResidualProgram,
+        errors: Vec<Value>,
+    ) -> Result<Value, JsError> {
         let array_prototype = self.array_prototype_for_realm(self.realm.globals);
         let errors = self.heap.alloc(Cell::Array {
-            object: crate::heap::ArrayObject::new(
-                Self::empty_object(array_prototype),
-                errors,
-            ),
+            object: crate::heap::ArrayObject::new(Self::empty_object(array_prototype), errors),
         });
         let errors = self.heap.root(errors);
         let result = (|| {

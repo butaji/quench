@@ -29,7 +29,11 @@ fn signal_started(
     _: RootId,
     _: &[RootId],
 ) -> Result<RootId, RootedError> {
-    ctx.host_mut().state::<InterruptProbe>().started.send(()).unwrap();
+    ctx.host_mut()
+        .state::<InterruptProbe>()
+        .started
+        .send(())
+        .unwrap();
     Ok(ctx.undefined())
 }
 #[test]
@@ -65,10 +69,8 @@ fn owned_termination_handle_stops_before_execution_and_is_send_sync() {
     let dropped = Arc::new(AtomicBool::new(false));
     let handle = crate::ExecutionInterrupt::default();
     handle.request_termination();
-    let mut runtime = Runtime::new_with_execution_interrupt(
-        interrupt_host(tx, dropped.clone()),
-        handle,
-    );
+    let mut runtime =
+        Runtime::new_with_execution_interrupt(interrupt_host(tx, dropped.clone()), handle);
     let program = Engine::specialize("started();", "preterminated.js").unwrap();
     assert!(
         runtime

@@ -58,7 +58,10 @@ pub(super) fn prototype_unobservable_functions<'a>(
     let mut found = FxHashSet::default();
     for (symbol, initial) in &uses.declarators {
         let scope = scoping.symbol_scope_id(*symbol);
-        if scope == root || evaluated.contains(&scope) || !scoping.symbol_redeclarations(*symbol).is_empty() {
+        if scope == root
+            || evaluated.contains(&scope)
+            || !scoping.symbol_redeclarations(*symbol).is_empty()
+        {
             continue;
         }
         let mut stored = match initial {
@@ -66,18 +69,23 @@ pub(super) fn prototype_unobservable_functions<'a>(
             Initial::Function(start) => vec![*start],
             Initial::Other => continue,
         };
-        let only_called = scoping.get_resolved_reference_ids(*symbol).iter().all(|reference| {
-            match uses.references.get(reference) {
+        let only_called = scoping
+            .get_resolved_reference_ids(*symbol)
+            .iter()
+            .all(|reference| match uses.references.get(reference) {
                 Some(Use::Callee) => true,
                 Some(Use::StoresFunction(start)) => {
                     stored.push(*start);
                     true
                 }
                 Some(Use::Other) | None => false,
-            }
-        });
+            });
         if only_called {
-            found.extend(stored.into_iter().filter(|start| uses.plain_functions.contains(start)));
+            found.extend(
+                stored
+                    .into_iter()
+                    .filter(|start| uses.plain_functions.contains(start)),
+            );
         }
     }
     found
@@ -126,7 +134,10 @@ impl<'a> Visit<'a> for References {
         walk::walk_program(self, it);
         let reads = std::mem::take(&mut self.arguments_reads);
         for function in std::mem::take(&mut self.functions) {
-            if !reads.iter().any(|read| function.start <= read.start && read.end <= function.end) {
+            if !reads
+                .iter()
+                .any(|read| function.start <= read.start && read.end <= function.end)
+            {
                 self.plain_functions.insert(function.start);
             }
         }
@@ -166,7 +177,9 @@ impl<'a> Visit<'a> for References {
         {
             let initial = match it.init.as_ref().map(Expression::without_parentheses) {
                 None => Initial::Nothing,
-                Some(Expression::FunctionExpression(function)) => Initial::Function(function.span.start),
+                Some(Expression::FunctionExpression(function)) => {
+                    Initial::Function(function.span.start)
+                }
                 Some(_) => Initial::Other,
             };
             self.declarators.push((symbol, initial));

@@ -169,10 +169,7 @@ impl<H: Host> Vm<H> {
                     vm.set_hidden_string(formatter, slot, value)?;
                 }
                 let grouping_value = options.grouping_boolean.map_or_else(
-                    || {
-                        vm.heap
-                            .alloc_string(options.grouping_mode.clone().into())
-                    },
+                    || vm.heap.alloc_string(options.grouping_mode.clone().into()),
                     |enabled| if enabled { Value::TRUE } else { Value::FALSE },
                 );
                 vm.set_hidden_value(formatter, NUMBER_FORMAT_GROUPING_SLOT, grouping_value)?;
@@ -221,11 +218,7 @@ impl<H: Host> Vm<H> {
         self.with_call_roots(args.iter().copied().chain([this]), |vm| {
             if !vm.number_format_legacy_receiver(p, this)? {
                 let native_intl_number_format = vm.native_value(Native::IntlNumberFormat);
-                return vm.intl_number_format_construct(
-                    p,
-                    args,
-                    native_intl_number_format,
-                );
+                return vm.intl_number_format_construct(p, args, native_intl_number_format);
             }
             let Some(symbol) = vm
                 .realm
@@ -235,22 +228,14 @@ impl<H: Host> Vm<H> {
                 .copied()
             else {
                 let native_intl_number_format = vm.native_value(Native::IntlNumberFormat);
-                return vm.intl_number_format_construct(
-                    p,
-                    args,
-                    native_intl_number_format,
-                );
+                return vm.intl_number_format_construct(p, args, native_intl_number_format);
             };
             let fallback = vm.get_symbol_property_with_receiver(p, this, symbol, this)?;
             if !fallback.is_undefined() {
                 return Ok(this);
             }
             let native_intl_number_format = vm.native_value(Native::IntlNumberFormat);
-            let formatter = vm.intl_number_format_construct(
-                p,
-                args,
-                native_intl_number_format,
-            )?;
+            let formatter = vm.intl_number_format_construct(p, args, native_intl_number_format)?;
             vm.set_symbol_property(this, symbol, formatter)?;
             vm.set_property_attributes(
                 this,

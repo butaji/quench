@@ -246,10 +246,11 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         let value = args.first().copied().unwrap_or(Value::UNDEFINED);
         let epoch = match native {
-            Native::TemporalInstantFromEpochNanoseconds => i128::try_from(self.to_bigint(p, value)?)
-                .map_err(|_| {
+            Native::TemporalInstantFromEpochNanoseconds => {
+                i128::try_from(self.to_bigint(p, value)?).map_err(|_| {
                     self.range_error(p, "epochNanoseconds outside supported range".into())
-                })?,
+                })?
+            }
             Native::TemporalInstantFromEpochMilliseconds => {
                 let milliseconds = self.to_number(p, value)?;
                 let limit =

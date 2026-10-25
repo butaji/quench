@@ -366,10 +366,7 @@ mod tests {
         let destination = vm
             .alloc_wasm_table(table_type, declarations, Value::NULL)
             .unwrap();
-        let values = ["a", "b", "c", "d"].map(|text| {
-            vm.heap
-                .alloc_string(text.into())
-        });
+        let values = ["a", "b", "c", "d"].map(|text| vm.heap.alloc_string(text.into()));
         let Some(Cell::WasmTable { elements, .. }) = vm.heap.get_mut(source) else {
             unreachable!()
         };
@@ -658,9 +655,7 @@ mod reference_boundary_tests {
         .unwrap();
         let mut vm = Vm::new(crate::SystemHost);
         let instance = vm.instantiate_wasm_module(&module).unwrap();
-        let host_value = vm
-            .heap
-            .alloc_string("host-owned external identity".into());
+        let host_value = vm.heap.alloc_string("host-owned external identity".into());
         let reference = WasmValue::ExternRef(host_value);
         assert_eq!(
             vm.invoke_wasm(&instance, 0, &[reference]).unwrap(),

@@ -18,8 +18,13 @@ impl<H: Host> Vm<H> {
         let prototype = self
             .heap
             .alloc(Cell::Object(Self::empty_object(object_prototype)));
-        self.realm.intrinsics.builtin_prototypes.insert((global, Native::Boolean), prototype);
-        self.object_data_mut(prototype).expect("primitive prototype").set_boxed_primitive(Value::FALSE);
+        self.realm
+            .intrinsics
+            .builtin_prototypes
+            .insert((global, Native::Boolean), prototype);
+        self.object_data_mut(prototype)
+            .expect("primitive prototype")
+            .set_boxed_primitive(Value::FALSE);
         self.set_builtin_value_named(constructor, "prototype", prototype)?;
         let prototype_atom = self.prototype_atom();
         self.set_property_attributes(
@@ -68,7 +73,8 @@ impl<H: Host> Vm<H> {
         if receiver.as_bool().is_some() {
             return Some(receiver);
         }
-        if let Some(value) = self.boxed_primitive_value(receiver)
+        if let Some(value) = self
+            .boxed_primitive_value(receiver)
             .filter(|value| value.as_bool().is_some())
         {
             return Some(value);

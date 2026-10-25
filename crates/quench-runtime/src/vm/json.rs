@@ -1,5 +1,5 @@
-use super::object_descriptors::PropertyDescriptorRecord;
 use super::atom_keys::AtomText;
+use super::object_descriptors::PropertyDescriptorRecord;
 use super::wtf16::{JsString, Units};
 use super::*;
 use crate::unicode;
@@ -167,7 +167,10 @@ type JsonText = Vec<u8>;
 /// literals and numbers, host strings, and JavaScript strings whose lone surrogates it
 /// escapes (`write_json_string`).
 fn json_text_string(text: JsonText) -> String {
-    debug_assert!(std::str::from_utf8(&text).is_ok(), "JSON text is written as UTF-8");
+    debug_assert!(
+        std::str::from_utf8(&text).is_ok(),
+        "JSON text is written as UTF-8"
+    );
     // SAFETY: as above, every byte sequence written is UTF-8.
     unsafe { String::from_utf8_unchecked(text) }
 }
@@ -435,7 +438,10 @@ impl JsonStringUnits<'_> {
 
 /// Parses `text` with `builder`, in the form the string holds: an ASCII string's bytes need
 /// no widening, and decoded text whose units are not made parses from its UTF-8.
-fn parse_json_text<B: JsonBuilder>(text: &JsString, builder: &mut B) -> Result<B::Value, JsonParseError> {
+fn parse_json_text<B: JsonBuilder>(
+    text: &JsString,
+    builder: &mut B,
+) -> Result<B::Value, JsonParseError> {
     if let Some(host) = text.unflattened_host() {
         return JsonParser::new(Utf8Byte::of(host)).parse(builder);
     }
@@ -623,12 +629,21 @@ impl<H: Host> JsonBuilder for JsonHeapBuilder<'_, H> {
         }
         // Keys whose adds this parse made before end at a known shape, each a one-slot
         // append (`shape_appends_one_slot`): the object is made at once with its values.
-        let shape = entries.iter().try_fold(self.empty_shape, |shape, (atom, _)| {
-            self.transitions.get(&(shape, *atom)).copied()
-        });
+        let shape = entries
+            .iter()
+            .try_fold(self.empty_shape, |shape, (atom, _)| {
+                self.transitions.get(&(shape, *atom)).copied()
+            });
         if let Some(shape) = shape {
-            let values = entries.iter().map(|(_, value)| *value).collect::<smallvec::SmallVec<[Value; 16]>>();
-            return self.vm.heap.alloc_object_with_properties(self.object_prototype, shape, &values);
+            let values = entries
+                .iter()
+                .map(|(_, value)| *value)
+                .collect::<smallvec::SmallVec<[Value; 16]>>();
+            return self.vm.heap.alloc_object_with_properties(
+                self.object_prototype,
+                shape,
+                &values,
+            );
         }
         let object = self
             .vm
@@ -730,7 +745,9 @@ impl<'a, T: JsonUnit> JsonParser<'a, T> {
         self.expect(JSON_QUOTE as u8)?;
         let units = self.units;
         let start = self.index;
-        let run = units[start..].iter().position(|unit| unit.ends_string_run());
+        let run = units[start..]
+            .iter()
+            .position(|unit| unit.ends_string_run());
         if let Some(length) = run
             && units[start + length].unit() == JSON_QUOTE
         {
@@ -740,7 +757,10 @@ impl<'a, T: JsonUnit> JsonParser<'a, T> {
         let mut output = Vec::new();
         loop {
             let run = &units[self.index..];
-            let length = run.iter().position(|unit| unit.ends_string_run()).unwrap_or(run.len());
+            let length = run
+                .iter()
+                .position(|unit| unit.ends_string_run())
+                .unwrap_or(run.len());
             T::extend_units(&run[..length], &mut output);
             self.index += length;
             match self.take() {
@@ -840,11 +860,13 @@ impl<'a, T: JsonUnit> JsonParser<'a, T> {
         }
         let integer = &self.units[integer_start..self.index];
         if integer.len() <= JSON_EXACT_INTEGER_DIGITS
-            && !self.peek().is_some_and(|unit| unit == u16::from(b'.') || unit == 69 || unit == 101)
+            && !self
+                .peek()
+                .is_some_and(|unit| unit == u16::from(b'.') || unit == 69 || unit == 101)
         {
-            let magnitude = integer
-                .iter()
-                .fold(0_u64, |value, digit| value * 10 + u64::from(digit.unit() - JSON_DIGIT_START));
+            let magnitude = integer.iter().fold(0_u64, |value, digit| {
+                value * 10 + u64::from(digit.unit() - JSON_DIGIT_START)
+            });
             let magnitude = magnitude as f64;
             return Ok(if negative { -magnitude } else { magnitude });
         }
@@ -874,7 +896,10 @@ impl<'a, T: JsonUnit> JsonParser<'a, T> {
             }
             &inline[..literal.len()]
         } else {
-            long = literal.iter().map(|unit| unit.unit() as u8).collect::<Vec<_>>();
+            long = literal
+                .iter()
+                .map(|unit| unit.unit() as u8)
+                .collect::<Vec<_>>();
             &long
         };
         std::str::from_utf8(bytes)
@@ -901,7 +926,10 @@ impl<'a, T: JsonUnit> JsonParser<'a, T> {
 
     fn whitespace(&mut self) {
         let rest = &self.units[self.index..];
-        self.index += rest.iter().take_while(|unit| is_json_whitespace(unit.unit())).count();
+        self.index += rest
+            .iter()
+            .take_while(|unit| is_json_whitespace(unit.unit()))
+            .count();
     }
 
     fn expect(&mut self, expected: u8) -> Result<(), JsonParseError> {
@@ -957,12 +985,8 @@ impl<H: Host> Vm<H> {
         let text = self.coerce_js_string(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
         let wide = text.units().wide();
         let units: &[u16] = &wide;
-        if units
-            .first()
-            .is_some_and(|unit| is_json_whitespace(*unit))
-            || units
-                .last()
-                .is_some_and(|unit| is_json_whitespace(*unit))
+        if units.first().is_some_and(|unit| is_json_whitespace(*unit))
+            || units.last().is_some_and(|unit| is_json_whitespace(*unit))
         {
             return self.syntax_error_result(p, "Invalid raw JSON text");
         }
@@ -990,9 +1014,7 @@ impl<H: Host> Vm<H> {
         let raw_text_value = self.heap.alloc_string(text);
         let raw_text_root = self.heap.root(raw_text_value);
         let result = (|| {
-            let key = self
-                .heap
-                .alloc_string(self.atom_name(raw_atom).into());
+            let key = self.heap.alloc_string(self.atom_name(raw_atom).into());
             let raw_text = self.heap.root_value(raw_text_root).unwrap();
             let descriptor = PropertyDescriptorRecord {
                 writable: Some(false),
@@ -1075,9 +1097,10 @@ impl<H: Host> Vm<H> {
             JsonValue::Null => current.is_null(),
             JsonValue::Bool(expected) => current.as_bool() == Some(*expected),
             JsonValue::Number(expected) => self.same_value(current, Value::number(*expected)),
-            JsonValue::String(expected) => {
-                self.heap.string(current).is_some_and(|actual| actual == expected)
-            }
+            JsonValue::String(expected) => self
+                .heap
+                .string(current)
+                .is_some_and(|actual| actual == expected),
             _ => false,
         };
         unchanged.then(|| text.clone())
@@ -1271,7 +1294,9 @@ impl<H: Host> Vm<H> {
             return Some(true);
         }
         if let Some(value) = value.as_bool() {
-            plain.output.extend_from_slice(if value { b"true" } else { b"false" });
+            plain
+                .output
+                .extend_from_slice(if value { b"true" } else { b"false" });
             return Some(true);
         }
         if let Some(integer) = value.as_int() {
@@ -1306,7 +1331,12 @@ impl<H: Host> Vm<H> {
         written.then_some(true)
     }
 
-    fn json_write_plain_array(&self, value: Value, array: &crate::heap::ArrayObject, plain: &mut JsonPlainWrite) -> bool {
+    fn json_write_plain_array(
+        &self,
+        value: Value,
+        array: &crate::heap::ArrayObject,
+        plain: &mut JsonPlainWrite,
+    ) -> bool {
         if array.has_side_descriptors() {
             return false;
         }
@@ -1340,7 +1370,10 @@ impl<H: Host> Vm<H> {
             return false;
         };
         // Shape facts decide the plan; these per-object facts do not.
-        if data.is_raw_json() || data.has_side_descriptors() || self.boxed_primitive_data(value).is_some() {
+        if data.is_raw_json()
+            || data.has_side_descriptors()
+            || self.boxed_primitive_data(value).is_some()
+        {
             return false;
         }
         let Some(members) = self.json_plain_members(value, data, plain) else {
@@ -1358,7 +1391,9 @@ impl<H: Host> Vm<H> {
                 plain.output.push(b',');
             }
             let (key_start, key_end) = member.key;
-            plain.output.extend_from_slice(&plain.key_text[key_start as usize..key_end as usize]);
+            plain
+                .output
+                .extend_from_slice(&plain.key_text[key_start as usize..key_end as usize]);
             match self.json_write_plain(member_value, plain) {
                 Some(true) => written = true,
                 Some(false) => plain.output.truncate(start),
@@ -1394,7 +1429,10 @@ impl<H: Host> Vm<H> {
                         let start = plain.key_text.len() as u32;
                         self.write_json_key(atom, &mut plain.key_text);
                         plain.key_text.push(b':');
-                        JsonMember { slot, key: (start, plain.key_text.len() as u32) }
+                        JsonMember {
+                            slot,
+                            key: (start, plain.key_text.len() as u32),
+                        }
                     })
                 })
                 .collect::<Option<std::rc::Rc<[JsonMember]>>>()
@@ -1449,9 +1487,14 @@ impl<H: Host> Vm<H> {
     }
 
     fn json_boxed_string_or_number(&self, value: Value) -> Option<Value> {
-        self.boxed_primitive_data(value).and_then(|(brand, payload)| {
-            matches!(brand, crate::BuiltinBrand::StringObject | crate::BuiltinBrand::NumberObject).then_some(payload)
-        })
+        self.boxed_primitive_data(value)
+            .and_then(|(brand, payload)| {
+                matches!(
+                    brand,
+                    crate::BuiltinBrand::StringObject | crate::BuiltinBrand::NumberObject
+                )
+                .then_some(payload)
+            })
     }
 
     fn json_gap(&mut self, p: &ResidualProgram, value: Value) -> Result<String, JsError> {
@@ -1623,7 +1666,11 @@ impl<H: Host> Vm<H> {
                 (self.plain_named_key(key) && !accessor).then(|| {
                     let mut quoted = Vec::new();
                     self.write_json_key(key, &mut quoted);
-                    JsonPlanMember { key, slot, quoted: quoted.into_boxed_slice() }
+                    JsonPlanMember {
+                        key,
+                        slot,
+                        quoted: quoted.into_boxed_slice(),
+                    }
                 })
             })
             .collect()
@@ -1680,7 +1727,9 @@ impl<H: Host> Vm<H> {
             return Ok(true);
         }
         if let Some(value) = value.as_bool() {
-            state.output.extend_from_slice(if value { b"true" } else { b"false" });
+            state
+                .output
+                .extend_from_slice(if value { b"true" } else { b"false" });
             return Ok(true);
         }
         if let Some(value) = value.as_number() {
@@ -1713,7 +1762,7 @@ impl<H: Host> Vm<H> {
             .map(|()| true);
         }
         match self.heap.get(value).cloned() {
-            _ if let Some(text) = self.heap.string(value).cloned()  => {
+            _ if let Some(text) = self.heap.string(value).cloned() => {
                 write_json_string(&text, &mut state.output);
                 Ok(true)
             }
@@ -1728,9 +1777,7 @@ impl<H: Host> Vm<H> {
             _ if self.is_array(p, value)? => {
                 self.json_serialize_array(p, value, state).map(|()| true)
             }
-            Some(Cell::Object(_)) => {
-                self.json_serialize_object(p, value, state).map(|()| true)
-            }
+            Some(Cell::Object(_)) => self.json_serialize_object(p, value, state).map(|()| true),
             Some(Cell::Proxy { .. })
             | Some(Cell::Date { .. })
             | Some(Cell::Error(_))
@@ -1793,7 +1840,9 @@ impl<H: Host> Vm<H> {
             return None;
         }
         let raw = self.lookup_atom("rawJSON")?;
-        self.heap.string(self.own_property(value, raw)?).map(|text| text.host_string().to_owned())
+        self.heap
+            .string(self.own_property(value, raw)?)
+            .map(|text| text.host_string().to_owned())
     }
 
     fn json_serialize_array(
@@ -1871,13 +1920,18 @@ impl<H: Host> Vm<H> {
                         keys[index]
                     }
                 };
-                state.output.extend_from_slice(if state.gap.is_empty() { b":" } else { b": " });
+                state
+                    .output
+                    .extend_from_slice(if state.gap.is_empty() { b":" } else { b": " });
                 // A plan read for this object holds while no member took the property steps.
-                let planned = plan.as_ref().filter(|_| state.steps == planned_steps).and_then(|plan| {
-                    self.heap
-                        .ordinary_object(object)
-                        .and_then(|data| self.heap.property_get(data, plan[index].slot))
-                });
+                let planned = plan
+                    .as_ref()
+                    .filter(|_| state.steps == planned_steps)
+                    .and_then(|plan| {
+                        self.heap
+                            .ordinary_object(object)
+                            .and_then(|data| self.heap.property_get(data, plan[index].slot))
+                    });
                 let value = planned.or_else(|| self.plain_named_get(object, key));
                 if self.json_member(p, object, JsonKey::Name(key), value, state)? {
                     written += 1;

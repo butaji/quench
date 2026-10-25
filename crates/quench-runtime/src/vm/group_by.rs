@@ -123,7 +123,7 @@ impl<H: Host> Vm<H> {
         let group = match kind {
             GroupByKind::Object => match self.heap.get(key).cloned() {
                 Some(Cell::Symbol(_)) => self.symbol_property(result, key),
-                _ if let Some(name) = self.heap.string(key).cloned()  => {
+                _ if let Some(name) = self.heap.string(key).cloned() => {
                     let atom = self.intern_js_atom(&name);
                     self.own_property(result, atom)
                 }
@@ -153,7 +153,7 @@ impl<H: Host> Vm<H> {
                     Some(Cell::Symbol(_)) => {
                         self.set_index(p, result, key, group)?;
                     }
-                    _ if let Some(name) = self.heap.string(key).cloned()  => {
+                    _ if let Some(name) = self.heap.string(key).cloned() => {
                         let atom = self.intern_js_atom(&name);
                         self.set_property(result, atom, group)?;
                     }

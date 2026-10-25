@@ -260,10 +260,15 @@ impl<H: Host> Vm<H> {
         let member = self.lazy_member(accessor)?;
         let mut entries = match self.member_slot(member, MemberSlot::Listeners) {
             listeners if listeners.is_undefined() => Vec::new(),
-            listeners => self.heap.array_elements(listeners).map(|elements| elements.to_vec()).unwrap_or_default(),
+            listeners => self
+                .heap
+                .array_elements(listeners)
+                .map(|elements| elements.to_vec())
+                .unwrap_or_default(),
         };
         entries.extend([listener, Value::number(f64::from(index))]);
-        let listeners = self.with_call_roots([accessor, member, listener], |vm| vm.new_array(entries));
+        let listeners =
+            self.with_call_roots([accessor, member, listener], |vm| vm.new_array(entries));
         if let Some(slot) = self
             .heap
             .environment_slot_mut(member, MemberSlot::Listeners as usize)
@@ -344,8 +349,12 @@ impl<H: Host> Vm<H> {
         holder: Value,
     ) -> Result<(), JsError> {
         let completes = |vm: &Self, group: Value| {
-            vm.heap.environment_slot(group, GroupSlot::CompletesKeys as usize) == Some(Value::TRUE)
-                && vm.heap.environment_slot(group, GroupSlot::State as usize)
+            vm.heap
+                .environment_slot(group, GroupSlot::CompletesKeys as usize)
+                == Some(Value::TRUE)
+                && vm
+                    .heap
+                    .environment_slot(group, GroupSlot::State as usize)
                     .map(GroupState::of)
                     == Some(GroupState::Pending)
         };
@@ -398,7 +407,10 @@ impl<H: Host> Vm<H> {
                     (!listeners.is_undefined()).then_some((key, listeners))
                 })
                 .collect::<Vec<_>>();
-            let roots = watched.iter().map(|(_, listeners)| *listeners).collect::<Vec<_>>();
+            let roots = watched
+                .iter()
+                .map(|(_, listeners)| *listeners)
+                .collect::<Vec<_>>();
             vm.with_call_roots(roots, |vm| {
                 vm.enter_startup_intrinsics(p)?;
                 let initialized = (|| {
@@ -427,9 +439,15 @@ impl<H: Host> Vm<H> {
                 let left = vm.leave_startup_intrinsics(p);
                 initialized.and(left)?;
                 for (key, listeners) in watched {
-                    let PropertyKey::String(atom) = key else { continue };
+                    let PropertyKey::String(atom) = key else {
+                        continue;
+                    };
                     let value = vm.get_property(p, holder, atom)?;
-                    let entries = vm.heap.array_elements(listeners).map(|elements| elements.to_vec()).unwrap_or_default();
+                    let entries = vm
+                        .heap
+                        .array_elements(listeners)
+                        .map(|elements| elements.to_vec())
+                        .unwrap_or_default();
                     for entry in entries.chunks_exact(2) {
                         vm.with_call_roots([value], |vm| {
                             vm.call_value(p, entry[0], Value::UNDEFINED, &[entry[1], value])

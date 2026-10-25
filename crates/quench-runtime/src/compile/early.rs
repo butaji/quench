@@ -420,8 +420,15 @@ pub(super) fn parameters_reach_no_scope(params: &FormalParameters<'_>, bound: &[
         reaches: bool,
     }
     impl<'a> Visit<'a> for Reach<'_> {
-        fn visit_identifier_reference(&mut self, identifier: &oxc_ast::ast::IdentifierReference<'a>) {
-            self.reaches |= identifier.name == "arguments" || self.bound.iter().any(|name| identifier.name == name.as_str());
+        fn visit_identifier_reference(
+            &mut self,
+            identifier: &oxc_ast::ast::IdentifierReference<'a>,
+        ) {
+            self.reaches |= identifier.name == "arguments"
+                || self
+                    .bound
+                    .iter()
+                    .any(|name| identifier.name == name.as_str());
         }
         fn visit_call_expression(&mut self, call: &CallExpression<'a>) {
             self.reaches |= is_direct_eval_call(call);
@@ -437,7 +444,10 @@ pub(super) fn parameters_reach_no_scope(params: &FormalParameters<'_>, bound: &[
             self.reaches = true;
         }
     }
-    let mut reach = Reach { bound, reaches: false };
+    let mut reach = Reach {
+        bound,
+        reaches: false,
+    };
     reach.visit_formal_parameters(params);
     !reach.reaches
 }
@@ -588,7 +598,8 @@ pub(super) fn fixed_register_local_facts(
                 self.unordered |= self.loops != 0;
                 self.first_pass.get_or_insert(identifier.span.start);
             } else {
-                self.last_references.insert(identifier.name.to_string(), identifier.span.start);
+                self.last_references
+                    .insert(identifier.name.to_string(), identifier.span.start);
             }
         }
 
@@ -596,7 +607,10 @@ pub(super) fn fixed_register_local_facts(
             self.bound_names.insert(identifier.name.to_string());
         }
 
-        fn visit_static_member_expression(&mut self, member: &oxc_ast::ast::StaticMemberExpression<'a>) {
+        fn visit_static_member_expression(
+            &mut self,
+            member: &oxc_ast::ast::StaticMemberExpression<'a>,
+        ) {
             if names_arguments(&member.object) && member.property.name == LENGTH_NAME {
                 self.use_arguments(ArgumentsUse::Reads);
             } else {
@@ -604,7 +618,10 @@ pub(super) fn fixed_register_local_facts(
             }
         }
 
-        fn visit_computed_member_expression(&mut self, member: &oxc_ast::ast::ComputedMemberExpression<'a>) {
+        fn visit_computed_member_expression(
+            &mut self,
+            member: &oxc_ast::ast::ComputedMemberExpression<'a>,
+        ) {
             if names_arguments(&member.object) {
                 self.use_arguments(ArgumentsUse::Reads);
                 self.visit_expression(&member.expression);
@@ -615,14 +632,27 @@ pub(super) fn fixed_register_local_facts(
 
         // A member of `arguments` as a callee or tag passes the object as the receiver.
         fn visit_call_expression(&mut self, call: &CallExpression<'a>) {
-            if call.callee.without_parentheses().as_member_expression().is_some_and(|member| names_arguments(member.object())) {
+            if call
+                .callee
+                .without_parentheses()
+                .as_member_expression()
+                .is_some_and(|member| names_arguments(member.object()))
+            {
                 self.use_arguments(ArgumentsUse::Escapes);
             }
             walk::walk_call_expression(self, call);
         }
 
-        fn visit_tagged_template_expression(&mut self, tagged: &oxc_ast::ast::TaggedTemplateExpression<'a>) {
-            if tagged.tag.without_parentheses().as_member_expression().is_some_and(|member| names_arguments(member.object())) {
+        fn visit_tagged_template_expression(
+            &mut self,
+            tagged: &oxc_ast::ast::TaggedTemplateExpression<'a>,
+        ) {
+            if tagged
+                .tag
+                .without_parentheses()
+                .as_member_expression()
+                .is_some_and(|member| names_arguments(member.object()))
+            {
                 self.use_arguments(ArgumentsUse::Escapes);
             }
             walk::walk_tagged_template_expression(self, tagged);
@@ -634,7 +664,10 @@ pub(super) fn fixed_register_local_facts(
                     .insert(identifier.name.to_string());
                 self.bound_names.insert(identifier.name.to_string());
             }
-            if target.as_member_expression().is_some_and(|member| names_arguments(member.object())) {
+            if target
+                .as_member_expression()
+                .is_some_and(|member| names_arguments(member.object()))
+            {
                 self.use_arguments(ArgumentsUse::Escapes);
             }
             walk::walk_simple_assignment_target(self, target);
@@ -706,12 +739,18 @@ pub(super) fn fixed_register_local_facts(
 
         // A destructuring target or binding evaluates its defaults and computed keys after
         // the value it takes apart.
-        fn visit_array_assignment_target(&mut self, target: &oxc_ast::ast::ArrayAssignmentTarget<'a>) {
+        fn visit_array_assignment_target(
+            &mut self,
+            target: &oxc_ast::ast::ArrayAssignmentTarget<'a>,
+        ) {
             self.unordered = true;
             walk::walk_array_assignment_target(self, target);
         }
 
-        fn visit_object_assignment_target(&mut self, target: &oxc_ast::ast::ObjectAssignmentTarget<'a>) {
+        fn visit_object_assignment_target(
+            &mut self,
+            target: &oxc_ast::ast::ObjectAssignmentTarget<'a>,
+        ) {
             self.unordered = true;
             walk::walk_object_assignment_target(self, target);
         }
@@ -788,12 +827,17 @@ impl FixedRegisterLocalFacts {
     /// mapping: it only reads the object, or it passes the object on after its last
     /// reference to any parameter, so what writes the object's elements finds no parameter
     /// read after it.
-    pub(super) fn arguments_mapping_unobserved(&self, parameters: impl Iterator<Item = impl AsRef<str>>) -> bool {
+    pub(super) fn arguments_mapping_unobserved(
+        &self,
+        parameters: impl Iterator<Item = impl AsRef<str>>,
+    ) -> bool {
         match self.arguments {
             ArgumentsUse::Reads => true,
             ArgumentsUse::Passes => self.first_pass.is_some_and(|pass| {
                 parameters.into_iter().all(|parameter| {
-                    self.last_references.get(parameter.as_ref()).is_none_or(|&reference| reference < pass)
+                    self.last_references
+                        .get(parameter.as_ref())
+                        .is_none_or(|&reference| reference < pass)
                 })
             }),
             ArgumentsUse::None | ArgumentsUse::Escapes => false,
@@ -841,7 +885,10 @@ impl<'a> Visit<'a> for DynamicBindingFinder {
 
     fn visit_unary_expression(&mut self, expression: &oxc_ast::ast::UnaryExpression<'a>) {
         if expression.operator == oxc_syntax::operator::UnaryOperator::Delete
-            && matches!(expression.argument.without_parentheses(), Expression::Identifier(_))
+            && matches!(
+                expression.argument.without_parentheses(),
+                Expression::Identifier(_)
+            )
         {
             self.0 = true;
         } else {
@@ -1731,7 +1778,10 @@ mod regexp_modifier_tests {
     #[test]
     fn classes_hold_atoms_not_modifier_groups() {
         for pattern in [r"^[(?-i)y]$", r"[a(?-i)]", r"[\](?-i)]", r"(?i:a)[(?-m)]"] {
-            assert!(validate_modifier_groups(pattern, false).is_ok(), "{pattern}");
+            assert!(
+                validate_modifier_groups(pattern, false).is_ok(),
+                "{pattern}"
+            );
         }
         assert!(validate_modifier_groups(r"[[a]](?-i)", true).is_err());
         assert!(validate_modifier_groups(r"[a](?-i)", false).is_err());
@@ -1766,7 +1816,14 @@ pub(super) fn arguments_alias<'a>(
             _ => None,
         }
     })?;
-    let mut uses = AliasUses { alias, declared_at, bindings: 0, references: 0, reads: 0, safe: true };
+    let mut uses = AliasUses {
+        alias,
+        declared_at,
+        bindings: 0,
+        references: 0,
+        reads: 0,
+        safe: true,
+    };
     if let Some(params) = params {
         uses.visit_formal_parameters(params);
     }

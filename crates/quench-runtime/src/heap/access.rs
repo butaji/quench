@@ -1,6 +1,6 @@
 use super::{
-    ArrayObject, AwaitState, Cell, EnvironmentBindings, FunctionRecord, IteratorRecord,
-    PromiseCell, EnvironmentSlotState, EnvironmentSlots, Heap, Object,
+    ArrayObject, AwaitState, Cell, EnvironmentBindings, EnvironmentSlotState, EnvironmentSlots,
+    FunctionRecord, Heap, IteratorRecord, Object, PromiseCell,
 };
 use crate::bytecode::Atom;
 use crate::value::{HeapReference, Value};
@@ -44,12 +44,12 @@ impl Heap {
             }
         }
         match self.get_mut(collection) {
-            Some(Cell::Map { entries, .. }) => {
-                running.into_iter().for_each(|it| entries.register_iterator(it))
-            }
-            Some(Cell::Set { entries, .. }) => {
-                running.into_iter().for_each(|it| entries.register_iterator(it))
-            }
+            Some(Cell::Map { entries, .. }) => running
+                .into_iter()
+                .for_each(|it| entries.register_iterator(it)),
+            Some(Cell::Set { entries, .. }) => running
+                .into_iter()
+                .for_each(|it| entries.register_iterator(it)),
             _ => {}
         }
     }
@@ -387,7 +387,11 @@ impl Heap {
         if let Some(record_id) = value.direct_function_index() {
             // SAFETY: direct-function Values name live records; `&mut self` is exclusive.
             return Some(
-                &mut unsafe { self.function_records.get_live_mut_storing(record_id, stored) }.object,
+                &mut unsafe {
+                    self.function_records
+                        .get_live_mut_storing(record_id, stored)
+                }
+                .object,
             );
         }
         if let Some(record_id) = value.direct_promise_index() {
@@ -399,8 +403,11 @@ impl Heap {
         if let Some(record_id) = value.direct_iterator_index() {
             // SAFETY: direct-iterator Values name live records; `&mut self` is exclusive.
             return Some(
-                &mut unsafe { self.iterator_records.get_live_mut_storing(record_id, stored) }
-                    .object,
+                &mut unsafe {
+                    self.iterator_records
+                        .get_live_mut_storing(record_id, stored)
+                }
+                .object,
             );
         }
         self.get_mut(value)?.object_mut()
@@ -437,7 +444,11 @@ impl Heap {
 
     /// `array_mut` for a store of `stored` into the array's elements.
     #[inline(always)]
-    pub(crate) fn array_store_mut(&mut self, value: Value, stored: Value) -> Option<&mut ArrayObject> {
+    pub(crate) fn array_store_mut(
+        &mut self,
+        value: Value,
+        stored: Value,
+    ) -> Option<&mut ArrayObject> {
         if value.direct_array_index().is_some() {
             return self.record_array_store_mut(value, stored);
         }
@@ -485,7 +496,9 @@ impl Heap {
             HeapReference::IteratorRecord(record_id) => {
                 &mut unsafe { iterator_records.get_live_mut(record_id) }.object
             }
-            HeapReference::AwaitRecord(_) | HeapReference::StringRecord(_) | HeapReference::V128Record(_) => {
+            HeapReference::AwaitRecord(_)
+            | HeapReference::StringRecord(_)
+            | HeapReference::V128Record(_) => {
                 return None;
             }
             HeapReference::LegacySlot(index) => {
@@ -541,10 +554,7 @@ impl Heap {
         self.array(value).map(ArrayObject::elements)
     }
 
-    pub(crate) fn array_elements_mut(
-        &mut self,
-        value: Value,
-    ) -> Option<&mut super::ArrayElements> {
+    pub(crate) fn array_elements_mut(&mut self, value: Value) -> Option<&mut super::ArrayElements> {
         self.array_mut(value).map(ArrayObject::elements_mut)
     }
 
@@ -684,9 +694,16 @@ impl Heap {
         {
             return;
         }
-        let (word, bit) = (index / u64::BITS as usize, 1_u64 << (index % u64::BITS as usize));
+        let (word, bit) = (
+            index / u64::BITS as usize,
+            1_u64 << (index % u64::BITS as usize),
+        );
         // A cell already remembered needs nothing more: the common repeated write.
-        if self.remembered_marks.get(word).is_some_and(|marks| marks & bit != 0) {
+        if self
+            .remembered_marks
+            .get(word)
+            .is_some_and(|marks| marks & bit != 0)
+        {
             return;
         }
         self.remember_first(word, bit, index);

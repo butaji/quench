@@ -1,6 +1,6 @@
 use super::{ArrayObject, AwaitState, FunctionRecord, IteratorRecord, Object, PromiseCell};
-use crate::vm::wtf16::JsString;
 use crate::value::Value;
+use crate::vm::wtf16::JsString;
 use std::alloc::Layout;
 use std::alloc::{alloc, dealloc};
 use std::mem::MaybeUninit;
@@ -311,7 +311,12 @@ impl<T, const CAPACITY: usize> RecordSpace<T, CAPACITY> {
             return false;
         }
         // SAFETY: the occupancy bit claims this previously uninitialized id.
-        unsafe { self.base.as_ptr().add(id as usize).write(MaybeUninit::new(value)) };
+        unsafe {
+            self.base
+                .as_ptr()
+                .add(id as usize)
+                .write(MaybeUninit::new(value))
+        };
         self.blocks[block_index].mark(record_index);
         self.next_id = id + 1;
         self.live += 1;
@@ -439,7 +444,9 @@ impl<T, const CAPACITY: usize> RecordSpace<T, CAPACITY> {
         let (block_index, record_index) = Self::split_id(id);
         // SAFETY: a live id belongs to an initialized block.
         let block = unsafe { self.blocks.get_unchecked(block_index) };
-        block.marked[record_index / OCCUPANCY_WORD_BITS] & (1_u64 << (record_index % OCCUPANCY_WORD_BITS)) != 0
+        block.marked[record_index / OCCUPANCY_WORD_BITS]
+            & (1_u64 << (record_index % OCCUPANCY_WORD_BITS))
+            != 0
     }
 
     #[inline(always)]
@@ -571,7 +578,8 @@ impl<T, const CAPACITY: usize> RecordSpace<T, CAPACITY> {
             let mut live_count = 0;
             for block_index in 0..self.blocks.len() {
                 for word_index in 0..RECORDS_PER_BLOCK / OCCUPANCY_WORD_BITS {
-                    let (live, freed) = self.sweep_word(block_index, word_index, visit_live, &mut visit);
+                    let (live, freed) =
+                        self.sweep_word(block_index, word_index, visit_live, &mut visit);
                     live_count += live;
                     freed_count += freed;
                 }
@@ -588,8 +596,14 @@ impl<T, const CAPACITY: usize> RecordSpace<T, CAPACITY> {
             {
                 let (block_index, record_index) =
                     Self::split_id(word * OCCUPANCY_WORD_BITS as RecordId);
-                freed_count +=
-                    self.sweep_word(block_index, record_index / OCCUPANCY_WORD_BITS, false, &mut visit).1;
+                freed_count += self
+                    .sweep_word(
+                        block_index,
+                        record_index / OCCUPANCY_WORD_BITS,
+                        false,
+                        &mut visit,
+                    )
+                    .1;
             }
             self.young_words = young_words;
             self.live - freed_count
@@ -623,7 +637,8 @@ impl<T, const CAPACITY: usize> RecordSpace<T, CAPACITY> {
         let marked = block.marked[word_index];
         debug_assert_eq!(marked & !occupied, 0);
         let mut dead = occupied & !marked;
-        let id_base = (block_index * RECORDS_PER_BLOCK + word_index * OCCUPANCY_WORD_BITS) as RecordId;
+        let id_base =
+            (block_index * RECORDS_PER_BLOCK + word_index * OCCUPANCY_WORD_BITS) as RecordId;
         let mut live = if visit_live { marked } else { 0 };
         while live != 0 {
             let id = id_base + live.trailing_zeros();
@@ -800,7 +815,9 @@ mod tests {
         assert!(arena.base_ptr().is_none());
 
         let first = arena.try_insert(11).unwrap();
-        let base = arena.base_ptr().expect("insertion reserves the record range");
+        let base = arena
+            .base_ptr()
+            .expect("insertion reserves the record range");
         // SAFETY: `first` is the live ID returned by the insertion above.
         assert_eq!(unsafe { *base.add(first as usize) }, 11);
 

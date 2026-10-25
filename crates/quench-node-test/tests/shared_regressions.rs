@@ -65,7 +65,10 @@ console.log(String(read()));
 "#;
     let node = observe_node_source(source);
     assert!(node.status.success(), "Node oracle failed: {node:?}");
-    assert_eq!(String::from_utf8_lossy(&node.stdout).trim(), "ReferenceError");
+    assert_eq!(
+        String::from_utf8_lossy(&node.stdout).trim(),
+        "ReferenceError"
+    );
     let quench = observe_source(source);
     assert_eq!(quench.outcome(), RunResult::Pass, "{:?}", quench.worker);
     assert_eq!(quench.stdout, node.stdout);
@@ -88,7 +91,10 @@ console.log(sum, errors[0], errors[49], new R(marker) === marker, new R(0) insta
 "#;
     let node = observe_node_source(source);
     assert!(node.status.success(), "Node oracle failed: {node:?}");
-    assert_eq!(String::from_utf8_lossy(&node.stdout).trim(), "1275 TypeError TypeError true true");
+    assert_eq!(
+        String::from_utf8_lossy(&node.stdout).trim(),
+        "1275 TypeError TypeError true true"
+    );
     let quench = observe_source(source);
     assert_eq!(quench.outcome(), RunResult::Pass, "{:?}", quench.worker);
     assert_eq!(quench.stdout, node.stdout);
@@ -120,6 +126,40 @@ console.log(p1(7));
 }
 
 #[test]
+fn warmed_frameless_calls_keep_arguments_and_legacy_caller_like_node() {
+    // `Array(...)` makes the closure-holding activation a frame between its `arguments`
+    // reads, and `peek.caller` reads the frame stack from a frameless caller.
+    let source = r#"
+function outer(r) {
+  function f() {
+    var x = Array(arguments.length);
+    for (var g = 0; g < x.length; g++) x[g] = arguments[g];
+    function b() { r.apply(null, x); }
+    b();
+  }
+  return function m() { f(null, 'body'); };
+}
+function peek() { return peek.caller ? Array.from(peek.caller.arguments).join(',') : 'none'; }
+function host(a, b) { a = 9; return peek(); }
+for (let k = 0; k < 6; k++) {
+  outer(function (e, v) { console.log(k, e, v); })();
+  console.log(host(1, 2));
+}
+"#;
+
+    let node = observe_node_source(source);
+    assert!(node.status.success(), "Node oracle failed: {node:?}");
+    let quench = observe_source(source);
+    assert_eq!(
+        quench.outcome(),
+        RunResult::Pass,
+        "Quench failed: {:?}",
+        quench.worker
+    );
+    assert_eq!(quench.stdout, node.stdout, "Node and Quench output differ");
+}
+
+#[test]
 fn deep_named_calls_raise_catchable_range_error_and_recover() {
     let source = r#"
 function Box() {}
@@ -137,7 +177,10 @@ if (!caught) throw new Error("deep call did not throw the stack RangeError");
 if (new Box().walk(2, 0) !== 2) throw new Error("runtime did not recover after deep call");
 "#;
     // Exercise the actual shared resource boundary, not a depth below its limit.
-    let source = source.replace("__GUEST_DEPTH__", &(quench_stack::MAX_GUEST_CALL_DEPTH + 1).to_string());
+    let source = source.replace(
+        "__GUEST_DEPTH__",
+        &(quench_stack::MAX_GUEST_CALL_DEPTH + 1).to_string(),
+    );
     let observation = observe_source(&source);
     assert_eq!(
         observation.outcome(),

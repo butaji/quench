@@ -80,7 +80,12 @@ struct RegExpResultSlots {
 
 impl RegExpResultSlots {
     /// The property values in storage order.
-    fn values(self, index: Value, input: Value, groups: Value) -> [Value; REGEXP_RESULT_PROPERTY_COUNT] {
+    fn values(
+        self,
+        index: Value,
+        input: Value,
+        groups: Value,
+    ) -> [Value; REGEXP_RESULT_PROPERTY_COUNT] {
         let mut values = [Value::UNDEFINED; REGEXP_RESULT_PROPERTY_COUNT];
         values[self.index] = index;
         values[self.input] = input;
@@ -130,18 +135,30 @@ pub(super) struct LegacyRegExpSnapshot {
 
 impl<H: Host> Vm<H> {
     pub(super) fn snapshot_regexp_legacy(&self) -> LegacyRegExpSnapshot {
-        match self.realm.intrinsics.regexp_intrinsics.get(&self.realm.globals) {
+        match self
+            .realm
+            .intrinsics
+            .regexp_intrinsics
+            .get(&self.realm.globals)
+        {
             Some(state) => LegacyRegExpSnapshot {
-                input: state.legacy_input.clone(), matched: state.legacy_match.clone(),
+                input: state.legacy_input.clone(),
+                matched: state.legacy_match.clone(),
             },
             None => LegacyRegExpSnapshot {
-                input: Some(JsString::from_units(&[])), matched: LegacyRegExpMatch::Empty,
+                input: Some(JsString::from_units(&[])),
+                matched: LegacyRegExpMatch::Empty,
             },
         }
     }
 
     pub(super) fn restore_regexp_legacy(&mut self, snapshot: LegacyRegExpSnapshot) {
-        if let Some(state) = self.realm.intrinsics.regexp_intrinsics.get_mut(&self.realm.globals) {
+        if let Some(state) = self
+            .realm
+            .intrinsics
+            .regexp_intrinsics
+            .get_mut(&self.realm.globals)
+        {
             state.legacy_input = snapshot.input;
             state.legacy_match = snapshot.matched;
         }
@@ -722,14 +739,21 @@ impl<H: Host> Vm<H> {
         let realm = self.realm.globals;
         // A recorded proof names its realm's prototype, so a match needs no intrinsics lookup.
         if let Some(layout) = self.regexp_symbol_layouts.iter().find(|layout| {
-            layout.symbol == symbol && layout.realm == realm && layout.prototype_object == proto
+            layout.symbol == symbol
+                && layout.realm == realm
+                && layout.prototype_object == proto
                 && layout.receiver == receiver_shape
         }) && let (slot, Some(prototype_data)) = (layout.slot as usize, self.object_data(proto))
             && prototype_data.shape() == layout.prototype
         {
             return self.heap.property_get(prototype_data, slot);
         }
-        let prototype = self.realm.intrinsics.regexp_intrinsics.get(&realm)?.prototype;
+        let prototype = self
+            .realm
+            .intrinsics
+            .regexp_intrinsics
+            .get(&realm)?
+            .prototype;
         if proto != prototype {
             return None;
         }
@@ -767,14 +791,17 @@ impl<H: Host> Vm<H> {
             self.object_data(object)
                 .is_some_and(|data| !self.shape_is_dictionary(data.shape()))
         };
-        if !shared(receiver) || !shared(prototype) || self.property_attributes(receiver, key).is_some()
+        if !shared(receiver)
+            || !shared(prototype)
+            || self.property_attributes(receiver, key).is_some()
         {
             return None;
         }
         if self.property_attributes(prototype, key)?.accessor {
             return None;
         }
-        self.object_property_slot(prototype, key).map(|(_, slot)| slot)
+        self.object_property_slot(prototype, key)
+            .map(|(_, slot)| slot)
     }
 
     /// The shape-determined half of `regexp_builtin_receiver_matcher`'s proof for the RegExp
@@ -795,7 +822,12 @@ impl<H: Host> Vm<H> {
         }) {
             return Some((proto, layout.exec_slot as usize));
         }
-        let prototype = self.realm.intrinsics.regexp_intrinsics.get(&realm)?.prototype;
+        let prototype = self
+            .realm
+            .intrinsics
+            .regexp_intrinsics
+            .get(&realm)?
+            .prototype;
         if proto != prototype {
             return None;
         }
@@ -822,7 +854,11 @@ impl<H: Host> Vm<H> {
     /// (`regexp_builtin_layout_proof`), the `flags` getter and each flag getter it calls only
     /// read the RegExp's own flags, so the result is those flags in the getter's order, the
     /// order of `REGEXP_FLAG_ACCESSORS`.
-    fn regexp_flags_text(&mut self, p: &ResidualProgram, receiver: Value) -> Result<JsString, JsError> {
+    fn regexp_flags_text(
+        &mut self,
+        p: &ResidualProgram,
+        receiver: Value,
+    ) -> Result<JsString, JsError> {
         if matches!(self.heap.get(receiver), Some(Cell::RegExp { .. }))
             && self.regexp_builtin_layout_proof(receiver).is_some()
             && let Some(Cell::RegExp { meta, .. }) = self.heap.get(receiver)
@@ -896,11 +932,21 @@ impl<H: Host> Vm<H> {
             return None;
         };
         let shape = object.shape();
-        if let Some(&(_, slot)) = self.regexp_last_index_layouts.iter().find(|(cached, _)| *cached == shape) {
-            return Some((slot as usize, self.heap.property_get(object, slot as usize)?));
+        if let Some(&(_, slot)) = self
+            .regexp_last_index_layouts
+            .iter()
+            .find(|(cached, _)| *cached == shape)
+        {
+            return Some((
+                slot as usize,
+                self.heap.property_get(object, slot as usize)?,
+            ));
         }
         let slot = self.regexp_last_index_slot_miss(receiver, shape)?;
-        Some((slot, self.heap.property_get(self.object_data(receiver)?, slot)?))
+        Some((
+            slot,
+            self.heap.property_get(self.object_data(receiver)?, slot)?,
+        ))
     }
 
     /// `regexp_last_index_slot` of a shape the layout cache does not hold: the slot of an own
@@ -1017,7 +1063,11 @@ impl<H: Host> Vm<H> {
     /// recently matched strings, rebuilt only when it is not one of them. A scanner
     /// alternates matches over its input with checks of short tokens, so remembering a few
     /// keeps the input's decoding across them.
-    fn regexp_subject(&mut self, input: &JsString, matcher: &quench_regexp::Regex) -> PreparedSubject {
+    fn regexp_subject(
+        &mut self,
+        input: &JsString,
+        matcher: &quench_regexp::Regex,
+    ) -> PreparedSubject {
         let flat = input.flat_unkept();
         let text = match &*flat {
             // A short subject is copied inline, so its decoding, at most a few units, is
@@ -1096,7 +1146,14 @@ impl<H: Host> Vm<H> {
         if let FastReplacement::Template(template) = replacement {
             if !template.units().iter().any(|unit| unit == u16::from(b'$')) {
                 return self.regexp_replace_with_literal(
-                    p, receiver, input, &subject, template, matcher, flags, result_used,
+                    p,
+                    receiver,
+                    input,
+                    &subject,
+                    template,
+                    matcher,
+                    flags,
+                    result_used,
                 );
             }
         }
@@ -1130,9 +1187,8 @@ impl<H: Host> Vm<H> {
                 .iter()
                 .map(|range| {
                     range.clone().map_or(Value::UNDEFINED, |range| {
-                        self.heap.alloc_string(JsString::from_unit_run(
-                            input.units().slice(range),
-                        ))
+                        self.heap
+                            .alloc_string(JsString::from_unit_run(input.units().slice(range)))
                     })
                 })
                 .collect::<Vec<_>>();
@@ -1247,14 +1303,18 @@ impl<H: Host> Vm<H> {
         };
         match last {
             Ok(found) => self.record_regexp_legacy_match(receiver, input.clone(), found)?,
-            Err(start) => self.record_regexp_legacy_pending(receiver, input.clone(), matcher, start)?,
+            Err(start) => {
+                self.record_regexp_legacy_pending(receiver, input.clone(), matcher, start)?
+            }
         }
         // Nothing reads the result: building it runs no guest code, so only its one
         // observable outcome, a length past the limit raising, needs the length.
         if !result_used {
-            let kept = ranges.iter().try_fold(input.units().len(), |length, range| {
-                (length - range.len()).checked_add(template.units().len())
-            });
+            let kept = ranges
+                .iter()
+                .try_fold(input.units().len(), |length, range| {
+                    (length - range.len()).checked_add(template.units().len())
+                });
             if kept.is_some_and(|length| length <= super::wtf16::MAX_STRING_UNITS) {
                 return Ok(Value::UNDEFINED);
             }
@@ -1351,9 +1411,9 @@ impl<H: Host> Vm<H> {
                         cursor += 1;
                         continue;
                     };
-                    let name = self.heap.alloc_string(JsString::from_unit_run(
-                        units.slice(cursor + 2..end),
-                    ));
+                    let name = self
+                        .heap
+                        .alloc_string(JsString::from_unit_run(units.slice(cursor + 2..end)));
                     let value = self.get_index(p, groups, name)?;
                     if !value.is_undefined() {
                         let value = self.coerce_js_string(p, value)?;
@@ -1449,7 +1509,14 @@ impl<H: Host> Vm<H> {
                         return Ok(array);
                     }
                     return vm.with_call_roots([array], |vm| {
-                        vm.regexp_split_builtin(receiver, &matcher, &input, array, limit, flags.unicode_mode())
+                        vm.regexp_split_builtin(
+                            receiver,
+                            &matcher,
+                            &input,
+                            array,
+                            limit,
+                            flags.unicode_mode(),
+                        )
                     });
                 }
                 let constructor = vm.regexp_species_constructor(p, receiver)?;
@@ -1607,18 +1674,17 @@ impl<H: Host> Vm<H> {
                 q = advance_string_index_units(input.units(), q, unicode);
                 continue;
             }
-            let piece = self.heap.alloc_string(JsString::from_unit_run(
-                input.units().slice(p_index..q),
-            ));
+            let piece = self
+                .heap
+                .alloc_string(JsString::from_unit_run(input.units().slice(p_index..q)));
             if self.append_fresh_array_element(array, piece) >= limit {
                 return self.finish_regexp_split_builtin(splitter, input, last_match, array);
             }
             p_index = end;
             for capture in captures {
                 let value = capture.map_or(Value::UNDEFINED, |range| {
-                    self.heap.alloc_string(JsString::from_unit_run(
-                        input.units().slice(range),
-                    ))
+                    self.heap
+                        .alloc_string(JsString::from_unit_run(input.units().slice(range)))
                 });
                 if self.append_fresh_array_element(array, value) >= limit {
                     return self.finish_regexp_split_builtin(splitter, input, last_match, array);
@@ -1670,7 +1736,8 @@ impl<H: Host> Vm<H> {
             Some(Cell::RegExp { meta, .. }) => meta.legacy_constructor,
             _ => return None,
         };
-        if !matches!(owner, crate::heap::RegExpLegacyOwner::Enabled(constructor) if constructor == intrinsic) {
+        if !matches!(owner, crate::heap::RegExpLegacyOwner::Enabled(constructor) if constructor == intrinsic)
+        {
             return None;
         }
         let matched = self.regexp_builtin_receiver_matcher(receiver)?;
@@ -1679,7 +1746,9 @@ impl<H: Host> Vm<H> {
         let constructor_atom = self.intern_atom("constructor");
         let constructor_key = PropertyKey::string(constructor_atom);
         let prototype = self.object_data(receiver)?.proto();
-        let constructor_is_intrinsic = self.property_attributes(receiver, constructor_key).is_none()
+        let constructor_is_intrinsic = self
+            .property_attributes(receiver, constructor_key)
+            .is_none()
             && self
                 .property_attributes(prototype, constructor_key)
                 .is_some_and(|attributes| !attributes.accessor)
@@ -1846,7 +1915,8 @@ impl<H: Host> Vm<H> {
                 if let Some((matcher, flags)) = vm.regexp_builtin_receiver_matcher(receiver)
                     && flags.contains(RegExpFlags::GLOBAL)
                 {
-                    return vm.regexp_symbol_match_global_fast(p, receiver, &input, &matcher, flags);
+                    return vm
+                        .regexp_symbol_match_global_fast(p, receiver, &input, &matcher, flags);
                 }
                 let flags = vm.regexp_flags_text(p, receiver)?;
                 if !flags.host_string().contains('g') {
@@ -1929,7 +1999,12 @@ impl<H: Host> Vm<H> {
             receiver,
             input,
             flags,
-            |start| matcher.find_in_subject(&subject, start).next().map(|found| found.range),
+            |start| {
+                matcher
+                    .find_in_subject(&subject, start)
+                    .next()
+                    .map(|found| found.range)
+            },
             Range::clone,
         )?;
         let Some(last) = ranges.last() else {
@@ -1974,9 +2049,9 @@ impl<H: Host> Vm<H> {
         this: Value,
     ) -> Result<Value, JsError> {
         match (native, self.heap.get(this)) {
-            (Native::RegExpSource, Some(Cell::RegExp { meta, .. })) => Ok(self
-                .heap
-                .alloc_string(escape_regexp_source(&meta.source))),
+            (Native::RegExpSource, Some(Cell::RegExp { meta, .. })) => {
+                Ok(self.heap.alloc_string(escape_regexp_source(&meta.source)))
+            }
             (Native::RegExpSource, _)
                 if self
                     .realm
@@ -2019,7 +2094,11 @@ impl<H: Host> Vm<H> {
             .position(|(_, accessor, _)| *accessor == native)
             .map(RegExpFlags::at)
             .ok_or_else(|| JsError("invalid RegExp flag accessor".into()))?;
-        Ok(if flags.contains(flag) { Value::TRUE } else { Value::FALSE })
+        Ok(if flags.contains(flag) {
+            Value::TRUE
+        } else {
+            Value::FALSE
+        })
     }
 
     pub(super) fn regexp_flags_native(
@@ -2304,7 +2383,12 @@ impl<H: Host> Vm<H> {
         let meta = match self.programs.regexp_literal_meta(program, site_index) {
             Some(meta) => meta,
             None => {
-                let flags = self.heap.string(flags_text).expect("checked above").host_string().to_owned();
+                let flags = self
+                    .heap
+                    .string(flags_text)
+                    .expect("checked above")
+                    .host_string()
+                    .to_owned();
                 let meta = self
                     .cached_regexp_matcher(&source, &flags, PatternValidity::EarlyChecked)
                     .map(|matcher| {
@@ -2316,7 +2400,10 @@ impl<H: Host> Vm<H> {
                         })
                     })
                     .map_err(|error| Rc::<str>::from(error.to_string()));
-                if !self.programs.cache_regexp_literal_meta(program, site_index, meta.clone()) {
+                if !self
+                    .programs
+                    .cache_regexp_literal_meta(program, site_index, meta.clone())
+                {
                     return Err(JsError::validation(
                         "RegExp literal cache site is invalid".into(),
                     ));
@@ -2330,7 +2417,10 @@ impl<H: Host> Vm<H> {
         let meta = if meta.legacy_constructor.constructor() == constructor {
             meta
         } else {
-            Rc::new(crate::heap::RegExpMeta { legacy_constructor: owner, ..(*meta).clone() })
+            Rc::new(crate::heap::RegExpMeta {
+                legacy_constructor: owner,
+                ..(*meta).clone()
+            })
         };
         self.regexp_from_meta(prototype, meta)
     }
@@ -2344,7 +2434,12 @@ impl<H: Host> Vm<H> {
         legacy_constructor: crate::heap::RegExpLegacyOwner,
     ) -> Result<Value, JsError> {
         let matcher = crate::heap::RegExpMatcher::compiled(matcher);
-        let meta = Rc::new(crate::heap::RegExpMeta { source, flags, legacy_constructor, matcher });
+        let meta = Rc::new(crate::heap::RegExpMeta {
+            source,
+            flags,
+            legacy_constructor,
+            matcher,
+        });
         self.regexp_from_meta(prototype, meta)
     }
 
@@ -2552,7 +2647,8 @@ impl<H: Host> Vm<H> {
         let (regex, stateful, sticky) = match self.heap.get(this) {
             Some(Cell::RegExp { meta, .. }) => (
                 Self::regexp_matcher(meta)?,
-                meta.flags.intersects(RegExpFlags::GLOBAL.with(RegExpFlags::STICKY)),
+                meta.flags
+                    .intersects(RegExpFlags::GLOBAL.with(RegExpFlags::STICKY)),
                 meta.flags.contains(RegExpFlags::STICKY),
             ),
             _ => {
@@ -2571,7 +2667,11 @@ impl<H: Host> Vm<H> {
         };
         let units = input.units();
         if (stateful && start > units.len())
-            || regex.excludes_search(units.len(), start, (start < units.len()).then(|| units.at(start)))
+            || regex.excludes_search(
+                units.len(),
+                start,
+                (start < units.len()).then(|| units.at(start)),
+            )
         {
             if stateful {
                 store(self, Value::number(0.0))?;
@@ -2619,7 +2719,8 @@ impl<H: Host> Vm<H> {
         }
         let (slot, last_index) = self.regexp_last_index_value(receiver)?;
         if last_index.as_number().is_none()
-            || (native == Native::RegExpTest && self.regexp_builtin_exec_matcher(receiver).is_none())
+            || (native == Native::RegExpTest
+                && self.regexp_builtin_exec_matcher(receiver).is_none())
         {
             return None;
         }
@@ -2630,11 +2731,22 @@ impl<H: Host> Vm<H> {
             if stateful {
                 self.heap.property_set(receiver, slot, Value::number(0.0));
             }
-            return Some(Ok(if native == Native::RegExpExec { Value::NULL } else { Value::FALSE }));
+            return Some(Ok(if native == Native::RegExpExec {
+                Value::NULL
+            } else {
+                Value::FALSE
+            }));
         }
         let arguments = [subject];
         if native == Native::RegExpExec {
-            return Some(self.regexp_steady_exec(p, receiver, subject, slot, last_index, result_used));
+            return Some(self.regexp_steady_exec(
+                p,
+                receiver,
+                subject,
+                slot,
+                last_index,
+                result_used,
+            ));
         }
         Some(self.regexp_test(p, receiver, &arguments))
     }
@@ -2654,9 +2766,7 @@ impl<H: Host> Vm<H> {
         result_used: bool,
     ) -> Option<Result<Value, JsError>> {
         let [search, replacement] = *arguments.get(..2)?.as_array::<2>()?;
-        if native != Native::StringReplace
-            || !self.is_string(this)
-            || !self.is_string(replacement)
+        if native != Native::StringReplace || !self.is_string(this) || !self.is_string(replacement)
         {
             return None;
         }
@@ -2701,7 +2811,8 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         let input = self.coerce_js_string(p, subject)?;
         let last_index = self.regexp_to_length_value(p, last_index)?;
-        let Some(matched) = self.regexp_match_from(p, receiver, &input, last_index, Some(slot))? else {
+        let Some(matched) = self.regexp_match_from(p, receiver, &input, last_index, Some(slot))?
+        else {
             return Ok(Value::NULL);
         };
         // Nothing reads the result: building it allocates and runs no guest code, so only
@@ -2710,7 +2821,9 @@ impl<H: Host> Vm<H> {
             self.record_regexp_legacy_match(receiver, input, matched)?;
             return Ok(Value::UNDEFINED);
         }
-        self.with_call_roots([receiver, subject], |vm| vm.regexp_exec_result(receiver, subject, input, matched))
+        self.with_call_roots([receiver, subject], |vm| {
+            vm.regexp_exec_result(receiver, subject, input, matched)
+        })
     }
 
     /// Whether `regexp_match_from`'s search of `subject` from `last_index` is one its
@@ -2718,7 +2831,12 @@ impl<H: Host> Vm<H> {
     /// conversion has an effect: a flat string subject and a Number `lastIndex`. `Some`
     /// carries whether the regexp is global or sticky; `None` leaves the read to the general
     /// path.
-    fn regexp_prefilter_rejects(&self, receiver: Value, subject: Value, last_index: Value) -> Option<bool> {
+    fn regexp_prefilter_rejects(
+        &self,
+        receiver: Value,
+        subject: Value,
+        last_index: Value,
+    ) -> Option<bool> {
         let Some(Cell::RegExp { meta, .. }) = self.heap.get(receiver) else {
             return None;
         };
@@ -2726,7 +2844,9 @@ impl<H: Host> Vm<H> {
         let input = self.heap.string(subject)?;
         let units = input.existing_flat()?;
         let last_index = regexp_to_length(last_index.as_number()?);
-        let stateful = meta.flags.intersects(RegExpFlags::GLOBAL.with(RegExpFlags::STICKY));
+        let stateful = meta
+            .flags
+            .intersects(RegExpFlags::GLOBAL.with(RegExpFlags::STICKY));
         let start = if stateful { last_index } else { 0 };
         let length = input.len();
         ((stateful && start > length) || regex.excludes_search(length, start, units.unit(start)))
@@ -2750,7 +2870,12 @@ impl<H: Host> Vm<H> {
             let Some(matched) = vm.regexp_builtin_match(p, this, &input)? else {
                 return Ok(Value::NULL);
             };
-            vm.regexp_exec_result(this, args.first().copied().unwrap_or(Value::UNDEFINED), input, matched)
+            vm.regexp_exec_result(
+                this,
+                args.first().copied().unwrap_or(Value::UNDEFINED),
+                input,
+                matched,
+            )
         })
     }
 
@@ -2777,7 +2902,8 @@ impl<H: Host> Vm<H> {
                 .chain(matched.captures.iter().cloned())
                 .map(|range| {
                     range.map_or(Value::UNDEFINED, |range| {
-                        vm.heap.alloc_string(JsString::from_unit_run(input.units().slice(range)))
+                        vm.heap
+                            .alloc_string(JsString::from_unit_run(input.units().slice(range)))
                     })
                 })
                 .collect::<Vec<_>>();
@@ -2905,7 +3031,11 @@ impl<H: Host> Vm<H> {
     /// Finds a pending legacy match (`LegacyRegExpMatch::Pending`) again, so the statics
     /// read its captures.
     fn resolve_regexp_legacy_match(&mut self) {
-        let Some(LegacyRegExpMatch::Pending { input, matcher, start }) = self
+        let Some(LegacyRegExpMatch::Pending {
+            input,
+            matcher,
+            start,
+        }) = self
             .realm
             .intrinsics
             .regexp_intrinsics
@@ -2919,7 +3049,12 @@ impl<H: Host> Vm<H> {
             .find_in_subject(&subject, start)
             .next()
             .expect("a pending legacy match begins at its start");
-        if let Some(state) = self.realm.intrinsics.regexp_intrinsics.get_mut(&self.realm.globals) {
+        if let Some(state) = self
+            .realm
+            .intrinsics
+            .regexp_intrinsics
+            .get_mut(&self.realm.globals)
+        {
             state.legacy_match = LegacyRegExpMatch::Matched { input, matched };
         }
     }
@@ -2931,7 +3066,10 @@ impl<H: Host> Vm<H> {
         input: JsString,
         matched: quench_regexp::Match,
     ) -> Result<(), JsError> {
-        self.record_regexp_legacy(this, input, |input| LegacyRegExpMatch::Matched { input, matched })
+        self.record_regexp_legacy(this, input, |input| LegacyRegExpMatch::Matched {
+            input,
+            matched,
+        })
     }
 
     /// `record_regexp_legacy_match` for the match `matcher` finds from `start`, found again
@@ -2944,7 +3082,11 @@ impl<H: Host> Vm<H> {
         start: usize,
     ) -> Result<(), JsError> {
         let matcher = Rc::clone(matcher);
-        self.record_regexp_legacy(this, input, |input| LegacyRegExpMatch::Pending { input, matcher, start })
+        self.record_regexp_legacy(this, input, |input| LegacyRegExpMatch::Pending {
+            input,
+            matcher,
+            start,
+        })
     }
 
     fn record_regexp_legacy(
@@ -2993,9 +3135,8 @@ impl<H: Host> Vm<H> {
         for (name, range) in named {
             let atom = self.intern_atom(name);
             let value = range.as_ref().map_or(Value::UNDEFINED, |range| {
-                self.heap.alloc_string(JsString::from_unit_run(
-                    input.slice(range.clone()),
-                ))
+                self.heap
+                    .alloc_string(JsString::from_unit_run(input.slice(range.clone())))
             });
             self.set_property(groups, atom, value)?;
         }
@@ -3015,10 +3156,7 @@ impl<H: Host> Vm<H> {
             .map(|range| self.regexp_index_pair(range))
             .collect::<Vec<_>>();
         let indices = self.heap.alloc(Cell::Array {
-            object: crate::heap::ArrayObject::new(
-                Self::empty_object(self.array_proto),
-                entries,
-            ),
+            object: crate::heap::ArrayObject::new(Self::empty_object(self.array_proto), entries),
         });
         let groups = if !named.is_empty() {
             let groups = self
@@ -3047,20 +3185,23 @@ impl<H: Host> Vm<H> {
             Value::number(range.end as f64),
         ];
         self.heap.alloc(Cell::Array {
-            object: crate::heap::ArrayObject::new(
-                Self::empty_object(self.array_proto),
-                pair,
-            ),
+            object: crate::heap::ArrayObject::new(Self::empty_object(self.array_proto), pair),
         })
     }
 
     /// `meta`'s matcher, compiled now if it has none (`RegExpMatcher`): the pattern compiled
     /// when the record was first made, so it compiles again.
-    pub(super) fn regexp_matcher(meta: &crate::heap::RegExpMeta) -> Result<Rc<quench_regexp::Regex>, JsError> {
+    pub(super) fn regexp_matcher(
+        meta: &crate::heap::RegExpMeta,
+    ) -> Result<Rc<quench_regexp::Regex>, JsError> {
         if let Some(matcher) = meta.matcher.0.get() {
             return Ok(Rc::clone(matcher));
         }
-        let matcher = Rc::new(Self::compile_regexp(&meta.source, &meta.flags.text(), PatternValidity::EarlyChecked)?);
+        let matcher = Rc::new(Self::compile_regexp(
+            &meta.source,
+            &meta.flags.text(),
+            PatternValidity::EarlyChecked,
+        )?);
         Ok(Rc::clone(meta.matcher.0.get_or_init(|| matcher)))
     }
 
@@ -3438,7 +3579,13 @@ impl RegExpMatcherCache {
 
 impl crate::snapshot::Snap for RegExpIntrinsics {
     fn snap(&self, writer: &mut crate::snapshot::Writer) -> crate::snapshot::SnapshotResult<()> {
-        let Self { constructor, prototype, legacy_input, legacy_match, result_template } = self;
+        let Self {
+            constructor,
+            prototype,
+            legacy_input,
+            legacy_match,
+            result_template,
+        } = self;
         writer.value(*constructor);
         writer.value(*prototype);
         writer.bool(legacy_input.is_some());
@@ -3449,11 +3596,19 @@ impl crate::snapshot::Snap for RegExpIntrinsics {
             LegacyRegExpMatch::Empty => false,
             LegacyRegExpMatch::Invalid => true,
             LegacyRegExpMatch::Matched { .. } | LegacyRegExpMatch::Pending { .. } => {
-                return Err(crate::snapshot::SnapshotError::unsupported("legacy RegExp match data"));
+                return Err(crate::snapshot::SnapshotError::unsupported(
+                    "legacy RegExp match data",
+                ));
             }
         });
         writer.bool(result_template.is_some());
-        if let Some(RegExpResultTemplate { anchor, index_slot, input_slot, groups_slot }) = result_template {
+        if let Some(RegExpResultTemplate {
+            anchor,
+            index_slot,
+            input_slot,
+            groups_slot,
+        }) = result_template
+        {
             writer.value(*anchor);
             writer.len(*index_slot);
             writer.len(*input_slot);
@@ -3465,8 +3620,16 @@ impl crate::snapshot::Snap for RegExpIntrinsics {
     fn unsnap(reader: &mut crate::snapshot::Reader<'_>) -> crate::snapshot::SnapshotResult<Self> {
         let constructor = reader.value()?;
         let prototype = reader.value()?;
-        let legacy_input = if reader.bool()? { Some(JsString::read_snapshot(reader)?) } else { None };
-        let legacy_match = if reader.bool()? { LegacyRegExpMatch::Invalid } else { LegacyRegExpMatch::Empty };
+        let legacy_input = if reader.bool()? {
+            Some(JsString::read_snapshot(reader)?)
+        } else {
+            None
+        };
+        let legacy_match = if reader.bool()? {
+            LegacyRegExpMatch::Invalid
+        } else {
+            LegacyRegExpMatch::Empty
+        };
         let result_template = if reader.bool()? {
             Some(RegExpResultTemplate {
                 anchor: reader.value()?,
@@ -3477,7 +3640,13 @@ impl crate::snapshot::Snap for RegExpIntrinsics {
         } else {
             None
         };
-        Ok(Self { constructor, prototype, legacy_input, legacy_match, result_template })
+        Ok(Self {
+            constructor,
+            prototype,
+            legacy_input,
+            legacy_match,
+            result_template,
+        })
     }
 }
 

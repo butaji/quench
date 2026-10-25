@@ -81,7 +81,7 @@ impl<H: Host> Vm<H> {
         outcome
     }
 
-/// CreateDataPropertyOrThrow of a class field adds an ordinary data property and nothing
+    /// CreateDataPropertyOrThrow of a class field adds an ordinary data property and nothing
     /// else when the target is an extensible ordinary object (not a Proxy, array, arguments
     /// or other exotic object) that lacks the key and the key is no array index.
     pub(super) fn class_field_is_plain_add(&self, target: Value, key: PropertyKey) -> bool {
@@ -152,7 +152,11 @@ impl<H: Host> Vm<H> {
             let text = self.to_string(p, this)?;
             return Ok(self.heap.alloc_string(text.into()));
         }
-        if let Some((crate::BuiltinBrand::NumberObject | crate::BuiltinBrand::BigIntObject, value)) = self.boxed_primitive_data(this) {
+        if let Some((
+            crate::BuiltinBrand::NumberObject | crate::BuiltinBrand::BigIntObject,
+            value,
+        )) = self.boxed_primitive_data(this)
+        {
             let text = self.to_string(p, value)?;
             return Ok(self.heap.alloc_string(text.into()));
         }
@@ -173,7 +177,12 @@ impl<H: Host> Vm<H> {
             matches!(self.heap.get(value), Some(Cell::Proxy { .. })) && self.is_array(p, value)?;
         let boxed_brand = self.boxed_primitive_data(value).and_then(|(brand, _)| {
             use crate::BuiltinBrand as B;
-            match brand { B::StringObject => Some("String"), B::BooleanObject => Some("Boolean"), B::NumberObject => Some("Number"), _ => None }
+            match brand {
+                B::StringObject => Some("String"),
+                B::BooleanObject => Some("Boolean"),
+                B::NumberObject => Some("Number"),
+                _ => None,
+            }
         });
         let brand = if value.is_undefined() || value.is_deleted() {
             "Undefined"
@@ -199,7 +208,7 @@ impl<H: Host> Vm<H> {
             match self.heap.get(value) {
                 Some(Cell::Proxy { .. }) if proxy_array => "Array",
                 Some(Cell::Proxy { .. }) if self.is_function(value) => "Function",
-                _ if self.heap.is_string(value)  => "String",
+                _ if self.heap.is_string(value) => "String",
                 Some(Cell::BigInt(_) | Cell::Symbol(_)) => "Object",
                 Some(Cell::Date { .. }) => "Date",
                 Some(Cell::RegExp { .. }) => "RegExp",
@@ -236,9 +245,7 @@ impl<H: Host> Vm<H> {
         let brand = tag
             .and_then(|tag| self.heap.string(tag).map(|text| text.to_string()))
             .unwrap_or_else(|| brand.to_owned());
-        Ok(self
-            .heap
-            .alloc_string(format!("[object {brand}]").into()))
+        Ok(self.heap.alloc_string(format!("[object {brand}]").into()))
     }
 
     pub(super) fn descriptor_field(
@@ -316,10 +323,7 @@ impl<H: Host> Vm<H> {
         let mut current = self.box_object(source)?;
         if let Some(keys) = self.shape_for_in_keys(current) {
             return Ok(self.heap.alloc(Cell::Array {
-                object: crate::heap::ArrayObject::new(
-                    Self::empty_object(self.array_proto),
-                    keys,
-                ),
+                object: crate::heap::ArrayObject::new(Self::empty_object(self.array_proto), keys),
             }));
         }
         let mut visited_objects = FxHashMap::default();
@@ -336,8 +340,7 @@ impl<H: Host> Vm<H> {
                     .map(|key| self.heap.root(key))
                     .collect();
                 for key in &own_keys {
-                    let Some(name) = self.heap.string(self.heap.root_value(*key).unwrap())
-                    else {
+                    let Some(name) = self.heap.string(self.heap.root_value(*key).unwrap()) else {
                         continue;
                     };
                     let name = name.clone();
@@ -451,7 +454,12 @@ impl<H: Host> Vm<H> {
             }
             prototype = self.object_data(prototype)?.proto();
         }
-        Some(slots.iter().map(|&(atom, _)| self.atom_string(atom)).collect())
+        Some(
+            slots
+                .iter()
+                .map(|&(atom, _)| self.atom_string(atom))
+                .collect(),
+        )
     }
 
     pub(super) fn object_for_in_key_is_enumerable(
@@ -766,7 +774,9 @@ impl<H: Host> Vm<H> {
                     self.heap.update_root(key, property_key);
                     let key = match self.heap.get(property_key).cloned() {
                         Some(Cell::Symbol(_)) => PropertyKey::symbol(property_key),
-                        _ if let Some(atom) = self.string_key_atom(property_key) => PropertyKey::string(atom),
+                        _ if let Some(atom) = self.string_key_atom(property_key) => {
+                            PropertyKey::string(atom)
+                        }
                         _ => unreachable!("ToPropertyKey returns a string or symbol"),
                     };
                     let object = self.heap.root_value(result).unwrap();
@@ -894,12 +904,17 @@ impl<H: Host> Vm<H> {
         let current_record = (!is_new).then(|| {
             PropertyDescriptorRecord::from_attributes(existing.unwrap_or(Value::UNDEFINED), current)
         });
-        let host_private = key.symbol_value().is_some_and(|symbol| self.is_host_private_symbol(symbol));
-        let extensible = host_private || self.object_data(target).is_some_and(Object::is_extensible);
+        let host_private = key
+            .symbol_value()
+            .is_some_and(|symbol| self.is_host_private_symbol(symbol));
+        let extensible =
+            host_private || self.object_data(target).is_some_and(Object::is_extensible);
         if !descriptor.compatible_with(current_record, extensible, |a, b| self.same_value(a, b)) {
             return Ok(false);
         }
-        if current.configurable && (descriptor_value.is_some() || descriptor_accessor || attributes != current) {
+        if current.configurable
+            && (descriptor_value.is_some() || descriptor_accessor || attributes != current)
+        {
             self.reconfigure_function_name(target, key);
         }
         if descriptor_accessor {

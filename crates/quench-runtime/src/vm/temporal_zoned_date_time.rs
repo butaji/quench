@@ -296,9 +296,7 @@ impl<H: Host> Vm<H> {
             self.set_builtin_named(p, prototype, name, native)?;
         }
         if let Some(symbol) = self.well_known_symbols.get(WellKnownSymbol::ToStringTag) {
-            let tag = self
-                .heap
-                .alloc_string("Temporal.ZonedDateTime".into());
+            let tag = self.heap.alloc_string("Temporal.ZonedDateTime".into());
             self.set_symbol_property(prototype, symbol, tag)?;
             self.set_property_attributes(
                 prototype,
@@ -703,9 +701,7 @@ impl<H: Host> Vm<H> {
                         return Ok(match native {
                             Native::TemporalZonedDateTimeEraGetter => calendar_fields
                                 .and_then(|fields| fields.era)
-                                .map_or(Value::UNDEFINED, |era| {
-                                    self.heap.alloc_string(era.into())
-                                }),
+                                .map_or(Value::UNDEFINED, |era| self.heap.alloc_string(era.into())),
                             _ => calendar_fields
                                 .and_then(|fields| fields.era_year)
                                 .map_or(Value::UNDEFINED, |year| Value::number(f64::from(year))),
@@ -1109,7 +1105,7 @@ impl<H: Host> Vm<H> {
         let record_time_zone = instant.time_zone.to_string();
         let calendar_like = args.first().copied().unwrap_or(Value::UNDEFINED);
         let calendar = match self.heap.get(calendar_like) {
-            _ if self.heap.is_string(calendar_like)  => {
+            _ if self.heap.is_string(calendar_like) => {
                 let text = self.to_string(p, calendar_like)?.to_string();
                 super::temporal_date_parse::calendar_identifier_from_string(&text)
                     .ok_or_else(|| self.range_error(p, "Invalid calendar".into()))?
@@ -1373,9 +1369,7 @@ impl<H: Host> Vm<H> {
                 let key = self.intern_atom(name);
                 let value = match value {
                     FieldValue::Number(value) => Value::number(*value),
-                    FieldValue::String(value) => {
-                        self.heap.alloc_string(value.clone().into())
-                    }
+                    FieldValue::String(value) => self.heap.alloc_string(value.clone().into()),
                     FieldValue::Undefined => Value::UNDEFINED,
                 };
                 self.set_property(changes, key, value)?;
@@ -1857,8 +1851,7 @@ impl<H: Host> Vm<H> {
             Value::number(f64::from(fields[6])),
             Value::number(f64::from(fields[7])),
             Value::number(f64::from(fields[8])),
-            self.heap
-                .alloc_string(value.calendar.to_string().into()),
+            self.heap.alloc_string(value.calendar.to_string().into()),
         ];
         self.temporal_plain_date_time_construct(p, &args, constructor)
     }
@@ -1948,7 +1941,7 @@ impl<H: Host> Vm<H> {
                     calendar: *calendar,
                 })
             }
-            _ if self.heap.is_string(value)  => {
+            _ if self.heap.is_string(value) => {
                 let text = self.to_string(p, value)?.to_string();
                 super::temporal_plain_date_time_conversion::validate_annotations(self, p, &text)?;
                 let parsed = parse_zoned_date_time_string(&text)
@@ -1957,7 +1950,9 @@ impl<H: Host> Vm<H> {
                 resolve_zoned_date_time_string(parsed, &options.offset, &options.disambiguation)
                     .ok_or_else(|| self.range_error(p, "Invalid ZonedDateTime".into()))
             }
-            Some(Cell::Proxy { .. }) => self.temporal_zoned_date_time_property_bag(p, value, options),
+            Some(Cell::Proxy { .. }) => {
+                self.temporal_zoned_date_time_property_bag(p, value, options)
+            }
             _ => Err(self.type_error(p, "Invalid ZonedDateTime value".into())),
         }
     }
@@ -2191,7 +2186,7 @@ impl<H: Host> Vm<H> {
         let calendar_value = self.get_property(p, value, calendar_atom)?;
         let calendar = match self.heap.get(calendar_value) {
             None if calendar_value.is_undefined() => "iso8601".to_owned(),
-            _ if let Some(value) = self.heap.string(calendar_value)  => {
+            _ if let Some(value) = self.heap.string(calendar_value) => {
                 super::temporal_date_parse::calendar_identifier_from_string(value.host_string())
                     .ok_or_else(|| self.range_error(p, "Invalid calendar".into()))?
             }
@@ -2216,9 +2211,7 @@ impl<H: Host> Vm<H> {
         let offset = if offset_value.is_undefined() {
             None
         } else {
-            if !self.heap.is_string(offset_value)
-                && !self.is_object_like(offset_value)
-            {
+            if !self.heap.is_string(offset_value) && !self.is_object_like(offset_value) {
                 return Err(self.type_error(p, "Invalid offset".into()));
             }
             let offset = self.to_string(p, offset_value)?.to_string();

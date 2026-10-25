@@ -42,16 +42,26 @@ fn child_hash(shapes: &[Shape], child: u32) -> u64 {
 
 /// Whether `child` is the cached transition from `parent` by `key`.
 #[inline]
-pub(super) fn is_transition(shapes: &[Shape], child: u32, parent: u32, key: ShapeTransitionKey) -> bool {
+pub(super) fn is_transition(
+    shapes: &[Shape],
+    child: u32,
+    parent: u32,
+    key: ShapeTransitionKey,
+) -> bool {
     let origin = origin(shapes, child);
     if origin.parent != parent {
         return false;
     }
     // A property add, the transition most probes ask for, compares its own fields.
     match (origin.transition, key) {
-        (ShapeTransition::Add { key: added, attributes: added_attributes, .. }, ShapeTransitionKey::Add(sought, attributes)) => {
-            added == sought && added_attributes == attributes
-        }
+        (
+            ShapeTransition::Add {
+                key: added,
+                attributes: added_attributes,
+                ..
+            },
+            ShapeTransitionKey::Add(sought, attributes),
+        ) => added == sought && added_attributes == attributes,
         (transition, key) => transition.cache_key() == Some(key),
     }
 }
@@ -64,7 +74,9 @@ impl ShapeTransitionIndex {
         key: ShapeTransitionKey,
     ) -> Option<u32> {
         self.children
-            .find(hash(parent, key), |&child| is_transition(shapes, child, parent, key))
+            .find(hash(parent, key), |&child| {
+                is_transition(shapes, child, parent, key)
+            })
             .copied()
     }
 
@@ -93,13 +105,17 @@ impl ShapeTransitionIndex {
 
     /// An empty index with room for `capacity` children.
     pub(super) fn with_capacity(capacity: usize) -> Self {
-        Self { children: hashbrown::HashTable::with_capacity(capacity) }
+        Self {
+            children: hashbrown::HashTable::with_capacity(capacity),
+        }
     }
 
     /// Records `child`, already in `shapes`, under the parent and key its shape names.
     pub(super) fn insert_child(&mut self, shapes: &[Shape], child: u32) {
         self.children
-            .insert_unique(child_hash(shapes, child), child, |&child| child_hash(shapes, child));
+            .insert_unique(child_hash(shapes, child), child, |&child| {
+                child_hash(shapes, child)
+            });
     }
 
     #[cfg(feature = "profile-memory")]

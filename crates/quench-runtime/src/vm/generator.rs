@@ -64,8 +64,7 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         self.profile
             .function(self.active_program.raw(), id as usize);
-        let parameter_eval_arguments_error =
-            p.function(id as usize).parameter_eval_arguments_error;
+        let parameter_eval_arguments_error = p.function(id as usize).parameter_eval_arguments_error;
         if parameter_eval_arguments_error {
             return self.syntax_error_result(
                 p,
@@ -144,7 +143,8 @@ impl<H: Host> Vm<H> {
                 }
             }
         }
-        frame.with_objects = self.captured_with_objects_for_function(parent, function.inherited_with_scope, p.kind);
+        frame.with_objects =
+            self.captured_with_objects_for_function(parent, function.inherited_with_scope, p.kind);
         let function_object = context.callee();
         let realm = function_object
             .map(|function| self.function_realm(p, function))
@@ -304,11 +304,7 @@ impl<H: Host> Vm<H> {
                 let environment = vm.heap.alloc(Cell::Array {
                     object: crate::heap::ArrayObject::new(
                         Self::empty_object(vm.array_proto),
-                        vec![
-                            generator,
-                            iterator,
-                            Value::number(f64::from(destination)),
-                        ],
+                        vec![generator, iterator, Value::number(f64::from(destination))],
                     ),
                 });
                 let start =
@@ -495,7 +491,13 @@ impl<H: Host> Vm<H> {
             on_fulfilled: Value::UNDEFINED,
             on_rejected: Value::UNDEFINED,
             next: target,
-            execution_context: self.host.capture_job_context(self.promise_record(target).and_then(|record| record.host_context.get())).into(),
+            execution_context: self
+                .host
+                .capture_job_context(
+                    self.promise_record(target)
+                        .and_then(|record| record.host_context.get()),
+                )
+                .into(),
         };
         if record.state == PromiseState::Pending {
             self.promise_record_mut(source)
@@ -747,7 +749,8 @@ impl<H: Host> Vm<H> {
         self.with_call_roots(continuation.roots(), |vm| {
             let mut first_error = None;
             for cleanup in continuation.frame.active_iterators.iter().rev() {
-                let Some(&done) = continuation.frame.registers.get(usize::from(cleanup.done)) else {
+                let Some(&done) = continuation.frame.registers.get(usize::from(cleanup.done))
+                else {
                     first_error
                         .get_or_insert_with(|| JsError("invalid iterator cleanup state".into()));
                     continue;
@@ -755,7 +758,10 @@ impl<H: Host> Vm<H> {
                 if vm.truthy(done) {
                     continue;
                 }
-                let Some(&iterator) = continuation.frame.registers.get(usize::from(cleanup.iterator))
+                let Some(&iterator) = continuation
+                    .frame
+                    .registers
+                    .get(usize::from(cleanup.iterator))
                 else {
                     first_error
                         .get_or_insert_with(|| JsError("invalid iterator cleanup target".into()));
@@ -1106,7 +1112,14 @@ impl<H: Host> Vm<H> {
                 Ok((rejected, promise))
             })
         })?;
-        self.enqueue_async_resume(p, Some(continuation), promise, Some(generator), rejected, false)?;
+        self.enqueue_async_resume(
+            p,
+            Some(continuation),
+            promise,
+            Some(generator),
+            rejected,
+            false,
+        )?;
         Ok(promise)
     }
 
@@ -1156,7 +1169,11 @@ impl<H: Host> Vm<H> {
         {
             continuation.frame.pc += 1;
             continuation.resume_register = None;
-            if let Some(register) = continuation.frame.registers.get_mut(usize::from(destination)) {
+            if let Some(register) = continuation
+                .frame
+                .registers
+                .get_mut(usize::from(destination))
+            {
                 *register = value;
             }
         }
@@ -1270,7 +1287,9 @@ impl<H: Host> Vm<H> {
             if let Some(record) = self.generator_record_mut(generator) {
                 record.running = false;
             }
-            return Err(JsError("generator continuation program is unavailable".into()));
+            return Err(JsError(
+                "generator continuation program is unavailable".into(),
+            ));
         };
         let resume_register = continuation.resume_register;
         let mut frame = continuation.resume(self.with_stack.len());
@@ -1575,7 +1594,14 @@ impl<H: Host> Vm<H> {
                         Some(destination),
                         promise,
                     );
-                    vm.enqueue_async_resume(p, Some(continuation), promise, Some(generator), value, false)?;
+                    vm.enqueue_async_resume(
+                        p,
+                        Some(continuation),
+                        promise,
+                        Some(generator),
+                        value,
+                        false,
+                    )?;
                 }
                 Ok(_) => {
                     vm.pool_frame(frame);

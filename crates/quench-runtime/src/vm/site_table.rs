@@ -78,7 +78,8 @@ mod storage {
     use std::ptr::NonNull;
 
     fn layout(bytes: usize) -> Layout {
-        Layout::from_size_align(bytes, super::MAPPING_GRANULE_BYTES).expect("cache site table layout")
+        Layout::from_size_align(bytes, super::MAPPING_GRANULE_BYTES)
+            .expect("cache site table layout")
     }
 
     pub(super) fn map_zeroed(bytes: usize) -> NonNull<u8> {
@@ -109,7 +110,11 @@ unsafe impl<T: SiteEntry + Send> Send for SiteTable<T> {}
 
 impl<T: SiteEntry> Default for SiteTable<T> {
     fn default() -> Self {
-        Self { base: std::ptr::NonNull::dangling(), len: 0, capacity: 0 }
+        Self {
+            base: std::ptr::NonNull::dangling(),
+            len: 0,
+            capacity: 0,
+        }
     }
 }
 

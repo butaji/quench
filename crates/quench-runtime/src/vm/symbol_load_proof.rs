@@ -24,12 +24,20 @@ pub(super) enum SymbolLoadAnswer {
     Own(u32),
     /// A data property in this slot of `holder`, reached from the receiver's prototype
     /// `prototype`.
-    Inherited { prototype: Value, holder: Value, slot: u32 },
+    Inherited {
+        prototype: Value,
+        holder: Value,
+        slot: u32,
+    },
     /// No object on the chain from `prototype` has the key.
     Absent { prototype: Value },
     /// An accessor in this slot of `holder`, reached from the receiver's prototype
     /// `prototype`: the read calls its getter, which only the general path does.
-    Getter { prototype: Value, holder: Value, slot: u32 },
+    Getter {
+        prototype: Value,
+        holder: Value,
+        slot: u32,
+    },
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -65,7 +73,10 @@ struct SiteOwnRead {
 
 impl Default for SymbolLoadProofs {
     fn default() -> Self {
-        Self { entries: Default::default(), sites: Default::default() }
+        Self {
+            entries: Default::default(),
+            sites: Default::default(),
+        }
     }
 }
 
@@ -76,32 +87,70 @@ impl SymbolLoadProofs {
 
     /// The answer a proof for `key` on a receiver of `shape` holds under `epoch`.
     #[inline(always)]
-    pub(super) fn answer(&self, shape: u32, key: PropertyKey, epoch: u64) -> Option<SymbolLoadAnswer> {
+    pub(super) fn answer(
+        &self,
+        shape: u32,
+        key: PropertyKey,
+        epoch: u64,
+    ) -> Option<SymbolLoadAnswer> {
         self.entries
             .get(Self::index(shape, key))
             .filter(|proof| proof.shape == shape && proof.key == key && proof.epoch == epoch)
             .map(|proof| proof.answer)
     }
 
-    pub(super) fn record(&self, shape: u32, key: PropertyKey, epoch: u64, answer: SymbolLoadAnswer) {
-        self.entries.set(Self::index(shape, key), SymbolLoadProof { shape, key, epoch, answer });
+    pub(super) fn record(
+        &self,
+        shape: u32,
+        key: PropertyKey,
+        epoch: u64,
+        answer: SymbolLoadAnswer,
+    ) {
+        self.entries.set(
+            Self::index(shape, key),
+            SymbolLoadProof {
+                shape,
+                key,
+                epoch,
+                answer,
+            },
+        );
     }
 
     /// The own data slot site `site` last read `key` from on a receiver of `shape`, while
     /// `epoch` holds.
     #[inline(always)]
-    pub(super) fn site_own_slot(&self, site: usize, shape: u32, key: Value, epoch: u64) -> Option<u32> {
+    pub(super) fn site_own_slot(
+        &self,
+        site: usize,
+        shape: u32,
+        key: Value,
+        epoch: u64,
+    ) -> Option<u32> {
         self.sites
             .get(site_index(site))
-            .filter(|read| read.site == site && read.shape == shape && read.key == key && read.epoch == epoch)
+            .filter(|read| {
+                read.site == site && read.shape == shape && read.key == key && read.epoch == epoch
+            })
             .map(|read| read.slot)
     }
 
     /// Records at `site` the own slot a proof gives `key` on a receiver of `shape`, if it
     /// gives one under `epoch`.
     pub(super) fn record_site_own_slot(&self, site: usize, shape: u32, key: Value, epoch: u64) {
-        if let Some(SymbolLoadAnswer::Own(slot)) = self.answer(shape, PropertyKey::symbol(key), epoch) {
-            self.sites.set(site_index(site), SiteOwnRead { site, shape, key, epoch, slot });
+        if let Some(SymbolLoadAnswer::Own(slot)) =
+            self.answer(shape, PropertyKey::symbol(key), epoch)
+        {
+            self.sites.set(
+                site_index(site),
+                SiteOwnRead {
+                    site,
+                    shape,
+                    key,
+                    epoch,
+                    slot,
+                },
+            );
         }
     }
 
