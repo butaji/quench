@@ -6417,10 +6417,11 @@ struct Plan {
 impl Plan {
     /// The plan as its callers see it: only the function being compiled
     /// holds its per-instruction facts.
-    fn interface(self) -> Self {
+    fn interface(&self) -> Self {
         Self {
+            params: self.params.clone(),
+            result: self.result,
             operands: Vec::new(),
-            ..self
         }
     }
 
@@ -12140,6 +12141,9 @@ impl<H: Host> Vm<H> {
         // The callable set is the greatest fixpoint: assume every function
         // compiles, drop those that cannot, until nothing changes.
         let mut callable;
+        // Each callable function's full plan from the pass that settled the set, which its
+        // compilation reads, and the interfaces its callers read.
+        let mut full_plans: Vec<Option<Plan>>;
         let mut plans: Vec<Option<Plan>>;
         let mut memory_slot;
         let mut guarded;
@@ -12147,17 +12151,16 @@ impl<H: Host> Vm<H> {
             callable = allowed.clone();
             loop {
                 memory_slot = None;
-                plans = (0..count)
+                full_plans = (0..count)
                     .map(|index| {
                         if callable[index] {
-                            analysis
-                                .plan(index, &callable, &mut memory_slot)
-                                .map(Plan::interface)
+                            analysis.plan(index, &callable, &mut memory_slot)
                         } else {
                             None
                         }
                     })
                     .collect();
+                plans = full_plans.iter().map(|plan| plan.as_ref().map(Plan::interface)).collect();
                 let next: Vec<bool> = plans.iter().map(Option::is_some).collect();
                 if next == callable {
                     break;
@@ -12196,8 +12199,6 @@ impl<H: Host> Vm<H> {
             eprintln!("QUENCH_WASM_JIT_OPT_LEVEL {opt_level}");
         }
         let isa = super::jit_backend::target_isa(opt_level)?;
-        // The full plan of a callable function, derived again where needed.
-        let plan = |index: usize| analysis.plan(index, &callable, &mut memory_slot.clone());
         let mut reference_site_ids = vec![Vec::new(); count];
         let mut reference_call_sites = Vec::new();
         let mut reference_cache_sites = Vec::new();
@@ -12210,7 +12211,7 @@ impl<H: Host> Vm<H> {
             if plans[index].is_none() {
                 continue;
             }
-            let full_plan = plan(index)?;
+            let full_plan = full_plans[index].as_ref()?;
             let function = &code.function(index);
             for (pc, packed) in function.code.iter().enumerate() {
                 let instruction = super::dispatch_fast::decoded_instruction(function, *packed);
@@ -12260,13 +12261,13 @@ impl<H: Host> Vm<H> {
                 .checked_add(appended)
         };
         let build = (0..count).filter(|&index| plans[index].is_some()).map(|index| {
-            let full_plan = plan(index)?;
+            let full_plan = full_plans[index].as_ref()?;
             let body_build_started = diagnostics_enabled.then(std::time::Instant::now);
             let body_memory_before = body_build_started.and_then(|_| jit_memory_snapshot());
             let built = analysis.build_function(
                 &*isa,
                 index,
-                &full_plan,
+                full_plan,
                 &plans,
                 guarded,
                 fixed_base,
