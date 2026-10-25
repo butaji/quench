@@ -6693,20 +6693,23 @@ lane_handler! {
     /// representation takes the general path, which raises its validation error.
     fn lane_wasm_simd<>(cx, r, ip, i, view) {
         let vm = unsafe { vm(cx) };
-        let Some((operator, lane)) = crate::wasm::simd::SimdOperator::from_selector(i.imm()) else {
+        let Some((kernel, lane)) = crate::wasm::simd::SimdKernel::of(i.imm()) else {
             return exit(ip);
         };
-        let Some(left) = lane_simd_operand(vm, r.get(i.b), operator.left_type()) else {
+        let Some(left) = lane_simd_operand(vm, r.get(i.b), kernel.left) else {
             return exit(ip);
         };
-        let right = match operator.right_type() {
+        let right = match kernel.right {
             None => None,
             Some(ty) => match lane_simd_operand(vm, r.get(i.c), ty) {
                 Some(right) => Some(right),
                 None => return exit(ip),
             },
         };
-        let value = vm.encode_wasm_value(operator.apply(left, right, lane));
+        let value = match (kernel.apply)(left, right, lane) {
+            crate::WasmValue::V128(bits) => vm.heap.alloc_v128(bits.to_le_bytes()),
+            value => vm.encode_wasm_value(value),
+        };
         note_allocation(vm);
         r.set(i.a, value);
         next!(cx, r, following(ip), view)
@@ -15608,7 +15611,7 @@ fn derive_lane_view<'live, H: Host>(
             &decoded,
             constants,
             sites,
-            live(),
+            live,
             general_dispatch,
             diagnostics,
             &mut records,
@@ -15692,13 +15695,13 @@ fn holds_no_call_link(op: Op) -> bool {
 /// Gives each backward `Jump` whose loop the shared compiler admits (`analyze_osr_region`) the
 /// record that counts it and enters its native code (`lane_loop_jump`). Runs after every
 /// other pass, which read a jump record's distance from its operand.
-fn install_loop_sites<H: Host>(
+fn install_loop_sites<'live, H: Host>(
     function_id: u32,
     function: &Function,
     decoded: &[WideInstruction],
     constants: &[Value],
     sites: &[crate::bytecode::FieldSite],
-    live: Option<&crate::compile::liveness::RegisterMasks>,
+    live: &dyn Fn() -> Option<&'live crate::compile::liveness::RegisterMasks>,
     general_dispatch: bool,
     diagnostics: bool,
     records: &mut [LaneInstruction],
@@ -15720,6 +15723,11 @@ fn install_loop_sites<H: Host>(
                 .any(|&handler| records[pc - 2].handler == handler as *const ());
         then || pair
     };
+    // The masks are derived for the first loop site only: a body without a backward jump
+    // needs none, and every view under a loop tier had derived them (npm scenarios under
+    // --jit: axios -3.6%, playwright -2.5% instructions).
+    let masks = std::cell::OnceCell::new();
+    let live = || *masks.get_or_init(live);
     let mut rejections = Vec::new();
     let sites: Vec<(usize, LoopSite)> = (0..records.len())
         .filter(|pc| records[*pc].handler == backward && decoded[*pc].op() == Op::Jump && !fused_into(*pc))
@@ -15730,13 +15738,13 @@ fn install_loop_sites<H: Host>(
                 decoded,
                 constants,
                 sites,
-                live,
+                live(),
                 header,
                 pc as u32,
             ) {
                 Ok(region) => (std::cell::OnceCell::from(region), false),
                 // A call may run inlined: the site makes its region once it is hot.
-                Err(super::compiled::RegionRejection::UnsupportedInstruction(Op::Call)) if live.is_some() => {
+                Err(super::compiled::RegionRejection::UnsupportedInstruction(Op::Call)) if live().is_some() => {
                     (std::cell::OnceCell::new(), false)
                 }
                 Err(reason) => {
