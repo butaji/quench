@@ -11613,7 +11613,7 @@ fn shared_osr_stores_guarded_numeric_own_fields_in_a_loop() {
       fill(frozen, 3);
       Object.freeze(frozen);
       fill(frozen, 4);
-      answer += fillReference(referenceTarget, reference, 4);
+      answer += fillReference(referenceTarget, reference, 2000);
       let setterCalls = 0;
       Object.defineProperty(item, "value", {
         set(value) { setterCalls++; }, configurable: true
@@ -11653,7 +11653,7 @@ fn shared_osr_stores_guarded_numeric_own_fields_in_a_loop() {
     compiled.execute(&program).unwrap();
 
     assert_eq!(compiled_output.borrow().as_slice(), interpreted_output.borrow().as_slice());
-    assert_eq!(compiled_output.borrow().as_slice(), ["160014 10 10 true 10 5 3"]);
+    assert_eq!(compiled_output.borrow().as_slice(), ["162010 10 10 true 10 5 3"]);
     let views = compiled
         .programs
         .lane_views(super::program_store::ProgramId::MAIN)
@@ -11665,6 +11665,23 @@ fn shared_osr_stores_guarded_numeric_own_fields_in_a_loop() {
         .osr_diagnostics();
     assert!(osr.currently_compiled_sites > 0, "field-store loop did not compile: {osr:?}");
     assert!(osr.native_region_runs > 0, "field-store loop never ran natively: {osr:?}");
+    let reference_id = program
+        .functions
+        .iter()
+        .position(|function| {
+            function
+                .header()
+                .name
+                .is_some_and(|atom| &program.atoms[atom as usize] == "fillReference")
+        })
+        .unwrap();
+    let reference_osr = views
+        .get(reference_id)
+        .and_then(std::cell::OnceCell::get)
+        .expect("hot reference field-store loop lane view")
+        .osr_diagnostics();
+    assert!(reference_osr.currently_compiled_sites > 0, "reference field-store loop did not compile: {reference_osr:?}");
+    assert!(reference_osr.native_region_runs > 0, "reference field-store loop never ran natively: {reference_osr:?}");
 }
 
 #[test]
