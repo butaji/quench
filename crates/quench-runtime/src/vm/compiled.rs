@@ -528,7 +528,7 @@ pub(super) fn compile_js_numeric_region(
     let context = parameters[0];
     let arguments = parameters[3];
     let result_pointer = parameters[4];
-    let mut body = Body::new(builder, context, None);
+    let mut body = Body::new(builder, context, None, Int32Extension::Zero);
     let mut registers = vec![false; usize::from(function.registers)];
     let mut locals = vec![None; usize::from(function.locals)];
 
@@ -2470,10 +2470,10 @@ fn view(ty: crate::WasmType) -> usize {
         .expect("compiled values are numeric scalars")
 }
 
-/// The machine type of a register's view as `ty`. An i32 view holds its value zero-extended to
-/// 64 bits, so an access can use it as an address offset as it is: x64's 32-bit operations
-/// already clear the upper half, and Cranelift elides the extension of their results, but not
-/// across the block parameters a loop carries.
+/// The machine type of a register's view as `ty`. An i32 view holds its value extended to 64
+/// bits as the body's reads use it (`Int32Extension`), so an access can use it as an address
+/// offset as it is: Cranelift elides the extension of the results of x64's 32-bit operations,
+/// but not across the block parameters a loop carries.
 fn view_ir(ty: crate::WasmType) -> ir::Type {
     match ty {
         crate::WasmType::I32 => types::I64,
@@ -7814,16 +7814,29 @@ struct Body<'b> {
     core: RegionCore<'b>,
     /// Per register, its views, declared on first use.
     variables: Vec<Option<[Variable; VIEW_TYPES.len()]>>,
-    /// Each i32 read from a register's view, by the zero-extended value it was read from.
-    zero_extended: std::collections::HashMap<ir::Value, ir::Value>,
+    /// How each register's i32 view extends its value to the 64 bits it is stored in.
+    int32_extension: Int32Extension,
+    /// Each i32 read from a register's view, by the extended value it was read from.
+    extended: std::collections::HashMap<ir::Value, ir::Value>,
+}
+
+/// How a register's i32 view holds its value in 64 bits (`view_ir`): as the operations
+/// that read the view use it, so each takes the stored value as it is.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Int32Extension {
+    /// A Wasm i32 is an unsigned address offset.
+    Zero,
+    /// A JS Number held as an i32 is signed, and an element access scales its sign extension.
+    Sign,
 }
 
 impl<'b> Body<'b> {
-    fn new(builder: FunctionBuilder<'b>, context: ir::Value, poll: Option<i64>) -> Self {
+    fn new(builder: FunctionBuilder<'b>, context: ir::Value, poll: Option<i64>, int32_extension: Int32Extension) -> Self {
         Self {
             core: RegionCore::new(builder, context, poll),
             variables: Vec::new(),
-            zero_extended: std::collections::HashMap::new(),
+            int32_extension,
+            extended: std::collections::HashMap::new(),
         }
     }
 
@@ -7853,22 +7866,31 @@ impl<'b> Body<'b> {
             return stored;
         }
         let value = self.builder.ins().ireduce(types::I32, stored);
-        self.zero_extended.insert(value, stored);
+        self.extended.insert(value, stored);
         value
     }
 
-    /// `value`, an i32, zero-extended to 64 bits: the i32 view it was read from, if any.
-    fn zero_extend(&mut self, value: ir::Value) -> ir::Value {
-        match self.zero_extended.get(&value) {
-            Some(&wide) => wide,
-            None => self.builder.ins().uextend(types::I64, value),
+    /// `value`, an i32, extended to 64 bits as `extension` does: the i32 view it was read
+    /// from, if the view holds it so.
+    fn extend(&mut self, value: ir::Value, extension: Int32Extension) -> ir::Value {
+        match self.extended.get(&value) {
+            Some(&wide) if extension == self.int32_extension => wide,
+            _ => match extension {
+                Int32Extension::Zero => self.builder.ins().uextend(types::I64, value),
+                Int32Extension::Sign => self.builder.ins().sextend(types::I64, value),
+            },
         }
+    }
+
+    /// `value`, an i32, zero-extended to 64 bits.
+    fn zero_extend(&mut self, value: ir::Value) -> ir::Value {
+        self.extend(value, Int32Extension::Zero)
     }
 
     /// The stored form of `value` in the register's view as `ty` (`view_ir`).
     fn view_value(&mut self, ty: crate::WasmType, value: ir::Value) -> ir::Value {
         match ty {
-            crate::WasmType::I32 => self.zero_extend(value),
+            crate::WasmType::I32 => self.extend(value, self.int32_extension),
             _ => value,
         }
     }
@@ -9722,7 +9744,7 @@ impl<'a, H: Host> Analysis<'a, H> {
             regions,
             globals,
             analysis: self,
-            body: Body::new(builder, context, poll_address(&self.vm.execution_interrupt)),
+            body: Body::new(builder, context, poll_address(&self.vm.execution_interrupt), Int32Extension::Zero),
             plan,
             blocks: vec![None; function.code.len()],
             reference_site_ids,

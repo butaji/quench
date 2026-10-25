@@ -2778,7 +2778,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
             })
             .collect();
         Self {
-            body: super::Body::new(builder, context, poll),
+            body: super::Body::new(builder, context, poll, super::Int32Extension::Sign),
             region,
             observation,
             pointer,
@@ -2904,7 +2904,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
                 return if multiply { self.body.builder.ins().imul(left, right) } else { self.body.builder.ins().iadd(left, right) };
             }
         };
-        self.body.builder.ins().sextend(types::I64, value)
+        self.body.extend(value, super::Int32Extension::Sign)
     }
 
     fn affine_start(&mut self, counted: &CountedLoop, value: Affine) -> ir::Value {
@@ -3526,7 +3526,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
             // which compares unsigned past every length (`MAX_INDEXED_LENGTH`).
             Representation::Int32 => {
                 let (root, offset) = self.int32_root(key.value);
-                let wide = self.body.builder.ins().sextend(types::I64, root);
+                let wide = self.body.extend(root, super::Int32Extension::Sign);
                 let index = self.body.builder.ins().iadd_imm_s(wide, offset);
                 match i32::try_from(offset * i64::from(WORD_BYTES)) {
                     Ok(displacement) => (index, ElementIndex { wide, displacement }),
@@ -3568,8 +3568,8 @@ impl<'a, 'b> Lowering<'a, 'b> {
             .then_some(())?;
         let array = *self.arrays.get(&read.operand_b().register_index()?)?;
         let (left, right) = (
-            self.body.builder.ins().sextend(types::I64, left.value),
-            self.body.builder.ins().sextend(types::I64, right.value),
+            self.body.extend(left.value, super::Int32Extension::Sign),
+            self.body.extend(right.value, super::Int32Extension::Sign),
         );
         let sum = self.body.builder.ins().iadd(left, right);
         let length = self.length(array);
@@ -3636,11 +3636,14 @@ impl<'a, 'b> Lowering<'a, 'b> {
     }
 
     /// The value an `i32` is a constant sum from, and that sum: the chain of constant
-    /// additions ending at `value`.
+    /// additions ending at `value`, through the views it was written to and read back from.
     fn int32_root(&self, value: ir::Value) -> (ir::Value, i64) {
         let dfg = &self.body.builder.func.dfg;
         let (mut value, mut offset) = (dfg.resolve_aliases(value), 0i64);
         loop {
+            if let Some(written) = written_int32(dfg, value) {
+                value = written;
+            }
             let ir::ValueDef::Result(instruction, 0) = dfg.value_def(value) else { break };
             let ir::InstructionData::Binary { opcode: ir::Opcode::Iadd, args } = dfg.insts[instruction] else { break };
             let (left, right) = (dfg.resolve_aliases(args[0]), dfg.resolve_aliases(args[1]));
@@ -4131,19 +4134,28 @@ impl<'a, 'b> Lowering<'a, 'b> {
 
 /// The SSA value an `i32` operand is a pure function of, so that two reads of one register
 /// definition key the same arithmetic: each read of an `i32` view narrows its stored
-/// zero-extended value anew (`Body::read`), giving distinct `ireduce`s of one value, and a
-/// view written in the same block chain reads back as `ireduce(uextend(x))`, which is `x`.
+/// sign-extended value anew (`Body::read`), giving distinct `ireduce`s of one value, and a
+/// view written in the same block chain reads back as `ireduce(sextend(x))`, which is `x`.
 fn int32_key(dfg: &ir::DataFlowGraph, value: ir::Value) -> ir::Value {
-    let operand = |value: ir::Value, opcode: ir::Opcode| match dfg.value_def(value) {
+    let value = dfg.resolve_aliases(value);
+    let Some(wide) = unary_operand(dfg, value, ir::Opcode::Ireduce) else { return value };
+    written_int32(dfg, value).unwrap_or(wide)
+}
+
+/// The `i32` an `i32` view read back where the same block chain wrote it, `ireduce(sextend(x))`,
+/// is: `x`.
+fn written_int32(dfg: &ir::DataFlowGraph, value: ir::Value) -> Option<ir::Value> {
+    let wide = unary_operand(dfg, dfg.resolve_aliases(value), ir::Opcode::Ireduce)?;
+    unary_operand(dfg, wide, ir::Opcode::Sextend).filter(|narrow| dfg.value_type(*narrow) == types::I32)
+}
+
+/// The operand of `value` when an `opcode` instruction defines it.
+fn unary_operand(dfg: &ir::DataFlowGraph, value: ir::Value, opcode: ir::Opcode) -> Option<ir::Value> {
+    match dfg.value_def(value) {
         ir::ValueDef::Result(instruction, 0) => match dfg.insts[instruction] {
             ir::InstructionData::Unary { opcode: found, arg } if found == opcode => Some(dfg.resolve_aliases(arg)),
             _ => None,
         },
         _ => None,
-    };
-    let value = dfg.resolve_aliases(value);
-    let Some(wide) = operand(value, ir::Opcode::Ireduce) else { return value };
-    operand(wide, ir::Opcode::Uextend)
-        .filter(|narrow| dfg.value_type(*narrow) == types::I32)
-        .unwrap_or(wide)
+    }
 }

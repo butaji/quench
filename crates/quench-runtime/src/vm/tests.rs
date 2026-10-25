@@ -12150,6 +12150,41 @@ print(out.slice(45, 52).join(" "));
 
 #[test]
 #[cfg(not(quench_profiled))]
+fn shared_osr_indexes_from_negative_carried_roots() {
+    // Loop-carried `i32`s below zero key reads at constant offsets from them (`r + 2`,
+    // `++r`): their views hold them sign-extended, so a key folds its offset into the
+    // access from the root's own 64 bits.
+    let source = r#"
+function walk(a, start, n) {
+  var s = 0, r = start, q = start + n + 2;
+  for (var i = 0; i < n; i++) {
+    s += a[r + 2] + a[q - 1];
+    s += a[++r + 1];
+    q--;
+  }
+  return s;
+}
+var a = [];
+for (var i = 0; i < 64; i++) a.push(i * 5 + 3);
+var out = [];
+for (var c = 0; c < 300; c++) out.push(walk(a, -2 + (c % 3), 40));
+print(out.slice(290).join(" "));
+"#;
+    let program = Engine::specialize(source, "osr-negative-roots.js").unwrap();
+    let interpreted_output = Rc::new(RefCell::new(Vec::new()));
+    Vm::new(TestHost::writing_to(interpreted_output.clone())).execute(&program).unwrap();
+    for policy in crate::MemoryPolicy::ALL {
+        let compiled_output = Rc::new(RefCell::new(Vec::new()));
+        let mut compiled = Vm::new(TestHost::writing_to(compiled_output.clone()));
+        compiled.set_memory_policy(policy);
+        compiled.set_execution_mode(crate::ExecutionMode::Compiled);
+        compiled.execute(&program).unwrap();
+        assert_eq!(compiled_output.borrow().as_slice(), interpreted_output.borrow().as_slice(), "{policy:?}");
+    }
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
 fn shared_osr_numeric_relations_keep_signed_int32_ordering() {
     let program = Engine::compile(crate::ExecutionRequest::script(
         r#"
