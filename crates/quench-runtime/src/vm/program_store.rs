@@ -3026,6 +3026,22 @@ fn parts_per_million(part: u64, whole: u64) -> u64 {
     (u128::from(part) * PARTS_PER_MILLION / u128::from(whole)).min(PARTS_PER_MILLION) as u64
 }
 
+fn osr_rejection_name(reason: super::compiled::RegionRejection) -> &'static str {
+    match reason {
+        super::compiled::RegionRejection::RegionTooLarge => "region-too-large",
+        super::compiled::RegionRejection::UnsupportedInstruction(op) => crate::bytecode::Op::NAMES
+            .get(op as usize)
+            .copied()
+            .unwrap_or("unknown-opcode"),
+        super::compiled::RegionRejection::RegisterLimit => "register-limit",
+        super::compiled::RegionRejection::CaptureLimit => "capture-limit",
+        super::compiled::RegionRejection::ArrayLimit => "array-limit",
+        super::compiled::RegionRejection::FieldLimit => "field-limit",
+        super::compiled::RegionRejection::FieldStoreLimit => "field-store-limit",
+        super::compiled::RegionRejection::FieldMutation => "field-mutation",
+    }
+}
+
 impl Drop for ProgramStore {
     fn drop(&mut self) {
         let Some(diagnostics) = &self.js_jit_diagnostics else {
@@ -3108,7 +3124,7 @@ impl Drop for ProgramStore {
             }
             let _ = write!(
                 stderr,
-                ",\"status\":\"{status}\",\"parameter_count\":{},\"instruction_count\":{},\"entries\":{},\"lane_entries\":{},\"numeric_entries\":{},\"promotions\":{},\"compile_attempts\":{},\"compile_successes\":{},\"general_dispatch_compile_attempts\":{},\"general_dispatch_compile_successes\":{},\"general_artifact_cache_hits\":{},\"general_artifact_cache_misses\":{},\"compile_ns\":{},\"native_entries\":{},\"native_entry_coverage_ppm\":{},\"all_entry_native_coverage_ppm\":{},\"field_cache_probes\":{},\"field_cache_hits\":{},\"field_store_cache_probes\":{},\"field_store_cache_hits\":{},\"field_return_candidate_entries\":{},\"field_return_fixed_this_entries\":{},\"field_return_fast_entries\":{},\"field_increment_candidate_entries\":{},\"field_increment_fixed_this_entries\":{},\"field_increment_fast_entries\":{},\"numeric_find_fast_entries\":{},\"fallback_entries\":{},\"interpreter_completions\":{},\"interpreter_inclusive_ns\":{},\"general_dispatch_work\":{},\"general_dispatch_work_required\":{},\"guard_census\":{{\"conditional_branch_sites\":{},\"typeof_operations\":{},\"strict_comparison_sites\":{},\"relational_comparison_sites\":{}}},\"osr\":{{\"plain_backward_jump_sites\":{},\"admitted_sites\":{},\"promotion_only_sites\":{},\"compile_attempts\":{},\"compile_successes\":{},\"currently_compiled_sites\":{},\"native_entry_attempts\":{},\"native_region_runs\":{},\"entry_guard_misses\":{},\"exits\":{},\"widenings\":{}}},\"call_sites\":[",
+                ",\"status\":\"{status}\",\"parameter_count\":{},\"instruction_count\":{},\"entries\":{},\"lane_entries\":{},\"numeric_entries\":{},\"promotions\":{},\"compile_attempts\":{},\"compile_successes\":{},\"general_dispatch_compile_attempts\":{},\"general_dispatch_compile_successes\":{},\"general_artifact_cache_hits\":{},\"general_artifact_cache_misses\":{},\"compile_ns\":{},\"native_entries\":{},\"native_entry_coverage_ppm\":{},\"all_entry_native_coverage_ppm\":{},\"field_cache_probes\":{},\"field_cache_hits\":{},\"field_store_cache_probes\":{},\"field_store_cache_hits\":{},\"field_return_candidate_entries\":{},\"field_return_fixed_this_entries\":{},\"field_return_fast_entries\":{},\"field_increment_candidate_entries\":{},\"field_increment_fixed_this_entries\":{},\"field_increment_fast_entries\":{},\"numeric_find_fast_entries\":{},\"fallback_entries\":{},\"interpreter_completions\":{},\"interpreter_inclusive_ns\":{},\"general_dispatch_work\":{},\"general_dispatch_work_required\":{},\"guard_census\":{{\"conditional_branch_sites\":{},\"typeof_operations\":{},\"strict_comparison_sites\":{},\"relational_comparison_sites\":{}}},\"osr\":{{\"plain_backward_jump_sites\":{},\"admitted_sites\":{},\"promotion_only_sites\":{},\"compile_attempts\":{},\"compile_successes\":{},\"currently_compiled_sites\":{},\"native_entry_attempts\":{},\"native_region_runs\":{},\"entry_guard_misses\":{},\"exits\":{},\"widenings\":{},\"sites\":[",
                 counters.parameter_count,
                 counters.instruction_count,
                 counters.entries,
@@ -3157,6 +3173,49 @@ impl Drop for ProgramStore {
                 osr.exits,
                 osr.widenings,
             );
+            for (site_index, site) in osr.sites.iter().enumerate() {
+                if site_index != 0 {
+                    let _ = write!(stderr, ",");
+                }
+                let state = if site.analysis_rejection.is_some() {
+                    "rejected"
+                } else if site.deferred_call {
+                    "deferred-call"
+                } else if site.promotion_only {
+                    "promotion-only"
+                } else if site.admitted {
+                    "admitted"
+                } else {
+                    "diagnostic-only"
+                };
+                let _ = write!(
+                    stderr,
+                    "{{\"header_pc\":{},\"backedge_pc\":{},\"state\":",
+                    site.header_pc, site.backedge_pc
+                );
+                let _ = write_json_string(&mut stderr, state);
+                let _ = write!(stderr, ",\"analysis_rejection\":");
+                if let Some(reason) = site.analysis_rejection {
+                    let _ = write_json_string(&mut stderr, osr_rejection_name(reason));
+                } else {
+                    let _ = write!(stderr, "null");
+                }
+                let _ = write!(
+                    stderr,
+                    ",\"backedge_count\":{},\"tier_threshold_reached\":{},\"compile_attempts\":{},\"compile_successes\":{},\"native_entry_attempts\":{},\"native_region_runs\":{},\"entry_guard_misses\":{},\"native_exits\":{},\"widenings\":{}",
+                    site.backedge_count,
+                    site.tier_threshold_reached,
+                    site.compile_attempts,
+                    site.compile_successes,
+                    site.native_entry_attempts,
+                    site.native_region_runs,
+                    site.entry_guard_misses,
+                    site.native_exits,
+                    site.widenings,
+                );
+                let _ = write!(stderr, "}}");
+            }
+            let _ = write!(stderr, "]}},\"call_sites\":[");
             for (site_index, site) in counters.call_sites.iter().enumerate() {
                 if site_index != 0 {
                     let _ = write!(stderr, ",");
@@ -3240,21 +3299,7 @@ impl Drop for ProgramStore {
                 if index != 0 {
                     let _ = write!(stderr, ",");
                 }
-                let name = match reason {
-                    super::compiled::RegionRejection::RegionTooLarge => "region-too-large",
-                    super::compiled::RegionRejection::UnsupportedInstruction(op) => {
-                        crate::bytecode::Op::NAMES
-                            .get(*op as usize)
-                            .copied()
-                            .unwrap_or("unknown-opcode")
-                    }
-                    super::compiled::RegionRejection::RegisterLimit => "register-limit",
-                    super::compiled::RegionRejection::CaptureLimit => "capture-limit",
-                    super::compiled::RegionRejection::ArrayLimit => "array-limit",
-                    super::compiled::RegionRejection::FieldLimit => "field-limit",
-                    super::compiled::RegionRejection::FieldStoreLimit => "field-store-limit",
-                    super::compiled::RegionRejection::FieldMutation => "field-mutation",
-                };
+                let name = osr_rejection_name(*reason);
                 let _ = write!(stderr, "[");
                 let _ = write_json_string(&mut stderr, name);
                 let _ = write!(stderr, ",{count}]");
