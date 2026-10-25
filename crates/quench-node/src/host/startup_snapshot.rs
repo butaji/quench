@@ -208,14 +208,46 @@ const KEYED_VARIABLES: &[&str] = &[
     "NODE_PATH",
     "QUENCH_PLATFORM",
 ];
-/// `on` boots an eligible process from a snapshot; `trace` does, and reports why one was not
-/// used. Otherwise processes boot without one: a restored `Preloaded` realm keeps every
-/// preloaded builtin resident, which a script that loads none of them would pay for (V8-v7
-/// max RSS, bolted static x86_64, 2026-10-21, before `SnapshotKind`: Richards 2200 -> 7040
-/// KiB, RegExp 6160 -> 10484).
+/// How eligible processes use a snapshot (`SnapshotUse`): `on` always, `trace` always and
+/// reporting why one was not used, `off` never; otherwise by what the entry loads.
 pub(crate) const SNAPSHOT_ENV: &str = "QUENCH_STARTUP_SNAPSHOT";
 const SNAPSHOT_ON: &str = "on";
 const SNAPSHOT_TRACE: &str = "trace";
+const SNAPSHOT_OFF: &str = "off";
+
+/// Whether an eligible process boots from a snapshot (`SNAPSHOT_ENV`).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SnapshotUse {
+    /// When its entry loads modules (`EntryLoading::Modules`). A program that loads modules
+    /// spends most of its start loading the builtins the snapshot holds (npm scenarios, x86_64
+    /// 4 vCPU, pinned, median of 7, 2026-10-25, without -> with: lodash 67 -> 30 ms, express
+    /// 123 -> 80, zod 85 -> 53, axios 132 -> 87, playwright 428 -> 382). A script that names no
+    /// module boots without one: a fresh boot loads only what it uses, while a restored
+    /// `Preloaded` realm keeps every preloaded builtin resident (V8-v7 max RSS, without ->
+    /// with: RegExp 12.3 -> 17.1 MB, Splay 32.6 -> 39.0, EarleyBoyer 12.3 -> 15.9; a one-line
+    /// `console.log` 12.9M -> 23.6M instructions).
+    Auto,
+    Always,
+    Never,
+}
+
+impl SnapshotUse {
+    fn of_environment() -> Self {
+        match std::env::var_os(SNAPSHOT_ENV) {
+            Some(value) if value == SNAPSHOT_ON || value == SNAPSHOT_TRACE => Self::Always,
+            Some(value) if value == SNAPSHOT_OFF => Self::Never,
+            _ => Self::Auto,
+        }
+    }
+
+    fn restores(self, loading: entry_graph::EntryLoading) -> bool {
+        match self {
+            Self::Auto => loading == entry_graph::EntryLoading::Modules,
+            Self::Always => true,
+            Self::Never => false,
+        }
+    }
+}
 /// Set in the environment of the process that builds a snapshot, to the file it writes.
 pub(crate) const BUILD_ENV: &str = "QUENCH_BUILD_STARTUP_SNAPSHOT";
 /// The snapshots' directory beside the compile cache's (`CompileCache::directory`).
@@ -331,9 +363,15 @@ pub(crate) fn snapshot_path(
     if worker || !crate::shared_run::names_only_inline_source(&host.shared_state.borrow().exec_argv) {
         return None;
     }
-    if REFUSED_VARIABLES.iter().any(|name| std::env::var_os(name).is_some())
-        || !std::env::var_os(SNAPSHOT_ENV).is_some_and(|value| value == SNAPSHOT_ON || value == SNAPSHOT_TRACE)
-    {
+    let snapshot_use = SnapshotUse::of_environment();
+    if REFUSED_VARIABLES.iter().any(|name| std::env::var_os(name).is_some()) || snapshot_use == SnapshotUse::Never {
+        return None;
+    }
+    let loading = match entry {
+        SnapshotEntry::File(path) => entry_graph::entry_loading(path),
+        SnapshotEntry::Inline(source) => entry_graph::inline_entry_loading(source),
+    };
+    if !snapshot_use.restores(loading) {
         return None;
     }
     // Each build's snapshots share a directory, which a builder of another build removes.
@@ -348,10 +386,7 @@ pub(crate) fn snapshot_path(
     for name in KEYED_VARIABLES {
         std::hash::Hash::hash(&std::env::var_os(name), &mut hasher);
     }
-    let kind = match entry {
-        SnapshotEntry::File(path) => entry_graph::snapshot_kind(path),
-        SnapshotEntry::Inline(source) => entry_graph::inline_snapshot_kind(source),
-    };
+    let kind = loading.snapshot_kind();
     Some(directory.join(format!(
         "{:016x}.{}.{SNAPSHOT_EXTENSION}",
         std::hash::Hasher::finish(&hasher),
