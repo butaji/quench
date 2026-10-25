@@ -305,6 +305,18 @@ issue whose comments hold its measurement and host (TOD-344: code in Git, eviden
 Linear). A component counts as settled when its alternatives were measured on the same
 binary and lost.
 
+**Result (2026-10-25).** Under MemoryFirst, Quench's worst max RSS is at most 0.97 of 0.8 ×
+the best other engine's lowest run (QuickJS, Node with and without its JIT, Bun with and
+without its JIT) on all 16 V8-v7 rows, on three consecutive 5-round boards; most rows are
+at 0.79–0.93, EarleyBoyer at 0.43 and Splay at 0.64. Pinned to one CPU (§8.3), every row
+passes at 0.80–0.97. The binary is the qualification recipe's: `tools/bolt-layout.sh
+production` (non-PGO static, link order and BOLT profile retrained on that binary) at trunk
+`c437fc6072`, with the compile cache warm. A binary's first run misses the cache and peaks
+about 550 KiB higher. The retrained link order carried the last step: pinned RayTrace 2796 →
+2684 KiB, Crypto `--jit` 3068 → 2816 against the committed order. Score against Node
+`--jitless` stays behind on RayTrace, EarleyBoyer, RegExp and DeltaBlue
+(TOD-197 (s4-proof)).
+
 ### 8.1 What is in force
 
 | Term of §1 | Mechanism | Evidence |
