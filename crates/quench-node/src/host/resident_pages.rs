@@ -378,7 +378,11 @@ impl CompileRelease {
 fn compile_release_interval() -> std::time::Duration {
     let returns_pages = crate::shared_run::process_memory_policy()
         .is_some_and(quench_runtime::MemoryPolicy::returns_pages_at_collections);
-    if returns_pages { MEMORY_FIRST_COMPILE_RELEASE_INTERVAL } else { LOAD_RELEASE_INTERVAL }
+    if returns_pages {
+        std::time::Duration::from_micros(tuned("QUENCH_TUNE_COMPILE_RELEASE_US", MEMORY_FIRST_COMPILE_RELEASE_INTERVAL.as_micros() as u64))
+    } else {
+        LOAD_RELEASE_INTERVAL
+    }
 }
 
 /// Under a policy that returns pages at collections, the resident file pages past which a
@@ -438,9 +442,9 @@ impl CompileRelease {
             return false;
         };
         let (started, count) = releases.get_or_insert_with(|| (std::time::Instant::now(), 0));
-        let allowed = started.elapsed() / BUDGET_RELEASE_TIME_DIVISOR + RELEASE_REFAULT_COST * MEMORY_FIRST_START_RELEASES;
+        let allowed = started.elapsed() / tuned("QUENCH_TUNE_BUDGET_TIME_DIVISOR", u64::from(BUDGET_RELEASE_TIME_DIVISOR)) as u32 + RELEASE_REFAULT_COST * MEMORY_FIRST_START_RELEASES;
         if RELEASE_REFAULT_COST * (*count + 1) > allowed
-            || resident_file_bytes().is_none_or(|bytes| bytes <= MEMORY_FIRST_RESIDENT_FILE_BUDGET)
+            || resident_file_bytes().is_none_or(|bytes| bytes as u64 <= tuned("QUENCH_TUNE_FIRST_CALL_BUDGET_BYTES", MEMORY_FIRST_RESIDENT_FILE_BUDGET as u64))
         {
             return false;
         }
@@ -940,4 +944,16 @@ mod tests {
         std::fs::remove_file(&path).unwrap();
         assert_eq!(runs, [(start, start + page), (start + 2 * page, start + 3 * page)]);
     }
+}
+
+/// Measurement builds (`release-tuning`) read a release knob from the environment, in place
+/// of its value; other builds use the value.
+#[cfg(feature = "release-tuning")]
+fn tuned(name: &str, value: u64) -> u64 {
+    std::env::var(name).ok().and_then(|text| text.parse().ok()).unwrap_or(value)
+}
+
+#[cfg(not(feature = "release-tuning"))]
+const fn tuned(_name: &str, value: u64) -> u64 {
+    value
 }

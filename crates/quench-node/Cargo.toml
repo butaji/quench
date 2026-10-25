@@ -17,6 +17,8 @@ default = []
 profile-memory = ["quench-runtime/profile-memory"]
 verify-replay = ["quench-runtime/verify-replay"]
 profile-allocator = ["quench-runtime/profile-allocator"]
+# Reads the memory-first compile-release knobs from the environment (measurement builds only).
+release-tuning = []
 
 [dependencies]
 quench-js-check = { path = "../quench-js-check" }
