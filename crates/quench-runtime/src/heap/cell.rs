@@ -931,7 +931,9 @@ impl Native {
     /// its arguments and the heap, and reaches guest code only through getters, coercions,
     /// proxy traps, species constructors or a `JSON.parse` reviver, whose calls make the activations frames first
     /// (`Vm::materialize_deferred_lane`): `assert.deepEqual` calls `Object.prototype.toString`
-    /// on every value it compares (10,210 materializations in the color-convert npm scenario).
+    /// on every value it compares (10,210 materializations in the color-convert npm scenario),
+    /// and TypeScript's CommonJS re-export helper (`__createBinding`) reads each export's
+    /// descriptor (208,883 in the typescript-eslint npm scenario).
     pub(crate) fn runs_beside_activations(self) -> bool {
         matches!(
             self,
@@ -943,6 +945,7 @@ impl Native {
                 | Self::ObjectEntries
                 | Self::ObjectGetOwnPropertyNames
                 | Self::ObjectHasOwn
+                | Self::ObjectGetOwnPropertyDescriptor
                 | Self::ObjectPrototypeHasOwnProperty
                 | Self::ObjectPrototypeToString
                 | Self::ReflectGetPrototypeOf
