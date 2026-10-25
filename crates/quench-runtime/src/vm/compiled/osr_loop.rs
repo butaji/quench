@@ -1339,8 +1339,31 @@ fn admit_region(
 ) -> Result<LoopRegion, RegionRejection> {
     let backedge = header + instructions.len() as u32 - 1;
     let paths = held_registers(&instructions, sites, header_live, objects);
-    let mut tagged = tagged_registers(&instructions, constants, &objects.iter().chain(paths.keys()).copied().collect())
-        .ok_or(RegionRejection::UnsupportedInstruction(Op::JumpBinaryFalse))?;
+    let mut tagged = match tagged_registers(&instructions, constants, &objects.iter().chain(paths.keys()).copied().collect()) {
+        Some(tagged) => tagged,
+        None => {
+            if std::env::var_os("QUENCH_JS_JIT_TRACE_OSR_REJECT").is_some() {
+                for (offset, instruction) in instructions.iter().copied().enumerate().filter(|(_, instruction)| {
+                    instruction.op() == Op::JumpBinaryFalse
+                }) {
+                    let operand = |operand: Operand| {
+                        let constant = (operand.kind() == Some(OperandKind::Constant))
+                            .then(|| constants.get(usize::from(operand.payload())).copied());
+                        (operand.kind(), operand.payload(), constant.flatten())
+                    };
+                    eprintln!(
+                        "QUENCH_JS_JIT_OSR_TAGGED_REJECT header={header} offset={offset} binary_operator={} equality={:?} number_relation={:?} operand_b={:?} operand_c={:?}",
+                        instruction.binary_operator_field(),
+                        super::super::operations::equality_operator(instruction.binary_operator_field()),
+                        super::super::operations::NumberRelation::from_operator(instruction.binary_operator_field()),
+                        operand(instruction.operand_b()),
+                        operand(instruction.operand_c()),
+                    );
+                }
+            }
+            return Err(RegionRejection::UnsupportedInstruction(Op::JumpBinaryFalse));
+        }
+    };
     tagged.extend(paths.keys().copied());
     let mut admission = Admission {
         constants,
