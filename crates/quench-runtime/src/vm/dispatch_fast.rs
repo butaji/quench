@@ -14233,17 +14233,10 @@ fn lane_call_fits(instruction: WideInstruction) -> bool {
 fn lane_call_result_marked(
     operand: LaneOperand,
     instruction: WideInstruction,
-    live: Option<&crate::compile::liveness::RegisterMasks>,
+    function: &Function,
     pc: usize,
 ) -> LaneOperand {
-    if instruction.op() != Op::Call || instruction.result_flags() != 0 {
-        return operand;
-    }
-    let result = instruction.a() & crate::bytecode::REGISTER_MASK;
-    let dead = live
-        .and_then(|live| live.get(pc + 1))
-        .is_some_and(|after| crate::compile::liveness::register_dead(after, usize::from(result)));
-    if !dead {
+    if instruction.op() != Op::Call || !function.register_roots.call_result_dead(pc) {
         return operand;
     }
     // SAFETY: a `Call`'s operand is its immediate (`lane_operand`).
@@ -14330,11 +14323,11 @@ const ACCUMULATOR: bool = cfg!(quench_lane_tail_calls);
 
 /// Derive a function's lane view from its bytecode and its program's
 /// constants.
-fn derive_lane_view<H: Host>(
+fn derive_lane_view<'live, H: Host>(
     function: &Function,
     constants: &[Value],
     kind: crate::bytecode::ProgramKind,
-    live: Option<&crate::compile::liveness::RegisterMasks>,
+    live: &dyn Fn() -> Option<&'live crate::compile::liveness::RegisterMasks>,
     sites: &[crate::bytecode::FieldSite],
     loop_tier: bool,
     diagnostics: bool,
@@ -14385,7 +14378,7 @@ fn derive_lane_view<H: Host>(
                 .filter(|_| {
                     keeps_view && lane_fields_fit(instruction, function) && lane_call_fits(instruction)
                 })
-                .map(|operand| lane_call_result_marked(operand, instruction, live, pc));
+                .map(|operand| lane_call_result_marked(operand, instruction, function, pc));
             // Control reaches this record only from the previous one when no
             // jump targets it; the general loop never enters at a record that
             // reads the accumulator.
@@ -15319,7 +15312,7 @@ fn derive_lane_view<H: Host>(
     specialize_outer_captures::<H>(&mut records);
     let environment_window = specialize_environment_window::<H>(function, &decoded, &mut records);
     let (loops, osr_rejections) = if loop_tier && kind != crate::bytecode::ProgramKind::Wasm {
-        install_loop_sites::<H>(function, &decoded, constants, sites, live, diagnostics, &mut records)
+        install_loop_sites::<H>(function, &decoded, constants, sites, live(), diagnostics, &mut records)
     } else {
         (Box::default(), Vec::new())
     };
