@@ -247,6 +247,67 @@ console.log(e.host(object) === object, e.host('s'), e.host(1.5), e.host(42), e.h
 }
 
 #[test]
+fn webassembly_gc_objects_are_opaque_exotic_objects_like_node() {
+    // (module (type $s (struct (field i32))) (func "st" (result anyref) (struct.new $s 1))
+    //   (func "back" (param externref) (result i32) (ref.test (ref $s) (any.convert_extern))))
+    let source = r#"
+const wasmModule = new WebAssembly.Module(new Uint8Array([0,97,115,109,1,0,0,0,1,14,3,95,1,127,0,96,0,1,110,96,1,111,1,127,3,3,2,1,2,7,13,2,2,115,116,0,0,4,98,97,99,107,0,1,10,19,2,7,0,65,1,251,0,0,11,9,0,32,0,251,26,251,20,0,11,0,11,4,110,97,109,101,4,4,1,0,1,115]));
+const e = new WebAssembly.Instance(wasmModule).exports;
+const r = e.st();
+const out = [];
+const t = (n, f) => { try { const v = f(); out.push(n + '=' + (typeof v === 'object' && v !== null ? JSON.stringify(v) : String(v))); } catch (err) { out.push(n + '!' + err.constructor.name); } };
+t('typeof', () => typeof r); t('keys', () => Object.keys(r)); t('x', () => r.x); t('proto', () => Object.getPrototypeOf(r));
+t('set', () => { 'use strict'; r.x = 1; }); t('str', () => String(r)); t('plus', () => r + 1); t('in', () => 'x' in r);
+t('ext', () => Object.isExtensible(r)); t('frozen', () => Object.isFrozen(r)); t('wrap', () => Object(r) === r); t('back', () => e.back(r));
+t('def', () => Object.defineProperty(r, 'y', { value: 1 })); t('setproto', () => Object.setPrototypeOf(r, {})); t('rsetproto', () => Reflect.setPrototypeOf(r, null));
+t('del', () => { 'use strict'; delete r.x; }); t('freeze', () => Object.freeze(r)); t('rset', () => Reflect.set(r, 'x', 1)); t('rpe', () => Reflect.preventExtensions(r));
+t('gopd', () => Object.getOwnPropertyDescriptor(r, 'x')); t('spread', () => ({ ...r })); t('create', () => Object.getPrototypeOf(Object.create(r)) === r);
+t('json', () => JSON.stringify([r])); t('sym', () => { 'use strict'; r[Symbol.iterator] = 1; });
+console.log(out.join(' '));
+"#;
+    let node = observe_node_source(source);
+    assert!(node.status.success(), "Node oracle failed: {node:?}");
+    let quench = observe_source(source);
+    assert_eq!(quench.outcome(), RunResult::Pass, "{:?}", quench.worker);
+    assert_eq!(quench.stdout, node.stdout);
+}
+
+#[test]
+fn webassembly_values_enter_reference_types_like_node() {
+    // Exports taking anyref, eqref, i31ref, structref, (ref null $s), (ref $s) and nullref;
+    // anyref and (ref null $s) globals and tables; imports returning anyref and (ref null $s);
+    // and the JS API's reference type names for WebAssembly.Global and WebAssembly.Table.
+    let source = r#"
+let ret = null;
+const wasmModule = new WebAssembly.Module(new Uint8Array([0,97,115,109,1,0,0,0,1,59,12,95,1,127,0,95,1,126,0,96,0,1,110,96,0,1,99,0,96,1,110,1,110,96,1,109,1,127,96,1,108,1,127,96,1,107,1,127,96,1,99,0,1,127,96,1,100,0,1,127,96,1,113,1,127,96,0,1,127,2,22,2,3,101,110,118,3,103,101,116,0,2,3,101,110,118,4,103,101,116,115,0,3,3,12,11,4,5,6,7,8,9,10,2,2,2,11,4,8,2,110,0,2,99,0,0,2,6,12,2,110,1,208,110,11,99,0,1,208,0,11,7,86,15,3,97,110,121,0,2,2,101,113,0,3,3,105,51,49,0,4,2,115,116,0,5,1,115,0,6,3,115,110,110,0,7,4,110,111,110,101,0,8,2,109,107,0,9,3,109,107,116,0,10,3,105,109,112,0,11,4,105,109,112,115,0,12,1,103,3,0,2,103,115,3,1,3,116,97,98,1,0,4,116,97,98,115,1,1,10,70,11,4,0,32,0,11,7,0,32,0,251,20,108,11,6,0,32,0,251,29,11,5,0,32,0,209,11,5,0,32,0,209,11,4,0,65,1,11,4,0,65,1,11,7,0,65,1,251,0,0,11,7,0,66,1,251,0,1,11,4,0,16,0,11,5,0,16,1,209,11,0,28,4,110,97,109,101,1,12,2,0,3,103,101,116,1,4,103,101,116,115,4,7,2,0,1,115,1,1,116]));
+const e = new WebAssembly.Instance(wasmModule, { env: { get: () => ret, gets: () => ret } }).exports;
+const s = e.mk(), t = e.mkt(), o = {};
+const show = x => x === null ? 'null' : typeof x === 'object' ? (x === o ? 'o' : x === s ? 's' : x === t ? 't' : 'obj') : typeof x + ':' + String(x);
+const out = [];
+const c = (n, f) => { try { out.push(n + '=' + show(f())); } catch (err) { out.push(n + '!' + err.constructor.name); } };
+for (const [name, x] of [['null', null], ['undef', undefined], ['num', 5], ['big', 2 ** 30], ['frac', 1.5], ['o', o], ['s', s], ['t', t], ['bigint', 1n]]) {
+  for (const f of ['any', 'eq', 'i31', 'st', 's', 'snn', 'none']) c(f + '(' + name + ')', () => e[f](x));
+  c('g=' + name, () => { e.g.value = x; return e.g.value; });
+  c('gs=' + name, () => { e.gs.value = x; return e.gs.value; });
+  c('tab=' + name, () => { e.tab.set(0, x); return e.tab.get(0); });
+  c('tabs=' + name, () => { e.tabs.set(0, x); return e.tabs.get(0); });
+  c('imp=' + name, () => { ret = x; return e.imp(); });
+  c('imps=' + name, () => { ret = x; return e.imps(); });
+}
+for (const ty of ['anyfunc', 'funcref', 'externref', 'anyref', 'eqref', 'i31ref', 'structref', 'arrayref', 'nullref', 'exnref']) {
+  c('global:' + ty, () => { const g = new WebAssembly.Global({ value: ty, mutable: true }); g.value = 7; return g.value; });
+  c('table:' + ty, () => { const table = new WebAssembly.Table({ element: ty, initial: 1 }); table.set(0, 7); return table.get(0); });
+}
+console.log(out.join(' '));
+"#;
+    let node = observe_node_source(source);
+    assert!(node.status.success(), "Node oracle failed: {node:?}");
+    let quench = observe_source(source);
+    assert_eq!(quench.outcome(), RunResult::Pass, "{:?}", quench.worker);
+    assert_eq!(quench.stdout, node.stdout);
+}
+
+#[test]
 fn vm_context_lexicals_survive_collection_and_prototypes_end_in_the_context() {
     // A context's script-scope `let` is reachable only through the realm while its code
     // runs; collections inside that code must keep it alive.

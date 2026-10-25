@@ -102,6 +102,9 @@ impl<H: Host> Vm<H> {
         record: PropertyDescriptorRecord,
     ) -> Result<bool, JsError> {
         let _stack = self.enter_stack()?;
+        if self.is_wasm_gc_object(target) {
+            return Err(self.wasm_gc_opaque_error(p));
+        }
         if matches!(self.heap.get(target), Some(Cell::Proxy { .. })) {
             if self.is_host_private_symbol(key) {
                 return Ok(false);

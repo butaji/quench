@@ -33,6 +33,12 @@ pub(crate) fn intrinsic_name_native(name: &str) -> Option<crate::heap::Native> {
         "\0quench:object-literal-prototype" => Native::ObjectLiteralPrototype,
         "\0quench:object-define-property" => Native::ObjectDefineProperty,
         "\0quench:object-freeze" => Native::ObjectFreeze,
+        // What the compiler's own throws, class setup and `using` declarations call: the
+        // realm's intrinsics, which a binding of the same name in scope does not replace.
+        INTRINSIC_TYPE_ERROR_BINDING => Native::TypeError,
+        INTRINSIC_REFERENCE_ERROR_BINDING => Native::ReferenceError,
+        INTRINSIC_SET_PROTOTYPE_OF_BINDING => Native::ObjectSetPrototypeOf,
+        INTRINSIC_DISPOSABLE_STACK_BINDING => Native::DisposableStack,
         // The iteration helpers each realm also installs on its global object.
         ITERATOR_CLOSE_BINDING => Native::IteratorClose,
         FOR_IN_KEYS_BINDING => Native::ForInKeys,
@@ -46,6 +52,10 @@ pub(crate) fn intrinsic_name_native(name: &str) -> Option<crate::heap::Native> {
 pub(crate) fn is_intrinsic_name(name: &str) -> bool {
     name == INTRINSIC_REGEXP_BINDING || intrinsic_name_native(name).is_some()
 }
+pub(crate) const INTRINSIC_TYPE_ERROR_BINDING: &str = "\0quench:intrinsic-type-error";
+pub(crate) const INTRINSIC_REFERENCE_ERROR_BINDING: &str = "\0quench:intrinsic-reference-error";
+pub(crate) const INTRINSIC_SET_PROTOTYPE_OF_BINDING: &str = "\0quench:intrinsic-set-prototype-of";
+pub(crate) const INTRINSIC_DISPOSABLE_STACK_BINDING: &str = "\0quench:intrinsic-disposable-stack";
 /// The engine-internal global a `with` statement calls to enter its object scope.
 pub(crate) const WITH_ENTER_BINDING: &str = "\0quench:with-enter";
 pub(crate) const LEXICAL_THIS_BINDING: &str = "\0quench:lexical-this";
@@ -2345,16 +2355,18 @@ impl Function {
 
     /// Whether the body reaches its `arguments` binding only by reading its length or an
     /// element (`ArgumentsLength`, `ArgumentGet`), with no closure capturing the binding, so
-    /// the values passed answer every read: the object is unmapped, mapped onto no
-    /// parameters, or mapped without a write that could observe it (`unaliased_arguments`).
-    /// An environment activation then keeps those values after its locals.
+    /// the values passed and the parameters answer every read: an element a parameter
+    /// aliases (`arguments_alias_parameters`) is that parameter's local, which no closure
+    /// captures, and any other the value passed. An environment activation then keeps those
+    /// values after its locals.
     pub(crate) fn reads_passed_arguments_only(&self) -> bool {
         let Some(slot) = self.arguments_slot else {
             return false;
         };
         !self.is_generator
             && !self.is_async
-            && !(self.arguments_alias_parameters() && self.params != 0)
+            && (!self.arguments_alias_parameters()
+                || (0..usize::from(self.params)).all(|parameter| !self.local_slot_uses_environment(parameter)))
             && !self.local_slot_uses_environment(usize::from(slot))
             && !self.has_dynamic_scope_access()
             && self.instructions().all(|instruction| {
