@@ -479,7 +479,7 @@ fn tagged_registers_with_failure(
         .chain(instructions.iter().filter_map(|instruction| {
             (instruction.op() == Op::Unary
                 && instruction.unary_operator() == crate::bytecode::UNARY_TYPEOF_INDEX)
-                .then(|| instruction.result_register())
+                .then_some(instruction.result_register())
         }))
         .chain(instructions.iter().filter_map(|instruction| match instruction.op() {
             Op::GetIndex => instruction.operand_b().register_index(),
