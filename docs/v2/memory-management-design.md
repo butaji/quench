@@ -257,6 +257,7 @@ are owned here and boarded on all four suites before any change.
 | Request-retention check for servers | Per-request leaks | To build |
 | Allocation-site profile | Survival per site; elimination targets | To build |
 | Paired runner, all-eight instruction guard, minimal `posix_spawn` RSS helper | Decisions | Exist |
+| Pinned RSS rounds (`rss-exec --cpu`, `v8-v7-rss.cjs --rss-cpu`) | Reproducible peaks: unpinned, a 2–4 MB process's peak reads up to a few hundred KiB low at random (§8.3) | Exist |
 
 ## 6. Staged path
 
@@ -297,12 +298,24 @@ nursery and pretenuring; QuickJS; Lua 5.4 generational mode; Go GC guide
 and soft memory limit; Wingo on Nofl field-logging barriers, V8 MinorMS and
 pretenuring. Full notes with links: the Linear design document.
 
-## 8. State and evidence (2026-10-24)
+## 8. State and evidence (2026-10-25)
 
 Linux x86_64, 4 vCPU, static + BOLT `quench-node` unless noted. Each line names the Linear
 issue whose comments hold its measurement and host (TOD-344: code in Git, evidence in
 Linear). A component counts as settled when its alternatives were measured on the same
 binary and lost.
+
+**Result (2026-10-25).** Under MemoryFirst, Quench's worst max RSS is at most 0.97 of 0.8 ×
+the best other engine's lowest run (QuickJS, Node with and without its JIT, Bun with and
+without its JIT) on all 16 V8-v7 rows, on three consecutive 5-round boards; most rows are
+at 0.79–0.93, EarleyBoyer at 0.43 and Splay at 0.64. Pinned to one CPU (§8.3), every row
+passes at 0.80–0.97. The binary is the qualification recipe's: `tools/bolt-layout.sh
+production` (non-PGO static, link order and BOLT profile retrained on that binary) at trunk
+`c437fc6072`, with the compile cache warm. A binary's first run misses the cache and peaks
+about 550 KiB higher. The retrained link order carried the last step: pinned RayTrace 2796 →
+2684 KiB, Crypto `--jit` 3068 → 2816 against the committed order. Score against Node
+`--jitless` stays behind on RayTrace, EarleyBoyer, RegExp and DeltaBlue
+(TOD-197 (s4-proof)).
 
 ### 8.1 What is in force
 
@@ -350,6 +363,9 @@ binary and lost.
 | Drop regexp matcher-cache entries no live RegExp shares, at full or every collection | RegExp +4 to +228 KiB, other rows flat: the cached matchers are in use, and dropping them recompiles. At RegExp's peak, compiled regexps are ~0.5 MB live (Massif: cache-held `Regex` 185 KiB, lowered programs 179, literal finders 60, match sets and classes 60) | session A/B (7 runs, unbolted static), TOD-137 comment |
 | MemoryFirst first-call release by code growth (256 KiB since the last release) instead of every 5 ms | Unbolted: Crypto worst −72 to −204 KiB, but NavierStokes `--jit` +124 and RayTrace +100; without the time budget npm CPU 1.4–2.2×. Bolted `cdsort`, 15 runs: RayTrace `--jit` worst +228, other rows ±120 both ways | TOD-137 (growth-release-rejected) |
 | Release the code pages at fewer MemoryFirst collections: only once file pages pass the hot set (measured over four collections after a release) by 64–512 KiB; or skip, or gate, the heap trim | Releases fall about 20×, Score +3% to +19% (RayTrace, EarleyBoyer, RegExp), but worst max RSS +136 to +464 KiB on the four rows at 0.90–1.00 of the target; the trim alone changes Score −5% to +6% | TOD-197 (memory-first-speed-cost) |
+| Hot-set gate on the collection-boundary code release (release only once file pages pass the last measured hot set by 32–256 KiB, measured over 2 or 4 collections), on the static PGO + BOLT binary | Richards worst no-JIT 2188 → 2760–2972 KiB, `--jit` 2428 → 2796–3008, Score −4 to +7%: on a small program the gate never fires, so every touched code page stays | TOD-197 (gate-pgo-bolt) |
+| First-call release interval 5 / 20 / 100 ms × resident-file budget 512K / 1M / off (one PGO + BOLT binary, 16 rows × 9 runs) | Budget off: Crypto, NavierStokes and RayTrace up to 15% over; every arm's Score geomean within ±1%; 1M at 21 runs: RayTrace tail −60 KiB, Crypto and Richards higher | TOD-197 (release-knob-grid) |
+| Memory-first memos at a quarter of their entries | Richards −128 KiB, RayTrace and DeltaBlue worst unchanged, DeltaBlue `--jit` Score −6 to −9% (21 runs) | TOD-197 (memo-quarter), branch `gc-memo-fit` |
 | Headerless payload space for string buffers | Exact census of RegExp: only 5,659 strings own a buffer; at most about 191 KiB of overhead to remove, under half the gap | TOD-137 (string-payload) |
 
 ### 8.3 Where the peak is now (MemoryFirst, no JIT)
@@ -378,6 +394,22 @@ brackets:
 | NavierStokes | 0.93 (0.93) | 0.93 (0.93) |
 | EarleyBoyer | 0.45 | 0.46 |
 | Splay | 0.64 | 0.64 |
+
+**Measurement precision (2026-10-25).** Since Linux 6.2 a process's resident counters are
+per-CPU, and the peak that `wait4` and `VmHWM` report is taken from their approximate sum.
+A process that migrates between CPUs leaves deltas unsynchronized, so on these 2–4 MB rows
+the reported peak lands up to a few hundred KiB low at random. RayTrace on one binary read
+2436–2824 KiB over 20 unpinned runs, and 2796 in all 20 runs pinned to one CPU. In-process
+reads of the precise counters at every release showed 2896–2908 KiB at RayTrace's peak in
+every run. Worst-of-5 against best-of-5 turns that noise against the side judged by its
+worst run. Pinned to one CPU, every engine, non-PGO static + BOLT at v2-gc `10230ec8dd`
+(5 runs, worst over 0.8 × QuickJS's best): Richards 0.82 / 0.81, DeltaBlue 0.91 / 0.91,
+Crypto 0.96 / 1.00, RayTrace 1.015 / 1.015, RegExp 0.98 / 0.98, NavierStokes 0.87 / 0.87,
+EarleyBoyer 0.44, Splay 0.25 (TOD-197 (pinned-rss)). RayTrace's pinned peak is a plateau
+at collection starts, about 1520 KiB of anonymous memory and 1270 KiB of file pages. The
+file pages are the text the program runs in the roughly 2 ms between collections; the
+anonymous part is about 860 KiB of malloc data in use, 150 KiB of free sub-page fragments,
+and the record spaces and stacks.
 
 ### 8.3a Why the memory manager is at its floor on the rows that miss
 
