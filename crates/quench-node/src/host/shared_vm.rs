@@ -831,7 +831,8 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "cryptoRsaCrypt" (8) => crate::modules::crypto_shared_vm::rsa_crypt,
         method "cryptoEcdh" (5) => crate::modules::crypto_shared_vm::ecdh,
         method "asyncResourceInit" (2) => crate::modules::async_hooks_shared_vm::initialize_resource,
-        method "asyncResourceRunInAsyncScope" (2) => crate::modules::async_hooks_shared_vm::run_in_async_scope,
+        method "asyncResourceEnterScope" (1) => crate::modules::async_hooks_shared_vm::enter_async_scope,
+        method "asyncResourceExitScope" (0) => crate::modules::async_hooks_shared_vm::exit_async_scope,
         method "asyncResourceEmitDestroy" (0) => crate::modules::async_hooks_shared_vm::emit_destroy,
         method "asyncLocalStorageInit" (1) => crate::modules::async_hooks_shared_vm::initialize_storage,
         method "asyncLocalStorageEnterWith" (1) => crate::modules::async_hooks_shared_vm::enter_with,
@@ -1056,6 +1057,8 @@ const BESIDE_ACTIVATIONS: &[&str] = &[
     "httpResponseInitialize",
     "httpIncomingDestroy",
     "asyncResourceInit",
+    "asyncResourceEnterScope",
+    "asyncResourceExitScope",
     "stringDecoderDecode",
     "markAsUncloneable",
 ];

@@ -103,6 +103,9 @@ pub(crate) struct SharedAsyncHooksState {
     /// died when a collection ran since.
     pub(crate) promise_resources_pruned_epoch: u64,
     pub(super) scoped_resource: Option<(u64, RootId)>,
+    /// The scopes `AsyncResource#runInAsyncScope` entered and has not left, innermost last
+    /// (`async_hooks_shared_vm::enter_async_scope`).
+    pub(super) entered_scopes: Vec<super::async_hooks_shared_vm::EnteredScope>,
     /// Each context's AsyncLocalStorage values, by storage ID: a context's frame is found,
     /// copied and dropped whole, without scanning the other contexts'.
     pub(super) local_stores: FxHashMap<StoreContext, Vec<(u64, RootId)>>,
@@ -127,6 +130,7 @@ impl SharedAsyncHooksState {
             promise_resources: FxHashMap::default(),
             promise_resources_pruned_epoch: 0,
             scoped_resource: None,
+            entered_scopes: Vec::new(),
             local_stores: FxHashMap::default(),
             store_references: FxHashMap::default(),
             destroyed_resources: FxHashSet::default(),
@@ -193,6 +197,7 @@ impl SharedAsyncHooksState {
             promise_resources,
             promise_resources_pruned_epoch: _,
             scoped_resource,
+            entered_scopes,
             local_stores,
             store_references,
             destroyed_resources,
@@ -204,7 +209,8 @@ impl SharedAsyncHooksState {
                 && cells.current_trigger_id.get() == ROOT_TRIGGER_ASYNC_ID
                 && cells.current_store.get() == StoreContext::Resource(ROOT_ASYNC_ID)
                 && default_trigger_async_id.is_none()
-                && scoped_resource.is_none(),
+                && scoped_resource.is_none()
+                && entered_scopes.is_empty(),
             "an async execution context",
         )?;
         require_quiescent(
