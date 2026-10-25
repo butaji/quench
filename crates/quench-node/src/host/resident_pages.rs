@@ -48,8 +48,12 @@ const LOAD_RELEASE_INTERVAL: std::time::Duration = std::time::Duration::from_mil
 /// RSS without JIT -124 to -516 KiB on six fixtures, with JIT -144 to +48 KiB, scores within
 /// noise; npm scenarios run 7-21% longer for -3.4 to +0.1 MB. Memory-first is the opt-in
 /// policy that trades speed for memory; the throughput default keeps `LOAD_RELEASE_INTERVAL`.
+/// Code generation and a kept program's release share it (`compile_release_interval`): at
+/// `LOAD_RELEASE_INTERVAL` a decode or bootstrap release just before had held back the entry
+/// compilation's, so its parser, code generator and encoder stayed resident together
+/// (`evidence/tod123-cold-entry-release-linux-2026-10-25`).
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-const MEMORY_FIRST_FIRST_CALL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(5);
+const MEMORY_FIRST_COMPILE_RELEASE_INTERVAL: std::time::Duration = std::time::Duration::from_millis(5);
 
 /// When the read-only pages were last released.
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
@@ -321,7 +325,7 @@ pub fn release_read_only_code_and_data() {
 pub fn release_read_only_code_and_data() {}
 
 /// The host's action at a compilation's phase boundaries (`set_compile_phase_boundary`), each
-/// at most once per `LOAD_RELEASE_INTERVAL`. Code generation pages code and data out
+/// at most once per its interval (`compile_release_interval`). Code generation pages code and data out
 /// (`release_read_only_code_and_data`); compilations that follow it quickly (functions a
 /// program builds at run time with `new Function`, `eval` or `vm`) run the same parser and
 /// code generator, which a release would only refault, and each release reads the whole
@@ -342,39 +346,46 @@ pub fn at_compile_phase(phase: quench_runtime::CompilePhase) {
     }
 }
 
+/// The host's action once a compilation offers its program to the compile cache
+/// (`Host::keep_compiled_program`): the compilation is over, and the program runs from its
+/// kept form, so the parser's, code generator's and encoder's pages leave before its decode
+/// and run fault theirs. A cold run compiles its entry (V8-v7 MemoryFirst cold first run,
+/// bolted static x86_64, 9 interleaved runs, 2026-10-25: median max RSS Richards 2700 ->
+/// 2448 KiB, DeltaBlue 2880 -> 2604, Crypto 3060 -> 2928, RayTrace 2852 -> 2784); a warm
+/// run keeps nothing and never reaches it.
+pub fn after_program_kept() {
+    release_once_per_interval(CompileRelease::Kept, release_read_only_code_and_data);
+}
+
 /// The compile-phase releases timed apart from each other (`at_compile_phase`).
 #[derive(Clone, Copy)]
 enum CompileRelease {
     CodeGeneration,
     FirstCall,
+    Kept,
 }
 
 impl CompileRelease {
-    const COUNT: usize = 2;
+    const COUNT: usize = 3;
 }
 
+/// How far apart each compile-phase release's runs are kept, by the process's memory policy.
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-impl CompileRelease {
-    /// How far apart this release's runs are kept.
-    fn interval(self) -> std::time::Duration {
-        let returns_pages = crate::shared_run::process_memory_policy()
-            .is_some_and(quench_runtime::MemoryPolicy::returns_pages_at_collections);
-        match self {
-            Self::FirstCall if returns_pages => MEMORY_FIRST_FIRST_CALL_INTERVAL,
-            Self::FirstCall | Self::CodeGeneration => LOAD_RELEASE_INTERVAL,
-        }
-    }
+fn compile_release_interval() -> std::time::Duration {
+    let returns_pages = crate::shared_run::process_memory_policy()
+        .is_some_and(quench_runtime::MemoryPolicy::returns_pages_at_collections);
+    if returns_pages { MEMORY_FIRST_COMPILE_RELEASE_INTERVAL } else { LOAD_RELEASE_INTERVAL }
 }
 
 /// Under a policy that returns pages at collections, the resident file pages past which a
-/// first call releases within `MEMORY_FIRST_FIRST_CALL_INTERVAL` of the last release. A
+/// first call releases within `MEMORY_FIRST_COMPILE_RELEASE_INTERVAL` of the last release. A
 /// run's warm-up faults in 1.3-1.5 MB of code within one interval, while its heap is at its
 /// peak (V8-v7 RegExp, bolted static x86_64, 2026-10-24: code pages 1.3-1.45 MB beside 4.3 MB
 /// of heap at 50-80 ms).
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 const MEMORY_FIRST_RESIDENT_FILE_BUDGET: usize = 512 * 1024;
 
-/// The refaults that follow a release (`MEMORY_FIRST_FIRST_CALL_INTERVAL`'s measurement).
+/// The refaults that follow a release (`MEMORY_FIRST_COMPILE_RELEASE_INTERVAL`'s measurement).
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 const RELEASE_REFAULT_COST: std::time::Duration = std::time::Duration::from_micros(350);
 
@@ -460,7 +471,7 @@ fn release_once_per_interval(release: CompileRelease, action: fn()) {
         return;
     };
     let last = &mut releases[release as usize];
-    if last.is_some_and(|last| last.elapsed() < release.interval()) && !release.over_budget() {
+    if last.is_some_and(|last| last.elapsed() < compile_release_interval()) && !release.over_budget() {
         return;
     }
     *last = Some(std::time::Instant::now());
