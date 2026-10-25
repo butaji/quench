@@ -1,0 +1,6 @@
+stanford-crypto-sha256   qn-cr      median=  47.73 min=  42.54 max=  53.37 rss=17320
+stanford-crypto-sha256   node       median=  38.89 min=  33.16 max=  40.35 rss=51368
+stanford-crypto-sha256   bun        median=  33.86 min=  32.36 max=  36.35 rss=37708
+stanford-crypto-pbkdf2   qn-cr      median=  48.59 min=  44.98 max=  49.73 rss=17356
+stanford-crypto-pbkdf2   node       median=  37.02 min=  33.95 max=  40.16 rss=55596
+stanford-crypto-pbkdf2   bun        median=  37.20 min=  32.17 max=  38.27 rss=37844

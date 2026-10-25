@@ -16422,3 +16422,88 @@ fn js_general_artifact_key_tracks_only_code_generation_dependencies() {
     assert_eq!(first_key, equivalent_key);
     assert_ne!(first_key, different_key);
 }
+
+#[test]
+fn synthesized_throws_class_setup_and_using_use_the_realm_intrinsics() {
+    // The compiler's own TypeError and ReferenceError throws, class prototype setup and
+    // `using` declarations call the realm's intrinsics, not whatever binding of the same name
+    // is in scope (`INTRINSIC_TYPE_ERROR_BINDING` and its siblings). Expected output is Node's
+    // (v26.12).
+    for (source, expected) in [
+        (r#"const out = [];
+{
+  class TypeError { constructor(m) { this.fake = m; } }
+  const c = 1;
+  try { c = 2; } catch (e) { out.push(e instanceof globalThis.TypeError, e.fake === undefined, e.constructor.name); }
+  try { const { a } = null; } catch (e) { out.push(e instanceof globalThis.TypeError, e.fake === undefined); }
+  try { (function () { const [x] = undefined; })(); } catch (e) { out.push(e instanceof globalThis.TypeError, e.fake === undefined); }
+}
+print(JSON.stringify(out));
+"#, r#"[true,true,"TypeError",true,true,true,true]"#),
+        (r#"const out = [];
+{
+  const Object = { setPrototypeOf() { out.push("fake setPrototypeOf"); } };
+  class B { static s() { return 1; } }
+  class A extends B {}
+  out.push(A.s(), globalThis.Object.getPrototypeOf(A) === B);
+  class N extends null {}
+  out.push(globalThis.Object.getPrototypeOf(N.prototype) === null);
+}
+const realSet = Object.setPrototypeOf;
+Object.setPrototypeOf = function () { out.push("patched"); return realSet.apply(this, arguments); };
+class C extends Array {}
+out.push(new C() instanceof Array);
+Object.setPrototypeOf = realSet;
+{
+  class DisposableStack { constructor() { out.push("fake stack"); } }
+  try {
+    { using r = { [Symbol.dispose]() { out.push("disposed"); } }; out.push("in"); }
+  } catch (e) { out.push("E:" + e.constructor.name); }
+}
+print(JSON.stringify(out));
+"#, r#"[1,true,true,true,"in","disposed"]"#),
+        (r#"const out = [];
+{
+  const ReferenceError = function () { this.fake = 1; };
+  try { (function () { super_delete: { } })(); } catch (e) {}
+  try { eval("f() = 1"); } catch (e) { out.push(e instanceof globalThis.ReferenceError, e.fake === undefined); }
+  class P { m() { try { delete super.x; } catch (e) { out.push(e instanceof globalThis.ReferenceError, e.fake === undefined); } } }
+  new P().m();
+}
+print(JSON.stringify(out));
+"#, r#"[true,true,true,true]"#),
+    ] {
+        let output = Rc::new(RefCell::new(Vec::new()));
+        let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+        vm.execute(&Engine::specialize(source, "intrinsic-names.js").unwrap()).unwrap();
+        assert_eq!(output.borrow().as_slice(), [expected]);
+    }
+}
+
+#[test]
+fn comparisons_with_a_constant_on_the_left_compare_like_node() {
+    // `C < r` compiles as `r > C` (`constant_right`), as values and as branch tests; results
+    // and conversion calls match Node's (v26.12).
+    let source = r#"
+const vals = [0, -0, 1, -1, 2.5, NaN, Infinity, -Infinity, "1", "a", "", null, undefined, true, false, 10n, {valueOf() { return 3; }}, [2], [], Symbol.iterator];
+const out = [];
+for (const v of vals) {
+  const r = [];
+  for (const f of [x => 1 < x, x => 1 > x, x => 1 <= x, x => 1 >= x, x => 1 == x, x => 1 != x, x => 1 === x, x => 1 !== x,
+                   x => "1" < x, x => null >= x, x => undefined == x, x => NaN < x, x => 0 === x, x => -0 >= x, x => 2n > x]) {
+    try { r.push(f(v) ? 1 : 0); } catch (e) { r.push("E"); }
+    try { if (f(v)) r.push("t"); else r.push("f"); } catch (e) { r.push("E"); }
+  }
+  out.push(r.join(""));
+}
+let calls = 0; const o = { valueOf() { calls++; return 5; } };
+out.push(3 < o, 3 > o, 5 <= o, calls);
+for (let i = 0; 64 > i; i++) calls++;
+out.push(calls);
+print(JSON.stringify(out));
+"#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    vm.execute(&Engine::specialize(source, "constant-left.js").unwrap()).unwrap();
+    assert_eq!(output.borrow().as_slice(), [r#"["0f1t0f1t0f1t0f1t0f1t0f0f1t1t1t","0f1t0f1t0f1t0f1t0f1t0f0f1t1t1t","0f0f1t1t1t0f1t0f0f0f0f0f0f0f1t","0f1t0f1t0f1t0f1t0f1t0f0f0f1t1t","1t0f1t0f0f1t0f1t1t0f0f0f0f0f0f","0f0f0f0f0f1t0f1t0f0f0f0f0f0f0f","1t0f1t0f0f1t0f1t1t0f0f0f0f0f0f","0f1t0f1t0f1t0f1t0f1t0f0f0f1t1t","0f0f1t1t1t0f0f1t0f0f0f0f0f0f1t","0f0f0f0f0f1t0f1t1t0f0f0f0f0f0f","0f1t0f1t0f1t0f1t0f1t0f0f0f1t1t","0f1t0f1t0f1t0f1t0f1t1t0f0f1t1t","0f0f0f0f0f1t0f1t0f0f1t0f0f0f0f","0f0f1t1t1t0f0f1t0f0f0f0f0f0f1t","0f1t0f1t0f1t0f1t0f1t0f0f0f1t1t","1t0f1t0f0f1t0f1t1t0f0f0f0f0f0f","1t0f1t0f0f1t0f1t1t0f0f0f0f0f0f","1t0f1t0f0f1t0f1t1t0f0f0f0f0f0f","0f1t0f1t0f1t0f1t0f1t0f0f0f1t1t","EEEEEEEE0f1t0f1tEEEE0fEE0fEEEE",true,false,true,3,67]"#]);
+}
