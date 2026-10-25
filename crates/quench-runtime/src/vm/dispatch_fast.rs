@@ -6693,20 +6693,23 @@ lane_handler! {
     /// representation takes the general path, which raises its validation error.
     fn lane_wasm_simd<>(cx, r, ip, i, view) {
         let vm = unsafe { vm(cx) };
-        let Some((operator, lane)) = crate::wasm::simd::SimdOperator::from_selector(i.imm()) else {
+        let Some((kernel, lane)) = crate::wasm::simd::SimdKernel::of(i.imm()) else {
             return exit(ip);
         };
-        let Some(left) = lane_simd_operand(vm, r.get(i.b), operator.left_type()) else {
+        let Some(left) = lane_simd_operand(vm, r.get(i.b), kernel.left) else {
             return exit(ip);
         };
-        let right = match operator.right_type() {
+        let right = match kernel.right {
             None => None,
             Some(ty) => match lane_simd_operand(vm, r.get(i.c), ty) {
                 Some(right) => Some(right),
                 None => return exit(ip),
             },
         };
-        let value = vm.encode_wasm_value(operator.apply(left, right, lane));
+        let value = match (kernel.apply)(left, right, lane) {
+            crate::WasmValue::V128(bits) => vm.heap.alloc_v128(bits.to_le_bytes()),
+            value => vm.encode_wasm_value(value),
+        };
         note_allocation(vm);
         r.set(i.a, value);
         next!(cx, r, following(ip), view)
