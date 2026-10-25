@@ -16039,3 +16039,58 @@ print(JSON.stringify(out));
     vm.execute(&Engine::specialize(source, "cell-stores.js").unwrap()).unwrap();
     assert_eq!(output.borrow().as_slice(), [r#"[39,39,39,39,39,39,39,39,39,39,39,39,"TypeError",39,39,39,true,true,true,true,true,true,true,true,true,true,true,true,true,true,true,true,true,true,true,true,true,true,true,true,true,true,true,true,true,true]"#]);
 }
+
+#[test]
+fn js_general_artifact_key_tracks_only_code_generation_dependencies() {
+    fn function_id(program: &crate::bytecode::ResidualProgram, name: &str) -> u32 {
+        program
+            .functions
+            .iter()
+            .position(|function| {
+                function
+                    .header()
+                    .name
+                    .or(function.header().inferred_name)
+                    .is_some_and(|atom| &program.atoms[atom as usize] == name)
+            })
+            .expect("test function exists") as u32
+    }
+
+    let first = Engine::compile(crate::ExecutionRequest::script(
+        "const unrelated = 'first'; function f(value) { return value + 1; }",
+        "general-cache-a.js",
+    ))
+    .unwrap();
+    let equivalent = Engine::compile(crate::ExecutionRequest::script(
+        "const unrelated = 'second'; function f(value) { return value + 1; }",
+        "general-cache-b.js",
+    ))
+    .unwrap();
+    let different_constant = Engine::compile(crate::ExecutionRequest::script(
+        "const unrelated = 'first'; function f(value) { return value + 2; }",
+        "general-cache-c.js",
+    ))
+    .unwrap();
+
+    let first_key = super::compiled::js_general_dispatch_cache_key(
+        &first,
+        function_id(&first, "f"),
+        true,
+    )
+    .expect("small function has a bounded cache key");
+    let equivalent_key = super::compiled::js_general_dispatch_cache_key(
+        &equivalent,
+        function_id(&equivalent, "f"),
+        true,
+    )
+    .expect("equivalent function has a bounded cache key");
+    let different_key = super::compiled::js_general_dispatch_cache_key(
+        &different_constant,
+        function_id(&different_constant, "f"),
+        true,
+    )
+    .expect("different function has a bounded cache key");
+
+    assert_eq!(first_key, equivalent_key);
+    assert_ne!(first_key, different_key);
+}
