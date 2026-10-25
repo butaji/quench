@@ -1616,7 +1616,7 @@ impl RegisterRoots {
     /// The masks a collection derived so far; none until one finds the function running.
     #[cfg(feature = "profile-memory")]
     pub(crate) fn capacity_bytes(&self) -> usize {
-        self.masks.get().map_or(0, crate::compile::liveness::RegisterMasks::bytes)
+        self.masks.get().map_or(0, |masks| masks.bytes())
     }
 }
 
