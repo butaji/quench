@@ -1207,7 +1207,7 @@ fn unary(instruction: Op, operator: u32) -> Option<Unary> {
 }
 
 /// What each register of a region holds.
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Role {
     Number,
     Tagged,
@@ -1438,17 +1438,26 @@ fn admit_region(
             if std::env::var_os("QUENCH_JS_JIT_TRACE_OSR_REJECT").is_some() {
                 let constant = (instruction.op() == Op::LoadConst)
                     .then(|| constants.get(instruction.constant_index()).copied());
+                let result = instruction.result_register();
+                let source = instruction.register_b();
                 eprintln!(
-                    "QUENCH_JS_JIT_OSR_REJECT header={header} offset={offset} op={:?} a={} b={} c={} imm={} constants_len={} tagged_result={} result_flags={} existing_role={} constant={:?}",
+                    "QUENCH_JS_JIT_OSR_REJECT header={header} offset={offset} op={:?} a={} b={} c={} imm={} constants_len={} tagged_result={} tagged_source={} result_flags={} result_role={:?} source_role={:?} operand_b={:?}:{} operand_c={:?}:{} binary_operator={} constant={:?}",
                     instruction.op(),
                     instruction.a(),
                     instruction.b(),
                     instruction.c(),
                     instruction.imm(),
                     constants.len(),
-                    tagged.contains(&instruction.result_register()),
+                    tagged.contains(&result),
+                    tagged.contains(&source),
                     instruction.result_flags(),
-                    admission.roles.contains_key(&instruction.result_register()),
+                    admission.roles.get(&result),
+                    admission.roles.get(&source),
+                    instruction.operand_b().kind(),
+                    instruction.operand_b().payload(),
+                    instruction.operand_c().kind(),
+                    instruction.operand_c().payload(),
+                    instruction.binary_operator_field(),
                     constant.flatten(),
                 );
             }
