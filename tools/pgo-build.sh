@@ -47,6 +47,18 @@ react_training_rounds="${QUENCH_PGO_REACT_ROUNDS:-0}"
 micros_budget_ms=1500
 
 host="$(rustc -vV | sed -n 's/^host: //p')"
+# QUENCH_PGO_STATIC=1 builds the qualification link (docs/README.md): the C runtime linked
+# statically and position-dependent code, for both the instrumented and the final build. The
+# explicit target keeps build scripts and proc macros dynamic; the binary then lands under
+# target/$host/PROFILE.
+static_rustflags=""
+target_args=()
+binary_dir="$profile"
+if [[ "${QUENCH_PGO_STATIC:-0}" == 1 ]]; then
+    static_rustflags=', "-Ctarget-feature=+crt-static", "-Crelocation-model=static"'
+    target_args=(--target "$host")
+    binary_dir="$host/$profile"
+fi
 llvm_profdata="$(rustc --print sysroot)/lib/rustlib/$host/bin/llvm-profdata"
 if [[ ! -x "$llvm_profdata" ]]; then
     printf 'llvm-profdata not found; run: rustup component add llvm-tools\n' >&2
@@ -84,9 +96,9 @@ cd "$root_dir"
 rm -rf "$data_dir"
 mkdir -p "$data_dir"
 # `--config` appends to the repository's configured rustflags instead of replacing them.
-CARGO_TARGET_DIR="$instrumented_dir" cargo build --profile "$profile" -p quench-node \
-    --config "build.rustflags=[\"-Cprofile-generate=$data_dir\"]"
-instrumented="$instrumented_dir/$profile/quench-node"
+CARGO_TARGET_DIR="$instrumented_dir" cargo build --profile "$profile" -p quench-node "${target_args[@]}" \
+    --config "build.rustflags=[\"-Cprofile-generate=$data_dir\"$static_rustflags]"
+instrumented="$instrumented_dir/$binary_dir/quench-node"
 
 # A fixed pool of profiles merged in place as programs exit keeps the raw data small.
 export LLVM_PROFILE_FILE="$data_dir/quench-%4m.profraw"
@@ -135,12 +147,12 @@ rm -rf "$data_dir"
 # promoting one inlines a large handler (a frameless call) into a small one (a register
 # move), whose every dispatch then pays the large one's prologue: Crypto and NavierStokes
 # ran 38% more instructions once training made a call the move's most frequent successor.
-CARGO_TARGET_DIR="$target_dir" cargo build --profile "$profile" -p quench-node \
-    --config "build.rustflags=[\"-Cprofile-use=$profdata\", \"-Cllvm-args=-disable-icp\"]"
-printf 'PGO build: %s\n' "$target_dir/$profile/quench-node"
+CARGO_TARGET_DIR="$target_dir" cargo build --profile "$profile" -p quench-node "${target_args[@]}" \
+    --config "build.rustflags=[\"-Cprofile-use=$profdata\", \"-Cllvm-args=-disable-icp\"$static_rustflags]"
+printf 'PGO build: %s\n' "$target_dir/$binary_dir/quench-node"
 # Profile-guided inlining decides which lane handlers form their dispatch as a sibling jump
 # (`tools/check-lane-tail-calls.sh`); a profile that keeps symbols reports the ones that do not.
-if nm "$target_dir/$profile/quench-node" 2>/dev/null | grep dispatch_fast >/dev/null; then
+if nm "$target_dir/$binary_dir/quench-node" 2>/dev/null | grep dispatch_fast >/dev/null; then
     printf 'Lane handlers dispatching with a call:\n'
-    tools/check-lane-tail-calls.sh "$target_dir/$profile/quench-node" || true
+    tools/check-lane-tail-calls.sh "$target_dir/$binary_dir/quench-node" || true
 fi
