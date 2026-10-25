@@ -650,9 +650,8 @@ struct ProgramEntry {
     constants: Vec<Value>,
     const_arrays: Vec<Option<crate::heap::ArrayElements>>,
     function_sources: Vec<Option<Value>>,
-    /// Each RegExp literal site's record, shared by every object it evaluates to, or its
-    /// compile error.
-    regexp_literals: Vec<Option<Result<Rc<crate::heap::RegExpMeta>, Rc<str>>>>,
+    /// Each RegExp literal site's record, shared by every object it evaluates to.
+    regexp_literals: Vec<Option<Rc<crate::heap::RegExpMeta>>>,
     module_environment: Option<Value>,
     import_meta: Option<Value>,
     module_imports: Vec<(u16, ModuleImport)>,
@@ -2967,15 +2966,15 @@ impl ProgramStore {
         &self,
         id: ProgramId,
         site: usize,
-    ) -> Option<Result<Rc<crate::heap::RegExpMeta>, Rc<str>>> {
-        self.entry(id)?.regexp_literals.get(site)?.as_ref().cloned()
+    ) -> Option<Rc<crate::heap::RegExpMeta>> {
+        self.entry(id)?.regexp_literals.get(site)?.clone()
     }
 
     pub(crate) fn cache_regexp_literal_meta(
         &mut self,
         id: ProgramId,
         site: usize,
-        matcher: Result<Rc<crate::heap::RegExpMeta>, Rc<str>>,
+        meta: Rc<crate::heap::RegExpMeta>,
     ) -> bool {
         let Some(entry) = self.entry_mut(id) else {
             return false;
@@ -2984,13 +2983,13 @@ impl ProgramStore {
             return false;
         };
         if cached.is_none() {
-            *cached = Some(matcher);
+            *cached = Some(meta);
         }
         true
     }
 
     #[cfg(test)]
-    pub(crate) fn compiled_regexp_literal_count(&self, id: ProgramId) -> usize {
+    pub(crate) fn regexp_literal_record_count(&self, id: ProgramId) -> usize {
         self.entry(id).map_or(0, |entry| {
             entry
                 .regexp_literals
