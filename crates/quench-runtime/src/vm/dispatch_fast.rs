@@ -9069,13 +9069,21 @@ impl<H: Host> Vm<H> {
                         let locals = held + usize::from(WINDOW_LOCALS);
                         let count = frame.locals.len();
                         // The activation never binds `arguments`: its body only reads the
-                        // values passed (`Function::reads_passed_arguments_only`), so the
-                        // object the push made from them is the binding.
-                        let arguments = code.function(activation.function as usize).arguments_slot.map(usize::from);
+                        // values passed and its parameters (`Function::reads_passed_arguments_only`),
+                        // so the object the push made from the values is the binding, with
+                        // each element a parameter aliases holding that parameter now.
+                        let body = code.function(activation.function as usize);
+                        let arguments = body.arguments_slot.map(usize::from);
                         let object = arguments.map(|slot| frame.locals[slot]);
                         frame.locals.copy_from_slice(&registers[locals..locals + count]);
                         if let (Some(slot), Some(object)) = (arguments, object) {
                             frame.locals[slot] = object;
+                            if body.arguments_alias_parameters() {
+                                for parameter in 0..usize::from(body.params).min(argc) {
+                                    let value = registers[locals + parameter];
+                                    self.store_mapped_argument(object, parameter, value);
+                                }
+                            }
                         }
                     }
                     // Its frame closes the iterators its loops pushed (`LaneStack::iterators`).
@@ -11728,7 +11736,13 @@ script_handler! {
                 else {
                     return exit(ip);
                 };
-                r.get(body.registers + WINDOW_LOCALS + body.locals + index)
+                // A parameter's element is the parameter while the mapping aliases it.
+                let local = if index < body.params && body.arguments_alias_parameters() {
+                    index
+                } else {
+                    body.locals + index
+                };
+                r.get(body.registers + WINDOW_LOCALS + local)
             } else {
                 Value::integer(i32::from(argc))
             };

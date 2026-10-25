@@ -3289,7 +3289,6 @@ impl<'a> Compiler<'a> {
         // unless the body rebinds no parameter and cannot observe the mapping
         // (`FixedRegisterLocalFacts::arguments_mapping_unobserved`).
         let unaliased_arguments = eligible
-            && register_local_facts.safe
             && own_arguments.is_some_and(|(strict, parameters)| {
                 !strict
                     && !rebinds_parameter(parameters)
