@@ -239,12 +239,20 @@ const BYTE_HIGHS: u64 = BYTE_ONES << (u8::BITS - 1);
 /// a byte's high bit only from such a byte or from a lower one that already passed, so the
 /// word test is exact even though its per-byte bits are not.
 fn word_needs_json_escape(word: u64) -> bool {
+    json_escape_bytes(word) != 0
+}
+
+/// The high bit of the bytes of `word` that need an escape (`json_escape_needed`), exact for
+/// the lowest of them: a borrow reaches a byte's high bit only from a lower byte that needs
+/// one, so only bytes above the lowest can be marked without needing one.
+#[inline(always)]
+fn json_escape_bytes(word: u64) -> u64 {
     let below = |bound: u8| word.wrapping_sub(BYTE_ONES * u64::from(bound)) & !word & BYTE_HIGHS;
     let equal = |byte: u8| {
         let difference = word ^ (BYTE_ONES * u64::from(byte));
         difference.wrapping_sub(BYTE_ONES) & !difference & BYTE_HIGHS
     };
-    below(LAST_CONTROL_CHARACTER + 1) | equal(b'"') | equal(b'\\') != 0
+    below(LAST_CONTROL_CHARACTER + 1) | equal(b'"') | equal(b'\\')
 }
 
 /// QuoteJSONString escapes every code point up to U+001F.
@@ -339,6 +347,11 @@ trait JsonUnit: Copy {
     fn ends_string_run(self) -> bool {
         ends_string_run(self.unit())
     }
+    /// The units of `units` before the first that `ends_string_run`; `None` when none does.
+    #[inline(always)]
+    fn string_run_length(units: &[Self]) -> Option<usize> {
+        units.iter().position(|unit| unit.ends_string_run())
+    }
     /// `units` as a run of string units.
     fn run(units: &[Self]) -> JsonStringUnits<'_>;
     /// Appends the string units of `units`, a run no escape, quote or control unit ends.
@@ -352,6 +365,22 @@ impl JsonUnit for u8 {
     #[inline(always)]
     fn ends_string_run(self) -> bool {
         STRING_RUN_ENDS[usize::from(self)]
+    }
+    /// A word of bytes at a time (`json_escape_bytes`, the bytes that end a run), then the
+    /// rest one by one.
+    #[inline(always)]
+    fn string_run_length(units: &[u8]) -> Option<usize> {
+        let mut words = units.chunks_exact(WORD_BYTES);
+        let mut offset = 0;
+        for word in &mut words {
+            let word = u64::from_le_bytes(word.try_into().expect("a whole word"));
+            let ends = json_escape_bytes(word);
+            if ends != 0 {
+                return Some(offset + (ends.trailing_zeros() / u8::BITS) as usize);
+            }
+            offset += WORD_BYTES;
+        }
+        words.remainder().iter().position(|unit| unit.ends_string_run()).map(|position| offset + position)
     }
     fn run(units: &[u8]) -> JsonStringUnits<'_> {
         JsonStringUnits::Run(Units::Ascii(units))
@@ -730,7 +759,7 @@ impl<'a, T: JsonUnit> JsonParser<'a, T> {
         self.expect(JSON_QUOTE as u8)?;
         let units = self.units;
         let start = self.index;
-        let run = units[start..].iter().position(|unit| unit.ends_string_run());
+        let run = T::string_run_length(&units[start..]);
         if let Some(length) = run
             && units[start + length].unit() == JSON_QUOTE
         {
@@ -740,7 +769,7 @@ impl<'a, T: JsonUnit> JsonParser<'a, T> {
         let mut output = Vec::new();
         loop {
             let run = &units[self.index..];
-            let length = run.iter().position(|unit| unit.ends_string_run()).unwrap_or(run.len());
+            let length = T::string_run_length(run).unwrap_or(run.len());
             T::extend_units(&run[..length], &mut output);
             self.index += length;
             match self.take() {
@@ -1976,7 +2005,32 @@ impl<H: Host> Vm<H> {
 
 #[cfg(test)]
 mod tests {
-    use super::{JsString, JsonParser, JsonTreeBuilder, JsonValue, write_json_string};
+    use super::{JsString, JsonParser, JsonTreeBuilder, JsonUnit, JsonValue, WORD_BYTES, write_json_string};
+
+    #[test]
+    fn byte_string_runs_end_where_each_byte_scan_ends() {
+        // Every byte value at every position of a word and past it, after every prefix byte
+        // class, as the per-unit definition finds it.
+        let fill = [b'a', 0x7f, 0x80, 0xff, b' ', b'!'];
+        for &prefix in &fill {
+            for length in 0..(2 * WORD_BYTES + 3) {
+                for position in 0..=length {
+                    for ending in 0..=u8::MAX {
+                        let mut units = vec![prefix; length];
+                        if position < length {
+                            units[position] = ending;
+                        }
+                        let expected = units.iter().position(|unit| unit.ends_string_run());
+                        assert_eq!(
+                            <u8 as JsonUnit>::string_run_length(&units),
+                            expected,
+                            "prefix {prefix:#x} length {length} position {position} byte {ending:#x}"
+                        );
+                    }
+                }
+            }
+        }
+    }
 
     #[test]
     fn json_string_writer_preserves_lone_surrogates() {
