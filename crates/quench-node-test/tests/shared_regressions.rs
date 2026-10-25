@@ -308,6 +308,36 @@ console.log(out.join(' '));
 }
 
 #[test]
+fn non_callable_calls_name_their_callee_like_node() {
+    // V8's CallPrinter: names, property chains, computed keys, sequences, operators,
+    // literals, nested calls and constructions, optional chains and private fields.
+    let source = r#"
+'use strict';
+const o = { a: { b: 2, 1: 3 }, n: null, s: 'str', arr: [1] };
+const value = { valueOf: 1 };
+let x = 5, k = 'b', f = () => 1, u;
+class C { #p = 1; m() { return this.#p(); } static s() { return super.toString.call(1)(); } }
+const cases = [
+  () => value.valueOf(), () => o.a.b(), () => o.a['b'](), () => o.a[1](), () => o.a[k](), () => (0, value.valueOf)(),
+  () => x(), () => u(), () => o.s(), () => o.n(), () => o.zz(), () => o?.a.b(), () => o.a?.b(), () => o.a.b?.(),
+  () => f()(), () => (x || o.a.b)(), () => (x && 3)(), () => (x + 1)(), () => (-x)(), () => (typeof x)(), () => (void 0)(),
+  () => (x++)(), () => (x ? 1 : 2)(), () => (x = 3)(), () => [1, 2]['length'](), () => [](), () => ({}).a(), () => ({ a: 1, b: 2 })(),
+  () => 'abc'(), () => 'abc'.length(), () => (1)(), () => /re/g.lastIndex(), () => new C().m(), () => this(),
+  () => new o.a.b(), () => new x(), () => new (f())(), () => new o.a['b'](), () => new f(),
+  () => (function () {})()(), () => (() => 1)()(), () => o.arr[0](), () => new Date().getTime()(), () => `t`(), () => (null)(), () => (true)(),
+  () => o.a
+    .b(), () => [...o.arr].x(), () => JSON.parse('1')(), () => (x, k, o.a.b)(), () => (x == 1)(), () => (x in o)(), () => (x instanceof Object)(),
+];
+for (const c of cases) { try { c(); console.log('no error'); } catch (e) { console.log(e.constructor.name + ': ' + e.message); } }
+"#;
+    let node = observe_node_source(source);
+    assert!(node.status.success(), "Node oracle failed: {node:?}");
+    let quench = observe_source(source);
+    assert_eq!(quench.outcome(), RunResult::Pass, "{:?}", quench.worker);
+    assert_eq!(quench.stdout, node.stdout);
+}
+
+#[test]
 fn vm_context_lexicals_survive_collection_and_prototypes_end_in_the_context() {
     // A context's script-scope `let` is reachable only through the realm while its code
     // runs; collections inside that code must keep it alive.

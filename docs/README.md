@@ -367,6 +367,29 @@ checkout targets Node 26 (26.12.0); other majors can differ on API contracts suc
 `util.parseEnv` object prototypes. Run the CLI/API oracle checks with
 `cargo test --profile iteration -p quench-node-test --test child_entry`.
 
+The checks compare against a Node built with its own native libraries; a host without
+them keeps Quench's portable fallbacks, which several checks then tell apart (legacy
+`TextDecoder` encodings and descriptors, zlib and Brotli streams, OpenSSL 3.4+ digests
+such as `sha256-192`). Build the matching libraries from the pinned checkout and point the
+build at them:
+
+```sh
+python3 tools/build-node-icu.py --node-source tests/node --prefix $DEPS/icu
+python3 tools/build-node-zlib.py --node-source tests/node --prefix $DEPS/zlib
+python3 tools/build-node-brotli.py --node-source tests/node --prefix $DEPS/brotli
+(mkdir -p $DEPS/openssl-build && cd $DEPS/openssl-build && \
+  $REPO/tests/node/deps/openssl/openssl/Configure --prefix=$DEPS/openssl --libdir=lib \
+  no-shared no-tests linux-x86_64 && make -j4 && make install_sw)
+export PKG_CONFIG_PATH=$DEPS/icu/lib/pkgconfig:$DEPS/zlib/lib/pkgconfig:$DEPS/brotli/lib/pkgconfig
+# The target-prefixed names override `.cargo/config.toml`'s system OpenSSL.
+export X86_64_UNKNOWN_LINUX_GNU_OPENSSL_LIB_DIR=$DEPS/openssl/lib \
+  X86_64_UNKNOWN_LINUX_GNU_OPENSSL_INCLUDE_DIR=$DEPS/openssl/include \
+  X86_64_UNKNOWN_LINUX_GNU_OPENSSL_LIBS=ssl:crypto
+```
+
+`tcp_reuse_port_shares_os_listeners_across_processes_like_node` also needs an IPv6
+interface (it listens on `::`).
+
 Run the selected upstream Node `test/parallel` profile against the shared VM
 with the canonical `run-parallel` worker. Profile membership
 comes from `crates/quench-node-test/node-tests/parallel.txt`; `--filter`

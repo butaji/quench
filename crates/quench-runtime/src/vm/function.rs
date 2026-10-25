@@ -193,7 +193,7 @@ impl<H: Host> Vm<H> {
         args: &[Value],
     ) -> Result<Value, JsError> {
         if !self.is_function(target) {
-            return Err(JsError("value is not callable".into()));
+            return Err(JsError(super::call_printer::NOT_CALLABLE_MESSAGE.into()));
         }
         let env = self.object();
         let target_atom = self.runtime_atoms.bound_target;

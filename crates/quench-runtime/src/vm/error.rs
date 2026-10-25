@@ -285,6 +285,11 @@ impl JsError {
         )))
     }
 
+    /// Whether this is a JavaScript error whose message is `text`.
+    pub(super) fn has_message(&self, text: &str) -> bool {
+        matches!(&self.0.payload.description, ErrorDescription::Text { message, .. } if message == text)
+    }
+
     pub(super) fn into_message(self) -> String {
         match self.0.payload.description {
             ErrorDescription::Text { message, .. } | ErrorDescription::WasmLink(message) => message,

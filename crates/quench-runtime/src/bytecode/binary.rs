@@ -265,7 +265,7 @@ fn encode_program(program: &super::ResidualProgram, atoms: AtomEncoding) -> (Vec
         out.u8(u8::from(deferred));
         write_function_header(&mut out, function.header());
         let body = std::mem::take(&mut out.bytes);
-        write_function(&mut out, function, &program.superinstructions);
+        write_function(&mut out, function, program);
         let record = std::mem::replace(&mut out.bytes, body);
         let length = u32::try_from(record.len()).expect("a function record fits u32 bytes");
         out.u32(length);
@@ -716,7 +716,7 @@ fn read_closure_reads(input: &mut BinaryReader<'_>) -> Result<Option<std::rc::Rc
 /// A function's record, which `read_function` decodes, with the projection of its plain local
 /// slots (`Function::plain_local_slots`) that the interpreter memoizes on first call: a
 /// decoder sets the memo instead of running the analysis again in every process.
-fn write_function(out: &mut BinaryWriter, function: &Function, superinstructions: &[super::Superinstruction]) {
+fn write_function(out: &mut BinaryWriter, function: &Function, program: &super::ResidualProgram) {
         out.option_u32(function.parent);
         out.option_atom(function.name);
         out.option_atom(function.inferred_name);
@@ -859,11 +859,12 @@ fn write_function(out: &mut BinaryWriter, function: &Function, superinstructions
         out.source_positions(&function.source_positions);
         let plain = match function.plain_locals.get() {
             Some(plain) => plain.to_vec(),
-            None => function.plain_local_slots(superinstructions),
+            None => function.plain_local_slots(&program.superinstructions),
         };
         for byte in plain.chunks(u8::BITS as usize) {
             out.u8(byte.iter().enumerate().fold(0, |bits, (bit, &plain)| bits | (u8::from(plain) << bit)));
         }
+        out.u32(function.derived_facts(program));
 }
 
 /// The header a decoder keeps for a function whose record stays encoded (`FunctionHeader`).
@@ -1116,7 +1117,8 @@ fn read_function(input: &mut BinaryReader<'_>) -> Result<Function, String> {
             plain.truncate(usize::from(locals));
             plain.into()
         };
-        Ok(Function {
+        let derived_facts = input.u32()?;
+        let function = Function {
             parent,
             name,
             inferred_name,
@@ -1179,7 +1181,9 @@ fn read_function(input: &mut BinaryReader<'_>) -> Result<Function, String> {
             undefined_register,
             parameter_registers,
             initial_register,
-        })
+        };
+        function.seed_derived_facts(derived_facts);
+        Ok(function)
 }
 
 /// `write_function_header`'s header.
