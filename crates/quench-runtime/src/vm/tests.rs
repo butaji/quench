@@ -12075,7 +12075,7 @@ print(t);
         // call still runs out of line.
         let calls = 2000 * 30;
         assert!(
-            callee.native_region_runs * 4 < calls,
+            callee.native_region_runs * 40 < calls,
             "am3 ran out of line under {policy:?}: {callee:?} against {caller:?}"
         );
     }
@@ -12188,6 +12188,82 @@ for (var c = 0; c < 300; c++) out = wrap(a, 400);
 print(out);
 "#;
     let program = Engine::specialize(source, "osr-truncated-sums.js").unwrap();
+    let interpreted_output = Rc::new(RefCell::new(Vec::new()));
+    Vm::new(TestHost::writing_to(interpreted_output.clone())).execute(&program).unwrap();
+    for policy in crate::MemoryPolicy::ALL {
+        let compiled_output = Rc::new(RefCell::new(Vec::new()));
+        let mut compiled = Vm::new(TestHost::writing_to(compiled_output.clone()));
+        compiled.set_memory_policy(policy);
+        compiled.set_execution_mode(crate::ExecutionMode::Compiled);
+        compiled.execute(&program).unwrap();
+        assert_eq!(compiled_output.borrow().as_slice(), interpreted_output.borrow().as_slice(), "{policy:?}");
+    }
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
+fn shared_osr_counts_loops_whose_bodies_branch_forward() {
+    // The loop's body clamps a double and branches on an element, and `continue` skips its
+    // tail on some iterations: `pos` and `i` still step by one on every path, so the proof
+    // covers the indexed accesses through them, while `odd`, which the paths step apart,
+    // stays guarded.
+    let source = r#"
+function smear(d, d0, u, n, w, k) {
+  var pos = 0, odd = 0;
+  for (var i = 1; i <= n; i++) {
+    var x = i - 0.37 * u[++pos];
+    if (x < 0.5) x = 0.5; else if (x > w) x = w;
+    var i0 = x | 0;
+    if (u[pos] > 3) { odd++; d[pos] = d0[i0] * 0.5; } else d[pos] = d0[i0 + 1] - x;
+    if (k > 0) continue;
+    odd += 2;
+  }
+  return odd;
+}
+var n = 500, d = [], d0 = [], u = [];
+for (var i = 0; i < n + 3; i++) { d.push(0); d0.push(i * 0.25); u.push((i * 7919) % 11 - 2.5); }
+var t = 0;
+for (var c = 0; c < 400; c++) t += smear(d, d0, u, n, n - 0.5, c % 3);
+var s = 0;
+for (var i = 0; i < d.length; i++) s += d[i];
+print(t + " " + s.toFixed(6));
+"#;
+    let program = Engine::specialize(source, "osr-branching-counted-loop.js").unwrap();
+    let interpreted_output = Rc::new(RefCell::new(Vec::new()));
+    Vm::new(TestHost::writing_to(interpreted_output.clone())).execute(&program).unwrap();
+    for policy in crate::MemoryPolicy::ALL {
+        let compiled_output = Rc::new(RefCell::new(Vec::new()));
+        let mut compiled = Vm::new(TestHost::writing_to(compiled_output.clone()));
+        compiled.set_memory_policy(policy);
+        compiled.set_execution_mode(crate::ExecutionMode::Compiled);
+        compiled.execute(&program).unwrap();
+        assert_eq!(compiled_output.borrow().as_slice(), interpreted_output.borrow().as_slice(), "{policy:?}");
+    }
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
+fn shared_osr_bounds_an_index_sum_with_its_read() {
+    // `j + k` feeds the element read right after it: one check below the length proves the
+    // sum an `i32` too. A `k` that takes the sum past the `i32`s reads `undefined`, as the
+    // general path does.
+    let source = r#"
+function gather(a, k, n) {
+  var s = 0, misses = 0;
+  for (var i = 0; i < n; i++) {
+    var j = (i * 7) % n;
+    var v = a[j + k];
+    if (v === undefined) misses++; else s += v;
+  }
+  return s + ":" + misses;
+}
+var a = [];
+for (var i = 0; i < 300; i++) a.push(i * 3 + 1);
+var out = [];
+for (var c = 0; c < 300; c++) out.push(gather(a, c % 50 == 49 ? 2147483600 : c % 3, 290));
+print(out.slice(45, 52).join(" "));
+"#;
+    let program = Engine::specialize(source, "osr-index-sum.js").unwrap();
     let interpreted_output = Rc::new(RefCell::new(Vec::new()));
     Vm::new(TestHost::writing_to(interpreted_output.clone())).execute(&program).unwrap();
     for policy in crate::MemoryPolicy::ALL {

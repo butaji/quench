@@ -710,9 +710,17 @@ impl<H: Host> Vm<H> {
     /// (`inherited_index_unclaimed`), and HasProperty of it finds nothing inherited
     /// (`inherited_index_absent`), whichever the index.
     pub(super) fn prototypes_hold_no_index(&self, object: Value) -> bool {
-        let mut current = self.object_data(object).map(|data| data.proto());
+        let first = self.object_data(object).map(|data| data.proto());
+        // The epoch's proof answers a chain it covers without the walk.
+        if first.is_some_and(|first| self.chain_holds_no_index(first)) {
+            return true;
+        }
+        let mut current = first;
         while let Some(holder) = current.filter(|value| !value.is_null()) {
-            if matches!(self.heap.get(holder), Some(Cell::Proxy { .. } | Cell::TypedArray { .. })) {
+            // A direct object or array record is neither a Proxy nor a typed array, whose
+            // cells only a slot holds.
+            let record = holder.direct_object_index().is_some() || holder.direct_array_index().is_some();
+            if !record && matches!(self.heap.get(holder), Some(Cell::Proxy { .. } | Cell::TypedArray { .. })) {
                 return false;
             }
             let Some(data) = self.object_data(holder) else {
