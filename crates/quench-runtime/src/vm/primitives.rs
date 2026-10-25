@@ -102,10 +102,40 @@ impl<H: Host> Vm<H> {
         {
             return None;
         }
+        if let Some(value) = self.string_search_in_place(native, receiver, args) {
+            return Some(value);
+        }
         let result = self.call_primitive_native(p, native, receiver, args).ok();
         // A string method reads its receiver as text, which it may make on demand.
         self.heap.charge_materialized_text();
         result
+    }
+
+    /// `indexOf`, `includes` or `startsWith` of a flat string receiver searching for a flat
+    /// string, from a position left out or passed as an integer: every conversion the
+    /// method makes is then the value itself, so the search reads the units in place, as
+    /// `call_primitive_native` would after copying them. `None` leaves any other call to it.
+    fn string_search_in_place(&self, native: Native, receiver: Value, args: &[Value]) -> Option<Value> {
+        if !matches!(native, Native::StringIndexOf | Native::StringIncludes | Native::StringStartsWith) {
+            return None;
+        }
+        let [search, rest @ ..] = args else {
+            return None;
+        };
+        let text = self.heap.string(receiver)?.existing_flat()?.view();
+        let needle = self.heap.string(*search)?.existing_flat()?.view();
+        let length = text.len();
+        // A position below zero reads as zero and one past the end as the end, for all three.
+        let position = match rest.first() {
+            None => 0,
+            Some(position) if position.is_undefined() => 0,
+            Some(position) => usize::try_from(position.as_int()?).unwrap_or(0).min(length),
+        };
+        Some(match native {
+            Native::StringIndexOf => Value::number(text.find(needle, position).map_or(-1.0, |index| index as f64)),
+            Native::StringIncludes => Value::boolean(text.find(needle, position).is_some()),
+            _ => Value::boolean(text.slice(position..length).starts_with(needle)),
+        })
     }
 
     pub(super) fn call_primitive_native(
