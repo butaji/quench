@@ -228,7 +228,10 @@ enum SnapshotUse {
     /// with: RegExp 12.3 -> 17.1 MB, Splay 32.6 -> 39.0, EarleyBoyer 12.3 -> 15.9; a one-line
     /// `console.log` 12.9M -> 23.6M instructions). An inline entry boots in full without one,
     /// whatever it names (`quench -e 'console.log(42)'`, the child the tinyexec and execa npm
-    /// scenarios spawn: 27.4 -> 15.4 ms; the same line from a file 9.4 ms fresh).
+    /// scenarios spawn: 27.4 -> 15.4 ms; the same line from a file 9.4 ms fresh). Only under a
+    /// policy that keeps pages resident: the preloaded realm is the memory a memory-first
+    /// process exists to avoid (V8-v7 DeltaBlue under memory-first, whose comments name
+    /// `require`, static x86_64 + BOLT, pinned, 2026-10-25: max RSS 2852 KiB without, 9112 with).
     Auto,
     Always,
     Never,
@@ -243,10 +246,16 @@ impl SnapshotUse {
         }
     }
 
-    fn restores(self, entry: &SnapshotEntry<'_>, loading: entry_graph::EntryLoading) -> bool {
+    fn restores(
+        self,
+        entry: &SnapshotEntry<'_>,
+        loading: entry_graph::EntryLoading,
+        policy: Option<quench_runtime::MemoryPolicy>,
+    ) -> bool {
         match self {
             Self::Auto => {
-                matches!(entry, SnapshotEntry::Inline(_)) || loading == entry_graph::EntryLoading::Modules
+                (matches!(entry, SnapshotEntry::Inline(_)) || loading == entry_graph::EntryLoading::Modules)
+                    && !policy.is_some_and(quench_runtime::MemoryPolicy::returns_pages_at_collections)
             }
             Self::Always => true,
             Self::Never => false,
@@ -377,7 +386,7 @@ pub(crate) fn snapshot_path(
         SnapshotEntry::File(path) => entry_graph::entry_loading(path),
         SnapshotEntry::Inline(source) => entry_graph::inline_entry_loading(source),
     };
-    if !snapshot_use.restores(&entry, loading) {
+    if !snapshot_use.restores(&entry, loading, crate::shared_run::process_memory_policy()) {
         return None;
     }
     // Each build's snapshots share a directory, which a builder of another build removes.
@@ -520,11 +529,25 @@ mod tests {
         let file = SnapshotEntry::File(std::path::Path::new("/app/main.js"));
         let inline = SnapshotEntry::Inline("console.log(42)");
         for loading in [EntryLoading::SelfContained, EntryLoading::Console, EntryLoading::Modules] {
-            assert!(SnapshotUse::Auto.restores(&inline, loading));
-            assert_eq!(SnapshotUse::Auto.restores(&file, loading), loading == EntryLoading::Modules);
-            assert!(SnapshotUse::Always.restores(&file, loading));
-            assert!(!SnapshotUse::Never.restores(&inline, loading));
+            assert!(SnapshotUse::Auto.restores(&inline, loading, None));
+            assert_eq!(SnapshotUse::Auto.restores(&file, loading, None), loading == EntryLoading::Modules);
+            assert!(SnapshotUse::Always.restores(&file, loading, None));
+            assert!(!SnapshotUse::Never.restores(&inline, loading, None));
         }
+    }
+
+    #[test]
+    fn automatic_restores_follow_the_memory_policy() {
+        use entry_graph::EntryLoading;
+        use quench_runtime::MemoryPolicy;
+        let file = SnapshotEntry::File(std::path::Path::new("/app/main.js"));
+        let inline = SnapshotEntry::Inline("console.log(42)");
+        assert!(SnapshotUse::Auto.restores(&file, EntryLoading::Modules, Some(MemoryPolicy::Throughput)));
+        assert!(!SnapshotUse::Auto.restores(&file, EntryLoading::Modules, Some(MemoryPolicy::MemoryFirst)));
+        assert!(!SnapshotUse::Auto.restores(&inline, EntryLoading::Console, Some(MemoryPolicy::MemoryFirst)));
+        assert!(!SnapshotUse::Auto.restores(&file, EntryLoading::Console, Some(MemoryPolicy::Throughput)));
+        assert!(SnapshotUse::Always.restores(&file, EntryLoading::Modules, Some(MemoryPolicy::MemoryFirst)));
+        assert!(!SnapshotUse::Never.restores(&inline, EntryLoading::Modules, Some(MemoryPolicy::Throughput)));
     }
 
     #[test]
