@@ -220,6 +220,12 @@ QUENCH_REPLAY_LOG=target/replay.log TEST262_TEST_TIMEOUT_MS=30000 \
 Each program writes a `replay-summary` line; `replay-differs` and `replay-failed` lines name
 a function whose replay does not equal its record or does not compile.
 
+Lazy code generation (TOD-196) needs each function's captures of bindings outside it before
+its code exists. A `verify-replay` build with `QUENCH_LAZY_FACTS_LOG` set predicts them for every
+plain function of a replayable source from its free names (`compile/free_names.rs`, from the
+semantic analysis) resolved through the scopes it closes over, and writes one `lazy-facts` line
+per function: `same`, `superset` or `missing` against what its compiled subtree captured.
+
 ## Host compile cache
 
 `quench-node` keeps the compiled programs of Node's own library modules (the embedded `lib/`
