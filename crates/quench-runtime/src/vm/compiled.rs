@@ -5001,6 +5001,19 @@ pub(super) fn analyze_osr_region(
     osr_loop::region(function, decoded, constants, sites, live, header, backedge)
 }
 
+/// Analyze a loop candidate's prefix before its first call (`osr_loop::call_prefix_region`).
+pub(super) fn analyze_osr_call_prefix_region(
+    function: &Function,
+    decoded: &[WideInstruction],
+    constants: &[crate::value::Value],
+    sites: &[crate::bytecode::FieldSite],
+    live: Option<&crate::compile::liveness::RegisterMasks>,
+    header: u32,
+    backedge: u32,
+) -> Result<LoopRegion, RegionRejection> {
+    osr_loop::call_prefix_region(function, decoded, constants, sites, live, header, backedge)
+}
+
 /// The Cranelift optimization level the loop tier compiles regions at under each memory
 /// policy (`MemoryPolicy` order), or none when it compiles no region. A loop region's
 /// compilation is the largest transient allocation of a `--jit` run: regalloc2's state and

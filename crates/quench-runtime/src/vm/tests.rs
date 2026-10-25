@@ -11862,6 +11862,59 @@ print(t + " " + w.array[5] + " " + w.array[77]);
 
 #[test]
 #[cfg(not(quench_profiled))]
+fn shared_osr_runs_the_prefix_before_a_call_that_does_not_inline() {
+    // `g` is a parameter, not a cached field, so its call cannot run inlined: the region is
+    // the loop's prefix before the call, and the interpreter resumes at the call.
+    let source = r#"
+function run(n, g) {
+  var s = 0;
+  for (var i = 0; i < n; i++) {
+    s = s + i * 3;
+    if (s > 1e12) s = 0;
+    g(i);
+  }
+  return s;
+}
+var c = 0;
+function g(x) { c += x & 1; }
+var t = 0;
+for (var k = 0; k < 20; k++) t += run(20000, g);
+print(t + " " + c);
+"#;
+    let program = Engine::specialize(source, "osr-call-prefix.js").unwrap();
+    let function_id = program
+        .functions
+        .iter()
+        .position(|function| function.header().name.is_some_and(|name| &program.atoms[name as usize] == "run"))
+        .unwrap();
+    let interpreted_output = Rc::new(RefCell::new(Vec::new()));
+    Vm::new(TestHost::writing_to(interpreted_output.clone())).execute(&program).unwrap();
+    for policy in crate::MemoryPolicy::ALL {
+        let compiled_output = Rc::new(RefCell::new(Vec::new()));
+        let mut compiled = Vm::new(TestHost::writing_to(compiled_output.clone()));
+        compiled.set_memory_policy(policy);
+        compiled.set_execution_mode(crate::ExecutionMode::Compiled);
+        compiled.programs.enable_js_jit_diagnostics();
+        compiled.execute(&program).unwrap();
+
+        assert_eq!(compiled_output.borrow().as_slice(), interpreted_output.borrow().as_slice(), "{policy:?}");
+        let views = compiled
+            .programs
+            .lane_views(super::program_store::ProgramId::MAIN)
+            .expect("main program lane views");
+        let osr = views
+            .get(function_id)
+            .and_then(std::cell::OnceCell::get)
+            .expect("hot loop lane view")
+            .osr_diagnostics();
+        let compiles = super::compiled::loop_tier_compiles(policy);
+        assert_eq!(osr.currently_compiled_sites, usize::from(compiles), "prefix native code under {policy:?}");
+        assert_eq!(osr.native_region_runs > 0, compiles, "prefix native runs under {policy:?}");
+    }
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
 fn shared_osr_inlined_callee_leaves_through_its_activation() {
     // An element the inlined callee reads leaves the subset partway through its loop: native
     // code leaves at the callee's instruction, whose activation the interpreter finishes.
