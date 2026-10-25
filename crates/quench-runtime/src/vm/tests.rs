@@ -12083,6 +12083,80 @@ fn shared_osr_reports_pino_like_deferred_calls_per_site_with_gc_and_throw() {
 
 #[test]
 #[cfg(not(quench_profiled))]
+fn shared_osr_exact_effect_exit_preserves_prefix_across_gc_and_throw() {
+    // The hot loop has a long numeric prefix and one call site whose callee collects and
+    // throws a unique object. An exact-PC exit must preserve the numeric prefix, run the
+    // ordinary call once, and deliver that same thrown object to the surrounding catch.
+    let source = r#"
+      const marker = {};
+      let calls = 0;
+      function effect(value) {
+        calls++;
+        $262.gc();
+        if (value === 1040) throw marker;
+        return value;
+      }
+      function run() {
+        let total = 0;
+        let caught = false;
+        try {
+          for (let index = 0; index < 1100; index++) {
+            total += index;
+            if (index === 1040) effect(index);
+          }
+        } catch (error) {
+          caught = error === marker;
+        }
+        return total + " " + calls + " " + caught;
+      }
+      print(run());
+    "#;
+    let program = Engine::specialize(source, "osr-exact-effect-exit-gc-throw.js").unwrap();
+    let function_id = program
+        .functions
+        .iter()
+        .position(|function| {
+            function
+                .header()
+                .name
+                .is_some_and(|name| &program.atoms[name as usize] == "run")
+        })
+        .unwrap();
+
+    let interpreted_output = Rc::new(RefCell::new(Vec::new()));
+    Vm::new(TestHost::writing_to(interpreted_output.clone()).with_test262())
+        .execute(&program)
+        .unwrap();
+    assert_eq!(interpreted_output.borrow().as_slice(), ["541320 1 true"]);
+
+    let compiled_output = Rc::new(RefCell::new(Vec::new()));
+    let mut compiled = Vm::new(TestHost::writing_to(compiled_output.clone()).with_test262());
+    compiled.set_memory_policy(crate::MemoryPolicy::Throughput);
+    compiled.set_execution_mode(crate::ExecutionMode::Compiled);
+    compiled.programs.enable_js_jit_diagnostics();
+    compiled.execute(&program).unwrap();
+    assert_eq!(compiled_output.borrow().as_slice(), interpreted_output.borrow().as_slice());
+
+    let views = compiled
+        .programs
+        .lane_views(super::program_store::ProgramId::MAIN)
+        .unwrap();
+    let view = views
+        .get(function_id)
+        .and_then(std::cell::OnceCell::get)
+        .expect("effectful loop lane view");
+    let osr = view.osr_diagnostics();
+    assert_eq!(osr.sites.len(), 1, "one loop must have one OSR site: {osr:?}");
+    if std::env::var_os("QUENCH_JS_JIT_STATS").is_some() {
+        assert!(
+            osr.native_region_runs > 0 && osr.exits > 0,
+            "the forced effect boundary must run and exit native code: {osr:?}"
+        );
+    }
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
 fn shared_osr_inlines_method_calls_in_a_loop() {
     // Each iteration calls `x.am` twice: the region runs am3 in place, its object
     // parameter bound to the caller register it was moved from.
