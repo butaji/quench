@@ -1329,3 +1329,16 @@ target. Before choosing a hot site, record time-weighted compile rejection
 reasons, call-target/cache state, receiver-shape diversity, entries and
 callouts. A cache/guard hit is useful only if it reduces measured VM work; keep
 it only on matched production JetStream score and RSS data.
+
+## Dumping loop-region machine code
+
+`QUENCH_JS_JIT_DUMP=<dir>` makes each compiled loop region write its machine code
+(`loop-<n>.bin`, the whole executable mapping) and its CLIF (`loop-<n>.clif`) into
+`<dir>`, numbered in compilation order. One stderr line per region gives its header PC,
+mapping address and size. To attribute instruction costs to native code:
+
+1. Run under `valgrind --tool=callgrind --dump-instr=yes`.
+2. Match each mapping address in the callgrind output to its dump.
+3. Disassemble the `.bin` with `objdump -D -b binary -mi386:x86-64`.
+
+The variable is read once per process and changes nothing about what the run computes.
