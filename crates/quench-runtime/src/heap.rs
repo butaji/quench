@@ -3318,6 +3318,11 @@ impl Heap {
         };
         if data.properties().has_inline_property_storage() {
             if !data.store_inline_narrow(slot, value) {
+                // Without `LOGS` the widening, which changes nothing before it, is left to the
+                // caller's logged store too, so this path makes no call at all.
+                if !LOGS {
+                    return false;
+                }
                 let length = self.properties.len(data.properties());
                 widen_inline_storage(data, &mut self.properties, data.shape(), length, slot, value);
             }
