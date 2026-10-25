@@ -3,7 +3,7 @@
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use crate::case_process::{RunResult, DEFAULT_CASE_TIMEOUT_SECS};
+use crate::case_process::{DEFAULT_CASE_TIMEOUT_SECS, RunResult};
 use crate::stages::discover_fixtures;
 
 pub fn run(arguments: impl IntoIterator<Item = String>) -> ExitCode {
@@ -22,7 +22,7 @@ pub fn run(arguments: impl IntoIterator<Item = String>) -> ExitCode {
         println!("{command}: run Node compatibility cases through the selected development entry");
         println!();
         println!(
-            "usage: {command} [--list] [--filter NAME] [--subset] [--quiet] [--trace-observations] [DIR | --inventory PATH]"
+            "usage: {command} [--list] [--filter NAME] [--subset] [--quiet] [DIR | --inventory PATH]"
         );
         println!("  --list           enumerate the suite instead of running it");
         println!("  --filter NAME    only run scripts whose name contains NAME");
@@ -30,9 +30,6 @@ pub fn run(arguments: impl IntoIterator<Item = String>) -> ExitCode {
         println!("  --inventory PATH use reviewed case membership; unfrozen lists are diagnostic");
         println!(
             "  --subset         run a filtered inventory subset as diagnostic, never as a gate"
-        );
-        println!(
-            "  --trace-observations capture matched Node/shared-VM traces only; does not qualify membership"
         );
         println!(
             "  DIR              compat suite root (default: crates/quench-node-test/node-tests)"
@@ -56,7 +53,6 @@ struct Options {
     filter: Option<String>,
     inventory: Option<PathBuf>,
     subset: bool,
-    trace_observations: bool,
 }
 
 impl Options {
@@ -68,7 +64,6 @@ impl Options {
             filter: None,
             inventory: None,
             subset: false,
-            trace_observations: false,
         };
         let mut positional = None;
         let mut args = args;
@@ -77,7 +72,6 @@ impl Options {
                 "--list" => options.list = true,
                 "--quiet" => options.quiet = true,
                 "--subset" => options.subset = true,
-                "--trace-observations" => options.trace_observations = true,
                 "--filter" => {
                     options.filter = Some(args.next().ok_or("--filter requires a name")?);
                 }
@@ -94,7 +88,6 @@ impl Options {
                 _ => return Err("only one directory may be specified".into()),
             }
         }
-        let has_positional = positional.is_some();
         if let Some(dir) = positional {
             if options.inventory.is_some() {
                 return Err("a directory and --inventory cannot be combined".into());
@@ -106,17 +99,6 @@ impl Options {
         }
         if options.subset && options.list {
             return Err("--subset applies only to execution, not listing".into());
-        }
-        if options.trace_observations
-            && (options.inventory.is_none()
-                || options.filter.is_some()
-                || options.subset
-                || options.list
-                || has_positional)
-        {
-            return Err(
-                "--trace-observations requires --inventory and cannot be combined with filters or a directory".into(),
-            );
         }
         Ok(options)
     }
@@ -142,20 +124,6 @@ fn run_with_options(options: Options) -> ExitCode {
             return ExitCode::from(2);
         }
     };
-    if options.trace_observations {
-        let Some(inventory) = inventory.as_ref() else {
-            eprintln!("error: --trace-observations requires --inventory");
-            return ExitCode::from(2);
-        };
-        return match crate::node_observations::trace_observations(inventory, &repository) {
-            Ok(true) => ExitCode::SUCCESS,
-            Ok(false) => ExitCode::FAILURE,
-            Err(error) => {
-                eprintln!("error: Node observation traces: {error}");
-                ExitCode::from(2)
-            }
-        };
-    }
     let fixtures = match inventory.as_ref() {
         Some(inventory) => Ok(inventory.included_paths(&repository)),
         None => discover_fixtures(&options.dir).map_err(|error| error.to_string()),
