@@ -154,6 +154,40 @@ for (let k = 0; k < 6; k++) {
 }
 
 #[test]
+fn warmed_environment_rest_calls_with_fewer_values_than_parameters_match_node() {
+    // A closure-holding function with fixed parameters before a rest list runs as a
+    // frameless environment activation once warm; calls passing fewer values than its
+    // fixed parameters gather an empty rest list (they panicked before cbaf372c1).
+    let source = r#"
+function outer() {
+  function r(a, b, ...m) {
+    const f = () => m.length + (a === undefined ? 0 : 1) + (b === undefined ? 0 : 10);
+    return f();
+  }
+  let sum = 0;
+  for (let i = 0; i < 3000; i++) sum += r() + r(1) + r(1, 2) + r(1, 2, 3, 4);
+  return sum;
+}
+console.log(outer());
+const o = { r(a, b, ...m) { const g = () => m; return g().length + (b ?? 0); } };
+let t = 0;
+for (let i = 0; i < 3000; i++) t += o.r(i) + o.r.call(o) + o.r.apply(o, [1]) + o.r(1, 2, 3);
+console.log(t);
+"#;
+
+    let node = observe_node_source(source);
+    assert!(node.status.success(), "Node oracle failed: {node:?}");
+    let quench = observe_source(source);
+    assert_eq!(
+        quench.outcome(),
+        RunResult::Pass,
+        "Quench failed: {:?}",
+        quench.worker
+    );
+    assert_eq!(quench.stdout, node.stdout, "Node and Quench output differ");
+}
+
+#[test]
 fn deep_named_calls_raise_catchable_range_error_and_recover() {
     let source = r#"
 function Box() {}
