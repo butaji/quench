@@ -160,6 +160,14 @@ pub trait Host {
         true
     }
 
+    /// The stage 3 proposal "non-extensible applies to private": adding a private field,
+    /// method or accessor to a non-extensible object throws (Test262
+    /// `nonextensible-applies-to-private`). Hosts matching engines that do not ship it (V8,
+    /// so Node) add them as before.
+    fn nonextensible_applies_to_private(&self) -> bool {
+        true
+    }
+
     /// Optional retained callback owning the host's Error stack policy,
     /// including dispatch of user prepareStackTrace hooks. Called as
     /// (global, error, callSites). The host owns the callback root's lifetime.

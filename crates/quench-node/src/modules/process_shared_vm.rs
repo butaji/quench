@@ -3650,22 +3650,24 @@ pub(crate) fn initialize_warning_policy(context: &mut NativeContext<'_, NodeHost
     // The bootstrap reads the environment before any script can change `process.env`.
     let disabled = environment(context).into_iter().any(|(name, value)| name == "NODE_NO_WARNINGS" && value == "1");
     if options.enabled("--warnings") && !disabled {
-        // Node's listener, or, unless a script can reach Node's own to compare, a listener of
-        // its name and length that loads Node's on the first warning: most runs never warn.
-        let callback = if options.enabled("--expose-internals") {
-            warning_export(context, "onWarning")?
+        if exposed {
+            let callback = warning_export(context, "onWarning")?;
+            let on = get(context, process, "on")?;
+            let event = context.string_rooted("warning");
+            context.call_rooted(on, process, &[event, callback])?;
         } else {
-            let factory = context.evaluate_script_rooted(
-                "(load) => function onWarning(warning) { return load()(warning); }",
-                "node:internal/process/warning-listener.js",
-            )?;
-            let load = context.host_function(crate::host::shared_vm::operation("processWarningListener"))?;
-            let undefined = context.undefined();
-            context.call_rooted(factory, undefined, &[load])?
-        };
-        let on = get(context, process, "on")?;
-        let event = context.string_rooted("warning");
-        context.call_rooted(on, process, &[event, callback])?;
+            // Node's own listener, registered as `process.on` would (`_events.warning`, one
+            // more event type) but loaded on the first read of that entry: by an emitted
+            // warning or a look at the listeners. Most runs never warn.
+            let events = get(context, process, "_events")?;
+            let initializer = context.host_function(crate::host::shared_vm::operation("processWarningListenerInitialize"))?;
+            context.define_lazy_data_properties_rooted(events, &[WARNING_EVENT], true, initializer)?;
+            let count = get(context, process, "_eventsCount")?;
+            let count = context.to_number(count)? + 1.0;
+            let count = context.number(count);
+            let key = context.string_rooted("_eventsCount");
+            context.set_property_rooted(process, key, count, process)?;
+        }
     }
     if options.enabled("--pending-deprecation") {
         let binding = get(context, process, "binding")?;
@@ -3798,8 +3800,17 @@ pub(crate) fn initialize_emit_warning(context: &mut NativeContext<'_, NodeHost>,
     Ok(context.undefined())
 }
 
-/// The default `warning` listener's implementation: Node's `onWarning`
-/// (`process_warning_shared_vm`).
-pub(crate) fn warning_listener(context: &mut NativeContext<'_, NodeHost>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
-    crate::modules::process_warning_shared_vm::on_warning(context)
+/// The event the default warning listener is registered for.
+const WARNING_EVENT: &str = "warning";
+
+/// Installs the default `warning` listener, Node's `onWarning` (`process_warning_shared_vm`),
+/// as the `process._events` entry `initialize_warning_policy` deferred.
+pub(crate) fn initialize_warning_listener(context: &mut NativeContext<'_, NodeHost>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
+    use super::event_constructor_shared_vm::get;
+    let process = context.host_mut().shared_state().borrow().process_module.ok_or_else(|| RootedError::host("process is not initialized"))?;
+    let listener = crate::modules::process_warning_shared_vm::on_warning(context)?;
+    let events = get(context, process, "_events")?;
+    let key = context.string_rooted(WARNING_EVENT);
+    context.define_data_property_rooted(events, key, listener, true, true, true)?;
+    Ok(context.undefined())
 }
