@@ -5052,12 +5052,37 @@ pub(super) fn compile_osr_region(
         poll_address(interrupt),
         track_backedges,
     )?;
+    let clif = native_dump_directory().map(|_| function.display().to_string());
     let (_code, entry) = compile_and_publish_entry(function, &*isa, osr_loop::MAX_CODE_BYTES)?;
+    if let (Some(directory), Some(clif)) = (native_dump_directory(), clif) {
+        dump_native_code(directory, region.header, &_code, &clif);
+    }
     Some(CompiledOsrRegion {
         _code,
         entry,
         widenings,
     })
+}
+
+/// The directory `QUENCH_JS_JIT_DUMP` names, read once per process: each loop region
+/// compiled writes its machine code and its CLIF there (`dump_native_code`), for attaching
+/// instruction-level profiles to native code.
+fn native_dump_directory() -> Option<&'static std::path::Path> {
+    static DIRECTORY: std::sync::OnceLock<Option<std::path::PathBuf>> = std::sync::OnceLock::new();
+    DIRECTORY.get_or_init(|| std::env::var_os("QUENCH_JS_JIT_DUMP").map(std::path::PathBuf::from)).as_deref()
+}
+
+/// Writes a compiled loop region's executable mapping as `loop-<n>.bin` and its CLIF as
+/// `loop-<n>.clif` into `directory`, numbered in compilation order, and reports where the
+/// mapping lives on stderr. A failed write leaves the run as it is.
+fn dump_native_code(directory: &std::path::Path, header: u32, code: &CodeMemory, clif: &str) {
+    static COMPILED: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    let number = COMPILED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    // SAFETY: the mapping is `code.length` readable bytes while `code` lives.
+    let bytes = unsafe { std::slice::from_raw_parts(code.pointer(), code.length) };
+    let _ = std::fs::write(directory.join(format!("loop-{number:03}.bin")), bytes);
+    let _ = std::fs::write(directory.join(format!("loop-{number:03}.clif")), clif);
+    eprintln!("QUENCH_JS_JIT_DUMP loop-{number:03} header={header} address={:p} bytes={}", code.pointer(), code.length);
 }
 
 /// Compile and publish a fully lowered native entry that has no relocations.
