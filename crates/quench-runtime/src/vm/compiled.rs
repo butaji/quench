@@ -2400,6 +2400,130 @@ pub(super) fn compile_js_general_dispatch(
     })
 }
 
+/// Canonical, owner-free description of the inputs that affect GeneralDispatch
+/// code generation. Keep this in lockstep with compile_js_general_dispatch:
+/// emitted instructions depend on decoded bytecode, frame layout, static-name
+/// mode, and referenced constant variants/payloads. The key records the full
+/// payload for values that lowering can embed and only the variant for payloads
+/// that the generated code reads from the active program at runtime.
+pub(super) fn js_general_dispatch_cache_key(
+    program: &ResidualProgram,
+    function_id: u32,
+    unresolved_names_are_global: bool,
+) -> Option<Box<[u8]>> {
+    use std::fmt::Write as _;
+
+    if program.kind == crate::bytecode::ProgramKind::Wasm || function_id == 0 {
+        return None;
+    }
+    let function = program.function_get(function_id as usize)?;
+    let static_global_names = unresolved_names_are_global
+        && function.names_resolve_statically(program);
+    let mut key = String::with_capacity(
+        function
+            .code
+            .len()
+            .saturating_mul(24)
+            .min(super::program_store::JS_GENERAL_ARTIFACT_CACHE_MAX_KEY_BYTES),
+    );
+    writeln!(
+        key,
+        "gd-v1:{}:{}:{}:{}:{}",
+        static_global_names as u8,
+        function.params,
+        function.locals,
+        function.registers,
+        function.code.len()
+    )
+    .ok()?;
+    for instruction in function.instructions() {
+        writeln!(
+            key,
+            "{}:{}:{}:{}:{}",
+            instruction.op() as u16,
+            instruction.a(),
+            instruction.b(),
+            instruction.c(),
+            instruction.imm()
+        )
+        .ok()?;
+        if key.len() > super::program_store::JS_GENERAL_ARTIFACT_CACHE_MAX_KEY_BYTES {
+            return None;
+        }
+
+        // Name fast-path admission checks the current program's atom text.
+        // Include that text because two programs may encode different names at
+        // the same atom index while sharing identical bytecode.
+        if matches!(
+            instruction.op(),
+            Op::LoadName | Op::LoadNameCall | Op::LoadNameTypeof
+        ) {
+            let name = program.atoms.get(instruction.atom_index() as usize)?;
+            if name.len()
+                > super::program_store::JS_GENERAL_ARTIFACT_CACHE_MAX_KEY_BYTES
+                    .saturating_sub(key.len())
+            {
+                return None;
+            }
+            write!(key, "A:{}:", name.len()).ok()?;
+            key.push_str(name);
+            key.push('\n');
+        }
+
+        // Only constants addressed by this function can affect its lowering.
+        // Keep the operand/index in the key as well as the value because the
+        // native PC map and compile-time tagged-operand decisions are per PC.
+        if instruction.op().immediate_role() == crate::bytecode::ImmediateRole::ConstantIndex {
+            let index = instruction.constant_index();
+            append_js_general_constant_key(&mut key, program, index)?;
+        }
+        for field in crate::bytecode::InstructionField::ALL {
+            if !instruction
+                .op()
+                .field_layout(*field)
+                .is_operand_field()
+            {
+                continue;
+            }
+            let operand = crate::bytecode::Operand(instruction.field_value(*field));
+            if operand.kind() == Some(crate::bytecode::OperandKind::Constant) {
+                let index = operand.payload();
+                write!(key, "O:{}:{}:", *field as u8, index).ok()?;
+                append_js_general_constant_key(&mut key, program, usize::from(index))?;
+            }
+        }
+        if key.len() > super::program_store::JS_GENERAL_ARTIFACT_CACHE_MAX_KEY_BYTES {
+            return None;
+        }
+    }
+    Some(key.into_bytes().into_boxed_slice())
+}
+
+fn append_js_general_constant_key(
+    key: &mut String,
+    program: &ResidualProgram,
+    index: usize,
+) -> Option<()> {
+    use std::fmt::Write as _;
+
+    match program.constants.get(index)? {
+        crate::bytecode::Constant::Number(value) => {
+            writeln!(key, "N:{}", value.to_bits()).ok()?;
+        }
+        crate::bytecode::Constant::String(_) => key.push_str("S;\n"),
+        crate::bytecode::Constant::StringUnits(_) => key.push_str("U;\n"),
+        crate::bytecode::Constant::BigInt(_) => key.push_str("B;\n"),
+        crate::bytecode::Constant::WasmBits64(_) => key.push_str("W;\n"),
+        crate::bytecode::Constant::WasmV128(_) => key.push_str("V;\n"),
+        crate::bytecode::Constant::Boolean(value) => {
+            writeln!(key, "b:{}", *value as u8).ok()?;
+        }
+        crate::bytecode::Constant::Null => key.push_str("0;\n"),
+        crate::bytecode::Constant::Undefined => key.push_str("u;\n"),
+    }
+    Some(())
+}
+
 /// How the shared VM executes JavaScript and Wasm functions. Compiled code is
 /// lazy and falls back to the interpreter; both modes use the same VM, heap,
 /// frames and host APIs.
@@ -4928,12 +5052,37 @@ pub(super) fn compile_osr_region(
         poll_address(interrupt),
         track_backedges,
     )?;
+    let clif = native_dump_directory().map(|_| function.display().to_string());
     let (_code, entry) = compile_and_publish_entry(function, &*isa, osr_loop::MAX_CODE_BYTES)?;
+    if let (Some(directory), Some(clif)) = (native_dump_directory(), clif) {
+        dump_native_code(directory, region.header, &_code, &clif);
+    }
     Some(CompiledOsrRegion {
         _code,
         entry,
         widenings,
     })
+}
+
+/// The directory `QUENCH_JS_JIT_DUMP` names, read once per process: each loop region
+/// compiled writes its machine code and its CLIF there (`dump_native_code`), for attaching
+/// instruction-level profiles to native code.
+fn native_dump_directory() -> Option<&'static std::path::Path> {
+    static DIRECTORY: std::sync::OnceLock<Option<std::path::PathBuf>> = std::sync::OnceLock::new();
+    DIRECTORY.get_or_init(|| std::env::var_os("QUENCH_JS_JIT_DUMP").map(std::path::PathBuf::from)).as_deref()
+}
+
+/// Writes a compiled loop region's executable mapping as `loop-<n>.bin` and its CLIF as
+/// `loop-<n>.clif` into `directory`, numbered in compilation order, and reports where the
+/// mapping lives on stderr. A failed write leaves the run as it is.
+fn dump_native_code(directory: &std::path::Path, header: u32, code: &CodeMemory, clif: &str) {
+    static COMPILED: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    let number = COMPILED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    // SAFETY: the mapping is `code.length` readable bytes while `code` lives.
+    let bytes = unsafe { std::slice::from_raw_parts(code.pointer(), code.length) };
+    let _ = std::fs::write(directory.join(format!("loop-{number:03}.bin")), bytes);
+    let _ = std::fs::write(directory.join(format!("loop-{number:03}.clif")), clif);
+    eprintln!("QUENCH_JS_JIT_DUMP loop-{number:03} header={header} address={:p} bytes={}", code.pointer(), code.length);
 }
 
 /// Compile and publish a fully lowered native entry that has no relocations.
@@ -10507,15 +10656,11 @@ impl<H: Host> Vm<H> {
         program_id: ProgramId,
         function: u32,
         facts: &super::js_compiled::JsEntryFacts,
-        frame: Option<usize>,
     ) -> (bool, bool) {
         let Some(body) = program
             .function_get(function as usize)
             .filter(|_| self.js_general_tier_takes(program, function, facts))
         else {
-            if let Some(frame) = frame {
-                self.frames[frame].js_general_dispatch_work_tracking = false;
-            }
             return (false, false);
         };
         let state = self.programs.js_tier(program_id, function);
@@ -10533,30 +10678,12 @@ impl<H: Host> Vm<H> {
                 || general_state
                 || matches!(state, Some(super::program_store::JsTierState::Compiled(compiled)) if compiled.is_general_dispatch()));
         if !general_candidate {
-            if let Some(frame) = frame {
-                self.frames[frame].js_general_dispatch_work_tracking = false;
-            }
             return (false, false);
         }
         // A legacy candidate is observed only once its numeric profile has declined.
         let observes = !facts.candidate || general_state;
         // The tier manager prices the baseline against the entries so far.
         let due = observes && self.programs.note_js_general_dispatch_entry(program_id, function, body.code.len(), self.memory_policy());
-        if let Some(frame) = frame {
-            let state = self.programs.js_tier(program_id, function);
-            self.frames[frame].js_general_dispatch_work_tracking = self
-                .programs
-                .js_jit_general_dispatch_enabled()
-                && matches!(
-                    state,
-                    Some(
-                        super::program_store::JsTierState::Hot { .. }
-                            | super::program_store::JsTierState::Rejected { .. }
-                            | super::program_store::JsTierState::GeneralPromotionPending { .. }
-                            | super::program_store::JsTierState::Unsupported
-                    )
-                );
-        }
         (true, due)
     }
 
@@ -10607,7 +10734,7 @@ impl<H: Host> Vm<H> {
                     instructions,
                 );
             } else {
-                self.js_tier_note_general_entry(program, id, function, &entry.facts, None);
+                self.js_tier_note_general_entry(program, id, function, &entry.facts);
             }
             self.programs.record_js_jit_fallback_entry(id, function);
         }
@@ -10689,7 +10816,7 @@ impl<H: Host> Vm<H> {
             })
         });
         let (general_candidate, mut promote_general) =
-            self.js_tier_note_general_entry(program, program_id, function, &facts, Some(frame));
+            self.js_tier_note_general_entry(program, program_id, function, &facts);
         let mut specialized_guard_miss = false;
         let compiled_entry = entry.as_ref().and_then(|entry| {
             self.js_jit_at_entry(program, entry, &mut specialized_guard_miss)
@@ -10763,31 +10890,59 @@ impl<H: Host> Vm<H> {
                     .programs
                     .js_jit_diagnostics_enabled()
                     .then(std::time::Instant::now);
-                self.host.before_native_compilation();
                 let unresolved_names_are_global = self
                     .programs
                     .unresolved_names_are_global(program_id, function_id);
-                let (artifact, compile_rejection) = match compile_js_general_dispatch(
-                    program,
-                    function_id,
-                    unresolved_names_are_global,
-                ) {
-                    Ok(artifact) => (Some(artifact), None),
-                    Err(rejection) => (None, Some(rejection)),
-                };
-                self.host.after_native_compilation();
-                let code_bytes = artifact.as_ref().map_or(0, |artifact| artifact.code.len());
-                let artifact_was_created = artifact.is_some();
-                let compiled = artifact
-                    .and_then(CompiledJsFunction::from_artifact)
-                    .map(Rc::new);
+                let cache_key = self
+                    .programs
+                    .js_general_artifact_cache_enabled()
+                    .then(|| {
+                        js_general_dispatch_cache_key(
+                            program,
+                            function_id,
+                            unresolved_names_are_global,
+                        )
+                    })
+                    .flatten();
+                let cached = cache_key
+                    .as_deref()
+                    .and_then(|key| self.programs.cached_js_general_artifact(key));
+                let cache_hit = cached.is_some();
+                let cache_key_available = cache_key.is_some();
+                let (compiled, compile_rejection, code_bytes, artifact_was_created) =
+                    if let Some(compiled) = cached {
+                        (Some(compiled), None, 0, false)
+                    } else {
+                        self.host.before_native_compilation();
+                        let (artifact, rejection) = match compile_js_general_dispatch(
+                            program,
+                            function_id,
+                            unresolved_names_are_global,
+                        ) {
+                            Ok(artifact) => (Some(artifact), None),
+                            Err(rejection) => (None, Some(rejection)),
+                        };
+                        self.host.after_native_compilation();
+                        let code_bytes = artifact.as_ref().map_or(0, |artifact| artifact.code.len());
+                        let artifact_was_created = artifact.is_some();
+                        let compiled = artifact
+                            .and_then(CompiledJsFunction::from_artifact)
+                            .map(Rc::new);
+                        (compiled, rejection, code_bytes, artifact_was_created)
+                    };
                 let rejection = compile_rejection.or_else(|| {
                     (artifact_was_created && compiled.is_none())
                         .then_some("native-code-mapping-failed")
                 });
                 let installed = self
                     .programs
-                    .install_js_tier(program_id, function_id, compiled.clone(), false);
+                    .install_js_tier_with_cache(
+                        program_id,
+                        function_id,
+                        compiled.clone(),
+                        cache_key,
+                        false,
+                    );
                 if let Some(compile_started) = compile_started {
                     self.programs.record_js_jit_general_compile(
                         program_id,
@@ -10798,14 +10953,19 @@ impl<H: Host> Vm<H> {
                         if installed { None } else { rejection.or(Some("shared-code-cache-budget-exhausted")) },
                     );
                 }
+                if cache_key_available {
+                    self.programs.record_js_jit_general_artifact_cache(
+                        program_id,
+                        function_id,
+                        cache_hit,
+                    );
+                }
                 if !installed {
                     return None;
                 }
                 compiled
             }
         }?;
-
-        self.frames[frame].js_general_dispatch_work_tracking = false;
 
         let mut dispatch = JsStepDispatch {
             program_id,
