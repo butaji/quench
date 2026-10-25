@@ -1,0 +1,9 @@
+cranelift warm (full build): 111.4s ok=False maxrss_child_kib=3965656
+     | Caused by: |   process didn't exit successfully: `/home/user/qbench/target-cranelift/debug/build/quench-runtime/6eb523cdd8c0c179/out/quench_runtime-6eb523cdd8c0c179 --exact 'vm::tests::plain_data_equality_proves_only_plain_data' --quiet` (signal: 6, SIGABRT: process abort signal)
+cranelift edit 1: 22.1s ok=False maxrss_child_kib=3965656
+     | Caused by: |   process didn't exit successfully: `/home/user/qbench/target-cranelift/debug/build/quench-runtime/6eb523cdd8c0c179/out/quench_runtime-6eb523cdd8c0c179 --exact 'vm::tests::plain_data_equality_proves_only_plain_data' --quiet` (signal: 6, SIGABRT: process abort signal)
+cranelift edit 2: 21.7s ok=False maxrss_child_kib=3965656
+     | Caused by: |   process didn't exit successfully: `/home/user/qbench/target-cranelift/debug/build/quench-runtime/6eb523cdd8c0c179/out/quench_runtime-6eb523cdd8c0c179 --exact 'vm::tests::plain_data_equality_proves_only_plain_data' --quiet` (signal: 6, SIGABRT: process abort signal)
+cranelift edit 3: 21.8s ok=False maxrss_child_kib=3965656
+     | Caused by: |   process didn't exit successfully: `/home/user/qbench/target-cranelift/debug/build/quench-runtime/6eb523cdd8c0c179/out/quench_runtime-6eb523cdd8c0c179 --exact 'vm::tests::plain_data_equality_proves_only_plain_data' --quiet` (signal: 6, SIGABRT: process abort signal)
+cranelift SUMMARY edits=['22.1', '21.7', '21.8'] median=21.8s daemon_peak_kib=0
