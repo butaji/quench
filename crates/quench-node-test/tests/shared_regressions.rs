@@ -227,6 +227,26 @@ WebAssembly.instantiate(m, { env: { log() {} } })
 }
 
 #[test]
+fn webassembly_internal_references_reach_javascript_like_node() {
+    // (module (func "i31" (result i31ref) (ref.i31 -5)) (func "wide" (result anyref)
+    //   (ref.i31 0x7fffffff)) (func "nullAny" (result anyref)) (func "nullNone" (result nullref))
+    //   (func "host" (param externref) (result anyref) (any.convert_extern))
+    //   (func "pair" (result anyref i32) (ref.i31 7) 1) (global "g" anyref (ref.i31 3)))
+    let source = r#"
+const bytes = new Uint8Array([0,97,115,109,1,0,0,0,1,23,5,96,0,1,108,96,0,1,110,96,0,1,113,96,1,111,1,110,96,0,2,110,127,3,7,6,0,1,1,2,3,4,6,8,1,110,0,65,3,251,28,11,7,53,7,3,105,51,49,0,0,4,119,105,100,101,0,1,7,110,117,108,108,65,110,121,0,2,8,110,117,108,108,78,111,110,101,0,3,4,104,111,115,116,0,4,4,112,97,105,114,0,5,1,103,3,0,10,45,6,6,0,65,123,251,28,11,10,0,65,255,255,255,255,7,251,28,11,4,0,208,110,11,4,0,208,113,11,6,0,32,0,251,26,11,8,0,65,7,251,28,65,1,11]);
+const e = new WebAssembly.Instance(new WebAssembly.Module(bytes)).exports;
+const object = {};
+console.log(e.i31(), e.wide(), e.nullAny(), e.nullNone(), JSON.stringify(e.pair()), e.g.value);
+console.log(e.host(object) === object, e.host('s'), e.host(1.5), e.host(42), e.host(null));
+"#;
+    let node = observe_node_source(source);
+    assert!(node.status.success(), "Node oracle failed: {node:?}");
+    let quench = observe_source(source);
+    assert_eq!(quench.outcome(), RunResult::Pass, "{:?}", quench.worker);
+    assert_eq!(quench.stdout, node.stdout);
+}
+
+#[test]
 fn vm_context_lexicals_survive_collection_and_prototypes_end_in_the_context() {
     // A context's script-scope `let` is reachable only through the realm while its code
     // runs; collections inside that code must keep it alive.

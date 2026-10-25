@@ -1422,22 +1422,24 @@ impl<H: Host> Vm<H> {
         };
         let results =
             self.decode_wasm_result_types(&signature.results, result, declarations.as_ref())?;
-        self.wasm_results_to_js(p, results)
+        self.wasm_results_to_js(p, results, &signature.results)
     }
 
-    /// A Wasm call's results as JavaScript: undefined, the single value, or an array.
+    /// A Wasm call's results, of types `types`, as JavaScript: undefined, the single value,
+    /// or an array.
     fn wasm_results_to_js(
         &mut self,
         p: &ResidualProgram,
         results: Vec<WasmValue>,
+        types: &[WasmType],
     ) -> Result<Value, JsError> {
-        match results.as_slice() {
-            [] => Ok(Value::UNDEFINED),
-            [value] => self.wasm_value_to_js(p, *value),
+        match (results.as_slice(), types) {
+            ([], _) => Ok(Value::UNDEFINED),
+            ([value], [ty]) => self.wasm_value_to_js(p, *value, *ty),
             _ => {
                 let mut values = Vec::with_capacity(results.len());
-                for value in results {
-                    values.push(self.wasm_value_to_js(p, value)?);
+                for (value, &ty) in results.into_iter().zip(types) {
+                    values.push(self.wasm_value_to_js(p, value, ty)?);
                 }
                 Ok(self.new_array(values))
             }
@@ -1733,13 +1735,17 @@ impl<H: Host> Vm<H> {
         ty: WasmType,
     ) -> Result<Value, JsError> {
         let value = self.decode_wasm_value(value, ty)?;
-        self.wasm_value_to_js(p, value)
+        self.wasm_value_to_js(p, value, ty)
     }
 
+    /// ToJSValue of `value`, of type `ty`. An internal reference leaves Wasm as `extern.convert_any`
+    /// would: null, an `i31` as its signed number, an internalized host value as itself. An
+    /// exception reference has no JavaScript representation.
     fn wasm_value_to_js(
         &mut self,
         p: &ResidualProgram,
         value: WasmValue,
+        ty: WasmType,
     ) -> Result<Value, JsError> {
         Ok(match value {
             WasmValue::I32(value) => Value::number(f64::from(value)),
@@ -1748,6 +1754,9 @@ impl<H: Host> Vm<H> {
             WasmValue::F64(bits) => Value::number(f64::from_bits(bits)),
             WasmValue::FuncRef(function) => self.wasm_js_function(function, None)?,
             WasmValue::ExternRef(value) => self.wasm_external_value(value),
+            WasmValue::GcRef(value) if !ty.is_exception_reference() => {
+                self.wasm_external_value(value)
+            }
             WasmValue::V128(_) | WasmValue::GcRef(_) => {
                 return Err(self.type_error(
                     p,

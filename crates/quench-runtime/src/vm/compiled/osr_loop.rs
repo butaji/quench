@@ -1,10 +1,12 @@
-//! The loop tier: Cranelift code for a hot loop whose body makes no call and allocates
-//! nothing, entered at its backward jump in compiled execution.
+//! The loop tier: Cranelift code for a hot loop's supported body, entered at its backward
+//! jump in compiled execution. An effectful call ends a native prefix; the lane resumes at
+//! the call and returns to the loop tier at the next backward jump.
 //!
-//! A region is a loop's instructions, header to backward jump, every one of which reads and
-//! writes Numbers in registers, depth-0 captures and dense elements of record arrays: it
-//! reads present elements, and stores below an array's length or appends at it within the
-//! capacity its backing already has.
+//! A region is the loop's instructions, header to backward jump, or the supported prefix
+//! before its first dynamic call. Its native instructions read and write Numbers in
+//! registers, depth-0 captures and dense elements of record arrays: it reads present
+//! elements, and stores below an array's length or appends at it within the capacity its
+//! backing already has.
 //! Native code keeps each Number register in an SSA value: an `i32` where every value it
 //! takes is one (`representations`), else an `f64`. Registers are the
 //! interpreter's state at every instruction boundary the code leaves at, so leaving is
@@ -21,7 +23,7 @@
 //! - every backward jump polls host termination, exiting at the jump so the interpreter's
 //!   safepoint runs.
 //!
-//! Nothing in a region allocates, collects, or runs guest code, so the arrays, their
+//! Nothing in a native region allocates, collects, or runs guest code, so the arrays, their
 //! element storage and the captures the entry read stay as they are while native code runs.
 
 use crate::bytecode::{
@@ -151,6 +153,9 @@ pub(crate) struct ArrayUse {
 /// A loop's admissible region and the facts its entry needs.
 pub(crate) struct LoopRegion {
     pub(crate) header: u32,
+    /// Last instruction lowered in this region. A dynamic call can end a guarded prefix
+    /// before the loop's actual backedge; control resumes at that call in the interpreter.
+    end: u32,
     pub(crate) backedge: u32,
     /// The Number registers; a register's index here names its entry definition (`Webs`).
     numbers: Vec<Register>,
@@ -911,6 +916,7 @@ pub(super) fn inline_region<'a>(
     }
     let receivers = calls.values().map(|site| site.frame.receiver).collect();
     let header_live = masks.first().copied();
+    let backedge = header + instructions.len() as u32 - 1;
     let mut region = admit_region(
         instructions,
         total as usize,
@@ -920,6 +926,7 @@ pub(super) fn inline_region<'a>(
         header_live,
         header,
         &receivers,
+        backedge,
     )
     .ok()?;
     // Each callee's field, which the entry reads and guards still holds it, read through
@@ -1250,8 +1257,8 @@ impl Admission<'_> {
     }
 }
 
-/// The region of the loop from `header` to its backward jump at `backedge`, when every
-/// instruction in it is one the tier lowers.
+/// The region of the loop from `header` to its backward jump at `backedge`, or the supported
+/// prefix before its first call, when every included instruction is one the tier lowers.
 pub(super) fn region(
     function: &Function,
     decoded: &[WideInstruction],
@@ -1266,8 +1273,19 @@ pub(super) fn region(
         return Err(RegionRejection::RegionTooLarge);
     }
     let header_live = live.and_then(|live| live.get(start));
+    // Dynamic calls are effect boundaries. Compile the supported prefix before the first
+    // call and resume the interpreter at that exact PC. The interpreter reaches this
+    // region again at the loop backedge, so the prefix remains useful across iterations.
+    // Branches that skip the call naturally resume at their exact target.
+    let mut prefix_end = end;
+    if let Some(call) = decoded[start..=end].iter().position(|instruction| instruction.op() == Op::Call) {
+        if call == 0 {
+            return Err(RegionRejection::UnsupportedInstruction(Op::Call));
+        }
+        prefix_end = start + call - 1;
+    }
     admit_region(
-        decoded[start..=end].to_vec(),
+        decoded[start..=prefix_end].to_vec(),
         usize::from(function.registers),
         constants,
         sites,
@@ -1275,6 +1293,7 @@ pub(super) fn region(
         header_live,
         header,
         &std::collections::BTreeSet::new(),
+        backedge,
     )
 }
 
@@ -1292,8 +1311,9 @@ fn admit_region(
     header_live: Option<RegisterSet>,
     header: u32,
     objects: &std::collections::BTreeSet<Register>,
+    backedge: u32,
 ) -> Result<LoopRegion, RegionRejection> {
-    let backedge = header + instructions.len() as u32 - 1;
+    let end = header + instructions.len() as u32 - 1;
     let paths = held_registers(&instructions, sites, header_live, objects);
     let mut tagged = tagged_registers(&instructions, constants, &objects.iter().chain(paths.keys()).copied().collect())
         .ok_or(RegionRejection::UnsupportedInstruction(Op::JumpBinaryFalse))?;
@@ -1428,6 +1448,7 @@ fn admit_region(
     }
     Ok(LoopRegion {
         header,
+        end,
         backedge,
         numbers,
         tagged,
@@ -1700,7 +1721,7 @@ fn webs(region: &LoopRegion) -> Webs {
     use std::collections::{BTreeMap, BTreeSet};
     let count = region.instructions.len();
     let entries = region.entry_count();
-    let inside = |pc: u32| (region.header..=region.backedge).contains(&pc);
+    let inside = |pc: u32| (region.header..=region.end).contains(&pc);
     let mut reaching: Vec<BTreeMap<Register, BTreeSet<Definition>>> = vec![BTreeMap::new(); count];
     for (index, register) in region.entry_registers().enumerate() {
         reaching[0].entry(register).or_default().insert(index);
@@ -2233,7 +2254,7 @@ fn int32_facts(region: &LoopRegion, webs: &Webs, representations: &[Representati
     }
     // A web no definition reached holds nothing; it is taken to hold any `i32`.
     let ranges: Vec<Option<Range>> = ranges.into_iter().map(|range| Some(range.unwrap_or(INT32_RANGE))).collect();
-    let inside = |pc: u32| (region.header..=region.backedge).contains(&pc);
+    let inside = |pc: u32| (region.header..=region.end).contains(&pc);
     let written_back: std::collections::BTreeSet<Definition> = webs
         .leaves
         .iter()
@@ -2346,7 +2367,7 @@ fn counted_loops(
     representations: &[Representation],
     captures: &[Representation],
 ) -> Vec<CountedLoop> {
-    (region.header..=region.backedge)
+    (region.header..=region.end)
         .filter_map(|backedge| {
             let instruction = region.instructions[(backedge - region.header) as usize];
             (instruction.op() == Op::Jump).then_some(())?;
@@ -2384,7 +2405,7 @@ fn counted_loop(
     }
     let test = test?;
     // Control enters only at the header.
-    let enters_inside = (region.header..=region.backedge).any(|pc| {
+    let enters_inside = (region.header..=region.end).any(|pc| {
         let instruction = at(pc);
         matches!(
             instruction.op(),
@@ -2720,14 +2741,14 @@ struct Lowering<'a, 'b> {
 fn straight_pcs(region: &LoopRegion, counted: &[CountedLoop]) -> Vec<bool> {
     let count = region.instructions.len();
     let mut predecessors = vec![Vec::new(); count];
-    for pc in region.header..=region.backedge {
+    for pc in region.header..=region.end {
         for successor in successors(region, pc) {
-            if (region.header..=region.backedge).contains(&successor) {
+            if (region.header..=region.end).contains(&successor) {
                 predecessors[(successor - region.header) as usize].push(pc);
             }
         }
     }
-    (region.header..=region.backedge)
+    (region.header..=region.end)
         .map(|pc| {
             pc != region.header
                 && !counted.iter().any(|counted| counted.header == pc)
@@ -2769,7 +2790,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
         let &[context, registers, _, entry, result] = builder.block_params(start) else {
             unreachable!("the entry signature has five parameters")
         };
-        let blocks = (region.header..=region.backedge).map(|_| builder.create_block()).collect();
+        let blocks = (region.header..=region.end).map(|_| builder.create_block()).collect();
         let straight = straight_pcs(region, &counted);
         let preheaders = counted.iter().map(|_| builder.create_block()).collect();
         let proved_blocks = counted
@@ -2828,7 +2849,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
         frontend: cranelift_codegen::isa::TargetFrontendConfig,
     ) -> Option<std::collections::BTreeMap<u32, Widening>> {
         self.enter()?;
-        for pc in self.region.header..=self.region.backedge {
+        for pc in self.region.header..=self.region.end {
             let block = self.block(pc)?;
             self.enter_instruction(pc, block);
             self.pc = pc;
@@ -2869,7 +2890,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
     }
 
     fn block(&self, pc: u32) -> Option<ir::Block> {
-        (self.region.header..=self.region.backedge)
+        (self.region.header..=self.region.end)
             .contains(&pc)
             .then(|| self.blocks[(pc - self.region.header) as usize])
     }
