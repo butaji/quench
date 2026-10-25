@@ -2692,6 +2692,9 @@ struct Lowering<'a, 'b> {
     element_reads: std::collections::HashMap<(Register, ir::Value, Representation), (Typed, ir::Block, usize)>,
     /// The element stores lowered so far; any may write any array's elements.
     element_stores: usize,
+    /// The PCs of element reads whose key an index sum lowered just before bounded
+    /// (`Lowering::index_sum`), with that sum as an `i64`.
+    bounded_reads: std::collections::BTreeMap<u32, ir::Value>,
     /// The Number each canonical encoding read from memory unboxes to, mapped to the bits as
     /// read: boxing the Number gives those bits back, so a store of it stores them.
     encodings: std::collections::HashMap<ir::Value, ir::Value>,
@@ -2797,6 +2800,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
             exact: std::collections::BTreeMap::new(),
             element_reads: std::collections::HashMap::new(),
             element_stores: 0,
+            bounded_reads: std::collections::BTreeMap::new(),
             encodings: std::collections::HashMap::new(),
             straight,
             registers,
@@ -3540,6 +3544,42 @@ impl<'a, 'b> Lowering<'a, 'b> {
         }
     }
 
+    /// The `i32` sum at `pc` of `left` and `right` into `register` when the next instruction
+    /// reads an element at it, with no proof covering either: the sum in `i64`, which is
+    /// exact, checked below the array's length, which also proves it an `i32`, so it needs
+    /// no overflow guard and the read no bounds check. Leaving there leaves at `pc`, before
+    /// the sum. `None` for any other sum.
+    fn index_sum(&mut self, pc: u32, register: Register, left: Typed, right: Typed) -> Option<Typed> {
+        (left.representation == Representation::Int32
+            && right.representation == Representation::Int32
+            && self.result_representation() == Representation::Int32
+            && !self.proved(pc)
+            && !self.facts.exact.contains(&pc)
+            && !self.facts.truncated.contains(&pc)
+            && pc < self.region.backedge)
+            .then_some(())?;
+        let next = pc + 1;
+        let offset = (next - self.region.header) as usize;
+        let read = self.region.instructions[offset];
+        (read.op() == Op::GetIndex
+            && read.operand_c().register_index() == Some(register)
+            && self.straight[offset]
+            && !self.proved(next))
+            .then_some(())?;
+        let array = *self.arrays.get(&read.operand_b().register_index()?)?;
+        let (left, right) = (
+            self.body.builder.ins().sextend(types::I64, left.value),
+            self.body.builder.ins().sextend(types::I64, right.value),
+        );
+        let sum = self.body.builder.ins().iadd(left, right);
+        let length = self.length(array);
+        let beyond = self.body.builder.ins().icmp(IntCC::UnsignedGreaterThanOrEqual, sum, length);
+        self.guard(pc, beyond);
+        self.bounded_reads.insert(next, sum);
+        let value = self.body.builder.ins().ireduce(types::I32, sum);
+        Some(Typed { value, representation: Representation::Int32 })
+    }
+
     /// Exits at `pc` unless `index` is below `array`'s length; an `i32` key a proof covers is.
     fn read_index(&mut self, pc: u32, array: ArrayView, index: ir::Value) {
         if self.proved(pc) {
@@ -3886,6 +3926,10 @@ impl<'a, 'b> Lowering<'a, 'b> {
                     {
                         left
                     }
+                    Arithmetic::Float(NumberArithmetic::Add) => match self.index_sum(pc, result, left, right) {
+                        Some(value) => value,
+                        None => self.arithmetic(pc, operator, result, left, right),
+                    },
                     _ => self.arithmetic(pc, operator, result, left, right),
                 };
                 self.define(result, value);
@@ -3963,6 +4007,8 @@ impl<'a, 'b> Lowering<'a, 'b> {
                 self.fall_through(pc)
             }
             Op::GetIndex => {
+                // An index sum just before checked this read's bounds (`index_sum`).
+                let bounded = self.bounded_reads.remove(&pc);
                 let base = instruction.operand_b().register_index()?;
                 let array = self.arrays[&base];
                 let key = self.operand(instruction.operand_c())?;
@@ -3977,8 +4023,14 @@ impl<'a, 'b> Lowering<'a, 'b> {
                     self.define(instruction.result_register(), value);
                     return self.fall_through(pc);
                 }
-                let (index, element) = self.element_index(pc, key);
-                self.read_index(pc, array, index);
+                let element = match bounded {
+                    Some(wide) => ElementIndex { wide, displacement: 0 },
+                    None => {
+                        let (index, element) = self.element_index(pc, key);
+                        self.read_index(pc, array, index);
+                        element
+                    }
+                };
                 let (address, displacement) = self.element_address(array.elements, element);
                 // A hole is tagged, so unboxing sends it to the general path too. A Float64
                 // element loads straight into a float register.

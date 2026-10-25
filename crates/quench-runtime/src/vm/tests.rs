@@ -12115,6 +12115,41 @@ print(t + " " + s.toFixed(6));
 
 #[test]
 #[cfg(not(quench_profiled))]
+fn shared_osr_bounds_an_index_sum_with_its_read() {
+    // `j + k` feeds the element read right after it: one check below the length proves the
+    // sum an `i32` too. A `k` that takes the sum past the `i32`s reads `undefined`, as the
+    // general path does.
+    let source = r#"
+function gather(a, k, n) {
+  var s = 0, misses = 0;
+  for (var i = 0; i < n; i++) {
+    var j = (i * 7) % n;
+    var v = a[j + k];
+    if (v === undefined) misses++; else s += v;
+  }
+  return s + ":" + misses;
+}
+var a = [];
+for (var i = 0; i < 300; i++) a.push(i * 3 + 1);
+var out = [];
+for (var c = 0; c < 300; c++) out.push(gather(a, c % 50 == 49 ? 2147483600 : c % 3, 290));
+print(out.slice(45, 52).join(" "));
+"#;
+    let program = Engine::specialize(source, "osr-index-sum.js").unwrap();
+    let interpreted_output = Rc::new(RefCell::new(Vec::new()));
+    Vm::new(TestHost::writing_to(interpreted_output.clone())).execute(&program).unwrap();
+    for policy in crate::MemoryPolicy::ALL {
+        let compiled_output = Rc::new(RefCell::new(Vec::new()));
+        let mut compiled = Vm::new(TestHost::writing_to(compiled_output.clone()));
+        compiled.set_memory_policy(policy);
+        compiled.set_execution_mode(crate::ExecutionMode::Compiled);
+        compiled.execute(&program).unwrap();
+        assert_eq!(compiled_output.borrow().as_slice(), interpreted_output.borrow().as_slice(), "{policy:?}");
+    }
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
 fn shared_osr_numeric_relations_keep_signed_int32_ordering() {
     let program = Engine::compile(crate::ExecutionRequest::script(
         r#"
