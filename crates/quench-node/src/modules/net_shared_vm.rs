@@ -33,6 +33,22 @@ const NET_MODULE_FACTORY: &str = r#"((Duplex, connectOperation, writeOperation, 
       super({
         ...options, autoDestroy: true, allowHalfOpen: true, emitClose: false,
         write(chunk, encoding, callback) { try { writeOperation(this, chunk, callback); } catch (error) { callback(error); } },
+        // Node's writable takes this branch when a stream corks: ws writes a frame header and
+        // its payload as two chunks, and without `writev` the second waits on the first's host
+        // completion (a whole turn). Writes complete in order, so the last chunk's callback is
+        // the flush barrier and an earlier failure is reported through it.
+        writev(chunks, callback) {
+          let failure;
+          try {
+            for (let index = 0; index < chunks.length; index += 1) {
+              const last = index === chunks.length - 1;
+              writeOperation(this, chunks[index].chunk, (error) => {
+                if (!last) { failure ??= error; return; }
+                callback(failure ?? error);
+              });
+            }
+          } catch (error) { callback(failure ?? error); }
+        },
         final(callback) { try { endOperation(this); callback(); } catch (error) { callback(error); } },
         destroy(error, callback) { try { destroyOperation(this, error, callback); } catch (failure) { callback(failure); } },
       });
