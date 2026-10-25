@@ -6290,7 +6290,14 @@ fn lane_loop_run<H: Host>(
         site.native_entry_attempts
             .set(site.native_entry_attempts.get().saturating_add(1));
         match outcome {
-            LoopOutcome::NotEntered(_) => {
+            LoopOutcome::NotEntered(widening) => {
+                if std::env::var_os("QUENCH_JS_JIT_TRACE_OSR_REJECT").is_some() {
+                    eprintln!(
+                        "QUENCH_JS_JIT_OSR_ENTRY_MISS function={} header={} widening={widening:?}",
+                        site.function,
+                        site.header,
+                    );
+                }
                 site.entry_guard_misses
                     .set(site.entry_guard_misses.get().saturating_add(1));
             }
@@ -9716,6 +9723,29 @@ impl<H: Host> Vm<H> {
 }
 
 script_handler! {
+    /// `lane_script_call` of a linked target whose entry is not a plain activation: the site
+    /// calls the form for that entry directly from now on, an environment or keeping
+    /// activation its own handler and any other entry the out-of-line form, which sorts them
+    /// out. Out of line, as a sibling call, so `lane_script_call` makes no call.
+    #[inline(never)]
+    fn lane_script_call_requicken<>(cx, r, ip, i, view) {
+        let vm = unsafe { vm(cx) };
+        let entry = vm.linked_script_call_entry(r.get(i.b), &i.call_link).map(|target| {
+            // SAFETY: as `Vm::script_call_entry`; nothing before this read resolves a target.
+            unsafe { (*target).entry }
+        });
+        let handler: Handler = match entry {
+            Some(CallEntry::Environment) => lane_script_call_environment::<H>,
+            Some(CallEntry::Keeps | CallEntry::Gathers) => lane_script_call_keeping::<H>,
+            Some(_) => lane_script_call_full::<H>,
+            None => sibling!(lane_script_call_resolve::<H>, r, ip, Carried::script(cx)),
+        };
+        requicken::<H>(ip, handler);
+        sibling!(handler, r, ip, Carried::script(cx))
+    }
+}
+
+script_handler! {
     /// A JavaScript `Call` of a frameless target (`Vm::resolve_script_call_target`): the
     /// callee runs in the lane on a window of the lane stack, with the frame facts its
     /// push would have set held by the activation until it returns or the lane exits.
@@ -9734,17 +9764,10 @@ script_handler! {
         };
         // SAFETY: as `Vm::script_call_entry`; nothing below resolves a target or collects.
         let target = unsafe { &*target };
-        // One test: the site calls the form for its target's entry directly from now on, an
-        // environment or keeping activation its own handler and any other entry the
-        // out-of-line form, which sorts them out.
+        // One test: the site calls the form for its target's entry directly from now on
+        // (`lane_script_call_requicken`), out of line so this handler makes no call.
         if target.entry != CallEntry::Activates {
-            let handler: Handler = match target.entry {
-                CallEntry::Environment => lane_script_call_environment::<H>,
-                CallEntry::Keeps | CallEntry::Gathers => lane_script_call_keeping::<H>,
-                _ => lane_script_call_full::<H>,
-            };
-            requicken::<H>(ip, handler);
-            sibling!(handler, r, ip, Carried::script(cx))
+            sibling!(lane_script_call_requicken::<H>, r, ip, Carried::script(cx))
         }
         #[cfg(feature = "profile-lane-exits")]
         profile_script_call_target(cx, ip, callee, target);
@@ -9756,7 +9779,10 @@ script_handler! {
         // Values past the parameters and a full lane stack take the out-of-line form too,
         // whose activation keeps them or grows the stack (`lane_activate`), and so does another
         // program's target (`lane_push_activation`).
-        if ImmediateLayout::argument_count(i.imm()) > target.params
+        // So does a window past `FIXED_ARGUMENT_COPIES`, whose copy is a call.
+        let argc = ImmediateLayout::argument_count(i.imm());
+        if argc > target.params
+            || argc > FIXED_ARGUMENT_COPIES
             || !lane_activation_room(vm, target)
             || lane_crosses::<H, false>(cx, target)
         {

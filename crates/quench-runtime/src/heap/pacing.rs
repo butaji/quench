@@ -413,10 +413,14 @@ const YOUNG_MINIMUM_ALLOCATION: usize = 1 << 12;
 
 /// The fewest allocations between young collections under throughput: above the npm lane's
 /// 2^14 (measured only against memory-first's 768) and below the 2^17 that doubled small-heap
-/// RSS (v2-cloud-jet: stanford-crypto-aes 29 -> 60 MB). 2^16 kept that under Bun's, and
-/// memory-first's 768 left UniPoker at 0.7x this table's Score; the Score lane's 2^15 against
-/// 2^17 was within noise on V8-v7 (v2-cloud-c).
-const THROUGHPUT_MINIMUM_YOUNG: usize = 1 << 16;
+/// RSS (v2-cloud-jet: stanford-crypto-aes 29 -> 60 MB); memory-first's 768 left UniPoker at
+/// 0.7x this table's Score, and the Score lane's 2^15 against 2^17 was within noise on V8-v7
+/// (v2-cloud-c). Three quarters of 2^16: JetStream rows whose young generations are all
+/// garbage peak lower with no Score cost (v2-cloud-jet, one gc-tuning binary, cold, 7
+/// interleaved runs, x86_64 4 vCPU, 2026-10-25; Score / max RSS): stanford-crypto-aes +10% /
+/// 34.8 -> 30.4 MB, bigint-noble-ed25519 +4% / 31.4 -> 28.7, UniPoker flat / 22.1 -> 19.9,
+/// hash-map flat / 27.3 -> 25.9, pbkdf2 and sha256 within noise, acorn-wtb +4% / +2.6 MB.
+const THROUGHPUT_MINIMUM_YOUNG: usize = 3 << 14;
 /// The fewest allocations, or old-generation growth, between full collections under
 /// throughput: the JetStream, Score and web lanes' common minimum (v2-cloud-jet, v2-cloud-c,
 /// v2-web). Against memory-first's 384 the Score lane's table, which shares it, ran the Earley
