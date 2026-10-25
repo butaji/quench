@@ -73,7 +73,7 @@ pub(crate) fn version_facts() -> &'static [(&'static str, &'static str)] {
         ("nghttp2", "1.61.0"),
         ("nghttp3", "1.3.0"),
         ("ngtcp2", "1.4.0"),
-        ("openssl", "3.0.0"),
+        ("openssl", env!("QUENCH_OPENSSL_VERSION")),
         ("simdjson", "1.0.0"),
         ("simdutf", "5.2.4"),
         ("tz", "2024a"),
