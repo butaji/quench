@@ -10,17 +10,23 @@ use std::{cell::RefCell, rc::Rc};
 
 const ASYNC_ID: &str = "\0quench:async_hooks:id";
 const LOCAL_ID: &str = "\0quench:async_hooks:local:id";
-const CLASS_FACTORY: &str = r#"(function(initializeResource, runInAsyncScope, emitDestroy,
+const CLASS_FACTORY: &str = r#"(function(initializeResource, enterAsyncScope, exitAsyncScope, emitDestroy,
     initializeStorage, enterWith, getStore, disableStorage,
     initializeHook, enableHook, disableHook, executionIdNative, triggerIdNative,
     executionResourceNative, hooksEnabledNative, initNative, defaultTriggerScopeNative,
     getDefaultTriggerNative, symbolsNative) {
+  const ReflectApply = Reflect.apply;
   class AsyncResource {
     constructor(type, options) {
       initializeResource.call(this, type, options);
     }
     runInAsyncScope(fn, thisArg, ...args) {
-      return runInAsyncScope.call(this, fn, thisArg, ...args);
+      enterAsyncScope.call(this, fn);
+      try {
+        return ReflectApply(fn, thisArg, args);
+      } finally {
+        exitAsyncScope.call(this);
+      }
     }
     asyncId() { return this["\0quench:async_hooks:id"]; }
     triggerAsyncId() { return this["\0quench:async_hooks:trigger"]; }
@@ -557,7 +563,8 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     let factory = context.evaluate_script_rooted(CLASS_FACTORY, "node:async_hooks/shared.js")?;
     let mut functions = [
         "asyncResourceInit",
-        "asyncResourceRunInAsyncScope",
+        "asyncResourceEnterScope",
+        "asyncResourceExitScope",
         "asyncResourceEmitDestroy",
         "asyncLocalStorageInit",
         "asyncLocalStorageEnterWith",
@@ -785,7 +792,22 @@ pub(crate) fn initialize_resource(
     Ok(receiver)
 }
 
-pub(crate) fn run_in_async_scope(
+/// The async context `AsyncResource#runInAsyncScope` replaced, which its exit restores
+/// (`exit_async_scope`), and the resource it entered, retained while the scope lasts.
+pub(crate) struct EnteredScope {
+    id: u64,
+    resource: RootId,
+    previous_id: u64,
+    previous_trigger: i64,
+    previous_store: StoreContext,
+    previous_resource: Option<(u64, RootId)>,
+}
+
+/// `AsyncResource#runInAsyncScope`'s entry: the resource's async context becomes current and
+/// the `before` hooks run, after which the guest calls `fn` and leaves the scope
+/// (`exit_async_scope`) however the call completes, as Node's `try`/`finally` does. A throw
+/// from a `before` hook leaves the scope at once, without the `after` hooks.
+pub(crate) fn enter_async_scope(
     context: &mut NativeContext<'_, NodeHost>,
     receiver: RootId,
     args: &[RootId],
@@ -798,6 +820,7 @@ pub(crate) fn run_in_async_scope(
     }
     let id = number_property(context, receiver, ASYNC_ID)?
         .ok_or_else(|| RootedError::host("AsyncResource has no async ID"))?;
+    let resource = context.retain(receiver)?;
     let state = context.host_mut().shared_state();
     let identity = state.borrow().async_hooks.identity.clone();
     let trigger = state
@@ -807,37 +830,65 @@ pub(crate) fn run_in_async_scope(
         .get(&id)
         .copied()
         .unwrap_or(super::async_hooks_state::ROOT_TRIGGER_ASYNC_ID);
-    let previous_store = identity.store_context();
-    let previous_id = identity.replace_current_async_id(id);
-    let previous_trigger = identity.replace_current_trigger_id(trigger);
-    let previous_resource = state
-        .borrow_mut()
-        .async_hooks
-        .scoped_resource
-        .replace((id, receiver));
-    let undefined = context.undefined();
-    let this_arg = args.get(1).copied().unwrap_or(undefined);
+    let scope = EnteredScope {
+        id,
+        resource,
+        previous_store: identity.store_context(),
+        previous_id: identity.replace_current_async_id(id),
+        previous_trigger: identity.replace_current_trigger_id(trigger),
+        previous_resource: state.borrow_mut().async_hooks.scoped_resource.replace((id, resource)),
+    };
+    state.borrow_mut().async_hooks.entered_scopes.push(scope);
     let id_value = context.number(id as f64);
-    let result = (|| {
-        super::async_hook_registry_shared_vm::emit(
-            context,
-            super::async_hook_registry_shared_vm::HookKind::Before,
-            &[id_value],
-        )?;
-        let result = context.call_rooted(callback, this_arg, args.get(2..).unwrap_or_default());
-        let after = super::async_hook_registry_shared_vm::emit(
-            context,
-            super::async_hook_registry_shared_vm::HookKind::After,
-            &[id_value],
-        );
-        after?;
-        result
-    })();
-    identity.replace_current_async_id(previous_id);
-    identity.replace_current_trigger_id(previous_trigger);
-    identity.replace_store_context(previous_store);
-    state.borrow_mut().async_hooks.scoped_resource = previous_resource;
-    result
+    if let Err(error) = super::async_hook_registry_shared_vm::emit(
+        context,
+        super::async_hook_registry_shared_vm::HookKind::Before,
+        &[id_value],
+    ) {
+        leave_entered_scope(context);
+        return Err(error);
+    }
+    Ok(context.undefined())
+}
+
+/// `AsyncResource#runInAsyncScope`'s exit: the `after` hooks of the innermost entered scope
+/// run, then the context it replaced is current again.
+pub(crate) fn exit_async_scope(
+    context: &mut NativeContext<'_, NodeHost>,
+    _receiver: RootId,
+    _args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let id = context
+        .host_mut()
+        .shared_state()
+        .borrow()
+        .async_hooks
+        .entered_scopes
+        .last()
+        .map(|scope| scope.id)
+        .ok_or_else(|| RootedError::host("AsyncResource scope was not entered"))?;
+    let id_value = context.number(id as f64);
+    let after = super::async_hook_registry_shared_vm::emit(
+        context,
+        super::async_hook_registry_shared_vm::HookKind::After,
+        &[id_value],
+    );
+    leave_entered_scope(context);
+    after.map(|_| context.undefined())
+}
+
+/// Restores the context the innermost entered scope replaced and releases its resource.
+fn leave_entered_scope(context: &mut NativeContext<'_, NodeHost>) {
+    let state = context.host_mut().shared_state();
+    let Some(scope) = state.borrow_mut().async_hooks.entered_scopes.pop() else {
+        return;
+    };
+    let identity = state.borrow().async_hooks.identity.clone();
+    identity.replace_current_async_id(scope.previous_id);
+    identity.replace_current_trigger_id(scope.previous_trigger);
+    identity.replace_store_context(scope.previous_store);
+    state.borrow_mut().async_hooks.scoped_resource = scope.previous_resource;
+    context.release_root(scope.resource);
 }
 
 fn queue_destroy(context: &mut NativeContext<'_, NodeHost>, id: u64) -> Result<(), RootedError> {

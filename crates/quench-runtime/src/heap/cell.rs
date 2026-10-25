@@ -925,6 +925,7 @@ impl Native {
                 | Self::WeakMapSet
                 | Self::FinalizationRegistryRegister
                 | Self::TypedArrayToStringTag
+                | Self::FunctionBind
         )
     }
 
