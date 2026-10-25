@@ -8912,7 +8912,15 @@ impl<H: Host> Vm<H> {
                         frame.captured = true;
                         let locals = held + usize::from(WINDOW_LOCALS);
                         let count = frame.locals.len();
+                        // The activation never binds `arguments`: its body only reads the
+                        // values passed (`Function::reads_passed_arguments_only`), so the
+                        // object the push made from them is the binding.
+                        let arguments = code.function(activation.function as usize).arguments_slot.map(usize::from);
+                        let object = arguments.map(|slot| frame.locals[slot]);
                         frame.locals.copy_from_slice(&registers[locals..locals + count]);
+                        if let (Some(slot), Some(object)) = (arguments, object) {
+                            frame.locals[slot] = object;
+                        }
                     }
                     // Its frame closes the iterators its loops pushed (`LaneStack::iterators`).
                     let frame = self.frames.last_mut().expect("the activation pushed a frame");
@@ -10093,6 +10101,25 @@ fn lane_passed_frame_call<H: Host>(
         return exit(ip);
     }
     let Some(target) = vm.in_loop_call_target(code, callee) else {
+        #[cfg(feature = "profile-lane-exits")]
+        super::lane_exits::record_detail(format!(
+            "passed frame call declined kind={:?} realm_matches={} name={:?}",
+            vm.heap.function(callee).map(|record| match record.kind {
+                FunctionKind::Native(Native::HostFunction) => vm.host_function_name(callee).unwrap_or_default().to_string(),
+                FunctionKind::Native(native) => format!("{native:?}"),
+                FunctionKind::User(..) => "user".to_string(),
+            }),
+            vm.heap.function(callee).is_some_and(|record| record.realm == vm.realm.globals),
+            vm.heap.function(callee).and_then(|record| match record.kind {
+                FunctionKind::User(program, function) => vm.programs.residual(program).and_then(|code| {
+                    let body = code.function_get(function as usize)?;
+                    Some(format!("{} @{:?} async={} generator={} in_loop={}",
+                        body.name.map(|atom| code.atoms[atom as usize].to_string()).unwrap_or_default(),
+                        body.source_span.map(|span| span.start), body.is_async, body.is_generator, body.call_plan(code).in_loop))
+                }),
+                _ => None,
+            }),
+        ));
         return exit(ip);
     };
     lane_push_frame_call(cx, r, ip, i, target, callee, receiver, passed)
@@ -10205,6 +10232,22 @@ fn lane_apply_activation<H: Host>(
         _ => (argument(0), argument(1), *args.get(2)?),
     };
     let listed = !(native == Native::FunctionApply && (list.is_undefined() || list.is_null()));
+    #[cfg(feature = "profile-lane-exits")]
+    {
+        let vm = unsafe { vm(cx) };
+        super::lane_exits::record_detail(format!(
+            "apply callee={:?} array={} arguments_object={} sparse={} holes={} activations={}",
+            vm.heap.function(callee).map(|record| match record.kind {
+                FunctionKind::User(..) => "user",
+                FunctionKind::Native(_) => "native",
+            }),
+            vm.heap.array(list).is_some(),
+            vm.heap.array(list).is_some_and(|array| array.is_arguments_object()),
+            vm.heap.sparse_length(list).is_some(),
+            vm.heap.array(list).is_some_and(|array| array.elements().as_slice().iter().any(|value| value.is_deleted())),
+            vm.lane_stack.activations.len(),
+        ));
+    }
     lane_list_activation(cx, r, ip, i, callee, receiver, list, listed)
 }
 
@@ -10233,6 +10276,39 @@ fn lane_list_activation<H: Host>(
     };
     if listed && !dense(vm) {
         return None;
+    }
+    // A bound function or `Function.prototype.call` forwards the list to the function it
+    // names (`Vm::forwarded_call`), which a forwarded call activates; the elements are copied
+    // out first, as a frame call's are.
+    if matches!(
+        vm.heap.function(callee),
+        Some(FunctionRecord { kind: FunctionKind::Native(Native::FunctionBoundCall | Native::FunctionCall), .. })
+    ) {
+        let elements = if listed {
+            vm.heap.array_elements(list)?.as_slice().iter().copied().collect()
+        } else {
+            smallvec::SmallVec::<[Value; FRAME_CALL_INLINE_ARGUMENTS]>::new()
+        };
+        let Some((target, receiver, args)) = vm.forwarded_list_call(callee, receiver, elements) else {
+            #[cfg(feature = "profile-lane-exits")]
+            super::lane_exits::record_detail("applied forwarding declined".into());
+            return None;
+        };
+        let args = args.as_slice();
+        if !matches!(vm.heap.function(target), Some(FunctionRecord { kind: FunctionKind::User(..), .. })) {
+            #[cfg(feature = "profile-lane-exits")]
+            super::lane_exits::record_detail("applied forwarding to a native".into());
+            return None;
+        }
+        let Some(activated) = lane_passed_target(cx, target, args.len()) else {
+            return Some(Err(lane_passed_frame_call(cx, r, ip, i, target, receiver, FrameCallArguments::List(args))));
+        };
+        let Some(this) = lane_call_this(vm, &activated, receiver) else {
+            #[cfg(feature = "profile-lane-exits")]
+            super::lane_exits::record_detail("applied forwarding this declined".into());
+            return Some(Err(exit(ip)));
+        };
+        return Some(lane_activate_passed(cx, r, ip, &activated, args, this));
     }
     let length = if listed { vm.heap.array(list).map_or(0, |array| array.elements().len()) } else { 0 };
     let Some(target) = lane_passed_target(cx, callee, length) else {
@@ -11479,9 +11555,29 @@ script_handler! {
     /// a mapped element (which aliases a parameter) among them, takes the general path.
     #[inline(never)]
     fn lane_frame_arguments<GET: bool>(cx, r, ip, i, view) {
-        // Only a frame's own run reads its binding; no activation runs such a function.
+        // An environment activation keeps the values passed after its locals
+        // (`Function::reads_passed_arguments_only`); no other activation runs such a function.
         if !unsafe { (*cx).env }.is_deleted() {
-            return exit(ip);
+            let vm = unsafe { vm(cx) };
+            let Some((function, argc)) = vm.lane_stack.activations.last().and_then(|activation| {
+                let script = activation.script().filter(|script| script.environment)?;
+                Some((activation.function, script.argc))
+            }) else {
+                return exit(ip);
+            };
+            // SAFETY: the context's program outlives the lane run.
+            let body = unsafe { &*(*cx).code }.function(function as usize);
+            let value = if GET {
+                let Some(index) = r.get(i.b).as_int().and_then(|index| u16::try_from(index).ok()).filter(|index| *index < argc)
+                else {
+                    return exit(ip);
+                };
+                r.get(body.registers + WINDOW_LOCALS + body.locals + index)
+            } else {
+                Value::integer(i32::from(argc))
+            };
+            r.set(i.a, value);
+            next!(cx, r, following(ip), view)
         }
         let vm = unsafe { vm(cx) };
         let frame = unsafe { (*cx).frame };
@@ -11821,11 +11917,13 @@ fn lane_activate_environment<H: Host>(
     if returns && !lane_returning_call_admitted(cx) {
         return Err(exit(ip));
     }
-    let Some(body) = vm.programs.residual(target.program).map(|code| code.function(target.function as usize)) else {
+    let Some(code) = vm.programs.residual(target.program) else {
         return Err(exit(ip));
     };
+    let body = code.function(target.function as usize);
     let rest = body.rest;
-    if argc > target.params && !rest || vm.with_scope_entered {
+    // A body reading its `arguments` keeps every value passed past its parameters too.
+    if argc > target.params && !(rest || body.call_plan(code).reads_passed_arguments) || vm.with_scope_entered {
         return Err(exit(ip));
     }
     // A rest body keeps every value passed, the room sized for its parameters and the rest.
@@ -15803,7 +15901,7 @@ fn specialize_environment_window<H: Host>(
 ) -> Option<EnvironmentWindow> {
     if function.locals == 0
         || u32::from(function.locals) > u64::BITS
-        || function.arguments_slot.is_some()
+        || (function.arguments_slot.is_some() && !function.reads_passed_arguments_only())
         || !function.local_registers.is_empty()
         || function.selective_capture_slots.is_none()
     {
