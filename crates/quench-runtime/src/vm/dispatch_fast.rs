@@ -1222,7 +1222,7 @@ pub(super) struct LaneStack {
     activations: Vec<Activation>,
     /// Wasm activation payload represented by `values` before lane materialization.
     wasm_storage_bytes: usize,
-    /// Resolved targets of lane `Call` records (`Vm::script_call_target`) of callees of the
+    /// Resolved targets of lane `Call` records (`Vm::script_call_entry`) of callees of the
     /// running program.
     script_targets: ScriptTargets,
     /// Resolved targets of callees of another program than the calling one, which those
@@ -9144,14 +9144,8 @@ impl<H: Host> Vm<H> {
         if frame.fixed_this { frame.this } else { Value::DELETED }
     }
 
-    /// The cached frameless target of a lane call to `callee`, if resolved.
-    #[inline(always)]
-    fn script_call_target(&self, callee: Value) -> Option<ScriptCallTarget> {
-        // SAFETY: the entry is read before anything else touches the cache.
-        self.script_call_entry(callee).map(|entry| unsafe { *entry })
-    }
-
-    /// `script_call_target` in place: its cache entry, which a call reads field by field
+    /// The cached frameless target of a lane call to `callee`, if resolved, in place: its
+    /// cache entry, which a call reads field by field
     /// where it uses them rather than holding a copy in registers. The cache is boxed, so
     /// the entry stays put; it holds this target until the next resolution or collection
     /// replaces it, which no activation makes.
@@ -10191,22 +10185,28 @@ fn lane_function_call_activation<H: Host>(
 #[inline(never)]
 fn lane_passed_target<H: Host>(cx: *mut LaneContext<H>, callee: Value, passed: usize) -> Option<ScriptCallTarget> {
     let vm = unsafe { vm(cx) };
-    let target = lane_script_target(cx, callee)
-        .or_else(|| {
-            if lane_constructing(vm, callee) {
-                return None;
-            }
-            let target = vm.cross_call_entry(callee)?;
+    // Matched in turn rather than chained: the combinators moved the target through copies.
+    let target = match lane_script_target(cx, callee) {
+        Some(target) => target,
+        None => {
             // SAFETY: as `Vm::script_call_entry`; nothing below resolves a target or collects.
-            Some(unsafe { *target }).filter(|target| {
-                target.entry.activates_across() || target.entry == CallEntry::Environment
-            })
-        })
-        .or_else(|| {
-            vm.script_call_target(callee).filter(|target| {
-                target.entry == CallEntry::Environment && target.program == vm.active_program
-            })
-        })?;
+            let cross = (!lane_constructing(vm, callee))
+                .then(|| vm.cross_call_entry(callee))
+                .flatten()
+                .map(|entry| unsafe { &*entry })
+                .filter(|target| target.entry.activates_across() || target.entry == CallEntry::Environment);
+            // SAFETY: as above.
+            let own = || {
+                vm.script_call_entry(callee)
+                    .map(|entry| unsafe { &*entry })
+                    .filter(|target| target.entry == CallEntry::Environment && target.program == vm.active_program)
+            };
+            match cross {
+                Some(target) => *target,
+                None => *own()?,
+            }
+        }
+    };
     if target.entry == CallEntry::Environment
         && passed > usize::from(target.params)
         && !vm.programs.residual(target.program)?.function(target.function as usize).rest
