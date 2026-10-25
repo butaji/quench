@@ -1,0 +1,33 @@
+cargo-incr warm (full build): 122.4s ok=True maxrss_child_kib=5286224
+cargo-incr edit 1: 41.4s ok=True maxrss_child_kib=5286224
+cargo-incr edit 2: 41.0s ok=True maxrss_child_kib=5286224
+cargo-incr edit 3: 40.7s ok=True maxrss_child_kib=5286224
+cargo-incr SUMMARY edits=['41.4', '41.0', '40.7'] median=41.0s daemon_peak_kib=0
+rajit warm (full build): 136.4s ok=True maxrss_child_kib=5931204
+rajit status: plain cargo: not through ra-jit (`ra-jit enable` turns it on) daemon: pid 19881, version 0.1.0-4526d70-18e1a83d2fe17f37, exits after 1800s idle worker: pid 19882, /home/user/qbench/crates/quench-runtime, log /root/.cache/ra-jit/spares/0/log /home/user/qbench: ready /home/user/qbench (test, e54cd4112
+rajit edit 1: 59.0s ok=True maxrss_child_kib=5931204
+rajit edit 2: 149.3s ok=True maxrss_child_kib=5931204
+rajit edit 3: 50.0s ok=True maxrss_child_kib=5931204
+rajit SUMMARY edits=['59.0', '149.3', '50.0'] median=59.0s daemon_peak_kib=12375816
+plain cargo: not through ra-jit (`ra-jit enable` turns it on)
+daemon: pid 19881, version 0.1.0-4526d70-18e1a83d2fe17f37, exits after 1800s idle
+  worker: pid 23141, /home/user/qbench/crates/quench-runtime, log /root/.cache/ra-jit/spares/1/log
+    /home/user/qbench: ready
+/home/user/qbench (test, e54cd41121a6e233): 2 builds by the daemon, 1 by cargo
+  1 x a library its unit tests are linked with as rustc built it: /home/user/qbench/target-rajit/debug/build/quench-regexp-3c24bebc4cfe0602/out/canonical_preimages.rs changed
+
+cranelift warm (full build): 0.3s ok=False maxrss_child_kib=65852
+    error: could not compile `proc-macro2` (build script) due to 1 previous error | error: could not compile `unicode-ident` (lib) due to 1 previous error | error: could not compile `quote` (build script) due to 1 previous error
+cranelift edit 1: 0.2s ok=False maxrss_child_kib=66460
+    error: could not compile `proc-macro2` (build script) due to 1 previous error | error: could not compile `serde_core` (build script) due to 1 previous error | error: could not compile `unicode-ident` (lib) due to 1 previous error
+cranelift edit 2: 0.2s ok=False maxrss_child_kib=66704
+    error: could not compile `proc-macro2` (build script) due to 1 previous error | error: could not compile `serde_core` (build script) due to 1 previous error | error: could not compile `quote` (build script) due to 1 previous error
+cranelift edit 3: 0.2s ok=False maxrss_child_kib=66704
+    error: could not compile `unicode-ident` (lib) due to 1 previous error | error: could not compile `quote` (build script) due to 1 previous error | error: could not compile `serde_core` (build script) due to 1 previous error
+cranelift SUMMARY edits=['0.2', '0.2', '0.2'] median=0.2s daemon_peak_kib=0
+cargo-noincr warm (full build): 111.7s ok=True maxrss_child_kib=5172580
+cargo-noincr edit 1: 69.9s ok=True maxrss_child_kib=5172580
+cargo-noincr edit 2: 68.5s ok=True maxrss_child_kib=5172580
+cargo-noincr edit 3: 70.8s ok=True maxrss_child_kib=5172580
+cargo-noincr SUMMARY edits=['69.9', '68.5', '70.8'] median=69.9s daemon_peak_kib=0
+DONE

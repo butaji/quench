@@ -708,17 +708,8 @@ impl FunctionCompiler<'_, '_> {
     }
 
     fn set_prototype(&mut self, target: Register, prototype: Register) {
-        let object = self.load_name("Object");
-        let setter = self.reg();
-        let atom = self.owner.atom("setPrototypeOf");
-        let cache = self.owner.cache_site();
-        self.emit(
-            Op::GetField,
-            setter,
-            FieldBase::register(object).0,
-            cache,
-            atom,
-        );
+        // The intrinsic `Object.setPrototypeOf`, whatever `Object` names here.
+        let setter = self.load_name(crate::bytecode::INTRINSIC_SET_PROTOTYPE_OF_BINDING);
         let base = self.next_reg;
         let target_arg = self.reg();
         self.emit(Op::Move, target_arg, target, 0, 0);
@@ -729,7 +720,7 @@ impl FunctionCompiler<'_, '_> {
             Op::Call,
             result,
             setter,
-            object,
+            setter,
             crate::bytecode::ImmediateLayout::call_immediate(base, 2, false, false),
         );
     }

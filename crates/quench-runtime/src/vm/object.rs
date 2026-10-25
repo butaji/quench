@@ -710,9 +710,17 @@ impl<H: Host> Vm<H> {
     /// (`inherited_index_unclaimed`), and HasProperty of it finds nothing inherited
     /// (`inherited_index_absent`), whichever the index.
     pub(super) fn prototypes_hold_no_index(&self, object: Value) -> bool {
-        let mut current = self.object_data(object).map(|data| data.proto());
+        let first = self.object_data(object).map(|data| data.proto());
+        // The epoch's proof answers a chain it covers without the walk.
+        if first.is_some_and(|first| self.chain_holds_no_index(first)) {
+            return true;
+        }
+        let mut current = first;
         while let Some(holder) = current.filter(|value| !value.is_null()) {
-            if matches!(self.heap.get(holder), Some(Cell::Proxy { .. } | Cell::TypedArray { .. })) {
+            // A direct object or array record is neither a Proxy nor a typed array, whose
+            // cells only a slot holds.
+            let record = holder.direct_object_index().is_some() || holder.direct_array_index().is_some();
+            if !record && matches!(self.heap.get(holder), Some(Cell::Proxy { .. } | Cell::TypedArray { .. })) {
                 return false;
             }
             let Some(data) = self.object_data(holder) else {
@@ -1210,7 +1218,9 @@ impl<H: Host> Vm<H> {
         self.heap.object_mut(value)
     }
     pub(super) fn is_object_like(&self, value: Value) -> bool {
-        self.heap.object(value).is_some() || matches!(self.heap.get(value), Some(Cell::Error(_)))
+        self.heap.object(value).is_some()
+            || matches!(self.heap.get(value), Some(Cell::Error(_)))
+            || self.is_wasm_gc_object(value)
     }
     #[inline(always)]
     pub(super) fn get_field_cached(
@@ -2779,6 +2789,9 @@ impl<H: Host> Vm<H> {
         if target == receiver && self.set_plain_named_property(target, atom, value).is_some() {
             return Ok(true);
         }
+        if self.is_wasm_gc_object(target) {
+            return Err(self.wasm_gc_opaque_error(p));
+        }
         let _stack = self.enter_stack()?;
         if self.is_private_name(atom) {
             self.check_private_brand(p, target, atom)?;
@@ -3389,6 +3402,9 @@ impl<H: Host> Vm<H> {
         site: u16,
         strict: bool,
     ) -> Result<(), JsError> {
+        if self.is_wasm_gc_object(object) {
+            return Err(self.wasm_gc_opaque_error(p));
+        }
         // Assignment to a nullish base is an abrupt completion regardless of
         // strictness. Keep it on the canonical realm-owned TypeError path;
         // the generic object mutator's fallback error is not an ECMAScript

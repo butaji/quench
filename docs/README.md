@@ -220,6 +220,12 @@ QUENCH_REPLAY_LOG=target/replay.log TEST262_TEST_TIMEOUT_MS=30000 \
 Each program writes a `replay-summary` line; `replay-differs` and `replay-failed` lines name
 a function whose replay does not equal its record or does not compile.
 
+Lazy code generation (TOD-196) needs each function's captures of bindings outside it before
+its code exists. A `verify-replay` build with `QUENCH_LAZY_FACTS_LOG` set predicts them for every
+plain function of a replayable source from its free names (`compile/free_names.rs`, from the
+semantic analysis) resolved through the scopes it closes over, and writes one `lazy-facts` line
+per function: `same`, `superset` or `missing` against what its compiled subtree captured.
+
 ## Host compile cache
 
 `quench-node` keeps the compiled programs of Node's own library modules (the embedded `lib/`
@@ -347,7 +353,7 @@ See
 
 For local Node oracle checks, put a Node executable matching the pinned
 checkout's major version (`tests/node/src/node_version.h`) on `PATH`. The current
-checkout targets Node 27; earlier majors can differ on API contracts such as
+checkout targets Node 26 (26.12.0); other majors can differ on API contracts such as
 `util.parseEnv` object prototypes. Run the CLI/API oracle checks with
 `cargo test --profile iteration -p quench-node-test --test child_entry`.
 

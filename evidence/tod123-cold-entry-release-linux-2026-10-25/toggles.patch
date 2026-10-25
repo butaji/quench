@@ -1,0 +1,37 @@
+diff --git a/crates/quench-node/src/host/resident_pages.rs b/crates/quench-node/src/host/resident_pages.rs
+index 04b3b02792..0a58c2ff82 100644
+--- a/crates/quench-node/src/host/resident_pages.rs
++++ b/crates/quench-node/src/host/resident_pages.rs
+@@ -460,7 +460,7 @@ fn release_once_per_interval(release: CompileRelease, action: fn()) {
+         return;
+     };
+     let last = &mut releases[release as usize];
+-    if last.is_some_and(|last| last.elapsed() < release.interval()) && !release.over_budget() {
++    if std::env::var_os("QX_K3").is_none() && last.is_some_and(|last| last.elapsed() < release.interval()) && !release.over_budget() {
+         return;
+     }
+     *last = Some(std::time::Instant::now());
+diff --git a/crates/quench-node/src/host/shared_vm.rs b/crates/quench-node/src/host/shared_vm.rs
+index 0ebf5a54c6..d6c4da1149 100644
+--- a/crates/quench-node/src/host/shared_vm.rs
++++ b/crates/quench-node/src/host/shared_vm.rs
+@@ -1121,6 +1121,7 @@ impl quench_runtime::Host for NodeHost {
+         if let Some(entry) = self.compile_cache.entry(name, parts) {
+             entry.store(bytes);
+         }
++        if std::env::var_os("QX_K1").is_some() { crate::host::resident_pages::release_read_only_pages(); }
+     }
+     /// A decoded program after bootstrap (the entry and its modules, a builtin or library
+     /// module loaded on first use) releases what loading it touched, as its compilation would
+diff --git a/crates/quench-runtime/src/vm/eval.rs b/crates/quench-runtime/src/vm/eval.rs
+index cc464385ed..aae1e089b2 100644
+--- a/crates/quench-runtime/src/vm/eval.rs
++++ b/crates/quench-runtime/src/vm/eval.rs
+@@ -526,6 +526,7 @@ impl<H: Host> Vm<H> {
+             let mode = self.specialization_part();
+             self.host.keep_compiled_program(name, &[mode, goal, source], &bytes);
+             drop(bytes);
++            if std::env::var_os("QX_K2").is_some() { residual.release_replayable_records(); }
+             // The program then runs from its kept form, as every later run of the text does:
+             // its records decode on first call from the host's mapped entry, which the host
+             // can page out, instead of staying compiled in memory for the whole run (V8-v7
