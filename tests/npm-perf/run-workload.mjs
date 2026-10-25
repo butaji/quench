@@ -45,8 +45,6 @@ function rssCommand(binary, args) {
 }
 
 function parseRss(stderr) {
-  const linux = stderr.match(/__QUENCH_MAX_RSS_KB=(\d+)/);
-  if (linux) return Number(linux[1]) * 1024;
   const mac = stderr.match(/([\d,]+)\s+maximum resident set size/);
   if (mac) return Number(mac[1].replaceAll(",", ""));
   throw new Error("timing tool did not report maximum resident set size");
@@ -114,14 +112,29 @@ function linuxProcessTreeRssBytes(rootPid) {
   return total;
 }
 
+function linuxProcessHighWaterRssBytes(pid) {
+  try {
+    const status = fs.readFileSync(`/proc/${pid}/status`, "utf8");
+    return Number(status.match(/^VmHWM:\s+(\d+)\s+kB$/m)?.[1] ?? 0) * 1024;
+  } catch {
+    return 0;
+  }
+}
+
 async function runLinuxChild(spec, env) {
   const child = spawn(spec.binary, spec.args, { cwd: root, env, stdio: ["ignore", "pipe", "pipe"] });
   let stdout = "";
   let stderr = "";
   let maxRssBytes = 0;
+  let maxProcessRssBytes = 0;
   child.stdout.setEncoding("utf8").on("data", (chunk) => { stdout += chunk; });
   child.stderr.setEncoding("utf8").on("data", (chunk) => { stderr += chunk; });
-  const sample = () => { maxRssBytes = Math.max(maxRssBytes, linuxProcessTreeRssBytes(child.pid)); };
+  const sample = () => {
+    // VmHWM is maintained by the kernel, so sampling it does not miss a brief
+    // peak within the engine process. Descendants still use a separate RSS sample.
+    maxProcessRssBytes = Math.max(maxProcessRssBytes, linuxProcessHighWaterRssBytes(child.pid));
+    maxRssBytes = Math.max(maxRssBytes, linuxProcessTreeRssBytes(child.pid));
+  };
   const sampler = setInterval(sample, 50);
   sample();
   const timeout = setTimeout(() => child.kill("SIGKILL"), 300_000);
@@ -132,7 +145,7 @@ async function runLinuxChild(spec, env) {
   sample();
   clearInterval(sampler);
   clearTimeout(timeout);
-  return { ...result, stdout, stderr, maxRssBytes };
+  return { ...result, stdout, stderr, maxRssBytes, maxProcessRssBytes };
 }
 
 async function runOne(spec, round) {
@@ -179,6 +192,9 @@ async function runOne(spec, round) {
     round,
     measurement,
     maxRssBytes: timed ? parseRss(result.stderr) : result.maxRssBytes,
+    ...(result.maxProcessRssBytes === undefined ? {} : {
+      maxProcessRssBytes: result.maxProcessRssBytes,
+    }),
     wallTimeMs,
     stderr: result.stderr.replace(/__QUENCH_MAX_RSS_KB=\d+\n?/g, "").trim(),
     command: [spec.binary, ...spec.args],
@@ -232,6 +248,11 @@ const summaries = Object.fromEntries(specs.map(({ name }) => {
     medianOperationsPerSecond: median(rows.map(({ measurement }) => measurement.operationsPerSecond)),
     medianElapsedMs: median(rows.map(({ measurement }) => measurement.elapsedMs)),
     medianMaximumRssBytes: median(rows.map(({ maxRssBytes }) => maxRssBytes)),
+    ...(rows.some(({ maxProcessRssBytes }) => maxProcessRssBytes !== undefined) ? {
+      medianMaximumProcessRssBytes: median(
+        rows.map(({ maxProcessRssBytes }) => maxProcessRssBytes),
+      ),
+    } : {}),
   }];
 }));
 const source = fs.readFileSync(workload);
@@ -249,7 +270,7 @@ const report = {
   } : {}),
   host: { platform: process.platform, arch: process.arch, cpus: os.cpus().length },
   rssMeasurement: process.platform === "linux"
-    ? "sampled process-tree sum of /proc/<pid>/status VmRSS every 50 ms (diagnostic only; can miss short-lived children and counts shared pages per process)"
+    ? "kernel VmHWM maximum RSS for the engine process plus a 50 ms sampled descendant-tree RSS estimate (tree sampling can miss short-lived children and counts shared pages per process; not qualification-ready)"
     : "maximum RSS from /usr/bin/time -l",
   inputs: {
     workloadSha256: crypto.createHash("sha256").update(source).digest("hex"),
