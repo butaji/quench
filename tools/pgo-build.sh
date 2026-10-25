@@ -52,6 +52,12 @@ curriculum_budget_ms=6000
 # QUENCH_PGO_REACT_ROUNDS=N. Keep this off by default so production builds stay independent
 # of npm fixture installation; the npm performance workflow can opt in when measuring React.
 react_training_rounds="${QUENCH_PGO_REACT_ROUNDS:-0}"
+# Neither the curriculum nor the Node fixtures serve HTTP for long, so the server path a web
+# application runs (socket polling, request parsing, response composition and the node:http
+# JavaScript around them) was laid out as cold code. The npm workload `http-echo-isolation`
+# is a plain node:http server and client on one keep-alive connection, with no package
+# dependencies; this many round trips (about fifteen seconds of the instrumented build) train it.
+http_training_rounds="${QUENCH_PGO_HTTP_ROUNDS:-3000}"
 # The curriculum stages interpreter mechanisms and runs no regular expression, string
 # search or typed-memory work; the numbered diagnostic micros (quench-bench/micros, one
 # operation family each, the same `microRun` protocol) cover those families, so a library
@@ -144,6 +150,10 @@ while IFS= read -r fixture; do
     (cd "$(dirname "$fixture")" && run_limited "$instrumented" "$(basename "$fixture")" \
         >/dev/null 2>&1) || true
 done < <(find tests/node-compat -name '*.js' | sort)
+if (( http_training_rounds > 0 )); then
+    QUENCH_BENCH_ROUNDS="$http_training_rounds" \
+        run_training_limited "$instrumented" tests/npm-perf/workloads/http-echo-isolation.cjs >/dev/null 2>&1 || true
+fi
 if (( react_training_rounds > 0 )); then
     if [[ ! -f tests/npm-perf/node_modules/react/package.json ]]; then
         printf 'React PGO training requested; install tests/npm-perf dependencies with npm ci first\n' >&2
