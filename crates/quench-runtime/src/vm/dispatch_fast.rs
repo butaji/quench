@@ -13655,6 +13655,12 @@ fn lane_push_frame_call<H: Host>(
     {
         return exit(ip);
     }
+    // A callee that has not made its deferred runs takes the general path, as a lane call's
+    // does (`ProgramStore::lane_call_may_derive`): entering its frame here derived its view at
+    // its first call, a callee run once included (jiti npm scenario: -2.1% instructions).
+    if !vm.programs.lane_call_may_derive(target.0, target.1) {
+        return exit(ip);
+    }
     #[cfg(feature = "profile-lane-exits")]
     if let Some(body) = frame_entry_census(vm, target.0, target.1) {
         super::lane_exits::record_detail(format!("frame call {body}"));
@@ -14362,17 +14368,10 @@ fn lane_call_fits(instruction: WideInstruction) -> bool {
 fn lane_call_result_marked(
     operand: LaneOperand,
     instruction: WideInstruction,
-    live: Option<&crate::compile::liveness::RegisterMasks>,
+    function: &Function,
     pc: usize,
 ) -> LaneOperand {
-    if instruction.op() != Op::Call || instruction.result_flags() != 0 {
-        return operand;
-    }
-    let result = instruction.a() & crate::bytecode::REGISTER_MASK;
-    let dead = live
-        .and_then(|live| live.get(pc + 1))
-        .is_some_and(|after| crate::compile::liveness::register_dead(after, usize::from(result)));
-    if !dead {
+    if instruction.op() != Op::Call || !function.register_roots.call_result_dead(pc) {
         return operand;
     }
     // SAFETY: a `Call`'s operand is its immediate (`lane_operand`).
@@ -14459,12 +14458,12 @@ const ACCUMULATOR: bool = cfg!(quench_lane_tail_calls);
 
 /// Derive a function's lane view from its bytecode and its program's
 /// constants.
-fn derive_lane_view<H: Host>(
+fn derive_lane_view<'live, H: Host>(
     function_id: u32,
     function: &Function,
     constants: &[Value],
     kind: crate::bytecode::ProgramKind,
-    live: Option<&crate::compile::liveness::RegisterMasks>,
+    live: &dyn Fn() -> Option<&'live crate::compile::liveness::RegisterMasks>,
     sites: &[crate::bytecode::FieldSite],
     loop_tier: bool,
     general_dispatch: bool,
@@ -14516,7 +14515,7 @@ fn derive_lane_view<H: Host>(
                 .filter(|_| {
                     keeps_view && lane_fields_fit(instruction, function) && lane_call_fits(instruction)
                 })
-                .map(|operand| lane_call_result_marked(operand, instruction, live, pc));
+                .map(|operand| lane_call_result_marked(operand, instruction, function, pc));
             // Control reaches this record only from the previous one when no
             // jump targets it; the general loop never enters at a record that
             // reads the accumulator.
@@ -15456,7 +15455,7 @@ fn derive_lane_view<H: Host>(
             &decoded,
             constants,
             sites,
-            live,
+            live(),
             general_dispatch,
             diagnostics,
             &mut records,

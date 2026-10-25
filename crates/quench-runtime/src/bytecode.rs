@@ -1528,22 +1528,39 @@ pub(crate) struct SourcePosition {
 pub(crate) const HIDDEN_PARAMETER_PREFIX: &str = "\0quench:param:";
 
 /// Whether register liveness covers a function's register forms, so a frame may leave its
-/// dead registers stale; and the per-pc live register masks the collector scans, derived
-/// when a collection first finds the function on the stack. Most of a program's functions
-/// never run during a collection, so their masks are never built.
+/// dead registers stale; the pcs of its `Call`s whose result register is dead after the
+/// call, which the compiler derives once from the same liveness (`liveness::mark_register_roots`);
+/// and the per-pc live register masks the collector scans, derived when a collection first
+/// finds the function on the stack. Most of a program's functions never run during a
+/// collection, so their masks are never built.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct RegisterRoots {
     covered: bool,
+    dead_call_results: Box<[u32]>,
     masks: std::cell::OnceCell<crate::compile::liveness::RegisterMasks>,
 }
 
 impl RegisterRoots {
     pub(crate) fn new(covered: bool) -> Self {
-        Self { covered, masks: std::cell::OnceCell::new() }
+        Self::with_dead_call_results(covered, Box::default())
+    }
+
+    /// `dead_call_results` in increasing pc order.
+    pub(crate) fn with_dead_call_results(covered: bool, dead_call_results: Box<[u32]>) -> Self {
+        Self { covered, dead_call_results, masks: std::cell::OnceCell::new() }
     }
 
     pub(crate) fn covered(&self) -> bool {
         self.covered
+    }
+
+    pub(crate) fn dead_call_results(&self) -> &[u32] {
+        &self.dead_call_results
+    }
+
+    /// Whether the `Call` at `pc` leaves its result register dead.
+    pub(crate) fn call_result_dead(&self, pc: usize) -> bool {
+        u32::try_from(pc).is_ok_and(|pc| self.dead_call_results.binary_search(&pc).is_ok())
     }
 
     /// The masks a collection derived so far; none until one finds the function running.
@@ -3627,7 +3644,7 @@ impl ResidualProgram {
         Some(position)
     }
 
-    pub const FORMAT_VERSION: u8 = 107;
+    pub const FORMAT_VERSION: u8 = 108;
     pub const RUNTIME_ABI_FINGERPRINT: u64 = {
         const ABI_SIGNATURE: u64 = 0x5251_4a00_0000_0000;
         const FORMAT_VERSION_SHIFT: u32 = 16;
