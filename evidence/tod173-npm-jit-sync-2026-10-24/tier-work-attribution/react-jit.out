@@ -1,0 +1,1 @@
+{"workload":"react-ssr","package":"react@19.3.1 + react-dom@19.3.1","rounds":2500,"warmups":100,"bytes":12490000,"checksum":208544,"elapsedMs":76464,"operationsPerSecond":32.69512450303411}
