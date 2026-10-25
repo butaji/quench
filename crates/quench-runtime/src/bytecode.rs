@@ -1329,6 +1329,8 @@ pub struct Function {
     pub(crate) js_tier_candidate: std::cell::OnceCell<bool>,
     /// Lazily derived `call_plan`; never serialized.
     pub(crate) call_plan: std::cell::OnceCell<CallPlan>,
+    /// Lazily derived `initializer_stores`; never serialized.
+    pub(crate) initializer: std::cell::OnceCell<Option<Box<[InitializerStore]>>>,
     pub(crate) handlers: crate::heap::ThinBoxSlice<Handler>,
     pub(crate) register_roots: RegisterRoots,
     /// A register that holds `undefined` for the whole activation, set at frame entry and
@@ -2399,43 +2401,111 @@ impl Function {
             && self.call_plan(program).to_bits() == self.derive_call_plan(program).to_bits()
     }
 
-    /// Whether the body's whole effect is storing parameters into fields of `this`, then
-    /// returning `undefined`: `SetThisField` records whose values are parameter registers,
-    /// followed by the return of an undefined constant or of a register nothing writes.
-    /// `constants` is the owning program's table. In a plain activation, where parameter `k`
-    /// lives in register `k` (`CallPlan::registers_only`), the body is its stores
-    /// (`this_field_stores`) alone.
+    /// Whether the body's whole effect is storing parameters into fields of `this`, each as
+    /// passed or a Number in its place where it is falsy, then returning `undefined`
+    /// (`initializer_stores`). `constants` is the owning program's table.
     pub(crate) fn only_initializes_this_fields(&self, constants: &[Constant]) -> bool {
+        self.initializer_stores(constants).is_some()
+    }
+
+    /// The function's `initializer_stores`, derived on first use.
+    #[inline(always)]
+    pub(crate) fn initializer_stores(&self, constants: &[Constant]) -> Option<&[InitializerStore]> {
+        self.initializer.get_or_init(|| self.derive_initializer_stores(constants)).as_deref()
+    }
+
+    /// The stores of a body whose whole effect is storing parameters into fields of `this`,
+    /// then returning `undefined`, in order; `None` for any other body. A store's value is
+    /// a parameter as passed (`SetThisField` of the parameter's register), or a Number
+    /// constant in its place where the parameter is falsy: `this.f = (p ? p : k)` (a
+    /// `JumpFalse` of the parameter over its `Move` into a temporary, else the constant's
+    /// `LoadConst` into it, then the temporary's `SetThisField`) or `if (!p) p = k` before
+    /// the parameter's stores (a `JumpTrue` of the parameter over the constant's `LoadConst`
+    /// into it). The body completes with the return of an undefined constant or of a
+    /// register nothing writes. In a plain activation, where parameter `k` lives in
+    /// register `k` (`CallPlan::registers_only`), these stores are its whole effect.
+    fn derive_initializer_stores(&self, constants: &[Constant]) -> Option<Box<[InitializerStore]>> {
         if !self.handlers.is_empty() {
-            return false;
+            return None;
         }
-        let mut stores = 0;
-        for store in self.this_field_stores() {
-            if store.a() >= self.params {
-                return false;
+        let instructions = self.instructions().collect::<Vec<_>>();
+        let number = |load: &WideInstruction| match constants.get(load.constant_index()) {
+            Some(Constant::Number(number)) if load.op() == Op::LoadConst => Some(*number),
+            _ => None,
+        };
+        let parameter = |register: Register| (register < self.params).then_some(register);
+        let mut fallbacks: SmallVec<[Option<f64>; 4]> = smallvec::smallvec![None; usize::from(self.params)];
+        let mut stores = Vec::new();
+        let mut pc = 0;
+        let store = |instruction: &WideInstruction| {
+            matches!(instruction.op(), Op::SetThisField | Op::SetThisFieldStrict).then_some(())
+        };
+        loop {
+            let at = |offset: usize| instructions.get(pc + offset);
+            let target = |offset: usize| (pc + offset) as u32;
+            match at(0)? {
+                // `if (!p) p = k`, before any store of `p`.
+                jump if jump.op() == Op::JumpTrue
+                    && let Some(p) = parameter(jump.register_a())
+                    && jump.jump_target() == target(2)
+                    && let Some(load) = at(1)
+                    && load.result_register() == p
+                    && let Some(k) = number(load)
+                    && fallbacks[usize::from(p)].is_none()
+                    && !stores.iter().any(|stored: &InitializerStore| stored.parameter == p) =>
+                {
+                    fallbacks[usize::from(p)] = Some(k);
+                    pc += 2;
+                }
+                // `this.f = (p ? p : k)`.
+                jump if jump.op() == Op::JumpFalse
+                    && let Some(p) = parameter(jump.register_a())
+                    && jump.jump_target() == target(3)
+                    && let (Some(copy), Some(skip), Some(load), Some(set)) = (at(1), at(2), at(3), at(4))
+                    && copy.op() == Op::Move
+                    && copy.register_b() == p
+                    && copy.result_register() >= self.params
+                    && skip.op() == Op::Jump
+                    && skip.jump_target() == target(4)
+                    && load.result_register() == copy.result_register()
+                    && let Some(k) = number(load)
+                    && store(set).is_some()
+                    && set.register_a() == copy.result_register()
+                    && fallbacks[usize::from(p)].is_none() =>
+                {
+                    stores.push(InitializerStore { atom: set.imm(), site: set.c(), parameter: p, fallback: Some(k) });
+                    pc += 5;
+                }
+                set if store(set).is_some() && let Some(p) = parameter(set.register_a()) => {
+                    stores.push(InitializerStore { atom: set.imm(), site: set.c(), parameter: p, fallback: fallbacks[usize::from(p)] });
+                    pc += 1;
+                }
+                _ => break,
             }
-            stores += 1;
         }
         let undefined_load = |load: &WideInstruction| {
-            load.op() == Op::LoadConst
-                && matches!(constants.get(load.constant_index()), Some(Constant::Undefined))
+            load.op() == Op::LoadConst && matches!(constants.get(load.constant_index()), Some(Constant::Undefined))
         };
-        stores != 0
-            && match self.instructions().skip(stores).collect::<Vec<_>>().as_slice() {
-                [completion] => {
-                    (undefined_load(completion) && completion.returns_from_frame())
-                        || (completion.op() == Op::Return
-                            && completion.register_a() >= self.params
-                            && self.initial_register == InitialRegister::Undefined)
-                }
-                [load, completion] => {
-                    undefined_load(load)
-                        && !load.returns_from_frame()
-                        && completion.op() == Op::Return
-                        && completion.register_a() == load.result_register()
-                }
-                _ => false,
+        let completes = match &instructions[pc..] {
+            [completion] => {
+                (undefined_load(completion) && completion.returns_from_frame())
+                    || (completion.op() == Op::Return
+                        && completion.register_a() >= self.params
+                        && self.initial_register == InitialRegister::Undefined)
             }
+            [load, completion] => {
+                undefined_load(load)
+                    && !load.returns_from_frame()
+                    && completion.op() == Op::Return
+                    && completion.register_a() == load.result_register()
+            }
+            _ => false,
+        };
+        // A defaulted parameter none of the stores reads is a store the model leaves out.
+        let all_read = fallbacks.iter().enumerate().all(|(p, fallback)| {
+            fallback.is_none() || stores.iter().any(|stored: &InitializerStore| usize::from(stored.parameter) == p)
+        });
+        (completes && all_read && !stores.is_empty()).then(|| stores.into_boxed_slice())
     }
 
     /// Whether the body reaches its `arguments` binding only by reading its length or an
@@ -2603,15 +2673,6 @@ impl Function {
             apply: (apply.imm(), apply.c()),
             call_pc: FORWARDED_THIS_METHOD_CALL,
             call_result: call.a(),
-        })
-    }
-
-    /// The `SetThisField` records a body opens with (`only_initializes_this_fields`), in their
-    /// packed form: each holds its value register in `a`, its cache site in `c` and its atom
-    /// in `imm`.
-    pub(crate) fn this_field_stores(&self) -> impl Iterator<Item = Instr> + '_ {
-        self.code.iter().copied().take_while(|store| {
-            !store.is_wide() && matches!(store.op(), Op::SetThisField | Op::SetThisFieldStrict)
         })
     }
 
@@ -3887,3 +3948,14 @@ mod disassemble;
 #[cfg(test)]
 mod tests;
 mod validate;
+
+/// A store of an initializing body (`Function::initializer_stores`): the field `atom`, at
+/// cache site `site`, takes parameter `parameter` as passed, or the Number `fallback` where
+/// the parameter is falsy.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct InitializerStore {
+    pub(crate) atom: u32,
+    pub(crate) site: u16,
+    pub(crate) parameter: u16,
+    pub(crate) fallback: Option<f64>,
+}

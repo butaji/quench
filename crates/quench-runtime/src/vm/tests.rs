@@ -140,6 +140,40 @@ fn lane_constructions_forward_plain_loaded_arguments() {
     assert_eq!(output.borrow().as_slice(), ["2003000 2005000"]);
 }
 
+#[test]
+fn planned_constructions_run_forwarded_initializers_and_their_defaults() {
+    // One `new` site constructs an initializer constructor, whose plan it allocates from, and
+    // forwarding constructors, whose plans hold only with their forwarding, which a getter
+    // keeps from resolving: each gets the fields its initializer stores, falsy arguments
+    // taking the Number defaults, and a replaced initializer runs in place of the planned
+    // one. Expected values are Node's (v26).
+    let source = r#"
+      var Class = { create: function () { return function () { this.initialize.apply(this, arguments); }; } };
+      function A(x) { this.x = x; }
+      var B = Class.create();
+      B.prototype = { initialize: function (x) { this.y = x + 1; } };
+      var C = Class.create();
+      C.prototype = { initialize: function (x, y) { this.z = (x ? x : 4); if (!y) y = 0.5; this.w = y; } };
+      var D = Class.create();
+      D.prototype = Object.defineProperty({}, "initialize", { get: function () { return function (x) { this.d = x; }; } });
+      var out = [];
+      for (var i = 0; i < 3000; i++) { var o = new [A, B, C, D][i % 4](i % 5, i % 2 ? "s" : ""); if (i > 2995) out.push(JSON.stringify(o)); }
+      var falsy = [0, -0, "", NaN, null, undefined, false, 0n];
+      for (var i = 0; i < falsy.length; i++) { var c = new C(falsy[i], falsy[i]); out.push(c.z + "/" + c.w); }
+      C.prototype.initialize = function (x) { this.v = x; };
+      out.push(JSON.stringify(new C(7)));
+      print(out.join(" "));
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    let program = Engine::specialize(source, "planned-forwarded-construct.js").unwrap();
+    vm.execute(&program).unwrap();
+    assert_eq!(
+        output.borrow().as_slice(),
+        [r#"{"x":1} {"y":3} {"z":3,"w":0.5} {"d":4} 4/0.5 4/0.5 4/0.5 4/0.5 4/0.5 4/0.5 4/0.5 4/0.5 {"v":7}"#]
+    );
+}
+
 
 
 #[test]
