@@ -40,7 +40,7 @@ mod register_profile;
 pub(crate) mod replay;
 mod rewrite;
 mod sequence;
-mod stack;
+pub(crate) mod stack;
 mod string;
 mod template;
 use ast::{FunctionCompiler, StatementCompletion};

@@ -42,7 +42,7 @@ impl<H: Host> Vm<H> {
     /// The kind whose name `typeof value` yields: an `[[IsHTMLDDA]]` object reads as
     /// undefined (ECMA-262 B.3.6.3).
     #[inline]
-    fn typeof_kind(&self, value: Value) -> crate::ValueType {
+    pub(super) fn typeof_kind(&self, value: Value) -> crate::ValueType {
         if self.is_html_dda(value) { crate::ValueType::Undefined } else { self.value_type(value) }
     }
 
@@ -455,7 +455,7 @@ fn typeof_name_index(kind: crate::ValueType) -> usize {
 }
 
 /// The text `typeof` yields for a value of `kind`.
-fn typeof_text(kind: crate::ValueType) -> &'static str {
+pub(super) fn typeof_text(kind: crate::ValueType) -> &'static str {
     crate::bytecode::TYPEOF_NAMES[typeof_name_index(kind)]
 }
 

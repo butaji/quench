@@ -73,7 +73,7 @@ impl<H: Host> Vm<H> {
         _callee: Value,
         _cell: Option<&Cell>,
     ) -> Result<CallTarget, JsError> {
-        Err(JsError("value is not callable".into()))
+        Err(JsError(super::call_printer::NOT_CALLABLE_MESSAGE.into()))
     }
 
     /// A call of `callee` that `Native::is_pure_string_method` admits for `receiver` and
