@@ -142,6 +142,7 @@ const TLS_FACTORY: &str = quench_js_check::checked_js!(
       };
       TLSSocket.prototype.getCipher=function getCipher(){return infoOperation(this,'cipher');};
       TLSSocket.prototype.getSession=function getSession(){return infoOperation(this,'session');};
+      TLSSocket.prototype.getTLSTicket=function getTLSTicket(){return infoOperation(this,'ticket');};
       TLSSocket.prototype.isSessionReused=function isSessionReused(){return infoOperation(this,'sessionReused');};
       TLSSocket.prototype.destroySoon=function destroySoon(){
         if(this.writable)this.end();

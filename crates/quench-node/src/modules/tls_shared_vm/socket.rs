@@ -4,6 +4,14 @@ use foreign_types::ForeignTypeRef;
 use openssl::ssl::{Ssl, SslContextRef, SslSession, SslVerifyMode};
 use quench_runtime::{NativeContext, RootId, RootedError};
 
+unsafe extern "C" {
+    fn SSL_SESSION_get0_ticket(
+        session: *const openssl_sys::SSL_SESSION,
+        ticket: *mut *const u8,
+        length: *mut usize,
+    );
+}
+
 pub(crate) fn owner(
     context: &mut NativeContext<'_, NodeHost>,
     socket: RootId,
@@ -307,6 +315,7 @@ pub(crate) fn info(
             Option<Vec<openssl::x509::X509>>,
         ),
         Session(Option<Vec<u8>>),
+        Ticket(Option<Vec<u8>>),
         Verification(i32, String),
     }
     let detailed = args
@@ -348,6 +357,17 @@ pub(crate) fn info(
                         RootedError::host(format!("serialize TLS session: {error}"))
                     })?,
             ),
+            "ticket" => Info::Ticket(ssl.session().and_then(|session| {
+                let mut ticket = std::ptr::null();
+                let mut length = 0;
+                // SAFETY: OpenSSL keeps the returned ticket borrowed from the
+                // live SslSession; copy it before dropping that owner.
+                unsafe {
+                    SSL_SESSION_get0_ticket(session.as_ptr().cast(), &mut ticket, &mut length);
+                }
+                (!ticket.is_null() && length != 0)
+                    .then(|| unsafe { std::slice::from_raw_parts(ticket, length).to_vec() })
+            })),
             "verifyError" => Info::Verification(
                 ssl.verify_result().as_raw(),
                 ssl.verify_result().error_string().to_owned(),
@@ -442,18 +462,25 @@ pub(crate) fn info(
             Ok(leaf)
         }
         Info::Session(None) => Ok(context.null()),
-        Info::Session(Some(bytes)) => {
-            let typed_array = context.uint8_array_rooted(&bytes)?;
-            let global = context.global_root()?;
-            let key = context.string_rooted("Buffer");
-            let buffer = context.get_property_rooted(global, key)?;
-            let key = context.string_rooted("from");
-            let from = context.get_property_rooted(buffer, key)?;
-            context.call_rooted(from, buffer, &[typed_array])
-        }
+        Info::Session(Some(bytes)) => session_buffer(context, &bytes),
+        Info::Ticket(Some(bytes)) => session_buffer(context, &bytes),
+        Info::Ticket(None) => Ok(context.undefined()),
         Info::Verification(code, _) if code == openssl_sys::X509_V_OK => Ok(context.null()),
         Info::Verification(code, reason) => verify_error(context, code, &reason),
     }
+}
+
+fn session_buffer(
+    context: &mut NativeContext<'_, NodeHost>,
+    bytes: &[u8],
+) -> Result<RootId, RootedError> {
+    let typed_array = context.uint8_array_rooted(bytes)?;
+    let global = context.global_root()?;
+    let key = context.string_rooted("Buffer");
+    let buffer = context.get_property_rooted(global, key)?;
+    let key = context.string_rooted("from");
+    let from = context.get_property_rooted(buffer, key)?;
+    context.call_rooted(from, buffer, &[typed_array])
 }
 
 pub(super) fn get(
@@ -997,10 +1024,15 @@ pub(crate) fn secure(
     let session = super::sessions::owner(context, socket)?;
     let shared = context.host_mut().shared_state();
     let purpose = shared.borrow().tls_contexts.sessions.entries[session].purpose;
-    let (result, reason, peer, reused, servername, alpn) = {
+    let (result, reason, peer, reused, servername, alpn, session_bytes) = {
         let state = shared.borrow();
         let ssl = super::super::net_shared_vm::tls_info(&state.tcp, id)
             .ok_or_else(|| RootedError::host("TLS session disappeared"))?;
+        let session_bytes = ssl
+            .session()
+            .map(|session| session.to_der())
+            .transpose()
+            .map_err(|error| RootedError::host(format!("serialize TLS session: {error}")))?;
         (
             ssl.verify_result().as_raw(),
             ssl.verify_result().error_string().to_owned(),
@@ -1019,6 +1051,7 @@ pub(crate) fn secure(
                     .map(|byte| char::from(*byte))
                     .collect::<String>()
             }),
+            session_bytes,
         )
     };
     let options = get(context, socket, "_tlsOptions")?;
@@ -1151,6 +1184,17 @@ pub(crate) fn secure(
     super::super::net_shared_vm::authorize(&mut shared.borrow_mut().tcp, id);
     let event = context.string_rooted("secureConnect");
     method(context, socket, "emit", &[event])?;
+    // Node exposes each newly negotiated TLS session to clients after the
+    // secureConnect notification. TLS 1.3 can deliver tickets after this
+    // point through OpenSSL's new-session callback; this path covers sessions
+    // already available at handshake completion (notably TLS 1.2).
+    if !reused {
+        if let Some(bytes) = session_bytes {
+            let session = session_buffer(context, &bytes)?;
+            let event = context.string_rooted("session");
+            method(context, socket, "emit", &[event, session])?;
+        }
+    }
     Ok(context.undefined())
 }
 
