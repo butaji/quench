@@ -2,13 +2,17 @@
 //! cannot read a child's resource usage themselves (a JavaScript runner on quench-node).
 //!
 //! ```sh
-//! rss-exec [--evict PATH]... -- COMMAND [ARGUMENT]...
+//! rss-exec [--evict PATH]... [--cpu N] -- COMMAND [ARGUMENT]...
 //! ```
 //!
 //! The child inherits stdin, stdout and stderr. After it exits, the last line on stderr is
 //! `rss-exec maxrss_kib=N status=S`; `status` is the exit code, or 128 plus the signal that
 //! ended it. `--evict PATH` drops PATH's cached pages first (`POSIX_FADV_DONTNEED`), so each
-//! run faults its executable in as a cold start does.
+//! run faults its executable in as a cold start does. `--cpu N` runs the command on CPU N
+//! alone: since Linux 6.2 a process's resident counters are per-CPU, and its peak is taken from
+//! their approximate sum, so a process that migrates between CPUs reports a peak up to a few
+//! hundred KiB low at random (V8-v7 RayTrace on one binary, x86_64 4-vCPU VM, 2026-10-25:
+//! 2436-2824 KiB over 20 runs, 2796 in all 20 pinned).
 //!
 //! The child is started with `posix_spawn`, which shares this process's memory until the
 //! exec, so the launcher's own pages never count toward the child's peak.
@@ -19,6 +23,7 @@ use std::os::unix::ffi::OsStrExt;
 /// What the command line asks for.
 struct Request {
     evict: Vec<OsString>,
+    cpu: Option<usize>,
     command: Vec<OsString>,
 }
 
@@ -30,11 +35,16 @@ const USAGE_STATUS: i32 = 2;
 
 fn parse(arguments: impl Iterator<Item = OsString>) -> Result<Request, String> {
     let mut evict = Vec::new();
+    let mut cpu = None;
     let mut arguments = arguments.peekable();
     loop {
         match arguments.next() {
             Some(argument) if argument == "--evict" => {
                 evict.push(arguments.next().ok_or("--evict needs a path")?);
+            }
+            Some(argument) if argument == "--cpu" => {
+                let value = arguments.next().ok_or("--cpu needs a CPU number")?;
+                cpu = Some(value.to_str().and_then(|text| text.parse().ok()).ok_or("--cpu needs a CPU number")?);
             }
             Some(argument) if argument == "--" => break,
             Some(argument) => return Err(format!("unexpected argument {argument:?}")),
@@ -45,7 +55,7 @@ fn parse(arguments: impl Iterator<Item = OsString>) -> Result<Request, String> {
     if command.is_empty() {
         return Err("missing COMMAND after --".into());
     }
-    Ok(Request { evict, command })
+    Ok(Request { evict, cpu, command })
 }
 
 /// Drops `path`'s pages from the page cache; a path that cannot be opened is reported.
@@ -57,6 +67,19 @@ fn evict(path: &OsString) -> Result<(), String> {
         unsafe { libc::posix_fadvise(file.as_raw_fd(), 0, 0, libc::POSIX_FADV_DONTNEED) };
     if result != 0 {
         return Err(format!("{path:?}: posix_fadvise failed ({result})"));
+    }
+    Ok(())
+}
+
+/// Confines this process, and so the command it spawns, to `cpu`.
+fn pin(cpu: usize) -> Result<(), String> {
+    // SAFETY: the set is a plain bit mask this function owns; `sched_setaffinity` only reads it.
+    unsafe {
+        let mut set: libc::cpu_set_t = std::mem::zeroed();
+        libc::CPU_SET(cpu, &mut set);
+        if libc::sched_setaffinity(0, std::mem::size_of::<libc::cpu_set_t>(), &set) != 0 {
+            return Err(format!("CPU {cpu}: {}", std::io::Error::last_os_error()));
+        }
     }
     Ok(())
 }
@@ -121,13 +144,19 @@ fn main() {
     let request = match parse(std::env::args_os().skip(1)) {
         Ok(request) => request,
         Err(message) => {
-            eprintln!("rss-exec: {message}\nusage: rss-exec [--evict PATH]... -- COMMAND [ARGUMENT]...");
+            eprintln!("rss-exec: {message}\nusage: rss-exec [--evict PATH]... [--cpu N] -- COMMAND [ARGUMENT]...");
             std::process::exit(USAGE_STATUS);
         }
     };
     for path in &request.evict {
         if let Err(message) = evict(path) {
             eprintln!("rss-exec: evict {message}");
+            std::process::exit(USAGE_STATUS);
+        }
+    }
+    if let Some(cpu) = request.cpu {
+        if let Err(message) = pin(cpu) {
+            eprintln!("rss-exec: pin {message}");
             std::process::exit(USAGE_STATUS);
         }
     }

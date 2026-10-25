@@ -1,7 +1,8 @@
 // V8-v7 max RSS board, run by quench-node itself:
 //
 //   quench-node quench-bench/v8-v7-rss.cjs --quench PATH [--qjs PATH] [--node PATH]
-//     [--bun PATH] [--runs N] [--only richards,regexp] [--rss-exec PATH] [--out FILE]
+//     [--bun PATH] [--runs N] [--only richards,regexp] [--rss-exec PATH] [--rss-cpu N]
+//     [--out FILE]
 //
 // Each fixture is the pinned suite's base.js, the fixture and the stock reporting runner.
 // Every round runs each engine once, in a fixed interleaved order, through `rss-exec`
@@ -10,6 +11,11 @@
 // finite Score. Quench runs without and with --jit; Node runs --jitless and with its JIT;
 // Bun runs with BUN_JSC_useJIT=0 and with its JIT. A fixture is won when every Quench
 // sample, in both modes, is below every sample of every other engine.
+//
+// --rss-cpu N adds a second set of rounds that runs every engine on CPU N alone
+// (`rss-exec --cpu`), whose peaks are reproducible: unpinned, a peak is read from per-CPU
+// counters that migration leaves unsynchronized, a few hundred KiB low at random. Each row
+// then reports both sets, and the fixture its pinned verdict beside the unpinned one.
 "use strict";
 
 const fs = require("node:fs");
@@ -54,7 +60,7 @@ function usage(message) {
   if (message) console.error(message);
   console.error(
     "usage: quench-node quench-bench/v8-v7-rss.cjs --quench PATH [--qjs PATH] [--node PATH]" +
-      " [--bun PATH] [--runs N] [--only a,b] [--rss-exec PATH] [--out FILE]"
+      " [--bun PATH] [--runs N] [--only a,b] [--rss-exec PATH] [--rss-cpu N] [--out FILE]"
   );
   process.exit(2);
 }
@@ -68,6 +74,9 @@ const rssExec = option("--rss-exec", path.join(root, "target", "release", "rss-e
 if (!fs.existsSync(rssExec)) {
   usage(`rss-exec not found at ${rssExec}: cargo build --release -p quench-bench --bin rss-exec`);
 }
+const rssCpuOption = option("--rss-cpu", null);
+const rssCpu = rssCpuOption === null ? null : Number(rssCpuOption);
+if (rssCpu !== null && !(Number.isInteger(rssCpu) && rssCpu >= 0)) usage("--rss-cpu must be a CPU number");
 const selected = option("--only", FIXTURES.join(",")).split(",").filter(Boolean);
 for (const fixture of selected) {
   if (!FIXTURES.includes(fixture)) usage(`unknown fixture ${fixture}`);
@@ -91,11 +100,12 @@ if (bun) {
   engines.push({ name: "bun", side: "other", executable: bun, argv: [], env: {} });
 }
 
-function sample(engine, script) {
+function sample(engine, script, cpu) {
   const env = Object.assign({}, process.env, engine.env);
+  const pin = cpu === null ? [] : ["--cpu", String(cpu)];
   const result = spawnSync(
     rssExec,
-    ["--evict", engine.executable, "--", engine.executable, ...engine.argv, script],
+    ["--evict", engine.executable, ...pin, "--", engine.executable, ...engine.argv, script],
     { encoding: "utf8", env, timeout, maxBuffer: 64 * 1024 * 1024 }
   );
   const rss = RSS_LINE.exec(result.stderr || "");
@@ -115,9 +125,27 @@ function summary(values) {
   return { min: sorted[0], median: sorted[Math.floor(sorted.length / 2)], max: sorted[sorted.length - 1] };
 }
 
+// `runs` interleaved rounds of every engine on `script`, unpinned or on `cpu`, with each row's
+// samples and the fixture's verdict over them.
+function rounds(script, cpu) {
+  const samples = engines.map(() => []);
+  for (let round = 0; round < runs; round++) {
+    engines.forEach((engine, index) => samples[index].push(sample(engine, script, cpu)));
+  }
+  const rows = samples.map((entries) => {
+    const kib = entries.map((entry) => entry.kib).filter((value) => value !== null);
+    return { valid: entries.every((entry) => entry.valid), kib, ...summary(kib), samples: entries };
+  });
+  const valid = rows.every((row) => row.valid);
+  const quenchWorst = Math.max(...rows.filter((_, index) => engines[index].side === "quench").map((row) => row.max));
+  const others = rows.filter((_, index) => engines[index].side === "other");
+  const otherBest = others.length ? Math.min(...others.map((row) => row.min)) : Infinity;
+  return { rows, valid, won: valid && quenchWorst < otherBest, verdict: { quenchWorst, otherBest } };
+}
+
 const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "v8-v7-rss-"));
 const base = fs.readFileSync(path.join(suite, "base.js"), "utf8");
-const report = { runs, rssExec, engines: engines.map(({ name, executable, argv }) => ({ name, executable, argv })), fixtures: {} };
+const report = { runs, rssExec, rssCpu, engines: engines.map(({ name, executable, argv }) => ({ name, executable, argv })), fixtures: {} };
 let allWon = true;
 let allValid = true;
 try {
@@ -127,27 +155,26 @@ try {
       script,
       base + "\n" + fs.readFileSync(path.join(suite, `${fixture}.js`), "utf8") + "\n" + RUNNER
     );
-    const samples = engines.map(() => []);
-    for (let round = 0; round < runs; round++) {
-      engines.forEach((engine, index) => samples[index].push(sample(engine, script)));
-    }
+    const unpinned = rounds(script, null);
+    const pinned = rssCpu === null ? null : rounds(script, rssCpu);
     const rows = engines.map((engine, index) => {
-      const valid = samples[index].every((entry) => entry.valid);
-      const kib = samples[index].map((entry) => entry.kib).filter((value) => value !== null);
-      return { engine: engine.name, side: engine.side, valid, kib, ...summary(kib), samples: samples[index] };
+      const row = { engine: engine.name, side: engine.side, ...unpinned.rows[index] };
+      return pinned ? { ...row, pinned: pinned.rows[index] } : row;
     });
-    const valid = rows.every((row) => row.valid);
-    const quenchWorst = Math.max(...rows.filter((row) => row.side === "quench").map((row) => row.max));
-    const others = rows.filter((row) => row.side === "other");
-    const otherBest = others.length ? Math.min(...others.map((row) => row.min)) : Infinity;
-    const won = valid && quenchWorst < otherBest;
+    const valid = unpinned.valid && (!pinned || pinned.valid);
+    const won = valid && unpinned.won && (!pinned || pinned.won);
     allWon = allWon && won;
     allValid = allValid && valid;
-    report.fixtures[fixture] = { valid, won, quenchWorst, otherBest, rows };
-    console.log(`${fixture}: ${won ? "WIN" : valid ? "LOSS" : "INVALID"} (Quench worst ${quenchWorst} KiB, best other ${otherBest} KiB)`);
+    report.fixtures[fixture] = { valid, won, ...unpinned.verdict, pinned: pinned && pinned.verdict, rows };
+    const verdict = (set) => (set.won ? "WIN" : set.valid ? "LOSS" : "INVALID");
+    const pinnedText = pinned ? `; pinned ${verdict(pinned)}, worst ${pinned.verdict.quenchWorst}, best other ${pinned.verdict.otherBest}` : "";
+    console.log(
+      `${fixture}: ${verdict(unpinned)} (Quench worst ${unpinned.verdict.quenchWorst} KiB, best other ${unpinned.verdict.otherBest} KiB${pinnedText})`
+    );
     for (const row of rows) {
+      const cells = (set) => `${String(set.min).padStart(7)} ${String(set.median).padStart(7)} ${String(set.max).padStart(7)}`;
       console.log(
-        `  ${row.engine.padEnd(15)} ${String(row.min).padStart(7)} ${String(row.median).padStart(7)} ${String(row.max).padStart(7)} KiB${row.valid ? "" : "  INVALID"}`
+        `  ${row.engine.padEnd(15)} ${cells(row)} KiB${row.pinned ? `   pinned ${cells(row.pinned)} KiB` : ""}${row.valid && (!row.pinned || row.pinned.valid) ? "" : "  INVALID"}`
       );
     }
   }
