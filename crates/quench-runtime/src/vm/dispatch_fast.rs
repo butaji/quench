@@ -10000,6 +10000,25 @@ fn lane_passed_frame_call<H: Host>(
         return exit(ip);
     }
     let Some(target) = vm.in_loop_call_target(code, callee) else {
+        #[cfg(feature = "profile-lane-exits")]
+        super::lane_exits::record_detail(format!(
+            "passed frame call declined kind={:?} realm_matches={} name={:?}",
+            vm.heap.function(callee).map(|record| match record.kind {
+                FunctionKind::Native(Native::HostFunction) => vm.host_function_name(callee).unwrap_or_default().to_string(),
+                FunctionKind::Native(native) => format!("{native:?}"),
+                FunctionKind::User(..) => "user".to_string(),
+            }),
+            vm.heap.function(callee).is_some_and(|record| record.realm == vm.realm.globals),
+            vm.heap.function(callee).and_then(|record| match record.kind {
+                FunctionKind::User(program, function) => vm.programs.residual(program).and_then(|code| {
+                    let body = code.function_get(function as usize)?;
+                    Some(format!("{} @{:?} async={} generator={} in_loop={}",
+                        body.name.map(|atom| code.atoms[atom as usize].to_string()).unwrap_or_default(),
+                        body.source_span.map(|span| span.start), body.is_async, body.is_generator, body.call_plan(code).in_loop))
+                }),
+                _ => None,
+            }),
+        ));
         return exit(ip);
     };
     lane_push_frame_call(cx, r, ip, i, target, callee, receiver, passed)
@@ -10112,6 +10131,22 @@ fn lane_apply_activation<H: Host>(
         _ => (argument(0), argument(1), *args.get(2)?),
     };
     let listed = !(native == Native::FunctionApply && (list.is_undefined() || list.is_null()));
+    #[cfg(feature = "profile-lane-exits")]
+    {
+        let vm = unsafe { vm(cx) };
+        super::lane_exits::record_detail(format!(
+            "apply callee={:?} array={} arguments_object={} sparse={} holes={} activations={}",
+            vm.heap.function(callee).map(|record| match record.kind {
+                FunctionKind::User(..) => "user",
+                FunctionKind::Native(_) => "native",
+            }),
+            vm.heap.array(list).is_some(),
+            vm.heap.array(list).is_some_and(|array| array.is_arguments_object()),
+            vm.heap.sparse_length(list).is_some(),
+            vm.heap.array(list).is_some_and(|array| array.elements().as_slice().iter().any(|value| value.is_deleted())),
+            vm.lane_stack.activations.len(),
+        ));
+    }
     lane_list_activation(cx, r, ip, i, callee, receiver, list, listed)
 }
 
@@ -10140,6 +10175,39 @@ fn lane_list_activation<H: Host>(
     };
     if listed && !dense(vm) {
         return None;
+    }
+    // A bound function or `Function.prototype.call` forwards the list to the function it
+    // names (`Vm::forwarded_call`), which a forwarded call activates; the elements are copied
+    // out first, as a frame call's are.
+    if matches!(
+        vm.heap.function(callee),
+        Some(FunctionRecord { kind: FunctionKind::Native(Native::FunctionBoundCall | Native::FunctionCall), .. })
+    ) {
+        let elements = if listed {
+            vm.heap.array_elements(list)?.as_slice().iter().copied().collect()
+        } else {
+            smallvec::SmallVec::<[Value; FRAME_CALL_INLINE_ARGUMENTS]>::new()
+        };
+        let Some((target, receiver, args)) = vm.forwarded_list_call(callee, receiver, elements) else {
+            #[cfg(feature = "profile-lane-exits")]
+            super::lane_exits::record_detail("applied forwarding declined".into());
+            return None;
+        };
+        let args = args.as_slice();
+        if !matches!(vm.heap.function(target), Some(FunctionRecord { kind: FunctionKind::User(..), .. })) {
+            #[cfg(feature = "profile-lane-exits")]
+            super::lane_exits::record_detail("applied forwarding to a native".into());
+            return None;
+        }
+        let Some(activated) = lane_passed_target(cx, target, args.len()) else {
+            return Some(Err(lane_passed_frame_call(cx, r, ip, i, target, receiver, FrameCallArguments::List(args))));
+        };
+        let Some(this) = lane_call_this(vm, &activated, receiver) else {
+            #[cfg(feature = "profile-lane-exits")]
+            super::lane_exits::record_detail("applied forwarding this declined".into());
+            return Some(Err(exit(ip)));
+        };
+        return Some(lane_activate_passed(cx, r, ip, &activated, args, this));
     }
     let length = if listed { vm.heap.array(list).map_or(0, |array| array.elements().len()) } else { 0 };
     let Some(target) = lane_passed_target(cx, callee, length) else {
