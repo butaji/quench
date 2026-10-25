@@ -774,7 +774,7 @@ impl FunctionCompiler<'_, '_> {
     }
 
     fn throw_object_coercion(&mut self) {
-        let constructor = self.load_name("TypeError");
+        let constructor = self.load_name(crate::bytecode::INTRINSIC_TYPE_ERROR_BINDING);
         let message = self.literal(Constant::String(
             "cannot destructure null or undefined".into(),
         ));
