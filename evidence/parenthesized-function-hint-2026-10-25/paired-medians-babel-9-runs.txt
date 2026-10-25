@@ -1,0 +1,2 @@
+babel-wtb                qn-cr      median=   9.79 min=   9.39 max=  10.84 rss=82952
+babel-wtb                qn-paren   median=  10.33 min=  10.01 max=  10.61 rss=72100
