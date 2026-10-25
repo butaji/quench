@@ -48,3 +48,7 @@ Three-round candidate/control checks for React, Zod, and Pino are saved as `reac
 | zod-parse | +8.9% | -57.4% | -23.6% |
 
 All reports enforce output parity. Every scenario misses the 20% throughput margin over at least one available peer. RSS numbers are sampled Linux process-tree values and do not qualify the memory gate.
+
+## General-tier switch screen
+
+The five-round `*-jit-general-tier-5.json` reports set `QUENCH_JS_JIT_GENERAL_DISPATCH=1` for the candidate and unset it for the saved control via a wrapper. Against the same candidate binary with the general tier off, enabling it changed React throughput/RSS by -2.3%/+8.3%, Pino by -5.6%/+0.1%, and Zod by 0.0%/-1.0%. The switch is rejected as a package-wide setting. A separate Zod diagnostic with the switch on recorded only four native entries across 381 tracked functions; `operations` still had no general compile attempt after 36,754 dynamically counted opcodes, with a 462,400-unit work threshold. This points to missing shared JIT coverage and tier-work attribution, not a global switch flip.
