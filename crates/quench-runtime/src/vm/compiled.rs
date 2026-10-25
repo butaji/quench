@@ -12122,6 +12122,10 @@ impl<H: Host> Vm<H> {
         let mut reference_call_sites = Vec::new();
         let mut reference_cache_sites = Vec::new();
         let mut reference_cache_count = 0usize;
+        // The globals compiled code accesses, each once.
+        let mut globals: Vec<u32> = Vec::new();
+        // One pass over each callable function's full plan finds both what every body's
+        // compilation reads first: its indirect reference sites and the globals it accesses.
         for index in 0..count {
             if plans[index].is_none() {
                 continue;
@@ -12130,41 +12134,31 @@ impl<H: Host> Vm<H> {
             let function = &code.function(index);
             for (pc, packed) in function.code.iter().enumerate() {
                 let instruction = super::dispatch_fast::decoded_instruction(function, *packed);
-                if instruction.op() == Op::Call
-                    && let Slot::IndirectReference { table, .. } = full_plan.operand(pc)
-                {
-                    let site_id = reference_cache_count;
-                    reference_cache_count += 1;
-                    reference_site_ids[index].push((pc, site_id));
-                    reference_cache_sites.push((index, pc, table));
-                    if diagnostics_enabled {
-                        reference_call_sites.push(ReferenceCallSiteDiagnostics {
-                            function: index,
-                            pc,
-                            counts: std::cell::Cell::new(ReferenceCallSiteCounts::default()),
-                            targets: std::cell::RefCell::new(Vec::new()),
-                        });
+                match instruction.op() {
+                    Op::Call => {
+                        if let Slot::IndirectReference { table, .. } = full_plan.operand(pc) {
+                            let site_id = reference_cache_count;
+                            reference_cache_count += 1;
+                            reference_site_ids[index].push((pc, site_id));
+                            reference_cache_sites.push((index, pc, table));
+                            if diagnostics_enabled {
+                                reference_call_sites.push(ReferenceCallSiteDiagnostics {
+                                    function: index,
+                                    pc,
+                                    counts: std::cell::Cell::new(ReferenceCallSiteCounts::default()),
+                                    targets: std::cell::RefCell::new(Vec::new()),
+                                });
+                            }
+                        }
                     }
-                }
-            }
-        }
-        // The globals compiled code accesses, each once.
-        let mut globals: Vec<u32> = Vec::new();
-        for index in 0..count {
-            if plans[index].is_none() {
-                continue;
-            }
-            let plan = plan(index)?;
-            let function = &code.function(index);
-            for (pc, packed) in function.code.iter().enumerate() {
-                let instruction = super::dispatch_fast::decoded_instruction(function, *packed);
-                if !matches!(instruction.op(), Op::WasmGlobalGet | Op::WasmGlobalSet) {
-                    continue;
-                }
-                if let Some(Slot::Binding(slot)) = plan.operands[pc]
-                    && !globals.contains(&slot)
-                {
-                    globals.push(slot);
+                    Op::WasmGlobalGet | Op::WasmGlobalSet => {
+                        if let Some(Slot::Binding(slot)) = full_plan.operands[pc]
+                            && !globals.contains(&slot)
+                        {
+                            globals.push(slot);
+                        }
+                    }
+                    _ => {}
                 }
             }
         }
