@@ -46,6 +46,19 @@ impl WasmType {
         nullable: false,
     };
 
+    /// Whether this is `exnref` or `nullexnref`, which no JavaScript value represents.
+    pub(crate) fn is_exception_reference(self) -> bool {
+        matches!(
+            self,
+            Self::Reference {
+                kind: WasmReferenceKind::Internal(
+                    wasmparser::AbstractHeapType::Exn | wasmparser::AbstractHeapType::NoExn
+                ),
+                ..
+            }
+        )
+    }
+
     pub(crate) fn requires_declarations(self) -> bool {
         matches!(
             self,
