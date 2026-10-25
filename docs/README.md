@@ -353,7 +353,7 @@ See
 
 For local Node oracle checks, put a Node executable matching the pinned
 checkout's major version (`tests/node/src/node_version.h`) on `PATH`. The current
-checkout targets Node 27; earlier majors can differ on API contracts such as
+checkout targets Node 26 (26.12.0); other majors can differ on API contracts such as
 `util.parseEnv` object prototypes. Run the CLI/API oracle checks with
 `cargo test --profile iteration -p quench-node-test --test child_entry`.
 
