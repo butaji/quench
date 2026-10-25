@@ -48,6 +48,7 @@ const MAX_REGION_REGISTERS: usize = 128;
 const MAX_REGION_ARRAYS: usize = 8;
 const MAX_REGION_CAPTURES: usize = 16;
 const MAX_REGION_FIELDS: usize = 16;
+const MAX_REGION_FIELD_STORES: usize = 16;
 /// The largest native body a region may produce.
 pub(super) const MAX_CODE_BYTES: usize = 64 * 1024;
 
@@ -166,6 +167,10 @@ pub(crate) struct LoopRegion {
     pub(crate) fields: Vec<FieldUse>,
     /// The field each `GetField` of the region reads, by offset from the header.
     field_reads: std::collections::BTreeMap<u32, usize>,
+    /// Existing own-data Number slots stored by the region, by offset from its header.
+    field_stores: std::collections::BTreeMap<u32, usize>,
+    /// Receivers and cache sites whose flat slots are guarded before native entry.
+    pub(crate) field_store_sites: Vec<FieldStore>,
     /// The registers that hold a field's value at every read (`held_registers`), with the
     /// path they hold and that field's index.
     held: std::collections::BTreeMap<Register, (FieldPath, usize)>,
@@ -194,6 +199,7 @@ pub(crate) enum RegionRejection {
     CaptureLimit,
     ArrayLimit,
     FieldLimit,
+    FieldStoreLimit,
     FieldMutation,
 }
 
@@ -353,6 +359,13 @@ pub(crate) struct FieldUse {
     pub(crate) atom: crate::bytecode::Atom,
     pub(crate) cache_site: u16,
     pub(crate) tagged: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct FieldStore {
+    pub(crate) receiver: Register,
+    pub(crate) atom: crate::bytecode::Atom,
+    pub(crate) cache_site: u16,
 }
 
 #[derive(Clone, Copy)]
@@ -576,7 +589,9 @@ fn object_reads(instruction: WideInstruction) -> Option<Register> {
             _ => None,
         },
         Op::GetIndex => instruction.operand_b().register_index(),
-        Op::SetIndex | Op::RequireObjectCoercible => Some(instruction.register_b()),
+        Op::SetIndex | Op::SetField | Op::SetFieldStrict | Op::RequireObjectCoercible => {
+            Some(instruction.register_b())
+        }
         _ => None,
     }
 }
@@ -670,8 +685,12 @@ pub(super) fn inline_region<'a>(
     struct Site<'b> {
         frame: InlineFrame,
         callee: InlineCallee<'b>,
-        /// The callee's read.
-        read: u32,
+        /// The path the callee's read reads it through, from a root the region does not
+        /// write (a receiver given its own register reads through its path).
+        callee_path: FieldPath,
+        /// Where leaving in the call's setup resumes: the receiver's own read, else the
+        /// callee's.
+        resume: u32,
         window: Register,
         result: Register,
         reached: Vec<bool>,
@@ -771,7 +790,8 @@ pub(super) fn inline_region<'a>(
                     registers: callee.registers,
                     bound,
                 },
-                read,
+                callee_path: callee_path.clone(),
+                resume,
                 window,
                 result: instruction.result_register(),
                 reached,
@@ -866,8 +886,8 @@ pub(super) fn inline_region<'a>(
                 continue;
             }
             instructions.push(WideInstruction::new(Op::Move, frame.base + parameter, site.window + parameter, 0, 0));
-            origins.push(Origin::Caller(site.read));
-            masks.push(mask(site.read)?);
+            origins.push(Origin::Caller(site.resume));
+            masks.push(mask(site.resume)?);
         }
         let continuation = caller_flat.get(offset + 1).copied().unwrap_or_else(|| caller_target(pc + 1, &mut leaves));
         for (callee_pc, instruction) in site.callee.instructions.iter().copied().enumerate() {
@@ -916,7 +936,18 @@ pub(super) fn inline_region<'a>(
         let mut frame = site.frame;
         let written = frame.receiver >= caller_registers || defines(frame.receiver);
         (!written || held.contains_key(&frame.receiver)).then_some(())?;
-        let path = field_path(caller[(site.read - header) as usize], sites, &held)?;
+        let FieldPath { root, steps } = site.callee_path;
+        let path = match root {
+            FieldReceiver::Register(register) => match held.get(&register) {
+                Some(path) => FieldPath { root: path.root, steps: path.steps.iter().copied().chain(steps).collect() },
+                None => FieldPath { root, steps },
+            },
+            _ => FieldPath { root, steps },
+        };
+        // The root is `this`, or a register the region does not write (`field_path`).
+        if let FieldReceiver::Register(register) = path.root {
+            (!defines(register)).then_some(())?;
+        }
         frame.field = intern_field(&mut region.fields, &path, true);
         frames.push(frame);
     }
@@ -988,9 +1019,9 @@ impl LoopRegion {
 }
 
 /// The entry record native code reads: each capture's value, then each cached field's,
-/// then each array's element pointer, length and capacity. Only the words pushed are ever
-/// read, by native code and by `captures` and `field_value`, so the rest stay
-/// uninitialized.
+/// then each array's element pointer, length and capacity, then each guarded field-store
+/// pointer. Only the words pushed are ever read, by native code and by `captures` and
+/// `field_value`, so the rest stay uninitialized.
 pub(crate) struct LoopEntry {
     words: [std::mem::MaybeUninit<u64>; ENTRY_WORDS],
     length: usize,
@@ -1010,10 +1041,16 @@ const WORD_BYTES: i32 = 8;
 /// An array's entry words: its element pointer, its length, then its capacity (which only
 /// a written array's appends read).
 const ARRAY_WORDS: usize = 3;
+const FIELD_STORE_WORDS: usize = 1;
 /// The scratch registers' address an inlining region's record ends with.
 const SCRATCH_WORDS: usize = 1;
 const ENTRY_WORDS: usize =
-    ENTRY_CAPTURES + MAX_REGION_CAPTURES + ARRAY_WORDS * MAX_REGION_ARRAYS + MAX_REGION_FIELDS + SCRATCH_WORDS;
+    ENTRY_CAPTURES
+        + MAX_REGION_CAPTURES
+        + ARRAY_WORDS * MAX_REGION_ARRAYS
+        + MAX_REGION_FIELDS
+        + FIELD_STORE_WORDS * MAX_REGION_FIELD_STORES
+        + SCRATCH_WORDS;
 
 impl LoopEntry {
     pub(crate) fn new() -> Self {
@@ -1063,6 +1100,11 @@ impl LoopEntry {
         self.push(length as u64);
         self.push(capacity.min(MAX_INDEXED_LENGTH) as u64);
         Some(())
+    }
+
+    /// A warmed own-data field slot guarded by the VM during entry setup.
+    pub(crate) fn push_field_store(&mut self, slot: *mut Value) {
+        self.push(slot.addr() as u64);
     }
 
     /// The value of the region's `index`th field as pushed: its word follows the captures
@@ -1282,16 +1324,49 @@ fn admit_region(
         field_arrays: std::collections::BTreeMap::new(),
     };
     let mut field_reads = std::collections::BTreeMap::new();
+    let mut field_stores = std::collections::BTreeMap::new();
+    let mut field_store_sites = Vec::new();
+    let defined_registers: std::collections::BTreeSet<Register> = instructions
+        .iter()
+        .filter_map(|instruction| instruction.defined_register())
+        .collect();
     for (offset, instruction) in instructions.iter().copied().enumerate() {
         if instruction.op() == Op::GetField {
             let path = field_path(instruction, sites, &paths).ok_or(RegionRejection::UnsupportedInstruction(Op::GetField))?;
             let index = intern_field(&mut admission.fields, &path, tagged.contains(&instruction.result_register()));
             field_reads.insert(offset as u32, index);
         }
+        if matches!(instruction.op(), Op::SetField | Op::SetFieldStrict) {
+            if instruction.result_flags() != 0 || instruction.returns_from_frame() {
+                return Err(RegionRejection::UnsupportedInstruction(instruction.op()));
+            }
+            let receiver = instruction.register_b();
+            let atom = instruction.atom_index();
+            let cache_site = instruction.cache_site_index();
+            // A cached read of this atom could otherwise keep using its entry value after a
+            // native store. Be conservative about aliases: reject every same-name read in
+            // this small region.
+            if instructions.iter().any(|candidate| {
+                candidate.op() == Op::GetField && candidate.atom_index() == atom
+            }) {
+                return Err(RegionRejection::FieldMutation);
+            }
+            // The slot pointer is captured at entry. The receiver must therefore stay in its
+            // tagged register for the entire region.
+            if instructions.iter().any(|candidate| candidate.defined_register() == Some(receiver)) {
+                return Err(RegionRejection::FieldMutation);
+            }
+            let site = FieldStore { receiver, atom, cache_site };
+            let index = field_store_sites.iter().position(|existing| *existing == site).unwrap_or_else(|| {
+                field_store_sites.push(site);
+                field_store_sites.len() - 1
+            });
+            field_stores.insert(offset as u32, index);
+        }
         if let Some(register) = object_reads(instruction).filter(|register| paths.contains_key(register)) {
             admission.field_arrays.entry(register).or_insert(false);
         }
-        admit(&mut admission, instruction, constants, &tagged)
+        admit(&mut admission, instruction, constants, &tagged, &defined_registers)
             .ok_or(RegionRejection::UnsupportedInstruction(instruction.op()))?;
     }
     let held: std::collections::BTreeMap<Register, (FieldPath, usize)> = paths
@@ -1311,11 +1386,13 @@ fn admit_region(
     if admission.fields.len() > MAX_REGION_FIELDS {
         return Err(RegionRejection::FieldLimit);
     }
+    if field_store_sites.len() > MAX_REGION_FIELD_STORES {
+        return Err(RegionRejection::FieldStoreLimit);
+    }
     // A field read holds the value its receiver had at entry, so no instruction may give a
-    // receiver register another value. Element stores cannot change one: a store writes an
-    // own data element below the length or at it (`Lowering::store_index`), which adds,
-    // removes or redefines no property a field cache holds (an array's `length` is no
-    // shape slot).
+    // receiver register another value. Element stores and admitted field stores preserve
+    // receiver registers and object shapes. A field store to any name read in the region was
+    // rejected above, so it cannot stale a cached field value.
     if admission.fields.iter().any(|field| match field.receiver {
         FieldReceiver::This | FieldReceiver::Field(_) => false,
         FieldReceiver::Register(register) => instructions
@@ -1374,6 +1451,8 @@ fn admit_region(
         captures: admission.captures,
         fields: admission.fields,
         field_reads,
+        field_stores,
+        field_store_sites,
         held,
         identity_branches,
         instructions,
@@ -1389,6 +1468,7 @@ fn admit(
     instruction: WideInstruction,
     constants: &[Value],
     tagged: &std::collections::BTreeSet<Register>,
+    defined_registers: &std::collections::BTreeSet<Register>,
 ) -> Option<()> {
     match instruction.op() {
         Op::LoadConst => {
@@ -1460,6 +1540,17 @@ fn admit(
             admission.number(instruction.register_a())?;
             admission.array(instruction.register_b(), true)?;
             admission.number(instruction.register_c())?;
+        }
+        Op::SetField | Op::SetFieldStrict => {
+            let value_register = instruction.register_a();
+            if defined_registers.contains(&value_register) {
+                admission.number(value_register)?;
+            } else {
+                // An unchanged entry value can be any tagged value. The VM logs the
+                // receiver in the generational barrier before native writes begin.
+                admission.tagged(value_register)?;
+            }
+            admission.tagged(instruction.register_b())?;
         }
         Op::Jump => {}
         Op::JumpBinaryFalse => {
@@ -1971,9 +2062,10 @@ struct ElementIndex {
     displacement: i32,
 }
 
-/// A counted loop of a region: a loop whose body, header to backward jump, is one path but
-/// for the test that leaves it, and whose test compares an induction variable with a bound
-/// the body leaves unchanged. Every arrival at its header from outside it runs the proof of
+/// A counted loop of a region: a loop whose body, header to backward jump, reaches the test
+/// that leaves it on every path and otherwise branches only forward within itself, and
+/// whose test compares an induction variable with a bound the body leaves unchanged on
+/// every path. Every arrival at its header from outside it runs the proof of
 /// its facts (`Lowering::proof`), which selects the copy of the body without their guards
 /// or the copy with them.
 #[derive(Clone, Debug)]
@@ -2167,13 +2259,22 @@ fn int32_facts(region: &LoopRegion, webs: &Webs, representations: &[Representati
         .collect();
     // Whether every read of `web` treats its -0 as +0: a bitwise operand (ToInt32), a
     // comparison, or a sum with an `i32`, which is never -0 itself.
-    let signless_reads = |web: Definition| {
-        region.instructions.iter().copied().enumerate().all(|(offset, instruction)| {
-            let pc = region.header + offset as u32;
-            let reads = |register: Register| webs.read(region, pc, register) == web;
-            if !number_reads(instruction).into_iter().any(reads) {
-                return true;
+    // The PC offsets of each web's reads, once.
+    let mut readers: Vec<Vec<usize>> = vec![Vec::new(); webs.parent.len()];
+    for (offset, instruction) in region.instructions.iter().copied().enumerate() {
+        let pc = region.header + offset as u32;
+        for register in number_reads(instruction) {
+            let web = webs.read(region, pc, register);
+            if readers[web].last() != Some(&offset) {
+                readers[web].push(offset);
             }
+        }
+    }
+    let signless_reads = |web: Definition| {
+        readers[web].iter().all(|offset| {
+            let instruction = region.instructions[*offset];
+            let pc = region.header + *offset as u32;
+            let reads = |register: Register| webs.read(region, pc, register) == web;
             match instruction.op() {
                 Op::JumpBinaryFalse => true,
                 Op::Binary | Op::NumericAdd | Op::NumericMultiply => {
@@ -2208,11 +2309,9 @@ fn int32_facts(region: &LoopRegion, webs: &Webs, representations: &[Representati
             .iter()
             .copied()
             .filter(|web| {
-                region.instructions.iter().copied().enumerate().all(|(offset, instruction)| {
-                    let pc = region.header + offset as u32;
-                    if !number_reads(instruction).into_iter().any(|register| webs.read(region, pc, register) == *web) {
-                        return true;
-                    }
+                readers[*web].iter().all(|offset| {
+                    let instruction = region.instructions[*offset];
+                    let pc = region.header + *offset as u32;
                     match sums(instruction) {
                         Some(Arithmetic::Int32(_)) => true,
                         Some(Arithmetic::Float(NumberArithmetic::Add | NumberArithmetic::Subtract)) => {
@@ -2293,28 +2392,32 @@ fn counted_loop(
     use std::collections::{BTreeMap, BTreeSet};
     let at = |pc: u32| region.instructions[(pc - region.header) as usize];
     let body = header..backedge;
-    // One path: the test is the body's only branch, and it leaves the loop.
+    let jumps = |instruction: WideInstruction| {
+        matches!(instruction.op(), Op::Jump | Op::JumpFalse | Op::JumpTrue | Op::JumpBinaryFalse)
+    };
+    // The test leaves the loop, and every path of the body reaches it: before it, the body
+    // branches nowhere. Every other branch of the body jumps forward within it.
     let mut test = None;
+    let mut branched = false;
     for pc in body.clone() {
         let instruction = at(pc);
-        match instruction.op() {
-            Op::Jump => return None,
-            Op::JumpBinaryFalse if test.is_none() && !(header..=backedge).contains(&instruction.jump_target()) => {
-                test = Some(pc);
-            }
-            Op::JumpBinaryFalse => return None,
-            Op::JumpFalse | Op::JumpTrue => return None,
-            _ => {}
+        if !jumps(instruction) {
+            continue;
+        }
+        let target = instruction.jump_target();
+        if (pc + 1..=backedge).contains(&target) {
+            branched = true;
+        } else if instruction.op() == Op::JumpBinaryFalse && test.is_none() && !branched && !(header..=backedge).contains(&target) {
+            test = Some(pc);
+        } else {
+            return None;
         }
     }
     let test = test?;
     // Control enters only at the header.
     let enters_inside = (region.header..=region.backedge).any(|pc| {
         let instruction = at(pc);
-        matches!(
-            instruction.op(),
-            Op::Jump | Op::JumpFalse | Op::JumpTrue | Op::JumpBinaryFalse
-        ) && (header + 1..=backedge).contains(&instruction.jump_target())
+        !(header..=backedge).contains(&pc) && jumps(instruction) && (header + 1..=backedge).contains(&instruction.jump_target())
     });
     if enters_inside {
         return None;
@@ -2352,7 +2455,33 @@ fn counted_loop(
     };
     let mut candidates: Vec<Fact> = Vec::new();
     let mut tested = None;
+    // The states forward branches carry to their targets, merged where paths join: a
+    // register keeps a value all its paths agree on.
+    let mut pending: BTreeMap<u32, Vec<BTreeMap<Register, Option<Affine>>>> = BTreeMap::new();
+    let mut reached = true;
+    let merge = |state: &mut BTreeMap<Register, Option<Affine>>, reached: bool, others: Vec<BTreeMap<Register, Option<Affine>>>| {
+        let mut states: Vec<BTreeMap<Register, Option<Affine>>> = others;
+        if reached {
+            states.push(std::mem::take(state));
+        }
+        let registers: BTreeSet<Register> = states.iter().flat_map(|state| state.keys().copied()).collect();
+        *state = registers
+            .into_iter()
+            .map(|register| {
+                let mut values = states.iter().map(|state| value(state, register));
+                let first = values.next().flatten();
+                (register, first.filter(|first| values.all(|other| other == Some(*first))))
+            })
+            .collect();
+    };
     for pc in body.clone() {
+        if let Some(others) = pending.remove(&pc) {
+            merge(&mut state, reached, others);
+            reached = true;
+        }
+        if !reached {
+            continue;
+        }
         let instruction = at(pc);
         let register = |register: Register| (int32(webs.read(region, pc, register)), value(&state, register));
         let defined = || int32(webs.defined(region, pc));
@@ -2436,7 +2565,7 @@ fn counted_loop(
                 }
                 None
             }
-            Op::JumpBinaryFalse => {
+            Op::JumpBinaryFalse if pc == test => {
                 let left = source(&state, pc, instruction.operand_b())?;
                 let right = source(&state, pc, instruction.operand_c())?;
                 tested = Some((instruction.binary_operator_field(), left, right));
@@ -2447,6 +2576,13 @@ fn counted_loop(
         if let Some(register) = number_definition(instruction) {
             state.insert(register, result);
         }
+        if jumps(instruction) && (pc + 1..=backedge).contains(&instruction.jump_target()) {
+            pending.entry(instruction.jump_target()).or_default().push(state.clone());
+            reached = instruction.op() != Op::Jump;
+        }
+    }
+    if let Some(others) = pending.remove(&backedge) {
+        merge(&mut state, reached, others);
     }
     let steps: BTreeMap<Register, i64> = state
         .iter()
@@ -2631,6 +2767,9 @@ struct Lowering<'a, 'b> {
     element_reads: std::collections::HashMap<(Register, ir::Value, Representation), (Typed, ir::Block, usize)>,
     /// The element stores lowered so far; any may write any array's elements.
     element_stores: usize,
+    /// The PCs of element reads whose key an index sum lowered just before bounded
+    /// (`Lowering::index_sum`), with that sum as an `i64`.
+    bounded_reads: std::collections::BTreeMap<u32, ir::Value>,
     /// The Number each canonical encoding read from memory unboxes to, mapped to the bits as
     /// read: boxing the Number gives those bits back, so a store of it stores them.
     encodings: std::collections::HashMap<ir::Value, ir::Value>,
@@ -2736,6 +2875,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
             exact: std::collections::BTreeMap::new(),
             element_reads: std::collections::HashMap::new(),
             element_stores: 0,
+            bounded_reads: std::collections::BTreeMap::new(),
             encodings: std::collections::HashMap::new(),
             straight,
             registers,
@@ -2961,6 +3101,14 @@ impl<'a, 'b> Lowering<'a, 'b> {
             .load(types::I64, flags(), self.entry, index as i32 * WORD_BYTES)
     }
 
+    fn field_store_pointer(&mut self, index: usize) -> ir::Value {
+        let start = ENTRY_CAPTURES
+            + self.region.captures.len()
+            + self.region.fields.len()
+            + ARRAY_WORDS * self.region.arrays.len();
+        self.word(start + index)
+    }
+
     /// A block laid out after the hot code: an exit, or a representation a region rarely
     /// meets.
     fn cold_block(&mut self) -> ir::Block {
@@ -3025,9 +3173,13 @@ impl<'a, 'b> Lowering<'a, 'b> {
             self.fields.push(Typed { value, representation });
         }
         if let Some(inlining) = &self.region.inlining {
-            // The scratch registers' address follows the arrays; each inlined callee is still
-            // the function its field held when the region was made.
-            self.scratch = Some(self.word(arrays_start + ARRAY_WORDS * self.region.arrays.len()));
+            // The scratch registers' address follows arrays and field-store slots; each
+            // inlined callee is still the function its field held when the region was made.
+            self.scratch = Some(self.word(
+                arrays_start
+                    + ARRAY_WORDS * self.region.arrays.len()
+                    + self.region.field_store_sites.len(),
+            ));
             for frame in inlining.frames.clone() {
                 let held = self.fields[frame.field].value;
                 let other = self.body.builder.ins().icmp_imm_u(IntCC::NotEqual, held, frame.callee.to_bits() as i64);
@@ -3479,6 +3631,42 @@ impl<'a, 'b> Lowering<'a, 'b> {
         }
     }
 
+    /// The `i32` sum at `pc` of `left` and `right` into `register` when the next instruction
+    /// reads an element at it, with no proof covering either: the sum in `i64`, which is
+    /// exact, checked below the array's length, which also proves it an `i32`, so it needs
+    /// no overflow guard and the read no bounds check. Leaving there leaves at `pc`, before
+    /// the sum. `None` for any other sum.
+    fn index_sum(&mut self, pc: u32, register: Register, left: Typed, right: Typed) -> Option<Typed> {
+        (left.representation == Representation::Int32
+            && right.representation == Representation::Int32
+            && self.result_representation() == Representation::Int32
+            && !self.proved(pc)
+            && !self.facts.exact.contains(&pc)
+            && !self.facts.truncated.contains(&pc)
+            && pc < self.region.backedge)
+            .then_some(())?;
+        let next = pc + 1;
+        let offset = (next - self.region.header) as usize;
+        let read = self.region.instructions[offset];
+        (read.op() == Op::GetIndex
+            && read.operand_c().register_index() == Some(register)
+            && self.straight[offset]
+            && !self.proved(next))
+            .then_some(())?;
+        let array = *self.arrays.get(&read.operand_b().register_index()?)?;
+        let (left, right) = (
+            self.body.builder.ins().sextend(types::I64, left.value),
+            self.body.builder.ins().sextend(types::I64, right.value),
+        );
+        let sum = self.body.builder.ins().iadd(left, right);
+        let length = self.length(array);
+        let beyond = self.body.builder.ins().icmp(IntCC::UnsignedGreaterThanOrEqual, sum, length);
+        self.guard(pc, beyond);
+        self.bounded_reads.insert(next, sum);
+        let value = self.body.builder.ins().ireduce(types::I32, sum);
+        Some(Typed { value, representation: Representation::Int32 })
+    }
+
     /// Exits at `pc` unless `index` is below `array`'s length; an `i32` key a proof covers is.
     fn read_index(&mut self, pc: u32, array: ArrayView, index: ir::Value) {
         if self.proved(pc) {
@@ -3825,6 +4013,10 @@ impl<'a, 'b> Lowering<'a, 'b> {
                     {
                         left
                     }
+                    Arithmetic::Float(NumberArithmetic::Add) => match self.index_sum(pc, result, left, right) {
+                        Some(value) => value,
+                        None => self.arithmetic(pc, operator, result, left, right),
+                    },
                     _ => self.arithmetic(pc, operator, result, left, right),
                 };
                 self.define(result, value);
@@ -3902,6 +4094,8 @@ impl<'a, 'b> Lowering<'a, 'b> {
                 self.fall_through(pc)
             }
             Op::GetIndex => {
+                // An index sum just before checked this read's bounds (`index_sum`).
+                let bounded = self.bounded_reads.remove(&pc);
                 let base = instruction.operand_b().register_index()?;
                 let array = self.arrays[&base];
                 let key = self.operand(instruction.operand_c())?;
@@ -3916,8 +4110,14 @@ impl<'a, 'b> Lowering<'a, 'b> {
                     self.define(instruction.result_register(), value);
                     return self.fall_through(pc);
                 }
-                let (index, element) = self.element_index(pc, key);
-                self.read_index(pc, array, index);
+                let element = match bounded {
+                    Some(wide) => ElementIndex { wide, displacement: 0 },
+                    None => {
+                        let (index, element) = self.element_index(pc, key);
+                        self.read_index(pc, array, index);
+                        element
+                    }
+                };
                 let (address, displacement) = self.element_address(array.elements, element);
                 // A hole is tagged, so unboxing sends it to the general path too. A Float64
                 // element loads straight into a float register.
@@ -3950,6 +4150,14 @@ impl<'a, 'b> Lowering<'a, 'b> {
                 let value = self.register(instruction.register_a());
                 let bits = self.encoding(value);
                 self.body.builder.ins().store(flags(), bits, address, displacement);
+                self.fall_through(pc)
+            }
+            Op::SetField | Op::SetFieldStrict => {
+                let index = *self.region.field_stores.get(&(pc - self.region.header))?;
+                let pointer = self.field_store_pointer(index);
+                let value = self.register(instruction.register_a());
+                let bits = self.boxed(value);
+                self.body.builder.ins().store(flags(), bits, pointer, 0);
                 self.fall_through(pc)
             }
             Op::Jump => self.jump(pc, instruction.jump_target()),

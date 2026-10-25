@@ -2828,8 +2828,8 @@ impl ProgramStore {
     /// (`LANE_VIEW_DEFERRED_RUNS`), so code that runs a few times without looping (a module
     /// body) runs on the general path instead of first deriving a view of every instruction,
     /// which costs more than those runs.
-    pub(super) fn entry_lane_view(
-        &self,
+    pub(super) fn entry_lane_view<'s>(
+        &'s self,
         id: ProgramId,
         function: u32,
         may_loop: impl FnOnce(&crate::bytecode::Function) -> bool,
@@ -2837,7 +2837,7 @@ impl ProgramStore {
             &crate::bytecode::Function,
             &[Value],
             crate::bytecode::ProgramKind,
-            Option<&crate::compile::liveness::RegisterMasks>,
+            &dyn Fn() -> Option<&'s crate::compile::liveness::RegisterMasks>,
             &[crate::bytecode::FieldSite],
         ) -> super::dispatch_fast::LaneView,
     ) -> Option<*const super::dispatch_fast::LaneView> {
@@ -2851,8 +2851,9 @@ impl ProgramStore {
             return None;
         }
         Some(view.get_or_init(|| {
-            let live = entry.residual.register_root_masks(function);
-            let view = derive(code, &entry.constants, entry.residual.kind, live, &entry.residual.field_sites);
+            // Only a loop tier reads the masks; a collection derives them otherwise.
+            let live = || entry.residual.register_root_masks(function);
+            let view = derive(code, &entry.constants, entry.residual.kind, &live, &entry.residual.field_sites);
             #[cfg(feature = "profile-lane-exits")]
             {
                 let (start, end) = view.record_range();
@@ -2878,15 +2879,15 @@ impl ProgramStore {
                 .is_some_and(deferred_run_completes)
     }
 
-    pub(super) fn lane_view(
-        &self,
+    pub(super) fn lane_view<'s>(
+        &'s self,
         id: ProgramId,
         function: u32,
         derive: impl FnOnce(
             &crate::bytecode::Function,
             &[Value],
             crate::bytecode::ProgramKind,
-            Option<&crate::compile::liveness::RegisterMasks>,
+            &dyn Fn() -> Option<&'s crate::compile::liveness::RegisterMasks>,
             &[crate::bytecode::FieldSite],
         ) -> super::dispatch_fast::LaneView,
     ) -> Option<*const super::dispatch_fast::LaneView> {
@@ -2894,8 +2895,9 @@ impl ProgramStore {
         let code = entry.residual.function_get(function as usize)?;
         let view = entry.lane_views.of(&entry.residual).get(function as usize)?;
         Some(view.get_or_init(|| {
-            let live = entry.residual.register_root_masks(function);
-            let view = derive(code, &entry.constants, entry.residual.kind, live, &entry.residual.field_sites);
+            // Only a loop tier reads the masks; a collection derives them otherwise.
+            let live = || entry.residual.register_root_masks(function);
+            let view = derive(code, &entry.constants, entry.residual.kind, &live, &entry.residual.field_sites);
             #[cfg(feature = "profile-lane-exits")]
             {
                 let (start, end) = view.record_range();
@@ -3108,7 +3110,7 @@ impl Drop for ProgramStore {
             }
             let _ = write!(
                 stderr,
-                ",\"status\":\"{status}\",\"parameter_count\":{},\"instruction_count\":{},\"entries\":{},\"lane_entries\":{},\"numeric_entries\":{},\"promotions\":{},\"compile_attempts\":{},\"compile_successes\":{},\"general_dispatch_compile_attempts\":{},\"general_dispatch_compile_successes\":{},\"general_artifact_cache_hits\":{},\"general_artifact_cache_misses\":{},\"compile_ns\":{},\"native_entries\":{},\"native_entry_coverage_ppm\":{},\"all_entry_native_coverage_ppm\":{},\"field_cache_probes\":{},\"field_cache_hits\":{},\"field_store_cache_probes\":{},\"field_store_cache_hits\":{},\"field_return_candidate_entries\":{},\"field_return_fixed_this_entries\":{},\"field_return_fast_entries\":{},\"field_increment_candidate_entries\":{},\"field_increment_fixed_this_entries\":{},\"field_increment_fast_entries\":{},\"numeric_find_fast_entries\":{},\"fallback_entries\":{},\"interpreter_completions\":{},\"interpreter_inclusive_ns\":{},\"general_dispatch_work\":{},\"general_dispatch_work_required\":{},\"guard_census\":{{\"conditional_branch_sites\":{},\"typeof_operations\":{},\"strict_comparison_sites\":{},\"relational_comparison_sites\":{}}},\"osr\":{{\"plain_backward_jump_sites\":{},\"admitted_sites\":{},\"compile_attempts\":{},\"compile_successes\":{},\"currently_compiled_sites\":{},\"native_entry_attempts\":{},\"native_region_runs\":{},\"entry_guard_misses\":{},\"exits\":{},\"widenings\":{}}},\"call_sites\":[",
+                ",\"status\":\"{status}\",\"parameter_count\":{},\"instruction_count\":{},\"entries\":{},\"lane_entries\":{},\"numeric_entries\":{},\"promotions\":{},\"compile_attempts\":{},\"compile_successes\":{},\"general_dispatch_compile_attempts\":{},\"general_dispatch_compile_successes\":{},\"general_artifact_cache_hits\":{},\"general_artifact_cache_misses\":{},\"compile_ns\":{},\"native_entries\":{},\"native_entry_coverage_ppm\":{},\"all_entry_native_coverage_ppm\":{},\"field_cache_probes\":{},\"field_cache_hits\":{},\"field_store_cache_probes\":{},\"field_store_cache_hits\":{},\"field_return_candidate_entries\":{},\"field_return_fixed_this_entries\":{},\"field_return_fast_entries\":{},\"field_increment_candidate_entries\":{},\"field_increment_fixed_this_entries\":{},\"field_increment_fast_entries\":{},\"numeric_find_fast_entries\":{},\"fallback_entries\":{},\"interpreter_completions\":{},\"interpreter_inclusive_ns\":{},\"general_dispatch_work\":{},\"general_dispatch_work_required\":{},\"guard_census\":{{\"conditional_branch_sites\":{},\"typeof_operations\":{},\"strict_comparison_sites\":{},\"relational_comparison_sites\":{}}},\"osr\":{{\"plain_backward_jump_sites\":{},\"admitted_sites\":{},\"promotion_only_sites\":{},\"compile_attempts\":{},\"compile_successes\":{},\"currently_compiled_sites\":{},\"native_entry_attempts\":{},\"native_region_runs\":{},\"entry_guard_misses\":{},\"exits\":{},\"widenings\":{}}},\"call_sites\":[",
                 counters.parameter_count,
                 counters.instruction_count,
                 counters.entries,
@@ -3147,6 +3149,7 @@ impl Drop for ProgramStore {
                 counters.guard_relational_comparisons,
                 osr.plain_backward_jump_sites,
                 osr.admitted_sites,
+                osr.promotion_only_sites,
                 osr.compile_attempts,
                 osr.compile_successes,
                 osr.currently_compiled_sites,
@@ -3251,6 +3254,7 @@ impl Drop for ProgramStore {
                     super::compiled::RegionRejection::CaptureLimit => "capture-limit",
                     super::compiled::RegionRejection::ArrayLimit => "array-limit",
                     super::compiled::RegionRejection::FieldLimit => "field-limit",
+                    super::compiled::RegionRejection::FieldStoreLimit => "field-store-limit",
                     super::compiled::RegionRejection::FieldMutation => "field-mutation",
                 };
                 let _ = write!(stderr, "[");

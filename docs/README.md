@@ -353,7 +353,7 @@ See
 
 For local Node oracle checks, put a Node executable matching the pinned
 checkout's major version (`tests/node/src/node_version.h`) on `PATH`. The current
-checkout targets Node 27; earlier majors can differ on API contracts such as
+checkout targets Node 26 (26.12.0); other majors can differ on API contracts such as
 `util.parseEnv` object prototypes. Run the CLI/API oracle checks with
 `cargo test --profile iteration -p quench-node-test --test child_entry`.
 
@@ -769,6 +769,27 @@ profiles after the others: without them the JS tier's Cranelift compiler is laid
 cold code, and a `--jit` run faulted in about 1.1 MB more of it (V8-v7 `--jit` max RSS,
 bolted static x86_64, 2026-10-22: Crypto 4620 -> 3968 KiB, DeltaBlue 3908 -> 3368,
 Richards 2724 -> 2468; no-JIT equal or lower).
+
+The Wasm load path trains on `wasm-esm-corpus` (`quench-wasm-test`): the spec testsuite's
+modules, written as files that its `run.mjs` imports through the Wasm ESM integration (those
+importing `spectest` resolve it as a package), invoking each module's actions. Profile it
+without `--jit` and with `--jit run.mjs returns`, which skips the actions expected to trap:
+callgrind cannot follow the JIT's trap signals. Without these profiles the code of a Wasm
+import lay scattered among npm and V8-v7 code: CoreMark imported as a module executed about
+125 KB of code lines over 984 KB of pages during its run. Bolted with the corpus's profiles
+alone, its max RSS without JIT fell 3784 -> 3296 KiB (static x86_64, 9 evicted runs, medians,
+2026-10-25; Score equal). Training never uses CoreMark itself.
+
+```sh
+target/production/wasm-esm-corpus corpus crates/quench-wasm-test/testsuite/{address,block,br,\
+br_if,br_table,bulk,call,call_indirect,conversions,data,elem,endianness,exports,f32,f64,fac,\
+forward,func,global,i32,i64,if,imports,int_exprs,int_literals,labels,left-to-right,load,\
+local_get,local_set,local_tee,loop,memory,memory_copy,memory_fill,memory_grow,memory_size,nop,\
+ref_func,ref_is_null,ref_null,return,select,stack,start,store,switch,table,table_get,\
+table_grow,table_set,table_size,traps,unwind}.wast
+valgrind --tool=callgrind --dump-instr=yes --dump-line=no --demangle=no quench-node corpus/run.mjs
+valgrind --tool=callgrind ... quench-node --jit corpus/run.mjs returns
+```
 
 `-jump-tables=move` lays the jump tables of hot code beside it, apart from the cold
 ones: in place, the `match` tables of the dispatch and the compiler sit among

@@ -710,9 +710,17 @@ impl<H: Host> Vm<H> {
     /// (`inherited_index_unclaimed`), and HasProperty of it finds nothing inherited
     /// (`inherited_index_absent`), whichever the index.
     pub(super) fn prototypes_hold_no_index(&self, object: Value) -> bool {
-        let mut current = self.object_data(object).map(|data| data.proto());
+        let first = self.object_data(object).map(|data| data.proto());
+        // The epoch's proof answers a chain it covers without the walk.
+        if first.is_some_and(|first| self.chain_holds_no_index(first)) {
+            return true;
+        }
+        let mut current = first;
         while let Some(holder) = current.filter(|value| !value.is_null()) {
-            if matches!(self.heap.get(holder), Some(Cell::Proxy { .. } | Cell::TypedArray { .. })) {
+            // A direct object or array record is neither a Proxy nor a typed array, whose
+            // cells only a slot holds.
+            let record = holder.direct_object_index().is_some() || holder.direct_array_index().is_some();
+            if !record && matches!(self.heap.get(holder), Some(Cell::Proxy { .. } | Cell::TypedArray { .. })) {
                 return false;
             }
             let Some(data) = self.object_data(holder) else {
@@ -1210,7 +1218,9 @@ impl<H: Host> Vm<H> {
         self.heap.object_mut(value)
     }
     pub(super) fn is_object_like(&self, value: Value) -> bool {
-        self.heap.object(value).is_some() || matches!(self.heap.get(value), Some(Cell::Error(_)))
+        self.heap.object(value).is_some()
+            || matches!(self.heap.get(value), Some(Cell::Error(_)))
+            || self.is_wasm_gc_object(value)
     }
     #[inline(always)]
     pub(super) fn get_field_cached(
@@ -2779,6 +2789,9 @@ impl<H: Host> Vm<H> {
         if target == receiver && self.set_plain_named_property(target, atom, value).is_some() {
             return Ok(true);
         }
+        if self.is_wasm_gc_object(target) {
+            return Err(self.wasm_gc_opaque_error(p));
+        }
         let _stack = self.enter_stack()?;
         if self.is_private_name(atom) {
             self.check_private_brand(p, target, atom)?;
@@ -3134,6 +3147,51 @@ impl<H: Host> Vm<H> {
         Ok(())
     }
 
+    /// A new accessor property, reaching the shape `set_shape_property` then
+    /// `set_property_attributes` would: the default data add, then the descriptor transition
+    /// of its slot, without looking the just-added slot up again or writing it twice.
+    /// Re-exports (`__createBinding`, `__export`) define these by the thousand.
+    pub(super) fn create_shape_accessor_property(
+        &mut self,
+        object: Value,
+        key: PropertyKey,
+        attributes: PropertyAttributes,
+    ) -> Result<(), JsError> {
+        debug_assert!(attributes.accessor, "an accessor property has accessor attributes");
+        let shape = self
+            .object_data(object)
+            .ok_or_else(|| JsError("property write on non-object".into()))?
+            .shape();
+        self.check_property_key_write(object, key, false)?;
+        let slot = u32::try_from(self.shapes[shape as usize].storage_len())
+            .expect("object property index exceeds u32");
+        let added = self.transition_data_property_shape(shape, key, DEFAULT_DATA_ATTRIBUTES);
+        let recorded = ShapeAttributes::record(attributes, &mut self.shape_accessors);
+        let next_shape = self.append_cached_shape_transition(
+            added,
+            ShapeTransition::Descriptor { slot, attributes: recorded },
+        );
+        let value = if recorded.slot_getter() {
+            attributes.getter.expect("a slot getter record has a getter")
+        } else {
+            Value::UNDEFINED
+        };
+        self.heap.property_add(object, value, next_shape);
+        // A getter and setter pair is held by the shape's accessor table, not by the slot, so
+        // the add's store passes no barrier for it: the owner is logged as a descriptor
+        // transition logs it, or a minor collection frees the young functions.
+        if recorded.table_accessors() {
+            self.heap.write_barrier(object);
+        }
+        if let PropertyKey::String(atom) = key
+            && self.method_caches_may_name(atom)
+        {
+            self.invalidate_method_caches_for_prototype_add(object, atom);
+        }
+        self.invalidate_method_caches_for_key(key);
+        Ok(())
+    }
+
     #[inline(always)]
     pub(super) fn set_field_cached(
         &mut self,
@@ -3191,6 +3249,60 @@ impl<H: Host> Vm<H> {
         };
         self.profile.field_cache_hit(0, 0);
         true
+    }
+
+    /// The raw address for a warmed, own-data store site whose exact receiver shape still
+    /// matches. Shared OSR uses this only for Number values in a region that cannot allocate,
+    /// collect, or call guest code; misses stay on the interpreter path before the store.
+    ///
+    /// # Safety
+    /// The caller must keep `object` rooted and must use the returned pointer only during the
+    /// current no-allocation OSR run. It may write only non-reference values; heap references
+    /// require the collector's write barrier.
+    #[inline(always)]
+    pub(super) unsafe fn cached_field_store_pointer(
+        &mut self,
+        p: &ResidualProgram,
+        object: Value,
+        atom: Atom,
+        site: u16,
+    ) -> Option<*mut Value> {
+        if !(self.specialized && p.specialized)
+            || self.is_private_name(atom)
+            || !self.field_cache_atom_eligible(atom)
+            || self.method_caches_may_name(atom)
+        {
+            return None;
+        }
+        let data = self.heap.object(object)?;
+        if data.is_module_namespace() || data.is_arguments_object() {
+            return None;
+        }
+        let properties = data.properties();
+        if properties.has_inline_property_storage() || properties.is_dictionary() {
+            return None;
+        }
+        let cache = self.field_cache_entry(site);
+        if cache.holder != NO_FIELD_HOLDER || cache.receiver != data.shape() {
+            return None;
+        }
+        let slot = cache.slot as usize;
+        // Integrity changes can update descriptor attributes without changing the
+        // receiver's shape. Recheck the current own descriptor before bypassing the
+        // ordinary SetField path, which must observe read-only and accessor semantics.
+        if self.property_shape_slot(data.shape(), PropertyKey::string(atom)) != Some(slot)
+            || !self
+                .property_attributes(object, PropertyKey::string(atom))
+                .is_some_and(|attributes| attributes.writable && !attributes.accessor)
+        {
+            return None;
+        }
+        // SAFETY: the exact own-data cache shape proves this slot. The caller guarantees the
+        // pointer does not outlive the no-allocation native region and applies the owner's
+        // write barrier before native code may store a tagged value through it.
+        let pointer = unsafe { self.heap.flat_property_mut_ptr_unchecked(object, slot) }?;
+        self.heap.write_barrier(object);
+        Some(pointer)
     }
 
     /// Increment or decrement a cached own writable Number field without
@@ -3290,6 +3402,9 @@ impl<H: Host> Vm<H> {
         site: u16,
         strict: bool,
     ) -> Result<(), JsError> {
+        if self.is_wasm_gc_object(object) {
+            return Err(self.wasm_gc_opaque_error(p));
+        }
         // Assignment to a nullish base is an abrupt completion regardless of
         // strictness. Keep it on the canonical realm-owned TypeError path;
         // the generic object mutator's fallback error is not an ECMAScript

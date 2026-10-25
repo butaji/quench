@@ -906,6 +906,7 @@ impl Native {
                 | Self::ObjectKeys
                 | Self::ObjectDefineProperty
                 | Self::ObjectGetPrototypeOf
+                | Self::ObjectSetPrototypeOf
                 | Self::ObjectEntries
                 | Self::ObjectGetOwnPropertyNames
                 | Self::ObjectHasOwn
@@ -925,6 +926,8 @@ impl Native {
                 | Self::WeakMapSet
                 | Self::FinalizationRegistryRegister
                 | Self::TypedArrayToStringTag
+                | Self::FunctionBind
+                | Self::Array
         )
     }
 

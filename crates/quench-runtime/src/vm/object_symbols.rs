@@ -647,6 +647,9 @@ impl<H: Host> Vm<H> {
         value: Value,
         receiver: Value,
     ) -> Result<bool, JsError> {
+        if self.is_wasm_gc_object(target) {
+            return Err(self.wasm_gc_opaque_error(p));
+        }
         if self.is_host_private_symbol(key) {
             if matches!(self.heap.get(target), Some(Cell::Proxy { .. })) { return Ok(false); }
             let own = self.ordinary_own_property(p, target, key)?;
