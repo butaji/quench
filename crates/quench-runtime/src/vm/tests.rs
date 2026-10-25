@@ -12152,6 +12152,71 @@ fn shared_osr_moves_tagged_array_values_before_effectful_calls() {
 
 #[test]
 #[cfg(not(quench_profiled))]
+fn shared_osr_reads_tagged_dense_values_and_falls_back_on_array_holes() {
+    // A dense indexed read may produce any JS value. Native code can carry that boxed word
+    // through a Move, but a hole must leave at GetIndex so prototype lookup stays in the VM.
+    let source = r#"
+      let calls = 0;
+      let sawHole = false;
+      const values = [{ kind: "present" }];
+      function effect(value) {
+        calls++;
+        if (calls === 1001) delete values[0];
+        if (value === undefined) sawHole = true;
+      }
+      function run(array, callback) {
+        for (let index = 0; index < 2000; index++) {
+          const value = array[0];
+          callback(value);
+        }
+      }
+      for (let repeat = 0; repeat < 25; repeat++) run(values, effect);
+      print(sawHole + " " + calls);
+    "#;
+    let program = Engine::specialize(source, "osr-tagged-array-read-hole-call-boundary.js").unwrap();
+    let function_id = program
+        .functions
+        .iter()
+        .position(|function| {
+            function
+                .header()
+                .name
+                .is_some_and(|name| &program.atoms[name as usize] == "run")
+        })
+        .unwrap();
+
+    let interpreted_output = Rc::new(RefCell::new(Vec::new()));
+    Vm::new(TestHost::writing_to(interpreted_output.clone()))
+        .execute(&program)
+        .unwrap();
+
+    let compiled_output = Rc::new(RefCell::new(Vec::new()));
+    let mut compiled = Vm::new(TestHost::writing_to(compiled_output.clone()));
+    compiled.set_memory_policy(crate::MemoryPolicy::Throughput);
+    compiled.set_execution_mode(crate::ExecutionMode::Compiled);
+    compiled.programs.enable_js_jit_diagnostics();
+    compiled.execute(&program).unwrap();
+    assert_eq!(compiled_output.borrow().as_slice(), interpreted_output.borrow().as_slice());
+    assert_eq!(compiled_output.borrow().as_slice(), ["true 50000"]);
+
+    let view = compiled
+        .programs
+        .lane_views(super::program_store::ProgramId::MAIN)
+        .unwrap()
+        .get(function_id)
+        .and_then(std::cell::OnceCell::get)
+        .expect("hot tagged-index callback loop lane view");
+    let osr = view.osr_diagnostics();
+    assert_eq!(osr.sites.len(), 1, "one loop must have one OSR site: {osr:?}");
+    let site = &osr.sites[0];
+    assert!(site.admitted && site.deferred_call, "the callback remains an exact-PC boundary: {site:?}");
+    assert!(site.compile_attempts > 0 && site.native_region_runs > 0, "tagged indexed reads should execute natively: {site:?}");
+    assert!(site.exits > 0, "the dynamic call and hole fallbacks must leave the native region: {site:?}");
+    assert_eq!(site.call_boundary_pcs.len(), 1, "one dynamic callback site: {site:?}");
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
 fn shared_osr_exact_effect_exit_preserves_prefix_across_gc_and_throw() {
     // The hot loop has a long numeric prefix and one call site whose callee collects and
     // throws a unique object. An exact-PC exit must preserve the numeric prefix, run the

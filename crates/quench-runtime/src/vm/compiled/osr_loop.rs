@@ -587,7 +587,7 @@ fn tagged_registers_with_failure(
                     }
                 }
                 // A cached field's value, which the entry record carries tagged.
-                Op::GetField => {}
+                Op::GetField | Op::GetIndex => {}
                 _ => {
                     if std::env::var_os("QUENCH_JS_JIT_TRACE_OSR_REJECT").is_some() {
                         eprintln!(
@@ -1868,7 +1868,11 @@ fn admit(
             admission.array(instruction.register_b(), false)?;
         }
         Op::GetIndex => {
-            admission.result(instruction)?;
+            if tagged.contains(&instruction.result_register()) {
+                admission.tagged(instruction.result_register())?;
+            } else {
+                admission.result(instruction)?;
+            }
             let base = instruction.operand_b().register_index()?;
             admission.array(base, false)?;
             admission.source(instruction.operand_c())?;
@@ -4754,7 +4758,11 @@ impl<'a, 'b> Lowering<'a, 'b> {
                 let base = instruction.operand_b().register_index()?;
                 let array = self.arrays[&base];
                 let key = self.operand(instruction.operand_c())?;
-                let representation = element_representation(&instruction, self.observation);
+                let representation = if self.region.tagged.contains(&instruction.result_register()) {
+                    Representation::Tagged
+                } else {
+                    element_representation(&instruction, self.observation)
+                };
                 let current = self.body.builder.current_block().expect("lowering inside a block");
                 let chain = self.chain(current);
                 // Two reads of one key definition key alike (`int32_key`).
@@ -4793,7 +4801,16 @@ impl<'a, 'b> Lowering<'a, 'b> {
                         let exit = self.exit_block(pc);
                         self.unbox_float64(double, exit)
                     }
-                    Representation::Tagged => return None,
+                    Representation::Tagged => {
+                        let bits = self.body.builder.ins().load(types::I64, flags(), address, displacement);
+                        let hole = self
+                            .body
+                            .builder
+                            .ins()
+                            .icmp_imm_u(IntCC::Equal, bits, Value::DELETED.to_bits() as i64);
+                        self.guard(pc, hole);
+                        bits
+                    }
                 };
                 self.element_reads.insert(read, (Typed { value, representation }, chain, self.element_stores));
                 self.define(instruction.result_register(), Typed { value, representation });
