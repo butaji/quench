@@ -11591,6 +11591,101 @@ fn shared_osr_reads_fields_in_a_loop_that_stores_elements() {
 
 #[test]
 #[cfg(not(quench_profiled))]
+fn shared_osr_stores_guarded_numeric_own_fields_in_a_loop() {
+    let source = r#"
+      function fill(item, limit) {
+        for (let index = 0; index < limit; index++) {
+          item.value = (index + 1) * 0.5;
+          item.other = index + 1;
+        }
+        return limit;
+      }
+      function fillReference(item, value, limit) {
+        for (let index = 0; index < limit; index++) item.reference = value;
+        return item.reference === value ? limit : -1;
+      }
+      const item = { value: 0, other: 0, left: 1, right: 2 };
+      const reference = {};
+      const referenceTarget = { reference: null, left: 1, right: 2 };
+      const frozen = { value: 0, other: 0, left: 1, right: 2 };
+      let answer = 0;
+      for (let call = 0; call < 80; call++) answer += fill(item, 2000);
+      fill(frozen, 3);
+      Object.freeze(frozen);
+      fill(frozen, 4);
+      answer += fillReference(referenceTarget, reference, 2000);
+      let setterCalls = 0;
+      Object.defineProperty(item, "value", {
+        set(value) { setterCalls++; }, configurable: true
+      });
+      answer += fill(item, 10);
+      let proxyCalls = 0;
+      const proxyTarget = { value: 0, other: 0, left: 1, right: 2 };
+      const proxy = new Proxy(proxyTarget, {
+        set(target, key, value) { proxyCalls++; target[key] = value; return true; }
+      });
+      fill(proxy, 5);
+      print(answer + " " + setterCalls + " " + proxyCalls + " " +
+        (referenceTarget.reference === reference) + " " + item.other + " " + proxyTarget.other + " " + frozen.other);
+    "#;
+    let program = Engine::specialize(source, "osr-field-store-numeric.js").unwrap();
+    let function_id = program
+        .functions
+        .iter()
+        .position(|function| {
+            function
+                .header()
+                .name
+                .is_some_and(|atom| &program.atoms[atom as usize] == "fill")
+        })
+        .unwrap();
+
+    let interpreted_output = Rc::new(RefCell::new(Vec::new()));
+    let mut interpreter = Vm::new(TestHost::writing_to(interpreted_output.clone()));
+    interpreter.set_execution_mode(crate::ExecutionMode::Interpreted);
+    interpreter.execute(&program).unwrap();
+
+    let compiled_output = Rc::new(RefCell::new(Vec::new()));
+    let mut compiled = Vm::new(TestHost::writing_to(compiled_output.clone()));
+    compiled.set_memory_policy(crate::MemoryPolicy::Throughput);
+    compiled.set_execution_mode(crate::ExecutionMode::Compiled);
+    compiled.programs.enable_js_jit_diagnostics();
+    compiled.execute(&program).unwrap();
+
+    assert_eq!(compiled_output.borrow().as_slice(), interpreted_output.borrow().as_slice());
+    assert_eq!(compiled_output.borrow().as_slice(), ["162010 10 10 true 10 5 3"]);
+    let views = compiled
+        .programs
+        .lane_views(super::program_store::ProgramId::MAIN)
+        .expect("main program lane views");
+    let osr = views
+        .get(function_id)
+        .and_then(std::cell::OnceCell::get)
+        .expect("hot field-store loop lane view")
+        .osr_diagnostics();
+    assert!(osr.currently_compiled_sites > 0, "field-store loop did not compile: {osr:?}");
+    assert!(osr.native_region_runs > 0, "field-store loop never ran natively: {osr:?}");
+    let reference_id = program
+        .functions
+        .iter()
+        .position(|function| {
+            function
+                .header()
+                .name
+                .is_some_and(|atom| &program.atoms[atom as usize] == "fillReference")
+        })
+        .unwrap();
+    let reference_osr = views
+        .get(reference_id)
+        .and_then(std::cell::OnceCell::get)
+        .expect("hot reference field-store loop lane view")
+        .osr_diagnostics();
+    assert!(reference_osr.currently_compiled_sites > 0, "reference field-store loop did not compile: {reference_osr:?}");
+    assert!(reference_osr.native_region_runs > 0, "reference field-store loop never ran natively: {reference_osr:?}");
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
 fn shared_osr_appends_and_fills_holes_in_place() {
     // The loops append at the length while the backing has room and fill holes below it.
     // Once a prototype holds an index, the entry declines, and the setter it defines runs.
