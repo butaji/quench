@@ -25,8 +25,8 @@
 
 use super::*;
 use crate::bytecode::{
-    ControlFlowLayout, FieldLookup, Function, JsDenotation, Operand, OperandKind, RETURN_REGISTER,
-    WideInstruction,
+    ControlFlowLayout, FieldLookup, Function, JsDenotation, Operand, OperandKind, ResidualProgram,
+    RETURN_REGISTER, WideInstruction,
 };
 use crate::wasm::conversion::ScalarConversionOperator;
 use crate::wasm::float::{
@@ -3316,6 +3316,72 @@ const MEMCPY_CACHE_FUNCTION: i32 = std::mem::offset_of!(EmscriptenMemcpyCache, f
 /// The callout's signature: (context, function index, arguments, result) ->
 /// status; arguments and result are Wasm bits, one word each.
 type Callout = unsafe extern "C" fn(*mut CallContext, u64, *const u64, *mut u64) -> i64;
+type OsrFieldProbeCallout = unsafe extern "C" fn(*mut CallContext, u64, u64, *mut u64) -> i64;
+
+#[repr(C)]
+struct OsrFieldProbePayload {
+    function: u32,
+    program: Option<Rc<ResidualProgram>>,
+    diagnostics_enabled: bool,
+}
+
+/// A cache-only JavaScript OSR helper. `receiver_bits` is passed in the ABI's arguments word
+/// (it is deliberately not dereferenced as a pointer); the cache site is the function word.
+/// A miss returns before any accessor, proxy trap, or other guest-visible operation runs.
+unsafe extern "C" fn osr_field_probe<H: Host>(
+    context: *mut CallContext,
+    cache_site: u64,
+    receiver_bits: u64,
+    result: *mut u64,
+) -> i64 {
+    let active = ACTIVE_CONTEXT.with(|current| current.replace(std::ptr::null_mut()));
+    // SAFETY: `CompiledOsrRegion::run` owns this context, VM and payload until this
+    // synchronous callback returns. The helper performs no guest call and retains no pointer.
+    let context_ref = unsafe { &mut *context };
+    let called = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        if context_ref.vm.is_null() || result.is_null() {
+            return None;
+        }
+        let site = u16::try_from(cache_site).ok()?;
+        // SAFETY: the stack payload lives through this native entry and owns a residual Rc,
+        // avoiding a ProgramStore lookup/refcount on every probed field read.
+        let payload = unsafe { &*context_ref.adapter_payload.cast::<OsrFieldProbePayload>() };
+        let program = payload.program.as_deref()?;
+        let vm = unsafe { &mut *context_ref.vm.cast::<Vm<H>>() };
+        // The ABI slot is used as a raw 64-bit Value, never as an address.
+        let receiver = Value::from_bits(receiver_bits);
+        let probe = vm.cached_field_hit(program, receiver, site);
+        if payload.diagnostics_enabled {
+            let function = payload.function;
+            vm.programs.record_js_jit_field_cache_probe(
+                context_ref.program,
+                function,
+                site,
+                matches!(&probe, super::object::FieldCacheProbe::Hit(_)),
+            );
+        }
+        match probe {
+            super::object::FieldCacheProbe::Hit(value) => Some(value),
+            super::object::FieldCacheProbe::OrdinaryMiss
+            | super::object::FieldCacheProbe::Ineligible => None,
+        }
+    }));
+    ACTIVE_CONTEXT.with(|current| current.set(active));
+
+    match called {
+        Ok(Some(value)) => {
+            // SAFETY: generated code supplies a valid result word.
+            unsafe { result.write(value.to_bits()) };
+            0
+        }
+        Ok(None) => 1,
+        Err(panic) => {
+            context_ref.raised = Some(Raised::Panic(panic));
+            RAISED_STATUS
+        }
+    }
+}
+
 type DirectMemcpyLeaf = unsafe extern "C" fn(*mut CallContext, u64, i32, i32, i32) -> i64;
 type ReferenceCallout = unsafe extern "C" fn(
     *mut CallContext,
@@ -4937,15 +5003,35 @@ impl CompiledOsrRegion {
     /// # Safety
     /// `registers` is the running activation's register file, at least `Function::registers`
     /// long; `entry` was built for this region from the current values of its arrays and
-    /// captures, which nothing changes while the call runs; `interrupt` is the VM's, whose
-    /// poll page the region was compiled for (`compile_osr_region`).
-    pub(super) unsafe fn run(
+    /// captures, which nothing changes while the call runs; `vm` and `interrupt` belong to
+    /// this lane activation, which excludes other mutable VM access while native code runs.
+    pub(super) unsafe fn run<H: Host>(
         &self,
         registers: *mut crate::value::Value,
         entry: &mut LoopEntry,
-        interrupt: &crate::execution_interrupt::ExecutionInterrupt,
+        vm: *mut Vm<H>,
+        program: ProgramId,
+        function: u32,
+        interrupt: *const crate::execution_interrupt::ExecutionInterrupt,
     ) -> LoopOutcome {
-        let mut context = CallContext::interrupt_only(interrupt);
+        // SAFETY: the caller keeps the VM alive and excludes other mutable VM access while
+        // native code runs. The interrupt reference is used only to construct raw ABI fields.
+        let mut context = CallContext::interrupt_only(unsafe { &*interrupt });
+        // Keep the immutable residual alive independently of the mutable VM borrow while the
+        // native region invokes its cache-only field probe.
+        let (program_data, diagnostics_enabled) = unsafe {
+            let vm = &*vm;
+            (vm.programs.get(program), vm.programs.js_jit_diagnostics_enabled())
+        };
+        let mut payload = OsrFieldProbePayload {
+            function,
+            program: program_data,
+            diagnostics_enabled,
+        };
+        context.vm = vm.cast();
+        context.program = program;
+        context.callout = osr_field_probe::<H> as OsrFieldProbeCallout as usize;
+        context.adapter_payload = (&mut payload as *mut OsrFieldProbePayload).cast();
         let mut word = 0u64;
         // SAFETY: as the caller promises; the code reads and writes only those and the
         // result word.
@@ -4960,6 +5046,9 @@ impl CompiledOsrRegion {
                 self.entry,
             )
         };
+        if let Some(Raised::Panic(panic)) = context.raised.take() {
+            std::panic::resume_unwind(panic);
+        }
         if i64::from(status) == TERMINATED_STATUS {
             LoopOutcome::Terminated
         } else {
@@ -6417,10 +6506,11 @@ struct Plan {
 impl Plan {
     /// The plan as its callers see it: only the function being compiled
     /// holds its per-instruction facts.
-    fn interface(self) -> Self {
+    fn interface(&self) -> Self {
         Self {
+            params: self.params.clone(),
+            result: self.result,
             operands: Vec::new(),
-            ..self
         }
     }
 
@@ -9765,10 +9855,118 @@ impl<H: Host> Emitter<'_, '_, H> {
     }
 }
 
+/// The machine code of a built function and its calls to other compiled functions; `None`
+/// when Cranelift refuses it or its code needs a relocation other than such a call. It reads
+/// only the function and the target, so any thread may run it.
+fn compile_built(
+    isa: &dyn cranelift_codegen::isa::TargetIsa,
+    func: ir::Function,
+) -> Option<(Vec<u8>, Vec<Call>)> {
+    let mut context = cranelift_codegen::Context::for_function(func);
+    let compiled = context
+        .compile(isa, &mut cranelift_codegen::control::ControlPlane::default())
+        .ok()?;
+    let code = compiled.code_buffer().to_vec();
+    let relocations = compiled.buffer.relocs().to_vec();
+    let names = context.func.params.user_named_funcs();
+    let calls = relocations
+        .iter()
+        .map(|relocation| {
+            let cranelift_codegen::FinalizedRelocTarget::ExternalName(ir::ExternalName::User(
+                name,
+            )) = relocation.target
+            else {
+                return None;
+            };
+            let name = names.get(name)?;
+            (name.namespace == FUNCTION_NAMESPACE).then_some(Call {
+                offset: relocation.offset as usize,
+                kind: relocation.kind,
+                addend: relocation.addend,
+                callee: name.index as usize,
+            })
+        })
+        .collect::<Option<Vec<_>>>()?;
+    Some((code, calls))
+}
+
+/// Built functions queued for each compile worker: one compiling and one ready keeps every
+/// worker busy while the building thread stays ahead, and bounds the Cranelift functions
+/// alive at once (each holds its whole body's IR) to a few per worker.
+const BUILT_FUNCTIONS_QUEUED_PER_WORKER: usize = 2;
+
+/// Each of `count` functions' compiled body, by index, from the built functions `build`
+/// yields in index order: the building stays on this thread, which owns the VM, and the
+/// compiling, which needs only the function and the target, runs on one worker per
+/// available CPU. `None` when any function fails to build or compile, as the sequential
+/// artifact fails.
+fn compile_built_functions(
+    isa: &dyn cranelift_codegen::isa::TargetIsa,
+    count: usize,
+    build: impl Iterator<Item = Option<(usize, ir::Function)>>,
+) -> Option<Vec<Option<(Vec<u8>, Vec<Call>)>>> {
+    let workers = std::thread::available_parallelism()
+        .map_or(1, std::num::NonZeroUsize::get)
+        .min(count);
+    let mut bodies: Vec<Option<(Vec<u8>, Vec<Call>)>> = std::iter::repeat_with(|| None).take(count).collect();
+    if workers <= 1 {
+        for built in build {
+            let (index, func) = built?;
+            bodies[index] = Some(compile_built(isa, func)?);
+        }
+        return Some(bodies);
+    }
+    let failed = std::sync::atomic::AtomicBool::new(false);
+    let (work, queue) =
+        std::sync::mpsc::sync_channel::<(usize, ir::Function)>(workers * BUILT_FUNCTIONS_QUEUED_PER_WORKER);
+    let queue = std::sync::Mutex::new(queue);
+    let (done, results) = std::sync::mpsc::channel();
+    let built_all = std::thread::scope(|scope| {
+        for _ in 0..workers {
+            let (queue, done, failed) = (&queue, done.clone(), &failed);
+            scope.spawn(move || {
+                loop {
+                    let next = queue.lock().ok().and_then(|queue| queue.recv().ok());
+                    let Some((index, func)) = next else { break };
+                    if failed.load(std::sync::atomic::Ordering::Relaxed) {
+                        continue;
+                    }
+                    match compile_built(isa, func) {
+                        Some(body) => {
+                            let _ = done.send((index, body));
+                        }
+                        None => failed.store(true, std::sync::atomic::Ordering::Relaxed),
+                    }
+                }
+            });
+        }
+        drop(done);
+        let mut built_all = true;
+        for built in build {
+            let Some(built) = built else {
+                built_all = false;
+                break;
+            };
+            if failed.load(std::sync::atomic::Ordering::Relaxed) || work.send(built).is_err() {
+                break;
+            }
+        }
+        drop(work);
+        built_all
+    });
+    if !built_all || failed.into_inner() {
+        return None;
+    }
+    for (index, body) in results {
+        bodies[index] = Some(body);
+    }
+    Some(bodies)
+}
+
 impl<'a, H: Host> Analysis<'a, H> {
-    /// Compile `index` with `plan`; `None` when Cranelift refuses it or its
-    /// code needs a relocation other than a call to a compiled function.
-    fn compile_function(
+    /// The Cranelift function of `index` with `plan`, ready for `compile_built`; `None` when
+    /// a construct has no lowering.
+    fn build_function(
         &self,
         isa: &dyn cranelift_codegen::isa::TargetIsa,
         index: usize,
@@ -9779,7 +9977,7 @@ impl<'a, H: Host> Analysis<'a, H> {
         globals: &[u32],
         reference_site_ids: &'a [(usize, usize)],
         diagnostics_enabled: bool,
-    ) -> Option<(Vec<u8>, Vec<Call>)> {
+    ) -> Option<ir::Function> {
         let function = &self.code.function(index);
         let call_conv = isa.default_call_conv();
         let memory = MemoryArguments::of(fixed_base, guarded);
@@ -9994,35 +10192,7 @@ impl<'a, H: Host> Analysis<'a, H> {
         emitter.finish_traps();
         emitter.body.core.builder.seal_all_blocks();
         emitter.body.into_builder().finalize(isa.frontend_config());
-        let mut context = cranelift_codegen::Context::for_function(func);
-        let compiled = context
-            .compile(
-                isa,
-                &mut cranelift_codegen::control::ControlPlane::default(),
-            )
-            .ok()?;
-        let code = compiled.code_buffer().to_vec();
-        let relocations = compiled.buffer.relocs().to_vec();
-        let names = context.func.params.user_named_funcs();
-        let calls = relocations
-            .iter()
-            .map(|relocation| {
-                let cranelift_codegen::FinalizedRelocTarget::ExternalName(ir::ExternalName::User(
-                    name,
-                )) = relocation.target
-                else {
-                    return None;
-                };
-                let name = names.get(name)?;
-                (name.namespace == FUNCTION_NAMESPACE).then_some(Call {
-                    offset: relocation.offset as usize,
-                    kind: relocation.kind,
-                    addend: relocation.addend,
-                    callee: name.index as usize,
-                })
-            })
-            .collect::<Option<Vec<_>>>()?;
-        Some((code, calls))
+        Some(func)
     }
 
     /// The C entry of `index`: unpack arguments, call through the table and
@@ -12082,6 +12252,9 @@ impl<H: Host> Vm<H> {
         // The callable set is the greatest fixpoint: assume every function
         // compiles, drop those that cannot, until nothing changes.
         let mut callable;
+        // Each callable function's full plan from the pass that settled the set, which its
+        // compilation reads, and the interfaces its callers read.
+        let mut full_plans: Vec<Option<Plan>>;
         let mut plans: Vec<Option<Plan>>;
         let mut memory_slot;
         let mut guarded;
@@ -12089,17 +12262,16 @@ impl<H: Host> Vm<H> {
             callable = allowed.clone();
             loop {
                 memory_slot = None;
-                plans = (0..count)
+                full_plans = (0..count)
                     .map(|index| {
                         if callable[index] {
-                            analysis
-                                .plan(index, &callable, &mut memory_slot)
-                                .map(Plan::interface)
+                            analysis.plan(index, &callable, &mut memory_slot)
                         } else {
                             None
                         }
                     })
                     .collect();
+                plans = full_plans.iter().map(|plan| plan.as_ref().map(Plan::interface)).collect();
                 let next: Vec<bool> = plans.iter().map(Option::is_some).collect();
                 if next == callable {
                     break;
@@ -12138,55 +12310,47 @@ impl<H: Host> Vm<H> {
             eprintln!("QUENCH_WASM_JIT_OPT_LEVEL {opt_level}");
         }
         let isa = super::jit_backend::target_isa(opt_level)?;
-        // The full plan of a callable function, derived again where needed.
-        let plan = |index: usize| analysis.plan(index, &callable, &mut memory_slot.clone());
         let mut reference_site_ids = vec![Vec::new(); count];
         let mut reference_call_sites = Vec::new();
         let mut reference_cache_sites = Vec::new();
         let mut reference_cache_count = 0usize;
-        for index in 0..count {
-            if plans[index].is_none() {
-                continue;
-            }
-            let full_plan = plan(index)?;
-            let function = &code.function(index);
-            for (pc, packed) in function.code.iter().enumerate() {
-                let instruction = super::dispatch_fast::decoded_instruction(function, *packed);
-                if instruction.op() == Op::Call
-                    && let Slot::IndirectReference { table, .. } = full_plan.operand(pc)
-                {
-                    let site_id = reference_cache_count;
-                    reference_cache_count += 1;
-                    reference_site_ids[index].push((pc, site_id));
-                    reference_cache_sites.push((index, pc, table));
-                    if diagnostics_enabled {
-                        reference_call_sites.push(ReferenceCallSiteDiagnostics {
-                            function: index,
-                            pc,
-                            counts: std::cell::Cell::new(ReferenceCallSiteCounts::default()),
-                            targets: std::cell::RefCell::new(Vec::new()),
-                        });
-                    }
-                }
-            }
-        }
         // The globals compiled code accesses, each once.
         let mut globals: Vec<u32> = Vec::new();
+        // One pass over each callable function's full plan finds both what every body's
+        // compilation reads first: its indirect reference sites and the globals it accesses.
         for index in 0..count {
             if plans[index].is_none() {
                 continue;
             }
-            let plan = plan(index)?;
+            let full_plan = full_plans[index].as_ref()?;
             let function = &code.function(index);
             for (pc, packed) in function.code.iter().enumerate() {
                 let instruction = super::dispatch_fast::decoded_instruction(function, *packed);
-                if !matches!(instruction.op(), Op::WasmGlobalGet | Op::WasmGlobalSet) {
-                    continue;
-                }
-                if let Some(Slot::Binding(slot)) = plan.operands[pc]
-                    && !globals.contains(&slot)
-                {
-                    globals.push(slot);
+                match instruction.op() {
+                    Op::Call => {
+                        if let Slot::IndirectReference { table, .. } = full_plan.operand(pc) {
+                            let site_id = reference_cache_count;
+                            reference_cache_count += 1;
+                            reference_site_ids[index].push((pc, site_id));
+                            reference_cache_sites.push((index, pc, table));
+                            if diagnostics_enabled {
+                                reference_call_sites.push(ReferenceCallSiteDiagnostics {
+                                    function: index,
+                                    pc,
+                                    counts: std::cell::Cell::new(ReferenceCallSiteCounts::default()),
+                                    targets: std::cell::RefCell::new(Vec::new()),
+                                });
+                            }
+                        }
+                    }
+                    Op::WasmGlobalGet | Op::WasmGlobalSet => {
+                        if let Some(Slot::Binding(slot)) = full_plan.operands[pc]
+                            && !globals.contains(&slot)
+                        {
+                            globals.push(slot);
+                        }
+                    }
+                    _ => {}
                 }
             }
         }
@@ -12207,17 +12371,14 @@ impl<H: Host> Vm<H> {
                 .map(|aligned| aligned / FUNCTION_ALIGNMENT * FUNCTION_ALIGNMENT)?
                 .checked_add(appended)
         };
-        for index in 0..count {
-            if plans[index].is_none() {
-                continue;
-            }
-            let full_plan = plan(index)?;
-            let body_compile_started = diagnostics_enabled.then(std::time::Instant::now);
-            let body_memory_before = body_compile_started.and_then(|_| jit_memory_snapshot());
-            let body_result = analysis.compile_function(
+        let build = (0..count).filter(|&index| plans[index].is_some()).map(|index| {
+            let full_plan = full_plans[index].as_ref()?;
+            let body_build_started = diagnostics_enabled.then(std::time::Instant::now);
+            let body_memory_before = body_build_started.and_then(|_| jit_memory_snapshot());
+            let built = analysis.build_function(
                 &*isa,
                 index,
-                &full_plan,
+                full_plan,
                 &plans,
                 guarded,
                 fixed_base,
@@ -12225,7 +12386,7 @@ impl<H: Host> Vm<H> {
                 &reference_site_ids[index],
                 diagnostics_enabled,
             );
-            if let Some(started) = body_compile_started {
+            if let Some(started) = body_build_started {
                 let memory_after = jit_memory_snapshot();
                 eprintln!(
                     "QUENCH_WASM_JIT_BODY_MEMORY function={index} elapsed_us={} rss_kib_before={:?} rss_kib_after={:?} hwm_kib_before={:?} hwm_kib_after={:?}",
@@ -12236,7 +12397,14 @@ impl<H: Host> Vm<H> {
                     memory_after.map(|memory| memory.1),
                 );
             }
-            let (body, function_calls) = body_result?;
+            Some((index, built?))
+        });
+        let mut bodies = compile_built_functions(&*isa, count, build)?;
+        for index in 0..count {
+            if plans[index].is_none() {
+                continue;
+            }
+            let (body, function_calls) = bodies[index].take()?;
             let body_projected_len = projected_code_len(bytes.len(), body.len())?;
             if root.is_some() && body_projected_len > MAX_JIT_ROOT_CODE_BYTES {
                 if diagnostics_enabled {

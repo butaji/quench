@@ -1,10 +1,10 @@
 use crate::Value;
 use rustc_hash::FxHashMap;
 
-const START_MASK: u32 = 0x3fff_ffff;
+pub(crate) const START_MASK: u32 = 0x3fff_ffff;
 const NON_EXTENSIBLE: u32 = 1 << 30;
 const FROZEN: u32 = 1 << 31;
-const DICTIONARY_STORAGE: u32 = 1 << 31;
+pub(crate) const DICTIONARY_STORAGE: u32 = 1 << 31;
 const SHAPE_MASK: u32 = !DICTIONARY_STORAGE;
 const EMPTY_START: u32 = START_MASK;
 const INLINE_PROPERTY_START: u32 = EMPTY_START - 1;

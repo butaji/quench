@@ -46,7 +46,7 @@ pub(super) struct EventQueue {
     wake: Arc<WakeSignal>,
 }
 
-struct WakeSignal {
+pub(crate) struct WakeSignal {
     #[cfg(target_os = "linux")]
     fd: RawFd,
     #[cfg(not(target_os = "linux"))]
@@ -78,7 +78,7 @@ impl WakeSignal {
         }
     }
 
-    fn notify(&self) {
+    pub(crate) fn notify(&self) {
         #[cfg(target_os = "linux")]
         {
             let value: u64 = 1;
@@ -174,7 +174,7 @@ thread_local! {
     static WAKE_SIGNAL: RefCell<Option<Arc<WakeSignal>>> = const { RefCell::new(None) };
 }
 
-fn wake_signal() -> std::io::Result<Arc<WakeSignal>> {
+pub(crate) fn wake_signal() -> std::io::Result<Arc<WakeSignal>> {
     WAKE_SIGNAL.with(|slot| {
         if let Some(signal) = slot.borrow().as_ref() {
             return Ok(Arc::clone(signal));

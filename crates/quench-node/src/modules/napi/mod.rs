@@ -29,9 +29,14 @@ mod values;
 mod work;
 
 pub(crate) use abi::*;
+pub(crate) use work::WakeSignal;
 
 pub(crate) fn wake_fd() -> Option<std::os::fd::RawFd> {
     work::wake_fd()
+}
+
+pub(crate) fn wake_signal() -> std::io::Result<Arc<WakeSignal>> {
+    work::wake_signal()
 }
 
 pub(crate) fn drain_wake() {
