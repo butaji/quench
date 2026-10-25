@@ -440,6 +440,9 @@ pub fn at_compile_phase(phase: quench_runtime::CompilePhase) {
         quench_runtime::CompilePhase::FirstCall => {
             release_once_per_interval(CompileRelease::FirstCall, release_read_only_pages)
         }
+        quench_runtime::CompilePhase::Encoding => {
+            release_once_per_interval(CompileRelease::Encoding, release_read_only_code_and_data)
+        }
     }
 }
 
@@ -459,11 +462,12 @@ pub fn after_program_kept() {
 enum CompileRelease {
     CodeGeneration,
     FirstCall,
+    Encoding,
     Kept,
 }
 
 impl CompileRelease {
-    const COUNT: usize = 3;
+    const COUNT: usize = 4;
 }
 
 /// How far apart each compile-phase release's runs are kept, by the process's memory policy.

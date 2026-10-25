@@ -1158,6 +1158,9 @@ pub enum CompilePhase {
     /// A function compiles, or decodes from its program's kept bytes, on its first call: code
     /// that has not run before is about to.
     FirstCall,
+    /// A compiled program is complete and its encoding for the host's compile cache starts:
+    /// the parser's and code generator's work is over, and the encoder's begins.
+    Encoding,
 }
 
 /// What a compilation does at each `CompilePhase`, set once by the embedding.
