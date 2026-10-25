@@ -3240,8 +3240,11 @@ impl<H: Host> Vm<H> {
             return None;
         }
         // SAFETY: the exact own-data cache shape proves this slot. The caller guarantees the
-        // pointer does not outlive the no-allocation native region and stores only Numbers.
-        unsafe { self.heap.flat_property_mut_ptr_unchecked(object, slot) }
+        // pointer does not outlive the no-allocation native region and applies the owner's
+        // write barrier before native code may store a tagged value through it.
+        let pointer = unsafe { self.heap.flat_property_mut_ptr_unchecked(object, slot) }?;
+        self.heap.write_barrier(object);
+        Some(pointer)
     }
 
     /// Increment or decrement a cached own writable Number field without
