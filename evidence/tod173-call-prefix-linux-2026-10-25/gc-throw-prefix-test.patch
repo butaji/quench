@@ -1,0 +1,76 @@
+diff --git a/crates/quench-runtime/src/vm/tests.rs b/crates/quench-runtime/src/vm/tests.rs
+index 39bea3091..d80f0a42d 100644
+--- a/crates/quench-runtime/src/vm/tests.rs
++++ b/crates/quench-runtime/src/vm/tests.rs
+@@ -11860,6 +11860,71 @@ print(t + " " + w.array[5] + " " + w.array[77]);
+     }
+ }
+
++#[test]
++#[cfg(not(quench_profiled))]
++fn shared_osr_prefix_resumes_at_gc_and_throwing_calls() {
++    let source = r#"
++      const marker = {};
++      let calls = 0;
++      function callback(index) {
++        calls++;
++        if (index % 64 === 0) $262.gc();
++        if (index === 2000) throw marker;
++      }
++      function run(effect) {
++        let total = 0;
++        let caught = false;
++        try {
++          for (let index = 0; index < 5000; index++) {
++            total += index;
++            effect(index);
++          }
++        } catch (error) {
++          caught = error === marker;
++        }
++        return total + " " + calls + " " + caught;
++      }
++      print(run(callback));
++    "#;
++    let program = Engine::specialize(source, "osr-effect-prefix-gc-throw.js").unwrap();
++    let function_id = program
++        .functions
++        .iter()
++        .position(|function| {
++            function
++                .header()
++                .name
++                .is_some_and(|name| &program.atoms[name as usize] == "run")
++        })
++        .unwrap();
++
++    let interpreted_output = Rc::new(RefCell::new(Vec::new()));
++    let mut interpreted = Vm::new(TestHost::writing_to(interpreted_output.clone()).with_test262());
++    interpreted.set_execution_mode(crate::ExecutionMode::Interpreted);
++    interpreted.execute(&program).unwrap();
++
++    let compiled_output = Rc::new(RefCell::new(Vec::new()));
++    let mut compiled = Vm::new(TestHost::writing_to(compiled_output.clone()).with_test262());
++    compiled.set_memory_policy(crate::MemoryPolicy::Throughput);
++    compiled.set_execution_mode(crate::ExecutionMode::Compiled);
++    compiled.programs.enable_js_jit_diagnostics();
++    compiled.execute(&program).unwrap();
++
++    assert_eq!(compiled_output.borrow().as_slice(), interpreted_output.borrow().as_slice());
++    assert_eq!(compiled_output.borrow().as_slice(), ["2001000 2001 true"]);
++    let views = compiled
++        .programs
++        .lane_views(super::program_store::ProgramId::MAIN)
++        .expect("main program lane views");
++    let osr = views
++        .get(function_id)
++        .and_then(std::cell::OnceCell::get)
++        .expect("hot effect loop lane view")
++        .osr_diagnostics();
++    assert!(osr.currently_compiled_sites > 0, "effect-prefix loop did not compile: {osr:?}");
++    assert!(osr.native_region_runs > 0, "effect-prefix loop never ran natively: {osr:?}");
++}
++
+ #[test]
+ #[cfg(not(quench_profiled))]
+ fn shared_osr_inlined_callee_leaves_through_its_activation() {
