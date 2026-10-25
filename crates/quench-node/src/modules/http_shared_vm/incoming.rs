@@ -410,8 +410,11 @@ pub(crate) fn create(
 pub(crate) fn destroy_socket(
     c: &mut Context<'_>,
     receiver: RootId,
-    _: &[RootId],
+    args: &[RootId],
 ) -> Result<RootId, RootedError> {
+    let missing = c.undefined();
+    let error = args.first().copied().unwrap_or(missing);
+    let had_error = c.truthy_rooted(error)?;
     let data = c.host_function_data()?;
     let transport = get(c, data, "0")?;
     if let Some(id) = c
@@ -419,15 +422,26 @@ pub(crate) fn destroy_socket(
         .and_then(|value| value.as_number())
         .map(|number| number as u64)
     {
-        net_shared_vm::close_socket(&mut c.host_mut().shared_state().borrow_mut().tcp, id);
+        let state = c.host_mut().shared_state();
+        let mut state = state.borrow_mut();
+        if net_shared_vm::socket_write_queue_size(&state.tcp, id) > 0 {
+            let _ = net_shared_vm::end(&mut state.tcp, id, false);
+        } else {
+            net_shared_vm::close_socket(&mut state.tcp, id);
+        }
     }
     let no = c.boolean(false);
     set(c, receiver, "readable", no)?;
     set(c, receiver, "writable", no)?;
     let yes = c.boolean(true);
     set(c, receiver, "destroyed", yes)?;
+    if had_error {
+        let error_event = c.string_rooted("error");
+        call(c, receiver, "emit", &[error_event, error])?;
+    }
     let close = c.string_rooted("close");
-    call(c, receiver, "emit", &[close])?;
+    let had_error = c.boolean(had_error);
+    call(c, receiver, "emit", &[close, had_error])?;
     Ok(receiver)
 }
 

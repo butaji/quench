@@ -722,13 +722,24 @@ const RESPONSE_FACTORY: &str = r#"((Writable, OutgoingMessage, setHeaderOperatio
       const writes = pendingResponseWrites;
       pendingResponseWrites = [];
       for (let index = 0; index < writes.length;) {
+        const first = index;
         const explicit = writes[index].explicit;
         const chunks = [];
         while (index < writes.length && writes[index].explicit === explicit) {
           chunks.push(writes[index++].chunk);
         }
-        write(id, Buffer.concat(chunks), explicit, response.statusCode,
-          response.statusMessage, response, undefined);
+        try {
+          write(id, Buffer.concat(chunks), explicit, response.statusCode,
+            response.statusMessage, response, undefined);
+        } catch (error) {
+          for (let callbackIndex = first; callbackIndex < index; callbackIndex++) {
+            writes[callbackIndex].callback(error);
+          }
+          continue;
+        }
+        for (let callbackIndex = first; callbackIndex < index; callbackIndex++) {
+          writes[callbackIndex].callback();
+        }
       }
     };
     const normalizeHeaderValue = (value) => {
@@ -755,13 +766,12 @@ const RESPONSE_FACTORY: &str = r#"((Writable, OutgoingMessage, setHeaderOperatio
         const bytes = typeof chunk === 'string'
           ? Buffer.from(chunk, encoding || 'utf8')
           : Buffer.from(chunk);
-        pendingResponseWrites.push({ chunk: bytes, explicit: !ending });
+        pendingResponseWrites.push({ chunk: bytes, explicit: !ending, callback });
         response.headersSent = true;
         if (!responseWriteFlushScheduled) {
           responseWriteFlushScheduled = true;
           process.nextTick(flushResponseWrites);
         }
-        callback();
       },
       final(callback) {
         try {
@@ -1209,6 +1219,7 @@ const RESPONSE_FACTORY: &str = r#"((Writable, OutgoingMessage, setHeaderOperatio
   // responses own their transport through Writable's host destroy callback.
   ServerResponse.prototype.destroy = function destroy(error) {
     this.destroyed = true;
+    if (this.socket) return this.socket.destroy(error);
     return destroyWritable.call(this, error);
   };
   ServerResponse.prototype.assignSocket = function assignSocket(socket) {

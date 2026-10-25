@@ -1,0 +1,57 @@
+diff --git a/crates/quench-node/src/modules/http_shared_vm/incoming.rs b/crates/quench-node/src/modules/http_shared_vm/incoming.rs
+index 3f33a18ae..140e795e3 100644
+--- a/crates/quench-node/src/modules/http_shared_vm/incoming.rs
++++ b/crates/quench-node/src/modules/http_shared_vm/incoming.rs
+@@ -413 +413 @@ pub(crate) fn destroy_socket(
+-    _: &[RootId],
++    args: &[RootId],
+@@ -414,0 +415,3 @@ pub(crate) fn destroy_socket(
++    let missing = c.undefined();
++    let error = args.first().copied().unwrap_or(missing);
++    let had_error = c.truthy_rooted(error)?;
+@@ -422 +425,7 @@ pub(crate) fn destroy_socket(
+-        net_shared_vm::close_socket(&mut c.host_mut().shared_state().borrow_mut().tcp, id);
++        let state = c.host_mut().shared_state();
++        let mut state = state.borrow_mut();
++        if net_shared_vm::socket_write_queue_size(&state.tcp, id) > 0 {
++            let _ = net_shared_vm::end(&mut state.tcp, id, false);
++        } else {
++            net_shared_vm::close_socket(&mut state.tcp, id);
++        }
+@@ -428,0 +438,4 @@ pub(crate) fn destroy_socket(
++    if had_error {
++        let error_event = c.string_rooted("error");
++        call(c, receiver, "emit", &[error_event, error])?;
++    }
+@@ -430 +443,2 @@ pub(crate) fn destroy_socket(
+-    call(c, receiver, "emit", &[close])?;
++    let had_error = c.boolean(had_error);
++    call(c, receiver, "emit", &[close, had_error])?;
+diff --git a/crates/quench-node/src/modules/http_shared_vm/operations.rs b/crates/quench-node/src/modules/http_shared_vm/operations.rs
+index fe3b10647..ab4bd2043 100644
+--- a/crates/quench-node/src/modules/http_shared_vm/operations.rs
++++ b/crates/quench-node/src/modules/http_shared_vm/operations.rs
+@@ -724,0 +725 @@ const RESPONSE_FACTORY: &str = r#"((Writable, OutgoingMessage, setHeaderOperatio
++        const first = index;
+@@ -730,2 +731,12 @@ const RESPONSE_FACTORY: &str = r#"((Writable, OutgoingMessage, setHeaderOperatio
+-        write(id, Buffer.concat(chunks), explicit, response.statusCode,
+-          response.statusMessage, response, undefined);
++        try {
++          write(id, Buffer.concat(chunks), explicit, response.statusCode,
++            response.statusMessage, response, undefined);
++        } catch (error) {
++          for (let callbackIndex = first; callbackIndex < index; callbackIndex++) {
++            writes[callbackIndex].callback(error);
++          }
++          continue;
++        }
++        for (let callbackIndex = first; callbackIndex < index; callbackIndex++) {
++          writes[callbackIndex].callback();
++        }
+@@ -758 +769 @@ const RESPONSE_FACTORY: &str = r#"((Writable, OutgoingMessage, setHeaderOperatio
+-        pendingResponseWrites.push({ chunk: bytes, explicit: !ending });
++        pendingResponseWrites.push({ chunk: bytes, explicit: !ending, callback });
+@@ -764 +774,0 @@ const RESPONSE_FACTORY: &str = r#"((Writable, OutgoingMessage, setHeaderOperatio
+-        callback();
+@@ -1211,0 +1222 @@ const RESPONSE_FACTORY: &str = r#"((Writable, OutgoingMessage, setHeaderOperatio
++    if (this.socket) return this.socket.destroy(error);
