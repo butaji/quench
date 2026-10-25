@@ -39,4 +39,21 @@ For each harness scenario (10 packages represented by 11 scenarios because Fasti
 - A five-round `QUENCH_JS_JIT_GENERAL_DISPATCH=1` screen was also rejected as a global package fix: relative to the same production candidate with the tier off, React throughput/RSS changed -2.3%/+8.3%, Pino -5.6%/+0.1%, and Zod 0.0%/-1.0%. Zod's hot `operations` still had no general compile attempt at 36,754 dynamic dispatches versus its 462,400-unit threshold. Preserve the disabled default and implement a narrower shared coverage/admission mechanism instead.
 - Goal remains unmet: zero of 22 current scorecard rows meet the throughput gate, and Linux sampled RSS does not qualify the memory gate. Keep TOD-173 In Progress. Next steps: commit/push this screen and update Linear; then implement the next shared JIT coverage step on its owning integration branch, merge it back, and rerun the same paired screen before any 11-round qualification.
 
+## Next execution cycle
+
+The required outcome is still 22 passing workload/mode rows (11 scenarios in JIT and no-JIT), each at least 1.20x every available peer's throughput and at most 0.80x every peer's maximum RSS. No scorecard row currently passes throughput, and RSS is unqualified. The current source cannot be called complete until both conditions are supported by qualification evidence.
+
+1. Use existing opcode-site/function diagnostics to choose one shared JIT implementation target. Require a hot dynamic site or loop region, its exact baseline work, the current lowering/admission reason, and a plausible route to native coverage before changing code. Workload names and source paths may guide profiling, but must not enter runtime policy.
+2. Read the owning shared-JIT integration notes and issue acceptance requirements. Implement on the owning integration branch. Keep effectful operations on the exact-PC VM callout path; add regression coverage for value parity, throws, GC/reentrancy, and exactly-once effects whenever the change touches those paths.
+3. Run the runtime suite and build with only the general runtime PGO curriculum. Verify the expected native entry or OSR-region coverage in diagnostics before spending time on a package matrix.
+4. Screen the change against the same binary control on the directly affected package scenarios in both modes. Reject and revert changes that do not produce native coverage, violate parity, regress paired throughput/RSS, or widen errors elsewhere.
+5. If the focused screen is positive, merge/sync the generic change into `v2-zod`, build a clean candidate, and run all 11 scenarios with matched rounds. Keep RSS labeled diagnostic until the sampler is platform-qualified.
+6. Update the scorecard, plan, and TOD-173 with the exact commit, build hash, commands, results, and next highest-value target. Push source and evidence. Repeat until every throughput and qualified memory gate passes; otherwise keep TOD-173 In Progress and state the measured blocker.
+
+### Latest target selection
+
+- The exact-PC call continuation and resume behavior already exist in the shared-JIT implementation, with tests for caller resume, throws, GC roots, and call effects. This work is not the next missing feature.
+- A temporary `MAX_INSTRUCTIONS` 256-to-320 trial did not move Pino `_asJson` out of `lane-only` or produce native entries. The bound was restored; see `merged-jit-screen-2026-10-25/pino-cap320-diagnostic.stderr`. Do not repeat this limit expansion without a new eligibility or lowering diagnosis.
+- Next inspect the shared OSR loop and general-dispatch admission against the exact hot regions from React, Zod, and Pino diagnostics. Prefer one generic hot-region lowering with observable native coverage over global tier-admission changes; the broad general-tier toggle already regressed React and Pino.
+
 The authoritative current scorecard is [`final-pgo-recheck/scorecard.md`](final-pgo-recheck/scorecard.md), with the per-row reports beside it. The root `scorecard.md` records the earlier baseline.
