@@ -2,14 +2,14 @@
 
 ## Acceptance gates
 
-For each of the 10 npm workloads, in both no-JIT and JIT modes, Quench must be at least 1.20x each available peer's throughput and use at most 0.80x each peer's maximum RSS. A package/mode row passes only when both gates pass for all available peers. RSS must use a platform-qualified sampler. Do not train PGO on the scored npm workloads.
+For each harness scenario (10 packages represented by 11 scenarios because Fastify has separate HTTP and inject paths), in both no-JIT and JIT modes, Quench must be at least 1.20x each available peer's throughput and use at most 0.80x each peer's maximum RSS. A scenario/mode row passes only when both gates pass for all available peers. RSS must use a platform-qualified sampler. Do not train PGO on the scored npm workloads.
 
 ## Work sequence
 
-1. Sync the generic shared JIT work from `v2-jit` into `v2-zod`, keeping workload-specific behavior out of the runtime.
+1. Sync the generic shared JIT work from `v2-merged` into `v2-zod`, keeping workload-specific behavior out of the runtime.
 2. Run the runtime library suite and fix any compatibility regressions introduced by the sync.
 3. Produce a clean production build with PGO trained only on the repository's general runtime curriculum.
-4. Run 11 matched rounds for all 10 workloads in no-JIT and JIT modes, check output parity, and record commands, versions, hashes, throughput, and RSS.
+4. Run 11 matched rounds for all 11 scenarios in no-JIT and JIT modes, check output parity, and record commands, versions, hashes, throughput, and RSS.
 5. Calculate each row against its fastest throughput peer and lowest RSS peer. Treat RSS as unqualified until a platform-qualified process-tree sampler is available.
 6. Commit and push the source, regression tests, and evidence to `v2-zod`; keep TOD-173 In Progress until every scored row passes.
 7. Use the largest measured shared interpreter/JIT bottleneck to choose the next generic optimization, then repeat steps 2–6.
@@ -32,7 +32,10 @@ For each of the 10 npm workloads, in both no-JIT and JIT modes, Quench must be a
 
 - Synced the latest `origin/v2-merged` shared runtime/JIT integration into `v2-zod`. Merge commit `7f3372f29` is pushed to `origin/v2-zod`. The two conflicts were resolved by retaining both branch-local general-dispatch attribution and upstream call-site counters, and by preserving upstream tier admission together with branch-local sampler reset behavior.
 - `cargo check -p quench-runtime` passed; `cargo test -p quench-runtime` passed all 962 tests.
-- A fresh production PGO build is in progress. The training script excludes all ten scored npm fixtures. The previous production binary was saved as an A/B control before rebuilding.
-- Next: compare merged JIT and pre-merge control on React, Zod, and Pino with matched runs and output checks. Keep the shared JIT change only if the evidence supports its broader integration; then refresh package-wide JIT and no-JIT rows as time permits. This sync is not a goal win: the last qualified-by-parity diagnostic scorecard still had 0/22 throughput rows passing and Linux RSS remains unqualified.
+- A fresh production PGO build completed with the general runtime curriculum and Node compatibility fixtures; all scored npm workloads were excluded. Candidate binary SHA-256 is `6f7c7601e6bcecc68b74266b8a6160869279051a114ced514f33a5fb3644879a`; pre-merge control is `44f127af7abf4682b56600b97c5640389fc40559658d5e7467bf80a4f58a5de0`.
+- The shared JIT integration is in the source now: the merge adds 1,454 lines to `vm/compiled/osr_loop.rs` plus shared compiler/VM integration and recovery tests. The JIT screen covers all 11 scenarios for 3 matched rounds. Candidate throughput changes versus control range from -4.4% to +14.5%; all 11 still trail the fastest peer (by 5.2%–99.3%). It improves React, Next, Pino, Undici, and Zod by at least 9%; it regresses sharp by 4.4% and Fastify HTTP by 0.6%. Full reports and coverage diagnostics are in `merged-jit-screen-2026-10-25/`.
+- The same directory has current-build no-JIT one-round output-parity screens for all 11 scenarios (Node `--jitless` is omitted only for Vite and Undici due the WebAssembly limitation), plus 3-round paired React/Zod/Pino checks. Three-round candidate/control changes were +1.6%, +0.5%, and +4.9%. Every sampled no-JIT row remains below at least one peer on throughput; these screens are diagnostics, not qualification.
+- JIT attribution finds zero native entries and zero OSR runs in the measured React and Zod functions. Zod's `operations` accounts for 36,754 dynamically counted dispatches but its specialized compile rejects the shape, and the general compiler is never attempted. Pino enters native code 26,219 times in `get hasSubscribers`, while its 269-instruction `_asJson` function remains lane-only. The next JIT iteration should target broader shared-region or lane entry coverage for effectful schema/render functions, following TOD-186/TOD-191 exact recovery requirements.
+- Goal remains unmet: zero of 22 current scorecard rows meet the throughput gate, and Linux sampled RSS does not qualify the memory gate. Keep TOD-173 In Progress. Next steps: commit/push this screen and update Linear; then implement the next shared JIT coverage step on its owning integration branch, merge it back, and rerun the same paired screen before any 11-round qualification.
 
 The authoritative current scorecard is [`final-pgo-recheck/scorecard.md`](final-pgo-recheck/scorecard.md), with the per-row reports beside it. The root `scorecard.md` records the earlier baseline.

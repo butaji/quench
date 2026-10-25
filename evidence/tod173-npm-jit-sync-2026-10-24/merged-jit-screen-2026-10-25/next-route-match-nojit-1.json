@@ -1,0 +1,186 @@
+{
+  "schema": 1,
+  "workload": "next-route-match",
+  "phase": "no-jit",
+  "runs": 1,
+  "qualificationReady": false,
+  "host": {
+    "platform": "linux",
+    "arch": "x64",
+    "cpus": 5
+  },
+  "rssMeasurement": "sampled process-tree sum of /proc/<pid>/status VmRSS every 50 ms (diagnostic only; can miss short-lived children and counts shared pages per process)",
+  "inputs": {
+    "workloadSha256": "c9deeae0ff53ad417d8928f616ce507f42c86eaaff686312ecfbf18f16cdde9b",
+    "packageLockSha256": "92dbfcb2312b42ddf55a8f0b06c40368544ca4b5e861782ead6770268da3c1b0",
+    "quenchBinarySha256": "6f7c7601e6bcecc68b74266b8a6160869279051a114ced514f33a5fb3644879a",
+    "controlQuenchBinary": "/workspace/quench/target/production/quench-node-premerge-control",
+    "controlQuenchBinarySha256": "44f127af7abf4682b56600b97c5640389fc40559658d5e7467bf80a4f58a5de0",
+    "nodeBinary": "/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node",
+    "bunBinary": "/tmp/quench-bun/bun-linux-x64/bun"
+  },
+  "nodeVersion": "v24.19.0",
+  "bunVersion": "1.4.4",
+  "summary": {
+    "quench-interpreter": {
+      "medianOperationsPerSecond": 175438.59649122806,
+      "medianElapsedMs": 57,
+      "medianMaximumRssBytes": 23113728
+    },
+    "quench-control": {
+      "medianOperationsPerSecond": 175438.59649122806,
+      "medianElapsedMs": 57,
+      "medianMaximumRssBytes": 24064000
+    },
+    "node-jitless": {
+      "medianOperationsPerSecond": 526315.7894736842,
+      "medianElapsedMs": 19,
+      "medianMaximumRssBytes": 4091904
+    },
+    "bun-no-jit": {
+      "medianOperationsPerSecond": 400000,
+      "medianElapsedMs": 25,
+      "medianMaximumRssBytes": 10780672
+    }
+  },
+  "output": {
+    "workload": "next-route-match",
+    "package": "next@16.4.3",
+    "warmups": 500,
+    "cases": [
+      "Next dynamic-route matcher",
+      "regexp capture groups",
+      "param validation"
+    ],
+    "bytes": 565000,
+    "checksum": 47912500
+  },
+  "samples": [
+    {
+      "engine": "quench-interpreter",
+      "round": 1,
+      "measurement": {
+        "workload": "next-route-match",
+        "package": "next@16.4.3",
+        "rounds": 10000,
+        "warmups": 500,
+        "cases": [
+          "Next dynamic-route matcher",
+          "regexp capture groups",
+          "param validation"
+        ],
+        "bytes": 565000,
+        "checksum": 47912500,
+        "elapsedMs": 57,
+        "operationsPerSecond": 175438.59649122806
+      },
+      "maxRssBytes": 23113728,
+      "wallTimeMs": 79.733396,
+      "stderr": "",
+      "command": [
+        "/workspace/quench/target/production/quench-node",
+        "/workspace/quench/tests/npm-perf/workloads/next-route-match.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "5000",
+        "QUENCH_BENCH_WARMUPS": "250"
+      }
+    },
+    {
+      "engine": "quench-control",
+      "round": 1,
+      "measurement": {
+        "workload": "next-route-match",
+        "package": "next@16.4.3",
+        "rounds": 10000,
+        "warmups": 500,
+        "cases": [
+          "Next dynamic-route matcher",
+          "regexp capture groups",
+          "param validation"
+        ],
+        "bytes": 565000,
+        "checksum": 47912500,
+        "elapsedMs": 57,
+        "operationsPerSecond": 175438.59649122806
+      },
+      "maxRssBytes": 24064000,
+      "wallTimeMs": 78.119386,
+      "stderr": "",
+      "command": [
+        "/workspace/quench/target/production/quench-node-premerge-control",
+        "/workspace/quench/tests/npm-perf/workloads/next-route-match.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "5000",
+        "QUENCH_BENCH_WARMUPS": "250"
+      }
+    },
+    {
+      "engine": "node-jitless",
+      "round": 1,
+      "measurement": {
+        "workload": "next-route-match",
+        "package": "next@16.4.3",
+        "rounds": 10000,
+        "warmups": 500,
+        "cases": [
+          "Next dynamic-route matcher",
+          "regexp capture groups",
+          "param validation"
+        ],
+        "bytes": 565000,
+        "checksum": 47912500,
+        "elapsedMs": 19,
+        "operationsPerSecond": 526315.7894736842
+      },
+      "maxRssBytes": 4091904,
+      "wallTimeMs": 51.746347,
+      "stderr": "",
+      "command": [
+        "/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node",
+        "--jitless",
+        "/workspace/quench/tests/npm-perf/workloads/next-route-match.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "5000",
+        "QUENCH_BENCH_WARMUPS": "250"
+      }
+    },
+    {
+      "engine": "bun-no-jit",
+      "round": 1,
+      "measurement": {
+        "workload": "next-route-match",
+        "package": "next@16.4.3",
+        "rounds": 10000,
+        "warmups": 500,
+        "cases": [
+          "Next dynamic-route matcher",
+          "regexp capture groups",
+          "param validation"
+        ],
+        "bytes": 565000,
+        "checksum": 47912500,
+        "elapsedMs": 25,
+        "operationsPerSecond": 400000
+      },
+      "maxRssBytes": 10780672,
+      "wallTimeMs": 37.195856,
+      "stderr": "Modified JSC options:\n   dumpOptions=1 (default: 0)\n   useJIT=false (default: true)",
+      "command": [
+        "/tmp/quench-bun/bun-linux-x64/bun",
+        "/workspace/quench/tests/npm-perf/workloads/next-route-match.cjs"
+      ],
+      "effectiveEnvironment": {
+        "BUN_JSC_useJIT": "0",
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "5000",
+        "QUENCH_BENCH_WARMUPS": "250"
+      }
+    }
+  ]
+}
