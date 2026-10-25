@@ -146,6 +146,37 @@ impl<H: Host> Vm<H> {
         }
     }
 
+    /// Feed real loop work to the shared JS baseline tier. The loop length is
+    /// an upper bound for the bytecodes executed on this iteration, so pricing
+    /// stays conservative when a loop body contains VM callouts.
+    #[inline(always)]
+    fn note_js_general_dispatch_backedge(
+        &mut self,
+        program: &ResidualProgram,
+        frame: usize,
+        source_pc: usize,
+        target_pc: usize,
+    ) {
+        if !self.js_tier_runs()
+            || !self.programs.js_jit_general_dispatch_enabled()
+            || program.kind == crate::bytecode::ProgramKind::Wasm
+        {
+            return;
+        }
+        let program_id = self.frames[frame].program;
+        let function = self.frames[frame].function;
+        let instructions = program
+            .function_get(function as usize)
+            .map_or(0, |body| body.code.len());
+        let work = source_pc.saturating_sub(target_pc).saturating_add(1);
+        self.programs.note_js_general_dispatch_backedge(
+            program_id,
+            function,
+            work,
+            instructions,
+        );
+    }
+
     pub(super) fn call_this_value(&mut self, this: Value, strict: bool) -> Result<Value, JsError> {
         if strict {
             Ok(this)
@@ -1241,21 +1272,6 @@ impl<H: Host> Vm<H> {
 
     pub(super) fn pool_frame(&mut self, frame: impl Into<Box<Frame>>) {
         let mut frame = frame.into();
-        let sampled_work = usize::from(frame.js_general_dispatch_work_sample);
-        if sampled_work != 0 {
-            let instruction_count = self
-                .programs
-                .residual(frame.program)
-                .and_then(|program| program.function_get(frame.function as usize))
-                .map_or(0, |function| function.code.len());
-            self.programs.note_js_general_dispatch_work(
-                frame.program,
-                frame.function,
-                sampled_work,
-                instruction_count,
-            );
-            frame.js_general_dispatch_work_sample = 0;
-        }
         Self::recycle_frame(&mut frame);
         self.frame_pool.push(frame);
     }
@@ -1773,22 +1789,6 @@ impl<H: Host> Vm<H> {
             let step = if let Some(step) = native_step {
                 step.result
             } else {
-            if self.frames[frame].js_general_dispatch_work_tracking {
-                let sample = &mut self.frames[frame].js_general_dispatch_work_sample;
-                *sample = sample.saturating_add(1);
-                if *sample == 64 {
-                    *sample = 0;
-                    let instruction_count = p
-                        .function_get(cursor.function as usize)
-                        .map_or(0, |body| body.code.len());
-                    self.programs.note_js_general_dispatch_work(
-                        cursor.program,
-                        cursor.function,
-                        64,
-                        instruction_count,
-                    );
-                }
-            }
             #[cfg(feature = "profile-memory")]
             self.heap.set_memory_allocation_site(
                 cursor.program.raw(),
@@ -1799,7 +1799,6 @@ impl<H: Host> Vm<H> {
                 self.programs.record_js_jit_general_dispatch_opcode(
                     cursor.program,
                     cursor.function,
-                    instruction_pc as u32,
                     ins.op(),
                 );
             }
@@ -1886,6 +1885,12 @@ impl<H: Host> Vm<H> {
                         pc = ins.jump_target() as usize;
                         if pc <= instruction_pc {
                             self.note_back_edge(&mut cursor);
+                            self.note_js_general_dispatch_backedge(
+                                p,
+                                frame,
+                                instruction_pc,
+                                pc,
+                            );
                         }
                     }
                     continue;
@@ -1909,6 +1914,12 @@ impl<H: Host> Vm<H> {
                             pc = ins.jump_target() as usize;
                             if pc <= instruction_pc {
                                 self.note_back_edge(&mut cursor);
+                                self.note_js_general_dispatch_backedge(
+                                    p,
+                                    frame,
+                                    instruction_pc,
+                                    pc,
+                                );
                             }
                         }
                         continue;
@@ -2067,6 +2078,12 @@ impl<H: Host> Vm<H> {
                     pc = ins.jump_target() as usize;
                     if pc <= instruction_pc {
                         self.note_back_edge(&mut cursor);
+                        self.note_js_general_dispatch_backedge(
+                            p,
+                            frame,
+                            instruction_pc,
+                            pc,
+                        );
                     }
                     continue;
                 }

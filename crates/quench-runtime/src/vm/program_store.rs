@@ -26,6 +26,8 @@ struct JsJitCounters {
     compile_successes: u64,
     general_compile_attempts: u64,
     general_compile_successes: u64,
+    general_artifact_cache_hits: u64,
+    general_artifact_cache_misses: u64,
     general_compile_rejection_reason: Option<&'static str>,
     rejection_reason: Option<&'static str>,
     compile_ns: u64,
@@ -47,7 +49,6 @@ struct JsJitCounters {
     interpreter_inclusive_ns: u64,
     opcode_counts: Vec<(u16, u32)>,
     general_dispatch_opcode_counts: Vec<(u16, u64)>,
-    general_dispatch_opcode_sites: FxHashMap<(u32, u16), u64>,
     call_sites: Vec<JsJitCallSiteCounters>,
     code_bytes: usize,
 }
@@ -63,6 +64,19 @@ struct JsJitCallSiteCounters {
     other_target_calls: u64,
     outcomes: [u64; JsJitCallOutcome::COUNT],
 }
+
+/// A bounded VM-local entry for GeneralDispatch code shared by equivalent
+/// dynamic functions. Idle artifacts remain available for later dynamic-code
+/// copies until LRU eviction. The key contains no program, function, heap, or
+/// atom owners; the artifact itself has no guest roots.
+struct CachedJsGeneralArtifact {
+    compiled: Rc<super::compiled::CompiledJsFunction>,
+    tier_references: usize,
+    last_used: u64,
+}
+
+const JS_GENERAL_ARTIFACT_CACHE_MAX_ENTRIES: usize = 32;
+pub(super) const JS_GENERAL_ARTIFACT_CACHE_MAX_KEY_BYTES: usize = 512 * 1024;
 
 #[derive(Clone, Copy)]
 #[repr(usize)]
@@ -750,12 +764,22 @@ pub(crate) struct ProgramStore {
     reclaim_passes: u64,
     /// Reclaimable programs inserted since the last reclamation pass.
     unchecked_reclaimable: usize,
+    /// The entry facts every function shares whose facts are all unset
+    /// (`JsEntryFacts::is_unset`): most functions the tier
+    /// watches, which had each held a copy (V8-v7 Crypto `--jit`: 32 -> 21 KiB at the heap's peak).
+    no_entry_facts: Rc<super::js_compiled::JsEntryFacts>,
     /// VM-local bounds for the optional JavaScript tier cache.
     js_jit_tracked_functions: usize,
     js_jit_tracking_exhaustions: u64,
     js_jit_rejected_functions: usize,
     /// Shared JS/Wasm executable-code cache admission and accounting.
     jit_code_cache: JitCodeCacheBudget,
+    /// GeneralDispatch artifacts can be shared by bytecode-identical dynamic
+    /// functions. Idle entries are evicted by LRU under the existing VM code
+    /// budget; both executable bytes and key bytes are bounded.
+    js_general_artifacts: FxHashMap<Box<[u8]>, CachedJsGeneralArtifact>,
+    js_general_artifact_key_bytes: usize,
+    js_general_artifact_clock: u64,
     /// Whether a hot function's general baseline waits until its entries pay for
     /// the compile (`general_promotion_due`); tests of the baseline's semantics compile it
     /// once hot.
@@ -767,9 +791,12 @@ pub(crate) struct ProgramStore {
     /// a fixed entry count promoted short runs into compile cost (npm p51, TOD-138) until
     /// promotion weighs size and compile cost.
     js_jit_general_dispatch_enabled: bool,
-    /// Per-program, per-function sampled interpreter work and native loop work.
+    /// Per-program, per-function estimated work from opt-in JS backedges.
     /// Both map levels are allocated only after the first eligible observation.
     js_general_dispatch_work: Option<FxHashMap<u32, FxHashMap<u32, u64>>>,
+    /// Keep idle GeneralDispatch artifacts for equivalent dynamic functions
+    /// when `QUENCH_JS_JIT_GENERAL_ARTIFACT_CACHE` is enabled (default on).
+    js_general_artifact_cache_enabled: bool,
     js_jit_dataview_float64_enabled: bool,
     js_jit_dataview_float64_get_entries: u64,
     js_jit_dataview_float64_set_entries: u64,
@@ -783,10 +810,14 @@ impl Default for ProgramStore {
             owned_scripts: FxHashMap::default(),
             reclaim_passes: 0,
             unchecked_reclaimable: 0,
+            no_entry_facts: Rc::default(),
             js_jit_tracked_functions: 0,
             js_jit_tracking_exhaustions: 0,
             js_jit_rejected_functions: 0,
             jit_code_cache: JitCodeCacheBudget::default(),
+            js_general_artifacts: FxHashMap::default(),
+            js_general_artifact_key_bytes: 0,
+            js_general_artifact_clock: 0,
             // TOD-191's correctness oracle may force hot candidates past the
             // payback model so guarded exits can be tested independently of
             // profitability. This is diagnostic-only and never set by score
@@ -801,6 +832,10 @@ impl Default for ProgramStore {
             js_jit_general_dispatch_enabled: std::env::var_os("QUENCH_JS_JIT_GENERAL_DISPATCH")
                 .is_some_and(|value| value == "1"),
             js_general_dispatch_work: None,
+            js_general_artifact_cache_enabled: std::env::var_os(
+                "QUENCH_JS_JIT_GENERAL_ARTIFACT_CACHE",
+            )
+            .is_none_or(|value| value != "0"),
             js_jit_dataview_float64_enabled:
                 std::env::var_os("QUENCH_JS_JIT_DATAVIEW_FLOAT64")
                     .is_none_or(|value| value != "0"),
@@ -820,7 +855,12 @@ impl ProgramStore {
             entry.residual.functions.iter().map(|_| std::cell::OnceCell::new()).collect()
         });
         Some(Rc::clone(cells.get(function as usize)?.get_or_init(|| {
-            Rc::new(super::js_compiled::JsEntryFacts::of(&entry.residual, body))
+            let facts = super::js_compiled::JsEntryFacts::of(&entry.residual, body);
+            if facts.is_unset() {
+                Rc::clone(&self.no_entry_facts)
+            } else {
+                Rc::new(facts)
+            }
         })))
     }
 
@@ -894,6 +934,7 @@ impl ProgramStore {
         let mut reclaimed_tiers = (0usize, 0usize, 0usize);
         let mut reclaimed_wasm_tiers = (0usize, 0usize);
         let mut reclaimed_wasm_baselines = (0usize, 0usize);
+        let mut reclaimed_shared_js = Vec::new();
         let mut reclaimed_rejected = 0usize;
         let mut pending = 0;
         for (index, slot) in self.programs.iter_mut().enumerate() {
@@ -917,8 +958,17 @@ impl ProgramStore {
                 .count();
             for state in entry.jit_tiers.js_values() {
                 if let JsTierState::Compiled(compiled) = state {
-                    reclaimed_tiers.1 += 1;
-                    reclaimed_tiers.2 += compiled.mapped_bytes();
+                    if compiled.is_general_dispatch()
+                        && self
+                            .js_general_artifacts
+                            .values()
+                            .any(|cached| Rc::ptr_eq(&cached.compiled, compiled))
+                    {
+                        reclaimed_shared_js.push(compiled.clone());
+                    } else {
+                        reclaimed_tiers.1 += 1;
+                        reclaimed_tiers.2 += compiled.mapped_bytes();
+                    }
                 }
             }
             reclaimed_wasm_tiers.1 += entry
@@ -950,6 +1000,9 @@ impl ProgramStore {
             reclaimed_tiers.1,
             reclaimed_tiers.2,
         );
+        for compiled in &reclaimed_shared_js {
+            let _ = self.release_js_general_artifact_reference(compiled);
+        }
         self.jit_code_cache.release(
             JitArtifactKind::WasmTierRoot,
             reclaimed_wasm_tiers.0,
@@ -986,6 +1039,9 @@ impl ProgramStore {
         self.js_jit_tracked_functions = 0;
         self.js_jit_rejected_functions = 0;
         self.jit_code_cache = JitCodeCacheBudget::default();
+        self.js_general_artifacts.clear();
+        self.js_general_artifact_key_bytes = 0;
+        self.js_general_artifact_clock = 0;
         self.js_general_dispatch_work = None;
         if let Some(diagnostics) = &mut self.js_jit_diagnostics {
             diagnostics.clear();
@@ -1866,10 +1922,10 @@ impl ProgramStore {
         false
     }
 
-    /// Accumulate sampled interpreter or native loop work. The function must
-    /// already have an eligible JS tier record, and this path is available
-    /// only to the opt-in complete-semantics dispatcher.
-    pub(super) fn note_js_general_dispatch_work(
+    /// Accumulate estimated bytecode work from a hot backward edge. The
+    /// function must already have an eligible JS tier record, and this path is
+    /// available only to the opt-in complete-semantics dispatcher.
+    pub(super) fn note_js_general_dispatch_backedge(
         &mut self,
         id: ProgramId,
         function: u32,
@@ -1879,8 +1935,13 @@ impl ProgramStore {
         if !self.js_jit_general_dispatch_enabled || work == 0 {
             return false;
         }
-        // Record work even when the artifact budget is full. If a retained
-        // artifact later frees capacity, the next sample can request compile.
+        // A zero-byte admission probe checks count and aggregate artifact
+        // ceilings before this accounting path can request compilation.
+        if self.jit_code_cache.js_functions >= JS_JIT_MAX_FUNCTIONS
+            || !self.jit_code_cache.can_retain(JitArtifactKind::JsFunction, 0)
+        {
+            return false;
+        }
         let priced = self.general_baseline_priced;
         if !self.entry(id).is_some_and(|entry| {
             !entry.jit_tiers.is_wasm()
@@ -1904,11 +1965,6 @@ impl ProgramStore {
             .or_default();
         accumulate_general_dispatch_work(accumulated_work, work);
         let accumulated_work = *accumulated_work;
-        if self.jit_code_cache.js_functions >= JS_JIT_MAX_FUNCTIONS
-            || !self.jit_code_cache.can_retain(JitArtifactKind::JsFunction, 0)
-        {
-            return false;
-        }
         let Some(entry) = self.entry_mut(id) else {
             return false;
         };
@@ -2252,6 +2308,28 @@ impl ProgramStore {
         }
     }
 
+    pub(super) fn record_js_jit_general_artifact_cache(
+        &mut self,
+        id: ProgramId,
+        function: u32,
+        hit: bool,
+    ) {
+        let Some(counters) = self
+            .js_jit_diagnostics
+            .as_mut()
+            .and_then(|diagnostics| diagnostics.get_mut(&(id.raw(), function)))
+        else {
+            return;
+        };
+        if hit {
+            counters.general_artifact_cache_hits =
+                counters.general_artifact_cache_hits.saturating_add(1);
+        } else {
+            counters.general_artifact_cache_misses =
+                counters.general_artifact_cache_misses.saturating_add(1);
+        }
+    }
+
     pub(super) fn record_js_jit_rejection(
         &mut self,
         id: ProgramId,
@@ -2399,7 +2477,6 @@ impl ProgramStore {
         &mut self,
         id: ProgramId,
         function: u32,
-        pc: u32,
         opcode: crate::bytecode::Op,
     ) {
         let Some(counters) = self
@@ -2419,10 +2496,6 @@ impl ProgramStore {
         } else {
             counters.general_dispatch_opcode_counts.push((opcode, 1));
         }
-        *counters
-            .general_dispatch_opcode_sites
-            .entry((pc, opcode))
-            .or_default() += 1;
     }
 
     /// Count call instructions handled by a compiled function's VM islands.
@@ -2561,6 +2634,23 @@ impl ProgramStore {
         compiled: Option<Rc<super::compiled::CompiledJsFunction>>,
         general_fallback_after_codegen_rejection: bool,
     ) -> bool {
+        self.install_js_tier_with_cache(
+            id,
+            function,
+            compiled,
+            None,
+            general_fallback_after_codegen_rejection,
+        )
+    }
+
+    pub(super) fn install_js_tier_with_cache(
+        &mut self,
+        id: ProgramId,
+        function: u32,
+        compiled: Option<Rc<super::compiled::CompiledJsFunction>>,
+        general_cache_key: Option<Box<[u8]>>,
+        general_fallback_after_codegen_rejection: bool,
+    ) -> bool {
         let Some(entry) = self.entry(id) else {
             return false;
         };
@@ -2568,10 +2658,72 @@ impl ProgramStore {
             return false;
         }
         let compilation_succeeded = compiled.is_some();
+        let cache_hit = compiled.as_ref().is_some_and(|compiled| {
+            compiled.is_general_dispatch()
+                && general_cache_key
+                    .as_deref()
+                    .and_then(|key| self.js_general_artifacts.get(key))
+                    .is_some_and(|cached| Rc::ptr_eq(&cached.compiled, compiled))
+        });
+        if !cache_hit
+            && compiled
+                .as_ref()
+                .is_some_and(|compiled| compiled.is_general_dispatch())
+            && general_cache_key
+                .as_ref()
+                .is_some_and(|key| key.len() <= JS_GENERAL_ARTIFACT_CACHE_MAX_KEY_BYTES)
+        {
+            let mapped_bytes = compiled.as_ref().map_or(0, |compiled| compiled.mapped_bytes());
+            while !self
+                .jit_code_cache
+                .can_retain(JitArtifactKind::JsFunction, mapped_bytes)
+                && self.evict_idle_js_general_artifact()
+            {}
+        }
         let compiled = compiled.filter(|compiled| {
+            if cache_hit {
+                return true;
+            }
             self.jit_code_cache
                 .retain(JitArtifactKind::JsFunction, compiled.mapped_bytes())
         });
+        if let (Some(key), Some(compiled)) = (general_cache_key, compiled.as_ref())
+            && compiled.is_general_dispatch()
+            && key.len() <= JS_GENERAL_ARTIFACT_CACHE_MAX_KEY_BYTES
+        {
+            if let Some(cached) = self.js_general_artifacts.get_mut(key.as_ref()) {
+                if Rc::ptr_eq(&cached.compiled, compiled) {
+                    cached.tier_references = cached.tier_references.saturating_add(1);
+                }
+            } else if !cache_hit {
+                while (self.js_general_artifacts.len() >= JS_GENERAL_ARTIFACT_CACHE_MAX_ENTRIES
+                    || self
+                        .js_general_artifact_key_bytes
+                        .saturating_add(key.len())
+                        > JS_GENERAL_ARTIFACT_CACHE_MAX_KEY_BYTES)
+                    && self.evict_idle_js_general_artifact()
+                {}
+            }
+            if !cache_hit
+                && !self.js_general_artifacts.contains_key(key.as_ref())
+                && self.js_general_artifacts.len() < JS_GENERAL_ARTIFACT_CACHE_MAX_ENTRIES
+                && self
+                    .js_general_artifact_key_bytes
+                    .saturating_add(key.len())
+                    <= JS_GENERAL_ARTIFACT_CACHE_MAX_KEY_BYTES
+            {
+                self.js_general_artifact_clock = self.js_general_artifact_clock.saturating_add(1);
+                self.js_general_artifact_key_bytes += key.len();
+                self.js_general_artifacts.insert(
+                    key,
+                    CachedJsGeneralArtifact {
+                        compiled: compiled.clone(),
+                        tier_references: 1,
+                        last_used: self.js_general_artifact_clock,
+                    },
+                );
+            }
+        }
         if let Some(entry) = self.entry_mut(id) {
             let tier = match compiled {
                 Some(compiled) => JsTierState::Compiled(compiled),
@@ -2588,6 +2740,63 @@ impl ProgramStore {
         }
         self.js_tier(id, function)
             .is_some_and(|tier| matches!(tier, JsTierState::Compiled(_)))
+    }
+
+    pub(super) fn cached_js_general_artifact(
+        &mut self,
+        key: &[u8],
+    ) -> Option<Rc<super::compiled::CompiledJsFunction>> {
+        self.js_general_artifact_clock = self.js_general_artifact_clock.saturating_add(1);
+        let cached = self.js_general_artifacts.get_mut(key)?;
+        cached.last_used = self.js_general_artifact_clock;
+        Some(cached.compiled.clone())
+    }
+
+    pub(super) fn js_general_artifact_cache_enabled(&self) -> bool {
+        self.js_general_artifact_cache_enabled
+    }
+
+    fn release_js_general_artifact_reference(
+        &mut self,
+        compiled: &Rc<super::compiled::CompiledJsFunction>,
+    ) -> bool {
+        let key = self
+            .js_general_artifacts
+            .iter()
+            .find_map(|(key, cached)| Rc::ptr_eq(&cached.compiled, compiled).then(|| key.clone()));
+        let Some(key) = key else {
+            return false;
+        };
+        if let Some(cached) = self.js_general_artifacts.get_mut(key.as_ref()) {
+            cached.tier_references = cached.tier_references.saturating_sub(1);
+            self.js_general_artifact_clock = self.js_general_artifact_clock.saturating_add(1);
+            cached.last_used = self.js_general_artifact_clock;
+        }
+        true
+    }
+
+    fn evict_idle_js_general_artifact(&mut self) -> bool {
+        let key = self
+            .js_general_artifacts
+            .iter()
+            .filter(|(_, cached)| cached.tier_references == 0)
+            .min_by_key(|(_, cached)| cached.last_used)
+            .map(|(key, _)| key.clone());
+        let Some(key) = key else {
+            return false;
+        };
+        let Some(cached) = self.js_general_artifacts.remove(key.as_ref()) else {
+            return false;
+        };
+        self.js_general_artifact_key_bytes = self
+            .js_general_artifact_key_bytes
+            .saturating_sub(key.len());
+        self.jit_code_cache.release(
+            JitArtifactKind::JsFunction,
+            1,
+            cached.compiled.mapped_bytes(),
+        );
+        true
     }
 
     #[cfg(test)]
@@ -2878,29 +3087,6 @@ impl Drop for ProgramStore {
                 .and_then(|entry| entry.lane_views.derived(*function))
                 .map(super::dispatch_fast::LaneView::osr_diagnostics)
                 .unwrap_or_default();
-            let general_dispatch_observed_work = self
-                .js_general_dispatch_work
-                .as_ref()
-                .and_then(|work| work.get(program))
-                .and_then(|work| work.get(function))
-                .copied()
-                .unwrap_or(0);
-            let general_entry_work = u64::try_from(counters.entries)
-                .unwrap_or(u64::MAX)
-                .saturating_mul(u64::try_from(counters.instruction_count.max(1)).unwrap_or(u64::MAX));
-            let general_compile_work_required = if self.general_baseline_priced {
-                JS_JIT_GENERAL_COMPILE_FIXED_COST
-                    .saturating_add(
-                        JS_JIT_GENERAL_COMPILE_COST_PER_INSTRUCTION
-                            .saturating_mul(u64::try_from(counters.instruction_count.max(1)).unwrap_or(u64::MAX)),
-                    )
-                    .saturating_mul(JS_JIT_GENERAL_SAVED_SHARE.1)
-                    / JS_JIT_GENERAL_SAVED_SHARE.0
-            } else {
-                u64::try_from(counters.instruction_count.max(1))
-                    .unwrap_or(u64::MAX)
-                    .saturating_mul(u64::from(JS_JIT_GENERAL_PROMOTION_ENTRIES))
-            };
             let _ = write!(
                 stderr,
                 "QUENCH_JS_JIT_STATS {{\"program\":{program},\"function\":{function},\"function_name\":"
@@ -2922,7 +3108,7 @@ impl Drop for ProgramStore {
             }
             let _ = write!(
                 stderr,
-                ",\"status\":\"{status}\",\"parameter_count\":{},\"instruction_count\":{},\"entries\":{},\"lane_entries\":{},\"numeric_entries\":{},\"promotions\":{},\"compile_attempts\":{},\"compile_successes\":{},\"general_dispatch_compile_attempts\":{},\"general_dispatch_compile_successes\":{},\"compile_ns\":{},\"native_entries\":{},\"native_entry_coverage_ppm\":{},\"all_entry_native_coverage_ppm\":{},\"field_cache_probes\":{},\"field_cache_hits\":{},\"field_store_cache_probes\":{},\"field_store_cache_hits\":{},\"field_return_candidate_entries\":{},\"field_return_fixed_this_entries\":{},\"field_return_fast_entries\":{},\"field_increment_candidate_entries\":{},\"field_increment_fixed_this_entries\":{},\"field_increment_fast_entries\":{},\"numeric_find_fast_entries\":{},\"fallback_entries\":{},\"interpreter_completions\":{},\"interpreter_inclusive_ns\":{},\"general_dispatch_work\":{},\"general_dispatch_work_required\":{},\"guard_census\":{{\"conditional_branch_sites\":{},\"typeof_operations\":{},\"strict_comparison_sites\":{},\"relational_comparison_sites\":{}}},\"osr\":{{\"plain_backward_jump_sites\":{},\"admitted_sites\":{},\"compile_attempts\":{},\"compile_successes\":{},\"currently_compiled_sites\":{},\"native_entry_attempts\":{},\"native_region_runs\":{},\"entry_guard_misses\":{},\"exits\":{},\"widenings\":{}}},\"call_sites\":[",
+                ",\"status\":\"{status}\",\"parameter_count\":{},\"instruction_count\":{},\"entries\":{},\"lane_entries\":{},\"numeric_entries\":{},\"promotions\":{},\"compile_attempts\":{},\"compile_successes\":{},\"general_dispatch_compile_attempts\":{},\"general_dispatch_compile_successes\":{},\"general_artifact_cache_hits\":{},\"general_artifact_cache_misses\":{},\"compile_ns\":{},\"native_entries\":{},\"native_entry_coverage_ppm\":{},\"all_entry_native_coverage_ppm\":{},\"field_cache_probes\":{},\"field_cache_hits\":{},\"field_store_cache_probes\":{},\"field_store_cache_hits\":{},\"field_return_candidate_entries\":{},\"field_return_fixed_this_entries\":{},\"field_return_fast_entries\":{},\"field_increment_candidate_entries\":{},\"field_increment_fixed_this_entries\":{},\"field_increment_fast_entries\":{},\"numeric_find_fast_entries\":{},\"fallback_entries\":{},\"interpreter_completions\":{},\"interpreter_inclusive_ns\":{},\"general_dispatch_work\":{},\"general_dispatch_work_required\":{},\"guard_census\":{{\"conditional_branch_sites\":{},\"typeof_operations\":{},\"strict_comparison_sites\":{},\"relational_comparison_sites\":{}}},\"osr\":{{\"plain_backward_jump_sites\":{},\"admitted_sites\":{},\"compile_attempts\":{},\"compile_successes\":{},\"currently_compiled_sites\":{},\"native_entry_attempts\":{},\"native_region_runs\":{},\"entry_guard_misses\":{},\"exits\":{},\"widenings\":{}}},\"call_sites\":[",
                 counters.parameter_count,
                 counters.instruction_count,
                 counters.entries,
@@ -2933,6 +3119,8 @@ impl Drop for ProgramStore {
                 counters.compile_successes,
                 counters.general_compile_attempts,
                 counters.general_compile_successes,
+                counters.general_artifact_cache_hits,
+                counters.general_artifact_cache_misses,
                 counters.compile_ns,
                 counters.native_entries,
                 native_entry_coverage_ppm,
@@ -3046,21 +3234,6 @@ impl Drop for ProgramStore {
                 let _ = write_json_string(&mut stderr, name);
                 let _ = write!(stderr, ",{count}]");
             }
-            let _ = write!(stderr, "],\"general_dispatch_opcode_sites\":[");
-            let mut opcode_sites: Vec<_> = counters.general_dispatch_opcode_sites.iter().collect();
-            opcode_sites.sort_unstable_by_key(|((pc, opcode), _)| (*pc, *opcode));
-            for (index, ((pc, opcode), count)) in opcode_sites.iter().enumerate() {
-                if index != 0 {
-                    let _ = write!(stderr, ",");
-                }
-                let name = crate::bytecode::Op::NAMES
-                    .get(usize::from(*opcode))
-                    .copied()
-                    .unwrap_or("unknown");
-                let _ = write!(stderr, "{{\"pc\":{pc},\"opcode\":");
-                let _ = write_json_string(&mut stderr, name);
-                let _ = write!(stderr, ",\"count\":{count}}}");
-            }
             let _ = write!(stderr, "],\"osr_analysis_rejections\":[");
             for (index, (reason, count)) in osr.analysis_rejections.iter().enumerate() {
                 if index != 0 {
@@ -3078,6 +3251,7 @@ impl Drop for ProgramStore {
                     super::compiled::RegionRejection::CaptureLimit => "capture-limit",
                     super::compiled::RegionRejection::ArrayLimit => "array-limit",
                     super::compiled::RegionRejection::FieldLimit => "field-limit",
+                    super::compiled::RegionRejection::FieldStoreLimit => "field-store-limit",
                     super::compiled::RegionRejection::FieldMutation => "field-mutation",
                 };
                 let _ = write!(stderr, "[");
@@ -3086,10 +3260,7 @@ impl Drop for ProgramStore {
             }
             let _ = writeln!(
                 stderr,
-                "],\"general_entry_work\":{},\"general_dispatch_observed_work\":{},\"general_compile_work_required\":{},\"code_bytes\":{},\"guard_census_kind\":\"bytecode-sites-not-proven-redundancies\",\"dynamic_opcode_count_scope\":\"general-dispatch-only; fast-lane-and-native-instructions-excluded\"}}",
-                general_entry_work,
-                general_dispatch_observed_work,
-                general_compile_work_required,
+                "],\"code_bytes\":{},\"guard_census_kind\":\"bytecode-sites-not-proven-redundancies\",\"dynamic_opcode_count_scope\":\"general-dispatch-only; fast-lane-and-native-instructions-excluded\"}}",
                 counters.code_bytes
             );
         }
@@ -3255,7 +3426,7 @@ mod jit_code_cache_tests {
         let mut store = super::ProgramStore::default();
         store.js_jit_general_dispatch_enabled = false;
         assert!(!store.js_jit_general_dispatch_enabled());
-        assert!(!store.note_js_general_dispatch_work(
+        assert!(!store.note_js_general_dispatch_backedge(
             super::ProgramId::MAIN,
             1,
             usize::MAX,
