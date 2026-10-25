@@ -2571,7 +2571,7 @@ impl<H: Host> Vm<H> {
         };
         let units = input.units();
         if (stateful && start > units.len())
-            || regex.excludes_search(units.len(), start, (start < units.len()).then(|| units.at(start)))
+            || regex.excludes_search(units.len(), start, || (start < units.len()).then(|| units.at(start)))
         {
             if stateful {
                 store(self, Value::number(0.0))?;
@@ -2611,22 +2611,18 @@ impl<H: Host> Vm<H> {
         result_used: bool,
     ) -> Option<Result<Value, JsError>> {
         if !matches!(native, Native::RegExpExec | Native::RegExpTest)
-            || !matches!(self.heap.get(receiver), Some(Cell::RegExp { .. }))
-            || !self.is_string(subject)
             || self.method_caches_may_name(self.runtime_atoms.last_index)
         {
             return None;
         }
-        let (slot, last_index) = self.regexp_last_index_value(receiver)?;
-        if last_index.as_number().is_none()
-            || (native == Native::RegExpTest && self.regexp_builtin_exec_matcher(receiver).is_none())
-        {
+        let (slot, last_index, rejected) = self.regexp_steady_state(receiver, subject)?;
+        if native == Native::RegExpTest && self.regexp_builtin_exec_matcher(receiver).is_none() {
             return None;
         }
         // A search the prefilter excludes fails as the matcher's would: `null` from exec and
         // `false` from test, and a global or sticky regexp's `lastIndex` reset through the
         // slot `regexp_match_from` stores through.
-        if let Some(stateful) = self.regexp_prefilter_rejects(receiver, subject, last_index) {
+        if let Some(stateful) = rejected {
             if stateful {
                 self.heap.property_set(receiver, slot, Value::number(0.0));
             }
@@ -2713,24 +2709,43 @@ impl<H: Host> Vm<H> {
         self.with_call_roots([receiver, subject], |vm| vm.regexp_exec_result(receiver, subject, input, matched))
     }
 
-    /// Whether `regexp_match_from`'s search of `subject` from `last_index` is one its
-    /// compiled regexp's prefilter excludes (`Regex::excludes_search`), decided where neither
-    /// conversion has an effect: a flat string subject and a Number `lastIndex`. `Some`
-    /// carries whether the regexp is global or sticky; `None` leaves the read to the general
-    /// path.
-    fn regexp_prefilter_rejects(&self, receiver: Value, subject: Value, last_index: Value) -> Option<bool> {
-        let Some(Cell::RegExp { meta, .. }) = self.heap.get(receiver) else {
+    /// What a steady call (`steady_regexp_call`) of the RegExp `receiver` over the string
+    /// `subject` reads, in one look at the regexp: the slot and Number value of its own
+    /// writable data `lastIndex` (`regexp_last_index_slot`), and whether its compiled
+    /// regexp's prefilter excludes `regexp_match_from`'s search (`Regex::excludes_search`),
+    /// decided where neither conversion has an effect, over a flat subject. That `Some`
+    /// carries whether the regexp is global or sticky; `None` leaves the search to the
+    /// matcher, and a `None` result the call to the general path.
+    #[inline(always)]
+    fn regexp_steady_state(&mut self, receiver: Value, subject: Value) -> Option<(usize, Value, Option<bool>)> {
+        let Some(Cell::RegExp { object, .. }) = self.heap.get(receiver) else {
             return None;
         };
-        let regex = meta.matcher.0.get()?;
+        let shape = object.shape();
+        let slot = match self.regexp_last_index_layouts.iter().find(|(cached, _)| *cached == shape) {
+            Some(&(_, slot)) => slot as usize,
+            None => self.regexp_last_index_slot_miss(receiver, shape)?,
+        };
+        let Some(Cell::RegExp { object, meta }) = self.heap.get(receiver) else {
+            return None;
+        };
+        // A RegExp's `lastIndex`, made first, usually lies in its inline storage.
+        let inline = (slot < crate::value_vec::INLINE_PROPERTY_COUNT).then(|| object.inline_property(slot)).flatten();
+        let last_index = match inline {
+            Some(value) => value,
+            None => self.heap.property_get(object, slot)?,
+        };
+        // A deleted slot is no Number either.
+        let index = last_index.as_number()?;
         let input = self.heap.string(subject)?;
-        let units = input.existing_flat()?;
-        let last_index = regexp_to_length(last_index.as_number()?);
+        let (Some(regex), Some(units)) = (meta.matcher.0.get(), input.existing_flat()) else {
+            return Some((slot, last_index, None));
+        };
         let stateful = meta.flags.intersects(RegExpFlags::GLOBAL.with(RegExpFlags::STICKY));
-        let start = if stateful { last_index } else { 0 };
+        let start = if stateful { regexp_to_length(index) } else { 0 };
         let length = input.len();
-        ((stateful && start > length) || regex.excludes_search(length, start, units.unit(start)))
-            .then_some(stateful)
+        let rejected = (stateful && start > length) || regex.excludes_search(length, start, || units.unit(start));
+        Some((slot, last_index, rejected.then_some(stateful)))
     }
 
     pub(super) fn regexp_builtin_exec(
