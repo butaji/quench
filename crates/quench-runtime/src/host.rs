@@ -140,11 +140,12 @@ pub trait Host {
     /// scratch memory, freed by now, are no longer needed while the program runs on.
     fn after_native_compilation(&mut self) {}
 
-    /// A snapshot restore has read `bytes`, part of the snapshot the host gave it
-    /// (`Runtime::restore_snapshot`), and reads them again only to decode a function's record
-    /// on its first call: a host that mapped them may return their pages, so they are not
-    /// resident beside the state decoded from them.
-    fn snapshot_bytes_read(_bytes: &[u8])
+    /// The runtime has read `bytes`, part of bytes the host gave it (a snapshot's,
+    /// `Runtime::restore_snapshot`, or a compiled program's, `kept_compiled_program`), and
+    /// reads them again only to decode a function's record on its first call: a host that
+    /// mapped them may return their pages, so they are not resident beside what was decoded
+    /// from them.
+    fn kept_bytes_read(_bytes: &[u8])
     where
         Self: Sized,
     {

@@ -1105,8 +1105,9 @@ impl quench_runtime::Host for NodeHost {
         crate::host::resident_pages::release_free_heap_pages();
     }
 
-    /// The snapshot is a tracked read-only mapping (`startup_snapshot::load_or_schedule`).
-    fn snapshot_bytes_read(bytes: &[u8]) {
+    /// Snapshots and compile-cache entries are tracked read-only mappings
+    /// (`startup_snapshot::load_or_schedule`, `CacheEntry::load`).
+    fn kept_bytes_read(bytes: &[u8]) {
         crate::host::resident_pages::release_tracked_bytes(bytes);
     }
 

@@ -426,11 +426,17 @@ impl<H: Host> Vm<H> {
         &mut self, bytes: crate::KeptBytes, text: crate::bytecode::SourceText, base: usize, name: &str,
         specialized: bool,
     ) -> Result<crate::ResidualProgram, String> {
+        let read = bytes.clone();
         let mut program = crate::ResidualProgram::decode_compact(
             bytes,
             &mut |name| self.intern_atom(name),
             text,
         )?;
+        // The decode read the body to check and decode it; the program reads the bytes again
+        // only for a function's record on its first call. A run that loads many modules
+        // before its first release had kept every decoded body resident (undici npm scenario:
+        // 4.2 MB of compile-cache pages at its 30 MB peak).
+        H::kept_bytes_read((*read).as_ref());
         let source_matches = program.source.as_ref().is_some_and(|source| source.base as usize == base);
         if program.source_name != name || !source_matches || program.specialized != specialized {
             return Err("cached program does not match its body".into());
