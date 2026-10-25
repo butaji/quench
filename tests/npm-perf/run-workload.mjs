@@ -24,12 +24,7 @@ if (!workloadName || !["no-jit", "jit"].includes(phase) ||
 }
 
 function bunBinary() {
-  if (process.env.BUN_BIN) return process.env.BUN_BIN;
-  const local = path.join(repo, "work/bun/bun");
-  if (fs.existsSync(local)) return local;
-  const onPath = spawnSync("bun", ["--version"], { encoding: "utf8" });
-  if (onPath.status === 0) return "bun";
-  return local;
+  return process.env.BUN_BIN ?? "bun";
 }
 
 const binaries = {

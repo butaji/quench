@@ -10344,8 +10344,8 @@ process.execve('/bin/sh', ['sh', '-c', 'echo replaced "$X" "$#"', 'sh', 'one'], 
     );
 }
 
-/// The parity script of `evidence/wasm-coremark-buffer-before-library-linux-2026-10-18/`:
-/// each case reads files before anything touches `Buffer`, then observes the result.
+/// The buffer/library ordering parity script: each case reads files before anything
+/// touches `Buffer`, then observes the result.
 const BUFFER_PARITY_SCRIPT: &str = r#"// Usage: node parity.cjs <case>. Each case reads files before touching Buffer, then observes.
 const fs = require('fs');
 const path = require('path');

@@ -66,10 +66,10 @@ Options:
   --screen            shorthand for --rounds 3 (can reject, never accept)
   --workload ID       repeatable workload id (default: all)
   --phase MODE        repeatable: no-jit or jit (default: both)
-  --out DIR           new evidence directory (default evidence/npm-10-m4-<date>)
+  --out DIR           new output directory (default a temporary directory)
   --quench PATH       quench-node binary (default target/production/quench-node)
   --node PATH         Node binary (default the running node)
-  --bun PATH          Bun binary (default work/bun/bun, then bun on PATH)
+  --bun PATH          Bun binary (default bun on PATH)
   --no-gate           write evidence but exit 0 even when a gate is missed
   --dry-run           print the jobs without running them
   --help              this text
@@ -460,7 +460,7 @@ function main() {
   ]);
   const node = resolveExecutable(options.node, [process.execPath]);
   const bun = resolveExecutable(options.bun, [
-    path.join(root, "work/bun/bun"),
+    path.join(os.homedir(), ".bun/bin/bun"),
     "bun",
   ]);
   const git = gitIdentity();
@@ -480,15 +480,13 @@ function main() {
   if (bun.includes("/") && !fs.existsSync(bun)) {
     fail(`Bun binary not found at ${bun}`);
   }
-  const stamp = `${new Date().toISOString().slice(0, 10)}T` +
-    new Date().toISOString().slice(11, 16).replace(":", "");
-  const outDir = path.resolve(
-    options.out ?? path.join(root, "evidence", `npm-10-m4-${stamp}`),
-  );
-  if (fs.existsSync(outDir)) {
-    fail(`evidence directory already exists: ${outDir}`);
+  const outDir = options.out
+    ? path.resolve(options.out)
+    : fs.mkdtempSync(path.join(os.tmpdir(), "quench-npm-matrix-"));
+  if (options.out && fs.existsSync(outDir)) {
+    fail(`output directory already exists: ${outDir}`);
   }
-  fs.mkdirSync(outDir, { recursive: true });
+  if (options.out) fs.mkdirSync(outDir, { recursive: true });
   const context = {
     generatedAt: new Date().toISOString(),
     outDir,

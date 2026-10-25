@@ -18,6 +18,16 @@ Thumbs.db
 # Local scratch / test outputs
 /tmp/
 /scratch/
+/work/
+/evidence/
+/tasks/
+/tests/npm-perf/reports/
+
+# Historical profiler and diagnostic dumps
+*.heapprofile
+*.heapsnapshot
+*.cpuprofile
+/secret.txt
 
 # Agent session artifacts
 .pi/

@@ -44,7 +44,7 @@ const LOAD_RELEASE_INTERVAL: std::time::Duration = std::time::Duration::from_mil
 /// at 18-100 ms, during that warm-up. A release costs the refaults that follow, about 0.35 ms
 /// (npm scenarios with 300-1800 first calls, x86_64 VM, 2026-10-22), so a release at every
 /// first call slowed TypeScript's transpile 313 -> 829 ms. At 5 ms (plain x86_64 build,
-/// MemoryFirst, 10 runs; `evidence/tod137-first-call-release-linux-2026-10-23`): V8-v7 max
+/// MemoryFirst, 10 runs): V8-v7 max
 /// RSS without JIT -124 to -516 KiB on six fixtures, with JIT -144 to +48 KiB, scores within
 /// noise; npm scenarios run 7-21% longer for -3.4 to +0.1 MB. Memory-first is the opt-in
 /// policy that trades speed for memory; the throughput default keeps `LOAD_RELEASE_INTERVAL`.

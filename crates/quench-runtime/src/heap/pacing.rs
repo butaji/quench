@@ -391,7 +391,7 @@ const MEMORY_FIRST_MINIMUM_ALLOCATION: usize = 384;
 /// policy. Without it the young budget is eight live sets: a server whose startup leaves a
 /// few hundred thousand live cells (the Node library plus a framework) allocated millions
 /// between collections, and its peak RSS was mostly garbage. Measured with the `gc-tuning`
-/// build, Linux x86_64, 4 vCPU, 500 connections (evidence/web-gc-young-cap-linux-2026-10-19):
+/// build, Linux x86_64, 4 vCPU, 500 connections:
 /// peak RSS hono 84 -> 53 MB, fastify 96 -> 72 MB, express 85 -> 53 MB; V8-v7 earley-boyer
 /// 46 -> 28 MB and splay 161 -> 92 MB, with Scores within the run-to-run band. 2^16 cut little
 /// more memory.

@@ -9,8 +9,7 @@
 //! and a Test262 sample's profiles, never from a scored bench). A fault on a file-backed page
 //! maps its cached neighbours too, so executed code scattered among cold code keeps the cold
 //! pages resident. Symbols the order names but a build lacks are ignored, so code changes
-//! erode the layout silently: retrain the order
-//! (`evidence/tod123-rss-linux-2026-10-14/README.md`) when start-up RSS rises. Symbol names
+//! erode the layout silently: retrain the order when start-up RSS rises. Symbol names
 //! carry crate hashes, which change with the exact compiler release: `rust-toolchain.toml`
 //! names one, and an order is trained with it.
 

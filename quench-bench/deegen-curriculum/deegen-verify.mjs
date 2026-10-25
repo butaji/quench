@@ -1,6 +1,6 @@
 #!/usr/bin/env node
-// Gradual Deegen-mechanism validation runner. See docs/deegen-micro-curriculum.md
-// for the design and manifest.json for the case list. Unlike quench-bench/micros/
+// Gradual Deegen-mechanism validation runner. See manifest.json for the case list
+// and the Linear project for the design record. Unlike quench-bench/micros/
 // verify.mjs (a neutral perf-regression corpus), this checks two things per case:
 //   1. Observable output matches the Node oracle exactly (same as micros/).
 //   2. Where the case declares an `expect.instrumentation` clause, the engine's
@@ -43,9 +43,8 @@ const runs = Number(arg("--runs", "3"));
 // per this suite's purpose: 3x wall time and 1.5x RSS vs. Node. RSS already
 // runs ~0.5x Node in practice (quench's representation is genuinely lighter),
 // so 1.5x is a real regression bar, not a courtesy margin. Wall time above 3x
-// is a real finding worth reporting, not noise to average away — see the
-// docs/deegen-micro-curriculum.md findings log for cases currently failing
-// this bar (recursion, megamorphic property access, string-heavy workloads)
+// is a real finding worth reporting, not noise to average away — notably for
+// recursion, megamorphic property access and string-heavy workloads
 // and the 026.js for-in case, which is a confirmed correctness-relevant perf
 // cliff, not just a slow path.
 const wallCeiling = Number(arg("--wall-ratio-max", "3"));

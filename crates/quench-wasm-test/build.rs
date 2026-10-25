@@ -4,7 +4,7 @@ use std::{env, path::Path};
 
 /// The trained symbol orders for x86-64 Linux binaries of this crate, one
 /// per C runtime linkage, whose builds name symbols differently (see
-/// `src/bin/symbol-order.rs` and docs/README.md).
+/// `src/bin/symbol-order.rs`).
 const X86_64_LINUX_ORDER: &str = "link/x86_64-linux.order";
 const X86_64_LINUX_STATIC_ORDER: &str = "link/x86_64-linux-static.order";
 
