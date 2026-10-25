@@ -48,6 +48,7 @@ const MAX_REGION_REGISTERS: usize = 128;
 const MAX_REGION_ARRAYS: usize = 8;
 const MAX_REGION_CAPTURES: usize = 16;
 const MAX_REGION_FIELDS: usize = 16;
+const MAX_REGION_FIELD_STORES: usize = 16;
 /// The largest native body a region may produce.
 pub(super) const MAX_CODE_BYTES: usize = 64 * 1024;
 
@@ -166,6 +167,10 @@ pub(crate) struct LoopRegion {
     pub(crate) fields: Vec<FieldUse>,
     /// The field each `GetField` of the region reads, by offset from the header.
     field_reads: std::collections::BTreeMap<u32, usize>,
+    /// Existing own-data Number slots stored by the region, by offset from its header.
+    field_stores: std::collections::BTreeMap<u32, usize>,
+    /// Receivers and cache sites whose flat slots are guarded before native entry.
+    pub(crate) field_store_sites: Vec<FieldStore>,
     /// The registers that hold a field's value at every read (`held_registers`), with the
     /// path they hold and that field's index.
     held: std::collections::BTreeMap<Register, (FieldPath, usize)>,
@@ -194,6 +199,7 @@ pub(crate) enum RegionRejection {
     CaptureLimit,
     ArrayLimit,
     FieldLimit,
+    FieldStoreLimit,
     FieldMutation,
 }
 
@@ -353,6 +359,13 @@ pub(crate) struct FieldUse {
     pub(crate) atom: crate::bytecode::Atom,
     pub(crate) cache_site: u16,
     pub(crate) tagged: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct FieldStore {
+    pub(crate) receiver: Register,
+    pub(crate) atom: crate::bytecode::Atom,
+    pub(crate) cache_site: u16,
 }
 
 #[derive(Clone, Copy)]
@@ -576,7 +589,9 @@ fn object_reads(instruction: WideInstruction) -> Option<Register> {
             _ => None,
         },
         Op::GetIndex => instruction.operand_b().register_index(),
-        Op::SetIndex | Op::RequireObjectCoercible => Some(instruction.register_b()),
+        Op::SetIndex | Op::SetField | Op::SetFieldStrict | Op::RequireObjectCoercible => {
+            Some(instruction.register_b())
+        }
         _ => None,
     }
 }
@@ -988,9 +1003,9 @@ impl LoopRegion {
 }
 
 /// The entry record native code reads: each capture's value, then each cached field's,
-/// then each array's element pointer, length and capacity. Only the words pushed are ever
-/// read, by native code and by `captures` and `field_value`, so the rest stay
-/// uninitialized.
+/// then each array's element pointer, length and capacity, then each guarded field-store
+/// pointer. Only the words pushed are ever read, by native code and by `captures` and
+/// `field_value`, so the rest stay uninitialized.
 pub(crate) struct LoopEntry {
     words: [std::mem::MaybeUninit<u64>; ENTRY_WORDS],
     length: usize,
@@ -1010,10 +1025,16 @@ const WORD_BYTES: i32 = 8;
 /// An array's entry words: its element pointer, its length, then its capacity (which only
 /// a written array's appends read).
 const ARRAY_WORDS: usize = 3;
+const FIELD_STORE_WORDS: usize = 1;
 /// The scratch registers' address an inlining region's record ends with.
 const SCRATCH_WORDS: usize = 1;
 const ENTRY_WORDS: usize =
-    ENTRY_CAPTURES + MAX_REGION_CAPTURES + ARRAY_WORDS * MAX_REGION_ARRAYS + MAX_REGION_FIELDS + SCRATCH_WORDS;
+    ENTRY_CAPTURES
+        + MAX_REGION_CAPTURES
+        + ARRAY_WORDS * MAX_REGION_ARRAYS
+        + MAX_REGION_FIELDS
+        + FIELD_STORE_WORDS * MAX_REGION_FIELD_STORES
+        + SCRATCH_WORDS;
 
 impl LoopEntry {
     pub(crate) fn new() -> Self {
@@ -1063,6 +1084,11 @@ impl LoopEntry {
         self.push(length as u64);
         self.push(capacity.min(MAX_INDEXED_LENGTH) as u64);
         Some(())
+    }
+
+    /// A warmed own-data field slot guarded by the VM during entry setup.
+    pub(crate) fn push_field_store(&mut self, slot: *mut Value) {
+        self.push(slot.addr() as u64);
     }
 
     /// The value of the region's `index`th field as pushed: its word follows the captures
@@ -1282,16 +1308,49 @@ fn admit_region(
         field_arrays: std::collections::BTreeMap::new(),
     };
     let mut field_reads = std::collections::BTreeMap::new();
+    let mut field_stores = std::collections::BTreeMap::new();
+    let mut field_store_sites = Vec::new();
+    let defined_registers: std::collections::BTreeSet<Register> = instructions
+        .iter()
+        .filter_map(|instruction| instruction.defined_register())
+        .collect();
     for (offset, instruction) in instructions.iter().copied().enumerate() {
         if instruction.op() == Op::GetField {
             let path = field_path(instruction, sites, &paths).ok_or(RegionRejection::UnsupportedInstruction(Op::GetField))?;
             let index = intern_field(&mut admission.fields, &path, tagged.contains(&instruction.result_register()));
             field_reads.insert(offset as u32, index);
         }
+        if matches!(instruction.op(), Op::SetField | Op::SetFieldStrict) {
+            if instruction.result_flags() != 0 || instruction.returns_from_frame() {
+                return Err(RegionRejection::UnsupportedInstruction(instruction.op()));
+            }
+            let receiver = instruction.register_b();
+            let atom = instruction.atom_index();
+            let cache_site = instruction.cache_site_index();
+            // A cached read of this atom could otherwise keep using its entry value after a
+            // native store. Be conservative about aliases: reject every same-name read in
+            // this small region.
+            if instructions.iter().any(|candidate| {
+                candidate.op() == Op::GetField && candidate.atom_index() == atom
+            }) {
+                return Err(RegionRejection::FieldMutation);
+            }
+            // The slot pointer is captured at entry. The receiver must therefore stay in its
+            // tagged register for the entire region.
+            if instructions.iter().any(|candidate| candidate.defined_register() == Some(receiver)) {
+                return Err(RegionRejection::FieldMutation);
+            }
+            let site = FieldStore { receiver, atom, cache_site };
+            let index = field_store_sites.iter().position(|existing| *existing == site).unwrap_or_else(|| {
+                field_store_sites.push(site);
+                field_store_sites.len() - 1
+            });
+            field_stores.insert(offset as u32, index);
+        }
         if let Some(register) = object_reads(instruction).filter(|register| paths.contains_key(register)) {
             admission.field_arrays.entry(register).or_insert(false);
         }
-        admit(&mut admission, instruction, constants, &tagged)
+        admit(&mut admission, instruction, constants, &tagged, &defined_registers)
             .ok_or(RegionRejection::UnsupportedInstruction(instruction.op()))?;
     }
     let held: std::collections::BTreeMap<Register, (FieldPath, usize)> = paths
@@ -1311,11 +1370,13 @@ fn admit_region(
     if admission.fields.len() > MAX_REGION_FIELDS {
         return Err(RegionRejection::FieldLimit);
     }
+    if field_store_sites.len() > MAX_REGION_FIELD_STORES {
+        return Err(RegionRejection::FieldStoreLimit);
+    }
     // A field read holds the value its receiver had at entry, so no instruction may give a
-    // receiver register another value. Element stores cannot change one: a store writes an
-    // own data element below the length or at it (`Lowering::store_index`), which adds,
-    // removes or redefines no property a field cache holds (an array's `length` is no
-    // shape slot).
+    // receiver register another value. Element stores and admitted field stores preserve
+    // receiver registers and object shapes. A field store to any name read in the region was
+    // rejected above, so it cannot stale a cached field value.
     if admission.fields.iter().any(|field| match field.receiver {
         FieldReceiver::This | FieldReceiver::Field(_) => false,
         FieldReceiver::Register(register) => instructions
@@ -1374,6 +1435,8 @@ fn admit_region(
         captures: admission.captures,
         fields: admission.fields,
         field_reads,
+        field_stores,
+        field_store_sites,
         held,
         identity_branches,
         instructions,
@@ -1389,6 +1452,7 @@ fn admit(
     instruction: WideInstruction,
     constants: &[Value],
     tagged: &std::collections::BTreeSet<Register>,
+    defined_registers: &std::collections::BTreeSet<Register>,
 ) -> Option<()> {
     match instruction.op() {
         Op::LoadConst => {
@@ -1460,6 +1524,17 @@ fn admit(
             admission.number(instruction.register_a())?;
             admission.array(instruction.register_b(), true)?;
             admission.number(instruction.register_c())?;
+        }
+        Op::SetField | Op::SetFieldStrict => {
+            let value_register = instruction.register_a();
+            if defined_registers.contains(&value_register) {
+                admission.number(value_register)?;
+            } else {
+                // An unchanged entry value can be any tagged value. The VM logs the
+                // receiver in the generational barrier before native writes begin.
+                admission.tagged(value_register)?;
+            }
+            admission.tagged(instruction.register_b())?;
         }
         Op::Jump => {}
         Op::JumpBinaryFalse => {
@@ -2961,6 +3036,14 @@ impl<'a, 'b> Lowering<'a, 'b> {
             .load(types::I64, flags(), self.entry, index as i32 * WORD_BYTES)
     }
 
+    fn field_store_pointer(&mut self, index: usize) -> ir::Value {
+        let start = ENTRY_CAPTURES
+            + self.region.captures.len()
+            + self.region.fields.len()
+            + ARRAY_WORDS * self.region.arrays.len();
+        self.word(start + index)
+    }
+
     /// A block laid out after the hot code: an exit, or a representation a region rarely
     /// meets.
     fn cold_block(&mut self) -> ir::Block {
@@ -3025,9 +3108,13 @@ impl<'a, 'b> Lowering<'a, 'b> {
             self.fields.push(Typed { value, representation });
         }
         if let Some(inlining) = &self.region.inlining {
-            // The scratch registers' address follows the arrays; each inlined callee is still
-            // the function its field held when the region was made.
-            self.scratch = Some(self.word(arrays_start + ARRAY_WORDS * self.region.arrays.len()));
+            // The scratch registers' address follows arrays and field-store slots; each
+            // inlined callee is still the function its field held when the region was made.
+            self.scratch = Some(self.word(
+                arrays_start
+                    + ARRAY_WORDS * self.region.arrays.len()
+                    + self.region.field_store_sites.len(),
+            ));
             for frame in inlining.frames.clone() {
                 let held = self.fields[frame.field].value;
                 let other = self.body.builder.ins().icmp_imm_u(IntCC::NotEqual, held, frame.callee.to_bits() as i64);
@@ -3950,6 +4037,14 @@ impl<'a, 'b> Lowering<'a, 'b> {
                 let value = self.register(instruction.register_a());
                 let bits = self.encoding(value);
                 self.body.builder.ins().store(flags(), bits, address, displacement);
+                self.fall_through(pc)
+            }
+            Op::SetField | Op::SetFieldStrict => {
+                let index = *self.region.field_stores.get(&(pc - self.region.header))?;
+                let pointer = self.field_store_pointer(index);
+                let value = self.register(instruction.register_a());
+                let bits = self.boxed(value);
+                self.body.builder.ins().store(flags(), bits, pointer, 0);
                 self.fall_through(pc)
             }
             Op::Jump => self.jump(pc, instruction.jump_target()),
