@@ -578,6 +578,33 @@ impl<H: Host> Vm<H> {
             && self.set_plain_symbol_property(object, key, value) == Some(true)
     }
 
+    /// `object[key] = value` for a host-private symbol `key` on a non-Proxy object, as
+    /// `set_symbol_property_with_receiver` completes it for its own receiver: an own writable
+    /// data property takes the value, and an absent one is defined, not enumerable, on an
+    /// extensible object. `false` leaves any other store, unobserved, to the general path.
+    pub(super) fn try_host_private_symbol_set(&mut self, object: Value, key: Value, value: Value) -> bool {
+        if !self.is_host_private_symbol(key) || self.proxy_parts(object).is_some() {
+            return false;
+        }
+        let Some(data) = self.object_data(object) else {
+            return false;
+        };
+        let symbol = PropertyKey::symbol(key);
+        if let Some(slot) = self.property_shape_slot(data.shape(), symbol) {
+            let writable = self
+                .slot_attributes(data, slot)
+                .is_some_and(|attributes| !attributes.accessor && attributes.writable);
+            if writable {
+                self.heap.property_set(object, slot, value);
+            }
+            return writable;
+        }
+        data.is_extensible()
+            && self
+                .create_shape_data_property(object, symbol, value, HOST_PRIVATE_DATA_ATTRIBUTES)
+                .is_ok()
+    }
+
     /// `try_plain_symbol_set` at lane site `site` by the step the site recorded for the
     /// receiver's shape (`record_site_symbol_set`): the same store, or the same add, that
     /// `set_plain_symbol_property` makes for an extensible receiver of that shape and, for an
@@ -794,3 +821,11 @@ impl<H: Host> Vm<H> {
         Ok(self.own_keys_array(values))
     }
 }
+
+/// A host-private symbol property's attributes when a store defines it
+/// (`set_symbol_property_with_receiver`): a data property hidden from enumeration.
+const HOST_PRIVATE_DATA_ATTRIBUTES: DataAttributes = DataAttributes {
+    writable: true,
+    enumerable: false,
+    configurable: true,
+};

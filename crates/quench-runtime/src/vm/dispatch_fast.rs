@@ -3516,6 +3516,7 @@ fn lane_set_index_slot_store<H: Host>(vm: &mut Vm<H>, ip: Ip, object: Value, key
         && !vm.try_append_dense_element(object, key, value)
         && !vm.try_fill_dense_hole(object, key, value)
         && !vm.try_site_symbol_set(ip.addr(), object, key, value)
+        && !vm.try_host_private_symbol_set(object, key, value)
         && !lane_typed_array_store(ip, vm, object, key, value)
         && !lane_string_key_store(ip, vm, object, key, value)
         && !key
