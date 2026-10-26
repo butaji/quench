@@ -15,7 +15,10 @@
 - Release build log: `work/tod20-fs-family-clean-cluster-v373-build.log`, SHA-256 `f3b3b35e9befad27b1c3c987a0c5d38849598d91d54edb8ddb4ab793110252eb`.
 - Pinned Node executable `/workspace/work/node-v26.12.1-linux-x64/bin/node`, version `v26.12.1`, SHA-256 `08f12d42fb304468e8ee86247fe686aae5b225836ea65e9d6566c11ae6ba2e8e`.
 - Official fixture root `/workspace/work/node-stable-release/node-v26.12.1/test/parallel`.
-- Native inputs use ICU `/tmp/tod20-icu/pkgconfig`, zlib `/workspace/quench/work/node-stable-zlib/lib/pkgconfig`, and Brotli `/workspace/quench/work/node-stable-brotli/lib/pkgconfig`, with artifacts pinned in `work/tod20-ipc-v362-provenance.md`.
+- Native `PKG_CONFIG_PATH=/tmp/tod20-icu/pkgconfig:/workspace/quench/work/node-stable-zlib/lib/pkgconfig:/workspace/quench/work/node-stable-brotli/lib/pkgconfig`.
+- ICU descriptor `icu-uc.pc` SHA-256 `e4606f126a25674bedc3cf928f38691f9aa31a0140740c33b06aec1b0fcef51e`; libraries `libicuuc.so` SHA-256 `a8e433e81075732faf255b17d4a25ce28632e41fef1a75e727ee7f4ed73ab151` and `libicudata.so` SHA-256 `a04b2b906193fa1e40f968a3d16d7d6c844a1fafbdd5bce6e9f67b01c124ff24`.
+- zlib descriptor `quench-node-zlib.pc` SHA-256 `ffe8cfba16be369f59c8a9150e08cdccab8925461e2e9c26efda1b1f8537cd7c`; archive `libquench_node_zlib.a` SHA-256 `752b99b500732600d77273e6841d2786d1cc208fe2a897b1016defc21b637217`.
+- Brotli descriptor `quench-node-brotli.pc` SHA-256 `07267b7a9dd67dd2eb584ac098623a9bd14b9a305f1df7cc8e76f3726dd99073`; archive `libquench_node_brotli.a` SHA-256 `dd9005f7541ab4de214fb7bb133a15a67f277a3f6ccb7e9384d6526f0d348cb8`.
 
 ## Focused qualification
 
