@@ -309,6 +309,8 @@ impl<H: Host> Vm<H> {
             active_registers: _,
             lane_raised,
             lane_returned,
+            lane_native,
+            lane_native_returned,
             active_layout: _,
             active_constants: _,
             active_field_entries: _,
@@ -423,7 +425,8 @@ impl<H: Host> Vm<H> {
             ("a with statement", with_stack.is_empty()),
             ("a pending job", jobs.is_empty() && kept_alive.is_empty() && !native_microtask_running),
             ("an Atomics waiter", shared_async_waiters.is_empty() && !test262_agent.installed),
-            ("a lane completion", lane_raised.is_none() && lane_returned.is_none()),
+            ("a lane completion", lane_raised.is_none() && lane_returned.is_none() && lane_native_returned.is_none()),
+            ("a lane native call", lane_native.is_none()),
             (
                 "an eval or construction",
                 !direct_eval

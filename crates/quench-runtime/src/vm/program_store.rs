@@ -2865,22 +2865,22 @@ impl ProgramStore {
         self.jit_code_cache.mapped_bytes + self.jit_code_cache.baseline_mapped_bytes
     }
 
-    /// A program's lane views by function, derived on first use.
     /// What a lane running program `id` reads of it, from one look at its entry: its
     /// residual, lane views (`lane_views`) and constants (`constants`).
     #[inline]
     pub(super) fn lane_program(
         &self,
         id: ProgramId,
-    ) -> Option<(&ResidualProgram, &[std::cell::OnceCell<super::dispatch_fast::LaneView>], &[Value])> {
+    ) -> Option<(&ResidualProgram, &[LaneViewCell], &[Value])> {
         let entry = self.entry(id)?;
         Some((&entry.residual, entry.lane_views.of(&entry.residual), entry.constants.as_slice()))
     }
 
+    /// A program's lane views by function, derived on first use.
     pub(super) fn lane_views(
         &self,
         id: ProgramId,
-    ) -> Option<&[std::cell::OnceCell<super::dispatch_fast::LaneView>]> {
+    ) -> Option<&[LaneViewCell]> {
         let entry = self.entry(id)?;
         Some(entry.lane_views.of(&entry.residual))
     }
@@ -2906,23 +2906,13 @@ impl ProgramStore {
         let entry = self.entry(id)?;
         let view = entry.lane_views.of(&entry.residual).get(function as usize)?;
         if let Some(view) = view.get() {
-            return Some(view);
+            return Some(view.as_ptr());
         }
         let code = entry.residual.function_get(function as usize)?;
         if !deferred_run_completes(entry.lane_deferred.get(function as usize)?) && !may_loop(code) {
             return None;
         }
-        Some(view.get_or_init(|| {
-            // Only a loop tier reads the masks; a collection derives them otherwise.
-            let live = || entry.residual.shared_register_root_masks(function);
-            let view = derive(code, &entry.constants, entry.residual.kind, &live, &entry.residual.field_sites);
-            #[cfg(feature = "profile-lane-exits")]
-            {
-                let (start, end) = view.record_range();
-                super::lane_exits::register_view(start, end, census_label(entry, function), code.instructions().map(|instruction| instruction.op()).collect());
-            }
-            view
-        }))
+        Some(derive_lane_view(entry, function, code, view, derive))
     }
 
     /// Whether a lane call may derive `function`'s view now: it has one, or its earlier entries
@@ -2956,17 +2946,7 @@ impl ProgramStore {
         let entry = self.entry(id)?;
         let code = entry.residual.function_get(function as usize)?;
         let view = entry.lane_views.of(&entry.residual).get(function as usize)?;
-        Some(view.get_or_init(|| {
-            // Only a loop tier reads the masks; a collection derives them otherwise.
-            let live = || entry.residual.shared_register_root_masks(function);
-            let view = derive(code, &entry.constants, entry.residual.kind, &live, &entry.residual.field_sites);
-            #[cfg(feature = "profile-lane-exits")]
-            {
-                let (start, end) = view.record_range();
-                super::lane_exits::register_view(start, end, census_label(entry, function), code.instructions().map(|instruction| instruction.op()).collect());
-            }
-            view
-        }))
+        Some(derive_lane_view(entry, function, code, view, derive))
     }
 
     pub(crate) fn constant(&self, id: ProgramId, index: usize) -> Option<Value> {
@@ -3476,20 +3456,84 @@ fn deferred_run_completes(runs: &std::cell::Cell<u8>) -> bool {
 /// A program's lane views by function, derived on first use (`ProgramStore::entry_lane_view`).
 /// The table itself is made on the program's first lane use: most programs a process restores
 /// or loads never enter the lane, and a table zeroed for each of their functions cost a
-/// restored process about 54 fresh pages (2,493 functions at 88 bytes).
+/// restored process about 54 fresh pages (2,493 functions at 88 bytes). Its cells point into
+/// `arena`, which holds the derived views in derivation order, so the table costs a pointer
+/// per function: most functions never run (fastify's JSON route over HTTP, memory-first,
+/// 2026-10-25: about 12,800 functions in its programs, whose 88-byte cells were 1.1 MB at
+/// the peak).
 #[derive(Default)]
-pub(super) struct LaneViews(std::cell::OnceCell<Box<[std::cell::OnceCell<super::dispatch_fast::LaneView>]>>);
+pub(super) struct LaneViews {
+    table: std::cell::OnceCell<Box<[LaneViewCell]>>,
+    /// The derived views in chunks that never grow past their capacity, so a view's address is
+    /// fixed while its program holds it. Each chunk holds as many as all earlier chunks together
+    /// (`LANE_VIEW_FIRST_CHUNK` first), so a program's views take a few allocations with at
+    /// most half of the arena unused, and lie together in the order the program derived them.
+    arena: std::cell::RefCell<Vec<Vec<super::dispatch_fast::LaneView>>>,
+}
+
+/// The views a program's first arena chunk holds: most programs that enter the lane derive
+/// a handful of views, which this keeps in one allocation of 704 bytes.
+const LANE_VIEW_FIRST_CHUNK: usize = 8;
+
+/// One function's derived lane view, in its program's arena (`LaneViews::arena`).
+pub(super) type LaneViewCell = std::cell::OnceCell<std::ptr::NonNull<super::dispatch_fast::LaneView>>;
+
+/// The view a cell holds, if its function's was derived.
+pub(super) fn derived_lane_view(cell: &LaneViewCell) -> Option<&super::dispatch_fast::LaneView> {
+    // SAFETY: a cell points into its table's arena (`LaneViews::store`), which outlives it.
+    cell.get().map(|view| unsafe { view.as_ref() })
+}
+
+/// `function`'s view in its cell `view`, which `derive` makes from `code` if it has none yet.
+fn derive_lane_view<'s>(
+    entry: &'s ProgramEntry,
+    function: u32,
+    code: &crate::bytecode::Function,
+    view: &LaneViewCell,
+    derive: impl FnOnce(
+        &crate::bytecode::Function,
+        &[Value],
+        crate::bytecode::ProgramKind,
+        &dyn Fn() -> Option<&'s std::rc::Rc<crate::compile::liveness::RegisterMasks>>,
+        &[crate::bytecode::FieldSite],
+    ) -> super::dispatch_fast::LaneView,
+) -> *const super::dispatch_fast::LaneView {
+    view.get_or_init(|| {
+        // Only a loop tier reads the masks; a collection derives them otherwise.
+        let live = || entry.residual.shared_register_root_masks(function);
+        let view = derive(code, &entry.constants, entry.residual.kind, &live, &entry.residual.field_sites);
+        #[cfg(feature = "profile-lane-exits")]
+        {
+            let (start, end) = view.record_range();
+            super::lane_exits::register_view(start, end, census_label(entry, function), code.instructions().map(|instruction| instruction.op()).collect());
+        }
+        entry.lane_views.store(view)
+    })
+    .as_ptr()
+}
 
 impl LaneViews {
     /// The table, one cell per function of `residual`. Its address is fixed once made, as
     /// the lane context's pointer to it requires.
-    fn of(&self, residual: &ResidualProgram) -> &[std::cell::OnceCell<super::dispatch_fast::LaneView>] {
-        self.0.get_or_init(|| residual.functions.iter().map(|_| std::cell::OnceCell::new()).collect())
+    fn of(&self, residual: &ResidualProgram) -> &[LaneViewCell] {
+        self.table.get_or_init(|| residual.functions.iter().map(|_| std::cell::OnceCell::new()).collect())
     }
 
     /// `function`'s view if it has one, without making the table.
     fn derived(&self, function: u32) -> Option<&super::dispatch_fast::LaneView> {
-        self.0.get()?.get(function as usize)?.get()
+        derived_lane_view(self.table.get()?.get(function as usize)?)
+    }
+
+    /// `view` moved into the arena, at an address fixed while the arena holds it.
+    fn store(&self, view: super::dispatch_fast::LaneView) -> std::ptr::NonNull<super::dispatch_fast::LaneView> {
+        let mut arena = self.arena.borrow_mut();
+        if arena.last().is_none_or(|chunk| chunk.len() == chunk.capacity()) {
+            let held: usize = arena.iter().map(Vec::len).sum();
+            arena.push(Vec::with_capacity(held.max(LANE_VIEW_FIRST_CHUNK)));
+        }
+        let chunk = arena.last_mut().expect("the arena has a chunk with room");
+        chunk.push(view);
+        std::ptr::NonNull::from(chunk.last().expect("the view just stored"))
     }
 }
 

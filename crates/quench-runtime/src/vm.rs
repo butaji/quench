@@ -1616,6 +1616,21 @@ pub(super) enum FrameOutcome {
         frame: Option<Box<Frame>>,
     },
 }
+
+impl FrameOutcome {
+    /// The value a call's completed activation yields: a return, or a constructor's.
+    #[inline(always)]
+    fn into_value(self) -> Result<Value, JsError> {
+        match self {
+            Self::Complete(value) | Self::ConstructComplete { value, .. } => Ok(value),
+            Self::ParameterInitializationComplete => {
+                Err(JsError("parameter initialization escaped a generator activation".into()))
+            }
+            Self::Await { .. } => Err(JsError("await requires async continuation".into())),
+            Self::Yield { .. } => Err(JsError("yield requires generator continuation".into())),
+        }
+    }
+}
 #[cfg(feature = "profile-aggregate")]
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 struct MethodCacheKey {
@@ -1791,6 +1806,12 @@ pub(crate) struct Vm<H> {
     /// (`dispatch_fast::lane_frame_return`), which the general loop returns from the frame
     /// at that instruction once the lane exits there.
     lane_returned: Option<Value>,
+    /// The native a lane call is running from its caller's frame (`dispatch_fast::lane_call_native`),
+    /// whose calls of JavaScript run frameless in that lane (`Vm::lane_native_callback`).
+    lane_native: Option<dispatch_fast::LaneNativeCall>,
+    /// The completion of a native's frameless callback (`Completion::ReturnsToNative`), which
+    /// its run hands to the native once the lane exits there.
+    lane_native_returned: Option<Value>,
     /// `program_cache_layouts[active_program]`, kept by `set_active_program`.
     active_layout: ProgramCacheLayout,
     /// The active program's materialized constants, kept by `set_active_program` and by
@@ -3193,6 +3214,13 @@ impl<H: Host> Vm<H> {
                 self.call_native_guarded(p, native, this, args, callee)
             }
             CallTarget::User(program_id, id, env) => {
+                // A native a lane called runs its callee in that lane where the lane's own call
+                // of it would.
+                if self.lane_native.is_some()
+                    && let Some(result) = self.lane_native_callback(callee, this, args)
+                {
+                    return result;
+                }
                 let program = self.programs.get(program_id).ok_or_else(|| {
                     self.type_error(p, "function belongs to an unavailable program".into())
                 })?;

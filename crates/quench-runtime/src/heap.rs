@@ -1235,6 +1235,24 @@ impl Heap {
         self.alloc_object_of(object, prototype)
     }
 
+    /// `alloc_object_with_properties` of a planned object whose values outgrow its inline
+    /// slots: `header`, derived once for `prototype` and an arena shape
+    /// (`InlineObjectHeader::of_run`), over a new run of `values`.
+    #[inline(always)]
+    pub(crate) fn alloc_object_from_run_header(
+        &mut self,
+        header: InlineObjectHeader,
+        prototype: Value,
+        values: &[Value],
+    ) -> Value {
+        debug_assert!(values.len() > INLINE_PROPERTY_COUNT);
+        self.properties.assert_shape_length(header.shape(), values.len());
+        match self.properties.run_of(values) {
+            Some(start) => self.alloc_object_of(Object::from_run_header(header, start), prototype),
+            None => self.alloc_object_with_properties(prototype, header.shape(), values),
+        }
+    }
+
     /// `alloc_object_from_header` of values the payload word cannot hold: arena storage.
     #[cold]
     fn alloc_object_with_properties_of_header(

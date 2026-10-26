@@ -435,18 +435,27 @@ impl ValueArena {
         if values.is_empty() {
             return vector;
         }
+        if let Some(start) = self.run_of(values) {
+            vector.start = start;
+        } else {
+            vector.use_dictionary(self.allocate_dictionary(values.to_vec()));
+        }
+        vector
+    }
+
+    /// The start of a new arena run holding `values`, of the capacity their count derives
+    /// (`ordered_capacity`); `None` once the arena's positions are spent, where storage takes
+    /// a dictionary.
+    #[inline(always)]
+    pub(crate) fn run_of(&mut self, values: &[Value]) -> Option<u32> {
         let capacity = values
             .len()
             .max(MIN_CAPACITY)
             .checked_next_power_of_two()
             .expect("property vector capacity overflow");
-        if let Some(start) = self.allocate(capacity, MAX_ARENA_START) {
-            vector.start = start as u32;
-            self.values[start..start + values.len()].copy_from_slice(values);
-        } else {
-            vector.use_dictionary(self.allocate_dictionary(values.to_vec()));
-        }
-        vector
+        let start = self.allocate(capacity, MAX_ARENA_START)?;
+        self.values[start..start + values.len()].copy_from_slice(values);
+        Some(start as u32)
     }
 
     /// The heap references among a vector's values: the edges a collector traces. Numbers,
