@@ -141,6 +141,38 @@ fn lane_constructions_forward_plain_loaded_arguments() {
 }
 
 #[test]
+fn returned_forwarded_constructions_finish_in_the_lane() {
+    // `return new V(…)` of forwarding constructors whose initializers are stores, from
+    // activations and from the frame's own return, before and after the initializer is
+    // replaced. Expected values are Node's (v26).
+    let source = r#"
+      "use strict";
+      var Class = { create: function() { return function() { this.initialize.apply(this, arguments); }; } };
+      var V = Class.create();
+      V.prototype = { initialize: function(x, y, z) { this.x = (x ? x : 0); this.y = (y ? y : 0); this.z = (z ? z : 0); },
+        add: function(o) { return new V(this.x + o.x, this.y + o.y, this.z + o.z); } };
+      var C = Class.create();
+      C.prototype = { initialize: function(r) { if (!r) r = 0.5; this.r = r; } };
+      function mk(k) { return new C(k % 3); }
+      function deep(k) { return k ? deep(k - 1) : new V(k, 1); }
+      var a = new V(1, 2, 3), s = 0, out = [];
+      for (var i = 0; i < 5000; i++) { a = a.add(new V(i % 2, 0, -1)); s += mk(i).r; }
+      out.push(JSON.stringify(a), s, JSON.stringify(deep(20)), JSON.stringify(mk(0)), Object.keys(a.add(a)).join());
+      V.prototype.initialize = function(x) { this.q = x; };
+      out.push(JSON.stringify(a.add(a)));
+      print(out.join(" "));
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    let program = Engine::specialize(source, "returned-forwarded-construct.js").unwrap();
+    vm.execute(&program).unwrap();
+    assert_eq!(
+        output.borrow().as_slice(),
+        [r#"{"x":2501,"y":2,"z":-4997} 5832.5 {"x":0,"y":1,"z":0} {"r":0.5} x,y,z {"q":5002}"#]
+    );
+}
+
+#[test]
 fn planned_constructions_run_forwarded_initializers_and_their_defaults() {
     // One `new` site constructs an initializer constructor, whose plan it allocates from, and
     // forwarding constructors, whose plans hold only with their forwarding, which a getter
