@@ -1665,17 +1665,34 @@ type MethodSiteSpec = (Atom, u16, Vec<Register>, Option<(Atom, u16)>);
 /// Byte offset of each non-ASCII character of `text` with the running excess of UTF-8 bytes
 /// over UTF-16 units through it.
 fn source_utf16_excess(text: &str) -> Vec<(usize, usize)> {
-    if text.is_ascii() {
-        return Vec::new();
-    }
+    let bytes = text.as_bytes();
+    let mut table = Vec::new();
     let mut excess = 0;
-    text.char_indices()
-        .filter(|(_, character)| !character.is_ascii())
-        .map(|(offset, character)| {
-            excess += character.len_utf8() - character.len_utf16();
-            (offset, excess)
-        })
-        .collect()
+    let mut offset = 0;
+    while let Some(skipped) = ascii_prefix_len(&bytes[offset..]) {
+        offset += skipped;
+        let character = text[offset..].chars().next().expect("a non-ASCII byte starts a character");
+        excess += character.len_utf8() - character.len_utf16();
+        table.push((offset, excess));
+        offset += character.len_utf8();
+    }
+    table
+}
+
+/// The bytes of `bytes` before its first non-ASCII byte, `None` when every one is ASCII:
+/// a word of bytes at a time, as source text is nearly all ASCII.
+fn ascii_prefix_len(bytes: &[u8]) -> Option<usize> {
+    const WORD: usize = size_of::<u64>();
+    const HIGH_BITS: u64 = u64::from_ne_bytes([0x80; WORD]);
+    let mut words = bytes.chunks_exact(WORD);
+    let mut offset = 0;
+    for word in &mut words {
+        if u64::from_ne_bytes(word.try_into().expect("a whole word")) & HIGH_BITS != 0 {
+            break;
+        }
+        offset += WORD;
+    }
+    bytes[offset..].iter().position(|byte| !byte.is_ascii()).map(|position| offset + position)
 }
 
 /// The name prefix of a catch parameter's capture marker (`Compiler::capture_marker`).

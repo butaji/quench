@@ -378,3 +378,26 @@ fn source_lines_found_from_the_last_line_match_a_search() {
         }
     }
 }
+
+#[test]
+fn utf16_excess_scans_match_each_character() {
+    let per_character = |text: &str| {
+        let mut excess = 0;
+        text.char_indices()
+            .filter(|(_, character)| !character.is_ascii())
+            .map(|(offset, character)| {
+                excess += character.len_utf8() - character.len_utf16();
+                (offset, excess)
+            })
+            .collect::<Vec<_>>()
+    };
+    let pieces = ["", "a", "abcdefgh", "\u{e9}", "\u{1F600}", "\u{4e2d}\u{6587}", "0123456789abcdef"];
+    for first in pieces {
+        for second in pieces {
+            for third in pieces {
+                let text = format!("{first}{second}x{third}{first}");
+                assert_eq!(super::source_utf16_excess(&text), per_character(&text), "{text:?}");
+            }
+        }
+    }
+}
