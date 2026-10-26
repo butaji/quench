@@ -155,10 +155,10 @@ while IFS= read -r test; do
     } >"$corpus/$(printf 'z-t%04d.js' "$index")"
     index=$((index + 1))
 done < <(find "$test262/test/built-ins/RegExp" -name '*.js' ! -name '*_FIXTURE.js' | sort)
-packages="none"
+package_corpus="none"
 if [[ -n "${QUENCH_LAYOUT_NODE_MODULES:-}" ]]; then
     cp tools/layout-corpus/npm-*.js "$corpus/"
-    packages="tools/layout-corpus under $QUENCH_LAYOUT_NODE_MODULES (diagnostic)"
+    package_corpus="tools/layout-corpus under $QUENCH_LAYOUT_NODE_MODULES (diagnostic)"
 fi
 "$tools_dir/wasm-esm-corpus" "$corpus/wasm-esm" "$wasm_testsuite"/{address,block,br,\
 br_if,br_table,bulk,call,call_indirect,conversions,data,elem,endianness,exports,f32,f64,fac,\
@@ -229,6 +229,6 @@ tools/check-link-order.sh "$binary" "$order"
         "$(ls "$corpus"/[0-9]*.js | wc -l)" "$(ls "$corpus"/micro-*.js | wc -l)" \
         "${#COMPILE_ONLY_MODULES[@]}" "$(ls "$corpus"/z-t*.js | wc -l)" "$eligible"
     printf 'wasm esm corpus: %s, laid out late\n' "$(git -C "$wasm_testsuite" rev-parse HEAD)"
-    printf 'packages: %s\n' "$packages"
+    printf 'packages: %s\n' "$package_corpus"
 } | tee "$corpus/MANIFEST"
 printf 'laid-out binary: %s-bolt\n' "$binary"
