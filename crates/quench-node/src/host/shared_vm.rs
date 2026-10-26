@@ -236,6 +236,7 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "childProcessPrepareExit" (3) => crate::modules::child_process_shared_vm::prepare_exit,
         method "vmCreateRealm" (0) => crate::modules::vm_shared_vm::create_realm,
         method "vmEvaluateScript" (3) => crate::modules::vm_shared_vm::evaluate_script,
+        method "vmEvaluateSourceTextModule" (2) => crate::modules::vm_shared_vm::evaluate_source_text_module,
         method "pathJoin" (0) => crate::modules::path_shared_vm::join_operation,
         method "pathResolve" (0) => crate::modules::path_shared_vm::resolve_operation,
         method "pathRelative" (2) => crate::modules::path_shared_vm::relative_operation,
@@ -1095,6 +1096,12 @@ impl quench_runtime::Host for NodeHost {
         referrer: &str,
         specifier: &str,
     ) -> Result<Option<quench_runtime::ModuleSource>, String> {
+        if let Some(module) = self
+            .vm_module_sources
+            .get(&(referrer.to_owned(), specifier.to_owned()))
+        {
+            return Ok(Some(module.clone()));
+        }
         use std::path::Path;
 
         if matches!(specifier, "bench" | "bench/reporters") {

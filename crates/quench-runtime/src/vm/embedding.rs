@@ -1447,6 +1447,17 @@ impl<H: Host> Vm<H> {
         self.synchronous_module_namespace(&program, module)
     }
 
+    pub(crate) fn evaluate_module_sync_in_realm(
+        &mut self,
+        global: RootId,
+        module: &crate::ModuleSource,
+    ) -> Result<crate::SynchronousModule<Value>, JsError> {
+        self.with_embedding_realm(global, |vm| {
+            let program = vm.embedding_program()?;
+            vm.synchronous_module_namespace(&program, module)
+        })
+    }
+
     pub(crate) fn module_namespace_with_export_rooted(
         &mut self,
         namespace: RootId,

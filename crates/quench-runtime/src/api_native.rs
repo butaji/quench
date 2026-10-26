@@ -1441,6 +1441,26 @@ impl<'a, H: Host> NativeContext<'a, H> {
         })
     }
 
+    /// Evaluate a host-provided ECMAScript Module in the realm owning `global`.
+    /// Static requests use this runtime's normal host module resolver.
+    pub fn evaluate_module_sync_in_realm_rooted(
+        &mut self,
+        global: RootId,
+        module: &crate::ModuleSource,
+    ) -> Result<SynchronousModule<RootId>, RootedError> {
+        let outcome = self
+            .vm
+            .evaluate_module_sync_in_realm(global, module)
+            .map_err(|error| self.error(error))?;
+        Ok(match outcome {
+            SynchronousModule::Namespace(value) => {
+                SynchronousModule::Namespace(self.scoped_value(value))
+            }
+            SynchronousModule::AsyncGraph => SynchronousModule::AsyncGraph,
+            SynchronousModule::Evaluating => SynchronousModule::Evaluating,
+        })
+    }
+
     /// Add a constant export while retaining a namespace's original live bindings.
     pub fn module_namespace_with_export_rooted(
         &mut self,

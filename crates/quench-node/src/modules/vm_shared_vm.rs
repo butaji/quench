@@ -12,7 +12,7 @@ use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 
 const MODULE: &str = quench_js_check::checked_js!(
-    r#"((createRealm, evaluateScript) => {
+    r#"((createRealm, evaluateScript, evaluateModule) => {
   const mainGlobal = globalThis;
   const contextifyScriptSource = Symbol.for('quench.internal.contextifyScript.source');
   const contextifyScriptFilename = Symbol.for('quench.internal.contextifyScript.filename');
@@ -188,6 +188,7 @@ const MODULE: &str = quench_js_check::checked_js!(
   const moduleCounters = new WeakMap();
   const sourceModules = new WeakSet();
   const syntheticModules = new WeakSet();
+  const moduleNativeNamespaces = new WeakMap();
   const inspectCustom = Symbol.for('nodejs.util.inspect.custom');
   function sourceExportNames(sourceText) {
     const names = new Set();
@@ -276,10 +277,20 @@ const MODULE: &str = quench_js_check::checked_js!(
           throw error;
         }
       }
+      const module = this;
       const namespace = Object.create(null);
       const exports = new Map();
       for (const name of sourceExportNames(sourceText)) {
-        Object.defineProperty(namespace, name, { enumerable: true, get() { return exports.get(name); } });
+        Object.defineProperty(namespace, name, {
+          enumerable: true,
+          get() {
+            const nativeNamespace = moduleNativeNamespaces.get(module);
+            if (!nativeNamespace && module._status === 'evaluating') {
+              throw new ReferenceError(`Cannot access '${name}' before initialization`);
+            }
+            return nativeNamespace ? nativeNamespace[name] : exports.get(name);
+          },
+        });
       }
       Object.defineProperty(namespace, Symbol.toStringTag, { value: 'Module', enumerable: true });
       const moduleRequests = sourceModuleRequests(sourceText);
@@ -322,7 +333,26 @@ const MODULE: &str = quench_js_check::checked_js!(
       if (this._status !== 'unlinked') throw vmModuleLinkFailure('Module has already been linked');
       if (!Array.isArray(requests)) throw invalidArgType('The "requests" argument must be an array');
       if (this.moduleRequests.length !== requests.length) {
-        throw vmModuleLinkFailure('The number of linked modules must match the number of module requests');
+        const error = vmModuleLinkFailure('The number of linked modules must match the number of module requests');
+        error.code = 'ERR_MODULE_LINK_MISMATCH';
+        throw error;
+      }
+      const linkedBySpecifier = new Map();
+      for (let index = 0; index < requests.length; index++) {
+        const request = requests[index];
+        if (!sourceModules.has(request) && !syntheticModules.has(request)) {
+          const error = new TypeError('The linked module must be a Module instance');
+          error.code = 'ERR_VM_MODULE_NOT_MODULE';
+          throw error;
+        }
+        const specifier = this.moduleRequests[index].specifier;
+        const previous = linkedBySpecifier.get(specifier);
+        if (previous !== undefined && previous !== request) {
+          const error = vmModuleLinkFailure(`Module request '${specifier}' resolved to multiple module instances`);
+          error.code = 'ERR_MODULE_LINK_MISMATCH';
+          throw error;
+        }
+        linkedBySpecifier.set(specifier, request);
       }
       this._linkedModules = requests;
       if (/\bexport\s*\*\s*from\b/.test(this._sourceText)) {
@@ -349,6 +379,21 @@ const MODULE: &str = quench_js_check::checked_js!(
       if (this._status === 'unlinked') throw vmModuleLinkFailure();
       if (this._status === 'errored') throw vmModuleLinkFailure('Module is in an errored state');
       const visited = new Set();
+      const validateLinked = (module) => {
+        if (!sourceModules.has(module) || visited.has(module)) return;
+        visited.add(module);
+        if (module._status !== 'linked' && module._status !== 'evaluated') {
+          const request = module.moduleRequests[0];
+          const suffix = request
+            ? `request for '${request.specifier}' can not be resolved on module '${module.identifier}' that is not linked`
+            : `Module '${module.identifier}' is not linked`;
+          throw vmModuleLinkFailure(suffix);
+        }
+        module._linkedModules.forEach(validateLinked);
+      };
+      visited.clear();
+      validateLinked(this);
+      visited.clear();
       const markInstantiated = (module) => {
         if (!sourceModules.has(module) || visited.has(module)) return;
         visited.add(module);
@@ -387,21 +432,128 @@ const MODULE: &str = quench_js_check::checked_js!(
     }
     link(linker) {
       if (this._status !== 'unlinked') return Promise.reject(new Error('Module has already been linked.'));
-      this._status = 'linking';
       if (typeof linker !== 'function') {
-        this._status = 'errored';
         return Promise.reject(invalidArgType('The "linker" argument must be of type function.'));
       }
-      this._status = 'linked';
-      return Promise.resolve(this);
+      const queue = [this];
+      const discovered = new Set([this]);
+      const completed = [];
+      this._status = 'linking';
+      const processQueue = async () => {
+        for (let cursor = 0; cursor < queue.length; cursor++) {
+          const module = queue[cursor];
+          if (module !== this && module._status === 'unlinked') module._status = 'linking';
+          const dependencies = [];
+          const bySpecifier = new Map();
+          for (const request of module.moduleRequests) {
+            const attributes = request.attributes;
+            const dependency = await linker(request.specifier, module, {
+              attributes,
+              assert: attributes,
+              phase: request.phase,
+            });
+            if (!sourceModules.has(dependency) && !syntheticModules.has(dependency)) {
+              const error = new TypeError('The module linker function must return a Module object');
+              error.code = 'ERR_VM_MODULE_NOT_MODULE';
+              throw error;
+            }
+            const previous = bySpecifier.get(request.specifier);
+            if (previous !== undefined && previous !== dependency) {
+              const error = vmModuleLinkFailure(
+                `Module request '${request.specifier}' resolved to multiple module instances`,
+              );
+              error.code = 'ERR_MODULE_LINK_MISMATCH';
+              throw error;
+            }
+            bySpecifier.set(request.specifier, dependency);
+            dependencies.push(dependency);
+            if (sourceModules.has(dependency) && !discovered.has(dependency) &&
+                dependency._status === 'unlinked') {
+              discovered.add(dependency);
+              dependency._status = 'linking';
+              queue.push(dependency);
+            }
+          }
+          module._linkedModules = dependencies;
+          completed.push(module);
+        }
+        for (const module of completed) module._status = 'linked';
+      };
+      return processQueue().then(() => this, (error) => {
+        for (const module of discovered) {
+          module._status = 'errored';
+          module.error = error;
+        }
+        throw error;
+      });
     }
     evaluate(options = {}) {
+      if (this._status === 'errored') return Promise.reject(this.error);
       if (this._status !== 'linked' && this._status !== 'evaluated') {
-        return Promise.reject(new Error('Module status must be linked or evaluated'));
+        const error = new Error('Module status must be linked or evaluated');
+        error.code = 'ERR_VM_MODULE_STATUS';
+        return Promise.reject(error);
       }
       if (this._status === 'evaluated') return Promise.resolve(undefined);
       try {
         validateRunOptions(options);
+        if (this._status === 'evaluating') {
+          const error = new Error('Module is already evaluating');
+          error.code = 'ERR_VM_MODULE_STATUS';
+          return Promise.reject(error);
+        }
+        const graph = [];
+        const seen = new Set();
+        let allSourceModules = true;
+        const collect = (module) => {
+          if (!sourceModules.has(module) || seen.has(module)) return;
+          seen.add(module);
+          graph.push(module);
+          for (const dependency of module._linkedModules) {
+            if (!sourceModules.has(dependency)) {
+              allSourceModules = false;
+              continue;
+            }
+            collect(dependency);
+          }
+        };
+        collect(this);
+        if (allSourceModules && !graph.some((module) => sourceHasTopLevelAwait(module._sourceText))) {
+          const records = graph.map((module) => ({
+            identifier: module.identifier,
+            sourceText: module._sourceText,
+            requests: module.moduleRequests.map(({ specifier }) => specifier),
+            dependencies: module._linkedModules,
+          }));
+          for (const module of graph) module._status = 'evaluating';
+          try {
+            const realmGlobal = this._context === undefined
+              ? undefined : (realms.get(this._context)?.global || this._context);
+            const namespaces = evaluateModule(realmGlobal, records);
+            for (const module of graph) {
+              const nativeNamespace = namespaces[module.identifier];
+              if (nativeNamespace) {
+                moduleNativeNamespaces.set(module, nativeNamespace);
+                for (const name of Reflect.ownKeys(nativeNamespace)) {
+                  if (name === Symbol.toStringTag || Object.hasOwn(module.namespace, name)) continue;
+                  Object.defineProperty(module.namespace, name, {
+                    enumerable: true,
+                    get() { return nativeNamespace[name]; },
+                  });
+                }
+                Object.freeze(module.namespace);
+              }
+              module._status = 'evaluated';
+            }
+            return Promise.resolve(undefined);
+          } catch (error) {
+            for (const module of graph) {
+              module._status = 'errored';
+              module.error = error;
+            }
+            return Promise.reject(error);
+          }
+        }
         // The host evaluator has no interruptible timeout entry point yet.
         // Reject a requested timeout instead of risking a non-terminating VM.
         if (options && options.timeout !== undefined) throw new Error('Script execution timed out');
@@ -538,13 +690,21 @@ const MODULE: &str = quench_js_check::checked_js!(
       if (!this._exports.has(name)) throw new ReferenceError(`Export '${name}' is not defined`);
       this._exports.set(name, value);
     }
-    link() { return undefined; }
+    link() {
+      const error = new Error('Module is already linked');
+      error.code = 'ERR_VM_MODULE_ALREADY_LINKED';
+      return Promise.reject(error);
+    }
     evaluate() {
       if (this._status === 'evaluated') return Promise.resolve(undefined);
-      if (this._status !== 'linked') return Promise.reject(new Error('Module status must be linked or evaluated'));
+      if (this._status !== 'linked') {
+        const error = new Error('Module status must be linked or evaluated');
+        error.code = 'ERR_VM_MODULE_STATUS';
+        return Promise.reject(error);
+      }
+      this._status = 'evaluating';
       try {
         const result = this._evaluationSteps.call(this);
-        this._status = 'evaluated';
         if (result !== null && (typeof result === 'object' || typeof result === 'function') &&
             typeof result.then === 'function') {
           Promise.resolve(result).catch((error) => {
@@ -552,6 +712,7 @@ const MODULE: &str = quench_js_check::checked_js!(
             this.error = error;
           });
         }
+        this._status = 'evaluated';
         return Promise.resolve(undefined);
       } catch (error) {
         this._status = 'errored';
@@ -1156,8 +1317,10 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     let factory = context.evaluate_script_rooted(MODULE, "node:vm/shared.js")?;
     let create_realm = context.host_function(crate::host::shared_vm::operation("vmCreateRealm"))?;
     let evaluate = context.host_function(crate::host::shared_vm::operation("vmEvaluateScript"))?;
+    let evaluate_module = context
+        .host_function(crate::host::shared_vm::operation("vmEvaluateSourceTextModule"))?;
     let undefined = context.undefined();
-    context.call_rooted(factory, undefined, &[create_realm, evaluate])
+    context.call_rooted(factory, undefined, &[create_realm, evaluate, evaluate_module])
 }
 
 pub(crate) fn create_realm(
@@ -1182,4 +1345,101 @@ pub(crate) fn evaluate_script(
     let source = context.to_string(*source)?;
     let filename = context.to_string(*filename)?;
     context.evaluate_script_in_realm_rooted(*global, &source, &filename)
+}
+
+/// Evaluate a linked SourceTextModule graph using the runtime's module parser,
+/// linker, and namespace records. The graph's linker results are temporarily
+/// exposed through NodeHost's ordinary module resolver.
+pub(crate) fn evaluate_source_text_module(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let [global, records] = args else {
+        return Err(RootedError::host("vm module evaluation expects realm and graph"));
+    };
+    let length_key = context.string_rooted("length");
+    let length = context.get_property_rooted(*records, length_key)?;
+    let count = context
+        .rooted_value(length)
+        .and_then(|value| value.as_number())
+        .unwrap_or(0.0) as usize;
+    let mut modules = Vec::with_capacity(count);
+    let mut resolver = std::collections::HashMap::new();
+    for index in 0..count {
+        let index_key = context.string_rooted(&index.to_string());
+        let record = context.get_property_rooted(*records, index_key)?;
+        let identifier_key = context.string_rooted("identifier");
+        let identifier = context.get_property_rooted(record, identifier_key)?;
+        let identifier = context.to_string(identifier)?;
+        let source_key = context.string_rooted("sourceText");
+        let source = context.get_property_rooted(record, source_key)?;
+        let source = context.to_string(source)?;
+        let requests_key = context.string_rooted("requests");
+        let requests = context.get_property_rooted(record, requests_key)?;
+        let dependencies_key = context.string_rooted("dependencies");
+        let dependencies = context.get_property_rooted(record, dependencies_key)?;
+        let request_length = context.get_property_rooted(requests, length_key)?;
+        let request_count = context
+            .rooted_value(request_length)
+            .and_then(|value| value.as_number())
+            .unwrap_or(0.0) as usize;
+        for request_index in 0..request_count {
+            let item_key = context.string_rooted(&request_index.to_string());
+            let specifier = context.get_property_rooted(requests, item_key)?;
+            let specifier = context.to_string(specifier)?;
+            let dependency = context.get_property_rooted(dependencies, item_key)?;
+            if !context.is_object_rooted(dependency)? {
+                return Err(RootedError::host("SourceTextModule linker returned a non-source module"));
+            }
+            let dependency_identifier_key = context.string_rooted("identifier");
+            let dependency_identifier = context.get_property_rooted(dependency, dependency_identifier_key)?;
+            let dependency_identifier = context.to_string(dependency_identifier)?;
+            let dependency_source_key = context.string_rooted("_sourceText");
+            let dependency_source = context.get_property_rooted(dependency, dependency_source_key)?;
+            let dependency_source = context.to_string(dependency_source)?;
+            let bytes = dependency_source.as_bytes().to_vec();
+            resolver.insert(
+                (identifier.clone(), specifier),
+                quench_runtime::ModuleSource {
+                    name: dependency_identifier,
+                    source: dependency_source,
+                    bytes,
+                },
+            );
+        }
+        modules.push(quench_runtime::ModuleSource {
+            name: identifier,
+            bytes: source.as_bytes().to_vec(),
+            source,
+        });
+    }
+
+    let previous = std::mem::replace(&mut context.host_mut().vm_module_sources, resolver);
+    let evaluated = (|| {
+        let namespaces = context.object_rooted()?;
+        for module in &modules {
+            let outcome = if context.rooted_value(*global).is_some_and(|value| value.is_undefined()) {
+                context.evaluate_module_sync_rooted(module)?
+            } else {
+                context.evaluate_module_sync_in_realm_rooted(*global, module)?
+            };
+            let namespace = match outcome {
+                quench_runtime::SynchronousModule::Namespace(namespace) => namespace,
+                quench_runtime::SynchronousModule::AsyncGraph
+                | quench_runtime::SynchronousModule::Evaluating => {
+                    return Err(RootedError::host(
+                        "asynchronous SourceTextModule graphs are not supported by synchronous evaluation",
+                    ));
+                }
+            };
+            let key = context.string_rooted(&module.name);
+            if !context.set_property_rooted(namespaces, key, namespace, namespaces)? {
+                return Err(RootedError::host("cannot retain SourceTextModule namespace"));
+            }
+        }
+        Ok(namespaces)
+    })();
+    context.host_mut().vm_module_sources = previous;
+    evaluated
 }

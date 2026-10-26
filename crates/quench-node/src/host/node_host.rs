@@ -42,6 +42,10 @@ pub struct NodeHost {
     pub(crate) net_pending_writes: Vec<(u64, Vec<u8>, bool)>,
     pub(crate) net_pending_ends: Vec<(u64, bool)>,
     pub(crate) net_pending_destroys: Vec<(u64, bool)>,
+    /// In-memory source records supplied by `vm.SourceTextModule.link()` for
+    /// the runtime's native ESM linker. Keys are (referrer, specifier).
+    pub(crate) vm_module_sources:
+        std::collections::HashMap<(String, String), quench_runtime::ModuleSource>,
 }
 
 #[derive(Clone)]
@@ -418,6 +422,7 @@ impl NodeHost {
             net_pending_writes: Vec::new(),
             net_pending_ends: Vec::new(),
             net_pending_destroys: Vec::new(),
+            vm_module_sources: std::collections::HashMap::new(),
         }
     }
 
