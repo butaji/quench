@@ -11437,18 +11437,25 @@ script_handler! {
         if !target.constructs {
             sibling!(lane_native_construct::<H>, r, ip, Carried::script(cx))
         }
-        // A planned construction into a register, the common `new C(…)`: the receiver is
-        // the finished object, and the body completed with `undefined`.
+        // A planned construction, the common `new C(…)` or `return new C(…)`: the receiver
+        // is the finished object, and the body completed with `undefined`.
         if target.initializes
-            && i.a & crate::bytecode::RETURN_REGISTER == 0
+            && lane_finishes_construction(cx, i)
             && let Some(this) = lane_planned_construction(vm, callee, r, i)
         {
-            // Later runs of the site try the plan first.
-            requicken::<H>(ip, lane_planned_construct::<H>);
             // Allocating the receiver can make a collection due.
             note_allocation(vm);
-            r.set(i.a, this);
-            next!(cx, r, following(ip), Carried::script(cx))
+            // Later runs of the site try the plan first.
+            if i.a & crate::bytecode::RETURN_REGISTER == 0 {
+                requicken::<H>(ip, lane_planned_construct::<H>);
+                r.set(i.a, this);
+                next!(cx, r, following(ip), Carried::script(cx))
+            }
+            requicken::<H>(ip, lane_planned_construct_returned::<H>);
+            if let Some(resumed) = lane_complete_activation(cx, this) {
+                resume!(cx, resumed)
+            }
+            return lane_frame_return(vm, ip, this);
         }
         let target = *target;
         if target.forwards() {
@@ -11513,6 +11520,33 @@ script_handler! {
         note_allocation(vm);
         r.set(i.a, this);
         next!(cx, r, following(ip), Carried::script(cx))
+    }
+}
+
+script_handler! {
+    /// `lane_planned_construct` at a site whose construction is returned (`RETURN_REGISTER`),
+    /// which `lane_script_construct` moves it to: the planned receiver completes the
+    /// activation that returns it, or the frame's own returning construct where
+    /// `lane_finishes_construction` admits it. Any other construction moves the record back
+    /// to `lane_script_construct`.
+    fn lane_planned_construct_returned<>(cx, r, ip, i, view) {
+        let vm = unsafe { vm(cx) };
+        if !unsafe { (*cx).script_calls && (*cx).script_constructs } || vm.construct_target.is_some() {
+            return exit(ip);
+        }
+        let planned = lane_finishes_construction(cx, i)
+            .then(|| lane_planned_construction(vm, r.get(i.b), r, i))
+            .flatten();
+        let Some(this) = planned else {
+            requicken::<H>(ip, lane_script_construct::<H>);
+            sibling!(lane_script_construct::<H>, r, ip, Carried::script(cx))
+        };
+        // Allocating the receiver can make a collection due.
+        note_allocation(vm);
+        if let Some(resumed) = lane_complete_activation(cx, this) {
+            resume!(cx, resumed)
+        }
+        lane_frame_return(vm, ip, this)
     }
 }
 
