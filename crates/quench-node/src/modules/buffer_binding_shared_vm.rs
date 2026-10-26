@@ -168,8 +168,13 @@ fn byte_length(c: &Context<'_>, value: RootId) -> usize {
 fn string_units(c: &mut Context<'_>, value: RootId) -> Result<Vec<u16>, RootedError> {
     match c.string_code_units(value)? {
         Some(units) => Ok(units),
-        None => Err(throw(c, Class::Type, "ERR_INVALID_ARG_TYPE", "argument must be a string")),
+        None => Err(not_a_string(c)),
     }
+}
+
+/// The TypeError a binding that takes a string throws for any other argument.
+fn not_a_string(c: &mut Context<'_>) -> RootedError {
+    throw(c, Class::Type, "ERR_INVALID_ARG_TYPE", "argument must be a string")
 }
 
 /// `ParseArrayIndex`: `default` for undefined, `None` for a negative integer.
@@ -348,10 +353,9 @@ codecs! {
 /// `byteLengthUtf8(string)`: lone surrogates count as U+FFFD.
 pub(crate) fn byte_length_utf8(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
     let string = arg(c, args, 0);
-    let units = string_units(c, string)?;
-    let length: usize = char::decode_utf16(units.iter().copied())
-        .map(|unit| unit.unwrap_or(char::REPLACEMENT_CHARACTER).len_utf8())
-        .sum();
+    let Some(length) = c.string_utf8_length(string)? else {
+        return Err(not_a_string(c));
+    };
     Ok(c.number(length as f64))
 }
 

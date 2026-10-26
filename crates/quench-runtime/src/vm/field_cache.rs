@@ -41,16 +41,20 @@ impl<H: Host> Vm<H> {
     }
 
     /// A function's shape answers what it stores, but not its restricted `caller` and
-    /// `arguments`, which reflection computes (`AtomClass::RESTRICTED_FUNCTION_PROPERTY`).
+    /// `arguments`, which reflection computes (`AtomClass::RESTRICTED_FUNCTION_PROPERTY`),
+    /// nor its `length`, function information a read prepares outside the shape
+    /// (`Vm::prepare_named_function_info_lookup`). The other virtual field names are a
+    /// collection's or buffer view's, which no function is: a function stores them as an
+    /// ordinary object does, as `Buffer.byteLength`.
     pub(super) fn shape_property_lookup_function<'a>(
         &self,
         function: &'a FunctionRecord,
         atom: Atom,
     ) -> Option<&'a Object> {
-        if self.atom_class(atom).contains(AtomClass::RESTRICTED_FUNCTION_PROPERTY) {
+        if atom == self.length_atom || self.atom_class(atom).contains(AtomClass::RESTRICTED_FUNCTION_PROPERTY) {
             return None;
         }
-        self.shape_answers(&function.object, atom, ReceiverKind::Exotic)
+        self.shape_answers(&function.object, atom, ReceiverKind::Ordinary)
     }
 
     pub(super) fn shape_property_lookup_cell<'a>(

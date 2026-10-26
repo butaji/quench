@@ -321,6 +321,18 @@ impl<'a> Units<'a> {
         self.iter().collect()
     }
 
+    /// The length of these units' UTF-8 encoding, each lone surrogate encoded as the
+    /// replacement character, as V8's `String::Utf8Length` counts it: an ASCII run's length,
+    /// or a wide run's code points summed without copying the units.
+    pub(crate) fn utf8_len(self) -> usize {
+        match self {
+            Self::Ascii(bytes) => bytes.len(),
+            Self::Wide(units) => char::decode_utf16(units.iter().copied())
+                .map(|unit| unit.unwrap_or(char::REPLACEMENT_CHARACTER).len_utf8())
+                .sum(),
+        }
+    }
+
     /// The units as UTF-16, borrowed when they already are.
     pub(crate) fn wide(self) -> Cow<'a, [u16]> {
         match self {
