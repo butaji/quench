@@ -510,11 +510,21 @@ const REQUEST_FUNCTION: &str = r#"((Writable, Readable, create, write, setHeader
       // release the Agent's deferred close. Node emits close after tearing
       // down its socket, so let the Writable close notification through.
       if (!request.res) request.__quenchCloseReady = true;
-      // A request destroyed before receiving a response has no response-end
-      // callback to release its Agent slot. Remove it now and give the next
-      // live queued request a fresh connection; queued requests remain in the
-      // public queue until the current slot is actually released.
-      if (agentPool && !agentPool.queued) releaseAgentSlotAfterDestroy();
+      // Keep a pre-response socket in Agent.sockets through the request's
+      // error callback. Node releases the active slot only after the request
+      // close lifecycle; releasing synchronously here lets queued requests
+      // exceed maxSockets and exposes an empty socket pool to error listeners.
+      // Requests with a response are released by settleAgentRequest when the
+      // response ends or closes.
+      if (agentPool && !agentPool.queued && !request.res) {
+        request.once('close', releaseAgentSlotAfterDestroy);
+      } else if (agentPool && !agentPool.queued && request.aborted && request.res) {
+        // An abort from the response callback must keep the active slot
+        // visible until that callback returns. The transport must also finish
+        // closing before a queued request receives a replacement socket.
+        request.__quenchCloseReady = true;
+        request.once('close', releaseAgentSlotAfterDestroy);
+      }
       // Destroying a ClientRequest before its Agent has assigned a socket is
       // still an HTTP request failure in Node. The Writable has no transport
       // to report the usual ECONNRESET from, so synthesize that error after
@@ -1029,8 +1039,10 @@ const REQUEST_FUNCTION: &str = r#"((Writable, Readable, create, write, setHeader
         let settled = false;
         let responseEnded = false;
         const settleAgentRequest = () => {
-          if (settled || !responseEnded || !request.writableFinished) return;
+          if (settled || request.aborted || request.__quenchAgentSlotReleased ||
+              !responseEnded || !request.writableFinished) return;
           settled = true;
+          request.__quenchAgentSlotReleased = true;
           request.destroyed = true;
           const { name, slot } = agentPool;
           let requests = agent.requests[name];
