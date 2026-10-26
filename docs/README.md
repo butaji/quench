@@ -60,9 +60,14 @@ about 1 MiB on all eight.
 `tools/pgo-build.sh --static [PROFILE]` builds the static x86_64 Linux binary the
 same way: both builds add `-Ctarget-feature=+crt-static -Crelocation-model=static`
 for the host triple, and the binary lands at `target/<host>/PROFILE/quench-node`.
-That binary is the input of the BOLT layout step below, so one recipe yields the
-qualification binary: `tools/pgo-build.sh --static`, then the callgrind training,
-`bolt-profile` and `llvm-bolt` steps. Every mode keeps the repository's
+That binary can be laid out with `tools/bolt-layout.sh --pgo PROFDATA` (below) for a
+Score column. It is not the memory qualification binary: PGO's inlining grows the hot
+text (3.45 -> 4.60 MB), and its MemoryFirst max RSS failed the V8-v7 target on Crypto and
+RayTrace pinned (TOD-197), so the memory qualification binary is the non-PGO layout,
+`tools/bolt-layout.sh production`, with the repository corpus it records in
+`target/layout-corpus/MANIFEST` (the Wasm ESM corpus laid out `--late`, no npm packages).
+A PGO layout becomes the qualification binary only once it passes both columns. Every
+mode keeps the repository's
 `.cargo/config.toml` rustflags (`-D warnings`, the function alignment): the script
 appends its flags with `--config`, which cargo concatenates with the configured
 array. It refuses to run with `RUSTFLAGS` set, as that variable replaces both.
