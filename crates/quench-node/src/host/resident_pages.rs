@@ -755,17 +755,24 @@ pub fn note_collection() {
     COLLECTIONS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 }
 
-/// Releases the read-only pages before console output when a collection has run since the
-/// last such release: a run that prints its result once at the end touches the output code
-/// while its own code is resident, at the peak of its heap (V8-v7 RegExp max RSS, bolted
-/// static x86_64, 2026-10-19: 6316-6524 -> 6244-6300 KiB). Output in a loop that allocates
-/// little releases nothing more.
-pub fn release_before_output() {
+/// Runs console `output` between two releases of the read-only pages when a collection has
+/// run since the last such release. Before: a run that prints its result once at the end
+/// touches the output code while its own code is resident, at the peak of its heap (V8-v7
+/// RegExp max RSS, bolted static x86_64, 2026-10-19: 6316-6524 -> 6244-6300 KiB). After: the
+/// output code would otherwise stay resident while the run's code refaults until the next
+/// collection releases both. Output in a loop that allocates little releases nothing more.
+pub fn around_output<R>(output: impl FnOnce() -> R) -> R {
     use std::sync::atomic::Ordering::Relaxed;
     let collections = COLLECTIONS.load(Relaxed);
-    if COLLECTIONS_AT_OUTPUT_RELEASE.swap(collections, Relaxed) != collections {
+    let releases = COLLECTIONS_AT_OUTPUT_RELEASE.swap(collections, Relaxed) != collections;
+    if releases {
         release_read_only_pages();
     }
+    let result = output();
+    if releases {
+        release_read_only_pages();
+    }
+    result
 }
 
 /// Returns the allocator's free pages to the system: a compilation frees its syntax tree

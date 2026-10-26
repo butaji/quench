@@ -161,7 +161,10 @@ fn sdk_keys_match(context: &mut NativeContext<'_, NodeHost>, keys: RootId) -> bo
 
 /// The global console's `log`.
 pub(crate) fn log(context: &mut NativeContext<'_, NodeHost>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
-    crate::host::resident_pages::release_before_output();
+    crate::host::resident_pages::around_output(|| write_log(context, args))
+}
+
+fn write_log(context: &mut NativeContext<'_, NodeHost>, args: &[RootId]) -> Result<RootId, RootedError> {
     if cached(context, SDK_CONSOLE).is_none() {
         let mut parts = Vec::with_capacity(args.len());
         for &arg in args {
