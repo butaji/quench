@@ -420,8 +420,7 @@ pub(super) const MEMORY_FIRST_PACING: GenerationalPacing = GenerationalPacing {
     young: Ratio::new(1, 64),
     minimum_young: YOUNG_MINIMUM_ALLOCATION,
     maximum_young: MAXIMUM_YOUNG,
-    // RSS is this table's first criterion; on a steady heap it trades a little for Score
-    // (`MEMORY_FIRST_SURVIVING_YOUNG_FACTOR`).
+    // RSS is this table's first criterion (`MEMORY_FIRST_SURVIVING_YOUNG_FACTOR`).
     surviving_young_from: SURVIVING_YOUNG_FROM,
     surviving_young_factor: MEMORY_FIRST_SURVIVING_YOUNG_FACTOR,
     steady_live_growth: STEADY_LIVE_GROWTH,
@@ -525,18 +524,19 @@ const SURVIVING_YOUNG_FROM: u32 = SURVIVAL_SCALE / 4;
 /// full collection moves within 6-10K weight in both directions; a loading jsdom grows
 /// 121K -> 188K between its two.
 const STEADY_LIVE_GROWTH: Ratio = Ratio::new(1, 8);
-/// The young budget's factor past `SURVIVING_YOUNG_FROM` under throughput: one,
-/// so throughput's budget does not widen yet. Eight, on a steady heap, gave EarleyBoyer Score
-/// x1.025 at max RSS 11.1 -> 15.1 MB (pinned, 11 runs, 2026-10-26; ungated x1.047); it waits on
-/// npm's heaviest rows, where the ungated factor raised max RSS 5-16 MB (TOD-197).
-const THROUGHPUT_SURVIVING_YOUNG_FACTOR: usize = 1;
-/// The young budget's factor past `SURVIVING_YOUNG_FROM` under memory-first, on a steady
-/// heap only (`PacingState::steady`): on the owner's direction (2026-10-26) memory-first trades
-/// this much peak RSS, still far below every rival's, for Score. V8-v7 under memory-first
-/// (pinned, 7 runs, gc-tuning build, 2026-10-26): EarleyBoyer Score 4002 -> 4629 at 7328 -> 7740 KiB, RegExp 2903 -> 2869 at
-/// 6316 -> 6932 KiB; factor eight gave 4999 at 8232 and 3325 at 8136. The other six fixtures
-/// unchanged in RSS and within noise in Score.
-const MEMORY_FIRST_SURVIVING_YOUNG_FACTOR: usize = 4;
+/// The young budget's factor past `SURVIVING_YOUNG_FROM` under throughput, on a steady heap
+/// only (`PacingState::steady`): eight gave EarleyBoyer Score x1.025 at max RSS 11.1 -> 15.1 MB
+/// (pinned, 11 runs, 2026-10-26; ungated x1.047). On npm's heaviest rows the steady gate keeps
+/// max RSS within 0.5 MB of the unwidened table and CPU within 5% (TOD-197); ungated, the
+/// factor raised it 5-16 MB.
+const THROUGHPUT_SURVIVING_YOUNG_FACTOR: usize = 8;
+/// The young budget's factor past `SURVIVING_YOUNG_FROM` under memory-first: one, so
+/// memory-first's budget does not widen. Four, on a steady heap, gave EarleyBoyer Score
+/// 4002 -> 4629 at 7328 -> 7740 KiB but RegExp 6316 -> 6932 KiB for no Score (pinned, 7 runs,
+/// 2026-10-26): one warm-up window of RegExp crosses a quarter's survival. Neither requiring
+/// up to four steady full collections nor a steady tolerance up to one live set separates the
+/// two; a survival threshold does only in a 288-320 band, too narrow to hold beyond V8-v7.
+const MEMORY_FIRST_SURVIVING_YOUNG_FACTOR: usize = 1;
 
 #[cfg(test)]
 mod tests {
