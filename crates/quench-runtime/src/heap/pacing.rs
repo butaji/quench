@@ -397,15 +397,18 @@ pub(super) const MEMORY_FIRST_PACING: GenerationalPacing = GenerationalPacing {
 /// throughput. Like V8's external memory limit it bounds dead buffers without collecting at
 /// every chunk: on the SaltyAom video route (64 KiB chunks, Linux x86_64, 4 vCPU) one
 /// collection per 64 KiB buffer cut peak RSS 112 -> 47 MB and throughput by two thirds. A
-/// stream that reads each chunk into a fresh buffer (`fs.createReadStream`) left this floor
-/// of dead buffers resident: at 8 MiB a fastify server's video phase added 3.5-5.8 MB, at
-/// 1 MiB (16 such chunks) 1.5-4 MB, and served 330-340 against 228-356 requests a second
-/// (bombardier, board phases, 3 rounds, plain x86_64 build, 4 vCPU, 2026-10-26; undici,
-/// ws, pino and http-echo npm-perf workloads and V8-v7 within noise).
-const THROUGHPUT_MINIMUM_EXTERNAL_BUDGET: usize = 1 << 20;
-/// The external budget's floor under memory-first: half of throughput's, the lowest video
-/// phase peak of that sweep, run under throughput pacing (fastify final VmHWM 39.0-40.2 MB
-/// against 39.8-41.3 at 1 MiB and 39.4-43.1 at 8 MiB); a quarter gave no lower peak.
+/// stream that reads each chunk into a fresh buffer (`fs.createReadStream`) left the floor
+/// of dead buffers resident: at 8 MiB a fastify server's video phase added 3.5-5.8 MB, and
+/// web's board found 2-4 MiB as low as 1 MiB there. Below 4 MiB hono's video route, which
+/// collects about ninety times a second anyway, paid for the extra collections: at 1 MiB
+/// 1447-1680 collections in 10 s against 923-961 at 8 MiB and 898-959 at 4 MiB, 3.5% fewer
+/// requests a second and a 1.4 MB higher peak (pinned server, bombardier 10 connections,
+/// 4 rounds, plain x86_64 build, 2026-10-26).
+const THROUGHPUT_MINIMUM_EXTERNAL_BUDGET: usize = 4 << 20;
+/// The external budget's floor under memory-first: the lowest fastify video-phase peak of the
+/// sweep above, run under throughput pacing (final VmHWM 39.0-40.2 MB against 39.8-41.3 at
+/// 1 MiB and 39.4-43.1 at 8 MiB); 256 KiB gave no lower peak. Memory-first trades the extra
+/// collections for it.
 const MEMORY_FIRST_MINIMUM_EXTERNAL_BUDGET: usize = 512 << 10;
 
 /// The fewest allocations between collections under memory-first, whatever survived: the
