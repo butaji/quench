@@ -1218,8 +1218,8 @@ struct ConstructPlan {
     callee_layout: (u32, usize),
     prototype: Value,
     shape: u32,
-    /// The receiver's header (`InlineObjectHeader::of` of `prototype` and `shape`), which
-    /// `ConstructPlan::finish` derives; the receiver stores its fields inline when they fit.
+    /// The receiver's header (`ConstructPlan::derive_header`): of inline storage when its
+    /// fields fit the inline slots, else of an arena run.
     header: InlineObjectHeader,
     kind: ConstructPlanKind,
     fields: u8,
@@ -1262,7 +1262,7 @@ struct ForwardedResolution {
     /// The forwarded method's function whose initializer stores the plan's fields record
     /// (`lane_record_forwarded_fields`), when it has fields: the method this resolution
     /// reads must still be of it.
-    initializer: Option<u32>,
+    initializer: Option<(ProgramId, u32)>,
 }
 
 /// Fields a `ConstructPlan` names; an initializer storing more keeps running its adds.
@@ -1285,9 +1285,19 @@ impl ConstructPlan {
     fn finish(self) -> Self {
         Self {
             epoch: crate::heap::prototype_layout_epoch(),
-            header: InlineObjectHeader::of(self.prototype, self.shape),
-            ..self
+            ..self.derive_header()
         }
+    }
+
+    /// This plan with the header its receiver starts with, of its prototype and shape: inline
+    /// storage when its fields fit the inline slots, else an arena run.
+    fn derive_header(self) -> Self {
+        let header = if usize::from(self.fields) <= INLINE_PROPERTY_COUNT {
+            InlineObjectHeader::of(self.prototype, self.shape)
+        } else {
+            InlineObjectHeader::of_run(self.prototype, self.shape)
+        };
+        Self { header, ..self }
     }
 
     /// This plan's field values in order, `undefined` past them: the argument each field's
@@ -1319,7 +1329,7 @@ impl ConstructPlan {
         for (index, value) in values.iter_mut().enumerate().take(fields) {
             *value = field(index);
         }
-        heap.alloc_object_with_properties(self.prototype, self.shape, &values[..fields])
+        heap.alloc_object_from_run_header(self.header, self.prototype, &values[..fields])
     }
 
     /// This plan extended by the field `store` adds, `None` once it names all it can.
@@ -11615,6 +11625,16 @@ fn lane_construct_keeping_activation<H: Host>(
     if !unsafe { (*cx).script_calls && (*cx).script_constructs } || vm.construct_target.is_some() {
         return Err(Some(exit(ip)));
     }
+    // A plan holding for `callee` fixes its function, so the plan alone answers before its
+    // target is resolved.
+    if i.a & crate::bytecode::RETURN_REGISTER == 0
+        && let Some(this) = lane_forwarded_fields(vm, callee, r, i)
+    {
+        // Allocating the receiver can make a collection due.
+        note_allocation(vm);
+        r.set(i.a, this);
+        return Ok((r, following(ip)));
+    }
     // Matched rather than filtered: the combinators moved the target through copies.
     let Some(target) = lane_script_target(cx, callee) else {
         return Err(None);
@@ -11625,14 +11645,6 @@ fn lane_construct_keeping_activation<H: Host>(
     // One look at the plan serves the receiver and the forwarding: a plan the receiver's
     // allocation leaves records no resolution yet.
     let plan = holding_construct_plan(vm, callee);
-    if i.a & crate::bytecode::RETURN_REGISTER == 0
-        && let Some(this) = lane_forwarded_fields(cx, callee, plan.as_ref(), r, i)
-    {
-        // Allocating the receiver can make a collection due.
-        note_allocation(vm);
-        r.set(i.a, this);
-        return Ok((r, following(ip)));
-    }
     let Some(this) = lane_planned_receiver(vm, callee, plan.as_ref()) else {
         return Err(Some(exit(ip)));
     };
@@ -11659,7 +11671,7 @@ fn lane_construct_keeping_activation<H: Host>(
                 fields = fields.and_then(|fields| fields.with_field(store));
             }) {
                 if let Some(fields) = fields {
-                    lane_record_forwarded_fields(vm, callee, forwarded.function, this, &fields);
+                    lane_record_forwarded_fields(vm, callee, (forwarded.program, forwarded.function), this, &fields);
                 }
                 r.set(i.a, this);
                 return Ok((r, following(ip)));
@@ -11677,28 +11689,24 @@ fn lane_construct_keeping_activation<H: Host>(
     lane_activate_keeping::<H, false>(cx, r, ip, &target, arguments, this, true, None).map_err(Some)
 }
 
-/// The finished receiver of a forwarding constructor's construction under `plan`, `callee`'s
+/// The finished receiver of a forwarding constructor's construction under `callee`'s
 /// holding plan, when it records the fields its forwarded initializer stores
-/// (`lane_record_forwarded_fields`) and its forwarding still resolves to that initializer
-/// (`lane_resolved_forwarding`): the receiver that initializer's adds would finish, whose
+/// (`lane_record_forwarded_fields`) and its forwarding still reads that initializer
+/// (`resolved_forwarded_method`): the receiver that initializer's adds would finish, whose
 /// body completes with `undefined`, as the forwarding body then does.
 #[inline(always)]
-fn lane_forwarded_fields<H: Host>(
-    cx: *mut LaneContext<H>,
-    callee: Value,
-    plan: Option<&ConstructPlan>,
-    r: Registers,
-    i: &LaneInstruction,
-) -> Option<Value> {
-    let plan = plan?;
-    let initializer = plan.forwarded?.initializer?;
-    let forwarded = lane_resolved_forwarding(cx, callee, Some(plan))?;
-    if forwarded.function != initializer || !forwarded.initializes {
+fn lane_forwarded_fields<H: Host>(vm: &mut Vm<H>, callee: Value, r: Registers, i: &LaneInstruction) -> Option<Value> {
+    let index = holding_construct_plan_index(vm, callee)?;
+    // The plan in place: the allocation borrows the heap beside it, not a copy.
+    let plan = &vm.lane_stack.construct_plans[index];
+    let (program, function) = plan.forwarded?.initializer?;
+    let method = resolved_forwarded_method(vm, callee, plan)?;
+    if !matches!(vm.heap.function(method), Some(FunctionRecord { kind: FunctionKind::User(p, f), .. }) if *p == program && *f == function)
+    {
         return None;
     }
-    let vm = unsafe { vm(cx) };
     let values = plan.values(vm, lane_construct_argument(r, i));
-    Some(plan.allocate(&mut vm.heap, |field| values[field]))
+    Some(vm.lane_stack.construct_plans[index].allocate(&mut vm.heap, |field| values[field]))
 }
 
 /// Records in `callee`'s holding plan of no fields, whose forwarding resolved
@@ -11710,7 +11718,7 @@ fn lane_forwarded_fields<H: Host>(
 fn lane_record_forwarded_fields<H: Host>(
     vm: &mut Vm<H>,
     callee: Value,
-    initializer: u32,
+    initializer: (ProgramId, u32),
     this: Value,
     fields: &ConstructPlan,
 ) {
@@ -11726,7 +11734,6 @@ fn lane_record_forwarded_fields<H: Host>(
     };
     *plan = ConstructPlan {
         shape,
-        header: InlineObjectHeader::of(plan.prototype, shape),
         fields: fields.fields,
         parameters: fields.parameters,
         defaulted: fields.defaulted,
@@ -11736,7 +11743,8 @@ fn lane_record_forwarded_fields<H: Host>(
             ..resolution
         }),
         ..*plan
-    };
+    }
+    .derive_header();
 }
 
 /// The method a forwarding constructor's body (`ScriptCallTarget::forwarded_method`) would
@@ -11846,18 +11854,23 @@ fn forwarded_resolution<H: Host>(
 }
 
 /// The method a forwarding constructor's construction activates, from `callee`'s plan's
-/// recorded resolution (`ConstructPlan::forwarded`): the values in the recorded slots, the
-/// method still of the recorded shape and prototype, `apply` still the intrinsic, and a
-/// frameless target, under `plan`, `callee`'s holding plan. `None` resolves afresh
-/// (`lane_forwarded_construction`).
+/// recorded resolution (`resolved_forwarded_method`) as a frameless target, under `plan`,
+/// `callee`'s holding plan. `None` resolves afresh (`lane_forwarded_construction`).
 #[inline(always)]
 fn lane_resolved_forwarding<H: Host>(
     cx: *mut LaneContext<H>,
     callee: Value,
     plan: Option<&ConstructPlan>,
 ) -> Option<ScriptCallTarget> {
-    let vm = unsafe { vm(cx) };
-    let plan = plan?;
+    let function = resolved_forwarded_method(unsafe { vm(cx) }, callee, plan?)?;
+    lane_script_target(cx, function)
+}
+
+/// The method `callee`'s forwarding reads under `plan`, its holding plan, from the plan's
+/// recorded resolution (`ConstructPlan::forwarded`): the value in the recorded slot, still of
+/// the recorded shape and prototype, whose `apply` is still the intrinsic, and not `callee`.
+#[inline(always)]
+fn resolved_forwarded_method<H: Host>(vm: &Vm<H>, callee: Value, plan: &ConstructPlan) -> Option<Value> {
     let resolution = plan.forwarded?;
     let prototype = vm.heap.object_record(plan.prototype)?;
     // SAFETY: the plan's proof keeps the prototype's shape, which holds the slot.
@@ -11871,17 +11884,14 @@ fn lane_resolved_forwarding<H: Host>(
     let holder = vm.heap.object(resolution.apply_holder)?;
     // SAFETY: the epoch the plan holds under keeps the holder's shape, which holds the slot.
     let apply = unsafe { vm.heap.property_get_shaped(holder, usize::from(resolution.apply_slot)) }?;
-    if !matches!(
+    (matches!(
         vm.heap.function(apply),
         Some(FunctionRecord {
             kind: FunctionKind::Native(Native::FunctionApply),
             ..
         })
-    ) || function == callee
-    {
-        return None;
-    }
-    lane_script_target(cx, function)
+    ) && function != callee)
+        .then_some(function)
 }
 
 script_handler! {
