@@ -4832,11 +4832,153 @@ pub(crate) fn node_internal_binding_source() -> &'static str {
         return { root: encode(root), nodes };
       }
       function serialize(value, BufferCtor = Buffer) {
-        const payload = BufferCtor.from(JSON.stringify(encodeGraph(value, BufferCtor)), "utf8");
-        // `internal/child_process/serialization.js` advanced mode writes the
-        // ipc_serdes result directly to the pipe. Node's binding includes a
-        // four-byte big-endian payload length; without it the receiver keeps
-        // buffering forever while waiting for the declared message size.
+        const parts = [BufferCtor.from([0xff, 0x0f])];
+        const references = new Map();
+        const append = (bytes) => parts.push(BufferCtor.from(bytes));
+        const tag = (value) => append([value]);
+        const writeVarint = (input) => {
+          let number = Number(input) >>> 0;
+          const bytes = [];
+          while (number > 0x7f) {
+            bytes.push((number & 0x7f) | 0x80);
+            number >>>= 7;
+          }
+          bytes.push(number);
+          append(bytes);
+        };
+        const writeString = (input) => {
+          const string = String(input);
+          const oneByte = /^[\u0000-\u00ff]*$/.test(string);
+          if (oneByte) {
+            tag(0x22);
+            const bytes = BufferCtor.from(string, 'latin1');
+            writeVarint(bytes.length);
+            append(bytes);
+          } else {
+            tag(0x53);
+            const bytes = BufferCtor.from(string, 'utf8');
+            writeVarint(bytes.length);
+            append(bytes);
+          }
+        };
+        const writeDouble = (number) => {
+          const bytes = BufferCtor.allocUnsafe(8);
+          bytes.writeDoubleLE(number, 0);
+          append(bytes);
+        };
+        const writeRef = (object) => {
+          if (references.has(object)) {
+            tag(0x5e);
+            writeVarint(references.get(object));
+            return true;
+          }
+          references.set(object, references.size);
+          return false;
+        };
+        const write = (item) => {
+          if (item === undefined) { tag(0x5f); return; }
+          if (item === null) { tag(0x30); return; }
+          if (item === true) { tag(0x54); return; }
+          if (item === false) { tag(0x46); return; }
+          if (typeof item === 'string') { writeString(item); return; }
+          if (typeof item === 'number') {
+            if (Number.isInteger(item) && item >= -0x80000000 && item <= 0x7fffffff) {
+              tag(0x49);
+              writeVarint((item << 1) ^ (item >> 31));
+            } else if (Number.isInteger(item) && item >= 0 && item <= 0xffffffff) {
+              tag(0x55);
+              writeVarint(item);
+            } else {
+              tag(0x4e);
+              writeDouble(item);
+            }
+            return;
+          }
+          if (typeof item === 'bigint') {
+            tag(0x5a);
+            let value = item < 0n ? -item : item;
+            const bytes = [];
+            while (value > 0n) { bytes.push(Number(value & 0xffn)); value >>= 8n; }
+            writeVarint((bytes.length << 1) | (item < 0n ? 1 : 0));
+            append(bytes);
+            return;
+          }
+          if (typeof item !== 'object') throw new Error('Unserializable IPC value');
+          if (writeRef(item)) return;
+          if (Buffer.isBuffer(item) || ArrayBuffer.isView(item)) {
+            const typeNames = ['Int8Array', 'Uint8Array', 'Uint8ClampedArray', 'Int16Array', 'Uint16Array', 'Int32Array', 'Uint32Array', 'Float32Array', 'Float64Array', 'DataView'];
+            let type = item.constructor === BufferCtor ? 10 : typeNames.indexOf(item.constructor?.name);
+            if (type < 0) {
+              if (item instanceof BigInt64Array) type = 11;
+              else if (item instanceof BigUint64Array) type = 12;
+              else if (typeof Float16Array === 'function' && item instanceof Float16Array) type = 13;
+            }
+            if (type < 0) throw new Error('Unserializable IPC view');
+            tag(0x5c);
+            writeVarint(0);
+            writeVarint(type);
+            writeVarint(item.byteLength);
+            append(BufferCtor.from(item.buffer, item.byteOffset, item.byteLength));
+            return;
+          }
+          if (item instanceof ArrayBuffer) {
+            tag(0x42);
+            writeVarint(item.byteLength);
+            append(new Uint8Array(item));
+            return;
+          }
+          if (item instanceof Date) { tag(0x44); writeDouble(item.getTime()); return; }
+          if (item instanceof Map) {
+            tag(0x3b);
+            for (const [key, entry] of item) { write(key); write(entry); }
+            tag(0x3a);
+            writeVarint(item.size * 2);
+            return;
+          }
+          if (item instanceof Set) {
+            tag(0x27);
+            for (const entry of item) write(entry);
+            tag(0x2c);
+            writeVarint(item.size);
+            return;
+          }
+          if (item instanceof RegExp) {
+            tag(0x52);
+            writeString(item.source);
+            let flags = 0;
+            for (const [flag, bit] of [['d', 1], ['g', 2], ['i', 4], ['m', 8], ['s', 16], ['u', 32], ['y', 64]]) if (item.flags.includes(flag)) flags |= bit;
+            writeVarint(flags);
+            return;
+          }
+          if (item instanceof Error) {
+            tag(0x72);
+            const prototype = ({ EvalError: 0x45, RangeError: 0x52, ReferenceError: 0x46, SyntaxError: 0x53, TypeError: 0x54, URIError: 0x55 })[item.name];
+            if (prototype !== undefined) writeVarint(prototype);
+            if (Object.hasOwn(item, 'message')) { writeVarint(0x6d); writeString(item.message); }
+            if (typeof item.stack === 'string') { writeVarint(0x73); writeString(item.stack); }
+            if (Object.hasOwn(item, 'cause')) { writeVarint(0x63); write(item.cause); }
+            writeVarint(0x2e);
+            return;
+          }
+          if (Array.isArray(item)) {
+            tag(0x41);
+            writeVarint(item.length);
+            for (const entry of item) write(entry);
+            tag(0x24);
+            writeVarint(0);
+            writeVarint(item.length);
+            return;
+          }
+          const keys = Object.keys(item);
+          tag(0x6f);
+          for (const key of keys) { writeString(key); write(item[key]); }
+          tag(0x7b);
+          writeVarint(keys.length);
+        };
+        write(value);
+        const payload = BufferCtor.concat(parts);
+        // Advanced IPC frames are a big-endian payload length followed by the
+        // V8 wire header and serialized value.
         const frame = BufferCtor.allocUnsafe(payload.length + 4);
         frame.writeUInt32BE(payload.length, 0);
         payload.copy(frame, 4);
@@ -4844,6 +4986,170 @@ pub(crate) fn node_internal_binding_source() -> &'static str {
       }
       function deserialize(bytes) {
         const serialized = Buffer.isBuffer(bytes) ? bytes : Buffer.from(bytes);
+        // Node's ipc_serdes uses V8's versioned wire format, with a host-object
+        // delegate for ArrayBufferViews. Decode the common structured-clone
+        // values used by advanced child-process and cluster IPC.
+        if (serialized.length >= 3 && serialized[0] === 0xff && serialized[1] === 0x0f) {
+          let offset = 2;
+          const references = [];
+          const fail = () => { throw new Error('Unable to deserialize advanced IPC data'); };
+          const byte = () => {
+            if (offset >= serialized.length) return fail();
+            return serialized[offset++];
+          };
+          const varint = () => {
+            let value = 0;
+            let shift = 0;
+            while (shift < 35) {
+              const next = byte();
+              value |= (next & 0x7f) << shift;
+              if ((next & 0x80) === 0) return value >>> 0;
+              shift += 7;
+            }
+            return fail();
+          };
+          const raw = (length) => {
+            if (length > serialized.length - offset) return fail();
+            const value = serialized.subarray(offset, offset + length);
+            offset += length;
+            return value;
+          };
+          const text = (length) => raw(length).toString('utf8');
+          const value = () => {
+            const tag = byte();
+            switch (tag) {
+              case 0x5f: return undefined;
+              case 0x30: return null;
+              case 0x54: return true;
+              case 0x46: return false;
+              case 0x49: { const n = varint(); return (n >>> 1) ^ -(n & 1); }
+              case 0x55: return varint();
+              case 0x4e: return raw(8).readDoubleLE(0);
+              case 0x22: return raw(varint()).toString('latin1');
+              case 0x53: return text(varint());
+              case 0x63: {
+                const bytes = raw(varint());
+                return bytes.toString('utf16le');
+              }
+              case 0x5a: {
+                const bitfield = varint();
+                const bytes = raw(bitfield >>> 1);
+                let bigint = 0n;
+                for (let index = bytes.length - 1; index >= 0; index--) {
+                  bigint = (bigint << 8n) | BigInt(bytes[index]);
+                }
+                return bitfield & 1 ? -bigint : bigint;
+              }
+              case 0x5e: {
+                const reference = varint();
+                if (reference >= references.length) return fail();
+                return references[reference];
+              }
+              default: break;
+            }
+            if (tag === 0x6f) {
+              const object = {};
+              references.push(object);
+              while (offset < serialized.length && serialized[offset] !== 0x7b) {
+                const key = value();
+                const entry = value();
+                Object.defineProperty(object, key, { value: entry, enumerable: true, configurable: true, writable: true });
+              }
+              if (byte() !== 0x7b) return fail();
+              varint();
+              return object;
+            }
+            if (tag === 0x41) {
+              const length = varint();
+              const array = [];
+              references.push(array);
+              for (let index = 0; index < length; index++) array.push(value());
+              if (byte() !== 0x24) return fail();
+              const properties = varint();
+              const finalLength = varint();
+              if (finalLength !== length) return fail();
+              for (let index = 0; index < properties; index++) {
+                const key = value();
+                Object.defineProperty(array, key, { value: value(), enumerable: true, configurable: true, writable: true });
+              }
+              return array;
+            }
+            if (tag === 0x44) {
+              const date = new Date(raw(8).readDoubleLE(0));
+              references.push(date);
+              return date;
+            }
+            if (tag === 0x3b) {
+              const map = new Map();
+              references.push(map);
+              while (offset < serialized.length && serialized[offset] !== 0x3a) map.set(value(), value());
+              if (byte() !== 0x3a) return fail();
+              varint();
+              return map;
+            }
+            if (tag === 0x27) {
+              const set = new Set();
+              references.push(set);
+              while (offset < serialized.length && serialized[offset] !== 0x2c) set.add(value());
+              if (byte() !== 0x2c) return fail();
+              varint();
+              return set;
+            }
+            if (tag === 0x42) {
+              const length = varint();
+              const buffer = new ArrayBuffer(length);
+              new Uint8Array(buffer).set(raw(length));
+              references.push(buffer);
+              return buffer;
+            }
+            if (tag === 0x72) {
+              const error = new Error();
+              references.push(error);
+              for (;;) {
+                const errorTag = varint();
+                if (errorTag === 0x2e) break;
+                if (errorTag === 0x45) Object.setPrototypeOf(error, EvalError.prototype);
+                else if (errorTag === 0x52) Object.setPrototypeOf(error, RangeError.prototype);
+                else if (errorTag === 0x46) Object.setPrototypeOf(error, ReferenceError.prototype);
+                else if (errorTag === 0x53) Object.setPrototypeOf(error, SyntaxError.prototype);
+                else if (errorTag === 0x54) Object.setPrototypeOf(error, TypeError.prototype);
+                else if (errorTag === 0x55) Object.setPrototypeOf(error, URIError.prototype);
+                else if (errorTag === 0x6d) Object.defineProperty(error, 'message', { value: value(), writable: true, configurable: true });
+                else if (errorTag === 0x73) error.stack = value();
+                else if (errorTag === 0x63) Object.defineProperty(error, 'cause', { value: value(), writable: true, configurable: true });
+                else return fail();
+              }
+              return error;
+            }
+            if (tag === 0x5c) {
+              const hostTag = varint();
+              if (hostTag > 1) {
+                const error = new Error('Invalid host object tag');
+                error.code = 'ERR_INVALID_STATE';
+                throw error;
+              }
+              if (hostTag === 1) return value();
+              if (hostTag !== 0) return fail();
+              const type = varint();
+              const length = varint();
+              const data = raw(length);
+              let view;
+              if (type === 10) view = Buffer.from(data);
+              else {
+                const names = ['Int8Array', 'Uint8Array', 'Uint8ClampedArray', 'Int16Array', 'Uint16Array', 'Int32Array', 'Uint32Array', 'Float32Array', 'Float64Array', 'DataView', undefined, 'BigInt64Array', 'BigUint64Array', 'Float16Array'];
+                const Constructor = globalThis[names[type]];
+                if (typeof Constructor !== 'function') return fail();
+                const buffer = new ArrayBuffer(length);
+                new Uint8Array(buffer).set(data);
+                view = type === 9 ? new DataView(buffer) : new Constructor(buffer);
+              }
+              references.push(view);
+              return view;
+            }
+            return fail();
+          };
+          return value();
+        }
         // The internal binding also accepts V8's wire format. Validate the
         // host-object tag before rejecting wire formats this graph codec does
         // not otherwise decode, matching ipc_serdes' coded validation error.
@@ -4852,7 +5158,14 @@ pub(crate) fn node_internal_binding_source() -> &'static str {
           error.code = "ERR_INVALID_STATE";
           throw error;
         }
-        const graph = JSON.parse(serialized.toString("utf8"));
+        const payload = serialized.toString("utf8");
+        let graph;
+        try {
+          graph = JSON.parse(payload);
+        } catch (error) {
+          const preview = payload.slice(0, 96);
+          throw new SyntaxError(`${error.message}; advanced IPC payload length=${payload.length} preview=${JSON.stringify(preview)}`);
+        }
         const values = graph.nodes.map(node => {
           switch (node.type) {
             case "Buffer": return Buffer.from(node.data, "base64");
