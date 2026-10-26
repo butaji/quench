@@ -9,6 +9,42 @@ type Context<'a> = NativeContext<'a, NodeHost>;
 
 const DEFAULT_LISTEN_HOST: &str = "127.0.0.1";
 
+// HTTP servers use the shared HTTP listener directly instead of net.Server's
+// listen implementation. Mirror the small cluster lifecycle bridge installed
+// by the net facade so the primary sees listening workers and can shut their
+// local listener down during disconnect.
+const CLUSTER_LISTEN_WRAPPER: &str = r#"(operation) => function listen(...args) {
+  const cluster = process.getBuiltinModule('cluster');
+  const options = args[0];
+  if (cluster?.isWorker &&
+      !(options && typeof options === 'object' && options.exclusive === true)) {
+    let disconnected = process.connected === false;
+    process.once('disconnect', () => {
+      disconnected = true;
+      if (this.listening) this.close();
+    });
+    this.once('listening', () => {
+      if (disconnected) {
+        this.close();
+        return;
+      }
+      const address = this.address();
+      if (!address || typeof process.send !== 'function') return;
+      cluster.worker.state = 'listening';
+      const isPipe = typeof address === 'string';
+      process.send({
+        cmd: 'NODE_CLUSTER',
+        act: 'listening',
+        addressType: isPipe ? -1 : address.family === 'IPv6' ? 6 : 4,
+        address: isPipe ? address : address.address,
+        port: isPipe ? -1 : address.port,
+        fd: undefined,
+      }, () => {});
+    });
+  }
+  return Reflect.apply(operation, this, args);
+}"#;
+
 enum HttpListenAddress {
     Tcp(SocketAddr),
     #[cfg(unix)]
@@ -1733,6 +1769,18 @@ pub(crate) fn create_server(
     ] {
         let function = context
             .host_function_with_data(crate::host::shared_vm::operation(operation), id_value)?;
+        let function = if name == "listen" {
+            let factory = context.evaluate_script_rooted(
+                CLUSTER_LISTEN_WRAPPER,
+                "node:http/cluster-listen.js",
+            )?;
+            let undefined = context.undefined();
+            let wrapped = context.call_rooted(factory, undefined, &[function])?;
+            context.release_root(factory);
+            wrapped
+        } else {
+            function
+        };
         let function = if name == "closeAllConnections" || name == "closeIdleConnections" {
             let mode = context.string_rooted(if name == "closeAllConnections" {
                 "all"
