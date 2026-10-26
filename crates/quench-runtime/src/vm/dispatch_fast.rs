@@ -11224,6 +11224,21 @@ fn lane_pure_native<H: Host>(
             note_allocation(vm);
             Some(value)
         }
+        // `Number(value)` of a primitive whose ToNumber reads no cell but a string's text, as
+        // Node's `utf8Write` converts its offset and length; a BigInt, a Symbol and any object
+        // take the general call.
+        Native::Number if !args.is_empty() => vm.primitive_to_number(argument).map(Value::number),
+        // `Number.prototype.toString` of a Number primitive in decimal, as a status code's
+        // `toString()` reads; a wrapper object, another radix or a radix to coerce take the
+        // general call.
+        Native::NumberString
+            if args.first().is_none_or(|radix| radix.is_undefined() || radix.as_number() == Some(10.0)) =>
+        {
+            let number = receiver.as_number()?;
+            let text = vm.heap.alloc_string(super::number::number_to_decimal(number).into());
+            note_allocation(vm);
+            Some(text)
+        }
         Native::GlobalIsNaN | Native::GlobalIsFinite => {
             super::number::global_number_predicate(*native, vm.primitive_to_number(argument)?).map(Value::boolean)
         }
