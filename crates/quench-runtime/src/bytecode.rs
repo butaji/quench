@@ -1717,10 +1717,29 @@ impl SourcePositions {
             u64::from(position.column)
         });
         self.last = Some(position);
-        self.checkpoints = std::cell::OnceCell::new();
+        // The checkpoints exist only once a lookup made them.
+        if self.checkpoints.get().is_some() {
+            self.checkpoints = std::cell::OnceCell::new();
+        }
     }
 
+    /// An empty table with room for `bytes` coded bytes.
+    pub(crate) fn with_capacity(bytes: usize) -> Self {
+        Self { bytes: Vec::with_capacity(bytes), last: None, checkpoints: std::cell::OnceCell::new() }
+    }
+
+    /// The bytes the entries are coded in.
+    pub(crate) fn coded_len(&self) -> usize {
+        self.bytes.len()
+    }
+
+    #[inline(always)]
     fn write(&mut self, mut value: u64) {
+        // Most deltas fit one byte.
+        if value < u64::from(LEB128_CONTINUATION) {
+            self.bytes.push(value as u8);
+            return;
+        }
         loop {
             let byte = (value & u64::from(!LEB128_CONTINUATION)) as u8;
             value >>= LEB128_PAYLOAD_BITS;

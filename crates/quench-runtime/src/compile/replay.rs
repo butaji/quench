@@ -145,10 +145,17 @@ pub(crate) struct TableCursors {
     pub(crate) literal_templates: u32,
 }
 
-/// The names a replay interns: the atoms the program's compilation interned, in name order.
-/// A replay of one of its functions interns only names the load did.
+/// The names a replay interns: the atoms the program's compilation interned, found by their
+/// name's hash. A replay of one of its functions interns only names the load did.
 pub(crate) struct ProgramAtomIndex {
-    sorted: Box<[Atom]>,
+    atoms: hashbrown::HashTable<Atom>,
+}
+
+fn atom_name_hash(name: &str) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = rustc_hash::FxHasher::default();
+    name.hash(&mut hasher);
+    hasher.finish()
 }
 
 impl ProgramAtomIndex {
@@ -156,25 +163,22 @@ impl ProgramAtomIndex {
         interned: impl Iterator<Item = Atom>,
         atoms: &crate::bytecode::AtomTable,
     ) -> Self {
-        let mut sorted: Vec<Atom> = interned.collect();
-        sorted.sort_unstable_by(|left, right| {
-            atoms[*left as usize]
-                .cmp(&atoms[*right as usize])
-                .then(left.cmp(right))
-        });
-        Self {
-            sorted: sorted.into_boxed_slice(),
+        let mut interned = interned.collect::<Vec<_>>();
+        // A name interned twice is found as its first atom.
+        interned.sort_unstable();
+        let mut index = hashbrown::HashTable::with_capacity(interned.len());
+        for atom in interned {
+            let name = &atoms[atom as usize];
+            let hash = atom_name_hash(name);
+            if index.find(hash, |&known: &Atom| &atoms[known as usize] == name).is_none() {
+                index.insert_unique(hash, atom, |&known: &Atom| atom_name_hash(&atoms[known as usize]));
+            }
         }
+        Self { atoms: index }
     }
 
     pub(crate) fn find(&self, atoms: &crate::bytecode::AtomTable, name: &str) -> Option<Atom> {
-        let at = self
-            .sorted
-            .partition_point(|atom| &atoms[*atom as usize] < name);
-        self.sorted
-            .get(at)
-            .copied()
-            .filter(|atom| &atoms[*atom as usize] == name)
+        self.atoms.find(atom_name_hash(name), |&atom| &atoms[atom as usize] == name).copied()
     }
 }
 
