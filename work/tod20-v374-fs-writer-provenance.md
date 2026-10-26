@@ -31,3 +31,18 @@ The full official `test-fs*` cohort passed 350 / 385, with 11 TAP-verified skips
 The frozen full run is `work/full-node26-v374-fs-writer-{results.json,checkpoint.jsonl,run.log}`. Command parameters are the unchanged official 5,023-file inventory (`47b65dd4945a6e57`), Node v26.12.1, five workers, 60-second per-fixture deadline, PATH and `QUENCH_NODE_TEST_EXECUTABLE` pinned to the official Node executable. The `PKG_CONFIG_PATH` is pinned to the ICU/zlib/Brotli locations above. At start the runner SHA was verified as `b3da9cb8aca2f15745bcf120a855b3bb3524c2c0e69e6f63d52d4594f9b4528c`.
 
 The latest accepted complete census before v374 is v362: 3,564 pass / 650 skip / 638 fail / 157 timeout / 10 crash / 4 unclassified. Focused totals do not alter that result. v374 terminal classifications and hashes will be appended after the runner completes and are reconciled against checkpoint transitions; exit-only execve results remain unclassified absent worker payloads.
+
+## Terminal full census and transition accounting
+
+The complete v374 runner wrote all 5,023 fixture records and the aggregate terminal line `all: pass=3574 skip=650 fail=629 timeout=159 crash=7 unclassified=4 total=5023 inventory_hash=47b65dd4945a6e57`. The runner process exits 1 when fixture failures exist; this does not indicate an incomplete census because the machine-readable result, checkpoint, and terminal aggregate are present.
+
+- Terminal classifications: **3,574 pass / 650 skip / 629 fail / 159 timeout / 7 crash / 4 unclassified**. The 650 skips all contain the explicit `1..0 # Skipped:` TAP marker in captured stdout.
+- Result `work/full-node26-v374-fs-writer-results.json`, SHA-256 `b11f68cdd848728d5d9179d74a4a4c63f5aaeec4ab39526ef1370470ce09c991`.
+- Checkpoint `work/full-node26-v374-fs-writer-checkpoint.jsonl`, SHA-256 `a02f5fea5349c8e9caf756529a336cdbbddcfa444cb04414479e467d41e0877d`.
+- Run log `work/full-node26-v374-fs-writer-run.log`, SHA-256 `189bdea129cc8c4bdfa27dd36ce6ae361bbe6f0f3d5d75f186da7f0bf137f3f6`.
+- The result and checkpoint each contain 5,023 unique fixture names with the same inventory hash; their status classifications agree for all records. All four execve cases remain unclassified: they exit 0 but have no worker payload and empty stdout/stderr.
+- Result metadata records runtime commit `45b61875069239100cc3630cf94de3f53cfe3dca` because the runner was built before the focused source was committed. The exact compiled FileHandle implementation matches the committed file SHA above, now at source commit `99fa70ee242107613bd8d666ca64a9d7182b4c9e`; the runner hash is pinned above.
+
+Against complete v362 (3,564 pass / 650 skip / 638 fail / 157 timeout / 10 crash / 4 unclassified), v374 gains **10 net passes**. Exact transitions: crash→crash 6, crash→pass 4, fail→fail 619, fail→pass 17, fail→timeout 2, pass→crash 1, pass→fail 10, pass→pass 3,550, pass→timeout 3, skip→skip 650, timeout→pass 3, timeout→timeout 154, and unclassified→unclassified 4. The 17 fail→pass fixtures span IPC/structured clone, VM linking, the FS stat-abort and writer work, HTTP/2, common tests and worker transfers; the 10 pass regressions are concentrated in crypto/worker transfer and VM module behavior. These transitions span several commits since v362 and are not attributed solely to the FS writer change.
+
+The current lane gap is **426 passes**. The required latest-trunk integration at `17a793763a814392944e8125b9026e6dacf64591` and complete merged-head 4,000-pass census remain open.
