@@ -41,6 +41,7 @@ v386 runs the original 5,021 official fixtures at `/tmp/tod20-node-v26.12.1-offi
 
 - Runner process PID `1679035`; started 2026-10-26 18:52 UTC. Results/checkpoint/log: `work/full-node26-v386-official-complete-results.json`, `work/full-node26-v386-official-complete-checkpoint.jsonl`, `work/full-node26-v386-official-complete-run.log`.
 - At 2026-10-26 18:53 UTC, 78/5,021 observations had arrived: 74 pass / 4 fail / 0 skip / 0 timeout / 0 crash / 0 unclassified; no terminal results JSON yet. The initial `primordials` failure is absent. These are interim counts, not the gate result.
+- At 2026-10-26 19:08 UTC, 1,532/5,021 observations had arrived: 1,214 pass / 168 TAP skip / 137 fail / 11 timeout / 2 crash / 0 unclassified. The runner was active and the checkpoint audit found no duplicate fixtures or skip-marker mismatches. These are interim counts, not the gate result.
 - Disk headroom at start was 115 MB on `/workspace` and 268 MB on `/tmp`; no build or second census is running concurrently.
 
 The full original acceptance remains open: improve shared Node compatibility roots, qualify at 4,000+ official parallel passes on `v2-cloud-node`, then integrate the current owner-routed trunk batches and rerun the complete 5,021-fixture gate on the exact merged head.
