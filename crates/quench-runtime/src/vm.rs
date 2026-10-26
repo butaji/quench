@@ -1917,6 +1917,9 @@ pub(crate) struct Vm<H> {
     /// `prototype` (`construction::ClosureShapes`); derived from shapes, so field-cache
     /// invalidation clears it.
     closure_shapes: [Option<construction::ClosureShapes>; 2],
+    /// The shape a promise's resolving function's own `length` and `name` reach
+    /// (`Vm::native_with_realm`); derived from shapes, so field-cache invalidation clears it.
+    resolver_function_shape: Option<u32>,
     /// The parts of a recorded closure that depend on its function and realm alone
     /// (`construction::ClosureTemplate`); derived from shapes, so field-cache invalidation
     /// clears it.
@@ -2916,6 +2919,7 @@ impl<H: Host> Vm<H> {
         self.programs.reset(program.clone());
         self.instanceof_constructor_layouts = [None; INSTANCEOF_CONSTRUCTOR_LAYOUTS];
         self.closure_shapes = [None; 2];
+        self.resolver_function_shape = None;
         self.function_name_shapes.clear();
         self.closure_templates.fill(None);
         self.iterator_result_shape = None;
