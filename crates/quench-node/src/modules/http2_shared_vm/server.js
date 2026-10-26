@@ -6,6 +6,7 @@
   const streamErrorChannel = diagnosticsChannel.channel('http2.server.stream.error');
   const streamFinishChannel = diagnosticsChannel.channel('http2.server.stream.finish');
   const streamCloseChannel = diagnosticsChannel.channel('http2.server.stream.close');
+  const handshakenSockets = new WeakSet();
 
   function emitPriorityDeprecation() {
     const key = Symbol.for('quench.node.http2PriorityDeprecationEmitted');
@@ -990,6 +991,7 @@
             this.server._options.Http2ServerResponse || compat.Http2ServerResponse,
             stream, values.headers, flags, values.rawHeaders);
         }
+        this.emit('stream', stream, values.headers, flags, values.rawHeaders);
         this.server.emit('stream', stream, values.headers, flags, values.rawHeaders);
         return;
       }
@@ -1648,6 +1650,7 @@
       }
       if (this._timeout > 0) this._applySocketTimeout(session);
       if (initialData?.length) session._receive(initialData);
+      return session;
     }
 
     _applySocketTimeout(session) {
@@ -1808,9 +1811,25 @@
     return new Http2Server(options, handler, true);
   }
 
+  function performServerHandshake(socket, options) {
+    if (socket === null || (typeof socket !== 'object' && typeof socket !== 'function')) {
+      throw new TypeError('The "socket" argument must be a stream.Duplex instance.');
+    }
+    if (handshakenSockets.has(socket)) {
+      const error = new Error('The socket is already bound to an HTTP/2 session');
+      error.code = 'ERR_HTTP2_SOCKET_BOUND';
+      throw error;
+    }
+    [options] = normalizeOptions(options, undefined, false);
+    handshakenSockets.add(socket);
+    const server = new Http2Server(options, undefined, false);
+    return server._accept(socket);
+  }
+
   return {
     createServer,
     createSecureServer,
+    performServerHandshake,
     Http2Server,
     Http2ServerSession,
     Http2ServerStream: ServerHttp2Stream,

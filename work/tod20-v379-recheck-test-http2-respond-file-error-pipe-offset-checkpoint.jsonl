@@ -1,0 +1,1 @@
+{"inventory_hash":"f8009a5a4f1750bf","fixture":"/workspace/work/node-stable-release/node-v26.12.1/test/parallel/test-http2-respond-file-error-pipe-offset.js","observation":{"Ok":{"exit_code":null,"signal":9,"timed_out":true,"worker":null,"stdout":[],"stderr":[]}}}

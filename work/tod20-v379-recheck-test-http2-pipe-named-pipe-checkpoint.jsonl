@@ -1,0 +1,1 @@
+{"inventory_hash":"ab9480facc2dd68a","fixture":"/workspace/work/node-stable-release/node-v26.12.1/test/parallel/test-http2-pipe-named-pipe.js","observation":{"Ok":{"exit_code":0,"signal":null,"timed_out":false,"worker":{"outcome":"pass"},"stdout":[],"stderr":[]}}}

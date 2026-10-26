@@ -1,0 +1,26 @@
+{
+  "schema_version": 2,
+  "inventory_hash": "f8009a5a4f1750bf",
+  "timeout_secs": 60,
+  "jobs": 1,
+  "node_version": "v26.12.1",
+  "runtime_commit": "e3cf6256b85ea531828d4370d270122b2ff0d363",
+  "tests_node_commit": "unknown",
+  "platform": "linux-x86_64",
+  "results": [
+    {
+      "fixture": "/workspace/work/node-stable-release/node-v26.12.1/test/parallel/test-http2-respond-file-error-pipe-offset.js",
+      "status": "timeout",
+      "observation": {
+        "Ok": {
+          "exit_code": null,
+          "signal": 9,
+          "timed_out": true,
+          "worker": null,
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    }
+  ]
+}

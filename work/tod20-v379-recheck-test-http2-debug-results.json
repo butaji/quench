@@ -1,0 +1,29 @@
+{
+  "schema_version": 2,
+  "inventory_hash": "859972f0161df452",
+  "timeout_secs": 60,
+  "jobs": 1,
+  "node_version": "v26.12.1",
+  "runtime_commit": "e3cf6256b85ea531828d4370d270122b2ff0d363",
+  "tests_node_commit": "unknown",
+  "platform": "linux-x86_64",
+  "results": [
+    {
+      "fixture": "/workspace/work/node-stable-release/node-v26.12.1/test/parallel/test-http2-debug.js",
+      "status": "fail",
+      "observation": {
+        "Ok": {
+          "exit_code": 1,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "fail",
+            "reason": "/workspace/work/node-stable-release/node-v26.12.1/lib/internal/assert/utils.js:146\n  throw error;\n  ^\n\nAssertionError [ERR_ASSERTION]: The input did not match the regular expression /Setting the NODE_DEBUG environment variable to 'http2' can expose sensitive data/. Input:\n\n''\n\n    at Object.<anonymous> (/workspace/work/node-stable-release/node-v26.12.1/test/parallel/test-http2-debug.js:34:8)\n\nNode.js v26.12.1"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    }
+  ]
+}

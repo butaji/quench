@@ -1,0 +1,2 @@
+Pass /workspace/work/node-stable-release/node-v26.12.1/test/parallel/test-http2-pipe-named-pipe.js
+all: pass=1 skip=0 fail=0 timeout=0 crash=0 unclassified=0 total=1 inventory_hash=ab9480facc2dd68a

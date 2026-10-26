@@ -3124,7 +3124,7 @@ fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<Ro
                     socket_symbol,
                 ],
             )?;
-            for name in ["createServer", "createSecureServer"] {
+            for name in ["createServer", "createSecureServer", "performServerHandshake"] {
                 let value = get(context, server_exports, name)?;
                 set(context, module, name, value)?;
             }
