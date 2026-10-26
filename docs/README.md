@@ -829,6 +829,29 @@ valgrind --tool=callgrind --dump-instr=yes --dump-line=no --demangle=no quench-n
 valgrind --tool=callgrind ... quench-node --jit corpus/run.mjs returns
 ```
 
+Pass these profiles to `bolt-profile` after `--late`: an instruction only they execute counts
+once, the lowest density BOLT orders, so `-reorder-functions=cdsort` lays the Wasm load path
+behind the code the JavaScript profiles run instead of among it. At full weight they
+interleaved with the JavaScript hot set and raised V8-v7 max RSS; after `--late` every row is
+lower than with the JavaScript profiles alone. Bolted static x86_64, memory-first, 5 evicted
+runs, medians, KiB, 2026-10-26; JavaScript profiles: the deegen curriculum, micros and an
+empty script, without and with `--jit` (Scores within run-to-run spread):
+
+| Row | JavaScript only | + Wasm, full weight | + Wasm, `--late` |
+| -- | --: | --: | --: |
+| CoreMark (Wasm ESM, no JIT) | 3356 | 3344 | 3128 |
+| Crypto | 2756 | 2780 | 2660 |
+| RegExp | 5176 | 5220 | 5108 |
+| DeltaBlue | 2724 | 2696 | 2608 |
+| Richards | 2172 | 2300 | 2064 |
+| NavierStokes | 3736 | 3808 | 3632 |
+| RayTrace | 2660 | 2644 | 2528 |
+
+```sh
+target/production/bolt-profile $PROFILED_BINARY bolt --order $ORDER \
+  --dense 13dispatch_fast --dense run_frame_general_until run/*.out* --late wasm/*.out
+```
+
 `-jump-tables=move` lays the jump tables of hot code beside it, apart from the cold
 ones: in place, the `match` tables of the dispatch and the compiler sit among
 `.rodata`'s merged constants, and a run kept about 120 KB of them resident (V8-v7
