@@ -177,14 +177,6 @@ pub(crate) fn full_collection_allocation_bound(policy: MemoryPolicy) -> usize {
 /// allocation toward the next collection.
 #[cfg(not(feature = "gc-tuning"))]
 const PAYLOAD_BYTES_PER_ALLOCATION: usize = 64;
-/// Backing-store bytes (ArrayBuffer contents) allocated since the last collection that
-/// make the next one due, at least; the budget grows to the live external bytes a
-/// collection leaves. Buffers die only with their cells, so streaming code that drops
-/// one buffer per chunk retains every chunk until a collection. Like V8's external
-/// memory limit this bounds that garbage without collecting at every chunk: on the
-/// SaltyAom video route (64 KiB chunks, Linux x86_64, 4 vCPU) one collection per
-/// 64 KiB buffer cut peak RSS 112 -> 47 MB and throughput by two thirds.
-const MINIMUM_EXTERNAL_COLLECTION_BUDGET: usize = 8 << 20;
 /// Diagnostic builds read the unit from `QUENCH_GC_PAYLOAD_UNIT` to measure it.
 #[cfg(feature = "gc-tuning")]
 static PAYLOAD_BYTES_PER_ALLOCATION_TUNED: std::sync::LazyLock<usize> = std::sync::LazyLock::new(|| {
@@ -890,7 +882,7 @@ impl Heap {
             free_slots: 0,
             threshold: MemoryPolicy::default().pacing().minimum_young,
             max_threshold: MemoryPolicy::default().pacing().minimum_young,
-            external_collection_budget: MINIMUM_EXTERNAL_COLLECTION_BUDGET,
+            external_collection_budget: MemoryPolicy::default().pacing().minimum_external_budget,
             ..Self::default()
         }
     }
@@ -901,6 +893,7 @@ impl Heap {
         self.memory_policy = policy;
         self.threshold = self.pacing().minimum_young;
         self.max_threshold = self.threshold;
+        self.external_collection_budget = self.pacing().minimum_external_budget;
     }
     pub(crate) fn memory_policy(&self) -> MemoryPolicy {
         self.memory_policy
@@ -1739,7 +1732,7 @@ impl Heap {
         self.free_slots = 0;
         self.external_bytes = 0;
         self.external_since_collection = 0;
-        self.external_collection_budget = MINIMUM_EXTERNAL_COLLECTION_BUDGET;
+        self.external_collection_budget = self.pacing().minimum_external_budget;
         self.payload_bytes = 0;
         self.allocations = 0;
         self.allocations_since_full = 0;
@@ -2280,7 +2273,7 @@ impl Heap {
         let live_weight = live + self.payload_bytes / payload_unit();
         let allocated = std::mem::take(&mut self.allocations);
         self.external_since_collection = 0;
-        self.external_collection_budget = self.external_bytes.max(MINIMUM_EXTERNAL_COLLECTION_BUDGET);
+        self.external_collection_budget = self.external_bytes.max(self.pacing().minimum_external_budget);
         if full {
             self.allocations_since_full = 0;
             self.old_live = legacy_live;

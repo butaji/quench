@@ -70,6 +70,12 @@ pub(super) struct GenerationalPacing {
     /// Growth of live weight (cells, records and payload) since the last full collection, as
     /// a share of what it kept, that makes the next collection full; zero disables it.
     pub(super) weight_growth: Ratio,
+    /// Backing-store bytes (ArrayBuffer contents) allocated since the last collection that
+    /// make the next one due, at least; the budget grows to the live external bytes a
+    /// collection leaves (`Heap::charge_external_growth`). Buffers die only with their cells,
+    /// so streaming code that drops one buffer per chunk retains every chunk until a
+    /// collection, and this bounds that garbage.
+    pub(super) minimum_external_budget: usize,
 }
 
 /// Fixed-point scale of the survival estimate.
@@ -241,6 +247,7 @@ impl GenerationalPacing {
             full_only_headroom: ratio("QUENCH_GC_FULL_ONLY", self.full_only_headroom),
             probe_interval: read("QUENCH_GC_PROBE_INTERVAL", self.probe_interval as usize) as u32,
             weight_growth: ratio("QUENCH_GC_WEIGHT_GROWTH", self.weight_growth),
+            minimum_external_budget: read("QUENCH_GC_MIN_EXTERNAL", self.minimum_external_budget),
         }
     }
 }
@@ -346,6 +353,7 @@ pub(super) const THROUGHPUT_PACING: GenerationalPacing = GenerationalPacing {
     full_only_headroom: Ratio::new(1, 1),
     probe_interval: 4,
     weight_growth: Ratio::new(0, 1),
+    minimum_external_budget: THROUGHPUT_MINIMUM_EXTERNAL_BUDGET,
 };
 
 /// Memory-first pacing on the owner's direction of 2026-10-17 (TOD-123), selected by
@@ -382,7 +390,23 @@ pub(super) const MEMORY_FIRST_PACING: GenerationalPacing = GenerationalPacing {
     full_only_headroom: Ratio::new(1, 1),
     probe_interval: 4,
     weight_growth: Ratio::new(0, 1),
+    minimum_external_budget: MEMORY_FIRST_MINIMUM_EXTERNAL_BUDGET,
 };
+
+/// The external budget's floor (`GenerationalPacing::minimum_external_budget`) under
+/// throughput. Like V8's external memory limit it bounds dead buffers without collecting at
+/// every chunk: on the SaltyAom video route (64 KiB chunks, Linux x86_64, 4 vCPU) one
+/// collection per 64 KiB buffer cut peak RSS 112 -> 47 MB and throughput by two thirds. A
+/// stream that reads each chunk into a fresh buffer (`fs.createReadStream`) left this floor
+/// of dead buffers resident: at 8 MiB a fastify server's video phase added 3.5-5.8 MB, at
+/// 1 MiB (16 such chunks) 1.5-4 MB, and served 330-340 against 228-356 requests a second
+/// (bombardier, board phases, 3 rounds, plain x86_64 build, 4 vCPU, 2026-10-26; undici,
+/// ws, pino and http-echo npm-perf workloads and V8-v7 within noise).
+const THROUGHPUT_MINIMUM_EXTERNAL_BUDGET: usize = 1 << 20;
+/// The external budget's floor under memory-first: half of throughput's, the lowest video
+/// phase peak of that sweep, run under throughput pacing (fastify final VmHWM 39.0-40.2 MB
+/// against 39.8-41.3 at 1 MiB and 39.4-43.1 at 8 MiB); a quarter gave no lower peak.
+const MEMORY_FIRST_MINIMUM_EXTERNAL_BUDGET: usize = 512 << 10;
 
 /// The fewest allocations between collections under memory-first, whatever survived: the
 /// pre-generational minimum headroom.
