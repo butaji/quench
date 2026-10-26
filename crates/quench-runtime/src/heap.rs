@@ -2,11 +2,11 @@ use crate::value::{HeapReference, Value};
 use crate::vm::wtf16::JsString;
 use crate::value_vec::{INLINE_PROPERTY_COUNT, ValueArena, ValueVec};
 use rayon::prelude::*;
-use rayon::{Scope, ThreadPool, ThreadPoolBuilder};
+use rayon::ThreadPool;
 use rustc_hash::FxHashMap;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Mutex, OnceLock};
+use std::sync::Mutex;
 mod access;
 mod array_elements;
 pub(crate) use array_elements::{ArrayElements, LENGTH_FROM_VALUES, UniqueElements};
@@ -22,6 +22,7 @@ pub use memory_stats::HeapMemoryComposition;
 #[cfg(feature = "profile-memory")]
 mod memory_profile;
 mod pacing;
+mod parallel_mark;
 mod promise_record;
 pub(crate) use promise_record::{AbandonedHostContexts, PromiseCell, PromiseReaction, PromiseRecord, PromiseRejectionState, PromiseState};
 mod records;
@@ -190,7 +191,14 @@ const MINIMUM_EXTERNAL_COLLECTION_BUDGET: usize = 8 << 20;
 static PAYLOAD_BYTES_PER_ALLOCATION_TUNED: std::sync::LazyLock<usize> = std::sync::LazyLock::new(|| {
     std::env::var("QUENCH_GC_PAYLOAD_UNIT").ok().and_then(|v| v.parse().ok()).unwrap_or(64)
 });
-const PARALLEL_MARK_MINIMUM_SLOTS: usize = 50_000;
+/// The fewest cells for which a collection runs on the parallel pool: live slots and live
+/// records for a mark (`Heap::parallel_mark`), which visits what is live, and allocated slots
+/// for a sweep (`sweep_full_parallel`), which visits every slot. Below it a full mark takes a
+/// few milliseconds, which rounds do not shorten: on a synthetic Throughput record graph
+/// (4-vCPU Linux x86_64, four markers) the explicit full collections took as long as serial
+/// ones at 52K and 110K live cells, 27% less at 223K and 52% less mark at 1.65M. A
+/// MemoryFirst heap rarely reaches it.
+const PARALLEL_MARK_MINIMUM_CELLS: usize = 50_000;
 const PARALLEL_MARK_MAX_THREADS: usize = 4;
 // Paired Splay screens on the 4-vCPU Linux host favored the collector thread;
 // larger hosts start with four total markers, with an explicit env override.
@@ -481,6 +489,7 @@ macro_rules! mark_bits {
         }
     };
 }
+use mark_bits;
 
 #[derive(Default)]
 pub(crate) struct Heap {
@@ -559,126 +568,12 @@ pub(crate) struct Heap {
     gc_profile: GcProfile,
     #[cfg(feature = "profile-memory")]
     memory_profile: memory_profile::MemoryProfile,
+    /// Marks on the parallel pool whatever the heap's size (`Heap::parallel_mark`), so unit
+    /// tests reach the parallel path with small heaps.
+    #[cfg(test)]
+    parallel_mark_forced: bool,
 }
 
-/// Immutable view used only while the mutator is stopped during parallel
-/// marking. `Cell` contains `Rc` and other `!Sync` payloads, so workers must
-/// only borrow them and walk immutable edges: they may not clone/drop an `Rc`,
-/// mutate a cell, or retain any reference past the joined Rayon scope.
-#[derive(Clone, Copy)]
-struct ReadOnlyHeapView<'heap> {
-    slots: *const SlotArena,
-    properties: *const ValueArena,
-    sparse_arrays: *const Option<Box<FxHashMap<Value, SparseElements>>>,
-    marks: *const [AtomicU64],
-    slot_len: usize,
-    _heap: std::marker::PhantomData<&'heap Heap>,
-}
-
-// SAFETY: the view is created from an immutable borrow of Heap and remains
-// scoped to the stop-the-world marking call. SlotArena, ValueArena, sparse
-// arrays and Cells are not mutated until all Rayon work joins. The only
-// shared writes are the atomic mark bits. Cell tracing borrows Rc payloads
-// without changing their reference counts.
-unsafe impl Send for ReadOnlyHeapView<'_> {}
-// SAFETY: same stopped-mutator and read-only-payload invariant as above.
-unsafe impl Sync for ReadOnlyHeapView<'_> {}
-
-impl<'heap> ReadOnlyHeapView<'heap> {
-    fn new(heap: &'heap Heap) -> Self {
-        Self {
-            slots: &heap.slots,
-            properties: &heap.properties,
-            sparse_arrays: &heap.sparse_arrays,
-            marks: heap.marks.as_slice(),
-            slot_len: heap.slots.len(),
-            _heap: std::marker::PhantomData,
-        }
-    }
-
-    fn cell(&self, index: usize) -> Option<&'heap Cell> {
-        if index >= self.slot_len {
-            return None;
-        }
-        // SAFETY: the view borrows this immutable SlotArena for 'heap; the
-        // bound proves the flat slot index is initialized and no worker can
-        // mutate or reclaim it until the scope has joined.
-        unsafe {
-            let slots: &'heap SlotArena = &*self.slots;
-            slots.get_unchecked(index).cell.as_ref()
-        }
-    }
-
-    fn properties(&self) -> &'heap ValueArena {
-        // SAFETY: protected by the view's immutable heap borrow and scope.
-        unsafe { &*self.properties }
-    }
-
-    fn sparse_arrays(&self) -> Option<&'heap FxHashMap<Value, SparseElements>> {
-        // SAFETY: protected by the view's immutable heap borrow and scope.
-        unsafe { (&*self.sparse_arrays).as_deref() }
-    }
-
-    fn mark_if_new(&self, index: usize) -> bool {
-        // SAFETY: the mark slice has one atomic word for every allocated slot.
-        let marks = unsafe { &*self.marks };
-        let word = &marks[index / u64::BITS as usize];
-        let mask = 1_u64 << (index % u64::BITS as usize);
-        mark_word_if_new(word, mask)
-    }
-}
-
-struct ParallelMarkBatch {
-    weak_maps: Vec<u32>,
-    object_roots: Vec<(Value, u32, bool)>,
-    work_items: u64,
-    max_worklist: usize,
-    marked_count: usize,
-    #[cfg(feature = "profile-aggregate")]
-    marked_kinds: [u64; CellKind::COUNT],
-}
-
-impl Default for ParallelMarkBatch {
-    // Arrays longer than 32 have no derived `Default`.
-    fn default() -> Self {
-        Self {
-            weak_maps: Vec::new(),
-            object_roots: Vec::new(),
-            work_items: 0,
-            max_worklist: 0,
-            marked_count: 0,
-            #[cfg(feature = "profile-aggregate")]
-            marked_kinds: [0; CellKind::COUNT],
-        }
-    }
-}
-
-fn parallel_mark_pool() -> Option<&'static ThreadPool> {
-    static POOL: OnceLock<Option<ThreadPool>> = OnceLock::new();
-    POOL.get_or_init(|| {
-        let available = std::thread::available_parallelism().map_or(1, |count| count.get());
-        let default_threads = if available <= PARALLEL_MARK_SMALL_HOST_MAX_CPUS {
-            PARALLEL_MARK_SMALL_HOST_DEFAULT_THREADS
-        } else {
-            PARALLEL_MARK_LARGE_HOST_DEFAULT_THREADS
-        };
-        let requested = std::env::var("QUENCH_GC_MARK_THREADS")
-            .ok()
-            .and_then(|value| value.parse::<usize>().ok())
-            .unwrap_or(default_threads)
-            .clamp(1, PARALLEL_MARK_MAX_THREADS);
-        let total_threads = available.min(requested);
-        let worker_threads = total_threads.saturating_sub(1);
-        (worker_threads > 0).then(|| {
-            ThreadPoolBuilder::new()
-                .num_threads(worker_threads)
-                .stack_size(PARALLEL_MARK_STACK_SIZE_BYTES)
-                .build()
-                .expect("parallel GC mark pool construction failed")
-        })
-    })
-    .as_ref()
-}
 #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
 #[derive(Clone, Copy)]
 pub(crate) struct GcProfile {
@@ -933,12 +828,48 @@ impl Heap {
         self.roots.values().count()
     }
 
-    /// Direct object or array records exist. They are traced and swept only on the serial
-    /// full-collection path until they carry a generation and parallel sweep support.
+    /// Direct records exist. They are swept only serially, and a minor collection traces
+    /// them only serially; a full collection may mark them in parallel (`parallel_mark`).
     fn has_direct_records(&self) -> bool {
         self.record_families()
             .iter()
             .any(|(family, _)| family.live_count() > 0)
+    }
+
+    /// How this collection marks in parallel, if it does: a full collection, or a minor one
+    /// of a heap without records, once the live slots and records reach
+    /// `PARALLEL_MARK_MINIMUM_CELLS`, on a host whose pool has workers.
+    fn parallel_mark<'a>(
+        &self,
+        object_roots: Option<&'a ParallelObjectRootTrace<'a>>,
+    ) -> Option<parallel_mark::ParallelMark<'a>> {
+        let traces_records_in_parallel =
+            self.collection_state == CollectionState::FullMarking || !self.has_direct_records();
+        let forced = self.parallel_mark_forced();
+        if !traces_records_in_parallel || !forced && self.live_slots() < PARALLEL_MARK_MINIMUM_CELLS {
+            return None;
+        }
+        let round_minimum = if forced { 0 } else { PARALLEL_MARK_SPLIT_THRESHOLD };
+        parallel_mark::parallel_mark_pool().map(|pool| parallel_mark::ParallelMark {
+            pool,
+            object_roots,
+            round_minimum,
+        })
+    }
+
+    /// Makes every collection whose kind may mark in parallel (`parallel_mark`) do so, in
+    /// rounds of any size, whatever the heap's size: small test heaps then cover the rounds
+    /// and the work workers leave to the collector.
+    #[cfg(test)]
+    pub(crate) fn force_parallel_mark_for_test(&mut self) {
+        self.parallel_mark_forced = true;
+    }
+
+    fn parallel_mark_forced(&self) -> bool {
+        #[cfg(test)]
+        return self.parallel_mark_forced;
+        #[cfg(not(test))]
+        false
     }
 
     /// Every record family, with the `Value` constructor naming its records.
@@ -1998,10 +1929,11 @@ impl Heap {
                     }
                 }
             }
-            self.mark_work_parallel_or_serial(
+            let parallel = self.parallel_mark(parallel_object_roots);
+            self.mark_work(
                 &mut work,
                 &mut object_roots,
-                parallel_object_roots,
+                parallel,
                 &mut ephemerons,
                 GcTraceKind::Collection,
                 &mut environments,
@@ -2037,10 +1969,10 @@ impl Heap {
         let compacts = full && self.properties.compaction_due();
         let sweep_pool = if full
             && !self.has_direct_records()
-            && self.slots.len() >= PARALLEL_MARK_MINIMUM_SLOTS
+            && self.slots.len() >= PARALLEL_MARK_MINIMUM_CELLS
             && !cfg!(feature = "profile-memory")
         {
-            parallel_mark_pool()
+            parallel_mark::parallel_mark_pool()
         } else {
             None
         };
@@ -2511,156 +2443,6 @@ impl Heap {
         }
     }
 
-    fn mark_work_parallel_or_serial(
-        &mut self,
-        work: &mut Vec<Value>,
-        object_roots: &mut impl FnMut(GcTraceKind, Value, u32, bool, &mut Vec<Value>),
-        parallel_object_roots: Option<&ParallelObjectRootTrace<'_>>,
-        ephemerons: &mut weak::EphemeronWork,
-        trace_kind: GcTraceKind,
-        environments: &mut EnvironmentTrace<'_>,
-    ) {
-        if self.has_direct_records() {
-            self.mark_work(work, object_roots, ephemerons, trace_kind, environments);
-            return;
-        }
-        if self.slots.len() < PARALLEL_MARK_MINIMUM_SLOTS {
-            self.mark_work(work, object_roots, ephemerons, trace_kind, environments);
-            return;
-        }
-        // Without function records, closures are boxed cells (`Cell::Function`), whose
-        // environments the parallel trace marks whole.
-        let Some(pool) = parallel_mark_pool() else {
-            self.mark_work(work, object_roots, ephemerons, trace_kind, environments);
-            return;
-        };
-
-        while !work.is_empty() {
-            let initial_work = std::mem::take(work);
-            let batches = {
-                let view = ReadOnlyHeapView::new(self);
-                let batches = Mutex::new(Vec::new());
-                pool.scope(|scope| {
-                    Self::visit_parallel_work(
-                        scope,
-                        initial_work,
-                        view,
-                        &batches,
-                        parallel_object_roots,
-                        trace_kind,
-                    );
-                });
-                batches
-                    .into_inner()
-                    .expect("parallel GC mark output mutex poisoned")
-            };
-            for batch in batches {
-                #[cfg(feature = "profile-aggregate")]
-                {
-                    self.gc_profile.work_items += batch.work_items;
-                    self.gc_profile.max_worklist =
-                        self.gc_profile.max_worklist.max(batch.max_worklist as u64);
-                    self.gc_profile.marked += batch.marked_count as u64;
-                    for (kind, count) in batch.marked_kinds.iter().copied().enumerate() {
-                        self.gc_profile.marked_kinds[kind] += count;
-                    }
-                }
-                for (owner, shape, prototype) in batch.object_roots {
-                    object_roots(trace_kind, owner, shape, prototype, work);
-                }
-                for index in batch.weak_maps {
-                    let owner = Value::heap(index);
-                    if let Some(cell) = self.get(owner) {
-                        let mark_bits = mark_bits!(self);
-                        ephemerons.newly_marked(
-                            owner,
-                            Some(cell),
-                            |target| mark_bits.is_marked(target),
-                            work,
-                        );
-                    }
-                }
-            }
-        }
-    }
-
-    fn visit_parallel_work<'scope>(
-        scope: &Scope<'scope>,
-        mut work: Vec<Value>,
-        view: ReadOnlyHeapView<'scope>,
-        batches: &'scope Mutex<Vec<ParallelMarkBatch>>,
-        parallel_object_roots: Option<&'scope ParallelObjectRootTrace<'scope>>,
-        trace_kind: GcTraceKind,
-    ) {
-        let mut batch = ParallelMarkBatch::default();
-        batch.max_worklist = work.len();
-        let mut last_proto = Value::UNDEFINED;
-        while let Some(value) = work.pop() {
-            batch.work_items += 1;
-            let Some(index) = value.legacy_heap_index().map(|value| value as usize) else {
-                continue;
-            };
-            let Some(cell) = view.cell(index) else {
-                continue;
-            };
-            if !view.mark_if_new(index) {
-                continue;
-            }
-
-            let mut trace_object_root =
-                |kind: GcTraceKind, owner: Value, shape: u32, prototype: bool, roots: &mut Vec<Value>| {
-                    if let Some(parallel_object_roots) = parallel_object_roots {
-                        parallel_object_roots(kind, owner, shape, prototype, roots);
-                    } else {
-                        batch.object_roots.push((owner, shape, prototype));
-                    }
-                };
-            Self::children(
-                value,
-                cell,
-                view.properties(),
-                &mut work,
-                &mut trace_object_root,
-                trace_kind,
-                &mut last_proto,
-            );
-            if matches!(cell, Cell::Array { .. })
-                && let Some(elements) = view
-                    .sparse_arrays()
-                    .and_then(|arrays| arrays.get(&Value::heap(index as u32)))
-            {
-                work.extend(elements.values.values().copied());
-            }
-            batch.marked_count += 1;
-            if matches!(cell, Cell::WeakMap { .. }) {
-                batch.weak_maps.push(index as u32);
-            }
-            #[cfg(feature = "profile-aggregate")]
-            {
-                batch.marked_kinds[Self::cell_kind(cell) as usize] += 1;
-            }
-            batch.max_worklist = batch.max_worklist.max(work.len());
-
-            if work.len() > PARALLEL_MARK_SPLIT_THRESHOLD {
-                let spawned = work.split_off(work.len() / 2);
-                scope.spawn(move |scope| {
-                    Self::visit_parallel_work(
-                        scope,
-                        spawned,
-                        view,
-                        batches,
-                        parallel_object_roots,
-                        trace_kind,
-                    );
-                });
-            }
-        }
-        batches
-            .lock()
-            .expect("parallel GC mark output mutex poisoned")
-            .push(batch);
-    }
-
     #[cfg(debug_assertions)]
     fn snapshot_record_marks(&self) -> Vec<Vec<u64>> {
         self.record_families()
@@ -2696,6 +2478,7 @@ impl Heap {
         self.mark_work(
             &mut work,
             object_roots,
+            None,
             &mut ephemerons,
             GcTraceKind::VerifyFull,
             &mut EnvironmentTrace::new(closure_reads),
@@ -2748,6 +2531,7 @@ impl Heap {
         self.mark_work(
             &mut work,
             object_roots,
+            None,
             &mut ephemerons,
             GcTraceKind::VerifyFull,
             &mut EnvironmentTrace::new(None),
@@ -2788,237 +2572,290 @@ impl Heap {
             self.gc_profile = profile;
         }
     }
+
+    /// Marks everything `work` reaches, with the closure environments it reaches through
+    /// `environments` and the weak map values through `ephemerons`. With `parallel`, work
+    /// larger than its `round_minimum` is marked in a parallel round (`mark_parallel_round`);
+    /// smaller work is marked here, value by value, as is all of it without, and so are the
+    /// environments a round's workers leave for this visit. Either way marking ends when no
+    /// work and no environment edge is left.
+    // Inlined into its one production caller, `collect_with_object_roots`, as the serial
+    // mark loop was before the parallel mark visited records.
+    #[inline(always)]
     fn mark_work(
         &mut self,
         work: &mut Vec<Value>,
         object_roots: &mut impl FnMut(GcTraceKind, Value, u32, bool, &mut Vec<Value>),
+        parallel: Option<parallel_mark::ParallelMark<'_>>,
         ephemerons: &mut weak::EphemeronWork,
         trace_kind: GcTraceKind,
         environments: &mut EnvironmentTrace<'_>,
     ) {
         let mut last_proto = Value::UNDEFINED;
+        // The environments workers reached whole, for `mark_value`'s visit here: its one call
+        // site, so the serial mark inlines it.
+        let mut left_to_collector = Vec::new();
         loop {
-            if work.is_empty() {
+            if let Some(parallel) = parallel
+                && left_to_collector.is_empty()
+                && work.len() > parallel.round_minimum
+            {
+                self.mark_parallel_round(
+                    parallel,
+                    work,
+                    &mut left_to_collector,
+                    object_roots,
+                    ephemerons,
+                    trace_kind,
+                    environments,
+                );
+                continue;
+            }
+            // A worker counted the visit of an environment it left.
+            let value = if let Some(environment) = left_to_collector.pop() {
+                environment
+            } else if let Some(value) = work.pop() {
+                #[cfg(feature = "profile-aggregate")]
+                {
+                    self.gc_profile.work_items += 1;
+                }
+                value
+            } else {
                 if !environments.has_pending() {
                     break;
                 }
                 self.trace_environment_edges(environments, work);
                 continue;
-            }
-            let value = work.pop().expect("work is not empty");
-            #[cfg(feature = "profile-aggregate")]
-            {
-                self.gc_profile.work_items += 1;
-            }
-            if let Some(record_id) = value.direct_object_index() {
-                if !self.object_records.mark(record_id) {
-                    continue;
-                }
-                #[cfg(feature = "profile-aggregate")]
-                {
-                    self.gc_profile.marked += 1;
-                    self.gc_profile.marked_kinds[CellKind::Object as usize] += 1;
-                }
-                // SAFETY: the direct handle is live and its mark bit was newly set.
-                let object = unsafe { self.object_records.get_live(record_id) };
-                Self::object_children(
-                    value,
-                    object,
-                    &self.properties,
-                    work,
-                    object_roots,
-                    trace_kind,
-                    &mut last_proto,
-                );
-                let mark_bits = mark_bits!(self);
-                ephemerons.newly_marked(
-                    value,
-                    None,
-                    |target| mark_bits.is_marked(target),
-                    work,
-                );
-            } else if let Some(record_id) = value.direct_array_index() {
-                if !self.array_records.mark(record_id) {
-                    continue;
-                }
-                #[cfg(feature = "profile-aggregate")]
-                {
-                    self.gc_profile.marked += 1;
-                    self.gc_profile.marked_kinds[CellKind::Array as usize] += 1;
-                }
-                // SAFETY: a direct Array Value names an initialized record.
-                let array = unsafe { self.array_records.get_live(record_id) };
-                Self::array_children(
-                    value,
-                    array,
-                    &self.properties,
-                    &mut self.string_records,
-                    work,
-                    object_roots,
-                    trace_kind,
-                    &mut last_proto,
-                );
-                if let Some(arrays) = self.sparse_arrays.as_ref()
-                    && let Some(elements) = arrays.get(&value)
-                {
-                    work.extend(elements.values.values().copied());
-                }
-                let mark_bits = mark_bits!(self);
-                ephemerons.newly_marked(
-                    value,
-                    None,
-                    |target| mark_bits.is_marked(target),
-                    work,
-                );
-            } else if let Some(record_id) = value.direct_function_index() {
-                if !self.function_records.mark(record_id) {
-                    continue;
-                }
-                #[cfg(feature = "profile-aggregate")]
-                {
-                    self.gc_profile.marked += 1;
-                    self.gc_profile.marked_kinds[CellKind::Function as usize] += 1;
-                }
-                // SAFETY: a direct function Value names an initialized record.
-                let function = unsafe { self.function_records.get_live(record_id) };
-                Self::function_children(
-                    value,
-                    function,
-                    &self.properties,
-                    work,
-                    object_roots,
-                    trace_kind,
-                    &mut last_proto,
-                );
-                environments.closure(function.env, &function.kind, work);
-                let mark_bits = mark_bits!(self);
-                ephemerons.newly_marked(value, None, |target| mark_bits.is_marked(target), work);
-            } else if let Some(record_id) = value.direct_iterator_index() {
-                if !self.iterator_records.mark(record_id) {
-                    continue;
-                }
-                #[cfg(feature = "profile-aggregate")]
-                {
-                    self.gc_profile.marked += 1;
-                    self.gc_profile.marked_kinds[CellKind::Iterator as usize] += 1;
-                }
-                // SAFETY: a direct iterator Value names an initialized record.
-                let iterator = unsafe { self.iterator_records.get_live(record_id) };
-                Self::object_children(
-                    value,
-                    &iterator.object,
-                    &self.properties,
-                    work,
-                    object_roots,
-                    trace_kind,
-                    &mut last_proto,
-                );
-                Self::iterator_edges(iterator, work);
-                let mark_bits = mark_bits!(self);
-                ephemerons.newly_marked(value, None, |target| mark_bits.is_marked(target), work);
-            } else if let Some(record_id) = value.direct_string_index() {
-                // A string holds no heap edges: marking it is the whole visit.
-                if self.string_records.mark(record_id) {
-                    #[cfg(feature = "profile-aggregate")]
-                    {
-                        self.gc_profile.marked += 1;
-                        self.gc_profile.marked_kinds[CellKind::String as usize] += 1;
-                    }
-                }
-            } else if let Some(record_id) = value.direct_v128_index() {
-                // A vector holds no heap edges: marking it is the whole visit.
-                if self.v128_records.mark(record_id) {
-                    #[cfg(feature = "profile-aggregate")]
-                    {
-                        self.gc_profile.marked += 1;
-                        self.gc_profile.marked_kinds[CellKind::WasmV128 as usize] += 1;
-                    }
-                }
-            } else if let Some(record_id) = value.direct_await_index() {
-                if !self.await_records.mark(record_id) {
-                    continue;
-                }
-                #[cfg(feature = "profile-aggregate")]
-                {
-                    self.gc_profile.marked += 1;
-                    self.gc_profile.marked_kinds[CellKind::AwaitState as usize] += 1;
-                }
-                // SAFETY: a direct await Value names an initialized record.
-                unsafe { self.await_records.get_live(record_id) }.extend_roots(work);
-            } else if let Some(record_id) = value.direct_promise_index() {
-                if !self.promise_records.mark(record_id) {
-                    continue;
-                }
-                #[cfg(feature = "profile-aggregate")]
-                {
-                    self.gc_profile.marked += 1;
-                    self.gc_profile.marked_kinds[CellKind::Object as usize] += 1;
-                }
-                // SAFETY: a direct promise Value names an initialized record.
-                let promise = unsafe { self.promise_records.get_live(record_id) };
-                Self::object_children(
-                    value,
-                    &promise.object,
-                    &self.properties,
-                    work,
-                    object_roots,
-                    trace_kind,
-                    &mut last_proto,
-                );
-                promise.record.append_roots(work);
-                let mark_bits = mark_bits!(self);
-                ephemerons.newly_marked(value, None, |target| mark_bits.is_marked(target), work);
-            } else {
-                let Some(index) = value.legacy_heap_index().map(|value| value as usize) else {
-                    continue;
-                };
-                let Some(slot) = self.slots.get_mut(index) else {
-                    continue;
-                };
-                if slot.cell.is_none() {
-                    continue;
-                }
-                // A full collection traces environments by what their readers read.
-                if let Some(Cell::Environment { function, .. }) = &slot.cell
-                    && environments.whole(value, index as u32, *function)
-                {
-                    continue;
-                }
-                if !Self::mark_serial(&self.marks, index) {
-                    continue;
-                }
-                let cell = slot.cell.as_ref().unwrap();
-                #[cfg(feature = "profile-aggregate")]
-                {
-                    self.gc_profile.marked += 1;
-                    self.gc_profile.marked_kinds[Self::cell_kind(cell) as usize] += 1;
-                }
-                Self::children(
-                    value,
-                    cell,
-                    &self.properties,
-                    work,
-                    object_roots,
-                    trace_kind,
-                    &mut last_proto,
-                );
-                let mark_bits = mark_bits!(self);
-                ephemerons.newly_marked(
-                    value,
-                    Some(cell),
-                    |target| mark_bits.is_marked(target),
-                    work,
-                );
-                if let Some(arrays) = self.sparse_arrays.as_ref()
-                    && matches!(cell, Cell::Array { .. })
-                    && let Some(elements) = arrays.get(&Value::heap(index as u32))
-                {
-                    work.extend(elements.values.values().copied());
-                }
-            }
+            };
+            self.mark_value(value, work, object_roots, ephemerons, trace_kind, environments, &mut last_proto);
             #[cfg(feature = "profile-aggregate")]
             {
                 self.gc_profile.max_worklist = self.gc_profile.max_worklist.max(work.len() as u64);
+            }
+        }
+    }
+
+    /// Marks `value` when it is a heap value not marked yet, pushing the values it keeps
+    /// alive onto `work`: the serial mark's visit of one value.
+    #[inline(always)]
+    #[allow(clippy::too_many_arguments)]
+    fn mark_value(
+        &mut self,
+        value: Value,
+        work: &mut Vec<Value>,
+        object_roots: &mut impl FnMut(GcTraceKind, Value, u32, bool, &mut Vec<Value>),
+        ephemerons: &mut weak::EphemeronWork,
+        trace_kind: GcTraceKind,
+        environments: &mut EnvironmentTrace<'_>,
+        last_proto: &mut Value,
+    ) {
+        if let Some(record_id) = value.direct_object_index() {
+            if !self.object_records.mark(record_id) {
+                return;
+            }
+            #[cfg(feature = "profile-aggregate")]
+            {
+                self.gc_profile.marked += 1;
+                self.gc_profile.marked_kinds[CellKind::Object as usize] += 1;
+            }
+            // SAFETY: the direct handle is live and its mark bit was newly set.
+            let object = unsafe { self.object_records.get_live(record_id) };
+            Self::object_children(
+                value,
+                object,
+                &self.properties,
+                work,
+                object_roots,
+                trace_kind,
+                last_proto,
+            );
+            let mark_bits = mark_bits!(self);
+            ephemerons.newly_marked(
+                value,
+                None,
+                |target| mark_bits.is_marked(target),
+                work,
+            );
+        } else if let Some(record_id) = value.direct_array_index() {
+            if !self.array_records.mark(record_id) {
+                return;
+            }
+            #[cfg(feature = "profile-aggregate")]
+            {
+                self.gc_profile.marked += 1;
+                self.gc_profile.marked_kinds[CellKind::Array as usize] += 1;
+            }
+            // SAFETY: a direct Array Value names an initialized record.
+            let array = unsafe { self.array_records.get_live(record_id) };
+            let string_records = &mut self.string_records;
+            Self::array_children(
+                value,
+                array,
+                &self.properties,
+                |string| {
+                    string_records.mark(string);
+                },
+                work,
+                object_roots,
+                trace_kind,
+                last_proto,
+            );
+            if let Some(arrays) = self.sparse_arrays.as_ref()
+                && let Some(elements) = arrays.get(&value)
+            {
+                work.extend(elements.values.values().copied());
+            }
+            let mark_bits = mark_bits!(self);
+            ephemerons.newly_marked(
+                value,
+                None,
+                |target| mark_bits.is_marked(target),
+                work,
+            );
+        } else if let Some(record_id) = value.direct_function_index() {
+            if !self.function_records.mark(record_id) {
+                return;
+            }
+            #[cfg(feature = "profile-aggregate")]
+            {
+                self.gc_profile.marked += 1;
+                self.gc_profile.marked_kinds[CellKind::Function as usize] += 1;
+            }
+            // SAFETY: a direct function Value names an initialized record.
+            let function = unsafe { self.function_records.get_live(record_id) };
+            Self::function_children(
+                value,
+                function,
+                &self.properties,
+                work,
+                object_roots,
+                trace_kind,
+                last_proto,
+            );
+            environments.closure(function.env, &function.kind, work);
+            let mark_bits = mark_bits!(self);
+            ephemerons.newly_marked(value, None, |target| mark_bits.is_marked(target), work);
+        } else if let Some(record_id) = value.direct_iterator_index() {
+            if !self.iterator_records.mark(record_id) {
+                return;
+            }
+            #[cfg(feature = "profile-aggregate")]
+            {
+                self.gc_profile.marked += 1;
+                self.gc_profile.marked_kinds[CellKind::Iterator as usize] += 1;
+            }
+            // SAFETY: a direct iterator Value names an initialized record.
+            let iterator = unsafe { self.iterator_records.get_live(record_id) };
+            Self::object_children(
+                value,
+                &iterator.object,
+                &self.properties,
+                work,
+                object_roots,
+                trace_kind,
+                last_proto,
+            );
+            Self::iterator_edges(iterator, work);
+            let mark_bits = mark_bits!(self);
+            ephemerons.newly_marked(value, None, |target| mark_bits.is_marked(target), work);
+        } else if let Some(record_id) = value.direct_string_index() {
+            // A string holds no heap edges: marking it is the whole visit.
+            if self.string_records.mark(record_id) {
+                #[cfg(feature = "profile-aggregate")]
+                {
+                    self.gc_profile.marked += 1;
+                    self.gc_profile.marked_kinds[CellKind::String as usize] += 1;
+                }
+            }
+        } else if let Some(record_id) = value.direct_v128_index() {
+            // A vector holds no heap edges: marking it is the whole visit.
+            if self.v128_records.mark(record_id) {
+                #[cfg(feature = "profile-aggregate")]
+                {
+                    self.gc_profile.marked += 1;
+                    self.gc_profile.marked_kinds[CellKind::WasmV128 as usize] += 1;
+                }
+            }
+        } else if let Some(record_id) = value.direct_await_index() {
+            if !self.await_records.mark(record_id) {
+                return;
+            }
+            #[cfg(feature = "profile-aggregate")]
+            {
+                self.gc_profile.marked += 1;
+                self.gc_profile.marked_kinds[CellKind::AwaitState as usize] += 1;
+            }
+            // SAFETY: a direct await Value names an initialized record.
+            unsafe { self.await_records.get_live(record_id) }.extend_roots(work);
+        } else if let Some(record_id) = value.direct_promise_index() {
+            if !self.promise_records.mark(record_id) {
+                return;
+            }
+            #[cfg(feature = "profile-aggregate")]
+            {
+                self.gc_profile.marked += 1;
+                self.gc_profile.marked_kinds[CellKind::Object as usize] += 1;
+            }
+            // SAFETY: a direct promise Value names an initialized record.
+            let promise = unsafe { self.promise_records.get_live(record_id) };
+            Self::object_children(
+                value,
+                &promise.object,
+                &self.properties,
+                work,
+                object_roots,
+                trace_kind,
+                last_proto,
+            );
+            promise.record.append_roots(work);
+            let mark_bits = mark_bits!(self);
+            ephemerons.newly_marked(value, None, |target| mark_bits.is_marked(target), work);
+        } else {
+            let Some(index) = value.legacy_heap_index().map(|value| value as usize) else {
+                return;
+            };
+            let Some(slot) = self.slots.get_mut(index) else {
+                return;
+            };
+            if slot.cell.is_none() {
+                return;
+            }
+            // A full collection traces environments by what their readers read.
+            if let Some(Cell::Environment { function, .. }) = &slot.cell
+                && environments.whole(value, index as u32, *function)
+            {
+                return;
+            }
+            if !Self::mark_serial(&self.marks, index) {
+                return;
+            }
+            let cell = slot.cell.as_ref().unwrap();
+            #[cfg(feature = "profile-aggregate")]
+            {
+                self.gc_profile.marked += 1;
+                self.gc_profile.marked_kinds[Self::cell_kind(cell) as usize] += 1;
+            }
+            Self::children(
+                value,
+                cell,
+                &self.properties,
+                work,
+                object_roots,
+                trace_kind,
+                last_proto,
+            );
+            let mark_bits = mark_bits!(self);
+            ephemerons.newly_marked(
+                value,
+                Some(cell),
+                |target| mark_bits.is_marked(target),
+                work,
+            );
+            if let Some(arrays) = self.sparse_arrays.as_ref()
+                && matches!(cell, Cell::Array { .. })
+                && let Some(elements) = arrays.get(&Value::heap(index as u32))
+            {
+                work.extend(elements.values.values().copied());
             }
         }
     }
@@ -3723,7 +3560,7 @@ impl Heap {
         owner: Value,
         array: &ArrayObject,
         properties: &ValueArena,
-        string_records: &mut StringRecordSpace,
+        mut mark_string: impl FnMut(RecordId),
         work: &mut Vec<Value>,
         object_roots: &mut impl FnMut(GcTraceKind, Value, u32, bool, &mut Vec<Value>),
         trace_kind: GcTraceKind,
@@ -3743,23 +3580,23 @@ impl Heap {
                 .elements()
                 .iter()
                 .copied()
-                .filter(|value| value.is_heap() && !Self::mark_leaf(string_records, *value)),
+                .filter(|value| value.is_heap() && !Self::mark_leaf(&mut mark_string, *value)),
         );
     }
 
-    /// Marks `value` where the trace finds it when it is a string, and says whether it was
-    /// one. A string holds no heap edges, so marking it is the whole visit (`mark_work`): an
-    /// array of strings adds nothing to the mark stack, which had held a value per element at
-    /// the heap's peak (V8-v7 RegExp: 141 KiB). Profiling builds leave every value to
-    /// `mark_work`, which counts each visit.
-    fn mark_leaf(string_records: &mut StringRecordSpace, value: Value) -> bool {
+    /// Marks `value` where the trace finds it, through `mark_string`, when it is a string, and
+    /// says whether it was one. A string holds no heap edges, so marking it is the whole visit
+    /// (`mark_value`): an array of strings adds nothing to the mark stack, which had held a
+    /// value per element at the heap's peak (V8-v7 RegExp: 141 KiB). Profiling builds leave
+    /// every value to `mark_value`, which counts each visit.
+    fn mark_leaf(mark_string: &mut impl FnMut(RecordId), value: Value) -> bool {
         if cfg!(feature = "profile-aggregate") {
             return false;
         }
         let Some(record_id) = value.direct_string_index() else {
             return false;
         };
-        string_records.mark(record_id);
+        mark_string(record_id);
         true
     }
     /// An iterator's edges besides its object: its source, cached next method, helper
