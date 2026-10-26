@@ -431,8 +431,14 @@ fn nested_member(member: Instr) -> Option<WideInstruction> {
     (!member.is_wide()).then(|| member.as_wide())
 }
 
+/// The registers `base..base + count` that the set covers, as `register_bit` of each.
 fn range(base: u16, count: u16) -> RegisterSet {
-    (0..count).fold(0, |mask, offset| mask | register_bit(base + offset))
+    let start = u32::from(base).min(RegisterSet::BITS);
+    let end = (u32::from(base) + u32::from(count)).min(RegisterSet::BITS);
+    match end - start {
+        0 => 0,
+        span => (RegisterSet::MAX >> (RegisterSet::BITS - span)) << start,
+    }
 }
 
 /// The set of `register` alone; empty past the set's width.
@@ -447,6 +453,19 @@ pub(crate) fn register_bit(register: u16) -> RegisterSet {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn register_ranges_are_their_registers_bits() {
+        let width = RegisterSet::BITS as u16;
+        for base in (0..width + 4).chain([u16::MAX - 2, u16::MAX]) {
+            for count in (0..width + 4).chain([u16::MAX - base.min(u16::MAX)]) {
+                let expected = (0..count)
+                    .filter_map(|offset| base.checked_add(offset))
+                    .fold(0, |mask, register| mask | register_bit(register));
+                assert_eq!(range(base, count), expected, "base {base} count {count}");
+            }
+        }
+    }
     use crate::bytecode::Op;
 
     const NO_METHODS: &[MethodSite] = &[];
