@@ -1003,7 +1003,7 @@ fn read_function(input: &mut BinaryReader<'_>) -> Result<Function, String> {
         })?;
         let selective_capture_slots = match input.u8()? {
             0 => None,
-            1 => Some(input.u16s()?),
+            1 => Some(input.u16s()?.into()),
             _ => return Err("invalid selective capture layout".into()),
         };
         let inherited_with_scope = match input.u8()? {
@@ -1041,7 +1041,7 @@ fn read_function(input: &mut BinaryReader<'_>) -> Result<Function, String> {
         if !dead_call_results.is_sorted_by(|before, after| before < after) || !covered && !dead_call_results.is_empty() {
             return Err("invalid residual dead call results".into());
         }
-        let register_roots = super::RegisterRoots::with_dead_call_results(covered, dead_call_results.into_boxed_slice());
+        let register_roots = super::RegisterRoots::with_dead_call_results(covered, dead_call_results.into());
         let undefined_register =
             Some(input.u16()?).filter(|register| *register != NO_UNDEFINED_REGISTER);
         let parameter_registers = Some(input.u16()?).filter(|base| *base != NO_PARAMETER_REGISTERS);
@@ -1109,7 +1109,7 @@ fn read_function(input: &mut BinaryReader<'_>) -> Result<Function, String> {
             })
         })?;
         let source_positions = input.source_positions()?;
-        let plain_locals: Box<[bool]> = {
+        let plain_locals: crate::heap::ThinBoxSlice<bool> = {
             let mut plain = Vec::with_capacity(usize::from(locals));
             for _ in 0..usize::from(locals).div_ceil(u8::BITS as usize) {
                 let bits = input.u8()?;
