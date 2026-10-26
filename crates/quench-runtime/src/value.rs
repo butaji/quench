@@ -118,6 +118,11 @@ const NARROW_HEAP_FAMILIES: usize = 1 << HEAP_FAMILY_BITS.count_ones();
 const _: () = assert!(HEAP_FAMILY_BITS >> HEAP_FAMILY_SHIFT == NARROW_HEAP_FAMILIES as u64 - 1);
 const _: () = assert!(NARROW_HEAP_FAMILIES + 4 <= 1 << NARROW_CODE_BITS);
 const _: () = assert!(NARROW_HEAP_FAMILIES + 3 + NARROW_HEAP_FAMILIES <= NARROW_LOOKUP_CODES);
+/// The upper word of a direct object handle and its narrow code, its family bits, as
+/// `to_narrow`'s table names them; `to_narrow_reference` packs it without the lookup.
+const DIRECT_OBJECT_UPPER: u64 = TAG_HEAP | DIRECT_OBJECT_HANDLE_BIT;
+const DIRECT_OBJECT_NARROW_CODE: u32 = ((DIRECT_OBJECT_UPPER & HEAP_FAMILY_BITS) >> HEAP_FAMILY_SHIFT) as u32;
+const _: () = assert!(NARROW_UPPER_WORDS[DIRECT_OBJECT_NARROW_CODE as usize] == DIRECT_OBJECT_UPPER);
 
 impl Value {
     /// This value as a narrow value, when it has one.
@@ -139,6 +144,18 @@ impl Value {
         let code = base + ((self.0 & HEAP_FAMILY_BITS) >> HEAP_FAMILY_SHIFT) as usize;
         (NARROW_UPPER_WORDS[code] == upper && lower >> NARROW_INDEX_BITS == 0)
             .then_some(lower << NARROW_INDEX_SHIFT | (code as u32) << NARROW_CODE_SHIFT)
+    }
+
+    /// `to_narrow`, testing a direct object handle first: a new object's values
+    /// (`Object::pack_inline`) are mostly references, where field stores, which test an
+    /// integer first, keep `to_narrow`.
+    #[inline(always)]
+    pub(crate) fn to_narrow_reference(self) -> Option<u32> {
+        if self.0 & !LOWER_WORD != DIRECT_OBJECT_UPPER {
+            return self.to_narrow();
+        }
+        let lower = self.0 as u32;
+        (lower >> NARROW_INDEX_BITS == 0).then_some(lower << NARROW_INDEX_SHIFT | DIRECT_OBJECT_NARROW_CODE << NARROW_CODE_SHIFT)
     }
 
     /// The value `narrow` packs (`to_narrow`).
