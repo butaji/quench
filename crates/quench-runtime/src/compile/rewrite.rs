@@ -155,7 +155,9 @@ pub(super) fn apply(
     while rewrite_once(function, methods, field_sites, superinstructions.as_slice(), &mut liveness) {
         changed_passes += 1;
     }
-    if std::env::var_os("QUENCH_REWRITE_STATS").is_some() {
+    // Read once: every function's rewrite asks, and the process environment does not change.
+    static REWRITE_STATS: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    if *REWRITE_STATS.get_or_init(|| std::env::var_os("QUENCH_REWRITE_STATS").is_some()) {
         eprintln!(
             "{{\"kind\":\"quench-rewrite\",\"input\":{input},\"output\":{},\"changed_passes\":{changed_passes},\"scans\":{}}}",
             function.code.len(),
