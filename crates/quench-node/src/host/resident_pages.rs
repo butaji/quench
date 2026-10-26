@@ -72,6 +72,12 @@ pub fn release_read_only_pages_after_load() {
 /// from its file.
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 pub fn release_read_only_pages() {
+    if std::env::var_os("QUENCH_TP_PACE_ALL").is_some()
+        && shares_release_clock()
+        && released_within(LOAD_RELEASE_INTERVAL)
+    {
+        return;
+    }
     if let Ok(mut last) = LAST_RELEASE.lock() {
         *last = Some(std::time::Instant::now());
     }
