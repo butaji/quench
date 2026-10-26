@@ -12234,6 +12234,88 @@ fn shared_osr_captured_and_parameter_callees_preserve_gc_throw_and_coercion_once
 
 #[test]
 #[cfg(not(quench_profiled))]
+fn shared_osr_call_result_is_not_an_incoming_number() {
+    for bypass in [false, true] {
+        let call = if bypass {
+            "let value = 1; if (i < 5) value = g();"
+        } else {
+            "const value = g();"
+        };
+        let rounds = if bypass { 400 } else { 200 };
+        let source = format!(
+            r#"
+            let calls = 0, coercions = 0, caught = 0, checksum = 0;
+            const marker = {{ identity: 'original' }};
+            function make() {{
+                calls++;
+                if (calls % 64 === 0) $262.gc();
+                if (calls === 1999) throw marker;
+                const number = calls;
+                return {{ valueOf() {{ coercions++; if (coercions % 64 === 0) $262.gc(); return number; }} }};
+            }}
+            function run(g) {{
+                let total = 0;
+                for (let i = 0; i < 10; i++) {{
+                    total += 3;
+                    {call}
+                    total += +value;
+                }}
+                return total;
+            }}
+            for (let n = 0; n < {rounds}; n++) {{
+                try {{ checksum += run(make); }} catch (error) {{
+                    if (error !== marker) throw Error('throw identity');
+                    caught++;
+                }}
+            }}
+            print(calls + ' ' + coercions + ' ' + caught + ' ' + checksum);
+        "#
+        );
+        let program = Engine::specialize(&source, "osr-call-result-entry.js").unwrap();
+        let function = program
+            .functions
+            .iter()
+            .position(|function| {
+                function
+                    .header()
+                    .name
+                    .is_some_and(|name| &program.atoms[name as usize] == "run")
+            })
+            .unwrap();
+        let interpreted = Rc::new(RefCell::new(Vec::new()));
+        Vm::new(TestHost::writing_to(interpreted.clone()).with_test262())
+            .execute(&program)
+            .unwrap();
+        assert!(interpreted.borrow()[0].starts_with("1999 1998 1 "));
+        let output = Rc::new(RefCell::new(Vec::new()));
+        let mut vm = Vm::new(TestHost::writing_to(output.clone()).with_test262());
+        vm.set_execution_mode(crate::ExecutionMode::Compiled);
+        vm.programs.enable_js_jit_diagnostics();
+        vm.execute(&program).unwrap();
+        assert_eq!(output.borrow().as_slice(), interpreted.borrow().as_slice());
+        let diagnostics = vm
+            .programs
+            .lane_views(super::program_store::ProgramId::MAIN)
+            .unwrap()
+            .get(function)
+            .and_then(super::program_store::derived_lane_view)
+            .unwrap()
+            .osr_diagnostics();
+        assert!(
+            diagnostics.compile_successes > 0
+                && diagnostics.native_region_runs > 0
+                && diagnostics.exits > 0,
+            "bypass={bypass}: {diagnostics:?}"
+        );
+        assert_eq!(
+            diagnostics.entry_guard_misses, 0,
+            "bypass={bypass}: {diagnostics:?}"
+        );
+    }
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
 fn shared_osr_projected_capture_observes_aliasing_global_field_stores() {
     let source = r#"
         var captured = 1;

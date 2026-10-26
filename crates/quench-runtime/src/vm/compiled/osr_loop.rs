@@ -1934,12 +1934,7 @@ fn admit(
         // region but leave at the exact PC so it can perform binding lookup, call resolution,
         // activation, allocation, GC, and throws with the complete interpreter state
         // materialized.
-        Op::RequireIteratorResult
-        | Op::LoadName
-        | Op::LoadNameCall
-        | Op::LoadNameTypeof
-            => {}
-        Op::Call | Op::CallArray => {}
+        op if exits_before_effects(op) => {}
         Op::Jump => {}
         Op::JumpBinaryFalse => {
             if let Some(branch) = identity_branch(instruction, constants) {
@@ -2033,6 +2028,8 @@ type Definition = usize;
 /// one SSA variable with one representation. A register reused for unrelated values (an
 /// index, then an element) gets a web for each, so one does not widen the other.
 struct Webs {
+    /// Instructions reachable from the header before an exact-PC VM exit.
+    reachable: Vec<bool>,
     /// Union-find parents over definitions.
     parent: Vec<Definition>,
     /// The definitions reaching each instruction, by PC offset and register.
@@ -2125,10 +2122,23 @@ fn number_definition(instruction: WideInstruction) -> Option<Register> {
     .then(|| instruction.result_register())
 }
 
+/// These instructions resume in the VM before their effects; native control never
+/// reaches their bytecode fallthrough. Keep analysis and emission on that same boundary.
+fn exits_before_effects(op: Op) -> bool {
+    matches!(
+        op,
+        Op::RequireIteratorResult | Op::LoadName | Op::LoadNameCall
+            | Op::LoadNameTypeof | Op::Call | Op::CallArray
+    )
+}
+
 /// The region PCs control continues at from the instruction at `pc`, and the PCs outside it
 /// where the lane resumes; as lowered (`Lowering::jump`, `Lowering::fall_through`).
 fn successors(region: &LoopRegion, pc: u32) -> Vec<u32> {
     let instruction = region.instructions[(pc - region.header) as usize];
+    if exits_before_effects(instruction.op()) {
+        return Vec::new();
+    }
     let mut successors = Vec::with_capacity(2);
     crate::bytecode::for_each_instruction_successor(pc as usize, instruction, |successor| {
         successors.push(successor as u32);
@@ -2141,6 +2151,15 @@ fn webs(region: &LoopRegion) -> Webs {
     let count = region.instructions.len();
     let entries = region.entry_count();
     let inside = |pc: u32| (region.header..=region.backedge).contains(&pc);
+    let mut reachable = vec![false; count];
+    let mut pending = vec![region.header];
+    while let Some(pc) = pending.pop() {
+        let offset = (pc - region.header) as usize;
+        if std::mem::replace(&mut reachable[offset], true) {
+            continue;
+        }
+        pending.extend(successors(region, pc).into_iter().filter(|pc| inside(*pc)));
+    }
     let mut reaching: Vec<BTreeMap<Register, BTreeSet<Definition>>> = vec![BTreeMap::new(); count];
     for (index, register) in region.entry_registers().enumerate() {
         reaching[0].entry(register).or_default().insert(index);
@@ -2149,6 +2168,9 @@ fn webs(region: &LoopRegion) -> Webs {
     loop {
         let mut changed = false;
         for offset in 0..count {
+            if !reachable[offset] {
+                continue;
+            }
             let pc = region.header + offset as u32;
             let mut out = reaching[offset].clone();
             if let Some(register) = number_definition(region.instructions[offset]) {
@@ -2169,6 +2191,7 @@ fn webs(region: &LoopRegion) -> Webs {
         }
     }
     let mut webs = Webs {
+        reachable,
         parent: (0..entries + count).collect(),
         reaching,
         leaves: BTreeMap::new(),
@@ -2189,6 +2212,9 @@ fn webs(region: &LoopRegion) -> Webs {
         Some(first)
     }
     for offset in 0..count {
+        if !webs.reachable[offset] {
+            continue;
+        }
         let pc = region.header + offset as u32;
         let instruction = region.instructions[offset];
         for register in number_reads(instruction) {
@@ -2281,6 +2307,9 @@ fn representations(
     loop {
         let mut changed = false;
         for (offset, instruction) in region.instructions.iter().enumerate() {
+            if !webs.reachable[offset] {
+                continue;
+            }
             let pc = region.header + offset as u32;
             let read = |register: Register| webs_representation[webs.read(region, pc, register)];
             let Some((register, representation)) =
@@ -2653,6 +2682,9 @@ fn int32_facts(region: &LoopRegion, webs: &Webs, representations: &[Representati
     loop {
         let mut changed = false;
         for (offset, instruction) in region.instructions.iter().copied().enumerate() {
+            if !webs.reachable[offset] {
+                continue;
+            }
             let pc = region.header + offset as u32;
             if number_definition(instruction).is_none() || !int32(webs.defined(region, pc)) {
                 continue;
@@ -2697,6 +2729,9 @@ fn int32_facts(region: &LoopRegion, webs: &Webs, representations: &[Representati
     // The PC offsets of each web's reads, once.
     let mut readers: Vec<Vec<usize>> = vec![Vec::new(); webs.parent.len()];
     for (offset, instruction) in region.instructions.iter().copied().enumerate() {
+        if !webs.reachable[offset] {
+            continue;
+        }
         let pc = region.header + offset as u32;
         for register in number_reads(instruction) {
             let web = webs.read(region, pc, register);
@@ -2764,6 +2799,9 @@ fn int32_facts(region: &LoopRegion, webs: &Webs, representations: &[Representati
     }
     let mut facts = Int32Facts::default();
     for (offset, instruction) in region.instructions.iter().copied().enumerate() {
+        if !webs.reachable[offset] {
+            continue;
+        }
         let pc = region.header + offset as u32;
         let Some(Arithmetic::Float(operator @ (NumberArithmetic::Add | NumberArithmetic::Subtract | NumberArithmetic::Multiply))) =
             matches!(instruction.op(), Op::Binary | Op::NumericAdd | Op::NumericMultiply)
@@ -2811,6 +2849,7 @@ fn counted_loops(
             (instruction.op() == Op::Jump).then_some(())?;
             let header = instruction.jump_target();
             (region.header..backedge).contains(&header).then_some(())?;
+            (header..=backedge).all(|pc| webs.reachable[(pc - region.header) as usize]).then_some(())?;
             counted_loop(region, webs, representations, captures, header, backedge)
         })
         .collect()
@@ -3343,6 +3382,9 @@ impl<'a, 'b> Lowering<'a, 'b> {
     ) -> Option<std::collections::BTreeMap<u32, Widening>> {
         self.enter()?;
         for pc in self.region.header..=self.region.backedge {
+            if !self.webs.reachable[(pc - self.region.header) as usize] {
+                continue;
+            }
             let block = self.block(pc)?;
             self.enter_instruction(pc, block);
             self.pc = pc;
@@ -5022,12 +5064,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
                 self.body.builder.ins().store(flags(), bits, pointer, 0);
                 self.fall_through(pc)
             }
-            Op::RequireIteratorResult
-            | Op::LoadName
-            | Op::LoadNameCall
-            | Op::LoadNameTypeof
-            | Op::Call
-            | Op::CallArray => {
+            op if exits_before_effects(op) => {
                 self.leave(super::RegionExit::Fallback(pc));
                 Some(())
             }
