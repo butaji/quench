@@ -1077,6 +1077,9 @@ const PROMISES_FACTORY: &str = quench_js_check::checked_js!(
         return fs.createWriteStream(null, settings);
       },
       writer: (options = {}) => {
+        if (closed || closePromise) {
+          throw Object.assign(new Error('The FileHandle is closed'), { code: 'ERR_INVALID_STATE' });
+        }
         ensureOpen("write");
         if (writerActive || readableWebStreamActive) {
           throw Object.assign(new Error('The FileHandle is already locked'), { code: 'ERR_INVALID_STATE' });
@@ -1086,7 +1089,36 @@ const PROMISES_FACTORY: &str = quench_js_check::checked_js!(
           error.code = 'ERR_INVALID_ARG_TYPE';
           throw error;
         }
-        const chunkSize = options.chunkSize ?? 16 * 1024;
+        const autoClose = options.autoClose === undefined ? false : options.autoClose;
+        if (typeof autoClose !== 'boolean') {
+          const error = new TypeError('The "options.autoClose" property must be of type boolean.');
+          error.code = 'ERR_INVALID_ARG_TYPE';
+          throw error;
+        }
+        const start = options.start;
+        if (start !== undefined && typeof start !== 'number') {
+          const error = new TypeError('The "options.start" property must be of type number.');
+          error.code = 'ERR_INVALID_ARG_TYPE';
+          throw error;
+        }
+        if (start !== undefined && (!Number.isSafeInteger(start) || start < 0)) {
+          const error = new RangeError('The value of "start" is out of range. It must be a non-negative integer.');
+          error.code = 'ERR_OUT_OF_RANGE';
+          throw error;
+        }
+        const hasLimit = options.limit !== undefined;
+        let bytesRemaining = hasLimit ? options.limit : -1;
+        if (typeof bytesRemaining !== 'number') {
+          const error = new TypeError('The "options.limit" property must be of type number.');
+          error.code = 'ERR_INVALID_ARG_TYPE';
+          throw error;
+        }
+        if (hasLimit && (!Number.isSafeInteger(bytesRemaining) || bytesRemaining < 1)) {
+          const error = new RangeError('The value of "options.limit" is out of range.');
+          error.code = 'ERR_OUT_OF_RANGE';
+          throw error;
+        }
+        const chunkSize = options.chunkSize === undefined ? 128 * 1024 : options.chunkSize;
         if (typeof chunkSize !== 'number') {
           const error = new TypeError('The "options.chunkSize" property must be of type number.');
           error.code = 'ERR_INVALID_ARG_TYPE';
@@ -1097,22 +1129,24 @@ const PROMISES_FACTORY: &str = quench_js_check::checked_js!(
           error.code = 'ERR_OUT_OF_RANGE';
           throw error;
         }
-        const start = options.start;
-        if (start !== undefined && (typeof start !== 'number' || !Number.isSafeInteger(start) || start < 0)) {
-          const error = new RangeError('The value of "start" is out of range. It must be a non-negative integer.');
-          error.code = 'ERR_OUT_OF_RANGE';
-          throw error;
-        }
         writerActive = true;
         let position = start === undefined ? null : start;
         let bytesWritten = 0;
         let writerClosed = false;
         let writerClosing = false;
         let writerErrored = false;
+        let writerError;
+        let endPromise;
         let queuedWrites = Promise.resolve();
         let queuedWriteCount = 0;
+        const invalidWriterState = (state) => {
+          const error = new TypeError(`The writer is ${state}`);
+          error.code = 'ERR_INVALID_STATE';
+          return error;
+        };
         const checkWriter = (writeOptions) => {
-          if (writerClosed) throw new TypeError('The writer is closed');
+          if (writerErrored) throw writerError;
+          if (writerClosed) throw invalidWriterState('closed');
           ensureOpen('write');
           const signal = writeOptions?.signal;
           if (signal?.aborted) {
@@ -1123,20 +1157,58 @@ const PROMISES_FACTORY: &str = quench_js_check::checked_js!(
             throw error;
           }
         };
-        const writeChunk = async (chunk, writeOptions) => {
-          checkWriter(writeOptions);
-          const buffer = typeof chunk === 'string'
-            ? Buffer.from(chunk, writeOptions?.encoding || options.encoding || 'utf8')
-            : ArrayBuffer.isView(chunk)
-              ? Buffer.from(chunk.buffer, chunk.byteOffset, chunk.byteLength)
-              : chunk instanceof ArrayBuffer
-                ? Buffer.from(chunk)
-                : null;
-          if (buffer === null) {
-            const error = new TypeError('The "chunk" argument must be of type string or an instance of Buffer, TypedArray, or DataView.');
+        const toWriteBuffer = (chunk) => {
+          if (chunk instanceof Uint8Array) {
+            return Buffer.from(chunk.buffer, chunk.byteOffset, chunk.byteLength);
+          }
+          let stringChunk;
+          try { stringChunk = `${chunk}`; }
+          catch (error) {
+            if (typeof chunk === 'symbol' && error && typeof error === 'object') {
+              error.code = 'ERR_INVALID_ARG_TYPE';
+            }
+            throw error;
+          }
+          return Buffer.from(stringChunk);
+        };
+        const toWriteBuffers = (chunks) => {
+          if (chunks === null || (typeof chunks !== 'object' && typeof chunks !== 'function')) {
+            const error = new TypeError('The "chunks" argument cannot be converted to a sequence.');
             error.code = 'ERR_INVALID_ARG_TYPE';
             throw error;
           }
+          const iterator = chunks[Symbol.iterator];
+          if (typeof iterator !== 'function') {
+            const error = new TypeError('The "chunks" argument must be an iterable.');
+            error.code = 'ERR_INVALID_ARG_TYPE';
+            throw error;
+          }
+          return Array.from(chunks, toWriteBuffer);
+        };
+        const getWriteSignal = (writeOptions) => {
+          if (writeOptions == null) return undefined;
+          if (typeof writeOptions !== 'object' && typeof writeOptions !== 'function') {
+            const error = new TypeError('The "options" argument cannot be converted to a dictionary.');
+            error.code = 'ERR_INVALID_ARG_TYPE';
+            throw error;
+          }
+          const signal = writeOptions.signal;
+          if (signal !== undefined &&
+              (signal === null || typeof signal !== 'object' || !('aborted' in signal))) {
+            const error = new TypeError('The "options.signal" property must be an instance of AbortSignal.');
+            error.code = 'ERR_INVALID_ARG_TYPE';
+            throw error;
+          }
+          return signal;
+        };
+        const limitError = (operation, actual) => {
+          const error = new RangeError(`The value of "${operation}" is out of range. It must be <= ${bytesRemaining} bytes. Received ${actual}`);
+          error.code = 'ERR_OUT_OF_RANGE';
+          return error;
+        };
+        const writeChunk = async (chunk, writeOptions) => {
+          checkWriter(writeOptions);
+          const buffer = toWriteBuffer(chunk);
           let offset = 0;
           while (offset < buffer.byteLength) {
             checkWriter(writeOptions);
@@ -1151,27 +1223,39 @@ const PROMISES_FACTORY: &str = quench_js_check::checked_js!(
         const queueWrite = (chunk, writeOptions) => {
           queuedWriteCount++;
           const task = queuedWrites.then(() => writeChunk(chunk, writeOptions));
-          queuedWrites = task.finally(() => { queuedWriteCount--; });
+          queuedWrites = task.then(() => {
+            queuedWriteCount--;
+          }, (error) => {
+            if (!writerErrored) {
+              writerErrored = true;
+              writerError = error;
+              writerClosed = true;
+              writerActive = false;
+            }
+            queuedWriteCount--;
+          });
           return task;
         };
+        const write = (chunk, writeOptions) => {
+          const buffer = toWriteBuffer(chunk);
+          const signal = getWriteSignal(writeOptions);
+          if (writerErrored) return Promise.reject(writerError);
+          if (writerClosed) return Promise.reject(invalidWriterState('closed'));
+          if (writerClosing) return Promise.reject(invalidWriterState('closing'));
+          try { ensureOpen('write'); }
+          catch (error) { return Promise.reject(error); }
+          if (signal?.aborted) return Promise.reject(signal.reason);
+          if (bytesRemaining >= 0 && buffer.byteLength > bytesRemaining) {
+            return Promise.reject(limitError('write', buffer.byteLength));
+          }
+          if (bytesRemaining > 0) bytesRemaining -= buffer.byteLength;
+          return queueWrite(buffer, writeOptions);
+        };
         const writeSync = (chunk, writeOptions) => {
-          checkWriter(writeOptions);
-          const buffer = typeof chunk === 'string'
-            ? Buffer.from(chunk, writeOptions?.encoding || options.encoding || 'utf8')
-            : ArrayBuffer.isView(chunk)
-              ? Buffer.from(chunk.buffer, chunk.byteOffset, chunk.byteLength)
-              : chunk instanceof ArrayBuffer
-                ? Buffer.from(chunk)
-                : null;
-          if (buffer === null) {
-            const error = new TypeError('The "chunk" argument must be of type string or an instance of Buffer, TypedArray, or DataView.');
-            error.code = 'ERR_INVALID_ARG_TYPE';
-            throw error;
-          }
-          if (buffer.byteLength > chunkSize || queuedWriteCount !== 0) {
-            queueWrite(buffer, writeOptions);
-            return false;
-          }
+          const buffer = toWriteBuffer(chunk);
+          if (writerErrored || writerClosed || writerClosing || closed || queuedWriteCount !== 0) return false;
+          if (buffer.byteLength > chunkSize || queuedWriteCount !== 0) return false;
+          if (bytesRemaining >= 0 && buffer.byteLength > bytesRemaining) return false;
           let offset = 0;
           while (offset < buffer.byteLength) {
             const written = fs.writeSync(fd, buffer, offset, buffer.byteLength - offset, position);
@@ -1180,37 +1264,69 @@ const PROMISES_FACTORY: &str = quench_js_check::checked_js!(
             bytesWritten += written;
             if (position !== null) position += written;
           }
-          return offset === buffer.byteLength;
+          if (offset !== buffer.byteLength) return false;
+          if (bytesRemaining > 0) bytesRemaining -= buffer.byteLength;
+          return true;
         };
-        const finish = async (writeOptions) => {
-          checkWriter(writeOptions);
+        const finish = (writeOptions) => {
+          const signal = getWriteSignal(writeOptions);
+          if (writerErrored) return Promise.reject(writerError);
+          if (writerClosed) return Promise.resolve(bytesWritten);
+          if (writerClosing) return endPromise;
+          if (signal?.aborted) return Promise.reject(signal.reason);
           writerClosing = true;
-          await queuedWrites;
+          endPromise = queuedWrites.then(async () => {
+            if (writerErrored) throw writerError;
+            writerClosing = false;
+            writerClosed = true;
+            writerActive = false;
+            if (autoClose) await handle.close();
+            return bytesWritten;
+          }, (error) => {
+            writerClosing = false;
+            throw error;
+          });
+          return endPromise;
+        };
+        const fail = (error) => {
+          if (writerClosed || writerErrored) return;
+          writerErrored = true;
+          writerError = error;
           writerClosing = false;
           writerClosed = true;
           writerActive = false;
-          if (options.autoClose) await handle.close();
-          return bytesWritten;
-        };
-        const fail = async (error) => {
-          if (writerClosed) return;
-          writerErrored = true;
-          writerClosed = true;
-          writerActive = false;
-          if (options.autoClose) await handle.close();
-          return error;
+          if (autoClose) return handle.close();
         };
         return {
-          write: queueWrite,
+          write,
           writeSync,
-          async writev(chunks, writeOptions) {
-            if (!Array.isArray(chunks)) {
-              const error = new TypeError('The "chunks" argument must be an array.');
-              error.code = 'ERR_INVALID_ARG_TYPE';
-              throw error;
+          writevSync(chunks, writeOptions) {
+            const buffers = toWriteBuffers(chunks);
+            if (writerErrored || writerClosed || writerClosing || closed || queuedWriteCount !== 0) return false;
+            const totalSize = buffers.reduce((total, buffer) => total + buffer.byteLength, 0);
+            if (bytesRemaining >= 0 && totalSize > bytesRemaining) return false;
+            let complete = true;
+            for (const buffer of buffers) {
+              if (!writeSync(buffer, writeOptions)) complete = false;
             }
-            for (const chunk of chunks) await writeChunk(chunk, writeOptions);
-            return bytesWritten;
+            return complete;
+          },
+          writev(chunks, writeOptions) {
+            const buffers = toWriteBuffers(chunks);
+            const signal = getWriteSignal(writeOptions);
+            if (writerErrored) return Promise.reject(writerError);
+            if (writerClosed) return Promise.reject(invalidWriterState('closed'));
+            if (writerClosing) return Promise.reject(invalidWriterState('closing'));
+            try { ensureOpen('write'); }
+            catch (error) { return Promise.reject(error); }
+            if (signal?.aborted) return Promise.reject(signal.reason);
+            const totalSize = buffers.reduce((total, buffer) => total + buffer.byteLength, 0);
+            if (bytesRemaining >= 0 && totalSize > bytesRemaining) {
+              return Promise.reject(limitError('writev', totalSize));
+            }
+            if (bytesRemaining > 0) bytesRemaining -= totalSize;
+            const writes = buffers.map((buffer) => queueWrite(buffer, writeOptions));
+            return Promise.all(writes).then(() => bytesWritten);
           },
           end: finish,
           endSync() {
@@ -1230,13 +1346,13 @@ const PROMISES_FACTORY: &str = quench_js_check::checked_js!(
             return bytesWritten;
           },
           fail,
-          [Symbol.asyncDispose]: () => writerClosed ? undefined : finish(),
+          [Symbol.asyncDispose]: () => {
+            if (writerClosing) return endPromise;
+            if (!writerClosed && !writerErrored) fail(undefined);
+            return Promise.resolve();
+          },
           [Symbol.dispose]: () => {
-            if (writerClosed) return;
-            writerErrored = true;
-            writerClosed = true;
-            writerActive = false;
-            if (options.autoClose) void handle.close();
+            void fail(undefined);
           },
         };
       },
