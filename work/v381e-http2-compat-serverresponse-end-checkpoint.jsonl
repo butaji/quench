@@ -1,0 +1,2 @@
+{"inventory_hash":"26049962624c0b61","fixture":"/workspace/work/node-stable-release/node-v26.12.1/test/parallel/test-http2-compat-serverresponse-end-after-statuses-without-body.js","observation":{"Ok":{"exit_code":0,"signal":null,"timed_out":false,"worker":{"outcome":"pass"},"stdout":[],"stderr":[]}}}
+{"inventory_hash":"26049962624c0b61","fixture":"/workspace/work/node-stable-release/node-v26.12.1/test/parallel/test-http2-compat-serverresponse-end.js","observation":{"Ok":{"exit_code":0,"signal":null,"timed_out":false,"worker":{"outcome":"pass"},"stdout":[],"stderr":[]}}}

@@ -622,22 +622,23 @@
             } catch {}
           }
           const status = headers[':status'];
+          const flags = 4 | (event.endStream ? 1 : 0);
           if (stream._receivedResponseHeaders && status === undefined) {
-            if (Object.keys(headers).length) stream.emit('trailers', headers, 0, headers);
+            if (Object.keys(headers).length) stream.emit('trailers', headers, flags, headers);
             if (event.endStream) {
               stream._responseEnded = true;
               stream.push(null);
             }
           } else if (status >= 100 && status < 200) {
             if (status === 100) stream.emit('continue');
-            stream.emit('headers', headers, 0, headers);
+            stream.emit('headers', headers, flags, headers);
           } else {
             stream._receivedResponseHeaders = true;
             if (event.endStream) stream._responseEnded = true;
-            if (stream.pushStream) stream.emit('push', headers, 0, headers);
-            else stream.emit('response', headers, 0, headers);
+            if (stream.pushStream) stream.emit('push', headers, flags, headers);
+            else stream.emit('response', headers, flags, headers);
             if (streamFinishChannel.hasSubscribers) {
-              streamFinishChannel.publish({ stream, headers, flags: 0 });
+              streamFinishChannel.publish({ stream, headers, flags });
             }
           }
           if (event.endStream) stream.push(null);

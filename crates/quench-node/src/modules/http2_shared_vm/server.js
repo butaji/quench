@@ -337,6 +337,13 @@
     _write(chunk, encoding, callback) {
       try {
         this._ensureResponse();
+        // HEAD responses carry their representation metadata in headers but
+        // never send DATA. Still complete Writable callbacks so the HTTP/2
+        // compatibility response preserves Node's end/finish ordering.
+        if (this.headRequest) {
+          process.nextTick(callback);
+          return;
+        }
         const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk, encoding);
         // An empty Writable chunk has no HTTP/2 DATA frame representation.
         // Submitting a zero-length, non-final provider can be interpreted by
@@ -407,8 +414,8 @@
       }
       values[':status'] = statusCode;
       const waitForTrailers = options.waitForTrailers === true;
-      const endStream = !waitForTrailers && (options.endStream === true ||
-        statusCode === 204 || statusCode === 205 || statusCode === 304 || this.headRequest);
+      const endStream = options.endStream === true || statusCode === 204 ||
+        statusCode === 205 || statusCode === 304 || this.headRequest;
       if (options.sendDate !== false && !Object.hasOwn(values, 'date')) {
         values.date = new Date().toUTCString();
       }
@@ -426,14 +433,17 @@
       pairs.sort(([left], [right]) => Number(right.startsWith(':')) - Number(left.startsWith(':')));
       this.sentHeaders = values;
       this._responseSent = true;
-      this._waitForTrailers = waitForTrailers;
+      this._waitForTrailers = waitForTrailers && !endStream;
       this._endSent = endStream;
       binding.submitHeaders(this.session._id, this.id, pairs, endStream);
       this.session._flush();
       if (streamFinishChannel.hasSubscribers) {
         streamFinishChannel.publish({ stream: this, headers: values, flags: 0 });
       }
-      if (endStream) this.end();
+      // Sending END_STREAM on HEADERS is a wire-level half-close. Do not mark
+      // the Writable finished for an implicit bodyless response: the HTTP/2
+      // compatibility response still owns its later end()/finish callback.
+      if (options.endStream === true || (endStream && !waitForTrailers)) this.end();
       return this;
     }
 

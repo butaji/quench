@@ -1,0 +1,28 @@
+{
+  "schema_version": 2,
+  "inventory_hash": "37f93a4d9a4f0679",
+  "timeout_secs": 60,
+  "jobs": 2,
+  "node_version": "v26.12.1",
+  "runtime_commit": "f64f2a7760eeea36d46ad0da00f69775385e5b86",
+  "tests_node_commit": "unknown",
+  "platform": "linux-x86_64",
+  "results": [
+    {
+      "fixture": "/workspace/work/node-stable-release/node-v26.12.1/test/parallel/test-http2-head-request.js",
+      "status": "pass",
+      "observation": {
+        "Ok": {
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "pass"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,3 @@
+Pass /workspace/work/node-stable-release/node-v26.12.1/test/parallel/test-http2-compat-serverresponse-end-after-statuses-without-body.js
+Pass /workspace/work/node-stable-release/node-v26.12.1/test/parallel/test-http2-compat-serverresponse-end.js
+all: pass=2 skip=0 fail=0 timeout=0 crash=0 unclassified=0 total=2 inventory_hash=26049962624c0b61
