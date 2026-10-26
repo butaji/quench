@@ -1876,6 +1876,14 @@ impl Heap {
             }
             old
         });
+        #[cfg(feature = "gc-tuning")]
+        let probe_roots = (work.len(), self.roots.slot_count(), self.remembered.len(), self.young.len());
+        #[cfg(feature = "gc-tuning")]
+        let probe_remembered: usize = self.record_families().iter().map(|(family, _)| family.remembered_count()).sum();
+        #[cfg(feature = "gc-tuning")]
+        if std::env::var_os("QUENCH_GC_PROBE").is_some() {
+            eprintln!("probe full={full} roots={} root_slots={} legacy_remembered={} young={} remembered_records={probe_remembered}", probe_roots.0, probe_roots.1, probe_roots.2, probe_roots.3);
+        }
         if !full {
             #[cfg(feature = "profile-aggregate")]
             {
