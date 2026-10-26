@@ -1964,7 +1964,7 @@ impl Object {
     fn pack_inline(values: [Value; INLINE_PROPERTY_COUNT]) -> Option<u64> {
         let mut word = 0;
         for (slot, value) in values.into_iter().enumerate() {
-            word |= u64::from(value.to_narrow()?) << (slot as u32 * u32::BITS);
+            word |= u64::from(value.to_narrow_reference()?) << (slot as u32 * u32::BITS);
         }
         Some(word)
     }
