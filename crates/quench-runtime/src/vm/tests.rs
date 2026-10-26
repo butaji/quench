@@ -12261,6 +12261,43 @@ fn shared_osr_projected_capture_observes_aliasing_global_field_stores() {
 
 #[test]
 #[cfg(not(quench_profiled))]
+fn shared_osr_captured_array_replacement_preserves_reads_and_stores_after_gc() {
+    for writing in [false, true] {
+        let store = if writing { "values[0] = index;" } else { "" };
+        let source = format!(r#"
+            let values = [1];
+            const original = values;
+            function replace(index) {{
+                if (index === 1500) {{ values = [7]; $262.gc(); }}
+            }}
+            function run(callback) {{
+                let total = 0;
+                for (let index = 0; index < 3000; index++) {{
+                    total += values[0];
+                    {store}
+                    callback(index);
+                }}
+                return total;
+            }}
+            print(run(replace));
+            print(original[0]);
+            print(values[0]);
+        "#);
+        let program = Engine::specialize(&source, "osr-captured-array-replacement.js").unwrap();
+        let interpreted = Rc::new(RefCell::new(Vec::new()));
+        Vm::new(TestHost::writing_to(interpreted.clone()).with_test262()).execute(&program).unwrap();
+        let expected = if writing { ["4494009", "1500", "2999"] } else { ["11994", "1", "7"] };
+        assert_eq!(interpreted.borrow().as_slice(), expected);
+        let output = Rc::new(RefCell::new(Vec::new()));
+        let mut vm = Vm::new(TestHost::writing_to(output.clone()).with_test262());
+        vm.set_execution_mode(crate::ExecutionMode::Compiled);
+        vm.execute(&program).unwrap();
+        assert_eq!(output.borrow().as_slice(), interpreted.borrow().as_slice(), "writing={writing}");
+    }
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
 fn shared_osr_moves_tagged_array_values_before_effectful_calls() {
     // Copying the array into a callback argument is a tagged Move; its call is an exact-PC
     // boundary, so the callback may mutate the array before the next native entry reloads it.

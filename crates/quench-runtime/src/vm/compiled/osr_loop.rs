@@ -1573,7 +1573,10 @@ fn admit_region(
         .filter_map(|instruction| instruction.defined_register())
         .collect();
     for (offset, instruction) in instructions.iter().copied().enumerate() {
-        if instruction.op() == Op::Move
+        // Array backing stores are pinned from the register at entry. A Move or capture
+        // reload could replace that register while the native array view still names its
+        // old backing store. Field-derived arrays have their separate entry contract.
+        if matches!(instruction.op(), Op::Move | Op::LoadCapture)
             && instructions.iter().any(|candidate| {
                 matches!(candidate.op(), Op::GetIndex | Op::SetIndex | Op::RequireObjectCoercible)
                     && object_reads(*candidate) == Some(instruction.result_register())
