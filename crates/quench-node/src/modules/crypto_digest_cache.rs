@@ -1,5 +1,5 @@
 //! Generation-owned native digest registry and independent raw native inventory.
-use super::crypto_digest::{Digest, DigestError, supported_names};
+use super::crypto_digest::{Digest, DigestError, supported_digests};
 use std::{collections::BTreeMap, sync::Arc};
 #[derive(Default)]
 pub(crate) struct Registry {
@@ -67,11 +67,9 @@ impl Registry {
                 next_id: self.next_id,
                 ..Self::default()
             };
-            for name in supported_names() {
-                if let Some(digest) = Digest::fetch_preserving_errors(&name) {
-                    next.insert_owner(&name, digest)?;
-                    next.inventory.push(name);
-                }
+            for (name, digest) in supported_digests() {
+                next.insert_owner(&name, digest)?;
+                next.inventory.push(name);
             }
             if before != read_generation() {
                 continue;
