@@ -1,0 +1,437 @@
+diff --git a/crates/quench-node/src/host/node_host.rs b/crates/quench-node/src/host/node_host.rs
+index f24ff485e2..5f7cf0f262 100644
+--- a/crates/quench-node/src/host/node_host.rs
++++ b/crates/quench-node/src/host/node_host.rs
+@@ -171,6 +171,7 @@ pub(crate) struct NetSocket {
+ 
+ pub(crate) struct NetServer {
+     pub(crate) root: quench_runtime::RootId,
++    pub(crate) listener_handle: quench_runtime::RootId,
+     pub(crate) listener: u64,
+     pub(crate) connections: std::collections::HashSet<u64>,
+     pub(crate) closing: bool,
+diff --git a/crates/quench-node/src/host/shared_vm.rs b/crates/quench-node/src/host/shared_vm.rs
+index d5572c2efe..c02322214c 100644
+--- a/crates/quench-node/src/host/shared_vm.rs
++++ b/crates/quench-node/src/host/shared_vm.rs
+@@ -322,6 +322,9 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
+         method "netServerInitializeOptions" (2) => crate::modules::net_socket_options::initialize_server,
+         method "netServerAcceptedOptions" (1) => crate::modules::net_socket_options::accepted_options,
+         method "netServerOnConnection" (3) => crate::modules::net_server_admission::on_connection,
++        method "netServerClusterListenStart" (2) => crate::modules::net_server_listen::cluster_listen_start,
++        method "netServerClusterListenEnd" (2) => crate::modules::net_server_listen::cluster_listen_end,
++        method "netServerClusterListenError" (2) => crate::modules::net_server_listen::cluster_listen_error,
+         method "netSocketCreateHandle" (1) => crate::modules::net_reference_shared_vm::create_socket_handle,
+         method "netHandleClose" (0) => crate::modules::net_reference_shared_vm::close,
+         method "netHandleReadStart" (0) => crate::modules::net_reference_shared_vm::read_start,
+diff --git a/crates/quench-node/src/modules/http_shared_vm/poll.rs b/crates/quench-node/src/modules/http_shared_vm/poll.rs
+index c40728ca4c..ac5f930ffb 100644
+--- a/crates/quench-node/src/modules/http_shared_vm/poll.rs
++++ b/crates/quench-node/src/modules/http_shared_vm/poll.rs
+@@ -358,7 +358,9 @@ pub(crate) fn poll(
+                         server_id,
+                         server_id
+                             .and_then(|id| host.http.servers.get(&id).map(|server| server.root)),
+-                        host.net_servers.get(&listener).map(|server| server.root),
++                        host.net_servers
++                            .get(&listener)
++                            .map(|server| server.listener_handle),
+                         host.native_tcp_listeners.get(&listener).copied(),
+                         host.http.incoming_factory,
+                     )
+@@ -430,12 +432,11 @@ pub(crate) fn poll(
+                                 .ok_or("native TCP listener expired")?,
+                         )
+                     } else {
+-                        let key = runtime.string_rooted("_handle");
+-                        let handle = runtime
+-                            .get_property_rooted(net_server.expect("public server"), key)
+-                            .map_err(|error| error.to_string())?;
+-                        runtime.release_root(key);
+-                        handle
++                        runtime.root(
++                            runtime
++                                .rooted_value(net_server.expect("public server"))
++                                .ok_or("public TCP listener handle expired")?,
++                        )
+                     };
+                     let create = runtime
+                         .host_function(crate::host::shared_vm::operation("netSocketCreateHandle"))
+@@ -2745,16 +2746,21 @@ fn emit_net_server_events(
+             .collect::<Vec<_>>();
+         let closed = ids
+             .into_iter()
+-            .filter_map(|id| host.net_servers.remove(&id).map(|server| server.root))
++            .filter_map(|id| {
++                host.net_servers
++                    .remove(&id)
++                    .map(|server| (server.root, server.listener_handle))
++            })
+             .collect::<Vec<_>>();
+         (listening, closed)
+     };
+     for (_, root) in &listening {
+         queue_net_event(runtime, shared_state, *root, "listening", &[])?;
+     }
+-    for root in &closed {
++    for (root, listener_handle) in &closed {
+         queue_net_event(runtime, shared_state, *root, "close", &[])?;
+         runtime.release_root(*root);
++        runtime.release_root(*listener_handle);
+     }
+     Ok(!listening.is_empty() || !closed.is_empty())
+ }
+diff --git a/crates/quench-node/src/modules/net_reference_shared_vm.rs b/crates/quench-node/src/modules/net_reference_shared_vm.rs
+index b68e8db382..b5d837819e 100644
+--- a/crates/quench-node/src/modules/net_reference_shared_vm.rs
++++ b/crates/quench-node/src/modules/net_reference_shared_vm.rs
+@@ -236,6 +236,18 @@ fn create_handle(
+     if matches!(kind, EndpointKind::Listener) {
+         let method = on_connection(context)?;
+         set(context, handle, "onconnection", method)?;
++        if let Some(server) = object {
++            let factory = context.evaluate_script_rooted(
++                quench_js_check::checked_js!(
++                    "server=>({close:function close(){'use strict';return server.close();}})"
++                ),
++                "node:net/listener-handle-close.js",
++            )?;
++            let undefined = context.undefined();
++            let methods = context.call_rooted(factory, undefined, &[server])?;
++            let close = get(context, methods, "close")?;
++            set(context, handle, "close", close)?;
++        }
+     }
+     Ok(handle)
+ }
+diff --git a/crates/quench-node/src/modules/net_server_listen.rs b/crates/quench-node/src/modules/net_server_listen.rs
+index 5cec064df3..db430a4641 100644
+--- a/crates/quench-node/src/modules/net_server_listen.rs
++++ b/crates/quench-node/src/modules/net_server_listen.rs
+@@ -145,9 +145,70 @@ pub(crate) fn install(context: &mut Context<'_>, prototype: RootId) -> Result<()
+     }
+     let key = context.string_rooted("listening");
+     context.define_property_descriptor_rooted(prototype, key, descriptor)?;
++
++    let operation = context.host_function(crate::host::shared_vm::operation(
++        "netServerOnConnection",
++    ))?;
++    let owner_symbol = super::net_reference_shared_vm::owner_symbol(context)?;
++    let factory = context.evaluate_script_rooted(
++        quench_js_check::checked_js!(
++            "(operation,ownerSymbol)=>function _listen2(){'use strict';const server=this;const handle=server._handle;if(!handle)throw new Error('Server handle is not available');handle[ownerSymbol]=server;handle.onconnection=function onconnection(err,clientHandle){'use strict';return operation(this,err,clientHandle);};queueMicrotask(()=>{if(server._handle===handle)server.emit('listening');});return server;}"
++        ),
++        "node:net/cluster-listen-handoff.js",
++    )?;
++    let undefined = context.undefined();
++    let listen_on_handle = context.call_rooted(
++        factory,
++        undefined,
++        &[operation, owner_symbol],
++    )?;
++    let key = context.string_rooted("_listen2");
++    context.define_data_property_rooted(prototype, key, listen_on_handle, true, true, true)?;
++    for (name, operation) in [
++        ("_quenchClusterListenStart", "netServerClusterListenStart"),
++        ("_quenchClusterListenEnd", "netServerClusterListenEnd"),
++        ("_quenchClusterListenError", "netServerClusterListenError"),
++    ] {
++        let method = context.host_function(crate::host::shared_vm::operation(operation))?;
++        let key = context.string_rooted(name);
++        context.define_data_property_rooted(prototype, key, method, true, true, true)?;
++    }
+     Ok(())
+ }
+ 
++pub(crate) fn cluster_listen_start(
++    context: &mut Context<'_>,
++    server: RootId,
++    args: &[RootId],
++) -> Result<RootId, RootedError> {
++    let options = args[0];
++    let resource = listen_resource(context, &[options])?;
++    check_net_permission(context, resource.as_deref())?;
++    publish_listen_event(context, "start", server, Some(options), None)?;
++    publish_listen_event(context, "asyncStart", server, Some(options), None)?;
++    advance(context, server)
++}
++
++pub(crate) fn cluster_listen_end(
++    context: &mut Context<'_>,
++    server: RootId,
++    args: &[RootId],
++) -> Result<RootId, RootedError> {
++    publish_listen_event(context, "asyncEnd", server, Some(args[0]), None)?;
++    publish_listen_event(context, "end", server, Some(args[0]), None)?;
++    Ok(server)
++}
++
++pub(crate) fn cluster_listen_error(
++    context: &mut Context<'_>,
++    server: RootId,
++    args: &[RootId],
++) -> Result<RootId, RootedError> {
++    publish_listen_event(context, "error", server, None, Some(args[0]))?;
++    publish_listen_event(context, "end", server, None, None)?;
++    emit(context, server, "error", &[args[0]])
++}
++
+ pub(crate) fn listening(
+     context: &mut Context<'_>,
+     server: RootId,
+@@ -546,6 +607,12 @@ pub(crate) fn close(
+     } else {
+         false
+     };
++    if active && !registered {
++        let close = get(context, handle, "close")?;
++        if context.is_callable_rooted(close)? {
++            context.call_rooted(close, handle, &[])?;
++        }
++    }
+     if !registered {
+         let callback =
+             context.host_function(crate::host::shared_vm::operation("netServerClosePending"))?;
+diff --git a/crates/quench-node/src/modules/net_shared_vm.rs b/crates/quench-node/src/modules/net_shared_vm.rs
+index d328b01f6c..02bbc6c3e5 100644
+--- a/crates/quench-node/src/modules/net_shared_vm.rs
++++ b/crates/quench-node/src/modules/net_shared_vm.rs
+@@ -325,6 +325,8 @@ const NET_MODULE_FACTORY: &str = r#"((Duplex, connectOperation, writeOperation,
+       const first = args[0];
+       if (typeof first === 'object' && first !== null) {
+         options = first;
++      } else if (typeof first === 'function') {
++        options = { port: 0 };
+       } else if (typeof first === 'string' && !(Number(first) >= 0)) {
+         options = { path: first };
+       } else {
+@@ -392,6 +394,7 @@ const NET_MODULE_FACTORY: &str = r#"((Duplex, connectOperation, writeOperation,
+     // for `{ port }` or `{ path }`. Adopt it here through the SDK's private
+     // consume hook, then let the native path register that handle as this
+     // Server's listener. Node 26 gives the hook a stable symbol description.
++    let consumedBoundSocket = false;
+     const first = args[0];
+     if (first !== null && typeof first === 'object') {
+       const prototype = Object.getPrototypeOf(first);
+@@ -402,6 +405,7 @@ const NET_MODULE_FACTORY: &str = r#"((Duplex, connectOperation, writeOperation,
+           .find((symbol) => symbol.description === 'kBoundSocketPath');
+         const path = pathSymbol ? first[pathSymbol] : undefined;
+         args[0] = first[consume]();
++        consumedBoundSocket = true;
+         if (path !== undefined) this._pipeName = path;
+       }
+     }
+@@ -426,52 +430,117 @@ const NET_MODULE_FACTORY: &str = r#"((Duplex, connectOperation, writeOperation,
+         this.once('close', () => signal.removeEventListener('abort', onAborted));
+       }
+     }
+-    // The native server backend binds worker listeners locally, so Node's
+-    // internal net.js listenInCluster() path never reports the resulting
+-    // endpoint to the cluster primary. Preserve the cluster lifecycle event
+-    // for this direct-bind path; workers that request exclusive listeners are
+-    // intentionally omitted, matching Node's listenInCluster behavior.
+-    const clusterWorker =
+-      !(options && typeof options === 'object' && options.exclusive === true);
+-    if (clusterWorker) {
+-      let cluster;
+-      try { cluster = process.getBuiltinModule('cluster'); } catch {}
+-      if (cluster?.isWorker) {
+-        // A worker can start running its entry point after the IPC channel has
+-        // already disconnected. In that case the disconnect event is gone, so
+-        // seed the state from process.connected before listening for future
+-        // disconnects.
+-        let clusterDisconnected = process.connected === false;
+-        // The native direct-bind path does not register its listener in
+-        // internal/cluster/child.js's handle table. Cluster's disconnect
+-        // handshake therefore cannot close this listener itself. Close it
+-        // when the IPC channel disconnects so the worker can finish exiting.
+-        process.once('disconnect', () => {
+-          clusterDisconnected = true;
+-          if (this.listening) this.close();
+-        });
+-        this.once('listening', () => {
+-          // cluster.disconnect() may reach the worker before this asynchronous
+-          // listen finishes. Close the newly opened handle instead of leaving
+-          // it alive after the earlier disconnect hook already ran.
+-          if (clusterDisconnected) {
+-            this.close();
++    const normalized = normalizeArgs(args);
++    const listenOptions = normalized[0];
++    let cluster;
++    try { cluster = process.getBuiltinModule('cluster'); } catch {}
++    const workerClusterListen = cluster?.isWorker && !consumedBoundSocket &&
++      !(listenOptions && typeof listenOptions === 'object' &&
++        (listenOptions.exclusive || listenOptions.reusePort === true ||
++         listenOptions.handle || listenOptions._handle ||
++         typeof listenOptions.listen === 'function'));
++    if (workerClusterListen) {
++      if (this._handle) {
++        throw Object.assign(
++          new Error('Listen method has been called more than once without closing.'),
++          { code: 'ERR_SERVER_ALREADY_LISTEN' },
++        );
++      }
++      const queryOptions = { ...listenOptions };
++      const callback = normalized[1];
++      const server = this;
++      if (!Number.isSafeInteger(server._listeningId)) server._listeningId = 0;
++      if (!Object.prototype.hasOwnProperty.call(queryOptions, 'port') &&
++          queryOptions.path === undefined) queryOptions.port = 0;
++      const fd = typeof queryOptions.fd === 'number' && queryOptions.fd >= 0
++        ? queryOptions.fd : undefined;
++      const plan = fd === undefined
++        ? endpointOperation(queryOptions, undefined, undefined, false)
++        : undefined;
++      const generation = server._quenchClusterListenStart(queryOptions);
++      if (typeof callback === 'function') server.once('listening', callback);
++      const start = (address, port, addressType, backlog, flags, pipeName = address) => {
++        if (typeof address === 'string' && port < 0) server._pipeName = pipeName;
++        cluster._getServer(server, {
++          ...queryOptions,
++          address,
++          port,
++          addressType,
++          fd,
++          flags,
++          backlog,
++        }, (errno, handle) => {
++          if (generation !== server._listeningId) {
++            handle?.close?.();
++            return;
++          }
++          if (errno) {
++            const util = process.getBuiltinModule('util');
++            let code = 'UNKNOWN';
++            try { code = util.getSystemErrorName(errno); } catch {}
++            const suffix = port >= 0 ? `${address || ''}:${port}` : String(address || '');
++            const error = Object.assign(
++              new Error(`listen ${code}${suffix ? `: ${suffix}` : ''}`),
++              { code, errno, syscall: 'listen' },
++            );
++            if (port >= 0) error.port = port;
++            if (address) error.address = address;
++            server._quenchClusterListenError(error);
+             return;
+           }
+-          const address = this.address();
+-          if (!address || typeof process.send !== 'function') return;
+-          cluster.worker.state = 'listening';
+-          const isPipe = typeof address === 'string';
+-          process.send({
+-            cmd: 'NODE_CLUSTER',
+-            act: 'listening',
+-            addressType: isPipe ? -1 : address.family === 'IPv6' ? 6 : 4,
+-            address: isPipe ? address : address.address,
+-            port: isPipe ? -1 : address.port,
+-            fd: undefined,
+-          }, () => {});
++          if (server._handle) server._handle.close?.();
++          server._handle = handle;
++          server._listen2(address, port, addressType, backlog, fd, flags);
++          server._quenchClusterListenEnd(queryOptions);
+         });
++      };
++      const backlog = queryOptions.backlog || Number(args[1]) || Number(args[2]) || 511;
++      if (fd !== undefined) {
++        start(null, null, null, backlog, 0);
++        return this;
++      }
++      const address = plan.address;
++      const host = plan.host;
++      if (typeof address === 'string') {
++        start(address, -1, -1, backlog,
++          queryOptions.ipv6Only === true ? 1 : 0, address);
++        return this;
++      }
++      const port = Number(address);
++      const flags = queryOptions.ipv6Only === true ? 1 : 0;
++      if (!host) {
++        start(null, port, 4, backlog, flags);
++        return this;
++      }
++      const hostText = String(host);
++      const addressType = hostText.includes(':') ? 6 :
++        /^\d{1,3}(?:\.\d{1,3}){3}$/.test(hostText) ? 4 : 0;
++      if (addressType !== 0) {
++        start(hostText, port, addressType, backlog, flags);
++        return this;
+       }
++      const dns = process.getBuiltinModule('dns');
++      const lookup = typeof queryOptions.lookup === 'function' ? queryOptions.lookup : dns.lookup;
++      lookup(hostText, { all: true }, (error, addresses) => {
++        if (error) {
++          if (generation === server._listeningId) server._quenchClusterListenError(error);
++          return;
++        }
++        const selected = addresses.find((entry) => !entry.address.startsWith('fe80:')) || addresses[0];
++        if (!selected) {
++          if (generation === server._listeningId) {
++            server._quenchClusterListenError(Object.assign(
++              new Error(`getaddrinfo ENOTFOUND ${hostText}`),
++              { code: 'ENOTFOUND', syscall: 'getaddrinfo', hostname: hostText },
++            ));
++          }
++          return;
++        }
++        start(selected.address, port,
++          selected.family === 6 || selected.family === 'IPv6' ? 6 : 4,
++          backlog, flags);
++      });
++      return this;
+     }
+     return Reflect.apply(listenOperation, this, args);
+   };
+@@ -2779,7 +2848,25 @@ pub(crate) fn server_address_operation(
+     _: &[RootId],
+ ) -> Result<RootId, RootedError> {
+     let Some(id) = optional_server_id(context, server)? else {
+-        return Ok(context.null());
++        let pipe_name = super::event_constructor_shared_vm::get(context, server, "_pipeName")?;
++        if context.truthy_rooted(pipe_name)? {
++            return Ok(pipe_name);
++        }
++        let handle = super::event_constructor_shared_vm::get(context, server, "_handle")?;
++        let getsockname = super::event_constructor_shared_vm::get(context, handle, "getsockname")?;
++        if !context.is_callable_rooted(getsockname)? {
++            return Ok(context.null());
++        }
++        let address = context.object_rooted()?;
++        let status = context.call_rooted(getsockname, handle, &[address])?;
++        if context
++            .rooted_value(status)
++            .and_then(Value::as_number)
++            .is_some_and(|status| status < 0.0)
++        {
++            return Ok(context.null());
++        }
++        return Ok(address);
+     };
+     let shared = context.host_mut().shared_state();
+     let local = listener_path(&shared.borrow().tcp, id).map(str::to_owned);
+@@ -3040,18 +3127,25 @@ pub(super) fn register_server(
+     if !context.set_property_rooted(server, key, value, server)? {
+         return Err(RootedError::host("cannot tag net server"));
+     }
++    super::net_reference_shared_vm::install(context, listener, server)?;
++    let handle_key = context.string_rooted("_handle");
++    let listener_handle = context.get_property_rooted(server, handle_key)?;
++    if !context.truthy_rooted(listener_handle)? {
++        return Err(RootedError::host("net server listener handle is unavailable"));
++    }
++    let listener_handle = context.retain(listener_handle)?;
+     let retained = context.retain(server)?;
+     shared.borrow_mut().net_servers.insert(
+         listener,
+         crate::host::node_host::NetServer {
+             root: retained,
++            listener_handle,
+             listener,
+             connections: Default::default(),
+             closing: false,
+             listening_pending: true,
+         },
+     );
+-    super::net_reference_shared_vm::install(context, listener, server)?;
+     Ok(server)
+ }
+ 
