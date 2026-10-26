@@ -507,7 +507,7 @@ fn tagged_registers_with_failure(
             } else {
                 usize::from(ImmediateLayout::argument_count(instruction.imm()))
             };
-            let mut registers = Vec::new();
+            let mut registers = vec![instruction.register_b()];
             for argument in (0..count).filter_map(|offset| {
                 usize::from(base).checked_add(offset).and_then(|register| u16::try_from(register).ok())
             }) {
@@ -591,8 +591,8 @@ fn tagged_registers_with_failure(
                         return Err(offset);
                     }
                 }
-                // A cached field's value, which the entry record carries tagged.
-                Op::GetField | Op::GetIndex => {}
+                // Entry captures and cached fields can carry arbitrary boxed values.
+                Op::LoadCapture | Op::GetField | Op::GetIndex => {}
                 // The type-name index is still a boxed Number at bytecode level. Its
                 // lowering reads only immediate tags and exits before the operation for
                 // heap values, whose language type depends on VM metadata.
@@ -1838,8 +1838,12 @@ fn admit(
             }
         }
         Op::LoadCapture => {
-            (instruction.capture_depth() == 0).then_some(())?;
-            admission.result(instruction)?;
+            (instruction.capture_depth() == 0 && instruction.result_flags() == 0).then_some(())?;
+            if tagged.contains(&instruction.result_register()) {
+                admission.tagged(instruction.result_register())?;
+            } else {
+                admission.result(instruction)?;
+            }
             let slot = instruction.capture_slot();
             if !admission.captures.contains(&slot) {
                 admission.captures.push(slot);
@@ -2234,6 +2238,15 @@ fn representations(
     };
     let captures: Vec<Representation> = (0..region.captures.len())
         .map(|index| {
+            // A slot shared with a numeric load retains its Number guard; boxing that
+            // number for a tagged load is safe, but unboxing an arbitrary capture is not.
+            let slot = region.captures[index];
+            if region.instructions.iter()
+                .filter(|instruction| instruction.op() == Op::LoadCapture && instruction.capture_slot() == slot)
+                .all(|instruction| region.tagged.contains(&instruction.result_register()))
+            {
+                return Representation::Tagged;
+            }
             let value = observation.captures.get(index).copied().unwrap_or(Value::UNDEFINED);
             of(value, Widening::Capture(index as u16))
         })

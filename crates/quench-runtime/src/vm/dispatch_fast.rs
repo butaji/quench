@@ -3759,29 +3759,26 @@ fn lane_frame_capture<H: Host>(cx: *mut LaneContext<H>) -> Option<*const crate::
     Some(dense)
 }
 
-script_handler! {
-    /// `lane_load_capture` before the running function's slots are known: the walk from
-    /// the frame's cache, or from the activation's environment, which keeps them.
-    #[inline(never)]
-    fn lane_load_capture_walk<>(cx, r, ip, i, view) {
-        let imm = i.imm();
-        let depth = ImmediateLayout::capture_depth(imm);
-        let slot = ImmediateLayout::capture_slot(imm);
-        let vm = unsafe { vm(cx) };
-        let env = unsafe { (*cx).env };
-        let value = if env.is_deleted() {
-            let frame = unsafe { (*cx).frame };
-            let value = vm.cached_direct_capture(frame, depth, slot);
-            if depth == 0
-                && let Some((slots, None)) = vm.current_capture_slots(frame)
-                && let Some(slots) = unsafe { &*slots }.dense()
-            {
-                unsafe { (*cx).capture = slots };
-            }
-            value
-        } else {
-            // A frameless activation's function has no environment of its own.
-            vm.walked_capture_slots(env, false, depth).and_then(|(slots, root)| {
+/// Resolve a lane capture without guest code or allocation, refreshing the dense cache.
+/// OSR entry and the LoadCapture slow lane use the same binding and TDZ guards.
+#[inline(never)]
+fn lane_capture_value<H: Host>(cx: *mut LaneContext<H>, depth: u16, slot: u16) -> Option<Value> {
+    let vm = unsafe { vm(cx) };
+    let env = unsafe { (*cx).env };
+    let value = if env.is_deleted() {
+        let frame = unsafe { (*cx).frame };
+        let value = vm.cached_direct_capture(frame, depth, slot);
+        if depth == 0
+            && let Some((slots, None)) = vm.current_capture_slots(frame)
+            && let Some(slots) = unsafe { &*slots }.dense()
+        {
+            unsafe { (*cx).capture = slots };
+        }
+        value
+    } else {
+        // A frameless activation's function has no environment of its own.
+        vm.walked_capture_slots(env, false, depth)
+            .and_then(|(slots, root)| {
                 // SAFETY: as `Vm::walked_capture_slots`; no collection runs in the lane.
                 let slots = unsafe { &*slots };
                 if depth == 0
@@ -3792,9 +3789,23 @@ script_handler! {
                 }
                 vm.owned_capture(slots, root, slot)
             })
-        };
+    };
+    value.or_else(|| lane_projected_capture(cx, depth, slot))
+}
+
+script_handler! {
+    /// `lane_load_capture` before the running function's slots are known: the walk from
+    /// the frame's cache, or from the activation's environment, which keeps them.
+    #[inline(never)]
+    fn lane_load_capture_walk<>(cx, r, ip, i, view) {
+        let imm = i.imm();
+        let depth = ImmediateLayout::capture_depth(imm);
+        let slot = ImmediateLayout::capture_slot(imm);
+        let value = lane_capture_value(cx, depth, slot);
         #[cfg(feature = "profile-lane-exits")]
         {
+            let vm = unsafe { vm(cx) };
+            let env = unsafe { (*cx).env };
             let code = unsafe { &*(*cx).code };
             let function = vm
                 .lane_stack
@@ -3813,7 +3824,7 @@ script_handler! {
                 env.is_deleted(),
             ));
         }
-        let Some(value) = value.or_else(|| lane_projected_capture(cx, depth, slot)) else {
+        let Some(value) = value else {
             return exit(ip);
         };
         r.set(i.a, value);
@@ -6477,8 +6488,8 @@ fn lane_loop_run<H: Host>(
 /// The entry record of `site`'s native code from the running activation, when its arrays
 /// and captures pass the region's guards: each written array a plain record array whose
 /// elements a write replaces in place (`Vm::try_replace_record_element`), each read one a
-/// record array (`Vm::direct_dense_element`), each capture a plain value of the running
-/// function's dense capture slots (`lane_load_capture`).
+/// record array (`Vm::direct_dense_element`), each capture an initialized binding resolved
+/// without guest code by the same lookup as LoadCapture (`lane_capture_value`).
 #[inline(never)]
 fn lane_loop_entry<H: Host>(
     cx: *mut LaneContext<H>,
@@ -6486,19 +6497,21 @@ fn lane_loop_entry<H: Host>(
     region: &super::compiled::LoopRegion,
     entry: &mut super::compiled::LoopEntry,
 ) -> Option<()> {
-    let vm = unsafe { vm(cx) };
     // SAFETY: the running program outlives this lane's OSR entry setup.
     let code = unsafe { &*(*cx).code };
     if !region.captures.is_empty() {
         let slots = capture_reads(unsafe { (*cx).capture });
-        if slots.is_null() {
-            return None;
-        }
         for slot in &region.captures {
-            // SAFETY: the running function's dense capture slots (`LaneContext::capture`).
-            entry.push_capture((unsafe { &*slots }).dense_plain(usize::from(*slot))?);
+            // SAFETY: the context's dense slots remain live until the next collection.
+            // A cache miss follows the same non-effectful lookup as LoadCapture.
+            let value = (!slots.is_null())
+                .then(|| unsafe { &*slots }.dense_plain(usize::from(*slot)))
+                .flatten()
+                .or_else(|| lane_capture_value(cx, 0, *slot))?;
+            entry.push_capture(value);
         }
     }
+    let vm = unsafe { vm(cx) };
     // These regions cannot run calls or field writes, and their element stores define or
     // replace own data elements, which changes no shape slot. Thus a hit on an ordinary
     // data field stays valid for the whole native run. Any miss, accessor, private name, or

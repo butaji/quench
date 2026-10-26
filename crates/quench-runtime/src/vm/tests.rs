@@ -12154,6 +12154,86 @@ fn shared_osr_reports_pino_like_deferred_calls_per_site_with_gc_and_throw() {
 
 #[test]
 #[cfg(not(quench_profiled))]
+fn shared_osr_captured_and_parameter_callees_preserve_gc_throw_and_coercion_once() {
+    for scoped in [false, true] {
+        for captured in [false, true] {
+            let call = if captured { "f()" } else { "g()" };
+            let source = format!(
+                r#"
+            let calls = 0, coercions = 0, caught = 0, seconds = 0;
+            const marker = {{ identity: 'original' }};
+            const operand = {{ valueOf() {{ coercions++; return 7; }} }};
+            let f = function first() {{ return step(); }};
+            function step() {{
+                calls++;
+                if (calls % 64 === 0) $262.gc();
+                if (calls === 1500) {{ f = second; $262.gc(); }}
+                if (calls === 1999) throw marker;
+                return +operand;
+            }}
+            function second() {{ seconds++; return step(); }}
+            function run(g) {{ for (let i = 0; i < 10; i += 1) {call}; }}
+            for (let n = 0; n < 200; n++) {{
+                try {{ run(f); }} catch (error) {{
+                    if (error !== marker) throw Error('throw identity');
+                    caught++;
+                }}
+            }}
+            const last = f();
+            print(calls + ' ' + coercions + ' ' + caught + ' ' + last + ' ' + seconds);
+        "#
+            );
+            let source = if scoped {
+                format!("(function scope() {{ {source} }})();")
+            } else {
+                source
+            };
+            let program = Engine::specialize(&source, "osr-captured-call-entry.js").unwrap();
+            let function = program
+                .functions
+                .iter()
+                .position(|function| {
+                    function
+                        .header()
+                        .name
+                        .is_some_and(|name| &program.atoms[name as usize] == "run")
+                })
+                .unwrap();
+            let interpreted = Rc::new(RefCell::new(Vec::new()));
+            Vm::new(TestHost::writing_to(interpreted.clone()).with_test262())
+                .execute(&program)
+                .unwrap();
+            assert_eq!(interpreted.borrow().as_slice(), ["2000 1999 1 7 500"]);
+            let output = Rc::new(RefCell::new(Vec::new()));
+            let mut vm = Vm::new(TestHost::writing_to(output.clone()).with_test262());
+            vm.set_execution_mode(crate::ExecutionMode::Compiled);
+            vm.programs.enable_js_jit_diagnostics();
+            vm.execute(&program).unwrap();
+            assert_eq!(output.borrow().as_slice(), interpreted.borrow().as_slice());
+            let diagnostics = vm
+                .programs
+                .lane_views(super::program_store::ProgramId::MAIN)
+                .unwrap()
+                .get(function)
+                .and_then(super::program_store::derived_lane_view)
+                .unwrap()
+                .osr_diagnostics();
+            assert!(
+                diagnostics.compile_successes > 0
+                    && diagnostics.native_region_runs > 0
+                    && diagnostics.exits > 0,
+                "scoped={scoped} captured={captured}: exact-PC call boundary must run natively: {diagnostics:?}"
+            );
+            assert_eq!(
+                diagnostics.entry_guard_misses, 0,
+                "scoped={scoped} captured={captured}: a boxed callee must not be guarded as a Number: {diagnostics:?}"
+            );
+        }
+    }
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
 fn shared_osr_moves_tagged_array_values_before_effectful_calls() {
     // Copying the array into a callback argument is a tagged Move; its call is an exact-PC
     // boundary, so the callback may mutate the array before the next native entry reloads it.
@@ -13445,7 +13525,7 @@ fn shared_osr_compiles_typeof_switch_indices_and_falls_back_for_heap_values() {
         .expect("main program lane views");
     let view = views
         .get(function_id)
-        .and_then(std::cell::OnceCell::get)
+        .and_then(super::program_store::derived_lane_view)
         .expect("hot typeof switch lane view");
     let diagnostics = view.osr_diagnostics();
     assert_eq!(diagnostics.currently_compiled_sites, 1, "OSR diagnostics: {diagnostics:?}");
@@ -13501,7 +13581,7 @@ fn shared_osr_tagged_number_equality_keeps_boolean_negation_and_number_semantics
     vm.execute(&program).unwrap();
     assert_eq!(output.borrow().as_slice(), interpreted.borrow().as_slice());
     let views = vm.programs.lane_views(super::program_store::ProgramId::MAIN).unwrap();
-    let diagnostics = views[function_id].get().unwrap().osr_diagnostics();
+    let diagnostics = super::program_store::derived_lane_view(&views[function_id]).unwrap().osr_diagnostics();
     assert_eq!(diagnostics.currently_compiled_sites, 1, "{diagnostics:?}");
     assert!(diagnostics.native_region_runs > 0, "{diagnostics:?}");
     assert_eq!(diagnostics.exits, 0, "strict comparisons must not coerce or exit: {diagnostics:?}");
