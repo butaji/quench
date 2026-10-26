@@ -661,6 +661,7 @@ fn decode_program(
         replay: None,
         encoded_records,
         validated: Default::default(),
+        undefined_constant: Default::default(),
         closure_reads,
     };
     Ok(program)

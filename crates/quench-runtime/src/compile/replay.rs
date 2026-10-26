@@ -886,9 +886,7 @@ pub(crate) fn recompile(
         compiler.field_sites.as_slice(),
         compiler.superinstructions.as_slice(),
     );
-    function.code.shrink_to_fit();
-    function.wide.shrink_to_fit();
-    function.source_positions.shrink_to_fit();
+    function.shrink_to_fit();
     // The function making this one named it after compiling it.
     function.inferred_name = header.inferred_name;
     #[cfg_attr(not(feature = "verify-replay"), allow(unused_mut))]
