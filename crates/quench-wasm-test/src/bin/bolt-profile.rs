@@ -17,6 +17,12 @@
 //!   instruction; the linked order keeps that code together instead (`symbol-order
 //!   --foreign-first`).
 //!
+//! Profiles after `--late` lay out after the others: an instruction only they execute counts
+//! once (`LATE_SAMPLE_COUNT`), the lowest density BOLT orders, and an instruction the others
+//! execute keeps their count. Their code joins hot text behind the code the other profiles
+//! run (`-reorder-functions=cdsort` sorts by density), so a workload that trains a separate
+//! path (the Wasm load path) leaves the other workloads' hot pages as they were.
+//!
 //! `--dense PATTERN` counts every instruction of the functions whose symbol contains
 //! PATTERN as executed, so they stay whole in hot text: the interpreter's dispatch
 //! (`run_frame_general_until`, the lane handlers `13dispatch_fast`) reaches whichever
@@ -40,6 +46,9 @@ const LOCAL_CODE_KIND: &str = "t";
 
 /// The header of a basic-sample (no-LBR) BOLT profile.
 const NO_LBR_HEADER: &str = "no_lbr";
+
+/// The count of an instruction only `--late` profiles execute: the least BOLT reads as executed.
+const LATE_SAMPLE_COUNT: u64 = 1;
 
 /// A code symbol of the binary.
 struct Symbol {
@@ -192,11 +201,19 @@ fn run(
     dense: &[String],
     branches: bool,
     profiles: &[String],
+    late: &[String],
 ) -> Result<(), String> {
     let symbols = code_symbols(binary)?;
     let mut counts = HashMap::new();
     for profile in profiles {
         add_counts(profile, &mut counts)?;
+    }
+    let mut late_counts = HashMap::new();
+    for profile in late {
+        add_counts(profile, &mut late_counts)?;
+    }
+    for address in late_counts.into_keys() {
+        counts.entry(address).or_insert(LATE_SAMPLE_COUNT);
     }
     // Aliases share an address; BOLT knows the function by any of its names.
     let mut by_address: BTreeMap<u64, usize> = BTreeMap::new();
@@ -285,23 +302,31 @@ fn run(
 fn main() -> ExitCode {
     let args: Vec<String> = env::args().skip(1).collect();
     let [binary, out, rest @ ..] = args.as_slice() else {
-        eprintln!("usage: bolt-profile <binary> <out-dir> [--order FILE] [--dense PATTERN]... <callgrind.out>...");
+        eprintln!("usage: bolt-profile <binary> <out-dir> [--order FILE] [--dense PATTERN]... <callgrind.out>... [--late <callgrind.out>...]");
         return ExitCode::from(2);
     };
     let mut order = None;
     let mut branches = false;
     let mut dense = Vec::new();
     let mut profiles = Vec::new();
+    let mut late = Vec::new();
+    let mut in_late = false;
     let mut arguments = rest.iter();
     while let Some(argument) = arguments.next() {
         match argument.as_str() {
             "--order" => order = arguments.next().cloned(),
             "--dense" => dense.extend(arguments.next().cloned()),
             "--branches" => branches = true,
+            "--late" => in_late = true,
+            _ if in_late => late.push(argument.clone()),
             _ => profiles.push(argument.clone()),
         }
     }
-    match run(binary, out, order.as_deref(), &dense, branches, &profiles) {
+    if branches && !late.is_empty() {
+        eprintln!("--late takes basic samples; it does not combine with --branches");
+        return ExitCode::from(2);
+    }
+    match run(binary, out, order.as_deref(), &dense, branches, &profiles, &late) {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
             eprintln!("error: {error}");
