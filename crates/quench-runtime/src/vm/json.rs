@@ -314,6 +314,13 @@ impl From<&str> for JsonParseError {
 
 /// Number literals at most this long parse from a stack buffer.
 const JSON_INLINE_NUMBER_LENGTH: usize = 64;
+
+/// Members of an object a parse gathers without a heap allocation. Objects of the
+/// SeaMonster inspector payload have at most eight members but for under 0.3% of them.
+const JSON_INLINE_MEMBERS: usize = 8;
+
+/// An object's members as a parse gathers them, in source order.
+type JsonMembers<K, V> = smallvec::SmallVec<[(K, V); JSON_INLINE_MEMBERS]>;
 /// Integer literals of at most this many digits are below 2^53, so accumulating their
 /// digits gives the exact value the decimal conversion would.
 const JSON_EXACT_INTEGER_DIGITS: usize = 15;
@@ -484,7 +491,7 @@ trait JsonBuilder {
     fn string(&mut self, units: Units<'_>) -> Self::Value;
     fn key(&mut self, units: Units<'_>) -> Self::Key;
     fn array(&mut self, values: Vec<Self::Value>) -> Self::Value;
-    fn object(&mut self, entries: Vec<(Self::Key, Self::Value)>) -> Self::Value;
+    fn object(&mut self, entries: JsonMembers<Self::Key, Self::Value>) -> Self::Value;
     /// A primitive parsed from `source`, the text a reviver's context exposes.
     fn primitive(&mut self, value: Self::Value, source: Units<'_>) -> Self::Value;
 }
@@ -521,8 +528,8 @@ impl JsonBuilder for JsonTreeBuilder {
     fn array(&mut self, values: Vec<JsonValue>) -> JsonValue {
         JsonValue::Array(values)
     }
-    fn object(&mut self, entries: Vec<(JsString, JsonValue)>) -> JsonValue {
-        JsonValue::Object(entries)
+    fn object(&mut self, entries: JsonMembers<JsString, JsonValue>) -> JsonValue {
+        JsonValue::Object(entries.into_vec())
     }
     fn primitive(&mut self, value: JsonValue, source: Units<'_>) -> JsonValue {
         JsonValue::Source(Box::new(value), JsString::from_unit_run(source))
@@ -602,7 +609,7 @@ impl<'v, H: Host> JsonHeapBuilder<'v, H> {
                         let key = self.vm.intern_js_atom(key);
                         Ok((key, self.materialize(value)?))
                     })
-                    .collect::<Result<Vec<_>, JsError>>()?;
+                    .collect::<Result<JsonMembers<_, _>, JsError>>()?;
                 self.object(entries)
             }
         })
@@ -644,7 +651,7 @@ impl<H: Host> JsonBuilder for JsonHeapBuilder<'_, H> {
             ),
         })
     }
-    fn object(&mut self, entries: Vec<(Atom, Value)>) -> Value {
+    fn object(&mut self, entries: JsonMembers<Atom, Value>) -> Value {
         let epoch = self.vm.heap.collection_epoch();
         if epoch != self.transitions_epoch {
             self.transitions.clear();
@@ -656,7 +663,7 @@ impl<H: Host> JsonBuilder for JsonHeapBuilder<'_, H> {
             self.transitions.get(&(shape, *atom)).copied()
         });
         if let Some(shape) = shape {
-            let values = entries.iter().map(|(_, value)| *value).collect::<smallvec::SmallVec<[Value; 16]>>();
+            let values = entries.iter().map(|(_, value)| *value).collect::<smallvec::SmallVec<[Value; JSON_INLINE_MEMBERS]>>();
             return self.vm.heap.alloc_object_with_properties(self.object_prototype, shape, &values);
         }
         let object = self
@@ -838,7 +845,7 @@ impl<'a, T: JsonUnit> JsonParser<'a, T> {
     fn object<B: JsonBuilder>(&mut self, builder: &mut B) -> Result<B::Value, JsonParseError> {
         let _stack = Self::nesting_guard()?;
         self.expect(b'{')?;
-        let mut entries = Vec::new();
+        let mut entries = JsonMembers::new();
         self.whitespace();
         if self.take_if(b'}') {
             return Ok(builder.object(entries));
