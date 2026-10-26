@@ -523,9 +523,9 @@ impl<H: Host> Vm<H> {
                     Native::DataViewSetFloat32 => (value as f32).to_bits() as u64,
                     Native::DataViewSetFloat64 => value.to_bits(),
                     Native::DataViewSetUint16 | Native::DataViewSetInt16 => {
-                        value.trunc().rem_euclid(65_536.0) as u64
+                        u64::from(Self::uint16_from_value(value))
                     }
-                    _ => value.trunc().rem_euclid(4_294_967_296.0) as u64,
+                    _ => u64::from(Self::uint32_from_value(value)),
                 };
                 self.data_view_write(buffer, offset + index, width, bits, little_endian)?;
                 Ok(Value::UNDEFINED)
