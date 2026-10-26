@@ -11574,7 +11574,19 @@ script_handler! {
     #[inline(never)]
     fn lane_script_construct_keeping<>(cx, r, ip, i, view) {
         match lane_construct_keeping_activation(cx, r, ip, i) {
-            Ok((registers, base)) => next!(cx, registers, base, Carried::script(cx)),
+            Ok(KeepingConstruction::Activated(registers, base)) => next!(cx, registers, base, Carried::script(cx)),
+            Ok(KeepingConstruction::Finished(this)) => {
+                if i.a & crate::bytecode::RETURN_REGISTER == 0 {
+                    r.set(i.a, this);
+                    next!(cx, r, following(ip), Carried::script(cx))
+                }
+                if let Some(resumed) = lane_complete_activation(cx, this) {
+                    resume!(cx, resumed)
+                }
+                // The frame's own construct, which `lane_finishes_construction` admitted: the
+                // general loop returns the receiver from it.
+                lane_frame_return(unsafe { vm(cx) }, ip, this)
+            }
             Err(Some(next)) => next,
             Err(None) => {
                 requicken::<H>(ip, lane_script_construct::<H>);
@@ -11584,9 +11596,29 @@ script_handler! {
     }
 }
 
+/// What `lane_construct_keeping_activation` made of a construction.
+enum KeepingConstruction {
+    /// The callee's registers and first record.
+    Activated(Registers, Ip),
+    /// The construction's result, whose body ran without an activation: its site completes
+    /// with it.
+    Finished(Value),
+}
+
+/// Whether a construction at `i` may complete in the lane with a receiver its body finished
+/// without an activation: into a register, into the activation that returns it, or from the
+/// frame's own returning construct where `lane_returning_call_admitted` admits it, as
+/// `lane_script_construct` completes one.
+#[inline(always)]
+fn lane_finishes_construction<H: Host>(cx: *mut LaneContext<H>, i: &LaneInstruction) -> bool {
+    i.a & crate::bytecode::RETURN_REGISTER == 0
+        || !unsafe { vm(cx) }.lane_stack.activations.is_empty()
+        || lane_returning_call_admitted(cx)
+}
+
 /// `lane_script_construct_keeping`'s activation, under `lane_script_construct`'s admission:
-/// the callee's registers and first record, the record to continue at, or `None` for a
-/// construction of any target but a forwarding one. Out of line: the call target it passes
+/// the callee's registers and first record, or the receiver its body finished; the record
+/// to continue at, or `None` for a construction of any target but a forwarding one. Out of line: the call target it passes
 /// on lives in its frame, and a handler whose frame a callee addresses cannot dispatch its
 /// successor as a sibling call.
 #[inline(never)]
@@ -11595,21 +11627,19 @@ fn lane_construct_keeping_activation<H: Host>(
     r: Registers,
     ip: Ip,
     i: &LaneInstruction,
-) -> Result<(Registers, Ip), Option<Ip>> {
+) -> Result<KeepingConstruction, Option<Ip>> {
     let vm = unsafe { vm(cx) };
     let callee = r.get(i.b);
     if !unsafe { (*cx).script_calls && (*cx).script_constructs } || vm.construct_target.is_some() {
         return Err(Some(exit(ip)));
     }
+    let finishes = lane_finishes_construction(cx, i);
     // A plan holding for `callee` fixes its function, so the plan alone answers before its
     // target is resolved.
-    if i.a & crate::bytecode::RETURN_REGISTER == 0
-        && let Some(this) = lane_forwarded_fields(vm, callee, r, i)
-    {
+    if finishes && let Some(this) = lane_forwarded_fields(vm, callee, r, i) {
         // Allocating the receiver can make a collection due.
         note_allocation(vm);
-        r.set(i.a, this);
-        return Ok((r, following(ip)));
+        return Ok(KeepingConstruction::Finished(this));
     }
     // Matched rather than filtered: the combinators moved the target through copies.
     let Some(target) = lane_script_target(cx, callee) else {
@@ -11635,9 +11665,10 @@ fn lane_construct_keeping_activation<H: Host>(
     {
         // A forwarded method that only initializes `this` from its parameters, which the
         // forwarding passes the construction's arguments as: its adds alone, with neither
-        // activation, when the construction's result goes to a register. Its body completes
-        // with `undefined`, as the forwarding body then does, so [[Construct]] yields `this`.
-        if forwarded.initializes && i.a & crate::bytecode::RETURN_REGISTER == 0 {
+        // activation, where the construction completes in the lane (`lane_finishes_construction`).
+        // Its body completes with `undefined`, as the forwarding body then does, so
+        // [[Construct]] yields `this`.
+        if forwarded.initializes && finishes {
             // SAFETY: the context's program outlives the lane run, and the forwarded target is
             // one of its functions (`lane_script_target`).
             let code = unsafe { &*(*cx).code };
@@ -11649,8 +11680,7 @@ fn lane_construct_keeping_activation<H: Host>(
                 if let Some(fields) = fields {
                     lane_record_forwarded_fields(vm, callee, (forwarded.program, forwarded.function), this, &fields);
                 }
-                r.set(i.a, this);
-                return Ok((r, following(ip)));
+                return Ok(KeepingConstruction::Finished(this));
             }
         }
         let forwarder = SkippedForwarder {
@@ -11660,9 +11690,12 @@ fn lane_construct_keeping_activation<H: Host>(
             method,
         };
         return lane_activate_keeping::<H, false>(cx, r, ip, &forwarded, arguments, this, false, Some(forwarder))
+            .map(|(registers, base)| KeepingConstruction::Activated(registers, base))
             .map_err(Some);
     }
-    lane_activate_keeping::<H, false>(cx, r, ip, &target, arguments, this, true, None).map_err(Some)
+    lane_activate_keeping::<H, false>(cx, r, ip, &target, arguments, this, true, None)
+        .map(|(registers, base)| KeepingConstruction::Activated(registers, base))
+        .map_err(Some)
 }
 
 /// The finished receiver of a forwarding constructor's construction under `callee`'s
