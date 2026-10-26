@@ -3759,7 +3759,7 @@ fn lane_frame_capture<H: Host>(cx: *mut LaneContext<H>) -> Option<*const crate::
     Some(dense)
 }
 
-/// Resolve a lane capture without guest code or allocation, refreshing the dense cache.
+/// Resolve an owned or shared lane capture without guest code, refreshing the dense cache.
 /// OSR entry and the LoadCapture slow lane use the same binding and TDZ guards.
 #[inline(never)]
 fn lane_capture_value<H: Host>(cx: *mut LaneContext<H>, depth: u16, slot: u16) -> Option<Value> {
@@ -3790,7 +3790,7 @@ fn lane_capture_value<H: Host>(cx: *mut LaneContext<H>, depth: u16, slot: u16) -
                 vm.owned_capture(slots, root, slot)
             })
     };
-    value.or_else(|| lane_projected_capture(cx, depth, slot))
+    value
 }
 
 script_handler! {
@@ -3824,7 +3824,7 @@ script_handler! {
                 env.is_deleted(),
             ));
         }
-        let Some(value) = value else {
+        let Some(value) = value.or_else(|| lane_projected_capture(cx, depth, slot)) else {
             return exit(ip);
         };
         r.set(i.a, value);
@@ -6507,7 +6507,14 @@ fn lane_loop_entry<H: Host>(
             let value = (!slots.is_null())
                 .then(|| unsafe { &*slots }.dense_plain(usize::from(*slot)))
                 .flatten()
-                .or_else(|| lane_capture_value(cx, 0, *slot))?;
+                .or_else(|| lane_capture_value(cx, 0, *slot))
+                .or_else(|| {
+                    // A projected global var aliases its global object's property. Native
+                    // field stores could change it after entry, invalidating this snapshot.
+                    region.field_store_sites.is_empty()
+                        .then(|| lane_projected_capture(cx, 0, *slot))
+                        .flatten()
+                })?;
             entry.push_capture(value);
         }
     }

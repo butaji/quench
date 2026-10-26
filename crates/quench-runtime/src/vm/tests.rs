@@ -12234,6 +12234,33 @@ fn shared_osr_captured_and_parameter_callees_preserve_gc_throw_and_coercion_once
 
 #[test]
 #[cfg(not(quench_profiled))]
+fn shared_osr_projected_capture_observes_aliasing_global_field_stores() {
+    let source = r#"
+        var captured = 1;
+        function run(object) {
+            let total = 0;
+            for (let index = 0; index < 3000; index++) {
+                total += captured;
+                object.captured = index;
+            }
+            return total;
+        }
+        print(run(globalThis));
+        print(captured);
+    "#;
+    let program = Engine::specialize(source, "osr-capture-global-alias.js").unwrap();
+    let interpreted = Rc::new(RefCell::new(Vec::new()));
+    Vm::new(TestHost::writing_to(interpreted.clone())).execute(&program).unwrap();
+    assert_eq!(interpreted.borrow().as_slice(), ["4495502", "2999"]);
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    vm.set_execution_mode(crate::ExecutionMode::Compiled);
+    vm.execute(&program).unwrap();
+    assert_eq!(output.borrow().as_slice(), interpreted.borrow().as_slice());
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
 fn shared_osr_moves_tagged_array_values_before_effectful_calls() {
     // Copying the array into a callback argument is a tagged Move; its call is an exact-PC
     // boundary, so the callback may mutate the array before the next native entry reloads it.
