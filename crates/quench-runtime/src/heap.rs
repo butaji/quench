@@ -2575,13 +2575,12 @@ impl Heap {
 
     /// Marks everything `work` reaches, with the closure environments it reaches through
     /// `environments` and the weak map values through `ephemerons`. With `parallel`, work
-    /// larger than its `round_minimum` is marked in a parallel round (`mark_parallel_round`);
-    /// smaller work is marked here, value by value, as is all of it without, and so are the
-    /// environments a round's workers leave for this visit. Either way marking ends when no
-    /// work and no environment edge is left.
-    // Inlined into its one production caller, `collect_with_object_roots`, as the serial
-    // mark loop was before the parallel mark visited records.
-    #[inline(always)]
+    /// larger than its `round_minimum` is marked in parallel rounds (`mark_work_in_rounds`);
+    /// smaller work is marked on this thread, value by value (`drain_work`), as is all of it
+    /// without. Either way marking ends when no work and no environment edge is left.
+    // Kept out of `collect_with_object_roots`: inlined there, the visit loop shares registers
+    // with the whole collection, and cachegrind counted spills in every visit.
+    #[inline(never)]
     fn mark_work(
         &mut self,
         work: &mut Vec<Value>,
@@ -2591,43 +2590,87 @@ impl Heap {
         trace_kind: GcTraceKind,
         environments: &mut EnvironmentTrace<'_>,
     ) {
+        let Some(parallel) = parallel else {
+            let mut last_proto = Value::UNDEFINED;
+            self.drain_work::<false>(work, object_roots, ephemerons, trace_kind, environments, &mut last_proto, 0);
+            return;
+        };
+        self.mark_work_in_rounds(work, object_roots, parallel, ephemerons, trace_kind, environments);
+    }
+
+    /// `mark_work` with a parallel mark: drains work until a round is due, runs the round,
+    /// and visits the environments its workers left before draining again.
+    // Kept out of line: `collect_with_object_roots` then inlines one serial visit
+    // (`mark_value`), and with it the children walks, as before parallel rounds existed.
+    #[inline(never)]
+    fn mark_work_in_rounds(
+        &mut self,
+        work: &mut Vec<Value>,
+        object_roots: &mut impl FnMut(GcTraceKind, Value, u32, bool, &mut Vec<Value>),
+        parallel: parallel_mark::ParallelMark<'_>,
+        ephemerons: &mut weak::EphemeronWork,
+        trace_kind: GcTraceKind,
+        environments: &mut EnvironmentTrace<'_>,
+    ) {
         let mut last_proto = Value::UNDEFINED;
-        // The environments workers reached whole, for `mark_value`'s visit here: its one call
-        // site, so the serial mark inlines it.
         let mut left_to_collector = Vec::new();
-        loop {
-            if let Some(parallel) = parallel
-                && left_to_collector.is_empty()
-                && work.len() > parallel.round_minimum
-            {
-                self.mark_parallel_round(
-                    parallel,
-                    work,
-                    &mut left_to_collector,
-                    object_roots,
-                    ephemerons,
-                    trace_kind,
-                    environments,
-                );
-                continue;
-            }
+        while self.drain_work::<true>(
+            work,
+            object_roots,
+            ephemerons,
+            trace_kind,
+            environments,
+            &mut last_proto,
+            parallel.round_minimum,
+        ) {
+            self.mark_parallel_round(
+                parallel,
+                work,
+                &mut left_to_collector,
+                object_roots,
+                ephemerons,
+                trace_kind,
+                environments,
+            );
             // A worker counted the visit of an environment it left.
-            let value = if let Some(environment) = left_to_collector.pop() {
-                environment
-            } else if let Some(value) = work.pop() {
-                #[cfg(feature = "profile-aggregate")]
-                {
-                    self.gc_profile.work_items += 1;
-                }
-                value
-            } else {
+            while let Some(environment) = left_to_collector.pop() {
+                self.mark_value(environment, work, object_roots, ephemerons, trace_kind, environments, &mut last_proto);
+            }
+        }
+    }
+
+    /// Marks `work` value by value until no work and no environment edge is left (`false`)
+    /// or, with `ROUNDS`, until more than `round_minimum` values wait (`true`): a parallel
+    /// round then takes them. Without `ROUNDS` the loop tests nothing per value but the
+    /// stack, as the serial mark did before rounds existed.
+    #[inline(always)]
+    #[allow(clippy::too_many_arguments)]
+    fn drain_work<const ROUNDS: bool>(
+        &mut self,
+        work: &mut Vec<Value>,
+        object_roots: &mut impl FnMut(GcTraceKind, Value, u32, bool, &mut Vec<Value>),
+        ephemerons: &mut weak::EphemeronWork,
+        trace_kind: GcTraceKind,
+        environments: &mut EnvironmentTrace<'_>,
+        last_proto: &mut Value,
+        round_minimum: usize,
+    ) -> bool {
+        loop {
+            if ROUNDS && work.len() > round_minimum {
+                return true;
+            }
+            let Some(value) = work.pop() else {
                 if !environments.has_pending() {
-                    break;
+                    return false;
                 }
                 self.trace_environment_edges(environments, work);
                 continue;
             };
-            self.mark_value(value, work, object_roots, ephemerons, trace_kind, environments, &mut last_proto);
+            #[cfg(feature = "profile-aggregate")]
+            {
+                self.gc_profile.work_items += 1;
+            }
+            self.mark_value(value, work, object_roots, ephemerons, trace_kind, environments, last_proto);
             #[cfg(feature = "profile-aggregate")]
             {
                 self.gc_profile.max_worklist = self.gc_profile.max_worklist.max(work.len() as u64);
@@ -3556,6 +3599,9 @@ impl Heap {
 
     /// A direct Array record traces exactly as a legacy `Cell::Array`: its object part, then
     /// its heap-valued elements.
+    // Inlined into each mark visit, as the serial mark had it: left to its heuristics, LLVM
+    // calls it from `collect_with_object_roots`, which cachegrind measured at more instructions.
+    #[inline(always)]
     fn array_children(
         owner: Value,
         array: &ArrayObject,
@@ -3660,6 +3706,8 @@ impl Heap {
         }
     }
     /// A function's edges: its object, closure environment and realm.
+    // Inlined into each mark visit, as `array_children`.
+    #[inline(always)]
     fn function_children(
         owner: Value,
         function: &FunctionRecord,
