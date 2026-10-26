@@ -927,6 +927,14 @@ if (globalThis.MessagePort === undefined) {
               item instanceof Date || item instanceof RegExp || item instanceof Error) {
             return item;
           }
+          // Keep opaque cloneable host values intact. Copying their visible
+          // properties into a plain object erases CryptoKey, KeyObject and
+          // SharedArrayBuffer internal slots before the shared codec sees them.
+          const prototype = Object.getPrototypeOf(item);
+          if (prototype !== null && prototype !== Object.prototype &&
+              Object.keys(item).length === 0) {
+            return item;
+          }
           let result;
           if (Array.isArray(item)) result = [];
           else if (item instanceof Map) result = new Map();
