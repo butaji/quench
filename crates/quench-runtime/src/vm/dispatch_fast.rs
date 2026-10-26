@@ -2909,6 +2909,10 @@ macro_rules! lane_return_value {
 /// handlers keep their registers.
 #[inline(never)]
 fn lane_return_value_general<H: Host>(cx: *mut LaneContext<H>, ip: Ip, value: Value) -> Ip {
+    // As `lane_return_general`: a run of returning calls, then another program's activation.
+    if let Some(resumed) = lane_complete_plain_chain(cx, value) {
+        resume!(cx, resumed)
+    }
     if let Some(resumed) = lane_complete_cross_activation(cx, value) {
         resume!(cx, resumed)
     }
@@ -13363,6 +13367,11 @@ lane_handler! {
     /// registers.
     #[inline(never)]
     fn lane_return_general<>(cx, r, ip, i, view) {
+        // A run of returning calls (`return f(...)`) first, the commonest return past the
+        // plain one, then another program's activation.
+        if let Some(resumed) = lane_complete_plain_chain(cx, r.get(i.a)) {
+            resume!(cx, resumed)
+        }
         if let Some(resumed) = lane_complete_cross_activation(cx, r.get(i.a)) {
             resume!(cx, resumed)
         }
