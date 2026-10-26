@@ -26,6 +26,16 @@ pub(super) struct EphemeronWork {
 }
 
 impl EphemeronWork {
+    /// Whether some weak map value waits for `identity` to be marked: `newly_marked` has
+    /// work for it beyond scanning a weak map's own entries.
+    #[inline(always)]
+    pub(super) fn awaits_key(&self, identity: Value) -> bool {
+        !self.heads.is_empty() && self.heads.contains_key(&identity)
+    }
+
+    // Inlined into each mark visit, as `Heap::array_children`: most calls find no weak map
+    // and no pending key.
+    #[inline(always)]
     pub(super) fn newly_marked(
         &mut self,
         identity: Value,
@@ -46,6 +56,7 @@ impl EphemeronWork {
         self.scan_owner(identity, Some(cell), is_marked, work);
     }
 
+    #[inline(always)]
     fn scan_owner(
         &mut self,
         identity: Value,

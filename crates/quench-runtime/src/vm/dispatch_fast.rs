@@ -2909,6 +2909,9 @@ macro_rules! lane_return_value {
 /// handlers keep their registers.
 #[inline(never)]
 fn lane_return_value_general<H: Host>(cx: *mut LaneContext<H>, ip: Ip, value: Value) -> Ip {
+    if let Some(resumed) = lane_complete_cross_activation(cx, value) {
+        resume!(cx, resumed)
+    }
     if let Some(resumed) = lane_complete_activation(cx, value) {
         resume!(cx, resumed)
     }
@@ -13360,6 +13363,9 @@ lane_handler! {
     /// registers.
     #[inline(never)]
     fn lane_return_general<>(cx, r, ip, i, view) {
+        if let Some(resumed) = lane_complete_cross_activation(cx, r.get(i.a)) {
+            resume!(cx, resumed)
+        }
         if let Some(resumed) = lane_complete_activation(cx, r.get(i.a)) {
             resume!(cx, resumed)
         }
@@ -13367,27 +13373,43 @@ lane_handler! {
     }
 }
 
-/// `lane_complete_activation`'s commonest completion: a JavaScript activation whose call
-/// keeps its result (`Completion::Plain`, or `Completion::Cross` from another program, a
-/// result register). It restores what that completion restores, without moving the
-/// activation out of the stack: the caller's program, registers, records, receiver and
-/// environments, and the call's result. `None` leaves every other completion to
-/// `lane_complete_activation`.
+/// `lane_complete_activation`'s commonest completion: a JavaScript activation of the
+/// running program whose call keeps its result (`Completion::Plain`, a result register). It
+/// restores what that completion restores, without moving the activation out of the stack:
+/// the caller's registers, records, receiver and environments, and the call's result. `None`
+/// leaves every other completion to the returns past it, which take another program's
+/// activation the same way (`lane_complete_cross_activation`).
 #[inline(always)]
 fn lane_return_plain<H: Host>(cx: *mut LaneContext<H>, value: Value) -> Option<(Registers, Ip)> {
+    lane_return_from::<H, false>(cx, value)
+}
+
+/// `lane_complete_plain_activation` of an activation of another program than its caller's
+/// (`Completion::Cross`), which enters the caller's program first, for the returns past the
+/// common one (`lane_return_general`, `lane_return_value_general`), so the common return
+/// carries none of the program switch.
+#[inline(always)]
+fn lane_complete_cross_activation<H: Host>(cx: *mut LaneContext<H>, value: Value) -> Option<Resumed> {
+    let (registers, next) = lane_return_from::<H, true>(cx, value)?;
+    Some(Resumed::At(registers, next, Carried::script(cx)))
+}
+
+/// `lane_return_plain` of the innermost activation, a script one whose call keeps its
+/// result: of the caller's program (`Completion::Plain`), or, where `CROSSES`, of another
+/// (`Completion::Cross`), which enters the caller's program first.
+#[inline(always)]
+fn lane_return_from<H: Host, const CROSSES: bool>(cx: *mut LaneContext<H>, value: Value) -> Option<(Registers, Ip)> {
     let vm = unsafe { vm(cx) };
     let stack = &mut vm.lane_stack;
     let top = stack.activations.last()?;
     let ActivationKind::Script(script) = &top.kind else {
         return None;
     };
+    if script.completion != if CROSSES { Completion::Cross } else { Completion::Plain } {
+        return None;
+    }
     // SAFETY: the call record belongs to the caller's live view.
     let destination = unsafe { (*top.call).a };
-    let crosses = match script.completion {
-        Completion::Plain => false,
-        Completion::Cross => true,
-        _ => return None,
-    };
     if destination & crate::bytecode::RETURN_REGISTER != 0 {
         return None;
     }
@@ -13402,7 +13424,7 @@ fn lane_return_plain<H: Host>(cx: *mut LaneContext<H>, value: Value) -> Option<(
         stack.values.set_len(window);
     }
     // The caller's memory view reads its program's records (`MemoryView::script`).
-    if crosses {
+    if CROSSES {
         lane_enter_program(cx, caller_program);
     }
     unsafe {

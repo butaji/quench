@@ -204,6 +204,13 @@ impl<'s> EnvironmentTrace<'s> {
         position
     }
 
+    /// Whether this trace follows closure edges and the environments they reach through
+    /// their reads (`closure`, `whole`). Without a source, a closure's environment edge is an
+    /// ordinary edge, and an environment is marked and traced whole as any other cell.
+    pub(super) fn reads_closures(&self) -> bool {
+        self.source.is_some()
+    }
+
     /// A function's edge to its closure environment `environment`.
     pub(super) fn closure(&mut self, environment: Value, kind: &FunctionKind, work: &mut Vec<Value>) {
         match (self.source, kind) {
