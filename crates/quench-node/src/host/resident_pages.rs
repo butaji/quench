@@ -75,7 +75,12 @@ pub fn release_read_only_pages() {
     if let Ok(mut last) = LAST_RELEASE.lock() {
         *last = Some(std::time::Instant::now());
     }
-    let segments = loaded_segments(ReleasedSegment::Clean);
+    let mut segments = loaded_segments(ReleasedSegment::Clean);
+    let keeps_pages = !crate::shared_run::process_memory_policy()
+        .is_some_and(quench_runtime::MemoryPolicy::returns_pages_at_collections);
+    if let Some(hot) = run_hot_text(&segments).filter(|_| keeps_pages) {
+        segments = segments.into_iter().flat_map(|segment| without(segment, hot)).collect();
+    }
     for &(start, end) in segments.iter().chain(unwritten_relro_pages()) {
         // SAFETY: each range is a private file mapping that is never written, so discarding
         // its pages loses nothing.
@@ -97,6 +102,47 @@ pub fn release_read_only_pages() {
             }
         }
     }
+}
+
+// BOLT's hot text bounds (`llvm-bolt -hot-text`), defined only in a bolted executable: weak,
+// so an unbolted link resolves them to address zero.
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+std::arch::global_asm!(".weak __hot_start", ".weak __hot_end");
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+unsafe extern "C" {
+    static __hot_start: u8;
+    static __hot_end: u8;
+}
+
+/// The page range of the code a run executes once its entry has compiled, which a release under
+/// a policy that keeps pages between collections (throughput) leaves resident: every release
+/// otherwise dropped it and the next dispatch refaulted it (TOD-180, npm universalify: 112
+/// releases and twice Bun's minor faults). In a bolted executable it is BOLT's hot text; else
+/// the trained link order lays it first in the executable's code segment, up to
+/// `quench_entry_compiled` (build.rs). `None` when neither layout holds: an untrained link
+/// leaves no run-only range to keep.
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+fn run_hot_text(segments: &[(usize, usize)]) -> Option<(usize, usize)> {
+    let page = page_size();
+    // Only the weak symbols' addresses are taken, never their contents.
+    let (bolted_start, bolted_end) = (&raw const __hot_start as usize, &raw const __hot_end as usize);
+    if bolted_start != 0 && bolted_end > bolted_start {
+        return Some((bolted_start - bolted_start % page, bolted_end.next_multiple_of(page)));
+    }
+    let split = quench_entry_compiled as *const () as usize;
+    let &(start, _) = segments.iter().find(|&&(start, end)| (start..end).contains(&split))?;
+    let end = split - split % page;
+    (end > start).then_some((start, end))
+}
+
+/// `segment` without the pages of `kept`: none, one or two ranges.
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+fn without(segment: (usize, usize), kept: (usize, usize)) -> impl Iterator<Item = (usize, usize)> {
+    let (start, end) = segment;
+    let (kept_start, kept_end) = kept;
+    [(start, end.min(kept_start)), (start.max(kept_end), end)]
+        .into_iter()
+        .filter(|&(start, end)| start < end)
 }
 
 /// Read-only file mappings the host made after start-up (compile-cache entries), released with
