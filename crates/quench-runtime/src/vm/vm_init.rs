@@ -112,6 +112,7 @@ impl<H: Host> Vm<H> {
             symbol_load_proofs: Default::default(),
             private_site_homes: Default::default(),
             array_iteration_proof: None,
+            for_in_own_keys: None,
             species_slot_proof: Default::default(),
             index_free_chain_proof: Default::default(),
             enumerable_keys: Default::default(),

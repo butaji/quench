@@ -4,6 +4,17 @@ use super::object_symbols::PropertyCopyKind;
 use super::property_key::PropertyKey;
 use super::*;
 
+/// The own keys a for-in last listed from a receiver's shape (`Vm::own_for_in_keys`), with
+/// the receiver, that shape and the collection epoch: while the receiver keeps the shape,
+/// in the same epoch (which no reused handle or compacted shape shares), each listed key is
+/// still an own enumerable property (`Vm::for_in_own_key_listed`).
+pub(super) struct ForInOwnKeys {
+    object: Value,
+    shape: u32,
+    epoch: u64,
+    keys: Vec<Value>,
+}
+
 impl<H: Host> Vm<H> {
     /// `Object.create(proto)` before its properties argument: an empty ordinary object
     /// inheriting from `proto`, which runs no guest code; `None` when `proto` is neither an
@@ -451,7 +462,30 @@ impl<H: Host> Vm<H> {
             }
             prototype = self.object_data(prototype)?.proto();
         }
-        Some(slots.iter().map(|&(atom, _)| self.atom_string(atom)).collect())
+        let keys: Vec<Value> = slots.iter().map(|&(atom, _)| self.atom_string(atom)).collect();
+        let shape = self.object_data(receiver)?.shape();
+        self.for_in_own_keys = Some(ForInOwnKeys {
+            object: receiver,
+            shape,
+            epoch: self.heap.collection_epoch(),
+            keys: keys.clone(),
+        });
+        Some(keys)
+    }
+
+    /// Whether `key` is one of the own enumerable keys a for-in over `source` listed from
+    /// its shape (`ForInOwnKeys`) while `source` keeps that shape and stores no attributes
+    /// beside it: then it is still an own enumerable property, as the loop's check asks,
+    /// without a lookup. Any other key or object is left to the lookup.
+    pub(super) fn for_in_own_key_listed(&self, source: Value, key: Value) -> bool {
+        self.for_in_own_keys.as_ref().is_some_and(|listed| {
+            listed.object == source
+                && listed.epoch == self.heap.collection_epoch()
+                && self
+                    .object_data(source)
+                    .is_some_and(|data| data.shape() == listed.shape && !data.has_side_descriptors())
+                && listed.keys.contains(&key)
+        })
     }
 
     pub(super) fn object_for_in_key_is_enumerable(
@@ -462,6 +496,9 @@ impl<H: Host> Vm<H> {
     ) -> Result<bool, JsError> {
         if source.is_null() || source.is_undefined() {
             return Ok(false);
+        }
+        if self.for_in_own_key_listed(source, key) {
+            return Ok(true);
         }
         let mut current = self.box_object(source)?;
         if !matches!(self.heap.get(current), Some(Cell::Proxy { .. }))
