@@ -1732,6 +1732,7 @@ mod tests {
 
         let mut vm = Vm::new(crate::SystemHost);
         vm.set_execution_mode(crate::ExecutionMode::Compiled);
+        vm.programs.compile_wasm_modules_at_first_entry();
         vm.execute(&script).unwrap();
         assert!(matches!(
             vm.programs
@@ -1763,6 +1764,7 @@ mod tests {
         .unwrap();
         let mut vm = Vm::new(crate::SystemHost);
         vm.set_execution_mode(crate::ExecutionMode::Compiled);
+        vm.programs.compile_wasm_modules_at_first_entry();
 
         assert_eq!(vm.execute_wasm_i32(&function, &[]).unwrap(), Some(42));
 
@@ -1924,6 +1926,7 @@ mod tests {
 
         let mut vm = Vm::new(crate::SystemHost);
         vm.set_execution_mode(crate::ExecutionMode::Compiled);
+        vm.programs.compile_wasm_modules_at_first_entry();
         let instance = vm.instantiate_wasm_module(&module).unwrap();
         assert_eq!(
             vm.invoke_wasm(
@@ -2052,6 +2055,7 @@ mod tests {
 
         let mut vm = Vm::new(crate::SystemHost);
         vm.set_execution_mode(crate::ExecutionMode::Compiled);
+        vm.programs.compile_wasm_modules_at_first_entry();
         let instance = vm.instantiate_wasm_module(&module).unwrap();
         let base = crate::WasmValue::I32(-16);
         let index = crate::WasmValue::I32(0x30);
@@ -2251,6 +2255,7 @@ mod tests {
         .unwrap();
         let mut vm = Vm::new(crate::SystemHost);
         vm.set_execution_mode(crate::ExecutionMode::Compiled);
+        vm.programs.compile_wasm_modules_at_first_entry();
         let instance = vm.instantiate_wasm_module(&module).unwrap();
 
         assert_eq!(
@@ -2336,6 +2341,7 @@ mod tests {
         .unwrap();
         let mut vm = Vm::new(crate::SystemHost);
         vm.set_execution_mode(crate::ExecutionMode::Compiled);
+        vm.programs.compile_wasm_modules_at_first_entry();
         let instance = vm.instantiate_wasm_module(&module).unwrap();
 
         assert_eq!(
@@ -2412,6 +2418,7 @@ mod tests {
         .unwrap();
         let mut vm = Vm::new(crate::SystemHost);
         vm.set_execution_mode(crate::ExecutionMode::Compiled);
+        vm.programs.compile_wasm_modules_at_first_entry();
         let instance = vm.instantiate_wasm_module(&module).unwrap();
 
         assert_eq!(
@@ -2494,6 +2501,7 @@ mod tests {
         super::super::compiled::with_eager_unreachable_rejected_for_test(|| {
             let mut vm = Vm::new(crate::SystemHost);
             vm.set_execution_mode(crate::ExecutionMode::Compiled);
+            vm.programs.compile_wasm_modules_at_first_entry();
             let instance = vm.instantiate_wasm_module(&module).unwrap();
             let promotion_entries = super::super::program_store::WASM_JIT_PROMOTION_ENTRIES;
             for _ in 0..promotion_entries {
@@ -2628,6 +2636,7 @@ mod tests {
         .unwrap();
         let mut vm = Vm::new(crate::SystemHost);
         vm.set_execution_mode(crate::ExecutionMode::Compiled);
+        vm.programs.compile_wasm_modules_at_first_entry();
         let instance = vm.instantiate_wasm_module(&module).unwrap();
 
         assert_eq!(
@@ -2709,6 +2718,7 @@ mod tests {
         .unwrap();
         let mut vm = Vm::new(crate::SystemHost);
         vm.set_execution_mode(crate::ExecutionMode::Compiled);
+        vm.programs.compile_wasm_modules_at_first_entry();
         let instance = vm.instantiate_wasm_module(&module).unwrap();
 
         assert_eq!(
@@ -2798,6 +2808,7 @@ mod tests {
         .unwrap();
         let mut vm = Vm::new(crate::SystemHost);
         vm.set_execution_mode(crate::ExecutionMode::Compiled);
+        vm.programs.compile_wasm_modules_at_first_entry();
         let first = vm.instantiate_wasm_module(&module).unwrap();
         let second = vm.instantiate_wasm_module(&module).unwrap();
         let first_env = vm.root_value(first.environment).unwrap();
@@ -3436,6 +3447,7 @@ mod tests {
         .unwrap();
         let mut vm = Vm::new(crate::SystemHost);
         vm.set_execution_mode(crate::ExecutionMode::Compiled);
+        vm.programs.compile_wasm_modules_at_first_entry();
         let instance = vm.instantiate_wasm_module(&module).unwrap();
         for trips in 0..13 {
             assert_eq!(
@@ -3532,6 +3544,7 @@ mod tests {
         .unwrap();
         let mut vm = Vm::new(crate::SystemHost);
         vm.set_execution_mode(crate::ExecutionMode::Compiled);
+        vm.programs.compile_wasm_modules_at_first_entry();
         let instance = vm.instantiate_wasm_module(&module).unwrap();
 
         assert_eq!(
@@ -3557,6 +3570,7 @@ mod tests {
         // a native leaf through the normal dispatcher.
         let mut root_vm = Vm::new(crate::SystemHost);
         root_vm.set_execution_mode(crate::ExecutionMode::Compiled);
+        root_vm.programs.compile_wasm_modules_at_first_entry();
         let root_instance = root_vm.instantiate_wasm_module(&module).unwrap();
         let root_environment = root_vm.root_value(root_instance.environment).unwrap();
         let root_program = root_vm
@@ -4991,6 +5005,7 @@ mod tests {
                 let mut vm =
                     Vm::new_with_execution_interrupt(StartHost(entered_tx), worker_interrupt);
                 vm.set_execution_mode(crate::ExecutionMode::Compiled);
+                vm.programs.compile_wasm_modules_at_first_entry();
                 let signature = crate::WasmSignature {
                     params: vec![],
                     results: vec![],
@@ -5510,6 +5525,7 @@ mod tests {
                 .find_shared(&function.module.program)
                 .expect("registered Wasm program");
             vm.set_execution_mode(crate::ExecutionMode::Compiled);
+            vm.programs.compile_wasm_modules_at_first_entry();
             assert_eq!(
                 vm.execute_wasm_i32(&function, &[]).unwrap_err().wasm_trap(),
                 Some(crate::WasmTrap::Unreachable)
@@ -5558,6 +5574,7 @@ mod tests {
                 .find_shared(&function.module.program)
                 .expect("registered root Wasm program");
             root_vm.set_execution_mode(crate::ExecutionMode::Compiled);
+            root_vm.programs.compile_wasm_modules_at_first_entry();
             assert!(root_vm.install_compiled_root_for_test(root_program, Value::NULL, 0));
             assert_eq!(
                 root_vm
@@ -5604,6 +5621,7 @@ mod tests {
             .find_shared(&function.module.program)
             .expect("registered Wasm program");
         vm.set_execution_mode(crate::ExecutionMode::Compiled);
+        vm.programs.compile_wasm_modules_at_first_entry();
         assert_eq!(
             vm.execute_wasm_i32(&function, &[]).unwrap_err().wasm_trap(),
             Some(crate::WasmTrap::Unreachable)
@@ -5641,6 +5659,7 @@ mod tests {
             .find_shared(&function.module.program)
             .expect("registered root Wasm program");
         root_vm.set_execution_mode(crate::ExecutionMode::Compiled);
+        root_vm.programs.compile_wasm_modules_at_first_entry();
         assert!(root_vm.install_compiled_root_for_test(root_program, Value::NULL, 0));
         assert_eq!(
             root_vm

@@ -675,6 +675,11 @@ struct ProgramEntry {
     /// Sparse frontend-specific hotness state and compiled artifacts, owned
     /// by one VM-local tier manager.
     jit_tiers: JitTierManager,
+    /// Compiled-call entries of a Wasm module still in the interpreter, when the first came,
+    /// and whether one has compiled it whole (`ProgramStore::note_wasm_module_entry`).
+    wasm_module_entries: u32,
+    wasm_module_first_entry: Option<std::time::Instant>,
+    wasm_module_compiles: bool,
     /// The environment the program's root body evaluates in.
     scope: ProgramScope,
     /// Source provenance is independent of the root binding environment.
@@ -756,6 +761,31 @@ struct OwnedScript {
     instances: Vec<(WeakHandle, ProgramId)>,
 }
 
+/// When a Wasm module running under `--jit` compiles whole. It starts in the interpreter with
+/// its hot roots promoted, so a module used briefly (an npm package's one source-map parse)
+/// never pays for module-wide code, while one that runs long gets the code eager compilation
+/// made at its first entry.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct WasmModuleCompile {
+    /// The entry count at which the module compiles.
+    entries: u32,
+    /// The time since its first entry after which its next entry compiles it, for a module
+    /// that loops more than it is entered.
+    after: std::time::Duration,
+}
+
+impl WasmModuleCompile {
+    /// source-map's one parse `--jit` (2026-10-26, this host): eager 109 ms, adaptive 38 ms;
+    /// a 30-run Wasm kernel loop: eager 806 ms, adaptive 781 ms.
+    const ADAPTIVE: Self = Self { entries: 4096, after: std::time::Duration::from_millis(20) };
+    #[cfg(test)]
+    const FIRST_ENTRY: Self = Self { entries: 1, after: std::time::Duration::ZERO };
+
+    fn due(self, entries: u32, since_first: std::time::Duration) -> bool {
+        entries >= self.entries || since_first >= self.after
+    }
+}
+
 pub(crate) struct ProgramStore {
     /// Indexed by `ProgramId`; a reclaimed program leaves an empty slot, so an
     /// id never names another program.
@@ -787,6 +817,8 @@ pub(crate) struct ProgramStore {
     /// the compile (`general_promotion_due`); tests of the baseline's semantics compile it
     /// once hot.
     general_baseline_priced: bool,
+    /// When a Wasm module running uncompiled compiles whole (`note_wasm_module_entry`).
+    wasm_module_compile: WasmModuleCompile,
     /// Allocated only when opt-in JavaScript JIT diagnostics are requested.
     js_jit_diagnostics: Option<FxHashMap<(u32, u32), JsJitCounters>>,
     /// Whether ordinary JS functions promote to the general native dispatch tier
@@ -829,6 +861,7 @@ impl Default for ProgramStore {
                 "QUENCH_JS_JIT_UNPRICED_GENERAL_DISPATCH",
             )
             .is_some_and(|value| value == "1"),
+            wasm_module_compile: WasmModuleCompile::ADAPTIVE,
             js_jit_diagnostics: std::env::var_os("QUENCH_JS_JIT_STATS")
                 .is_some_and(|value| value == "1")
                 .then(FxHashMap::default),
@@ -1250,6 +1283,9 @@ impl ProgramStore {
             lane_deferred,
             compiled: None,
             jit_tiers: JitTierManager::default(),
+            wasm_module_entries: 0,
+            wasm_module_first_entry: None,
+            wasm_module_compiles: false,
             scope: ProgramScope::Own,
             origin,
             script_or_module: None,
@@ -1590,6 +1626,28 @@ impl ProgramStore {
         if let Some(entry) = self.entry_mut(id) {
             entry.compiled = Some(compiled);
         }
+    }
+
+    /// Count a compiled-call entry of Wasm module `id` while it runs uncompiled: true once,
+    /// at the entry `WasmModuleCompile` names, which compiles the module whole.
+    pub(super) fn note_wasm_module_entry(&mut self, id: ProgramId) -> bool {
+        let policy = self.wasm_module_compile;
+        let Some(entry) = self.entry_mut(id) else {
+            return false;
+        };
+        if entry.residual.kind != crate::bytecode::ProgramKind::Wasm || entry.wasm_module_compiles {
+            return false;
+        }
+        let first = *entry.wasm_module_first_entry.get_or_insert_with(std::time::Instant::now);
+        entry.wasm_module_entries = entry.wasm_module_entries.saturating_add(1);
+        entry.wasm_module_compiles = policy.due(entry.wasm_module_entries, first.elapsed());
+        entry.wasm_module_compiles
+    }
+
+    /// Compile a Wasm module whole at its first entry, for tests of module-wide code.
+    #[cfg(test)]
+    pub(super) fn compile_wasm_modules_at_first_entry(&mut self) {
+        self.wasm_module_compile = WasmModuleCompile::FIRST_ENTRY;
     }
 
     /// Record another interpreter entry and return true exactly once when a
@@ -3561,6 +3619,16 @@ mod jit_code_cache_tests {
         JsTierState,
         WASM_JIT_MAX_TIER_MAPPED_BYTES, WASM_JIT_MAX_TIER_ROOTS,
     };
+
+    #[test]
+    fn wasm_module_compiles_whole_once_its_entries_or_time_say_it_runs_long() {
+        let policy = super::WasmModuleCompile::ADAPTIVE;
+        assert!(!policy.due(1, std::time::Duration::ZERO));
+        assert!(!policy.due(policy.entries - 1, policy.after / 2));
+        assert!(policy.due(policy.entries, std::time::Duration::ZERO));
+        assert!(policy.due(1, policy.after));
+        assert!(super::WasmModuleCompile::FIRST_ENTRY.due(1, std::time::Duration::ZERO));
+    }
 
     #[test]
     fn general_dispatch_backedge_unpriced_mode_waits_for_work_floor() {
