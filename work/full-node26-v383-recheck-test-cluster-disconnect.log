@@ -1,0 +1,2 @@
+Fail /workspace/work/node-stable-release/node-v26.12.1/test/parallel/test-cluster-disconnect.js
+all: pass=0 skip=0 fail=1 timeout=0 crash=0 unclassified=0 total=1 inventory_hash=af35af1cbe3d81b7
