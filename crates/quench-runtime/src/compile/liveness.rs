@@ -267,7 +267,119 @@ pub(super) fn add_suspended_exception_roots(function: &Function, live: &mut [Reg
     }
 }
 
+/// The transfer of an op whose field layout alone decides it: each of A, B and C a register
+/// it reads, writes or both, or a field naming no register; no register window or pair,
+/// operand, field base, optional register, numeric local target, method site or
+/// superinstruction (`uses`, `definitions`). Most instructions are of such ops.
+#[derive(Clone, Copy)]
+struct FixedTransfer {
+    /// The fields, in `InstructionField::ALL` order, whose register the op reads.
+    reads: [bool; 3],
+    /// The fields, in that order, whose register the op writes.
+    writes: [bool; 3],
+    reads_result: bool,
+    has_result: bool,
+}
+
+impl FixedTransfer {
+    /// `op`'s fixed transfer, when its layout decides one.
+    const fn of(op: Op) -> Option<Self> {
+        if matches!(
+            op.immediate_layout(),
+            ImmediateLayout::CallWindow
+                | ImmediateLayout::CallWindowWithEvalFlags
+                | ImmediateLayout::SingleArgumentCallWindowWithEvalFlags
+                | ImmediateLayout::RegisterPair
+        ) || matches!(op.immediate_role(), ImmediateRole::MethodSiteIndex | ImmediateRole::SuperinstructionIndex)
+        {
+            return None;
+        }
+        let mut reads = [false; 3];
+        let mut writes = [false; 3];
+        let mut index = 0;
+        while index < InstructionField::ALL.len() {
+            let layout = op.field_layout(InstructionField::ALL[index]);
+            match layout {
+                FieldLayout::RegisterWindowBase
+                | FieldLayout::Operand
+                | FieldLayout::NumericIndexOperand
+                | FieldLayout::FieldBase
+                | FieldLayout::OptionalRegister
+                | FieldLayout::OptionalReadRegister
+                | FieldLayout::ConstructArguments
+                | FieldLayout::NumericLocalTarget => return None,
+                _ => {}
+            }
+            reads[index] = layout.reads_register();
+            writes[index] = layout.writes_register();
+            index += 1;
+        }
+        Some(Self {
+            reads,
+            writes,
+            reads_result: op.result_layout().reads_result_register(),
+            has_result: op.has_result_register(),
+        })
+    }
+
+    /// The registers of `instruction`'s fields that `flags` marks.
+    #[inline(always)]
+    fn registers(instruction: WideInstruction, flags: [bool; 3]) -> RegisterSet {
+        let mut set = 0;
+        let mut index = 0;
+        while index < flags.len() {
+            if flags[index] {
+                set |= register_bit(instruction.field_value(InstructionField::ALL[index]));
+            }
+            index += 1;
+        }
+        set
+    }
+
+    #[inline(always)]
+    fn uses(self, instruction: WideInstruction) -> RegisterSet {
+        let result = if self.reads_result { register_bit(instruction.result_register()) } else { 0 };
+        Self::registers(instruction, self.reads) | result
+    }
+
+    #[inline(always)]
+    fn definitions(self, instruction: WideInstruction) -> RegisterSet {
+        let result = if self.has_result && !instruction.returns_from_frame() && !instruction.writes_numeric_local() {
+            register_bit(instruction.result_register())
+        } else {
+            0
+        };
+        Self::registers(instruction, self.writes) | result
+    }
+}
+
+/// `FixedTransfer::of` of every op, by op.
+const FIXED_TRANSFERS: [Option<FixedTransfer>; Op::COUNT] = {
+    let mut table = [None; Op::COUNT];
+    let mut index = 0;
+    while index < Op::COUNT {
+        if let Some(op) = Op::from_index(index) {
+            table[index] = FixedTransfer::of(op);
+        }
+        index += 1;
+    }
+    table
+};
+
 pub(super) fn uses(
+    instruction: WideInstruction,
+    methods: &(impl MethodArguments + ?Sized),
+    fields: &[FieldSite],
+    superinstructions: &[Superinstruction],
+) -> RegisterSet {
+    if let Some(fixed) = FIXED_TRANSFERS[instruction.op() as usize] {
+        return fixed.uses(instruction);
+    }
+    general_uses(instruction, methods, fields, superinstructions)
+}
+
+/// `uses` of an instruction whose op has no `FixedTransfer`.
+fn general_uses(
     instruction: WideInstruction,
     methods: &(impl MethodArguments + ?Sized),
     fields: &[FieldSite],
@@ -342,6 +454,17 @@ fn field_uses(instruction: WideInstruction, field: InstructionField, fields: &[F
 }
 
 pub(super) fn definitions(
+    instruction: WideInstruction,
+    superinstructions: &[Superinstruction],
+) -> RegisterSet {
+    if let Some(fixed) = FIXED_TRANSFERS[instruction.op() as usize] {
+        return fixed.definitions(instruction);
+    }
+    general_definitions(instruction, superinstructions)
+}
+
+/// `definitions` of an instruction whose op has no `FixedTransfer`.
+fn general_definitions(
     instruction: WideInstruction,
     superinstructions: &[Superinstruction],
 ) -> RegisterSet {
@@ -453,6 +576,32 @@ pub(crate) fn register_bit(register: u16) -> RegisterSet {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn fixed_transfers_match_the_general_derivation() {
+        // Every op with a fixed transfer, over field values in and past the set's width and
+        // every result flag combination the A field can carry.
+        let values: [u16; 6] = [0, 1, 63, 127, 128, u16::MAX >> 4];
+        let mut checked = 0;
+        for index in 0..Op::COUNT {
+            let op = Op::from_index(index).unwrap();
+            if FIXED_TRANSFERS[index].is_none() {
+                continue;
+            }
+            for &a in values.iter().chain(&[crate::bytecode::RETURN_REGISTER, crate::bytecode::NUMERIC_LOCAL_TARGET, 5 | crate::bytecode::RETURN_REGISTER]) {
+                for &b in &values {
+                    for &c in &values {
+                        let instruction = WideInstruction::new(op, a, b, c, 0);
+                        let no_methods: &[MethodSite] = &[];
+                        assert_eq!(uses(instruction, no_methods, &[], &[]), general_uses(instruction, no_methods, &[], &[]), "{op:?} {a} {b} {c}");
+                        assert_eq!(definitions(instruction, &[]), general_definitions(instruction, &[]), "{op:?} {a} {b} {c}");
+                        checked += 1;
+                    }
+                }
+            }
+        }
+        assert!(checked > 0);
+    }
 
     #[test]
     fn register_ranges_are_their_registers_bits() {
