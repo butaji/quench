@@ -52,15 +52,6 @@ pub(super) struct LaneInstruction {
 
 /// A `LaneInstruction::call_link` that names no entry: no cache holds this many.
 const NO_CALL_LINK: u16 = u16::MAX;
-/// The `LaneInstruction::call_link` bit a plain call (`lane_script_call`) sets once its record
-/// and the linked target passed the tests the two alone decide: the target's entry, the
-/// argument count against its parameters and copies, and its program. Linking another entry
-/// clears it; while the link holds, the callee and generation fix the target, so the tests
-/// hold too.
-const CALL_LINK_VERIFIED: u16 = 1 << 15;
-/// The `LaneInstruction::call_link` bits that name the entry.
-const CALL_LINK_INDEX: u16 = !CALL_LINK_VERIFIED;
-const _: () = assert!(SCRIPT_CALL_TARGETS[0] <= CALL_LINK_INDEX as usize && SCRIPT_CALL_TARGETS[1] <= CALL_LINK_INDEX as usize);
 const _: () = assert!(std::mem::size_of::<LaneInstruction>() == 3 * std::mem::size_of::<u64>());
 
 /// The immediate, resolved by its role: a jump target becomes the byte
@@ -9485,28 +9476,17 @@ impl<H: Host> Vm<H> {
     /// costs the hash again.
     #[inline(always)]
     fn linked_script_call_entry(&self, callee: Value, link: &std::cell::Cell<u16>) -> Option<*const ScriptCallTarget> {
-        self.verified_script_call_entry(callee, link).map(|(target, _)| target)
-    }
-
-    /// `linked_script_call_entry`, and whether the link holds with `CALL_LINK_VERIFIED`.
-    #[inline(always)]
-    fn verified_script_call_entry(
-        &self,
-        callee: Value,
-        link: &std::cell::Cell<u16>,
-    ) -> Option<(*const ScriptCallTarget, bool)> {
-        let hint = link.get();
-        let linked = usize::from(hint & CALL_LINK_INDEX);
-        let (index, verified) = if self.script_call_holds(linked, callee) {
-            (linked, hint & CALL_LINK_VERIFIED != 0)
+        let linked = usize::from(link.get());
+        let index = if self.script_call_holds(linked, callee) {
+            linked
         } else {
             let index = self.script_call_index(callee)?;
-            // The entry count stays below `CALL_LINK_INDEX` (`SCRIPT_CALL_TARGETS`).
+            // The entry count stays below `NO_CALL_LINK` (`SCRIPT_CALL_TARGETS`).
             link.set(index as u16);
-            (index, false)
+            index
         };
         // SAFETY: `script_call_holds` found the entry within the cache.
-        Some((unsafe { self.lane_stack.script_targets.entries.get_unchecked(index) } as *const ScriptCallTarget, verified))
+        Some(unsafe { self.lane_stack.script_targets.entries.get_unchecked(index) } as *const ScriptCallTarget)
     }
 
     /// `script_call_entry` of a callee of another program than the running one, whose
@@ -9871,25 +9851,15 @@ script_handler! {
         if lane_constructing(vm, callee) {
             sibling!(lane_native_call::<H>, r, ip, Carried::script(cx))
         }
-        let Some((target, verified)) = vm.verified_script_call_entry(callee, &i.call_link) else {
+        let Some(target) = vm.linked_script_call_entry(callee, &i.call_link) else {
             sibling!(lane_script_call_resolve::<H>, r, ip, Carried::script(cx))
         };
         // SAFETY: as `Vm::script_call_entry`; nothing below resolves a target or collects.
         let target = unsafe { &*target };
-        if !verified {
-            // One test: the site calls the form for its target's entry directly from now on
-            // (`lane_script_call_requicken`), out of line so this handler makes no call.
-            if target.entry != CallEntry::Activates {
-                sibling!(lane_script_call_requicken::<H>, r, ip, Carried::script(cx))
-            }
-            // Values past the parameters take the out-of-line form, whose activation keeps
-            // them, and so do a window past `FIXED_ARGUMENT_COPIES`, whose copy is a call,
-            // and another program's target (`lane_push_activation`).
-            let argc = ImmediateLayout::argument_count(i.imm());
-            if argc > target.params || argc > FIXED_ARGUMENT_COPIES || lane_crosses::<H, false>(cx, target) {
-                sibling!(lane_script_call_full::<H>, r, ip, Carried::script(cx))
-            }
-            i.call_link.set(i.call_link.get() | CALL_LINK_VERIFIED);
+        // One test: the site calls the form for its target's entry directly from now on
+        // (`lane_script_call_requicken`), out of line so this handler makes no call.
+        if target.entry != CallEntry::Activates {
+            sibling!(lane_script_call_requicken::<H>, r, ip, Carried::script(cx))
         }
         #[cfg(feature = "profile-lane-exits")]
         profile_script_call_target(cx, ip, callee, target);
@@ -9898,9 +9868,16 @@ script_handler! {
         let Some(this) = lane_direct_call_this(vm, target, r.get(i.c)) else {
             sibling!(lane_script_call_full::<H>, r, ip, Carried::script(cx))
         };
-        // A full lane stack takes the out-of-line form too, whose activation grows it
-        // (`lane_activate`).
-        if !lane_activation_room(vm, target) {
+        // Values past the parameters and a full lane stack take the out-of-line form too,
+        // whose activation keeps them or grows the stack (`lane_activate`), and so does another
+        // program's target (`lane_push_activation`).
+        // So does a window past `FIXED_ARGUMENT_COPIES`, whose copy is a call.
+        let argc = ImmediateLayout::argument_count(i.imm());
+        if argc > target.params
+            || argc > FIXED_ARGUMENT_COPIES
+            || !lane_activation_room(vm, target)
+            || lane_crosses::<H, false>(cx, target)
+        {
             sibling!(lane_script_call_full::<H>, r, ip, Carried::script(cx))
         }
         let returns = i.a & crate::bytecode::RETURN_REGISTER != 0;
@@ -11246,6 +11223,21 @@ fn lane_pure_native<H: Host>(
             let value = vm.heap.alloc_string(super::wtf16::JsString::from_str(&text));
             note_allocation(vm);
             Some(value)
+        }
+        // `Number(value)` of a primitive whose ToNumber reads no cell but a string's text, as
+        // Node's `utf8Write` converts its offset and length; a BigInt, a Symbol and any object
+        // take the general call.
+        Native::Number if !args.is_empty() => vm.primitive_to_number(argument).map(Value::number),
+        // `Number.prototype.toString` of a Number primitive in decimal, as a status code's
+        // `toString()` reads; a wrapper object, another radix or a radix to coerce take the
+        // general call.
+        Native::NumberString
+            if args.first().is_none_or(|radix| radix.is_undefined() || radix.as_number() == Some(10.0)) =>
+        {
+            let number = receiver.as_number()?;
+            let text = vm.heap.alloc_string(super::number::number_to_decimal(number).into());
+            note_allocation(vm);
+            Some(text)
         }
         Native::GlobalIsNaN | Native::GlobalIsFinite => {
             super::number::global_number_predicate(*native, vm.primitive_to_number(argument)?).map(Value::boolean)

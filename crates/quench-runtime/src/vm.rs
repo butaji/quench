@@ -1844,6 +1844,7 @@ pub(crate) struct Vm<H> {
     /// Lane private-name sites' homes (`private_site_home`).
     private_site_homes: private_site_home::PrivateSiteHomes,
     array_iteration_proof: Option<iterators::ArrayIterationProof>,
+    for_in_own_keys: Option<object_static::ForInOwnKeys>,
     species_slot_proof: std::cell::Cell<Option<object_get::SpeciesSlotProof>>,
     index_free_chain_proof: std::cell::Cell<Option<object::IndexFreeChainProof>>,
     enumerable_keys: enumerable_key_memo::EnumerableKeyMemo,
@@ -2830,6 +2831,7 @@ impl<H: Host> Vm<H> {
         self.symbol_load_proofs.clear();
         self.private_site_homes.clear();
         self.array_iteration_proof = None;
+        self.for_in_own_keys = None;
         self.species_slot_proof.set(None);
         self.index_free_chain_proof.set(None);
         self.enumerable_keys.clear();

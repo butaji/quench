@@ -652,6 +652,16 @@ impl<H: Host> Vm<H> {
         Ok(self.heap.string(value).map(|text| text.units().to_vec()))
     }
 
+    pub(crate) fn embedding_string_utf8(&self, root: RootId) -> Result<Option<Vec<u8>>, JsError> {
+        let value = self.embedding_value(root)?;
+        Ok(self.heap.string(value).map(|text| text.units().to_utf8()))
+    }
+
+    pub(crate) fn embedding_string_utf8_length(&self, root: RootId) -> Result<Option<usize>, JsError> {
+        let value = self.embedding_value(root)?;
+        Ok(self.heap.string(value).map(|text| text.units().utf8_len()))
+    }
+
     pub(crate) fn embedding_string_text(&self, root: RootId) -> Result<Option<String>, JsError> {
         let value = self.embedding_value(root)?;
         Ok(self.heap.string(value).map(|text| text.host_string().to_owned()))
