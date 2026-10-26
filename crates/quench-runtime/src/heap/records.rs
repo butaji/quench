@@ -7,6 +7,7 @@ use std::mem::MaybeUninit;
 #[cfg(feature = "profile-memory")]
 use std::mem::size_of;
 use std::ptr::NonNull;
+use std::sync::atomic::AtomicU64;
 
 pub(super) type RecordId = u32;
 
@@ -154,6 +155,72 @@ impl<T, const CAPACITY: usize> RecordSpace<T, CAPACITY> {
 struct RecordBlock {
     occupied: [u64; RECORDS_PER_BLOCK / OCCUPANCY_WORD_BITS],
     marked: [u64; RECORDS_PER_BLOCK / OCCUPANCY_WORD_BITS],
+}
+
+/// The parallel mark sets a record's bit in its block's `marked` word through an atomic view
+/// of that same word, so both must share one layout.
+const _: () = assert!(
+    size_of::<AtomicU64>() == size_of::<u64>() && align_of::<AtomicU64>() == align_of::<u64>()
+);
+
+/// One record space during a parallel full mark: its occupancy words, read-only, and its
+/// mark words, set atomically. These are the words the serial mark sets with `mark`; only
+/// the access differs. Workers read records and set bits, nothing else: no record is
+/// inserted, removed or written, and no block is added, until the marking scope joins
+/// (the stopped-mutator invariant of `parallel_mark::ParallelMarkView`).
+pub(super) struct ParallelRecordMarks<'space, T> {
+    blocks: *mut RecordBlock,
+    block_count: usize,
+    records: *const T,
+    _space: std::marker::PhantomData<&'space mut [T]>,
+}
+
+impl<T> Clone for ParallelRecordMarks<'_, T> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+impl<T> Copy for ParallelRecordMarks<'_, T> {}
+
+impl<'space, T> ParallelRecordMarks<'space, T> {
+    /// Sets record `id`'s mark bit when the record is occupied and the bit is clear: `true`
+    /// for the one caller that set it, as `RecordSpace::mark` answers serially.
+    #[inline(always)]
+    pub(super) fn mark_if_new(&self, id: RecordId) -> bool {
+        let (block_index, record_index) = RecordSpace::<T>::split_id(id);
+        if block_index >= self.block_count {
+            return false;
+        }
+        let word_index = record_index / OCCUPANCY_WORD_BITS;
+        let mask = 1_u64 << (record_index % OCCUPANCY_WORD_BITS);
+        // SAFETY: the block is in bounds, and no occupancy word is written while marking.
+        let occupied = unsafe {
+            let block = self.blocks.add(block_index);
+            std::ptr::addr_of!((*block).occupied).cast::<u64>().add(word_index).read()
+        };
+        if occupied & mask == 0 {
+            return false;
+        }
+        // SAFETY: the word is in bounds and aligned for an atomic (the layout assertion), and
+        // while the view lives every access to mark words goes through atomics.
+        let word = unsafe {
+            let block = self.blocks.add(block_index);
+            AtomicU64::from_ptr(std::ptr::addr_of_mut!((*block).marked).cast::<u64>().add(word_index))
+        };
+        super::mark_word_if_new(word, mask)
+    }
+
+    /// The record `id`.
+    ///
+    /// # Safety
+    /// `mark_if_new(id)` must have answered `true` (or the record be otherwise known to be
+    /// occupied) through this view.
+    #[inline(always)]
+    pub(super) unsafe fn get(&self, id: RecordId) -> &'space T {
+        // SAFETY: an occupied id names an initialized record, which no one writes or frees
+        // while the view lives.
+        unsafe { &*self.records.add(id as usize) }
+    }
 }
 
 pub(super) enum RecordSweep<'a, T> {
@@ -499,6 +566,18 @@ impl<T, const CAPACITY: usize> RecordSpace<T, CAPACITY> {
         self.blocks
             .get(block_index)
             .is_some_and(|block| block.is_occupied(record_index) && block.is_marked(record_index))
+    }
+
+    /// This space's records and mark words as the parallel full mark shares them
+    /// (`ParallelRecordMarks`). The exclusive borrow is what lets workers set mark bits
+    /// through it: nothing else reads or writes the space until the view's last use.
+    pub(super) fn parallel_marks(&mut self) -> ParallelRecordMarks<'_, T> {
+        ParallelRecordMarks {
+            blocks: self.blocks.as_mut_ptr(),
+            block_count: self.blocks.len(),
+            records: self.base.as_ptr().cast::<T>().cast_const(),
+            _space: std::marker::PhantomData,
+        }
     }
 
     #[cfg(debug_assertions)]
