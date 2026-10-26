@@ -1,0 +1,9 @@
+# TOD-20 HTTP response chunk coalescing probe
+
+Source was frozen at `cc9b25cb3ea74b7c076e3d511ff514fb7dda1181` throughout this experiment; both candidate edits were reverted after focused validation. The official Node v26.12.1 fixture was `test-http-1.0.js`, inventory hash `0ccbdcf883825942`, with a 60-second deadline.
+
+The first candidate treated `ServerResponse._send('')` as a no-op when no callback was provided, on the hypothesis that the internal empty send flushed between adjacent body writes. It did not change the wire output: Node expected one `d` chunk for `Hello, world!`, while Quench still emitted separate `7` and `6` chunks. Results SHA-256 `e43b641ee7726253d0c972cfb51910b518370312fc30f46f8d28e087203de7fd`; checkpoint SHA-256 `908fd60b21ec24037baa289d94736cafaf2242676923095c5e16a5a584162caa`.
+
+The second candidate deferred the response-write flush from `process.nextTick` to `setImmediate`, on the hypothesis that host callback boundaries drained nextTick before adjacent guest writes. This also failed the fixture and produced a different wrong grouping: `Hello, ` remained its own chunk, while `world!` merged with a later `X` written from the nextTick callback. This shows that a later phase merges writes across a real Node turn and cannot replace OutgoingMessage's cork semantics. Results SHA-256 `d6abeedca38aedf8125506969e48710c9d5dd90f044c12469584a242396e03e9`; checkpoint SHA-256 `336ce8febb82097b078dbc0152ad51c9c22d1ca50571968f532dcd42def46016`.
+
+The current source file has no diff against v362. The rebuilt experimental runner SHA-256 is `22eec7d6d3580645e0cb98079ad7a712ee33f6e68f0ff166e77f9cd7f0af4168`; rebuild it from the frozen source before any subsequent census. These trials do not support a production change. A valid fix needs to preserve both same-callback cork coalescing and separation across a following nextTick, likely by correcting the OutgoingMessage/Writable adapter boundary rather than changing the scheduler phase.
