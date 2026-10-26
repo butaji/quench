@@ -209,9 +209,13 @@ callgrind wasm-esm-jit --jit "$corpus/wasm-esm/run.mjs" returns
     "$startup/wasm-kernels-no-jit.out" "$startup/wasm-kernels-jit.out" \
     --run "$run/000-empty.cjs.out" $(ls "$run"/*.js.out | grep -v /z-t) \
     --run $(ls "$run"/z-t*.js.out)
-# The profiles' addresses are the profiled link's: convert them before relinking.
+# The profiles' addresses are the profiled link's: convert them before relinking. The Wasm
+# ESM corpus's profiles come last (`--late`), so BOLT lays the Wasm load path behind the
+# code the JavaScript profiles run instead of among it, where V8-v7 runs kept it resident
+# (pinned, 2026-10-25: 40-128 KiB on every row at full weight).
 "$tools_dir/bolt-profile" "$binary" "$target_dir/layout-bolt" --order "$order" \
-    "${DENSE_FUNCTIONS[@]}" "$run"/*.out*
+    "${DENSE_FUNCTIONS[@]}" $(ls "$run"/*.out* | grep -v /wasm-esm-) \
+    --late "$run"/wasm-esm-*.out*
 build
 "$llvm_bolt" "$binary" -o "$binary-bolt" -data="$target_dir/layout-bolt/profile.fdata" \
     -reorder-blocks=ext-tsp -split-functions -split-all-cold -reorder-functions=cdsort \
@@ -224,7 +228,7 @@ tools/check-link-order.sh "$binary" "$order"
     printf 'curriculum: %d, micros: %d, compile-only modules: %d, test262 RegExp: %d of %d\n' \
         "$(ls "$corpus"/[0-9]*.js | wc -l)" "$(ls "$corpus"/micro-*.js | wc -l)" \
         "${#COMPILE_ONLY_MODULES[@]}" "$(ls "$corpus"/z-t*.js | wc -l)" "$eligible"
-    printf 'wasm esm corpus: %s\n' "$(git -C "$wasm_testsuite" rev-parse HEAD)"
+    printf 'wasm esm corpus: %s, laid out late\n' "$(git -C "$wasm_testsuite" rev-parse HEAD)"
     printf 'packages: %s\n' "$packages"
 } | tee "$corpus/MANIFEST"
 printf 'laid-out binary: %s-bolt\n' "$binary"
