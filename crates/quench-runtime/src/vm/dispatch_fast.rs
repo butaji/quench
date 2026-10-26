@@ -9861,8 +9861,10 @@ script_handler! {
     /// A JavaScript `Call` of a frameless target (`Vm::resolve_script_call_target`): the
     /// callee runs in the lane on a window of the lane stack, with the frame facts its
     /// push would have set held by the activation until it returns or the lane exits.
-    /// Any other call takes the general path.
-    fn lane_script_call<>(cx, r, ip, i, view) {
+    /// Any other call takes the general path. `ARGC` is the record's argument count where
+    /// the view resolved it (`script_call_handler`), so the window's copy makes no test, else
+    /// `ANY_ARGC`.
+    fn lane_script_call<ARGC: u16>(cx, r, ip, i, view) {
         if !unsafe { (*cx).script_calls } {
             return exit(ip);
         }
@@ -9885,7 +9887,7 @@ script_handler! {
             // Values past the parameters take the out-of-line form, whose activation keeps
             // them, and so do a window past `FIXED_ARGUMENT_COPIES`, whose copy is a call,
             // and another program's target (`lane_push_activation`).
-            let argc = ImmediateLayout::argument_count(i.imm());
+            let argc = call_argument_count::<ARGC>(i);
             if argc > target.params || argc > FIXED_ARGUMENT_COPIES || lane_crosses::<H, false>(cx, target) {
                 sibling!(lane_script_call_full::<H>, r, ip, Carried::script(cx))
             }
@@ -9907,9 +9909,43 @@ script_handler! {
         if (returns && !lane_returning_call_admitted(cx)) || vm.with_scope_entered {
             return exit(ip);
         }
-        let arguments = ImmediateLayout::call_window_base(i.imm());
-        let (registers, base) = lane_push_activation::<H, false>(cx, r, ip, target, arguments, this, false);
+        // SAFETY: the record's window of `r` holds its values.
+        let passed = unsafe { r.0.add(usize::from(ImmediateLayout::call_window_base(i.imm()))).cast_const() };
+        let (registers, base) =
+            lane_push_passed::<H, false>(cx, r, ip, target, passed, call_argument_count::<ARGC>(i), this, false);
         next!(cx, registers, base, Carried::script(cx))
+    }
+}
+
+/// The `lane_script_call` argument count of a record its view did not resolve.
+const ANY_ARGC: u16 = u16::MAX;
+
+/// The argument count of the call record `i`: `ARGC`, unless that is `ANY_ARGC`.
+#[inline(always)]
+fn call_argument_count<const ARGC: u16>(i: &LaneInstruction) -> u16 {
+    if ARGC == ANY_ARGC { ImmediateLayout::argument_count(i.imm()) } else { ARGC }
+}
+
+/// The `lane_script_call` instantiation of a call record whose immediate is `imm`: that of
+/// its argument count where the copy of its window is one fixed move
+/// (`FIXED_ARGUMENT_COPIES`), else the general one.
+fn script_call_handler<H: Host>(imm: u32) -> Handler {
+    const _: () = assert!(FIXED_ARGUMENT_COPIES == 4);
+    match ImmediateLayout::argument_count(imm) {
+        0 => lane_script_call::<H, 0>,
+        1 => lane_script_call::<H, 1>,
+        2 => lane_script_call::<H, 2>,
+        3 => lane_script_call::<H, 3>,
+        4 => lane_script_call::<H, 4>,
+        _ => lane_script_call::<H, ANY_ARGC>,
+    }
+}
+
+/// Gives each call record the `lane_script_call` instantiation of its argument count.
+fn specialize_script_calls<H: Host>(records: &mut [LaneInstruction]) {
+    let general = lane_script_call::<H, ANY_ARGC> as Handler as *const ();
+    for record in records.iter_mut().filter(|record| record.handler == general) {
+        record.handler = script_call_handler::<H>(record.imm()) as *const ();
     }
 }
 
@@ -10105,7 +10141,7 @@ script_handler! {
         let vm = unsafe { vm(cx) };
         let (method, iterator) = (r.get(i.b), r.get(i.c));
         if !vm.steps_as_array_iterator(iterator, method) {
-            sibling!(lane_script_call::<H>, r, ip, Carried::script(cx))
+            sibling!(lane_script_call::<H, ANY_ARGC>, r, ip, Carried::script(cx))
         }
         let Some(result) = lane_array_iteration_result(vm, iterator) else {
             sibling!(lane_native_call::<H>, r, ip, Carried::script(cx))
@@ -10140,8 +10176,8 @@ script_handler! {
             sibling!(lane_native_call::<H>, r, ip, Carried::script(cx))
         }
         let Some(target) = vm.cross_call_entry(callee) else {
-            requicken::<H>(ip, lane_script_call::<H>);
-            sibling!(lane_script_call::<H>, r, ip, Carried::script(cx))
+            requicken::<H>(ip, script_call_handler::<H>(i.imm()));
+            sibling!(lane_script_call::<H, ANY_ARGC>, r, ip, Carried::script(cx))
         };
         // SAFETY: as `Vm::script_call_entry`; nothing below resolves a target or collects.
         let target = unsafe { &*target };
@@ -10186,7 +10222,7 @@ script_handler! {
         }
         if let Some(target) = vm.resolve_script_call_target(code, callee) {
             if target.program == vm.active_program {
-                sibling!(lane_script_call::<H>, r, ip, Carried::script(cx))
+                sibling!(lane_script_call::<H, ANY_ARGC>, r, ip, Carried::script(cx))
             }
             // Another program's callee that needs a frame takes it as `lane_frame_call`
             // pushes one.
@@ -13385,6 +13421,21 @@ lane_handler! {
 }
 
 lane_handler! {
+    /// `LoadConst` of the register the next record, a `Return`, returns
+    /// (`specialize_constant_returns`): the constant's return in one record, as `return;` and
+    /// `return null;` compile. Any return past the common one writes the register and takes
+    /// the `Return` record's own path.
+    fn lane_return_constant<>(cx, r, ip, i, view) {
+        let value = i.constant();
+        if let Some(resumed) = lane_complete_plain_activation(cx, value) {
+            resume!(cx, resumed)
+        }
+        r.set(i.a, value);
+        sibling!(lane_return_general::<H>, r, following(ip), view)
+    }
+}
+
+lane_handler! {
     /// `lane_return` past the common return (`lane_complete_plain_activation`): any other
     /// activation's completion, or the frame's return. Out of line, so `lane_return` keeps its
     /// registers.
@@ -14393,7 +14444,7 @@ script_handler! {
             script_calls && (!returns || lane_returning_call_admitted(cx))
         };
         let Some(target) = target.filter(admitted) else {
-            requicken::<H>(ip, lane_script_call::<H>);
+            requicken::<H>(ip, script_call_handler::<H>(i.imm()));
             return exit(ip);
         };
         lane_push_frame_call(cx, r, ip, i, target, callee, r.get(i.c), FrameCallArguments::Window(0))
@@ -14940,7 +14991,7 @@ const fn other_handler<H: Host, const BACKWARD: bool, const ACC: u8>(op: Op) -> 
         Op::WasmGlobalSet => Some(lane_global_set::<H>),
         Op::WasmFillRegisters => Some(lane_fill_registers::<H>),
         Op::CallKnown => Some(lane_call_known::<H>),
-        Op::Call => Some(lane_script_call::<H>),
+        Op::Call => Some(lane_script_call::<H, ANY_ARGC>),
         Op::CallArray => Some(lane_call_array::<H>),
         Op::CallSpread => Some(lane_call_spread::<H>),
         Op::Delete => Some(lane_delete::<H>),
@@ -16264,9 +16315,11 @@ fn derive_lane_view<'live, H: Host>(
     } else {
         (Box::default(), Vec::new())
     };
-    // The fused record is a script handler; Wasm bodies run none.
+    // The fused records are script handlers; Wasm bodies run none.
     if !wasm {
         specialize_local_branch_pairs::<H>(&mut records);
+        specialize_constant_returns::<H>(&mut records);
+        specialize_script_calls::<H>(&mut records);
     }
     let min_run = if closes_loop(&decoded, &exits) {
         LANE_ENTRY_MIN_RUN
@@ -16681,6 +16734,19 @@ fn specialize_local_branch_pairs<H: Host>(records: &mut [LaneInstruction]) {
             continue;
         };
         records[pc].handler = fused as *const ();
+    }
+}
+
+/// Runs each `LoadConst` whose register the next record, a `Return`, returns as one record
+/// (`lane_return_constant`). The `Return` record stays for jumps that reach it, and the
+/// fused record's general return continues there.
+fn specialize_constant_returns<H: Host>(records: &mut [LaneInstruction]) {
+    let load = lane_load_const::<H> as Handler as *const ();
+    let ret = lane_return::<H> as Handler as *const ();
+    for pc in 0..records.len().saturating_sub(1) {
+        if records[pc].handler == load && records[pc + 1].handler == ret && records[pc + 1].a == records[pc].a {
+            records[pc].handler = lane_return_constant::<H> as Handler as *const ();
+        }
     }
 }
 
