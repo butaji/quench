@@ -876,7 +876,9 @@ const REQUEST_FUNCTION: &str = r#"((Writable, Readable, create, write, setHeader
       if (socket && typeof socket.once === 'function') {
         const onSocketError = (error) => request.destroy(error);
         socket.once('error', onSocketError);
+        request.__quenchInternalListenerRegistration = true;
         request.once('response', () => socket.removeListener('error', onSocketError));
+        request.__quenchInternalListenerRegistration = false;
       }
       socket._httpMessage = request;
       request.emit('socket', socket);
@@ -988,6 +990,10 @@ const REQUEST_FUNCTION: &str = r#"((Writable, Readable, create, write, setHeader
     // every request close through one idempotent transition, with or without
     // an Agent, so those paths cannot emit duplicate `close` events.
     request.emit = (event, ...args) => {
+      if (event === 'error' && request.__quenchSuppressTransportError) return true;
+      if (event === 'response' && request.__quenchResponseListeners?.size > 0) {
+        request.__quenchSuppressTransportError = true;
+      }
       if (event === 'close') {
         if (request._httpCloseEmitted) return true;
         if (!request.__quenchCloseReady) {
@@ -1211,7 +1217,33 @@ const REQUEST_FUNCTION: &str = r#"((Writable, Readable, create, write, setHeader
         }
       });
     }
-    if (typeof callback === "function") request.once("response", callback);
+    const responseListeners = new Set();
+    request.__quenchResponseListeners = responseListeners;
+    if (typeof callback === "function") {
+      responseListeners.add(callback);
+      request.once("response", callback);
+    }
+    for (const method of ['on', 'addListener', 'once', 'prependListener', 'prependOnceListener']) {
+      const listen = request[method].bind(request);
+      request[method] = (event, ...args) => {
+        if (event === 'response' && !request.__quenchInternalListenerRegistration) {
+          if (typeof args[0] === 'function') responseListeners.add(args[0]);
+        }
+        return listen(event, ...args);
+      };
+    }
+    for (const method of ['removeListener', 'off']) {
+      const remove = request[method].bind(request);
+      request[method] = (event, listener) => {
+        if (event === 'response') responseListeners.delete(listener);
+        return remove(event, listener);
+      };
+    }
+    const removeAllListeners = request.removeAllListeners.bind(request);
+    request.removeAllListeners = (event) => {
+      if (event === undefined || event === 'response') responseListeners.clear();
+      return removeAllListeners(event);
+    };
     return request;
   }
   request.prototype = clientRequestPrototype;

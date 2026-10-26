@@ -2400,11 +2400,10 @@ fn fail_client_exchange_with_code(
                 failure = Some(message);
             }
         }
-        // A response can already have been delivered when the transport
-        // fails before its message is complete. Node reports that terminal
-        // reset on ClientRequest as well as terminating the IncomingMessage;
-        // destroying only the response leaves request-level listeners waiting
-        // forever (and hides ECONNRESET from the request owner).
+        // Keep the error-driven Writable destroy path so ClientRequest still
+        // completes its close lifecycle. When the public response event had a
+        // listener, its emitter suppresses this duplicate request error; when
+        // no response was observed, ClientRequest owns the transport error.
         if let Err(message) =
             destroy_stream_with_error(runtime, program, client.request_root, error)
         {
