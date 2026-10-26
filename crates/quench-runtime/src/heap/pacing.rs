@@ -419,10 +419,11 @@ pub(super) const MEMORY_FIRST_PACING: GenerationalPacing = GenerationalPacing {
     young: Ratio::new(1, 64),
     minimum_young: YOUNG_MINIMUM_ALLOCATION,
     maximum_young: MAXIMUM_YOUNG,
-    // RSS is this table's criterion: survival never widens the young budget.
-    surviving_young_from: SURVIVAL_SCALE + 1,
-    surviving_young_factor: 1,
-    steady_live_growth: Ratio::new(0, 1),
+    // RSS is this table's first criterion; on a steady heap it trades a little for Score
+    // (`MEMORY_FIRST_SURVIVING_YOUNG_FACTOR`).
+    surviving_young_from: THROUGHPUT_SURVIVING_YOUNG_FROM,
+    surviving_young_factor: MEMORY_FIRST_SURVIVING_YOUNG_FACTOR,
+    steady_live_growth: Ratio::new(1, 8),
     old_growth: Ratio::new(1, 1),
     minimum_old_growth: MEMORY_FIRST_MINIMUM_ALLOCATION,
     allocation_cap: Ratio::new(1, 1),
@@ -526,6 +527,13 @@ const THROUGHPUT_SURVIVING_YOUNG_FROM: u32 = SURVIVAL_SCALE / 4;
 /// (17/31), fixed-work instructions 9.00G -> 8.81G; RayTrace, Splay, DeltaBlue and RegExp
 /// unchanged.
 const THROUGHPUT_SURVIVING_YOUNG_FACTOR: usize = 8;
+/// The young budget's factor past `THROUGHPUT_SURVIVING_YOUNG_FROM` under memory-first, on a
+/// steady heap only (`PacingState::steady`). Candidate for the owner's decision: memory-first
+/// trades peak RSS for Score here. V8-v7 under memory-first (pinned, 7 runs, gc-tuning build,
+/// 2026-10-26): EarleyBoyer Score 4002 -> 4629 at 7328 -> 7740 KiB, RegExp 2903 -> 2869 at
+/// 6316 -> 6932 KiB; factor eight gave 4999 at 8232 and 3325 at 8136. The other six fixtures
+/// unchanged in RSS and within noise in Score.
+const MEMORY_FIRST_SURVIVING_YOUNG_FACTOR: usize = 4;
 
 #[cfg(test)]
 mod tests {
@@ -567,7 +575,11 @@ mod tests {
             throughput.surviving_young_budget(0, SURVIVAL_SCALE, false),
             throughput.young_budget(0)
         );
-        assert_eq!(memory_first.surviving_young_budget(0, SURVIVAL_SCALE, true), memory_first.young_budget(0));
+        assert_eq!(
+            memory_first.surviving_young_budget(0, SURVIVAL_SCALE, true),
+            memory_first.young_budget(0) * MEMORY_FIRST_SURVIVING_YOUNG_FACTOR
+        );
+        assert_eq!(memory_first.surviving_young_budget(0, SURVIVAL_SCALE, false), memory_first.young_budget(0));
         assert!(throughput.maximum_cap_backoff > memory_first.maximum_cap_backoff);
     }
 
