@@ -13220,11 +13220,12 @@ lane_handler! {
     }
 }
 
-/// `lane_complete_activation`'s commonest completion: a JavaScript activation of the
-/// running program whose call keeps its result (`Completion::Plain`, a result register).
-/// It restores what that completion restores, without moving the activation out of the
-/// stack: the caller's registers, records, receiver and environments, and the call's
-/// result. `None` leaves every other completion to `lane_complete_activation`.
+/// `lane_complete_activation`'s commonest completion: a JavaScript activation whose call
+/// keeps its result (`Completion::Plain`, or `Completion::Cross` from another program, a
+/// result register). It restores what that completion restores, without moving the
+/// activation out of the stack: the caller's program, registers, records, receiver and
+/// environments, and the call's result. `None` leaves every other completion to
+/// `lane_complete_activation`.
 #[inline(always)]
 fn lane_return_plain<H: Host>(cx: *mut LaneContext<H>, value: Value) -> Option<(Registers, Ip)> {
     let vm = unsafe { vm(cx) };
@@ -13235,17 +13236,29 @@ fn lane_return_plain<H: Host>(cx: *mut LaneContext<H>, value: Value) -> Option<(
     };
     // SAFETY: the call record belongs to the caller's live view.
     let destination = unsafe { (*top.call).a };
-    if script.completion != Completion::Plain || destination & crate::bytecode::RETURN_REGISTER != 0 {
+    let crosses = match script.completion {
+        Completion::Plain => false,
+        Completion::Cross => true,
+        _ => return None,
+    };
+    if destination & crate::bytecode::RETURN_REGISTER != 0 {
         return None;
     }
     let (call, caller_registers, caller_base, window) = (top.call, top.caller_registers, top.caller_base, top.window);
     let (this, env, capture) = (script.caller_this, script.caller_env, script.caller_capture);
+    let caller_program = top.caller_program;
     // SAFETY: a script activation holds no drop glue and no Wasm storage
     // (`Activation::frame_storage_bytes`); its window starts within the values.
     unsafe {
         let len = stack.activations.len();
         stack.activations.set_len(len - 1);
         stack.values.set_len(window);
+    }
+    // The caller's memory view reads its program's records (`MemoryView::script`).
+    if crosses {
+        lane_enter_program(cx, caller_program);
+    }
+    unsafe {
         (*cx).registers = caller_registers;
         (*cx).base = caller_base;
         (*cx).memory = MemoryView::script(cx);
