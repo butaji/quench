@@ -84,6 +84,9 @@ pub fn release_read_only_pages() {
     let mut segments = loaded_segments(ReleasedSegment::Clean);
     let keeps_pages = !crate::shared_run::process_memory_policy()
         .is_some_and(quench_runtime::MemoryPolicy::returns_pages_at_collections);
+    if keeps_pages && std::env::var_os("QUENCH_TP_SKIP_EXEC").is_some() {
+        segments.clear();
+    }
     if let Some(hot) = run_hot_text(&segments).filter(|_| keeps_pages) {
         segments = segments.into_iter().flat_map(|segment| without(segment, hot)).collect();
     }
