@@ -262,7 +262,7 @@ pub(super) fn promote<'a>(
             handler.slot = Some(ThrownValueSlot::Register(target));
         }
     }
-    function.code = code;
+    function.code = code.into();
 }
 
 /// `instruction` in the slot `packed` held: packed when it fits, else in the wide table,

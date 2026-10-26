@@ -160,9 +160,11 @@ impl<T> Default for ThinBoxSlice<T> {
     }
 }
 
+/// Moves the elements straight into the slice's one allocation: a builder's `Vec` keeps
+/// its growth slack, which shrinking it to a `Box<[T]>` first would reallocate to drop.
 impl<T> From<Vec<T>> for ThinBoxSlice<T> {
     fn from(values: Vec<T>) -> Self {
-        values.into_boxed_slice().into()
+        Self::from_exact_iter(values.into_iter())
     }
 }
 
@@ -171,6 +173,14 @@ impl<'a, T> IntoIterator for &'a ThinBoxSlice<T> {
     type IntoIter = std::slice::Iter<'a, T>;
     fn into_iter(self) -> Self::IntoIter {
         self.iter()
+    }
+}
+
+impl<'a, T> IntoIterator for &'a mut ThinBoxSlice<T> {
+    type Item = &'a mut T;
+    type IntoIter = std::slice::IterMut<'a, T>;
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter_mut()
     }
 }
 

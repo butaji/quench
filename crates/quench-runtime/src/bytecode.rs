@@ -1289,7 +1289,7 @@ pub struct Function {
     /// Source local slots owned by a closure environment when this activation
     /// escapes. `None` retains legacy whole-frame promotion; `Some` is the
     /// selective layout, including an empty set for closure-only activations.
-    pub(crate) selective_capture_slots: Option<Vec<u16>>,
+    pub(crate) selective_capture_slots: Option<crate::heap::ThinBoxSlice<u16>>,
     /// Binding slots assigned stable frame registers by lowering.
     pub(crate) local_registers: crate::heap::ThinBoxSlice<LocalRegister>,
     /// The function was created while an enclosing `with` scope was active,
@@ -1306,14 +1306,14 @@ pub struct Function {
     pub(crate) source_positions: SourcePositions,
     /// The plan of each CloneEnv instruction.
     pub environment_clones: crate::heap::ThinBoxSlice<EnvironmentClone>,
-    pub code: Vec<Instr>,
+    pub(crate) code: crate::heap::ThinBoxSlice<Instr>,
     pub(crate) wide: Vec<WideInstruction>,
     pub registers: u16,
     pub(crate) dispatch: DispatchClass,
     /// Fixed-width view of `code`, derived once the function proves hot.
     pub(crate) decoded: HotDecoding,
     /// Lazily derived `plain_local_slots`; never serialized.
-    pub(crate) plain_locals: std::cell::OnceCell<Box<[bool]>>,
+    pub(crate) plain_locals: std::cell::OnceCell<crate::heap::ThinBoxSlice<bool>>,
     /// Lazily derived `declared_atoms`; never serialized.
     pub(crate) declared_atom_sets: std::cell::OnceCell<Box<DeclaredAtomSets>>,
     /// Lazily derived `activation_bindings_observable`; never serialized.
@@ -1330,7 +1330,7 @@ pub struct Function {
     /// Lazily derived `call_plan`; never serialized.
     pub(crate) call_plan: std::cell::OnceCell<CallPlan>,
     /// Lazily derived `initializer_stores`; never serialized.
-    pub(crate) initializer: std::cell::OnceCell<Option<Box<[InitializerStore]>>>,
+    pub(crate) initializer: std::cell::OnceCell<Option<crate::heap::ThinBoxSlice<InitializerStore>>>,
     pub(crate) handlers: crate::heap::ThinBoxSlice<Handler>,
     pub(crate) register_roots: RegisterRoots,
     /// A register that holds `undefined` for the whole activation, set at frame entry and
@@ -1342,6 +1342,11 @@ pub struct Function {
     /// The value every register holds when an activation starts.
     pub(crate) initial_register: InitialRegister,
 }
+
+// Every compiled function keeps one record for the program's life (a fastify server holds
+// about 4,400), so each word here is a per-function cost of an idle process: its variable
+// lengths sit behind thin slices, and builder-only state stays with the compiler.
+const _: () = assert!(size_of::<Function>() == 352);
 
 /// The facts about a function that are read before its first call: when its closure is
 /// made, by `IsConstructor` and brand checks, by `Function.prototype.toString`, and by an
@@ -1588,17 +1593,17 @@ pub(crate) const HIDDEN_PARAMETER_PREFIX: &str = "\0quench:param:";
 #[derive(Clone, Debug, Default)]
 pub(crate) struct RegisterRoots {
     covered: bool,
-    dead_call_results: Box<[u32]>,
+    dead_call_results: crate::heap::ThinBoxSlice<u32>,
     masks: std::cell::OnceCell<std::rc::Rc<crate::compile::liveness::RegisterMasks>>,
 }
 
 impl RegisterRoots {
     pub(crate) fn new(covered: bool) -> Self {
-        Self::with_dead_call_results(covered, Box::default())
+        Self::with_dead_call_results(covered, Default::default())
     }
 
     /// `dead_call_results` in increasing pc order.
-    pub(crate) fn with_dead_call_results(covered: bool, dead_call_results: Box<[u32]>) -> Self {
+    pub(crate) fn with_dead_call_results(covered: bool, dead_call_results: crate::heap::ThinBoxSlice<u32>) -> Self {
         Self { covered, dead_call_results, masks: std::cell::OnceCell::new() }
     }
 
@@ -1627,20 +1632,30 @@ impl RegisterRoots {
 /// before it as LEB128 varints: the pc advance, the line change (zigzag), then the column,
 /// as a change (zigzag) on the same line and absolute on a new one. Most entries take three
 /// bytes, a quarter of a `SourcePosition`, and a function keeps one per source location
-/// change while it compiles and for as long as it lives.
+/// change for as long as it lives. A table is appended to only while it is built
+/// (`SourcePositionsBuilder`); the finished table keeps just its bytes behind one word.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct SourcePositions {
-    bytes: Vec<u8>,
-    /// The final entry, which the next one is coded against.
-    last: Option<SourcePosition>,
+    bytes: crate::heap::ThinBoxSlice<u8>,
     /// Where decoding may start, made on the first lookup of a table longer than one interval
     /// (`SourcePositions::at`): a stack trace through a large function otherwise decoded its
     /// table from the start for every frame (Babel: about 20K instructions a frame).
-    checkpoints: std::cell::OnceCell<Box<[SourcePositionCheckpoint]>>,
+    checkpoints: std::cell::OnceCell<crate::heap::ThinBoxSlice<SourcePositionCheckpoint>>,
+}
+
+/// A `SourcePositions` table while it is appended to: its coded entries and the final one,
+/// which the next is coded against. Only building needs the final entry.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct SourcePositionsBuilder {
+    bytes: Vec<u8>,
+    last: Option<SourcePosition>,
 }
 
 /// The entries between two `SourcePositions` checkpoints.
 const SOURCE_POSITION_CHECKPOINT_INTERVAL: usize = 32;
+
+/// The varints coding one entry: its pc advance, line change and column.
+const SOURCE_POSITION_VARINTS: usize = 3;
 
 /// A point decoding may resume from: the byte offset of an entry, the entry before it
 /// (which it is coded against) and the entry's own pc.
@@ -1654,7 +1669,7 @@ struct SourcePositionCheckpoint {
 /// Two tables are equal when their entries are; the checkpoints are a memo of them.
 impl PartialEq for SourcePositions {
     fn eq(&self, other: &Self) -> bool {
-        self.bytes == other.bytes && self.last == other.last
+        self.bytes == other.bytes
     }
 }
 impl Eq for SourcePositions {}
@@ -1663,26 +1678,17 @@ impl Eq for SourcePositions {}
 const LEB128_PAYLOAD_BITS: u32 = 7;
 const LEB128_CONTINUATION: u8 = 1 << LEB128_PAYLOAD_BITS;
 
-impl SourcePositions {
+/// The entry every table's first is coded against.
+const SOURCE_POSITION_ORIGIN: SourcePosition = SourcePosition { pc: 0, line: 0, column: 0 };
+
+impl SourcePositionsBuilder {
     pub(crate) fn last(&self) -> Option<SourcePosition> {
         self.last
     }
 
-    /// The coded entries and the final one, as a residual stores them
-    /// (`BinaryWriter::source_positions`).
-    pub(crate) fn encoded(&self) -> (&[u8], Option<SourcePosition>) {
-        (&self.bytes, self.last)
-    }
-
-    /// The table a residual stored (`encoded`); validation judges it against its function.
-    pub(crate) fn from_encoded(bytes: Vec<u8>, last: Option<SourcePosition>) -> Self {
-        Self { bytes, last, checkpoints: std::cell::OnceCell::new() }
-    }
-
-    /// Appends `position`. Compiled code orders positions by pc; a decoded table keeps any
-    /// order exactly, for validation to judge.
+    /// Appends `position`. Compiled code orders positions by pc.
     pub(crate) fn push(&mut self, position: SourcePosition) {
-        let previous = self.last.unwrap_or(SourcePosition { pc: 0, line: 0, column: 0 });
+        let previous = self.last.unwrap_or(SOURCE_POSITION_ORIGIN);
         let line_change = i64::from(position.line) - i64::from(previous.line);
         self.write(u64::from(position.pc.wrapping_sub(previous.pc)));
         self.write(zigzag(line_change));
@@ -1692,7 +1698,6 @@ impl SourcePositions {
             u64::from(position.column)
         });
         self.last = Some(position);
-        self.checkpoints = std::cell::OnceCell::new();
     }
 
     fn write(&mut self, mut value: u64) {
@@ -1706,9 +1711,49 @@ impl SourcePositions {
             self.bytes.push(byte | LEB128_CONTINUATION);
         }
     }
+}
+
+impl From<SourcePositionsBuilder> for SourcePositions {
+    fn from(builder: SourcePositionsBuilder) -> Self {
+        Self::from_encoded(&builder.bytes)
+    }
+}
+
+impl SourcePositions {
+    /// The coded entries, as a residual stores them (`BinaryWriter::source_positions`).
+    pub(crate) fn encoded(&self) -> &[u8] {
+        &self.bytes
+    }
+
+    /// The table a residual stored (`encoded`); validation judges it (`well_formed`).
+    pub(crate) fn from_encoded(bytes: &[u8]) -> Self {
+        Self {
+            bytes: crate::heap::ThinBoxSlice::from_exact_iter(bytes.iter().copied()),
+            checkpoints: std::cell::OnceCell::new(),
+        }
+    }
+
+    /// Whether the bytes are whole entries of terminated varints that fit a `u64`, as
+    /// `SourcePositionsBuilder` codes them; a stored table is untrusted input.
+    pub(crate) fn well_formed(&self) -> bool {
+        let mut varints = 0;
+        let mut shift = 0;
+        for &byte in self.bytes.iter() {
+            if shift >= u64::BITS {
+                return false;
+            }
+            if byte & LEB128_CONTINUATION == 0 {
+                varints += 1;
+                shift = 0;
+            } else {
+                shift += LEB128_PAYLOAD_BITS;
+            }
+        }
+        shift == 0 && varints % SOURCE_POSITION_VARINTS == 0
+    }
 
     pub(crate) fn iter(&self) -> SourcePositionIter<'_> {
-        self.iter_from(0, SourcePosition { pc: 0, line: 0, column: 0 })
+        self.iter_from(0, SOURCE_POSITION_ORIGIN)
     }
 
     fn iter_from(&self, offset: usize, previous: SourcePosition) -> SourcePositionIter<'_> {
@@ -1736,7 +1781,7 @@ impl SourcePositions {
 
     /// A checkpoint at every `SOURCE_POSITION_CHECKPOINT_INTERVAL`th entry after the first;
     /// none for a table shorter than one interval, which decodes as fast from its start.
-    fn make_checkpoints(&self) -> Box<[SourcePositionCheckpoint]> {
+    fn make_checkpoints(&self) -> crate::heap::ThinBoxSlice<SourcePositionCheckpoint> {
         let mut checkpoints = Vec::new();
         let mut iter = self.iter();
         let mut entry = 0;
@@ -1749,26 +1794,22 @@ impl SourcePositions {
             }
             entry += 1;
         }
-        checkpoints.into_boxed_slice()
-    }
-
-    pub(crate) fn shrink_to_fit(&mut self) {
-        self.bytes.shrink_to_fit();
+        checkpoints.into()
     }
 
     #[cfg(feature = "profile-memory")]
     pub(crate) fn capacity_bytes(&self) -> usize {
-        self.bytes.capacity()
+        self.bytes.len()
     }
 }
 
 impl FromIterator<SourcePosition> for SourcePositions {
     fn from_iter<I: IntoIterator<Item = SourcePosition>>(positions: I) -> Self {
-        let mut table = Self::default();
+        let mut table = SourcePositionsBuilder::default();
         for position in positions {
             table.push(position);
         }
-        table
+        table.into()
     }
 }
 
@@ -2411,7 +2452,9 @@ impl Function {
     /// The function's `initializer_stores`, derived on first use.
     #[inline(always)]
     pub(crate) fn initializer_stores(&self, constants: &[Constant]) -> Option<&[InitializerStore]> {
-        self.initializer.get_or_init(|| self.derive_initializer_stores(constants)).as_deref()
+        self.initializer
+            .get_or_init(|| self.derive_initializer_stores(constants).map(Into::into))
+            .as_deref()
     }
 
     /// The stores of a body whose whole effect is storing parameters into fields of `this`,
@@ -2813,8 +2856,7 @@ impl Function {
     pub(crate) fn plain_local(&self, program: &ResidualProgram, slot: usize) -> bool {
         self.plain_locals
             .get_or_init(|| {
-                self.plain_local_slots(&program.superinstructions)
-                    .into_boxed_slice()
+                self.plain_local_slots(&program.superinstructions).into()
             })
             .get(slot)
             .copied()
@@ -3812,7 +3854,7 @@ impl ResidualProgram {
         Some(position)
     }
 
-    pub const FORMAT_VERSION: u8 = 109;
+    pub const FORMAT_VERSION: u8 = 110;
     pub const RUNTIME_ABI_FINGERPRINT: u64 = {
         const ABI_SIGNATURE: u64 = 0x5251_4a00_0000_0000;
         const FORMAT_VERSION_SHIFT: u32 = 16;

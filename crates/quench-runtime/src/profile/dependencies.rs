@@ -15,7 +15,7 @@ pub(super) fn binary_pairs(
         let Some(code) = program
             .functions
             .get(function as usize)
-            .map(|function| function.code.as_slice())
+            .map(|function| &*function.code)
         else {
             continue;
         };

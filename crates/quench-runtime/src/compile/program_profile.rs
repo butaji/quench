@@ -46,7 +46,7 @@ fn atom_bytes(function: &Function) -> usize {
 /// Layout tables beside the code: registers, capture slots, binding sites and clones.
 fn layout_bytes(function: &Function) -> usize {
     slice_bytes::<LocalRegister>(&function.local_registers)
-        + function.selective_capture_slots.as_ref().map_or(0, bytes::<u16>)
+        + function.selective_capture_slots.as_deref().map_or(0, slice_bytes::<u16>)
         + slice_bytes::<BindingSite>(&function.binding_sites)
         + slice_bytes::<EnvironmentClone>(&function.environment_clones)
 }
@@ -65,7 +65,7 @@ pub(super) fn report(program: &ResidualProgram) {
         slots.len(),
         size_of::<Function>(),
         slots.capacity() * size_of::<FunctionSlot>() + records().count() * size_of::<Function>(),
-        sum(|function| bytes::<Instr>(&function.code)),
+        sum(|function| slice_bytes::<Instr>(&function.code)),
         sum(|function| bytes::<WideInstruction>(&function.wide)),
         sum(|function| function.source_positions.capacity_bytes()),
         sum(|function| slice_bytes::<Handler>(&function.handlers)),

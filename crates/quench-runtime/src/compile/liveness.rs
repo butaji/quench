@@ -136,7 +136,7 @@ pub(crate) fn register_roots(
 /// skip building a result nothing reads (`ImmediateLayout::LANE_CALL_RESULT_UNUSED_FLAG`).
 /// A lane derived each from the per-pc masks on its first run, 3-6% of the instructions of
 /// cached npm runs (axios, schema-utils, ajv-formats), which a compile-cache hit now keeps.
-fn dead_call_results(function: &Function, live: &[RegisterSet]) -> Box<[u32]> {
+fn dead_call_results(function: &Function, live: &[RegisterSet]) -> crate::heap::ThinBoxSlice<u32> {
     function
         .instructions()
         .enumerate()
@@ -496,7 +496,7 @@ mod tests {
                 Instr::new(Op::Jump, 0, 0, 0, 3),
                 Instr::new(Op::Return, 0, 0, 0, 0),
                 Instr::new(Op::Return, 1, 0, 0, 0),
-            ],
+            ].into(),
             wide: vec![],
             registers: 2,
             dispatch: crate::bytecode::DispatchClass::General,

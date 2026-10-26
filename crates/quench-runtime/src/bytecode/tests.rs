@@ -180,7 +180,7 @@ fn one_function_program(code: Vec<Instr>, source_positions: crate::bytecode::Sou
             binding_sites: vec![].into(),
             source_positions,
             environment_clones: vec![].into(),
-            code,
+            code: code.into(),
             wide: vec![],
             registers: 1,
             dispatch: DispatchClass::General,
@@ -230,8 +230,8 @@ fn decoder_rejects_out_of_range_local_load() {
     assert_eq!(residual_round_trip(&program, "invalid-local").unwrap_err(), "invalid residual local load");
 }
 
-/// A stored source position table is untrusted input: a final entry that is not the coded
-/// table's last, a truncated varint and an overlong one each fail decoding with an error.
+/// A stored source position table is untrusted input: a truncated varint, an overlong one and
+/// a partial entry each fail decoding with an error.
 #[test]
 fn decoder_rejects_inconsistent_source_position_tables() {
     use crate::bytecode::{SourcePosition, SourcePositions};
@@ -240,13 +240,12 @@ fn decoder_rejects_inconsistent_source_position_tables() {
         .into_iter()
         .collect();
     assert!(residual_round_trip(&one_function_program(code(), valid.clone()), "positions-valid").is_ok());
-    let (bytes, last) = valid.encoded();
-    let bytes = bytes.to_vec();
-    let mismatched = SourcePositions::from_encoded(bytes.clone(), Some(SourcePosition { pc: 1, line: 9, column: 9 }));
-    let missing_last = SourcePositions::from_encoded(bytes.clone(), None);
-    let truncated = SourcePositions::from_encoded(bytes[..bytes.len() - 1].iter().copied().chain([0x80]).collect(), last);
-    let overlong = SourcePositions::from_encoded(vec![0xff; 32], last);
-    for (name, table) in [("mismatched", mismatched), ("missing-last", missing_last), ("truncated", truncated), ("overlong", overlong)] {
+    let bytes = valid.encoded();
+    let truncated: Vec<u8> = bytes[..bytes.len() - 1].iter().copied().chain([0x80]).collect();
+    let truncated = SourcePositions::from_encoded(&truncated);
+    let overlong = SourcePositions::from_encoded(&[0xff; 32]);
+    let partial = SourcePositions::from_encoded(&bytes[..bytes.len() - 1]);
+    for (name, table) in [("truncated", truncated), ("overlong", overlong), ("partial", partial)] {
         let error = residual_round_trip(&one_function_program(code(), table), name).unwrap_err();
         assert!(error.contains("invalid source positions"), "{name}: {error}");
     }
@@ -302,7 +301,7 @@ fn decoder_rejects_runtime_abi_mismatch_before_tables() {
             binding_sites: vec![].into(),
             source_positions: Default::default(),
             environment_clones: vec![].into(),
-            code: vec![Instr::new(Op::Return, 0, 0, 0, 0)],
+            code: vec![Instr::new(Op::Return, 0, 0, 0, 0)].into(),
             wide: vec![],
             registers: 1,
             dispatch: DispatchClass::General,
@@ -621,7 +620,7 @@ fn source_positions_round_trip_every_delta_shape() {
     ];
     let table = positions.into_iter().collect::<SourcePositions>();
     assert_eq!(table.iter().collect::<Vec<_>>(), positions);
-    assert_eq!(table.last(), positions.last().copied());
+    assert_eq!(table.iter().last(), positions.last().copied());
     assert_eq!(table.at(8), Some(positions[1]));
     assert_eq!(table.at(300), Some(positions[3]));
 }
@@ -743,3 +742,4 @@ fn derived_function_facts_round_trip_and_match_their_derivation() {
     }
     assert_eq!(decoded.validate(), Ok(()));
 }
+

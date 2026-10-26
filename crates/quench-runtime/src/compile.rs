@@ -2898,9 +2898,7 @@ impl<'a> Compiler<'a> {
             );
         }
         for function in functions.iter_mut().flatten() {
-            function.code.shrink_to_fit();
             function.wide.shrink_to_fit();
-            function.source_positions.shrink_to_fit();
         }
         let (mut method_sites, mut method_arguments) =
             Self::flatten_method_sites(self.method_sites.into_vec());
@@ -3613,10 +3611,6 @@ impl<'a> Compiler<'a> {
                 .map(|name| function.owner.atom(name))
                 .collect()
         });
-        // Grown by doubling, these would keep their slack beside the syntax tree until the
-        // whole program has compiled.
-        function.code.shrink_to_fit();
-        function.source_positions.shrink_to_fit();
         let name_bindings = function.name_bindings();
         let undefined_register = function.used_undefined_register();
         let environment_clones = function.per_site_environment_clones();
@@ -3668,7 +3662,7 @@ impl<'a> Compiler<'a> {
             binding_sites: function.binding_sites.into(),
             source_positions: function.source_positions.into(),
             environment_clones: environment_clones.into(),
-            code: function.code,
+            code: function.code.into(),
             wide: function.wide,
             registers: function.max_reg,
             dispatch: DispatchClass::General,
