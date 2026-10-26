@@ -577,6 +577,49 @@ const PROMISES_FACTORY: &str = quench_js_check::checked_js!(
     error.code = 'ABORT_ERR';
     return error;
   };
+  const validateSignal = (signal) => {
+    if (signal === undefined) return;
+    if (signal === null || typeof signal !== 'object' || !('aborted' in signal)) {
+      const error = new TypeError('The "options.signal" property must be an instance of AbortSignal.');
+      error.code = 'ERR_INVALID_ARG_TYPE';
+      throw error;
+    }
+  };
+  const abortErrorFor = (signal) => {
+    const error = abortError();
+    if (signal?.reason !== undefined) error.cause = signal.reason;
+    return error;
+  };
+  const runWithAbortSignal = (signal, operation) => new Promise((resolve, reject) => {
+    let settled = false;
+    let listening = false;
+    const finish = (error, value) => {
+      if (settled) return;
+      settled = true;
+      if (listening) signal.removeEventListener('abort', onAbort);
+      if (error) reject(error);
+      else resolve(value);
+    };
+    const onAbort = () => finish(abortErrorFor(signal));
+    try {
+      validateSignal(signal);
+      if (signal !== undefined) {
+        if (signal.aborted) {
+          finish(abortErrorFor(signal));
+          return;
+        }
+        signal.addEventListener('abort', onAbort, { once: true });
+        listening = true;
+      }
+      let value;
+      try { value = operation(); }
+      catch (error) { finish(error); return; }
+      if (signal?.aborted) finish(abortErrorFor(signal));
+      else finish(null, value);
+    } catch (error) {
+      finish(error);
+    }
+  });
   const throwIfAborted = (options) => {
     if (options?.signal?.aborted) throw abortError();
   };
@@ -634,8 +677,10 @@ const PROMISES_FACTORY: &str = quench_js_check::checked_js!(
     throwIfAborted(args[2]);
     return appendFileSync(...args);
   },
-  stat: (...args) => Promise.resolve().then(() => stat(...args)),
-  lstat: (...args) => Promise.resolve().then(() => lstat(...args)),
+  stat: (...args) => Promise.resolve().then(() =>
+    runWithAbortSignal(args[1]?.signal, () => stat(...args))),
+  lstat: (...args) => Promise.resolve().then(() =>
+    runWithAbortSignal(args[1]?.signal, () => lstat(...args))),
   readdir: (...args) => {
     // Snapshot Node's relevant option fields before the promise boundary;
     // callers may mutate the original options object immediately afterward.
@@ -1279,7 +1324,10 @@ const PROMISES_FACTORY: &str = quench_js_check::checked_js!(
         bytesRead: (ensureOpen("readv"), fs.readvSync(fd, buffers, position)),
         buffers,
       })),
-      stat: (...statArgs) => Promise.resolve().then(() => (ensureOpen("fstat"), fs.fstatSync(fd, ...statArgs))),
+      stat: (...statArgs) => Promise.resolve().then(() => {
+        ensureOpen("fstat");
+        return runWithAbortSignal(statArgs[0]?.signal, () => fs.fstatSync(fd, ...statArgs));
+      }),
       chmod: (...chmodArgs) => Promise.resolve().then(() => (ensureOpen("fchmod"), fs.fchmodSync(fd, ...chmodArgs))),
       utimes: (...timeArgs) => Promise.resolve().then(() => (ensureOpen("futimes"), fs.futimesSync(fd, ...timeArgs))),
       truncate: (length = 0) => Promise.resolve().then(() => (ensureOpen("ftruncate"), fs.ftruncateSync(fd, length))),
@@ -1526,9 +1574,59 @@ const OPEN_CLOSE_FACTORY: &str = quench_js_check::checked_js!(
       error.code = 'ERR_INVALID_ARG_TYPE';
       throw error;
     }
+    const signal = options?.signal;
+    if (signal !== undefined &&
+        (signal === null || typeof signal !== 'object' || !('aborted' in signal))) {
+      const error = new TypeError('The "options.signal" property must be an instance of AbortSignal.');
+      error.code = 'ERR_INVALID_ARG_TYPE';
+      throw error;
+    }
+    const makeAbortError = () => {
+      const error = new Error('The operation was aborted');
+      error.name = 'AbortError';
+      error.code = 'ABORT_ERR';
+      if (signal?.reason !== undefined) error.cause = signal.reason;
+      return error;
+    };
+    const AsyncResource = globalThis.process.getBuiltinModule?.('async_hooks')?.AsyncResource;
+    const asyncResource = typeof AsyncResource === 'function'
+      ? new AsyncResource('FSREQCALLBACK')
+      : undefined;
+    let settled = false;
+    let listening = false;
+    const invoke = (error, stats) => {
+      try { Reflect.apply(callback, undefined, error ? [error] : [null, stats]); }
+      catch (callbackError) {
+        if (globalThis.process.domain &&
+            typeof globalThis.process._fatalException === 'function' &&
+            globalThis.process._fatalException(callbackError, false) === true) return;
+        throw callbackError;
+      }
+    };
+    const finish = (error, stats) => {
+      if (settled) return;
+      settled = true;
+      if (listening) signal.removeEventListener('abort', onAbort);
+      try {
+        if (asyncResource) asyncResource.runInAsyncScope(invoke, undefined, error, stats);
+        else invoke(error, stats);
+      } finally {
+        asyncResource?.emitDestroy();
+      }
+    };
+    const onAbort = () => queueMicrotask(() => finish(makeAbortError()));
+    if (signal !== undefined && !signal.aborted) {
+      signal.addEventListener('abort', onAbort, { once: true });
+      listening = true;
+    }
     queueMicrotask(() => {
-      try { Reflect.apply(callback, undefined, [null, fstatSync(fd, options)]); }
-      catch (error) { Reflect.apply(callback, undefined, [error]); }
+      if (settled) return;
+      if (signal?.aborted) { finish(makeAbortError()); return; }
+      let stats;
+      try { stats = fstatSync(fd, options); }
+      catch (error) { finish(error); return; }
+      if (signal?.aborted) finish(makeAbortError());
+      else finish(null, stats);
     });
   },
   read(fd, bufferOrOptions, offsetOrOptions, length, position, callback) {
@@ -3345,6 +3443,21 @@ const ASYNC_OWNER_API: &str = r#"(ownerSync, descriptor) => {
 }"#;
 
 const ASYNC_LSTAT_API: &str = r#"(lstatSync, toPathIfFileURL) => {
+  const validateSignal = (signal) => {
+    if (signal === undefined) return;
+    if (signal === null || typeof signal !== 'object' || !('aborted' in signal)) {
+      const error = new TypeError('The "options.signal" property must be an instance of AbortSignal.');
+      error.code = 'ERR_INVALID_ARG_TYPE';
+      throw error;
+    }
+  };
+  const makeAbortError = (signal) => {
+    const error = new Error('The operation was aborted');
+    error.name = 'AbortError';
+    error.code = 'ABORT_ERR';
+    if (signal?.reason !== undefined) error.cause = signal.reason;
+    return error;
+  };
   return function lstat(path, options, callback) {
     if (typeof options === 'function') {
       callback = options;
@@ -3362,16 +3475,67 @@ const ASYNC_LSTAT_API: &str = r#"(lstatSync, toPathIfFileURL) => {
       throw error;
     }
     if (Buffer.isBuffer(path)) path = path.toString();
+    const signal = options?.signal;
+    validateSignal(signal);
+    const AsyncResource = globalThis.process.getBuiltinModule?.('async_hooks')?.AsyncResource;
+    const asyncResource = typeof AsyncResource === 'function'
+      ? new AsyncResource('FSREQCALLBACK')
+      : undefined;
+    let settled = false;
+    let listening = false;
+    const invoke = (error, stats) => {
+      try { Reflect.apply(callback, undefined, error ? [error] : [null, stats]); }
+      catch (callbackError) {
+        if (globalThis.process.domain &&
+            typeof globalThis.process._fatalException === 'function' &&
+            globalThis.process._fatalException(callbackError, false) === true) return;
+        throw callbackError;
+      }
+    };
+    const finish = (error, stats) => {
+      if (settled) return;
+      settled = true;
+      if (listening) signal.removeEventListener('abort', onAbort);
+      try {
+        if (asyncResource) asyncResource.runInAsyncScope(invoke, undefined, error, stats);
+        else invoke(error, stats);
+      } finally {
+        asyncResource?.emitDestroy();
+      }
+    };
+    const onAbort = () => queueMicrotask(() => finish(makeAbortError(signal)));
+    if (signal !== undefined && !signal.aborted) {
+      signal.addEventListener('abort', onAbort, { once: true });
+      listening = true;
+    }
     queueMicrotask(() => {
+      if (settled) return;
+      if (signal?.aborted) { finish(makeAbortError(signal)); return; }
       let stats;
       try { stats = lstatSync(path, options); }
-      catch (error) { Reflect.apply(callback, undefined, [error]); return; }
-      Reflect.apply(callback, undefined, [null, stats]);
+      catch (error) { finish(error); return; }
+      if (signal?.aborted) finish(makeAbortError(signal));
+      else finish(null, stats);
     });
   };
 }"#;
 
 const ASYNC_STAT_API: &str = r#"(statSync, toPathIfFileURL) => {
+  const validateSignal = (signal) => {
+    if (signal === undefined) return;
+    if (signal === null || typeof signal !== 'object' || !('aborted' in signal)) {
+      const error = new TypeError('The "options.signal" property must be an instance of AbortSignal.');
+      error.code = 'ERR_INVALID_ARG_TYPE';
+      throw error;
+    }
+  };
+  const makeAbortError = (signal) => {
+    const error = new Error('The operation was aborted');
+    error.name = 'AbortError';
+    error.code = 'ABORT_ERR';
+    if (signal?.reason !== undefined) error.cause = signal.reason;
+    return error;
+  };
   return function stat(path, options, callback) {
     if (typeof options === 'function') {
       callback = options;
@@ -3389,11 +3553,47 @@ const ASYNC_STAT_API: &str = r#"(statSync, toPathIfFileURL) => {
       throw error;
     }
     if (Buffer.isBuffer(path)) path = path.toString();
+    const signal = options?.signal;
+    validateSignal(signal);
+    const AsyncResource = globalThis.process.getBuiltinModule?.('async_hooks')?.AsyncResource;
+    const asyncResource = typeof AsyncResource === 'function'
+      ? new AsyncResource('FSREQCALLBACK')
+      : undefined;
+    let settled = false;
+    let listening = false;
+    const invoke = (error, stats) => {
+      try { Reflect.apply(callback, undefined, error ? [error] : [null, stats]); }
+      catch (callbackError) {
+        if (globalThis.process.domain &&
+            typeof globalThis.process._fatalException === 'function' &&
+            globalThis.process._fatalException(callbackError, false) === true) return;
+        throw callbackError;
+      }
+    };
+    const finish = (error, stats) => {
+      if (settled) return;
+      settled = true;
+      if (listening) signal.removeEventListener('abort', onAbort);
+      try {
+        if (asyncResource) asyncResource.runInAsyncScope(invoke, undefined, error, stats);
+        else invoke(error, stats);
+      } finally {
+        asyncResource?.emitDestroy();
+      }
+    };
+    const onAbort = () => queueMicrotask(() => finish(makeAbortError(signal)));
+    if (signal !== undefined && !signal.aborted) {
+      signal.addEventListener('abort', onAbort, { once: true });
+      listening = true;
+    }
     process.nextTick(() => {
+      if (settled) return;
+      if (signal?.aborted) { finish(makeAbortError(signal)); return; }
       let stats;
       try { stats = statSync(path, options); }
-      catch (error) { Reflect.apply(callback, undefined, [error]); return; }
-      Reflect.apply(callback, undefined, [null, stats]);
+      catch (error) { finish(error); return; }
+      if (signal?.aborted) finish(makeAbortError(signal));
+      else finish(null, stats);
     });
   };
 }"#;
@@ -4109,7 +4309,75 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     for name in ["stat", "lstat"] {
         let sync = get(context, module, &format!("{name}Sync"))?;
         let promise_factory = context.evaluate_script_rooted(
-            "(sync) => (...args) => Promise.resolve().then(() => sync(...args))",
+            r#"(sync) => {
+  const invalidType = (name, expected, value) => {
+    const received = value === null || value === undefined
+      ? ` Received ${value}`
+      : typeof value === 'object'
+        ? ` Received an instance of ${Array.isArray(value) ? 'Array' : 'Object'}`
+        : typeof value === 'string'
+          ? ` Received type string ('${value}')`
+          : ` Received type ${typeof value} (${String(value)})`;
+    const error = new TypeError(`The "${name}" argument must be of type ${expected}.${received}`);
+    error.code = 'ERR_INVALID_ARG_TYPE';
+    return error;
+  };
+  const abortError = (signal) => {
+    const error = new Error('The operation was aborted');
+    error.name = 'AbortError';
+    error.code = 'ABORT_ERR';
+    if (signal?.reason !== undefined) error.cause = signal.reason;
+    return error;
+  };
+  const validateOptions = (options) => {
+    if (options === null || Array.isArray(options) || typeof options !== 'object') {
+      throw invalidType('options', 'object', options);
+    }
+  };
+  const validateSignal = (signal) => {
+    if (signal !== undefined &&
+        (signal === null || typeof signal !== 'object' || !('aborted' in signal))) {
+      throw invalidType('options.signal', 'AbortSignal', signal);
+    }
+  };
+  const runWithSignal = (signal, operation) => new Promise((resolve, reject) => {
+    let settled = false;
+    let listening = false;
+    const finish = (error, value) => {
+      if (settled) return;
+      settled = true;
+      if (listening) signal.removeEventListener('abort', onAbort);
+      if (error) reject(error);
+      else resolve(value);
+    };
+    const onAbort = () => finish(abortError(signal));
+    try {
+      if (signal !== undefined) {
+        if (signal.aborted) {
+          finish(abortError(signal));
+          return;
+        }
+        signal.addEventListener('abort', onAbort, { once: true });
+        listening = true;
+      }
+      let value;
+      try { value = operation(); }
+      catch (error) { finish(error); return; }
+      if (signal?.aborted) finish(abortError(signal));
+      else finish(null, value);
+    } catch (error) {
+      finish(error);
+    }
+  });
+  return (...args) => Promise.resolve().then(() => {
+    const options = args[1];
+    if (options !== undefined) validateOptions(options);
+    const signal = options?.signal;
+    validateSignal(signal);
+    if (signal?.aborted) throw abortError(signal);
+    return runWithSignal(signal, () => sync(...args));
+  });
+}"#,
             "node:fs/promises/shared-stat.js",
         )?;
         let promise = context.call_rooted(promise_factory, undefined, &[sync])?;
