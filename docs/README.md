@@ -280,9 +280,14 @@ snapshot holds of the builder's process: `process.argv`, `execArgv`, `execPath`,
 `Math.random` seed. While a snapshot is built, reading `process.env`, `process.cwd()` or
 `perf_hooks` fails the build, since the snapshot would keep the builder's.
 
-A process uses a snapshot when `QUENCH_STARTUP_SNAPSHOT` is `on` or `trace` and it runs a
-file entry on the main thread with no CLI options and no IPC channel (`NODE_CHANNEL_FD`).
-Without it processes boot without one. Restoring decodes all a snapshot holds (heap,
+A process may use a snapshot when it runs a file or inline (`-e`, `-p`) entry on the main
+thread with no other CLI options and no IPC channel (`NODE_CHANNEL_FD`). By default an inline
+entry always does, since it boots in full without one, and a file does when it loads modules:
+the scan below finds a builtin, a dynamic `import()`, `require`, `getBuiltinModule`, or
+something it cannot follow. A file that names no module, or only `console`, boots without
+one, since a fresh boot loads only what the script uses
+(`SnapshotUse`, `startup_snapshot.rs`). `QUENCH_STARTUP_SNAPSHOT=on` restores one for every
+eligible process and `off` for none. Restoring decodes all a snapshot holds (heap,
 programs, shapes and atoms: about 5 MB resident for the preloaded builtins), so there are
 two kinds (`SnapshotKind`): `preloaded`, as above, and `bootstrap`, without the builtins. A
 process restores `bootstrap` when its entry's static graph cannot reach a builtin

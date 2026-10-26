@@ -370,6 +370,23 @@ enum CompileRelease {
 
 impl CompileRelease {
     const COUNT: usize = 4;
+
+    /// The releases that may come inside their interval once resident code passes the budget
+    /// (`over_budget`). A binary's first run compiles and keeps every bootstrap script back
+    /// to back, each within the interval of the last, and the compiler's and the host's code
+    /// stayed resident together: 1.95 MB of file pages beside 800 KiB of heap (V8-v7
+    /// MemoryFirst, first run with an empty compile cache, pinned, bolted static x86_64,
+    /// 3 runs, 2026-10-25: Richards 3028 -> 2336 KiB, RayTrace 2924-3048 -> 2768, DeltaBlue
+    /// 2952-3040 -> 2768-2844; warm runs within the pinned reading's 64-128 KiB modes, and
+    /// RayTrace's second run 2776 -> 2648). Encoding is left paced: a release there raised
+    /// RegExp's warm runs (5156 -> 5340).
+    #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+    fn releases_over_budget(self) -> bool {
+        match self {
+            Self::FirstCall | Self::CodeGeneration | Self::Kept => true,
+            Self::Encoding => false,
+        }
+    }
 }
 
 /// How far apart each compile-phase release's runs are kept, by the process's memory policy.
@@ -381,7 +398,7 @@ fn compile_release_interval() -> std::time::Duration {
 }
 
 /// Under a policy that returns pages at collections, the resident file pages past which a
-/// first call releases within `MEMORY_FIRST_COMPILE_RELEASE_INTERVAL` of the last release. A
+/// first call, a code generation or a kept program releases within `MEMORY_FIRST_COMPILE_RELEASE_INTERVAL` of the last release. A
 /// run's warm-up faults in 1.3-1.5 MB of code within one interval, while its heap is at its
 /// peak (V8-v7 RegExp, bolted static x86_64, 2026-10-24: code pages 1.3-1.45 MB beside 4.3 MB
 /// of heap at 50-80 ms).
@@ -423,14 +440,15 @@ static BUDGET_RELEASES: std::sync::Mutex<Option<(std::time::Instant, u32)>> = st
 
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 impl CompileRelease {
-    /// Whether a first call releases inside its interval: the resident file pages passed
+    /// Whether a first call, a code generation or a kept program releases inside its
+    /// interval: the resident file pages passed
     /// `MEMORY_FIRST_RESIDENT_FILE_BUDGET`, and the releases over it so far leave room in
     /// the run's time (`BUDGET_RELEASE_TIME_DIVISOR`) beyond the start's allowance
     /// (`MEMORY_FIRST_START_RELEASES`).
     fn over_budget(self) -> bool {
         let returns_pages = crate::shared_run::process_memory_policy()
             .is_some_and(quench_runtime::MemoryPolicy::returns_pages_at_collections);
-        if !matches!(self, Self::FirstCall) || !returns_pages {
+        if !self.releases_over_budget() || !returns_pages {
             return false;
         }
         let Ok(mut releases) = BUDGET_RELEASES.lock() else {

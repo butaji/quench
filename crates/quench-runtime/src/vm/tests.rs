@@ -140,6 +140,40 @@ fn lane_constructions_forward_plain_loaded_arguments() {
     assert_eq!(output.borrow().as_slice(), ["2003000 2005000"]);
 }
 
+#[test]
+fn planned_constructions_run_forwarded_initializers_and_their_defaults() {
+    // One `new` site constructs an initializer constructor, whose plan it allocates from, and
+    // forwarding constructors, whose plans hold only with their forwarding, which a getter
+    // keeps from resolving: each gets the fields its initializer stores, falsy arguments
+    // taking the Number defaults, and a replaced initializer runs in place of the planned
+    // one. Expected values are Node's (v26).
+    let source = r#"
+      var Class = { create: function () { return function () { this.initialize.apply(this, arguments); }; } };
+      function A(x) { this.x = x; }
+      var B = Class.create();
+      B.prototype = { initialize: function (x) { this.y = x + 1; } };
+      var C = Class.create();
+      C.prototype = { initialize: function (x, y) { this.z = (x ? x : 4); if (!y) y = 0.5; this.w = y; } };
+      var D = Class.create();
+      D.prototype = Object.defineProperty({}, "initialize", { get: function () { return function (x) { this.d = x; }; } });
+      var out = [];
+      for (var i = 0; i < 3000; i++) { var o = new [A, B, C, D][i % 4](i % 5, i % 2 ? "s" : ""); if (i > 2995) out.push(JSON.stringify(o)); }
+      var falsy = [0, -0, "", NaN, null, undefined, false, 0n];
+      for (var i = 0; i < falsy.length; i++) { var c = new C(falsy[i], falsy[i]); out.push(c.z + "/" + c.w); }
+      C.prototype.initialize = function (x) { this.v = x; };
+      out.push(JSON.stringify(new C(7)));
+      print(out.join(" "));
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    let program = Engine::specialize(source, "planned-forwarded-construct.js").unwrap();
+    vm.execute(&program).unwrap();
+    assert_eq!(
+        output.borrow().as_slice(),
+        [r#"{"x":1} {"y":3} {"z":3,"w":0.5} {"d":4} 4/0.5 4/0.5 4/0.5 4/0.5 4/0.5 4/0.5 4/0.5 4/0.5 {"v":7}"#]
+    );
+}
+
 
 
 #[test]
@@ -12084,6 +12118,135 @@ fn shared_osr_reports_pino_like_deferred_calls_per_site_with_gc_and_throw() {
         super::program_store::ProgramId::MAIN,
         function_id as u32,
     );
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
+fn shared_osr_moves_tagged_array_values_before_effectful_calls() {
+    // Copying the array into a callback argument is a tagged Move; its call is an exact-PC
+    // boundary, so the callback may mutate the array before the next native entry reloads it.
+    let source = r#"
+      let calls = 0;
+      function effect(array) {
+        calls++;
+        if (calls === 1001) array[0] = 100;
+      }
+      function run(array, callback) {
+        for (let index = 0; index < 2000; index++) {
+          const alias = array;
+          callback(alias);
+        }
+        return array[0];
+      }
+      const values = [1, 1];
+      let result = 0;
+      for (let repeat = 0; repeat < 25; repeat++) result = run(values, effect);
+      print(result + " " + calls);
+    "#;
+    let program = Engine::specialize(source, "osr-tagged-array-move-call-boundary.js").unwrap();
+    let function_id = program
+        .functions
+        .iter()
+        .position(|function| {
+            function
+                .header()
+                .name
+                .is_some_and(|name| &program.atoms[name as usize] == "run")
+        })
+        .unwrap();
+
+    let interpreted_output = Rc::new(RefCell::new(Vec::new()));
+    Vm::new(TestHost::writing_to(interpreted_output.clone()))
+        .execute(&program)
+        .unwrap();
+
+    let compiled_output = Rc::new(RefCell::new(Vec::new()));
+    let mut compiled = Vm::new(TestHost::writing_to(compiled_output.clone()));
+    compiled.set_memory_policy(crate::MemoryPolicy::Throughput);
+    compiled.set_execution_mode(crate::ExecutionMode::Compiled);
+    compiled.programs.enable_js_jit_diagnostics();
+    compiled.execute(&program).unwrap();
+    assert_eq!(compiled_output.borrow().as_slice(), interpreted_output.borrow().as_slice());
+    assert_eq!(compiled_output.borrow().as_slice(), ["100 50000"]);
+
+    let view = compiled
+        .programs
+        .lane_views(super::program_store::ProgramId::MAIN)
+        .unwrap()
+        .get(function_id)
+        .and_then(std::cell::OnceCell::get)
+        .expect("hot tagged-Move callback loop lane view");
+    let osr = view.osr_diagnostics();
+    assert_eq!(osr.sites.len(), 1, "one loop must have one OSR site: {osr:?}");
+    let site = &osr.sites[0];
+    assert!(site.admitted && site.deferred_call, "the call is a resumable exact-PC boundary: {site:?}");
+    assert!(site.compile_attempts > 0 && site.native_region_runs > 0 && site.exits > 0, "tagged Move should run natively before its call: {site:?}");
+    assert_eq!(site.call_boundary_pcs.len(), 1, "one dynamic callback site: {site:?}");
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
+fn shared_osr_reads_tagged_dense_values_and_falls_back_on_array_holes() {
+    // A dense indexed read may produce any JS value. Native code can carry that boxed word
+    // through a Move, but a hole must leave at GetIndex so prototype lookup stays in the VM.
+    let source = r#"
+      let calls = 0;
+      let sawHole = false;
+      const values = [{ kind: "present" }];
+      function effect(value) {
+        calls++;
+        if (calls === 1001) delete values[0];
+        if (value === undefined) sawHole = true;
+      }
+      function run(array, callback) {
+        for (let index = 0; index < 2000; index++) {
+          const value = array[0];
+          callback(value);
+        }
+      }
+      for (let repeat = 0; repeat < 25; repeat++) run(values, effect);
+      print(sawHole + " " + calls);
+    "#;
+    let program = Engine::specialize(source, "osr-tagged-array-read-hole-call-boundary.js").unwrap();
+    let function_id = program
+        .functions
+        .iter()
+        .position(|function| {
+            function
+                .header()
+                .name
+                .is_some_and(|name| &program.atoms[name as usize] == "run")
+        })
+        .unwrap();
+
+    let interpreted_output = Rc::new(RefCell::new(Vec::new()));
+    Vm::new(TestHost::writing_to(interpreted_output.clone()))
+        .execute(&program)
+        .unwrap();
+
+    let compiled_output = Rc::new(RefCell::new(Vec::new()));
+    let mut compiled = Vm::new(TestHost::writing_to(compiled_output.clone()));
+    compiled.set_memory_policy(crate::MemoryPolicy::Throughput);
+    compiled.set_execution_mode(crate::ExecutionMode::Compiled);
+    compiled.programs.enable_js_jit_diagnostics();
+    compiled.execute(&program).unwrap();
+    assert_eq!(compiled_output.borrow().as_slice(), interpreted_output.borrow().as_slice());
+    assert_eq!(compiled_output.borrow().as_slice(), ["true 50000"]);
+
+    let view = compiled
+        .programs
+        .lane_views(super::program_store::ProgramId::MAIN)
+        .unwrap()
+        .get(function_id)
+        .and_then(std::cell::OnceCell::get)
+        .expect("hot tagged-index callback loop lane view");
+    let osr = view.osr_diagnostics();
+    assert_eq!(osr.sites.len(), 1, "one loop must have one OSR site: {osr:?}");
+    let site = &osr.sites[0];
+    assert!(site.admitted && site.deferred_call, "the callback remains an exact-PC boundary: {site:?}");
+    assert!(site.compile_attempts > 0 && site.native_region_runs > 0, "tagged indexed reads should execute natively: {site:?}");
+    assert!(site.exits > 0, "the dynamic call and hole fallbacks must leave the native region: {site:?}");
+    assert_eq!(site.call_boundary_pcs.len(), 1, "one dynamic callback site: {site:?}");
 }
 
 #[test]

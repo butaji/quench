@@ -1200,9 +1200,10 @@ const _: () = assert!(FUNCTION_TARGETS.is_power_of_two());
 /// What a constructor's initializer body (`ScriptCallTarget::initializes`) made of a receiver
 /// whose adds all hit: the callee's receiver template under `prototype`, which the callee and
 /// that prototype alone determine, ends at `shape`, its fields the arguments for
-/// `parameters[..fields]` in order. While the prototype layout keeps
-/// `epoch` (`prototype_layout_epoch`), which every collection advances, those adds would hit
-/// again with the same transitions, so the object can be allocated finished.
+/// `parameters[..fields]` in order, a defaulted one's fallback in place of a falsy argument.
+/// While the prototype layout keeps `epoch` (`prototype_layout_epoch`), which every
+/// collection advances, those adds would hit again with the same transitions, so the object
+/// can be allocated finished.
 #[derive(Clone, Copy)]
 struct ConstructPlan {
     callee: Value,
@@ -1212,14 +1213,33 @@ struct ConstructPlan {
     callee_layout: (u32, usize),
     prototype: Value,
     shape: u32,
-    /// The receiver's header (`InlineObjectHeader::of` of `prototype` and `shape`), which
-    /// `ConstructPlan::finish` derives; the receiver stores its fields inline when they fit.
+    /// The receiver's header (`ConstructPlan::derive_header`): of inline storage when its
+    /// fields fit the inline slots, else of an arena run.
     header: InlineObjectHeader,
+    kind: ConstructPlanKind,
     fields: u8,
     parameters: [u16; CONSTRUCT_PLAN_FIELDS],
-    /// For a forwarding constructor's plan of no fields, where its body's reads resolved
-    /// (`lane_forwarded_construction`), which the plan's own proof keeps.
+    /// Fields whose store defaults a falsy argument (`InitializerStore::fallback`), one bit
+    /// per field index, each taking `fallbacks` at its index then.
+    defaulted: u8,
+    fallbacks: [Value; CONSTRUCT_PLAN_FIELDS],
+    /// For a forwarding constructor's plan, where its body's reads resolved
+    /// (`lane_forwarded_construction`), which the plan's own proof keeps. Its fields, if any, are
+    /// those its forwarded initializer stores (`lane_record_forwarded_fields`).
     forwarded: Option<ForwardedResolution>,
+}
+
+/// Which constructions allocate from a `ConstructPlan`, and how they compute its fields.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ConstructPlanKind {
+    /// An initializer constructor's plan (`lane_initialize_fields`) whose fields are the
+    /// arguments as passed.
+    Passed,
+    /// An initializer constructor's plan with defaulted fields (`ConstructPlan::defaulted`).
+    Defaulted,
+    /// A forwarding constructor's plan (`lane_planned_receiver`), which holds only with its
+    /// forwarding (`lane_forwarded_fields`).
+    Forwarding,
 }
 
 /// Where a forwarding constructor's reads of `this.<method>` and its `apply` resolved under
@@ -1234,12 +1254,18 @@ struct ForwardedResolution {
     method_shape: u32,
     apply_holder: Value,
     apply_slot: u16,
+    /// The forwarded method's function whose initializer stores the plan's fields record
+    /// (`lane_record_forwarded_fields`), when it has fields: the method this resolution
+    /// reads must still be of it.
+    initializer: Option<(ProgramId, u32)>,
 }
 
 /// Fields a `ConstructPlan` names; an initializer storing more keeps running its adds.
 const CONSTRUCT_PLAN_FIELDS: usize = 4;
 // A plan's values fill a receiver's inline slots (`ConstructPlan::allocate`).
 const _: () = assert!(INLINE_PROPERTY_COUNT <= CONSTRUCT_PLAN_FIELDS);
+// `ConstructPlan::defaulted` holds a bit per field.
+const _: () = assert!(CONSTRUCT_PLAN_FIELDS <= u8::BITS as usize);
 
 /// Entries of the construct plan cache, indexed by the callee's heap index.
 const CONSTRUCT_PLANS: usize = 64;
@@ -1254,29 +1280,64 @@ impl ConstructPlan {
     fn finish(self) -> Self {
         Self {
             epoch: crate::heap::prototype_layout_epoch(),
-            header: InlineObjectHeader::of(self.prototype, self.shape),
-            ..self
+            ..self.derive_header()
         }
+    }
+
+    /// This plan with the header its receiver starts with, of its prototype and shape: inline
+    /// storage when its fields fit the inline slots, else an arena run.
+    fn derive_header(self) -> Self {
+        let header = if usize::from(self.fields) <= INLINE_PROPERTY_COUNT {
+            InlineObjectHeader::of(self.prototype, self.shape)
+        } else {
+            InlineObjectHeader::of_run(self.prototype, self.shape)
+        };
+        Self { header, ..self }
+    }
+
+    /// This plan's field values in order, `undefined` past them: the argument each field's
+    /// parameter names (`argument`), or its fallback for a defaulted field passed a falsy
+    /// value, as its store computes it.
+    fn values<H: Host>(&self, vm: &Vm<H>, argument: impl Fn(u16) -> Value) -> [Value; CONSTRUCT_PLAN_FIELDS] {
+        let mut values = [Value::UNDEFINED; CONSTRUCT_PLAN_FIELDS];
+        for (field, value) in values.iter_mut().enumerate().take(usize::from(self.fields)) {
+            let fallback = (self.defaulted & (1 << field) != 0).then_some(self.fallbacks[field]);
+            *value = initializer_value(vm, argument(self.parameters[field]), fallback);
+        }
+        values
     }
 
     /// The receiver this plan allocates with its fields `field(k)` in order and `undefined`
     /// past them, which is how unused inline slots start: gathered into the receiver's inline
     /// slots where they fit, else into the arena run's values.
     #[inline(always)]
-    fn allocate(&self, heap: &mut crate::heap::Heap, field: impl Fn(u16) -> Value) -> Value {
-        let parameters = &self.parameters[..usize::from(self.fields)];
-        if parameters.len() <= INLINE_PROPERTY_COUNT {
+    fn allocate(&self, heap: &mut crate::heap::Heap, field: impl Fn(usize) -> Value) -> Value {
+        let fields = usize::from(self.fields);
+        if fields <= INLINE_PROPERTY_COUNT {
             let mut inline = [Value::UNDEFINED; INLINE_PROPERTY_COUNT];
-            for (slot, parameter) in inline.iter_mut().zip(parameters) {
-                *slot = field(*parameter);
+            for (index, slot) in inline.iter_mut().enumerate().take(fields) {
+                *slot = field(index);
             }
             return heap.alloc_object_from_header(self.header, self.prototype, inline);
         }
         let mut values = [Value::UNDEFINED; CONSTRUCT_PLAN_FIELDS];
-        for (value, parameter) in values.iter_mut().zip(parameters) {
-            *value = field(*parameter);
+        for (index, value) in values.iter_mut().enumerate().take(fields) {
+            *value = field(index);
         }
-        heap.alloc_object_with_properties(self.prototype, self.shape, &values[..parameters.len()])
+        heap.alloc_object_from_run_header(self.header, self.prototype, &values[..fields])
+    }
+
+    /// This plan extended by the field `store` adds, `None` once it names all it can.
+    fn with_field(mut self, store: &crate::bytecode::InitializerStore) -> Option<Self> {
+        let field = usize::from(self.fields);
+        *self.parameters.get_mut(field)? = store.parameter;
+        if let Some(fallback) = store.fallback {
+            self.kind = ConstructPlanKind::Defaulted;
+            self.defaulted |= 1 << field;
+            self.fallbacks[field] = Value::number(fallback);
+        }
+        self.fields += 1;
+        Some(self)
     }
 }
 
@@ -1287,8 +1348,11 @@ const EMPTY_CONSTRUCT_PLAN: ConstructPlan = ConstructPlan {
     prototype: Value::UNDEFINED,
     shape: 0,
     header: InlineObjectHeader::EMPTY,
+    kind: ConstructPlanKind::Passed,
     fields: 0,
     parameters: [0; CONSTRUCT_PLAN_FIELDS],
+    defaulted: 0,
+    fallbacks: [Value::UNDEFINED; CONSTRUCT_PLAN_FIELDS],
     forwarded: None,
 };
 
@@ -2512,7 +2576,7 @@ fn lane_step_beside_activations<H: Host>(cx: *mut LaneContext<H>, r: Registers, 
     let (code, pc) = unsafe { (&*(*cx).code, ip.offset_from((*cx).base) as usize) };
     let body = code.function(function as usize);
     let instruction = decoded_instruction(body, body.code[pc]);
-    if !matches!(instruction.op(), Op::ToPropertyKey | Op::GetIterator | Op::AppendArray) {
+    if !matches!(instruction.op(), Op::ToPropertyKey | Op::GetIterator | Op::IteratorClose | Op::AppendArray) {
         return exit(ip);
     }
     let [a, b] = super::dispatch::value_step_operands(instruction).map(|register| register.map(|register| r.get(register)));
@@ -3462,6 +3526,7 @@ fn lane_set_index_slot_store<H: Host>(vm: &mut Vm<H>, ip: Ip, object: Value, key
         && !vm.try_append_dense_element(object, key, value)
         && !vm.try_fill_dense_hole(object, key, value)
         && !vm.try_site_symbol_set(ip.addr(), object, key, value)
+        && !vm.try_host_private_symbol_set(object, key, value)
         && !lane_typed_array_store(ip, vm, object, key, value)
         && !lane_string_key_store(ip, vm, object, key, value)
         && !key
@@ -6290,7 +6355,14 @@ fn lane_loop_run<H: Host>(
         site.native_entry_attempts
             .set(site.native_entry_attempts.get().saturating_add(1));
         match outcome {
-            LoopOutcome::NotEntered(_) => {
+            LoopOutcome::NotEntered(widening) => {
+                if std::env::var_os("QUENCH_JS_JIT_TRACE_OSR_REJECT").is_some() {
+                    eprintln!(
+                        "QUENCH_JS_JIT_OSR_ENTRY_MISS function={} header={} widening={widening:?}",
+                        site.function,
+                        site.header,
+                    );
+                }
                 site.entry_guard_misses
                     .set(site.entry_guard_misses.get().saturating_add(1));
             }
@@ -9716,6 +9788,29 @@ impl<H: Host> Vm<H> {
 }
 
 script_handler! {
+    /// `lane_script_call` of a linked target whose entry is not a plain activation: the site
+    /// calls the form for that entry directly from now on, an environment or keeping
+    /// activation its own handler and any other entry the out-of-line form, which sorts them
+    /// out. Out of line, as a sibling call, so `lane_script_call` makes no call.
+    #[inline(never)]
+    fn lane_script_call_requicken<>(cx, r, ip, i, view) {
+        let vm = unsafe { vm(cx) };
+        let entry = vm.linked_script_call_entry(r.get(i.b), &i.call_link).map(|target| {
+            // SAFETY: as `Vm::script_call_entry`; nothing before this read resolves a target.
+            unsafe { (*target).entry }
+        });
+        let handler: Handler = match entry {
+            Some(CallEntry::Environment) => lane_script_call_environment::<H>,
+            Some(CallEntry::Keeps | CallEntry::Gathers) => lane_script_call_keeping::<H>,
+            Some(_) => lane_script_call_full::<H>,
+            None => sibling!(lane_script_call_resolve::<H>, r, ip, Carried::script(cx)),
+        };
+        requicken::<H>(ip, handler);
+        sibling!(handler, r, ip, Carried::script(cx))
+    }
+}
+
+script_handler! {
     /// A JavaScript `Call` of a frameless target (`Vm::resolve_script_call_target`): the
     /// callee runs in the lane on a window of the lane stack, with the frame facts its
     /// push would have set held by the activation until it returns or the lane exits.
@@ -9734,17 +9829,10 @@ script_handler! {
         };
         // SAFETY: as `Vm::script_call_entry`; nothing below resolves a target or collects.
         let target = unsafe { &*target };
-        // One test: the site calls the form for its target's entry directly from now on, an
-        // environment or keeping activation its own handler and any other entry the
-        // out-of-line form, which sorts them out.
+        // One test: the site calls the form for its target's entry directly from now on
+        // (`lane_script_call_requicken`), out of line so this handler makes no call.
         if target.entry != CallEntry::Activates {
-            let handler: Handler = match target.entry {
-                CallEntry::Environment => lane_script_call_environment::<H>,
-                CallEntry::Keeps | CallEntry::Gathers => lane_script_call_keeping::<H>,
-                _ => lane_script_call_full::<H>,
-            };
-            requicken::<H>(ip, handler);
-            sibling!(handler, r, ip, Carried::script(cx))
+            sibling!(lane_script_call_requicken::<H>, r, ip, Carried::script(cx))
         }
         #[cfg(feature = "profile-lane-exits")]
         profile_script_call_target(cx, ip, callee, target);
@@ -9756,7 +9844,10 @@ script_handler! {
         // Values past the parameters and a full lane stack take the out-of-line form too,
         // whose activation keeps them or grows the stack (`lane_activate`), and so does another
         // program's target (`lane_push_activation`).
-        if ImmediateLayout::argument_count(i.imm()) > target.params
+        // So does a window past `FIXED_ARGUMENT_COPIES`, whose copy is a call.
+        let argc = ImmediateLayout::argument_count(i.imm());
+        if argc > target.params
+            || argc > FIXED_ARGUMENT_COPIES
             || !lane_activation_room(vm, target)
             || lane_crosses::<H, false>(cx, target)
         {
@@ -10236,8 +10327,9 @@ script_handler! {
 
 script_handler! {
     /// `new Array(...values)` of an intrinsic `Array`, which allocates without running guest
-    /// code: the array of the values passed, with the callee's own `prototype`. One Number
-    /// argument (a length), and any other construction, take the general path.
+    /// code: the array of the values passed, or for one Number argument the array of that
+    /// length (`Vm::array_of_length`), with the callee's own `prototype`. An invalid length,
+    /// and any other construction, take the general path.
     #[inline(never)]
     fn lane_native_construct<>(cx, r, ip, i, view) {
         let vm = unsafe { vm(cx) };
@@ -10287,12 +10379,16 @@ script_handler! {
         let argc = usize::from(ImmediateLayout::argument_count(i.imm()));
         // SAFETY: the construction's window is registers of the running function.
         let args = unsafe { std::slice::from_raw_parts(r.0.add(usize::from(i.c)), argc) };
-        if let [length] = args
-            && length.as_number().is_some()
-        {
-            return exit(ip);
-        }
-        let array = lane_new_array(vm, prototype, args);
+        let array = match args {
+            [length] if let Some(length) = length.as_number() => {
+                // An invalid length throws its RangeError on the general path.
+                let Some(array) = vm.array_of_length(prototype, length) else {
+                    return exit(ip);
+                };
+                array
+            }
+            _ => lane_new_array(vm, prototype, args),
+        };
         note_allocation(vm);
         if returns {
             let Some(resumed) = lane_complete_activation(cx, array) else {
@@ -11505,6 +11601,16 @@ fn lane_construct_keeping_activation<H: Host>(
     if !unsafe { (*cx).script_calls && (*cx).script_constructs } || vm.construct_target.is_some() {
         return Err(Some(exit(ip)));
     }
+    // A plan holding for `callee` fixes its function, so the plan alone answers before its
+    // target is resolved.
+    if i.a & crate::bytecode::RETURN_REGISTER == 0
+        && let Some(this) = lane_forwarded_fields(vm, callee, r, i)
+    {
+        // Allocating the receiver can make a collection due.
+        note_allocation(vm);
+        r.set(i.a, this);
+        return Ok((r, following(ip)));
+    }
     // Matched rather than filtered: the combinators moved the target through copies.
     let Some(target) = lane_script_target(cx, callee) else {
         return Err(None);
@@ -11527,6 +11633,26 @@ fn lane_construct_keeping_activation<H: Host>(
             None => lane_forwarded_construction(cx, target, method, this),
         }
     {
+        // A forwarded method that only initializes `this` from its parameters, which the
+        // forwarding passes the construction's arguments as: its adds alone, with neither
+        // activation, when the construction's result goes to a register. Its body completes
+        // with `undefined`, as the forwarding body then does, so [[Construct]] yields `this`.
+        if forwarded.initializes && i.a & crate::bytecode::RETURN_REGISTER == 0 {
+            // SAFETY: the context's program outlives the lane run, and the forwarded target is
+            // one of its functions (`lane_script_target`).
+            let code = unsafe { &*(*cx).code };
+            let mut fields = Some(EMPTY_CONSTRUCT_PLAN);
+            let argument = lane_construct_argument(r, i);
+            if lane_add_initializer_fields(vm, code, this, forwarded.function, argument, |store| {
+                fields = fields.and_then(|fields| fields.with_field(store));
+            }) {
+                if let Some(fields) = fields {
+                    lane_record_forwarded_fields(vm, callee, (forwarded.program, forwarded.function), this, &fields);
+                }
+                r.set(i.a, this);
+                return Ok((r, following(ip)));
+            }
+        }
         let forwarder = SkippedForwarder {
             function: target.function,
             callee,
@@ -11537,6 +11663,64 @@ fn lane_construct_keeping_activation<H: Host>(
             .map_err(Some);
     }
     lane_activate_keeping::<H, false>(cx, r, ip, &target, arguments, this, true, None).map_err(Some)
+}
+
+/// The finished receiver of a forwarding constructor's construction under `callee`'s
+/// holding plan, when it records the fields its forwarded initializer stores
+/// (`lane_record_forwarded_fields`) and its forwarding still reads that initializer
+/// (`resolved_forwarded_method`): the receiver that initializer's adds would finish, whose
+/// body completes with `undefined`, as the forwarding body then does.
+#[inline(always)]
+fn lane_forwarded_fields<H: Host>(vm: &mut Vm<H>, callee: Value, r: Registers, i: &LaneInstruction) -> Option<Value> {
+    let index = holding_construct_plan_index(vm, callee)?;
+    // The plan in place: the allocation borrows the heap beside it, not a copy.
+    let plan = &vm.lane_stack.construct_plans[index];
+    let (program, function) = plan.forwarded?.initializer?;
+    let method = resolved_forwarded_method(vm, callee, plan)?;
+    if !matches!(vm.heap.function(method), Some(FunctionRecord { kind: FunctionKind::User(p, f), .. }) if *p == program && *f == function)
+    {
+        return None;
+    }
+    let values = plan.values(vm, lane_construct_argument(r, i));
+    Some(vm.lane_stack.construct_plans[index].allocate(&mut vm.heap, |field| values[field]))
+}
+
+/// Records in `callee`'s holding plan of no fields, whose forwarding resolved
+/// (`ConstructPlan::forwarded`), the fields `fields` the forwarded `initializer`'s adds gave
+/// `this`, which that plan's receiver started as: later constructions allocate the finished
+/// object (`lane_forwarded_fields`). The adds ran no guest code, so the plan's epoch still
+/// holds.
+#[inline(never)]
+fn lane_record_forwarded_fields<H: Host>(
+    vm: &mut Vm<H>,
+    callee: Value,
+    initializer: (ProgramId, u32),
+    this: Value,
+    fields: &ConstructPlan,
+) {
+    let Some(index) = holding_construct_plan_index(vm, callee) else {
+        return;
+    };
+    let Some(shape) = vm.object_data(this).map(|object| object.shape()) else {
+        return;
+    };
+    let plan = &mut vm.lane_stack.construct_plans[index];
+    let Some(resolution) = plan.forwarded.filter(|_| plan.fields == 0) else {
+        return;
+    };
+    *plan = ConstructPlan {
+        shape,
+        fields: fields.fields,
+        parameters: fields.parameters,
+        defaulted: fields.defaulted,
+        fallbacks: fields.fallbacks,
+        forwarded: Some(ForwardedResolution {
+            initializer: Some(initializer),
+            ..resolution
+        }),
+        ..*plan
+    }
+    .derive_header();
 }
 
 /// The method a forwarding constructor's body (`ScriptCallTarget::forwarded_method`) would
@@ -11641,22 +11825,28 @@ fn forwarded_resolution<H: Host>(
         method_shape,
         apply_holder,
         apply_slot,
+        initializer: None,
     })
 }
 
 /// The method a forwarding constructor's construction activates, from `callee`'s plan's
-/// recorded resolution (`ConstructPlan::forwarded`): the values in the recorded slots, the
-/// method still of the recorded shape and prototype, `apply` still the intrinsic, and a
-/// frameless target, under `plan`, `callee`'s holding plan. `None` resolves afresh
-/// (`lane_forwarded_construction`).
+/// recorded resolution (`resolved_forwarded_method`) as a frameless target, under `plan`,
+/// `callee`'s holding plan. `None` resolves afresh (`lane_forwarded_construction`).
 #[inline(always)]
 fn lane_resolved_forwarding<H: Host>(
     cx: *mut LaneContext<H>,
     callee: Value,
     plan: Option<&ConstructPlan>,
 ) -> Option<ScriptCallTarget> {
-    let vm = unsafe { vm(cx) };
-    let plan = plan?;
+    let function = resolved_forwarded_method(unsafe { vm(cx) }, callee, plan?)?;
+    lane_script_target(cx, function)
+}
+
+/// The method `callee`'s forwarding reads under `plan`, its holding plan, from the plan's
+/// recorded resolution (`ConstructPlan::forwarded`): the value in the recorded slot, still of
+/// the recorded shape and prototype, whose `apply` is still the intrinsic, and not `callee`.
+#[inline(always)]
+fn resolved_forwarded_method<H: Host>(vm: &Vm<H>, callee: Value, plan: &ConstructPlan) -> Option<Value> {
     let resolution = plan.forwarded?;
     let prototype = vm.heap.object_record(plan.prototype)?;
     // SAFETY: the plan's proof keeps the prototype's shape, which holds the slot.
@@ -11670,17 +11860,14 @@ fn lane_resolved_forwarding<H: Host>(
     let holder = vm.heap.object(resolution.apply_holder)?;
     // SAFETY: the epoch the plan holds under keeps the holder's shape, which holds the slot.
     let apply = unsafe { vm.heap.property_get_shaped(holder, usize::from(resolution.apply_slot)) }?;
-    if !matches!(
+    (matches!(
         vm.heap.function(apply),
         Some(FunctionRecord {
             kind: FunctionKind::Native(Native::FunctionApply),
             ..
         })
-    ) || function == callee
-    {
-        return None;
-    }
-    lane_script_target(cx, function)
+    ) && function != callee)
+        .then_some(function)
 }
 
 script_handler! {
@@ -12480,45 +12667,26 @@ fn lane_initialize_fields<H: Host>(
     r: Registers,
     i: &LaneInstruction,
 ) -> Option<(Value, bool)> {
-    let argc = ImmediateLayout::argument_count(i.imm());
-    // Parameter `k` of a plain activation is argument `k`, or undefined when not passed.
-    let argument = |parameter: u16| {
-        if parameter < argc {
-            r.get(i.c + parameter)
-        } else {
-            Value::UNDEFINED
-        }
-    };
+    let argument = lane_construct_argument(r, i);
     let plan_index = construct_plan_index(callee);
     let template = vm.inline_construct_template(callee)?;
     let (prototype, source_shape) = (template.proto(), template.shape());
     let this = vm.heap.alloc_object(template);
-    let mut plan = ConstructPlan {
+    let mut planned = Some(ConstructPlan {
         callee,
         epoch: NO_CONSTRUCT_PLAN_EPOCH,
         callee_layout: (0, 0),
         prototype,
         shape: source_shape,
         ..EMPTY_CONSTRUCT_PLAN
-    };
-    let mut plannable = true;
-    for store in code.function(function as usize).this_field_stores() {
-        let atom = store.imm();
-        let parameter = store.a();
-        if !vm.field_add_atom_eligible(atom)
-            || !vm.primary_field_add_hit(code, this, atom, argument(parameter), store.c())
-        {
-            return Some((this, false));
-        }
-        match plan.parameters.get_mut(usize::from(plan.fields)) {
-            Some(slot) => {
-                *slot = parameter;
-                plan.fields += 1;
-            }
-            None => plannable = false,
-        }
+    });
+    let added = lane_add_initializer_fields(vm, code, this, function, argument, |store| {
+        planned = planned.and_then(|plan| plan.with_field(store));
+    });
+    if !added {
+        return Some((this, false));
     }
-    if plannable
+    if let Some(mut plan) = planned
         && let Some(index) = plan_index
         && let Some(layout) = vm.function_prototype_layout(callee)
     {
@@ -12527,6 +12695,43 @@ fn lane_initialize_fields<H: Host>(
         vm.lane_stack.construct_plans[index] = plan.finish();
     }
     Some((this, true))
+}
+
+/// The adds an initializing body (`ScriptCallTarget::initializes`) of `function` makes to
+/// `this`, each the parameter its store names (`argument`) as a cached add that runs no guest
+/// code, passed to `each` in order. `false` at the first add the caches do not answer: the
+/// adds made so far are the body's own first stores of the same values, which an activation
+/// of the body then makes again as stores, leaving the object as the activation alone would.
+#[inline(always)]
+fn lane_add_initializer_fields<H: Host>(
+    vm: &mut Vm<H>,
+    code: &ResidualProgram,
+    this: Value,
+    function: u32,
+    argument: impl Fn(u16) -> Value,
+    mut each: impl FnMut(&crate::bytecode::InitializerStore),
+) -> bool {
+    let Some(stores) = code.function(function as usize).initializer_stores(&code.constants) else {
+        return false;
+    };
+    for store in stores {
+        let value = initializer_value(vm, argument(store.parameter), store.fallback.map(Value::number));
+        if !vm.field_add_atom_eligible(store.atom) || !vm.primary_field_add_hit(code, this, store.atom, value, store.site) {
+            return false;
+        }
+        each(store);
+    }
+    true
+}
+
+/// The value an initializer store (`InitializerStore`) gives its field from the parameter's
+/// `passed` value: `fallback` in place of a falsy one where the store has it, else as passed.
+#[inline(always)]
+fn initializer_value<H: Host>(vm: &Vm<H>, passed: Value, fallback: Option<Value>) -> Value {
+    match fallback {
+        Some(fallback) if !vm.truthy(passed) => fallback,
+        _ => passed,
+    }
 }
 
 /// `lane_initialize_fields` while `callee`'s plan holds: the finished receiver, its fields
@@ -12540,13 +12745,36 @@ fn lane_planned_construction<H: Host>(
     r: Registers,
     i: &LaneInstruction,
 ) -> Option<Value> {
+    let index = holding_construct_plan_index(vm, callee)?;
     // The plan in place: the allocation borrows the heap beside it, not a copy.
-    let plan = &vm.lane_stack.construct_plans[holding_construct_plan_index(vm, callee)?];
+    let plan = &vm.lane_stack.construct_plans[index];
+    if plan.kind != ConstructPlanKind::Passed {
+        return lane_defaulted_construction(vm, index, r, i);
+    }
+    let argument = lane_construct_argument(r, i);
+    Some(plan.allocate(&mut vm.heap, |field| argument(plan.parameters[field])))
+}
+
+/// `lane_planned_construction` under the plan at `index` with defaulted fields, whose values
+/// it computes first; `None` for a forwarding constructor's plan, which holds only with its
+/// forwarding (`lane_forwarded_fields`). Out of line, so plans of plain fields keep their
+/// code.
+#[inline(never)]
+fn lane_defaulted_construction<H: Host>(vm: &mut Vm<H>, index: usize, r: Registers, i: &LaneInstruction) -> Option<Value> {
+    let plan = vm.lane_stack.construct_plans[index];
+    if plan.kind == ConstructPlanKind::Forwarding {
+        return None;
+    }
+    let values = plan.values(vm, lane_construct_argument(r, i));
+    Some(plan.allocate(&mut vm.heap, |field| values[field]))
+}
+
+/// A construction's parameter `k` as a plain activation sees it: argument `k`, or undefined
+/// when not passed.
+#[inline(always)]
+fn lane_construct_argument(r: Registers, i: &LaneInstruction) -> impl Fn(u16) -> Value + '_ {
     let argc = ImmediateLayout::argument_count(i.imm());
-    // Parameter `k` is argument `k`, or undefined when not passed.
-    Some(plan.allocate(&mut vm.heap, |parameter| {
-        if parameter < argc { r.get(i.c + parameter) } else { Value::UNDEFINED }
-    }))
+    move |parameter| if parameter < argc { r.get(i.c + parameter) } else { Value::UNDEFINED }
 }
 
 /// The construct plan cache entry `callee` owns, when it names a heap cell.
@@ -12597,6 +12825,7 @@ fn lane_planned_receiver<H: Host>(
             callee_layout,
             prototype,
             shape,
+            kind: ConstructPlanKind::Forwarding,
             ..EMPTY_CONSTRUCT_PLAN
         }
         .finish();

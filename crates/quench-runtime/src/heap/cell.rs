@@ -931,7 +931,9 @@ impl Native {
     /// its arguments and the heap, and reaches guest code only through getters, coercions,
     /// proxy traps, species constructors or a `JSON.parse` reviver, whose calls make the activations frames first
     /// (`Vm::materialize_deferred_lane`): `assert.deepEqual` calls `Object.prototype.toString`
-    /// on every value it compares (10,210 materializations in the color-convert npm scenario).
+    /// on every value it compares (10,210 materializations in the color-convert npm scenario),
+    /// and TypeScript's CommonJS re-export helper (`__createBinding`) reads each export's
+    /// descriptor (208,883 in the typescript-eslint npm scenario).
     pub(crate) fn runs_beside_activations(self) -> bool {
         matches!(
             self,
@@ -943,6 +945,7 @@ impl Native {
                 | Self::ObjectEntries
                 | Self::ObjectGetOwnPropertyNames
                 | Self::ObjectHasOwn
+                | Self::ObjectGetOwnPropertyDescriptor
                 | Self::ObjectPrototypeHasOwnProperty
                 | Self::ObjectPrototypeToString
                 | Self::ReflectGetPrototypeOf
@@ -1364,11 +1367,18 @@ impl InlineObjectHeader {
     };
 
     pub(crate) fn of(proto: Value, shape: u32) -> Self {
-        let object = Object::with_property_storage(
-            proto,
-            ValueVec::inline_property_storage(shape),
-            [Value::UNDEFINED; INLINE_PROPERTY_COUNT],
-        );
+        Self::of_storage(proto, ValueVec::inline_property_storage(shape))
+    }
+
+    /// The header words of an object with prototype `proto` whose `shape`'s values live in an
+    /// arena run (`Object::from_run_header`), as `Object::with_property_storage` sets them
+    /// apart from the run's position.
+    pub(crate) fn of_run(proto: Value, shape: u32) -> Self {
+        Self::of_storage(proto, ValueVec::from_parts(0, shape))
+    }
+
+    fn of_storage(proto: Value, storage: ValueVec) -> Self {
+        let object = Object::with_property_storage(proto, storage, [Value::UNDEFINED; INLINE_PROPERTY_COUNT]);
         Self {
             meta: object.meta,
             auxiliary: object.auxiliary,
@@ -2045,6 +2055,16 @@ impl Object {
             auxiliary: header.auxiliary,
             payload: Self::pack_inline(inline)?,
         })
+    }
+
+    /// An object of a run header (`InlineObjectHeader::of_run`) whose values start at arena
+    /// position `start`: what `with_property_storage` makes of that run, which has no extras.
+    pub(crate) fn from_run_header(header: InlineObjectHeader, start: u32) -> Self {
+        Self {
+            meta: header.meta,
+            auxiliary: header.auxiliary,
+            payload: u64::from(start),
+        }
     }
 
     #[inline(always)]

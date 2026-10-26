@@ -16,8 +16,12 @@
 #    interpreter curriculum (quench-bench/deegen-curriculum), the numbered diagnostic micros
 #    (quench-bench/micros), Node library modules compiled without running
 #    (COMPILE_ONLY_MODULES), a sample of Test262's RegExp built-ins tests with their harness,
-#    and, when QUENCH_LAYOUT_NODE_MODULES names an npm `node_modules` holding them, the
-#    package workloads in tools/layout-corpus. The scored engine suites are never run.
+#    and the Wasm ESM corpus of the spec testsuite. That is the qualification corpus. The
+#    package workloads in tools/layout-corpus join it only when QUENCH_LAYOUT_NODE_MODULES
+#    names an npm `node_modules` holding them, for diagnostic layouts: with them the V8-v7
+#    rows' max RSS rose to the target (pinned, 2026-10-25: Crypto 0.95 -> 1.02-1.06 of it),
+#    as the packages' code shares the hot text. The scored engine suites are never run.
+#    The corpus used is written to target/layout-corpus/MANIFEST and printed at the end.
 # 3. Profiles start-up (cachegrind) and the run phase after the entry's compilation
 #    (callgrind, split at quench_entry_compiled), without and with --jit; the --jit profiles
 #    of the micros and packages run under memory-first, whose JS tier compiles less.
@@ -151,8 +155,10 @@ while IFS= read -r test; do
     } >"$corpus/$(printf 'z-t%04d.js' "$index")"
     index=$((index + 1))
 done < <(find "$test262/test/built-ins/RegExp" -name '*.js' ! -name '*_FIXTURE.js' | sort)
+packages="none"
 if [[ -n "${QUENCH_LAYOUT_NODE_MODULES:-}" ]]; then
     cp tools/layout-corpus/npm-*.js "$corpus/"
+    packages="tools/layout-corpus under $QUENCH_LAYOUT_NODE_MODULES (diagnostic)"
 fi
 "$tools_dir/wasm-esm-corpus" "$corpus/wasm-esm" "$wasm_testsuite"/{address,block,br,\
 br_if,br_table,bulk,call,call_indirect,conversions,data,elem,endianness,exports,f32,f64,fac,\
@@ -211,4 +217,14 @@ build
     -reorder-blocks=ext-tsp -split-functions -split-all-cold -reorder-functions=cdsort \
     -skip-funcs-file="$target_dir/layout-bolt/skip.funcs" -use-gnu-stack -jump-tables=move
 tools/check-link-order.sh "$binary" "$order"
+{
+    printf 'commit: %s\n' "$(git rev-parse HEAD)"
+    printf 'pgo profile: %s\n' "${profdata:-none}"
+    printf 'hot call-site threshold: %s\n' "${QUENCH_PGO_HOT_CALLSITE_THRESHOLD:-default}"
+    printf 'curriculum: %d, micros: %d, compile-only modules: %d, test262 RegExp: %d of %d\n' \
+        "$(ls "$corpus"/[0-9]*.js | wc -l)" "$(ls "$corpus"/micro-*.js | wc -l)" \
+        "${#COMPILE_ONLY_MODULES[@]}" "$(ls "$corpus"/z-t*.js | wc -l)" "$eligible"
+    printf 'wasm esm corpus: %s\n' "$(git -C "$wasm_testsuite" rev-parse HEAD)"
+    printf 'packages: %s\n' "$packages"
+} | tee "$corpus/MANIFEST"
 printf 'laid-out binary: %s-bolt\n' "$binary"

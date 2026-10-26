@@ -467,9 +467,85 @@ fn tagged_registers_with_failure(
     held: &std::collections::BTreeSet<Register>,
     header: u32,
 ) -> Result<std::collections::BTreeSet<Register>, usize> {
+    let numeric_uses: std::collections::BTreeSet<Register> = instructions
+        .iter()
+        .copied()
+        .filter(|instruction| instruction.op() != Op::Move)
+        .flat_map(number_reads)
+        .collect();
     let mut tagged: std::collections::BTreeSet<Register> = instructions
         .iter()
         .filter_map(|instruction| identity_branch(*instruction, constants).map(|branch| branch.register))
+        .chain(instructions.iter().filter_map(|instruction| match instruction.op() {
+            Op::GetIndex => instruction.operand_b().register_index(),
+            Op::SetIndex | Op::RequireObjectCoercible => Some(instruction.register_b()),
+            _ => None,
+        }))
+        .chain(instructions.iter().enumerate().flat_map(|(offset, instruction)| {
+            if !matches!(instruction.op(), Op::Call | Op::CallArray) {
+                return Vec::new();
+            }
+            // Keep field-resolved calls under the existing inliner's representation and
+            // ownership rules. Dynamic/direct calls leave at this exact PC, so their input
+            // window must remain boxed through preceding Moves.
+            if instructions[..offset]
+                .iter()
+                .rev()
+                .find(|candidate| candidate.defined_register() == Some(instruction.register_b()))
+                .is_some_and(|definition| definition.op() == Op::GetField)
+            {
+                return Vec::new();
+            }
+            let base = ImmediateLayout::call_window_base(instruction.imm());
+            let count = if instruction.op() == Op::CallArray {
+                1
+            } else {
+                usize::from(ImmediateLayout::argument_count(instruction.imm()))
+            };
+            let mut registers = Vec::new();
+            for argument in (0..count).filter_map(|offset| {
+                usize::from(base).checked_add(offset).and_then(|register| u16::try_from(register).ok())
+            }) {
+                let mut value = argument;
+                let mut moved_argument = false;
+                let mut numeric_use = false;
+                let mut moved_chain = std::collections::BTreeSet::new();
+                loop {
+                    if !moved_chain.insert(value) {
+                        break;
+                    }
+                    if numeric_uses.contains(&value) {
+                        numeric_use = true;
+                        break;
+                    }
+                    let numeric_move_alias = instructions.iter().any(|candidate| {
+                        candidate.op() == Op::Move
+                            && candidate.register_b() == value
+                            && numeric_uses.contains(&candidate.result_register())
+                    });
+                    if numeric_move_alias {
+                        numeric_use = true;
+                        break;
+                    }
+                    let Some(definition) = instructions[..offset]
+                        .iter()
+                        .rev()
+                        .find(|candidate| candidate.defined_register() == Some(value))
+                    else {
+                        break;
+                    };
+                    if definition.op() != Op::Move {
+                        break;
+                    }
+                    moved_argument = true;
+                    value = definition.register_b();
+                }
+                if moved_argument && !numeric_use {
+                    registers.push(argument);
+                }
+            }
+            registers
+        }))
         .chain(instructions.iter().filter_map(|instruction| {
             if instruction.op() != Op::LoadConst {
                 return None;
@@ -511,7 +587,7 @@ fn tagged_registers_with_failure(
                     }
                 }
                 // A cached field's value, which the entry record carries tagged.
-                Op::GetField => {}
+                Op::GetField | Op::GetIndex => {}
                 _ => {
                     if std::env::var_os("QUENCH_JS_JIT_TRACE_OSR_REJECT").is_some() {
                         eprintln!(
@@ -1290,6 +1366,7 @@ enum Role {
     Number,
     Tagged,
     Array { written: bool },
+    TaggedArray { written: bool },
 }
 
 struct Admission<'a> {
@@ -1325,6 +1402,18 @@ impl Admission<'_> {
             (Some(Role::Tagged), Role::Tagged) => {}
             (Some(Role::Array { written }), Role::Array { written: more }) => {
                 self.roles.insert(register, Role::Array { written: written || more });
+            }
+            (Some(Role::Array { written }), Role::Tagged)
+            | (Some(Role::TaggedArray { written }), Role::Tagged) => {
+                self.roles.insert(register, Role::TaggedArray { written });
+            }
+            (Some(Role::Tagged), Role::Array { written }) | (Some(Role::Tagged), Role::TaggedArray { written }) => {
+                self.roles.insert(register, Role::TaggedArray { written });
+            }
+            (Some(Role::Array { written }), Role::TaggedArray { written: more })
+            | (Some(Role::TaggedArray { written }), Role::Array { written: more })
+            | (Some(Role::TaggedArray { written }), Role::TaggedArray { written: more }) => {
+                self.roles.insert(register, Role::TaggedArray { written: written || more });
             }
             _ => return None,
         }
@@ -1473,6 +1562,18 @@ fn admit_region(
         .filter_map(|instruction| instruction.defined_register())
         .collect();
     for (offset, instruction) in instructions.iter().copied().enumerate() {
+        if instruction.op() == Op::Move
+            && instructions.iter().any(|candidate| {
+                matches!(candidate.op(), Op::GetIndex | Op::SetIndex | Op::RequireObjectCoercible)
+                    && object_reads(*candidate) == Some(instruction.result_register())
+            })
+        {
+            return Err(RegionAnalysisFailure::at(
+                RegionRejection::UnsupportedInstruction(Op::Move),
+                header,
+                offset,
+            ));
+        }
         if instruction.op() == Op::GetField {
             let path = field_path(instruction, sites, &paths).ok_or_else(|| {
                 RegionAnalysisFailure::at(
@@ -1656,15 +1757,20 @@ fn admit_region(
     let tagged: Vec<Register> = admission
         .roles
         .iter()
-        .filter(|(_, role)| **role == Role::Tagged)
+        .filter(|(_, role)| matches!(role, Role::Tagged | Role::TaggedArray { .. }))
         .map(|(register, _)| *register)
         .collect();
     let mut arrays: Vec<ArrayUse> = admission
         .roles
         .iter()
         .filter_map(|(register, role)| match role {
-            Role::Array { written } => Some(ArrayUse { register: *register, written: *written, field: None }),
+            Role::Array { written } | Role::TaggedArray { written }
+                if instructions.iter().any(|instruction| {
+                    matches!(instruction.op(), Op::GetIndex | Op::SetIndex | Op::RequireObjectCoercible)
+                        && object_reads(*instruction) == Some(*register)
+                }) => Some(ArrayUse { register: *register, written: *written, field: None }),
             Role::Number | Role::Tagged => None,
+            Role::Array { .. } | Role::TaggedArray { .. } => None,
         })
         .collect();
     for (register, written) in &admission.field_arrays {
@@ -1762,7 +1868,11 @@ fn admit(
             admission.array(instruction.register_b(), false)?;
         }
         Op::GetIndex => {
-            admission.result(instruction)?;
+            if tagged.contains(&instruction.result_register()) {
+                admission.tagged(instruction.result_register())?;
+            } else {
+                admission.result(instruction)?;
+            }
             let base = instruction.operand_b().register_index()?;
             admission.array(base, false)?;
             admission.source(instruction.operand_c())?;
@@ -1812,8 +1922,8 @@ fn admit(
         | Op::LoadName
         | Op::LoadNameCall
         | Op::LoadNameTypeof
-        | Op::Call
-        | Op::CallArray => {}
+            => {}
+        Op::Call | Op::CallArray => {}
         Op::Jump => {}
         Op::JumpBinaryFalse => {
             if let Some(branch) = identity_branch(instruction, constants) {
@@ -4648,7 +4758,11 @@ impl<'a, 'b> Lowering<'a, 'b> {
                 let base = instruction.operand_b().register_index()?;
                 let array = self.arrays[&base];
                 let key = self.operand(instruction.operand_c())?;
-                let representation = element_representation(&instruction, self.observation);
+                let representation = if self.region.tagged.contains(&instruction.result_register()) {
+                    Representation::Tagged
+                } else {
+                    element_representation(&instruction, self.observation)
+                };
                 let current = self.body.builder.current_block().expect("lowering inside a block");
                 let chain = self.chain(current);
                 // Two reads of one key definition key alike (`int32_key`).
@@ -4687,7 +4801,16 @@ impl<'a, 'b> Lowering<'a, 'b> {
                         let exit = self.exit_block(pc);
                         self.unbox_float64(double, exit)
                     }
-                    Representation::Tagged => return None,
+                    Representation::Tagged => {
+                        let bits = self.body.builder.ins().load(types::I64, flags(), address, displacement);
+                        let hole = self
+                            .body
+                            .builder
+                            .ins()
+                            .icmp_imm_u(IntCC::Equal, bits, Value::DELETED.to_bits() as i64);
+                        self.guard(pc, hole);
+                        bits
+                    }
                 };
                 self.element_reads.insert(read, (Typed { value, representation }, chain, self.element_stores));
                 self.define(instruction.result_register(), Typed { value, representation });
