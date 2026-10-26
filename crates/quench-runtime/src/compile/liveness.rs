@@ -255,6 +255,10 @@ fn resumes_into_handler(op: Op) -> bool {
 }
 
 pub(super) fn add_suspended_exception_roots(function: &Function, live: &mut [RegisterSet]) {
+    // Most functions have no handler for an abrupt resumption to enter.
+    if function.handlers.is_empty() {
+        return;
+    }
     for (pc, instruction) in function.instructions().enumerate() {
         if !resumes_into_handler(instruction.op()) {
             continue;
