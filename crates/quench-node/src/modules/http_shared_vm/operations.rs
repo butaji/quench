@@ -172,7 +172,9 @@ const REQUEST_DISPATCH_FACTORY: &str = quench_js_check::checked_js!(
     r#"(createIncoming, ServerResponse) => {
   'use strict';
   return function dispatchRequest(method, url, statusCode, statusMessage, httpVersion, httpVersionMajor, httpVersionMinor, rawHeaders, socket, complete, body, open, exchange, responseId, responseStatus, server, startSubscribers, startChannel) {
-    const request = createIncoming(method, url, statusCode, statusMessage, httpVersion, httpVersionMajor, httpVersionMinor, rawHeaders, socket, complete, body, open, exchange, true);
+    // Node's parser marks the message complete once its body is parsed, after the
+    // `request` listeners return (`parserOnMessageComplete`).
+    const request = createIncoming(method, url, statusCode, statusMessage, httpVersion, httpVersionMajor, httpVersionMinor, rawHeaders, socket, false, body, open, exchange, true);
     const response = new ServerResponse(responseId, responseStatus, request, server, socket);
     if (startSubscribers !== undefined) {
       const message = { request, response, socket, server };
@@ -188,6 +190,7 @@ const REQUEST_DISPATCH_FACTORY: &str = quench_js_check::checked_js!(
       }
     }
     server.emit("request", request, response);
+    if (complete && !open) request.complete = true;
   };
 }"#
 );
