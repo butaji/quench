@@ -1213,8 +1213,8 @@ struct ConstructPlan {
     callee_layout: (u32, usize),
     prototype: Value,
     shape: u32,
-    /// The receiver's header (`InlineObjectHeader::of` of `prototype` and `shape`), which
-    /// `ConstructPlan::finish` derives; the receiver stores its fields inline when they fit.
+    /// The receiver's header (`ConstructPlan::derive_header`): of inline storage when its
+    /// fields fit the inline slots, else of an arena run.
     header: InlineObjectHeader,
     kind: ConstructPlanKind,
     fields: u8,
@@ -1280,9 +1280,19 @@ impl ConstructPlan {
     fn finish(self) -> Self {
         Self {
             epoch: crate::heap::prototype_layout_epoch(),
-            header: InlineObjectHeader::of(self.prototype, self.shape),
-            ..self
+            ..self.derive_header()
         }
+    }
+
+    /// This plan with the header its receiver starts with, of its prototype and shape: inline
+    /// storage when its fields fit the inline slots, else an arena run.
+    fn derive_header(self) -> Self {
+        let header = if usize::from(self.fields) <= INLINE_PROPERTY_COUNT {
+            InlineObjectHeader::of(self.prototype, self.shape)
+        } else {
+            InlineObjectHeader::of_run(self.prototype, self.shape)
+        };
+        Self { header, ..self }
     }
 
     /// This plan's field values in order, `undefined` past them: the argument each field's
@@ -1314,7 +1324,7 @@ impl ConstructPlan {
         for (index, value) in values.iter_mut().enumerate().take(fields) {
             *value = field(index);
         }
-        heap.alloc_object_with_properties(self.prototype, self.shape, &values[..fields])
+        heap.alloc_object_from_run_header(self.header, self.prototype, &values[..fields])
     }
 
     /// This plan extended by the field `store` adds, `None` once it names all it can.
@@ -11700,7 +11710,6 @@ fn lane_record_forwarded_fields<H: Host>(
     };
     *plan = ConstructPlan {
         shape,
-        header: InlineObjectHeader::of(plan.prototype, shape),
         fields: fields.fields,
         parameters: fields.parameters,
         defaulted: fields.defaulted,
@@ -11710,7 +11719,8 @@ fn lane_record_forwarded_fields<H: Host>(
             ..resolution
         }),
         ..*plan
-    };
+    }
+    .derive_header();
 }
 
 /// The method a forwarding constructor's body (`ScriptCallTarget::forwarded_method`) would
