@@ -1580,6 +1580,9 @@ struct Compiler<'a> {
     source: &'a str,
     text: &'a str,
     source_line_starts: std::borrow::Cow<'a, [usize]>,
+    /// The line `source_position` found last, which the next position, emitted from the
+    /// same or a nearby node, most often falls on.
+    last_source_line: std::cell::Cell<usize>,
     source_comments: Vec<Span>,
     /// Byte offset of each non-ASCII character with the running excess of
     /// UTF-8 bytes over UTF-16 units through it; columns count UTF-16 units.
@@ -1836,6 +1839,20 @@ thread_local! {
     pub(crate) static LOWER_AT_LOAD: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
+/// The index of the line of `starts` holding `offset`: the last line start at or before it, or
+/// the first line when none is. `last`, the line found before, is tried first and updated.
+fn source_line_index(starts: &[usize], last: &std::cell::Cell<usize>, offset: usize) -> usize {
+    let holds = |line: usize| {
+        starts.get(line).is_none_or(|start| *start <= offset) && starts.get(line + 1).is_none_or(|next| offset < *next)
+    };
+    if holds(last.get()) {
+        return last.get();
+    }
+    let line = starts.partition_point(|start| *start <= offset).saturating_sub(1);
+    last.set(line);
+    line
+}
+
 /// The program tables a function's lowering reads, final once every function's rewrites
 /// have added their sites: at load the compiler's, after it the finished program's.
 pub(crate) struct LoweringTables<'t> {
@@ -2042,6 +2059,7 @@ impl<'a> Compiler<'a> {
             source,
             text,
             source_line_starts,
+            last_source_line: std::cell::Cell::new(0),
             source_comments: Vec::new(),
             source_utf16_excess,
             mode,
@@ -2532,10 +2550,7 @@ impl<'a> Compiler<'a> {
 
     fn source_position(&self, offset: u32) -> SourcePosition {
         let offset = (offset as usize).min(self.text.len());
-        let line_index = self
-            .source_line_starts
-            .partition_point(|start| *start <= offset)
-            .saturating_sub(1);
+        let line_index = self.source_line_index(offset);
         let line_start = self.source_line_starts[line_index];
         let excess_before = |offset: usize| {
             let index = self
@@ -2551,6 +2566,11 @@ impl<'a> Compiler<'a> {
             line: u32::try_from(line_index.saturating_add(1)).unwrap_or(u32::MAX),
             column: u32::try_from(column.saturating_add(1)).unwrap_or(u32::MAX),
         }
+    }
+
+    /// The index of the line holding `offset` (`source_line_index`).
+    fn source_line_index(&self, offset: usize) -> usize {
+        source_line_index(&self.source_line_starts, &self.last_source_line, offset)
     }
 
     /// Emits every function of `program`: all the compiler reads of its tree. `finish` makes
