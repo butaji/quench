@@ -2509,7 +2509,7 @@ impl<H: Host> Vm<H> {
                     called += 1;
                 } else {
                     uncalled_bytes += size_of::<crate::bytecode::Function>()
-                        + size_of_val::<[crate::bytecode::Instr]>(&function.code)
+                        + function.code.capacity() * size_of::<crate::bytecode::Instr>()
                         + function.wide.capacity() * size_of::<crate::bytecode::WideInstruction>();
                 }
             }

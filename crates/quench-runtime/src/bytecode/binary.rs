@@ -3,7 +3,7 @@ use super::{
     EvalBindingLocation, FieldBase, FieldSite, Function, FunctionSlot, Handler, InitialRegister, Instr,
     LexicalBindingKind, LocalRegister, MethodSite, ModuleImportBinding, ModuleImportName,
     ModuleImportNameKind, ModuleLinkPlan, ModuleReexport, ModuleReexportKind, ModuleRequest,
-    LiteralStep, ModuleRequestPhase, ObjectSite, Op, RegExpLiteralSite, Superinstruction,
+    LiteralStep, ModuleRequestPhase, ObjectSite, Op, RegExpLiteralSite, SourcePosition, Superinstruction,
     WideInstruction,
 };
 
@@ -1163,7 +1163,7 @@ fn read_function(input: &mut BinaryReader<'_>) -> Result<Function, String> {
             .boxed(),
             binding_sites: binding_sites.into(),
             source_positions,
-            code: code.into(),
+            code,
             wide,
             registers,
             dispatch,
@@ -1283,12 +1283,16 @@ impl BinaryWriter {
         if op.immediate_names_atom(b) { self.atom(imm) } else { self.u32(imm) }
     }
     pub(super) fn u8(&mut self, value: u8) { self.bytes.push(value); }
-    /// A source position table as it is coded in memory: decoding copies the bytes instead of
-    /// coding each entry again (`BinaryReader::source_positions`).
+    /// A source position table as it is coded in memory, and its final entry: decoding copies
+    /// the bytes instead of coding each entry again (`BinaryReader::source_positions`).
     fn source_positions(&mut self, table: &super::SourcePositions) {
-        let bytes = table.encoded();
+        let (bytes, last) = table.encoded();
         self.u32(bytes.len() as u32);
         self.bytes.extend_from_slice(bytes);
+        match last {
+            Some(position) => { self.u8(1); self.u32(position.pc); self.u32(position.line); self.u32(position.column); }
+            None => self.u8(0),
+        }
     }
     pub(super) fn u16(&mut self, value: u16) { self.bytes.extend_from_slice(&value.to_le_bytes()); }
     pub(super) fn u32(&mut self, value: u32) { self.bytes.extend_from_slice(&value.to_le_bytes()); }
@@ -1317,7 +1321,13 @@ impl<'a> BinaryReader<'a> {
     }
     fn source_positions(&mut self) -> Result<super::SourcePositions, String> {
         let len = self.u32()? as usize;
-        Ok(super::SourcePositions::from_encoded(self.take(len)?))
+        let bytes = self.take(len)?.to_vec();
+        let last = match self.u8()? {
+            0 => None,
+            1 => Some(SourcePosition { pc: self.u32()?, line: self.u32()?, column: self.u32()? }),
+            _ => return Err("invalid residual source position table".into()),
+        };
+        Ok(super::SourcePositions::from_encoded(bytes, last))
     }
     fn atom(&mut self) -> Result<u32, String> {
         let encoded = self.u32()?;

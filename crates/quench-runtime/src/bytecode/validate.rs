@@ -647,14 +647,14 @@ function.plain_local_slots(&self.superinstructions)
             }
             let code_len = function.code.len() as u32;
             let positions = function.source_positions.iter();
-            if !function.source_positions.well_formed()
-                || positions
-                    .clone()
-                    .zip(positions.clone().skip(1))
-                    .any(|(first, second)| first.pc >= second.pc)
+            if positions
+                .clone()
+                .zip(positions.clone().skip(1))
+                .any(|(first, second)| first.pc >= second.pc)
                 || positions.clone().any(|position| {
                     position.pc >= code_len || position.line == 0 || position.column == 0
                 })
+                || positions.clone().last() != function.source_positions.last()
             {
                 return Err(format!("function {index} has invalid source positions"));
             }
@@ -1285,7 +1285,7 @@ mod tests {
             binding_sites: vec![].into(),
             source_positions: Default::default(),
             environment_clones: vec![].into(),
-            code: code.into(),
+            code,
             wide: vec![],
             registers,
             dispatch: DispatchClass::General,

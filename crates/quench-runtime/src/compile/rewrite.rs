@@ -296,7 +296,7 @@ fn remove_nops(function: &mut BcFunction, liveness: &mut Option<CodeFacts>) {
         &mut function.source_positions,
         &old,
     );
-    function.code = code.into();
+    function.code = code;
     *liveness = match (transfers, live) {
         (Some(mut transfers), Some(mut live)) => {
             transfers.truncate(function.code.len());
@@ -849,7 +849,7 @@ fn rewrite_super_window(
         &mut function.source_positions,
         &old,
     );
-    function.code = code.into();
+    function.code = code;
     changed
 }
 
@@ -1031,7 +1031,7 @@ fn rewrite_once(
         &mut function.source_positions,
         &old,
     );
-    function.code = code.into();
+    function.code = code;
     true
 }
 
@@ -1118,7 +1118,7 @@ fn relocate_source_positions(
         .iter()
         .filter(|position| source_instruction_survives(position.pc as usize, old_code, map))
         .collect::<Vec<_>>();
-    let mut relocated = crate::bytecode::SourcePositionsBuilder::default();
+    let mut relocated = crate::bytecode::SourcePositions::default();
     let mut position_index = 0;
     let mut origin_pc = 0;
     let mut effective = None;
@@ -1162,7 +1162,7 @@ fn relocate_source_positions(
         });
         previous_location = Some(location);
     }
-    *source_positions = relocated.into();
+    *source_positions = relocated;
 }
 
 fn source_instruction_survives(old_pc: usize, old_code: &[Instr], map: &[usize]) -> bool {
@@ -1211,7 +1211,7 @@ mod tests {
             Instr::wide(0).unwrap(),
             Instr::new(Op::Move, 5, 3, 0, 0),
             Instr::new(Op::Return, 5, 0, 0, 0),
-        ].into();
+        ];
         assert!(!coalesce_distant_producer_moves(function, &[] as &[MethodSiteSpec], &[], &[], &mut None));
         assert_eq!(function.code[0].result_register(), 3);
         assert_eq!(function.code[2].op(), Op::Move);
@@ -1286,7 +1286,7 @@ mod tests {
             Instr::new(Op::JumpFalse, 0, 0, 0, 5),
             Instr::new(Op::Jump, 0, 0, 0, 0),
             move_,
-        ].into();
+        ];
         invert_branches_over_jumps(function);
         assert_eq!(
             ops(&function.code),
@@ -1307,7 +1307,7 @@ mod tests {
             Instr::new(Op::Jump, 0, 0, 0, 3),
             Instr::new(Op::JumpTrue, 0, 0, 0, 1),
             move_,
-        ].into();
+        ];
         let before = ops(&function.code);
         invert_branches_over_jumps(function);
         assert_eq!(ops(&function.code), before);
@@ -1320,7 +1320,7 @@ mod tests {
     ) -> Vec<(Op, Register)> {
         let mut program = Engine::specialize_unspecialized("", "rewrite-coalesce.js").unwrap();
         let function = &mut program.functions[0];
-        function.code = code.into();
+        function.code = code;
         function.registers = registers;
         function.local_registers = storage
             .iter()
@@ -1421,11 +1421,11 @@ mod tests {
         ];
         let mut program = Engine::specialize_unspecialized("", "rewrite-return.js").unwrap();
         let function = &mut program.functions[0];
-        function.code = code.clone().into();
+        function.code = code.clone();
         return_through_shared_returns(function);
         assert!(function.code[2].returns_from_frame());
         assert_eq!(function.code[3].op(), Op::Return);
-        function.code = code.into();
+        function.code = code;
         function.parameter_end_pc = 3;
         return_through_shared_returns(function);
         assert!(!function.code[2].returns_from_frame());
@@ -1434,10 +1434,10 @@ mod tests {
     fn rewrite_fixture(code: Vec<Instr>, registers: u16) -> Vec<Instr> {
         let mut program = Engine::specialize_unspecialized("", "rewrite-liveness.js").unwrap();
         let function = &mut program.functions[0];
-        function.code = code.into();
+        function.code = code;
         function.registers = registers;
         rewrite_once(function, &[] as &[MethodSiteSpec], &mut SiteTable::default(), &[], &mut None);
-        std::mem::take(&mut function.code).to_vec()
+        std::mem::take(&mut function.code)
     }
 
     fn assert_rewrite_preserves_code(code: Vec<Instr>, registers: u16) {
@@ -1628,7 +1628,7 @@ mod tests {
         .collect();
         let first = [load, Instr::new(Op::Move, 0, 0, 0, 0), call];
         relocate_source_positions(3, &mut positions, &first, &wide, &[0, 1, 2, 3]);
-        assert_eq!(positions.iter().last().unwrap().pc, 2);
+        assert_eq!(positions.last().unwrap().pc, 2);
         let second = [load, Instr::new(Op::Nop, 0, 0, 0, 0), call];
         relocate_source_positions(2, &mut positions, &second, &wide, &[0, 1, 1, 2]);
         assert_eq!(positions.iter().collect::<Vec<_>>(), vec![

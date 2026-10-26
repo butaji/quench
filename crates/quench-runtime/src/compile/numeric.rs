@@ -124,7 +124,7 @@ fn compact_binary_stores(
         &mut function.source_positions,
         &old,
     );
-    function.code = code.into();
+    function.code = code;
 }
 
 fn local_index_sources(
@@ -250,7 +250,7 @@ mod tests {
             binding_sites: vec![].into(),
             source_positions: Default::default(),
             environment_clones: vec![].into(),
-            code: code.clone().into(),
+            code: code.clone(),
             wide: vec![],
             registers: 3,
             dispatch: crate::bytecode::DispatchClass::Numeric,
@@ -336,7 +336,7 @@ mod tests {
             binding_sites: vec![].into(),
             source_positions: Default::default(),
             environment_clones: vec![].into(),
-            code: code.clone().into(),
+            code: code.clone(),
             wide: vec![],
             registers: 3,
             dispatch: crate::bytecode::DispatchClass::Numeric,

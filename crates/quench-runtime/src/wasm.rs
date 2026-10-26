@@ -944,7 +944,7 @@ impl Engine {
                 binding_sites: vec![].into(),
                 source_positions: Default::default(),
                 environment_clones: vec![].into(),
-                code: lowering.code.into(),
+                code: lowering.code,
                 wide: lowering.wide,
                 registers: lowering.registers,
                 dispatch: DispatchClass::General,

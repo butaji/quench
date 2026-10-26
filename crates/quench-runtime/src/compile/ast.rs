@@ -101,7 +101,7 @@ pub(super) struct FunctionCompiler<'a, 'b> {
     pub(super) locals: Vec<Atom>,
     pub(super) code: Vec<Instr>,
     pub(super) wide: Vec<WideInstruction>,
-    pub(super) source_positions: crate::bytecode::SourcePositionsBuilder,
+    pub(super) source_positions: crate::bytecode::SourcePositions,
     current_source_position: Option<(u32, u32)>,
     pub(super) next_reg: Register,
     pub(super) max_reg: Register,

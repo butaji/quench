@@ -153,6 +153,9 @@ impl Compiler<'_> {
                 function.emit(Op::Return, result, 0, 0, 0);
             }
         }
+        // As in `Compiler::compile_function`: no doubling slack beside the syntax tree.
+        function.code.shrink_to_fit();
+        function.source_positions.shrink_to_fit();
         let name_bindings = function.name_bindings();
         let undefined_register = function.used_undefined_register();
         let environment_clones = function.per_site_environment_clones();
@@ -199,7 +202,7 @@ impl Compiler<'_> {
             binding_sites: function.binding_sites.into(),
             source_positions: function.source_positions.into(),
             environment_clones: environment_clones.into(),
-            code: function.code.into(),
+            code: function.code,
             wide: function.wide,
             registers: function.max_reg,
             dispatch: DispatchClass::General,

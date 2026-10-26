@@ -496,7 +496,7 @@ mod tests {
                 Instr::new(Op::Jump, 0, 0, 0, 3),
                 Instr::new(Op::Return, 0, 0, 0, 0),
                 Instr::new(Op::Return, 1, 0, 0, 0),
-            ].into(),
+            ],
             wide: vec![],
             registers: 2,
             dispatch: crate::bytecode::DispatchClass::General,

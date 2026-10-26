@@ -250,8 +250,7 @@ pub(super) fn apply_function(
         {
             function.arguments_slot = None;
         }
-        function.selective_capture_slots =
-            Some(crate::heap::ThinBoxSlice::from_exact_iter(captured.iter().copied()));
+        function.selective_capture_slots = Some(crate::heap::ThinBoxSlice::from_slice(&captured));
         rewrite_local_ownership(function, &captured);
         remove_unobservable_clones(function, &captured);
     } else {

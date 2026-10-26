@@ -152,6 +152,33 @@ impl<T> ThinBoxSlice<T> {
         assert!(values.next().is_none(), "exact-size iterator yielded more than its length");
         slice
     }
+
+    /// A slice of the `len` elements at `source`, copied bitwise into a new allocation.
+    ///
+    /// # Safety
+    /// The `len` elements at `source` are initialized, and the caller no longer uses or
+    /// drops them unless `T` is `Copy`: the slice owns them now.
+    unsafe fn moved_from(source: *const T, len: usize) -> Self {
+        if len == 0 {
+            return Self::empty();
+        }
+        let (layout, offset) = Self::layout(len);
+        // SAFETY: the layout is non-zero sized, as it always holds the header.
+        let raw = unsafe { alloc(layout) };
+        let Some(header) = NonNull::new(raw.cast::<usize>()) else {
+            handle_alloc_error(layout)
+        };
+        // SAFETY: the new allocation fits the header and `len` elements from `offset`, and
+        // cannot overlap `source`.
+        unsafe {
+            header.as_ptr().write(len);
+            std::ptr::copy_nonoverlapping(source, raw.add(offset).cast::<T>(), len);
+        }
+        Self {
+            header,
+            marker: std::marker::PhantomData,
+        }
+    }
 }
 
 impl<T> Default for ThinBoxSlice<T> {
@@ -163,8 +190,14 @@ impl<T> Default for ThinBoxSlice<T> {
 /// Moves the elements straight into the slice's one allocation: a builder's `Vec` keeps
 /// its growth slack, which shrinking it to a `Box<[T]>` first would reallocate to drop.
 impl<T> From<Vec<T>> for ThinBoxSlice<T> {
-    fn from(values: Vec<T>) -> Self {
-        Self::from_exact_iter(values.into_iter())
+    fn from(mut values: Vec<T>) -> Self {
+        // SAFETY: the `len` elements are initialized; forgetting them leaves `values` to free
+        // only its buffer.
+        unsafe {
+            let slice = Self::moved_from(values.as_ptr(), values.len());
+            values.set_len(0);
+            slice
+        }
     }
 }
 
@@ -173,14 +206,6 @@ impl<'a, T> IntoIterator for &'a ThinBoxSlice<T> {
     type IntoIter = std::slice::Iter<'a, T>;
     fn into_iter(self) -> Self::IntoIter {
         self.iter()
-    }
-}
-
-impl<'a, T> IntoIterator for &'a mut ThinBoxSlice<T> {
-    type Item = &'a mut T;
-    type IntoIter = std::slice::IterMut<'a, T>;
-    fn into_iter(self) -> Self::IntoIter {
-        self.iter_mut()
     }
 }
 
@@ -199,28 +224,22 @@ impl<T: PartialEq> PartialEq for ThinBoxSlice<T> {
 impl<T> From<Box<[T]>> for ThinBoxSlice<T> {
     fn from(values: Box<[T]>) -> Self {
         let len = values.len();
-        if len == 0 {
-            return Self::empty();
-        }
-        let (layout, offset) = Self::layout(len);
-        // SAFETY: the layout is non-zero sized, as it always holds the header.
-        let raw = unsafe { alloc(layout) };
-        let Some(header) = NonNull::new(raw.cast::<usize>()) else {
-            handle_alloc_error(layout)
-        };
-        // SAFETY: the new allocation fits the header and `len` elements; the elements move
-        // out of `values`, whose own allocation is then freed without dropping them.
+        let source = Box::into_raw(values);
+        // SAFETY: the `len` elements are initialized; the box's allocation is then freed
+        // without dropping them.
         unsafe {
-            header.as_ptr().write(len);
-            let elements = raw.add(offset).cast::<T>();
-            let source = Box::into_raw(values);
-            std::ptr::copy_nonoverlapping(source.cast::<T>(), elements, len);
+            let slice = Self::moved_from(source.cast::<T>(), len);
             drop(Box::from_raw(source as *mut [std::mem::ManuallyDrop<T>]));
+            slice
         }
-        Self {
-            header,
-            marker: std::marker::PhantomData,
-        }
+    }
+}
+
+impl<T: Copy> ThinBoxSlice<T> {
+    /// A slice of copies of `values`, made with one allocation and one copy.
+    pub(crate) fn from_slice(values: &[T]) -> Self {
+        // SAFETY: the elements are initialized, and copying `Copy` values leaves them valid.
+        unsafe { Self::moved_from(values.as_ptr(), values.len()) }
     }
 }
 

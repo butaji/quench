@@ -65,7 +65,7 @@ pub(super) fn report(program: &ResidualProgram) {
         slots.len(),
         size_of::<Function>(),
         slots.capacity() * size_of::<FunctionSlot>() + records().count() * size_of::<Function>(),
-        sum(|function| slice_bytes::<Instr>(&function.code)),
+        sum(|function| bytes::<Instr>(&function.code)),
         sum(|function| bytes::<WideInstruction>(&function.wide)),
         sum(|function| function.source_positions.capacity_bytes()),
         sum(|function| slice_bytes::<Handler>(&function.handlers)),
