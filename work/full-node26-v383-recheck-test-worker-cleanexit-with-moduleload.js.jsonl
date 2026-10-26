@@ -1,0 +1,1 @@
+{"inventory_hash":"cc3b979bb85704fa","fixture":"/workspace/work/node-stable-release/node-v26.12.1/test/parallel/test-worker-cleanexit-with-moduleload.js","observation":{"Ok":{"exit_code":0,"signal":null,"timed_out":false,"worker":{"outcome":"guestexit","code":0},"stdout":[],"stderr":[]}}}

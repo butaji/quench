@@ -1,0 +1,1 @@
+{"inventory_hash":"64f013d69abd8c9e","fixture":"/workspace/work/node-stable-release/node-v26.12.1/test/parallel/test-pipe-abstract-socket-http.js","observation":{"Ok":{"exit_code":0,"signal":null,"timed_out":false,"worker":{"outcome":"pass"},"stdout":[],"stderr":[]}}}

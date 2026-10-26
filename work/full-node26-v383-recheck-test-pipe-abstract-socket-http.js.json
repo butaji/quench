@@ -1,0 +1,28 @@
+{
+  "schema_version": 2,
+  "inventory_hash": "64f013d69abd8c9e",
+  "timeout_secs": 60,
+  "jobs": 1,
+  "node_version": "v26.12.1",
+  "runtime_commit": "ef64d9b235962b17ab88005d79bf8439b5039208",
+  "tests_node_commit": "unknown",
+  "platform": "linux-x86_64",
+  "results": [
+    {
+      "fixture": "/workspace/work/node-stable-release/node-v26.12.1/test/parallel/test-pipe-abstract-socket-http.js",
+      "status": "pass",
+      "observation": {
+        "Ok": {
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "pass"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    }
+  ]
+}

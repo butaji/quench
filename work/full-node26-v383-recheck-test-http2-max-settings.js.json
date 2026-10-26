@@ -1,0 +1,26 @@
+{
+  "schema_version": 2,
+  "inventory_hash": "bc0bd74d17258b75",
+  "timeout_secs": 60,
+  "jobs": 1,
+  "node_version": "v26.12.1",
+  "runtime_commit": "ef64d9b235962b17ab88005d79bf8439b5039208",
+  "tests_node_commit": "unknown",
+  "platform": "linux-x86_64",
+  "results": [
+    {
+      "fixture": "/workspace/work/node-stable-release/node-v26.12.1/test/parallel/test-http2-max-settings.js",
+      "status": "timeout",
+      "observation": {
+        "Ok": {
+          "exit_code": null,
+          "signal": 9,
+          "timed_out": true,
+          "worker": null,
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    }
+  ]
+}

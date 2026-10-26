@@ -1,0 +1,29 @@
+{
+  "schema_version": 2,
+  "inventory_hash": "cc3b979bb85704fa",
+  "timeout_secs": 60,
+  "jobs": 1,
+  "node_version": "v26.12.1",
+  "runtime_commit": "ef64d9b235962b17ab88005d79bf8439b5039208",
+  "tests_node_commit": "unknown",
+  "platform": "linux-x86_64",
+  "results": [
+    {
+      "fixture": "/workspace/work/node-stable-release/node-v26.12.1/test/parallel/test-worker-cleanexit-with-moduleload.js",
+      "status": "pass",
+      "observation": {
+        "Ok": {
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "guestexit",
+            "code": 0
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    }
+  ]
+}
