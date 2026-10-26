@@ -303,12 +303,22 @@ fn writable_prefix(encoded: &[u8], encoding: &str, capacity: usize) -> usize {
     count
 }
 
+/// The bytes `string` encodes to under `encoding`; UTF-8 straight from the string's storage
+/// (`NativeContext::string_utf8`), which an ASCII string holds as is. A non-string throws.
+fn encoded_string(c: &mut Context<'_>, string: RootId, encoding: &str) -> Result<Vec<u8>, RootedError> {
+    if encoding == "utf8" {
+        return c.string_utf8(string)?.ok_or_else(|| not_a_string(c));
+    }
+    let units = string_units(c, string)?;
+    Ok(codec::encode_units(&units, encoding))
+}
+
 /// `StringWrite<encoding>(buffer, string, offset, length)`, also the static one-byte writes.
 fn write(c: &mut Context<'_>, args: &[RootId], encoding: &str) -> Result<RootId, RootedError> {
     let view = arg(c, args, 0);
     let length = view_length(c, view)?;
     let string = arg(c, args, 1);
-    let units = string_units(c, string)?;
+    let encoded = encoded_string(c, string, encoding)?;
     let offset = arg(c, args, 2);
     let offset = index(c, offset, 0)?;
     if offset > length {
@@ -320,7 +330,6 @@ fn write(c: &mut Context<'_>, args: &[RootId], encoding: &str) -> Result<RootId,
     if capacity == 0 {
         return Ok(c.number(0.0));
     }
-    let encoded = codec::encode_units(&units, encoding);
     let count = writable_prefix(&encoded, encoding, capacity);
     let written = c.with_buffer_bytes_mut_rooted(view, |bytes| {
         bytes[offset..offset + count].copy_from_slice(&encoded[..count]);
