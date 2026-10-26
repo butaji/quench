@@ -1391,6 +1391,65 @@ impl<H: Host> Vm<H> {
         outcome
     }
 
+    /// `run_frame_general_with_error` of a resumed generator's frame `frame` with no error to
+    /// raise. Without JS tiers the general loop would only enter the lane at the frame's PC
+    /// and take back the plain `yield` the lane stops at, so the lane runs from here and that
+    /// stop becomes the frame's outcome as the loop's `Op::Yield` step makes it. Any other stop
+    /// (another instruction, a pending call, a raised error, another frame or program) resumes
+    /// the general loop where the lane left (`run_frames_after_lane_exit`).
+    pub(super) fn run_generator_frame(&mut self, p: &ResidualProgram, frame: usize) -> Result<FrameOutcome, JsError> {
+        let (program, function, pc) = (self.frames[frame].program, self.frames[frame].function, self.frames[frame].pc);
+        let lane_runs = !cfg!(any(feature = "profile-aggregate", feature = "profile-memory"))
+            && !self.js_tier_runs()
+            && !self.programs.js_jit_general_dispatch_enabled();
+        let cursor = self.general_cursor(program, p, function, lane_runs);
+        if !Self::lane_runs(cursor.lane, pc) {
+            return self.run_frame_general_with_error(p, frame, None);
+        }
+        let previous_program = self.replace_active_program(program);
+        let previous_global = self.realm.globals;
+        let caller_registers = self.active_registers;
+        let mut pending_calls = self.pending_call_stacks.pop().unwrap_or_default();
+        let outcome = (|| {
+            let _stack = self.enter_stack()?;
+            // As the loop checks before each step; a termination selects no guest handler.
+            self.check_execution_interrupt()?;
+            self.active_registers = self.frames[frame].registers.as_mut_ptr();
+            let mut executing = ExecutingProgram { id: program, retained: None };
+            let mut running = frame;
+            let pc = self.run_fast_lane(p, cursor.program, cursor.lane, &mut running, pc, &mut pending_calls, &mut executing, true);
+            let yields = running == frame
+                && pending_calls.is_empty()
+                && executing.id == program
+                && self.lane_raised.is_none()
+                && !p.function(function as usize).is_async
+                && pc < p.function(function as usize).code.len();
+            if yields {
+                let instruction = cursor.instruction(pc);
+                if instruction.op() == Op::Yield {
+                    let value = self.read(frame, instruction.register_b());
+                    self.frames[frame].pc = pc + 1;
+                    self.frames[frame].pc_is_resume = true;
+                    return Ok(FrameOutcome::Yield {
+                        value,
+                        destination: instruction.result_register(),
+                        delegated_result: None,
+                        frame: None,
+                    });
+                }
+            }
+            self.frames[running].pc = pc;
+            let raised = self.lane_raised.take();
+            self.run_frames_after_lane_exit(p, running, &mut pending_calls, LaneExit { executing, raised })
+        })();
+        pending_calls.clear();
+        self.pending_call_stacks.push(pending_calls);
+        self.active_registers = caller_registers;
+        self.set_active_program(previous_program);
+        self.switch_realm_global(previous_global);
+        outcome
+    }
+
     /// The general dispatch loop of `run_frame_general_until`, whose caller restores the active
     /// program and realm around it; from a lane `exit`, it resumes where that lane left.
     #[inline(always)]
