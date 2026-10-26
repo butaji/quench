@@ -417,6 +417,21 @@ pub(crate) fn channel_has_subscribers(state: &crate::host::SharedNodeState, name
     state.diagnostics.channels.get(name).is_some_and(|subscribers| !subscribers.is_empty())
 }
 
+/// Node's `Channel.publish` catches a subscriber's throw, reports it as an uncaught
+/// exception on the next tick and calls the next subscriber (`lib/diagnostics_channel.js`).
+const REPORT_SUBSCRIBER_ERROR: &str = quench_js_check::checked_js!(
+    r#"(error) => { process.nextTick(() => { throw error; }); }"#
+);
+
+/// `REPORT_SUBSCRIBER_ERROR` of the value subscriber `exception` threw.
+fn report_subscriber_error(context: &mut NativeContext<'_, NodeHost>, exception: RootId) -> Result<(), RootedError> {
+    let report = context.evaluate_script_rooted(REPORT_SUBSCRIBER_ERROR, "node:diagnostics_channel/report.js")?;
+    let undefined = context.undefined();
+    let reported = context.call_rooted(report, undefined, &[exception])?;
+    context.release_root(reported);
+    Ok(())
+}
+
 pub(crate) fn publish(
     context: &mut NativeContext<'_, NodeHost>,
     _: RootId,
@@ -443,6 +458,9 @@ pub(crate) fn publish(
         match result {
             Ok(result) => {
                 context.release_root(result);
+            }
+            Err(RootedError { exception: Some(exception), .. }) => {
+                report_subscriber_error(context, exception)?;
             }
             Err(error) => {
                 first_error = Some(error);

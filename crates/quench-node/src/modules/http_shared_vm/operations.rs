@@ -178,7 +178,13 @@ const REQUEST_DISPATCH_FACTORY: &str = quench_js_check::checked_js!(
       const message = { request, response, socket, server };
       for (let index = 0; index < startSubscribers.length; index++) {
         const subscriber = startSubscribers[index];
-        subscriber(message, startChannel);
+        // A subscriber's throw is uncaught on the next tick; the rest still run, as
+        // Node's `Channel.publish` runs them.
+        try {
+          subscriber(message, startChannel);
+        } catch (error) {
+          process.nextTick(() => { throw error; });
+        }
       }
     }
     server.emit("request", request, response);
