@@ -284,8 +284,17 @@ const REQUEST_FUNCTION: &str = r#"((Writable, Readable, create, write, setHeader
       // pending-read guard and preventing response queue poisoning.
       while (free.length > 0) {
         const candidate = agent.scheduling === 'fifo' ? free.shift() : free.pop();
-        if (candidate?._handle?.hasPendingRead?.() || candidate?._handle?.writeQueueSize > 0) {
-          candidate.destroy();
+        const hasQuenchTransport = typeof candidate?.__quenchNetSocketId === 'number';
+        const isOwnedCustomDuplex = candidate?.__quenchCustomHttpSocket === true;
+        if (!candidate || candidate.destroyed ||
+            (!hasQuenchTransport && !isOwnedCustomDuplex) ||
+            candidate._handle?.hasPendingRead?.() || candidate._handle?.writeQueueSize > 0) {
+          // A destroyed socket may remain in freeSockets until its close event.
+          // Likewise, tests or callers can insert a never-connected Socket in
+          // the public pool. Neither represents a reusable transport; discard
+          // it synchronously so the request creates a fresh socket instead of
+          // hanging on an inert slot.
+          if (candidate && !candidate.destroyed) candidate.destroy?.();
           continue;
         }
         slot = candidate;
@@ -861,6 +870,7 @@ const REQUEST_FUNCTION: &str = r#"((Writable, Readable, create, write, setHeader
       if (socket && !socket.__quenchNetSocketId &&
           typeof socket.write === 'function' && typeof socket.on === 'function') {
         customSocket = socket;
+        socket.__quenchCustomHttpSocket = true;
       }
       if (agentPool && socket) {
         const previousSlot = agentPool.slot;
