@@ -365,3 +365,16 @@ fn records_lowered_on_first_read_match_records_lowered_at_load() {
         assert!(compared > 0, "{source}");
     }
 }
+
+#[test]
+fn source_lines_found_from_the_last_line_match_a_search() {
+    for starts in [vec![], vec![0], vec![0, 4, 4, 9, 30], vec![3, 8]] {
+        let last = std::cell::Cell::new(0);
+        // Offsets forwards, backwards and jumping, as emission visits them.
+        let offsets = (0..40).chain((0..40).rev()).chain([35, 2, 9, 9, 4, 0, 31]);
+        for offset in offsets {
+            let expected = starts.partition_point(|start| *start <= offset).saturating_sub(1);
+            assert_eq!(super::source_line_index(&starts, &last, offset), expected, "{starts:?} {offset}");
+        }
+    }
+}

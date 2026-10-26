@@ -774,11 +774,27 @@ pub(super) fn express_strict_sets(function: &mut BcFunction) {
     }
 }
 
+/// Whether some rule's pattern starts with each op: a pair whose first op starts none fuses
+/// with nothing, as most pairs do.
+const RULE_FIRSTS: [bool; Op::COUNT] = {
+    let mut firsts = [false; Op::COUNT];
+    let mut index = 0;
+    while index < RULES.len() {
+        firsts[RULES[index].pattern[0] as usize] = true;
+        index += 1;
+    }
+    firsts
+};
+
+/// The rules whose pattern is `[first, second]`, in rule order.
+fn rules_for(first: Op, second: Op) -> impl Iterator<Item = &'static Rule> {
+    let candidates: &'static [Rule] = if RULE_FIRSTS[first as usize] { RULES } else { &[] };
+    candidates.iter().filter(move |rule| rule.pattern == [first, second])
+}
+
 /// Whether a rule of the selected recipe fuses `[first, second]`.
 fn fuses(first: Op, second: Op, recipe: impl Fn(Recipe) -> bool) -> bool {
-    RULES
-        .iter()
-        .any(|rule| rule.pattern == [first, second] && recipe(rule.recipe))
+    rules_for(first, second).any(|rule| recipe(rule.recipe))
 }
 
 
@@ -798,6 +814,16 @@ fn rewrite_super_window(
     function: &mut BcFunction,
     superinstructions: &mut SiteTable<'_, Superinstruction>,
 ) -> bool {
+    // Code holding no rule's op sequence keeps every instruction where it is.
+    let matches_rule = |rule: &SuperRule| {
+        function
+            .code
+            .windows(rule.pattern.len())
+            .any(|window| window.iter().map(|instruction| instruction.op()).eq(rule.pattern.iter().copied()))
+    };
+    if !SUPER_RULES.iter().any(matches_rule) {
+        return false;
+    }
     let old = std::mem::take(&mut function.code);
     let protected = protected_positions(
         &old,
@@ -945,7 +971,7 @@ fn rewrite_once(
     let rewrites_pair = |first: &Instr, second: &Instr| {
         !first.is_wide()
             && !second.is_wide()
-            && RULES.iter().any(|rule| rule.pattern == [first.op(), second.op()])
+            && rules_for(first.op(), second.op()).next().is_some()
     };
     // A pass without a rule-shaped pair or a `Nop` changes nothing, and liveness is needed
     // only to judge pairs.
@@ -983,10 +1009,7 @@ fn rewrite_once(
             .filter(|second| !protected[index + 1] && !old[index].is_wide() && !second.is_wide())
             .and_then(|second| {
                 let first = old[index];
-                let mut rules = RULES
-                    .iter()
-                    .filter(|rule| rule.pattern == [first.op(), second.op()])
-                    .peekable();
+                let mut rules = rules_for(first.op(), second.op()).peekable();
                 rules.peek()?;
                 // The same control-flow facts justify frame roots and every
                 // removed register write. An unavailable map keeps the pair.
@@ -1118,7 +1141,8 @@ fn relocate_source_positions(
         .iter()
         .filter(|position| source_instruction_survives(position.pc as usize, old_code, map))
         .collect::<Vec<_>>();
-    let mut relocated = crate::bytecode::SourcePositions::default();
+    // Relocation keeps or drops entries, so the old coding bounds the new one's.
+    let mut relocated = crate::bytecode::SourcePositions::with_capacity(source_positions.coded_len());
     let mut position_index = 0;
     let mut origin_pc = 0;
     let mut effective = None;
