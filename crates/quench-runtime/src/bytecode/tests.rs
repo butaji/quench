@@ -211,6 +211,7 @@ fn one_function_program(code: Vec<Instr>, source_positions: crate::bytecode::Sou
         replay: None,
         encoded_records: None,
             validated: Default::default(),
+            undefined_constant: Default::default(),
             closure_reads: None,
     }
 }
@@ -333,6 +334,7 @@ fn decoder_rejects_runtime_abi_mismatch_before_tables() {
         replay: None,
         encoded_records: None,
             validated: Default::default(),
+            undefined_constant: Default::default(),
             closure_reads: None,
     };
     let path = std::env::temp_dir().join(format!("quench-invalid-abi-{}", std::process::id()));
@@ -412,10 +414,8 @@ fn instance_initializer_plan_survives_round_trip_and_rejects_invalid_owners() {
         "instance-initializer.js",
     )
     .unwrap();
-    let owner = program
-        .functions
-        .iter()
-        .position(|f| f.instance_initializer.is_some())
+    let owner = (0..program.functions.len())
+        .position(|index| program.function(index).instance_initializer.is_some())
         .unwrap();
     let initializer = program.function(owner).instance_initializer.unwrap();
     let path = std::env::temp_dir().join(format!(

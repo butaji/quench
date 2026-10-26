@@ -11661,7 +11661,7 @@ fn shared_osr_compiles_a_guarded_numeric_field_loop() {
             .expect("main program lane views");
         let view = views
             .get(function_id)
-            .and_then(std::cell::OnceCell::get)
+            .and_then(super::program_store::derived_lane_view)
             .expect("hot sum loop lane view");
         let osr = view.osr_diagnostics();
         // Loop sites are analyzed only where the JavaScript tiers run (`JS_FUNCTION_TIERS`).
@@ -11709,7 +11709,7 @@ fn shared_osr_reads_fields_in_a_loop_that_stores_elements() {
             .expect("main program lane views");
         let osr = views
             .get(function_id)
-            .and_then(std::cell::OnceCell::get)
+            .and_then(super::program_store::derived_lane_view)
             .expect("hot fill loop lane view")
             .osr_diagnostics();
         // Loop sites are analyzed only where the JavaScript tiers run (`JS_FUNCTION_TIERS`).
@@ -11791,7 +11791,7 @@ fn shared_osr_stores_guarded_numeric_own_fields_in_a_loop() {
         .expect("main program lane views");
     let osr = views
         .get(function_id)
-        .and_then(std::cell::OnceCell::get)
+        .and_then(super::program_store::derived_lane_view)
         .expect("hot field-store loop lane view")
         .osr_diagnostics();
     assert!(osr.currently_compiled_sites > 0, "field-store loop did not compile: {osr:?}");
@@ -11808,7 +11808,7 @@ fn shared_osr_stores_guarded_numeric_own_fields_in_a_loop() {
         .unwrap();
     let reference_osr = views
         .get(reference_id)
-        .and_then(std::cell::OnceCell::get)
+        .and_then(super::program_store::derived_lane_view)
         .expect("hot reference field-store loop lane view")
         .osr_diagnostics();
     assert!(reference_osr.currently_compiled_sites > 0, "reference field-store loop did not compile: {reference_osr:?}");
@@ -11863,7 +11863,7 @@ fn shared_osr_appends_and_fills_holes_in_place() {
             .expect("main program lane views");
         let osr = views
             .get(function_id)
-            .and_then(std::cell::OnceCell::get)
+            .and_then(super::program_store::derived_lane_view)
             .expect("hot grow loop lane view")
             .osr_diagnostics();
         assert!(osr.native_region_runs > 0, "no native run under {policy:?}: {osr:?}");
@@ -11913,7 +11913,7 @@ fn shared_osr_indexes_arrays_that_field_reads_give() {
             .expect("main program lane views");
         let osr = views
             .get(function_id)
-            .and_then(std::cell::OnceCell::get)
+            .and_then(super::program_store::derived_lane_view)
             .expect("hot mix loop lane view")
             .osr_diagnostics();
         // Loop sites are analyzed only where the JavaScript tiers run (`JS_FUNCTION_TIERS`).
@@ -11975,7 +11975,7 @@ fn shared_osr_reports_captured_environment_store_rejection_by_site() {
         .unwrap();
     let view = views
         .get(function_id)
-        .and_then(std::cell::OnceCell::get)
+        .and_then(super::program_store::derived_lane_view)
         .expect("captured loop lane view");
     let osr = view.osr_diagnostics();
     assert_eq!(
@@ -12107,7 +12107,7 @@ fn shared_osr_reports_pino_like_deferred_calls_per_site_with_gc_and_throw() {
         .unwrap();
     let view = views
         .get(function_id)
-        .and_then(std::cell::OnceCell::get)
+        .and_then(super::program_store::derived_lane_view)
         .expect("callback loop lane view");
     let osr = view.osr_diagnostics();
     assert_eq!(
@@ -12206,7 +12206,7 @@ fn shared_osr_moves_tagged_array_values_before_effectful_calls() {
         .lane_views(super::program_store::ProgramId::MAIN)
         .unwrap()
         .get(function_id)
-        .and_then(std::cell::OnceCell::get)
+        .and_then(super::program_store::derived_lane_view)
         .expect("hot tagged-Move callback loop lane view");
     let osr = view.osr_diagnostics();
     assert_eq!(osr.sites.len(), 1, "one loop must have one OSR site: {osr:?}");
@@ -12270,7 +12270,7 @@ fn shared_osr_reads_tagged_dense_values_and_falls_back_on_array_holes() {
         .lane_views(super::program_store::ProgramId::MAIN)
         .unwrap()
         .get(function_id)
-        .and_then(std::cell::OnceCell::get)
+        .and_then(super::program_store::derived_lane_view)
         .expect("hot tagged-index callback loop lane view");
     let osr = view.osr_diagnostics();
     assert_eq!(osr.sites.len(), 1, "one loop must have one OSR site: {osr:?}");
@@ -12343,7 +12343,7 @@ fn shared_osr_exact_effect_exit_preserves_prefix_across_gc_and_throw() {
         .unwrap();
     let view = views
         .get(function_id)
-        .and_then(std::cell::OnceCell::get)
+        .and_then(super::program_store::derived_lane_view)
         .expect("effectful loop lane view");
     let osr = view.osr_diagnostics();
     assert_eq!(osr.sites.len(), 1, "one loop must have one OSR site: {osr:?}");
@@ -12413,7 +12413,7 @@ print(t + " " + w.array[5] + " " + w.array[77]);
             .expect("main program lane views");
         let osr = views
             .get(function_id)
-            .and_then(std::cell::OnceCell::get)
+            .and_then(super::program_store::derived_lane_view)
             .expect("hot caller loop lane view")
             .osr_diagnostics();
         let compiles = super::compiled::loop_tier_compiles(policy);
@@ -12479,7 +12479,7 @@ print(total + " " + w.arr.slice(35, 50).join(","));
             .expect("main program lane views");
         let osr = views
             .get(function_id)
-            .and_then(std::cell::OnceCell::get)
+            .and_then(super::program_store::derived_lane_view)
             .expect("hot caller loop lane view")
             .osr_diagnostics();
         let compiles = super::compiled::loop_tier_compiles(policy);
@@ -12563,7 +12563,7 @@ print(t);
             .lane_views(super::program_store::ProgramId::MAIN)
             .expect("main program lane views");
         let osr = |function: usize| {
-            views.get(function).and_then(std::cell::OnceCell::get).expect("hot lane view").osr_diagnostics()
+            views.get(function).and_then(super::program_store::derived_lane_view).expect("hot lane view").osr_diagnostics()
         };
         let (callee, caller) = (osr(am3), osr(reduce));
         assert!(caller.native_region_runs > 0, "no native caller run under {policy:?}: {caller:?}");
@@ -12619,7 +12619,7 @@ fn shared_osr_widens_an_int32_field_that_holds_a_double() {
             .programs
             .lane_views(super::program_store::ProgramId::MAIN)
             .expect("main program lane views");
-        let osr = views.get(function_id).and_then(std::cell::OnceCell::get).expect("hot sum loop lane view").osr_diagnostics();
+        let osr = views.get(function_id).and_then(super::program_store::derived_lane_view).expect("hot sum loop lane view").osr_diagnostics();
         assert!(osr.entry_guard_misses > 0 && osr.compile_successes > 1, "the double field widened nothing under {policy:?}: {osr:?}");
     }
 }
@@ -12851,7 +12851,7 @@ fn shared_osr_numeric_relations_keep_signed_int32_ordering() {
         .expect("main program lane views");
     let view = views
         .get(function_id)
-        .and_then(std::cell::OnceCell::get)
+        .and_then(super::program_store::derived_lane_view)
         .expect("hot countNegative loop lane view");
     assert_eq!(view.osr_diagnostics().currently_compiled_sites, 1);
 }
@@ -12933,7 +12933,7 @@ fn shared_osr_compiles_numeric_truthiness_branches() {
         .expect("main program lane views");
     let view = views
         .get(function_id)
-        .and_then(std::cell::OnceCell::get)
+        .and_then(super::program_store::derived_lane_view)
         .expect("hot truthiness loop lane view");
     let diagnostics = view.osr_diagnostics();
     assert_eq!(
@@ -13007,7 +13007,7 @@ fn shared_osr_compiles_strict_null_identity_branches_on_rooted_values() {
         .expect("main program lane views");
     let view = views
         .get(function_id)
-        .and_then(std::cell::OnceCell::get)
+        .and_then(super::program_store::derived_lane_view)
         .expect("hot strict null loop lane view");
     let diagnostics = view.osr_diagnostics();
     assert_eq!(
@@ -13089,7 +13089,7 @@ fn shared_osr_compiles_strict_inequality_branches_for_null_and_undefined() {
         .expect("main program lane views");
     let diagnostics = views
         .get(function_id)
-        .and_then(std::cell::OnceCell::get)
+        .and_then(super::program_store::derived_lane_view)
         .expect("hot strict inequality lane view")
         .osr_diagnostics();
     assert!(diagnostics.compile_successes > 0, "strict inequality loop did not compile: {diagnostics:?}");
@@ -13171,7 +13171,7 @@ fn shared_osr_exits_at_effectful_calls_with_live_state_written_back() {
         .expect("main program lane views");
     let diagnostics = views
         .get(function_id)
-        .and_then(std::cell::OnceCell::get)
+        .and_then(super::program_store::derived_lane_view)
         .expect("hot callback loop lane view")
         .osr_diagnostics();
     assert!(diagnostics.compile_successes > 0, "call boundary did not admit a native prefix: {diagnostics:?}");
@@ -13232,7 +13232,7 @@ fn shared_osr_reads_initialized_captured_environment_locals_and_deopts_non_numbe
         .expect("main program lane views");
     let diagnostics = views
         .get(function_id)
-        .and_then(std::cell::OnceCell::get)
+        .and_then(super::program_store::derived_lane_view)
         .expect("hot captured local lane view")
         .osr_diagnostics();
     assert!(diagnostics.compile_successes > 0, "environment-local boundary was not compiled: {diagnostics:?}");
@@ -13326,7 +13326,7 @@ fn shared_osr_reloads_changing_field_receivers_and_exits_before_effects() {
             .expect("main program lane views");
         let view = views
             .get(function_id)
-            .and_then(std::cell::OnceCell::get)
+            .and_then(super::program_store::derived_lane_view)
             .expect("hot changing receiver lane view");
         view.osr_diagnostics().native_region_runs
     };
@@ -13356,7 +13356,7 @@ fn shared_osr_reloads_changing_field_receivers_and_exits_before_effects() {
         .expect("main program lane views");
     let view = views
         .get(function_id)
-        .and_then(std::cell::OnceCell::get)
+        .and_then(super::program_store::derived_lane_view)
         .expect("hot changing receiver lane view after collection");
     let diagnostics = view.osr_diagnostics();
     assert_eq!(diagnostics.currently_compiled_sites, 1, "OSR diagnostics: {diagnostics:?}");
@@ -13434,7 +13434,7 @@ fn shared_osr_compiles_loose_nullish_equality_without_coercion() {
         .expect("main program lane views");
     let view = views
         .get(function_id)
-        .and_then(std::cell::OnceCell::get)
+        .and_then(super::program_store::derived_lane_view)
         .expect("hot loose nullish loop lane view");
     let diagnostics = view.osr_diagnostics();
     assert_eq!(
@@ -13492,7 +13492,7 @@ fn shared_osr_float_unary_uses_shared_number_denotation() {
         .expect("main program lane views");
     let view = views
         .get(function_id)
-        .and_then(std::cell::OnceCell::get)
+        .and_then(super::program_store::derived_lane_view)
         .expect("hot negate loop lane view");
     let osr = view.osr_diagnostics();
     assert_eq!(
@@ -15530,7 +15530,7 @@ fn js_jit_general_dispatch_prices_work_inside_compiled_osr_regions() {
         .expect("main program lane views");
     let loop_view = views
         .get(function as usize)
-        .and_then(std::cell::OnceCell::get)
+        .and_then(super::program_store::derived_lane_view)
         .expect("sum function lane view");
     if std::env::var_os("QUENCH_JS_JIT_STATS").is_some() {
         assert!(

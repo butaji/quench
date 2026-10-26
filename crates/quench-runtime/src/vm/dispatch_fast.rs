@@ -1590,7 +1590,7 @@ struct LaneContext<H: Host> {
     executing: *mut super::dispatch_frame::ExecutingProgram,
     /// The program's lane views by function, which a call reads when its
     /// callee's view is derived.
-    views: *const [std::cell::OnceCell<LaneView>],
+    views: *const [super::program_store::LaneViewCell],
     /// The program's constants, which constant operands index. A program's lane views are
     /// derived from its constants and replaced with them, so they hold for the run.
     constants: *const [Value],
@@ -6176,9 +6176,9 @@ unsafe fn lane_header_site<H: Host>(cx: *mut LaneContext<H>, ip: Ip) -> Option<*
     };
     let view = views
         .get(function as usize)
-        .and_then(std::cell::OnceCell::get)
+        .and_then(super::program_store::derived_lane_view)
         .filter(holds)
-        .or_else(|| views.iter().filter_map(std::cell::OnceCell::get).find(holds))?;
+        .or_else(|| views.iter().filter_map(super::program_store::derived_lane_view).find(holds))?;
     // SAFETY: a record of the view; a held header's `call_link` names its site.
     view.loops.get(usize::from(unsafe { (*ip).call_link.get() })).map(std::ptr::from_ref)
 }
@@ -12367,7 +12367,7 @@ script_handler! {
         // SAFETY: the activation's registers hold its parameters from its first.
         let parameters = unsafe { std::slice::from_raw_parts(r.0, params) };
         // SAFETY: the program's views outlive the lane run.
-        let own = unsafe { &*(*cx).views }.get(function as usize).and_then(std::cell::OnceCell::get);
+        let own = unsafe { &*(*cx).views }.get(function as usize).and_then(super::program_store::derived_lane_view);
         let entered = own
             .and_then(|own| lane_tier_direct(vm, own, program, parameters))
             .or_else(|| lane_tier_enter(cx, function, i.b != 0, own, parameters));
@@ -13148,7 +13148,7 @@ lane_handler! {
         // SAFETY: the program's views outlive the lane run.
         let views = unsafe { &*(*cx).views };
         let stack = &mut vm.lane_stack;
-        if let Some(lane_view) = views.get(usize::from(i.b)).and_then(std::cell::OnceCell::get)
+        if let Some(lane_view) = views.get(usize::from(i.b)).and_then(super::program_store::derived_lane_view)
             && let Some(shape) = lane_view.activation
             && usize::from(shape.registers)
                 .saturating_mul(std::mem::size_of::<Value>())
@@ -13297,11 +13297,12 @@ lane_handler! {
     }
 }
 
-/// `lane_complete_activation`'s commonest completion: a JavaScript activation of the
-/// running program whose call keeps its result (`Completion::Plain`, a result register).
-/// It restores what that completion restores, without moving the activation out of the
-/// stack: the caller's registers, records, receiver and environments, and the call's
-/// result. `None` leaves every other completion to `lane_complete_activation`.
+/// `lane_complete_activation`'s commonest completion: a JavaScript activation whose call
+/// keeps its result (`Completion::Plain`, or `Completion::Cross` from another program, a
+/// result register). It restores what that completion restores, without moving the
+/// activation out of the stack: the caller's program, registers, records, receiver and
+/// environments, and the call's result. `None` leaves every other completion to
+/// `lane_complete_activation`.
 #[inline(always)]
 fn lane_return_plain<H: Host>(cx: *mut LaneContext<H>, value: Value) -> Option<(Registers, Ip)> {
     let vm = unsafe { vm(cx) };
@@ -13312,17 +13313,29 @@ fn lane_return_plain<H: Host>(cx: *mut LaneContext<H>, value: Value) -> Option<(
     };
     // SAFETY: the call record belongs to the caller's live view.
     let destination = unsafe { (*top.call).a };
-    if script.completion != Completion::Plain || destination & crate::bytecode::RETURN_REGISTER != 0 {
+    let crosses = match script.completion {
+        Completion::Plain => false,
+        Completion::Cross => true,
+        _ => return None,
+    };
+    if destination & crate::bytecode::RETURN_REGISTER != 0 {
         return None;
     }
     let (call, caller_registers, caller_base, window) = (top.call, top.caller_registers, top.caller_base, top.window);
     let (this, env, capture) = (script.caller_this, script.caller_env, script.caller_capture);
+    let caller_program = top.caller_program;
     // SAFETY: a script activation holds no drop glue and no Wasm storage
     // (`Activation::frame_storage_bytes`); its window starts within the values.
     unsafe {
         let len = stack.activations.len();
         stack.activations.set_len(len - 1);
         stack.values.set_len(window);
+    }
+    // The caller's memory view reads its program's records (`MemoryView::script`).
+    if crosses {
+        lane_enter_program(cx, caller_program);
+    }
+    unsafe {
         (*cx).registers = caller_registers;
         (*cx).base = caller_base;
         (*cx).memory = MemoryView::script(cx);

@@ -235,6 +235,37 @@ server.listen(0, async () => {
 }
 
 #[test]
+fn diagnostics_subscriber_throws_are_uncaught_on_the_next_tick_like_node() {
+    // A subscriber's throw neither ends `publish` nor the server's request start: Node
+    // reports it as an uncaught exception on the next tick and runs the other subscribers.
+    let source = r#"
+const http = require('http');
+const dc = require('diagnostics_channel');
+const seen = [];
+process.on('uncaughtException', (e) => { seen.push('uncaught ' + e.message); });
+dc.subscribe('http.server.request.start', () => { seen.push('sub1'); throw new Error('sub1'); });
+dc.subscribe('http.server.request.start', () => { seen.push('sub2'); });
+const ch = dc.channel('custom');
+ch.subscribe(() => { seen.push('c1'); throw new Error('c1'); });
+ch.subscribe(() => { seen.push('c2'); });
+ch.publish({}); seen.push('after publish');
+const srv = http.createServer((req, res) => { seen.push('request'); res.end('x'); });
+srv.listen(0, () => { http.get({ port: srv.address().port }, (r) => { r.resume(); r.on('end', () => { seen.push('done ' + r.statusCode); setImmediate(() => { console.log(JSON.stringify(seen)); srv.close(); }); }); }); });
+"#;
+
+    let node = observe_node_source(source);
+    assert!(node.status.success(), "Node oracle failed: {node:?}");
+    let quench = observe_source(source);
+    assert_eq!(
+        quench.outcome(),
+        RunResult::Pass,
+        "Quench failed: {:?}",
+        quench.worker
+    );
+    assert_eq!(quench.stdout, node.stdout, "Node and Quench output differ");
+}
+
+#[test]
 fn deep_named_calls_raise_catchable_range_error_and_recover() {
     let source = r#"
 function Box() {}

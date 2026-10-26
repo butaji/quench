@@ -1821,6 +1821,61 @@ impl<'a> From<&'a Constant> for ConstantKey<'a> {
     }
 }
 
+/// Whether a load lowers every record it keeps instead of leaving it to the record's first
+/// read: under `verify-replay`, and in tests that compare the two (`LOWER_AT_LOAD`).
+fn lowers_at_load() -> bool {
+    #[cfg(test)]
+    if LOWER_AT_LOAD.with(std::cell::Cell::get) {
+        return true;
+    }
+    cfg!(feature = "verify-replay")
+}
+
+#[cfg(test)]
+thread_local! {
+    pub(crate) static LOWER_AT_LOAD: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// The program tables a function's lowering reads, final once every function's rewrites
+/// have added their sites: at load the compiler's, after it the finished program's.
+pub(crate) struct LoweringTables<'t> {
+    pub(crate) methods: &'t dyn liveness::MethodArguments,
+    pub(crate) field_sites: &'t [FieldSite],
+    pub(crate) superinstructions: &'t [crate::bytecode::Superinstruction],
+    pub(crate) specialized: bool,
+    pub(crate) undefined_constant: u32,
+}
+
+/// The lowering passes after a function's dispatch class is settled (`settle_dispatch`):
+/// numeric and plain-local specialization and frame registers. They add no table entries,
+/// so they run equally at load and on a function's first read from its finished program.
+pub(crate) fn lower_settled<'a>(
+    function: &mut BcFunction,
+    tables: &LoweringTables<'_>,
+    atom_name: impl Fn(usize) -> Option<&'a str>,
+) {
+    let LoweringTables { methods, field_sites, superinstructions, specialized, undefined_constant } = *tables;
+    if function.dispatch == DispatchClass::Numeric {
+        let live = liveness::analyze(function, methods, field_sites, superinstructions);
+        numeric::apply(function, live.as_deref());
+    }
+    // Renaming a plain slot's operations keeps it plain (validation re-derives the same
+    // proof from the specialized code), so frame registers start from the same slots.
+    let plain_slots = Compiler::specialize_plain_local_operations(function, superinstructions);
+    frame_registers::promote(function, plain_slots, superinstructions, undefined_constant, atom_name);
+    if specialized {
+        rewrite::coalesce_promoted_moves(function, methods, field_sites, superinstructions);
+    }
+    if function
+        .code
+        .iter()
+        .any(|instruction| instruction.op() == Op::StoreLocalPlain)
+    {
+        let live = liveness::analyze(function, methods, field_sites, superinstructions);
+        numeric::apply_plain_local_stores(function, live.as_deref());
+    }
+}
+
 impl<'a> Compiler<'a> {
     /// The captured scopes of `scopes`, innermost first. A scope's names are resolved once per
     /// enclosing chain and shared by every function closing over it.
@@ -2877,30 +2932,58 @@ impl<'a> Compiler<'a> {
             let records: Vec<BcFunction> = functions.iter().flatten().cloned().collect();
             capture_profile::report(&records);
         }
+        // Lowering adds no table entries, so a record waits for it until its first read
+        // (`ResidualProgram::function`), which most of a bundle's functions never have; the
+        // header's dispatch class is settled here. The root, which runs as soon as the program
+        // does, lowers here, and every record does under `verify-replay`, as each replay it
+        // compares with is lowered.
         let undefined_constant = self.constant(Constant::Undefined);
-        for function in functions.iter_mut().flatten() {
-            self.lower_function(function, undefined_constant);
+        let lower_at_load = lowers_at_load();
+        let lowered_here = |id: usize| lower_at_load || id == crate::vm::ROOT_FUNCTION_ID as usize;
+        for (id, function) in functions.iter_mut().enumerate() {
+            let Some(function) = function else { continue };
+            if lowered_here(id) {
+                self.lower_function(function, undefined_constant);
+                function.register_roots = liveness::register_roots(
+                    function,
+                    self.method_sites.as_slice(),
+                    self.field_sites.as_slice(),
+                    self.superinstructions.as_slice(),
+                );
+            } else {
+                self.settle_dispatch(function);
+            }
+            function.shrink_to_fit();
         }
-        liveness::mark_register_roots(
-            functions.iter_mut().flatten(),
-            self.method_sites.as_slice(),
-            self.field_sites.as_slice(),
-            self.superinstructions.as_slice(),
-        );
         #[cfg(feature = "profile-memory")]
         if std::env::var_os("QUENCH_MEMORY").is_some() && released.is_empty() {
-            let records: Vec<BcFunction> = functions.iter().flatten().cloned().collect();
+            let records: Vec<BcFunction> = functions
+                .iter()
+                .enumerate()
+                .filter_map(|(id, function)| Some((id, function.clone()?)))
+                .map(|(id, mut function)| {
+                    if !lowered_here(id) {
+                        lower_settled(
+                            &mut function,
+                            &LoweringTables {
+                                methods: self.method_arguments(),
+                                field_sites: self.field_sites.as_slice(),
+                                superinstructions: self.superinstructions.as_slice(),
+                                specialized: self.mode == SpecializationMode::Enabled,
+                                undefined_constant,
+                            },
+                            |atom| self.atoms.get(atom),
+                        );
+                    }
+                    function
+                })
+                .collect();
             register_profile::report(
                 &records,
                 self.method_sites.as_slice(),
                 self.field_sites.as_slice(),
                 self.superinstructions.as_slice(),
             );
-        }
-        for function in functions.iter_mut().flatten() {
-            function.code.shrink_to_fit();
-            function.wide.shrink_to_fit();
-            function.source_positions.shrink_to_fit();
         }
         let (mut method_sites, mut method_arguments) =
             Self::flatten_method_sites(self.method_sites.into_vec());
@@ -2943,7 +3026,8 @@ impl<'a> Compiler<'a> {
                 let mut slots = Vec::with_capacity(functions.len());
                 slots.extend(functions.into_iter().enumerate().map(|(id, function)| {
                     match function {
-                        Some(function) => FunctionSlot::compiled(function),
+                        Some(function) if lowered_here(id) => FunctionSlot::compiled(function),
+                        Some(function) => FunctionSlot::unlowered(function),
                         None => FunctionSlot::released(released[&id].header),
                     }
                 }));
@@ -2980,6 +3064,7 @@ impl<'a> Compiler<'a> {
             }),
             encoded_records: None,
             validated: Default::default(),
+            undefined_constant: Default::default(),
             closure_reads,
         };
         #[cfg(feature = "profile-aggregate")]
@@ -3793,34 +3878,21 @@ impl<'a> Compiler<'a> {
         }
     }
 
-    /// The finishing passes of one function after every function's rewrites: shared returns,
-    /// dispatch class, numeric and plain-local specialization and frame registers.
+    /// The finishing passes of one function after every function's rewrites: its dispatch
+    /// class (`settle_dispatch`), then the passes the class leaves (`lower_settled`).
     fn lower_function(&self, function: &mut BcFunction, undefined_constant: u32) {
-        let method_sites = self.method_arguments();
-        let field_sites = self.field_sites.as_slice();
-        let superinstructions = self.superinstructions.as_slice();
         self.settle_dispatch(function);
-        if function.dispatch == DispatchClass::Numeric {
-            let live = liveness::analyze(function, method_sites, field_sites, superinstructions);
-            numeric::apply(function, live.as_deref());
-        }
-        // Renaming a plain slot's operations keeps it plain (validation re-derives the same
-        // proof from the specialized code), so frame registers start from the same slots.
-        let plain_slots = Self::specialize_plain_local_operations(function, superinstructions);
-        frame_registers::promote(function, plain_slots, superinstructions, undefined_constant, |atom| {
-            self.atoms.get(atom)
-        });
-        if self.mode == SpecializationMode::Enabled {
-            rewrite::coalesce_promoted_moves(function, method_sites, field_sites, superinstructions);
-        }
-        if function
-            .code
-            .iter()
-            .any(|instruction| instruction.op() == Op::StoreLocalPlain)
-        {
-            let live = liveness::analyze(function, method_sites, field_sites, superinstructions);
-            numeric::apply_plain_local_stores(function, live.as_deref());
-        }
+        lower_settled(
+            function,
+            &LoweringTables {
+                methods: self.method_arguments(),
+                field_sites: self.field_sites.as_slice(),
+                superinstructions: self.superinstructions.as_slice(),
+                specialized: self.mode == SpecializationMode::Enabled,
+                undefined_constant,
+            },
+            |atom| self.atoms.get(atom),
+        );
     }
 
     /// The lowering passes the dispatch class reads (shared returns and strict sets), then
