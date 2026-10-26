@@ -19,6 +19,7 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "workerThreadId" (0) => crate::modules::worker_threads_shared_vm::thread_id,
         method "workerThreadName" (0) => crate::modules::worker_threads_shared_vm::thread_name,
         method "workerPost" (0) => crate::modules::worker_threads_shared_vm::post,
+        method "workerRemotePortPost" (0) => crate::modules::worker_threads_shared_vm::remote_port_post,
         method "workerMovePortToContext" (2) => crate::modules::worker_threads_shared_vm::move_port_to_context,
         method "workerRef" (0) => crate::modules::worker_threads_shared_vm::ref_worker,
         method "workerUnref" (0) => crate::modules::worker_threads_shared_vm::unref_worker,

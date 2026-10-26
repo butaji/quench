@@ -17,6 +17,7 @@ use std::{
 };
 type Context<'a> = NativeContext<'a, NodeHost>;
 static NEXT_THREAD_ID: AtomicU64 = AtomicU64::new(1);
+static NEXT_PORT_TRANSFER_ID: AtomicU64 = AtomicU64::new(1);
 const WORKER_FAILURE_EXIT_CODE: i32 =
     super::node_protocol_constants::ExitCode::GenericUserError as i32;
 #[derive(Default)]
@@ -48,6 +49,7 @@ struct Child {
     tx: mpsc::Sender<Event>,
     interrupt: quench_runtime::ExecutionInterrupt,
     pending_messages: VecDeque<Message>,
+    transferred_ports: HashMap<u64, RootId>,
     broadcast_refs: usize,
     listening: bool,
     refed: bool,
@@ -69,6 +71,7 @@ struct Worker {
     thread_name: Option<String>,
     refed: bool,
     resolvers: Vec<RootId>,
+    transferred_ports: HashMap<u64, RootId>,
 }
 struct Failure {
     exit_code: i32,
@@ -256,6 +259,7 @@ fn failure(
 enum Event {
     Online,
     Message(Message),
+    PortMessage { id: u64, message: Message },
     InternalMessage(Message),
     Stdout(String),
     Stderr(String),
@@ -324,6 +328,203 @@ fn capture_message(
 ) -> Result<Message, RootedError> {
     clone::encode_with_transfers(ctx, value, transfers)
         .or_else(|error| Err(super::clone_shared_vm::translate_clone_failure(ctx, error)?))
+}
+
+#[derive(Clone, Copy)]
+struct PortTransfer {
+    id: u64,
+    port: RootId,
+    peer: RootId,
+}
+
+/// Replace transferred MessagePorts with plain ID markers before crossing the
+/// owned-clone boundary. ArrayBuffers stay in the ordinary structured-clone
+/// transfer list; ports have their own endpoint ownership and event bridge.
+fn capture_worker_message(
+    ctx: &mut Context<'_>,
+    value: RootId,
+    transfers: &[RootId],
+) -> Result<(Message, Vec<PortTransfer>), RootedError> {
+    let global = ctx.global_root()?;
+    let prepare = get(ctx, global, "__quenchPrepareWorkerPortTransfers")?;
+    let transfer_values = ctx.array_rooted(transfers)?;
+    let ids = transfers
+        .iter()
+        .map(|_| ctx.number(NEXT_PORT_TRANSFER_ID.fetch_add(1, Ordering::Relaxed) as f64))
+        .collect::<Vec<_>>();
+    let ids = ctx.array_rooted(&ids)?;
+    let undefined = ctx.undefined();
+    let prepared = ctx.call_rooted(prepare, undefined, &[value, transfer_values, ids])?;
+    let value = get(ctx, prepared, "value")?;
+    let buffers = get(ctx, prepared, "buffers")?;
+    let ports = get(ctx, prepared, "ports")?;
+    let buffer_length = get(ctx, buffers, "length")?;
+    let buffer_length = ctx.to_number(buffer_length)? as usize;
+    let mut buffer_roots = Vec::with_capacity(buffer_length);
+    for index in 0..buffer_length {
+        let key = ctx.number(index as f64);
+        buffer_roots.push(ctx.get_property_rooted(buffers, key)?);
+    }
+    let port_length = get(ctx, ports, "length")?;
+    let port_length = ctx.to_number(port_length)? as usize;
+    let mut port_transfers = Vec::with_capacity(port_length);
+    for index in 0..port_length {
+        let key = ctx.number(index as f64);
+        let record = ctx.get_property_rooted(ports, key)?;
+        let id = get(ctx, record, "id")?;
+        let id = ctx
+            .rooted_value(id)
+            .and_then(|value| value.as_number())
+            .ok_or_else(|| RootedError::host("MessagePort transfer ID missing"))? as u64;
+        port_transfers.push(PortTransfer {
+            id,
+            port: get(ctx, record, "port")?,
+            peer: get(ctx, record, "peer")?,
+        });
+    }
+    let message = capture_message(ctx, value, &buffer_roots)?;
+    Ok((message, port_transfers))
+}
+
+fn remote_port_post_callback(
+    ctx: &mut Context<'_>,
+    worker_id: Option<u64>,
+) -> Result<RootId, RootedError> {
+    let post = ctx.host_function_named(
+        crate::host::shared_vm::operation("workerRemotePortPost"),
+        "workerRemotePortPost",
+    )?;
+    let undefined = ctx.undefined();
+    let factory = if let Some(worker_id) = worker_id {
+        let factory = ctx.evaluate_script_rooted(
+            "(post, workerId) => (portId, value) => post(workerId, portId, value)",
+            "node:worker_threads/remote-port-post.js",
+        )?;
+        let worker_id = ctx.number(worker_id as f64);
+        ctx.call_rooted(factory, undefined, &[post, worker_id])?
+    } else {
+        let factory = ctx.evaluate_script_rooted(
+            "(post) => (portId, value) => post(portId, value)",
+            "node:worker_threads/remote-port-post.js",
+        )?;
+        ctx.call_rooted(factory, undefined, &[post])?
+    };
+    Ok(factory)
+}
+
+fn detach_worker_ports(
+    ctx: &mut Context<'_>,
+    worker_id: u64,
+    transfers: &[PortTransfer],
+) -> Result<HashMap<u64, RootId>, RootedError> {
+    let global = ctx.global_root()?;
+    let detach = get(ctx, global, "__quenchDetachWorkerPort")?;
+    let remote_post = remote_port_post_callback(ctx, Some(worker_id))?;
+    let undefined = ctx.undefined();
+    let mut peers = HashMap::with_capacity(transfers.len());
+    for transfer in transfers {
+        let id = ctx.number(transfer.id as f64);
+        ctx.call_rooted(
+            detach,
+            undefined,
+            &[transfer.port, transfer.peer, id, remote_post],
+        )?;
+        peers.insert(transfer.id, ctx.retain(transfer.peer)?);
+    }
+    Ok(peers)
+}
+
+fn hydrate_worker_ports(
+    ctx: &mut Context<'_>,
+    value: RootId,
+    worker_id: Option<u64>,
+) -> Result<(RootId, HashMap<u64, RootId>), RootedError> {
+    let global = ctx.global_root()?;
+    let hydrate = get(ctx, global, "__quenchHydrateWorkerPortTransfers")?;
+    let remote_post = remote_port_post_callback(ctx, worker_id)?;
+    let undefined = ctx.undefined();
+    let result = ctx.call_rooted(hydrate, undefined, &[value, remote_post])?;
+    let value = get(ctx, result, "value")?;
+    let ports = get(ctx, result, "ports")?;
+    let length = get(ctx, ports, "length")?;
+    let length = ctx.to_number(length)? as usize;
+    let mut hydrated = HashMap::with_capacity(length);
+    for index in 0..length {
+        let key = ctx.number(index as f64);
+        let pair = ctx.get_property_rooted(ports, key)?;
+        let id_key = ctx.number(0.0);
+        let id = ctx.get_property_rooted(pair, id_key)?;
+        let id = ctx
+            .rooted_value(id)
+            .and_then(|value| value.as_number())
+            .ok_or_else(|| RootedError::host("rehydrated MessagePort ID missing"))? as u64;
+        let port_key = ctx.number(1.0);
+        let port = ctx.get_property_rooted(pair, port_key)?;
+        hydrated.insert(id, ctx.retain(port)?);
+    }
+    Ok((value, hydrated))
+}
+
+fn queue_transferred_port_message(
+    ctx: &mut Context<'_>,
+    port: RootId,
+    value: RootId,
+) -> Result<(), RootedError> {
+    let global = ctx.global_root()?;
+    let queue = get(ctx, global, "__quenchQueueWorkerPortMessage")?;
+    let undefined = ctx.undefined();
+    ctx.call_rooted(queue, undefined, &[port, value])?;
+    Ok(())
+}
+
+fn close_transferred_port(
+    ctx: &mut Context<'_>,
+    port: RootId,
+) -> Result<(), RootedError> {
+    let global = ctx.global_root()?;
+    let close = get(ctx, global, "__quenchCloseWorkerPort")?;
+    let undefined = ctx.undefined();
+    ctx.call_rooted(close, undefined, &[port])?;
+    Ok(())
+}
+
+fn remote_port_message(
+    ctx: &mut Context<'_>,
+    value: RootId,
+) -> Result<Option<(u64, RootId)>, RootedError> {
+    if !ctx.is_object_rooted(value)? {
+        return Ok(None);
+    }
+    let global = ctx.global_root()?;
+    let key = get(ctx, global, "__quenchWorkerPortMessageKey")?;
+    let marker = ctx.get_property_rooted(value, key)?;
+    let Some(id) = ctx
+        .rooted_value(marker)
+        .and_then(|value| value.as_number())
+    else {
+        return Ok(None);
+    };
+    let data_key = ctx.string_rooted("data");
+    let data = ctx.get_property_rooted(value, data_key)?;
+    Ok(Some((id as u64, data)))
+}
+
+fn port_message_envelope(
+    ctx: &mut Context<'_>,
+    id: u64,
+    value: RootId,
+) -> Result<RootId, RootedError> {
+    let envelope = ctx.object_rooted()?;
+    let global = ctx.global_root()?;
+    let key = get(ctx, global, "__quenchWorkerPortMessageKey")?;
+    let id = ctx.number(id as f64);
+    let data_key = ctx.string_rooted("data");
+    if !ctx.define_data_property_rooted(envelope, key, id, true, true, true)?
+        || !ctx.define_data_property_rooted(envelope, data_key, value, true, true, true)?
+    {
+        return Err(RootedError::host("cannot create MessagePort transport envelope"));
+    }
+    Ok(envelope)
 }
 fn environment_data_key(ctx: &mut Context<'_>, key: RootId) -> Result<String, RootedError> {
     let value = ctx
@@ -567,7 +768,6 @@ pub(crate) fn module(ctx: &mut Context<'_>) -> Result<RootId, RootedError> {
         Some(v) => clone::decode(ctx, &v)?,
         None => ctx.null(),
     };
-    define(ctx, module, "workerData", data)?;
     if thread_id != 0 {
         let environment_data = shared
             .borrow()
@@ -612,6 +812,18 @@ pub(crate) fn module(ctx: &mut Context<'_>) -> Result<RootId, RootedError> {
         port
     };
     define(ctx, module, "parentPort", port)?;
+    let (data, transferred_ports) = if thread_id != 0 {
+        hydrate_worker_ports(ctx, data, None)?
+    } else {
+        (data, HashMap::new())
+    };
+    if thread_id != 0 && !transferred_ports.is_empty() {
+        let mut state = shared.borrow_mut();
+        if let Some(child) = state.workers.child.as_mut() {
+            child.transferred_ports.extend(transferred_ports);
+        }
+    }
+    define(ctx, module, "workerData", data)?;
     for name in [
         "markAsUncloneable",
         "markAsUntransferable",
@@ -1195,7 +1407,7 @@ pub(crate) fn construct(
             )?);
         }
     }
-    let data = capture_message(ctx, data, &transfers)?;
+    let (data, port_transfers) = capture_worker_message(ctx, data, &transfers)?;
     let emitter = super::events_shared_vm::module(ctx)?;
     ctx.call_rooted(emitter, receiver, &[])?;
     let stderr = ctx.construct_rooted(emitter, emitter, &[])?;
@@ -1363,6 +1575,7 @@ pub(crate) fn construct(
                         tx: up_tx,
                         interrupt: child_interrupt.clone(),
                         pending_messages: VecDeque::new(),
+                        transferred_ports: HashMap::new(),
                         broadcast_refs: 0,
                         listening: false,
                         refed: false,
@@ -1539,6 +1752,7 @@ pub(crate) fn construct(
             }
         })
         .map_err(|e| RootedError::host(e.to_string()))?;
+    let transferred_ports = detach_worker_ports(ctx, thread_id, &port_transfers)?;
     let identity = ctx.host_weak_root(receiver)?;
     let root = ctx.retain(receiver)?;
     ctx.host_mut()
@@ -1564,6 +1778,7 @@ pub(crate) fn construct(
                 thread_name: worker_name,
                 refed: true,
                 resolvers: Vec::new(),
+                transferred_ports,
             },
         );
     // Node exposes the WorkerImpl as the resource for a native WORKER async
@@ -1775,8 +1990,77 @@ pub(crate) fn post(
     let list = arg(ctx, args, 1);
     let transfers = transfers(ctx, list)?;
     if shared.borrow().workers.workers[&id].alive {
-        let data = capture_message(ctx, value, &transfers)?;
-        shared.borrow().workers.workers[&id].tx.send(data).ok();
+        let (data, port_transfers) = capture_worker_message(ctx, value, &transfers)?;
+        let tx = shared.borrow().workers.workers[&id].tx.clone();
+        if tx.send(data).is_ok() {
+            let peers = detach_worker_ports(ctx, id, &port_transfers)?;
+            shared
+                .borrow_mut()
+                .workers
+                .workers
+                .get_mut(&id)
+                .unwrap()
+                .transferred_ports
+                .extend(peers);
+        }
+    }
+    Ok(ctx.undefined())
+}
+
+/// Send a message through a MessagePort that has crossed the worker boundary.
+/// Child-side sends become a dedicated worker event; parent-side sends are
+/// carried through the child's existing message queue in an envelope.
+pub(crate) fn remote_port_post(
+    ctx: &mut Context<'_>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let child = is_child(ctx);
+    let (worker_id, port_id, value) = if child {
+        (None, arg(ctx, args, 0), arg(ctx, args, 1))
+    } else {
+        let worker_id_root = arg(ctx, args, 0);
+        let worker_id = ctx
+            .rooted_value(worker_id_root)
+            .and_then(|value| value.as_number())
+            .ok_or_else(|| RootedError::host("remote MessagePort worker ID missing"))?
+            as u64;
+        (Some(worker_id), arg(ctx, args, 1), arg(ctx, args, 2))
+    };
+    let port_id = ctx
+        .rooted_value(port_id)
+        .and_then(|value| value.as_number())
+        .ok_or_else(|| RootedError::host("remote MessagePort ID missing"))?
+        as u64;
+    let message = if worker_id.is_some() {
+        let envelope = port_message_envelope(ctx, port_id, value)?;
+        capture_message(ctx, envelope, &[])?
+    } else {
+        capture_message(ctx, value, &[])?
+    };
+    let shared = ctx.host_mut().shared_state();
+    if let Some(worker_id) = worker_id {
+        let tx = shared
+            .borrow()
+            .workers
+            .workers
+            .get(&worker_id)
+            .filter(|worker| worker.alive)
+            .map(|worker| worker.tx.clone());
+        if let Some(tx) = tx {
+            tx.send(message).ok();
+        }
+    } else if let Some(child) = shared
+        .borrow()
+        .workers
+        .child
+        .as_ref()
+        .filter(|child| !child.closed)
+    {
+        child
+            .tx
+            .send(Event::PortMessage { id: port_id, message })
+            .ok();
     }
     Ok(ctx.undefined())
 }
@@ -2403,6 +2687,18 @@ pub(crate) fn poll_native(
                 let m = clone::decode(ctx, &m)?;
                 emit(ctx, root, "message", &[m])?
             }
+            Event::PortMessage { id: port_id, message } => {
+                let value = clone::decode(ctx, &message)?;
+                let peer = shared
+                    .borrow()
+                    .workers
+                    .workers
+                    .get(&id)
+                    .and_then(|worker| worker.transferred_ports.get(&port_id).copied());
+                if let Some(peer) = peer {
+                    queue_transferred_port_message(ctx, peer, value)?;
+                }
+            }
             Event::InternalMessage(message) => {
                 let message_graph = message;
                 let message = clone::decode(ctx, &message_graph)?;
@@ -2503,7 +2799,12 @@ pub(crate) fn poll_native(
                     ctx.call_rooted(push, stdout, &[null])?;
                 }
                 let n = ctx.number(code as f64);
-                let (resolvers, async_resource, message_port_async_resource) = {
+                let (
+                    resolvers,
+                    async_resource,
+                    message_port_async_resource,
+                    transferred_port_roots,
+                ) = {
                     let mut state = shared.borrow_mut();
                     let w = state.workers.workers.get_mut(&id).unwrap();
                     w.alive = false;
@@ -2513,8 +2814,15 @@ pub(crate) fn poll_native(
                         std::mem::take(&mut w.resolvers),
                         w.async_resource,
                         w.message_port_async_resource.take(),
+                        std::mem::take(&mut w.transferred_ports)
+                            .into_values()
+                            .collect::<Vec<_>>(),
                     )
                 };
+                for port_root in transferred_port_roots {
+                    close_transferred_port(ctx, port_root)?;
+                    ctx.release_root(port_root);
+                }
                 // Node drops message listeners once the worker can no longer
                 // deliver messages. Keep exit listeners intact so they can
                 // observe the final state while message/messageerror listener
@@ -2584,6 +2892,18 @@ pub(crate) fn poll_native(
     if let Some(port) = port {
         for m in messages {
             let value = clone::decode(ctx, &m)?;
+            if let Some((port_id, data)) = remote_port_message(ctx, value)? {
+                let port = shared
+                    .borrow()
+                    .workers
+                    .child
+                    .as_ref()
+                    .and_then(|child| child.transferred_ports.get(&port_id).copied());
+                if let Some(port) = port {
+                    queue_transferred_port_message(ctx, port, data)?;
+                }
+                continue;
+            }
             let message_type = get(ctx, value, "type")?;
             if ctx.to_string(message_type)? == "quenchBroadcastChannel" {
                 let name = get(ctx, value, "name")?;
@@ -2598,6 +2918,12 @@ pub(crate) fn poll_native(
                 .as_ref()
                 .is_some_and(|child| child.listening && !child.closed);
             if listening {
+                let (value, transferred_ports) = hydrate_worker_ports(ctx, value, None)?;
+                if !transferred_ports.is_empty() {
+                    if let Some(child) = shared.borrow_mut().workers.child.as_mut() {
+                        child.transferred_ports.extend(transferred_ports);
+                    }
+                }
                 emit(ctx, port, "message", &[value])?;
             } else if let Some(child) = shared.borrow_mut().workers.child.as_mut() {
                 child.pending_messages.push_back(m);

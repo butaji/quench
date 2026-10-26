@@ -881,6 +881,170 @@ if (globalThis.MessagePort === undefined) {
     configurable: true,
     value: () => new MessagePort(__quenchMessagePortToken),
   });
+  // Keep marker keys as ordinary enumerable strings so they survive the
+  // owned-clone graph and can be recognized in the receiving worker.
+  const __quenchWorkerPortMarker = "__quenchWorkerPortTransferId__";
+  const __quenchWorkerPortMessage = "__quenchWorkerPortMessage__";
+  Object.defineProperties(globalThis, {
+    __quenchPrepareWorkerPortTransfers: {
+      configurable: true,
+      value(value, transferValues, ids) {
+        const ports = [];
+        const buffers = [];
+        const replacements = new Map();
+        for (let i = 0; i < transferValues.length; i++) {
+          const item = transferValues[i];
+          if (item instanceof MessagePort) {
+            if (item._closed || !item._peer || item._peer._closed) {
+              throw new DOMException("MessagePort in transfer list is already detached", "DataCloneError");
+            }
+            if (replacements.has(item)) {
+              throw new DOMException("Transfer list contains duplicate MessagePort", "DataCloneError");
+            }
+            const id = ids[i];
+            replacements.set(item, id);
+            ports.push({ id, port: item, peer: item._peer });
+          } else {
+            buffers.push(item);
+          }
+        }
+        const copies = new Map();
+        const copy = (item) => {
+          if (item === null || typeof item !== "object") return item;
+          if (item instanceof MessagePort) {
+            const id = replacements.get(item);
+            if (id === undefined) {
+              throw new DOMException("Object that needs transfer was found in message but not listed in transferList", "DataCloneError");
+            }
+            const marker = Object.create(null);
+            Object.defineProperty(marker, __quenchWorkerPortMarker, {
+              value: id, enumerable: true,
+            });
+            return marker;
+          }
+          if (copies.has(item)) return copies.get(item);
+          if (ArrayBuffer.isView(item) || item instanceof ArrayBuffer ||
+              item instanceof Date || item instanceof RegExp || item instanceof Error) {
+            return item;
+          }
+          let result;
+          if (Array.isArray(item)) result = [];
+          else if (item instanceof Map) result = new Map();
+          else if (item instanceof Set) result = new Set();
+          else result = Object.create(null);
+          copies.set(item, result);
+          if (item instanceof Map) {
+            for (const [key, entry] of item) result.set(copy(key), copy(entry));
+          } else if (item instanceof Set) {
+            for (const entry of item) result.add(copy(entry));
+          } else {
+            for (const key of Object.keys(item)) result[key] = copy(item[key]);
+          }
+          return result;
+        };
+        return { value: copy(value), ports, buffers };
+      },
+    },
+    __quenchDetachWorkerPort: {
+      configurable: true,
+      value(port, peer, id, remotePost) {
+        port._peer = null;
+        port._closed = true;
+        port._refed = false;
+        const remote = {
+          _closed: false,
+          _queue: [],
+          _dispatchScheduled: false,
+          _nodeListeners: new Map(),
+          dispatchEvent() { return true; },
+          __scheduleQueuedMessages() {
+            if (this._dispatchScheduled || this._queue.length === 0) return;
+            this._dispatchScheduled = true;
+            setTimeout(() => {
+              this._dispatchScheduled = false;
+              const message = this._queue.shift();
+              if (message && !message.canceled && !this._closed) {
+                remotePost(id, message.data);
+              }
+              this.__scheduleQueuedMessages();
+            }, 0);
+          },
+        };
+        peer._peer = remote;
+      },
+    },
+    __quenchHydrateWorkerPortTransfers: {
+      configurable: true,
+      value(value, remotePost) {
+        const ports = new Map();
+        const seen = new Map();
+        const restore = (item) => {
+          if (item === null || typeof item !== "object") return item;
+          const markerId = item[__quenchWorkerPortMarker];
+          if (markerId !== undefined &&
+              Object.prototype.hasOwnProperty.call(item, __quenchWorkerPortMarker)) {
+            if (!ports.has(markerId)) {
+              const port = globalThis.__quenchCreateMessagePort();
+              const peer = {
+                _closed: false,
+                _nodeListeners: new Map(),
+                dispatchEvent() { return true; },
+              };
+              port._peer = peer;
+              Object.defineProperty(port, "postMessage", {
+                configurable: true,
+                value(value) { remotePost(markerId, value); },
+              });
+              ports.set(markerId, port);
+            }
+            return ports.get(markerId);
+          }
+          if (seen.has(item)) return seen.get(item);
+          seen.set(item, item);
+          if (item instanceof Map) {
+            const entries = [...item];
+            item.clear();
+            for (const [key, entry] of entries) item.set(restore(key), restore(entry));
+          } else if (item instanceof Set) {
+            const entries = [...item];
+            item.clear();
+            for (const entry of entries) item.add(restore(entry));
+          } else if (!ArrayBuffer.isView(item) && !(item instanceof ArrayBuffer) &&
+                     !(item instanceof Date) && !(item instanceof RegExp) &&
+                     !(item instanceof Error)) {
+            for (const key of Object.keys(item)) item[key] = restore(item[key]);
+          }
+          return item;
+        };
+        const restored = restore(value);
+        return { value: restored, ports: [...ports.entries()] };
+      },
+    },
+    __quenchQueueWorkerPortMessage: {
+      configurable: true,
+      value(port, value) {
+        port._queue.push({ data: value, ports: [], canceled: false });
+        port.__scheduleQueuedMessages();
+      },
+    },
+    __quenchCloseWorkerPort: {
+      configurable: true,
+      value(port) {
+        const remote = port._peer;
+        if (!remote || remote._closed) return;
+        remote._closed = true;
+        queueMicrotask(() => {
+          const event = new Event("close");
+          port.dispatchEvent(event);
+          for (const listener of port._nodeListeners.get("close") || []) listener();
+        });
+      },
+    },
+    __quenchWorkerPortMessageKey: {
+      configurable: true,
+      value: __quenchWorkerPortMessage,
+    },
+  });
 }
 
 if (globalThis.MessageChannel === undefined) {
