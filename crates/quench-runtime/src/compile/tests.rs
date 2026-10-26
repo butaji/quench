@@ -367,6 +367,19 @@ fn records_lowered_on_first_read_match_records_lowered_at_load() {
 }
 
 #[test]
+fn partition_points_found_from_the_last_match_a_search() {
+    let table = [1, 3, 3, 7, 12];
+    let last = std::cell::Cell::new(0);
+    for bound in (0..15).chain((0..15).rev()).chain([9, 2, 14, 0, 3, 3]) {
+        let expected = table.partition_point(|value| *value < bound);
+        assert_eq!(super::partition_point_from(&table, &last, |value| *value < bound), expected, "{bound}");
+    }
+    // A point left past a shorter table is searched again.
+    let last = std::cell::Cell::new(10);
+    assert_eq!(super::partition_point_from(&table, &last, |value| *value < 4), 3);
+}
+
+#[test]
 fn source_lines_found_from_the_last_line_match_a_search() {
     for starts in [vec![], vec![0], vec![0, 4, 4, 9, 30], vec![3, 8]] {
         let last = std::cell::Cell::new(0);

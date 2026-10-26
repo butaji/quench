@@ -1580,9 +1580,12 @@ struct Compiler<'a> {
     source: &'a str,
     text: &'a str,
     source_line_starts: std::borrow::Cow<'a, [usize]>,
-    /// The line `source_position` found last, which the next position, emitted from the
-    /// same or a nearby node, most often falls on.
+    /// The line start partition `source_position` found last, which the next position,
+    /// emitted from the same or a nearby node, most often falls on.
     last_source_line: std::cell::Cell<usize>,
+    /// The UTF-16 excess partitions `source_position` found last, at a position and at its
+    /// line's start.
+    last_utf16_excess: [std::cell::Cell<usize>; 2],
     source_comments: Vec<Span>,
     /// Byte offset of each non-ASCII character with the running excess of
     /// UTF-8 bytes over UTF-16 units through it; columns count UTF-16 units.
@@ -1859,15 +1862,20 @@ thread_local! {
 /// The index of the line of `starts` holding `offset`: the last line start at or before it, or
 /// the first line when none is. `last`, the line found before, is tried first and updated.
 fn source_line_index(starts: &[usize], last: &std::cell::Cell<usize>, offset: usize) -> usize {
-    let holds = |line: usize| {
-        starts.get(line).is_none_or(|start| *start <= offset) && starts.get(line + 1).is_none_or(|next| offset < *next)
-    };
-    if holds(last.get()) {
-        return last.get();
+    partition_point_from(starts, last, |start| *start <= offset).saturating_sub(1)
+}
+
+/// `slice.partition_point(holds)`, trying `last`, the point found before, first and updating
+/// it: positions are asked for in nearly source order, so most fall where the last did.
+fn partition_point_from<T>(slice: &[T], last: &std::cell::Cell<usize>, holds: impl Fn(&T) -> bool) -> usize {
+    let point = last.get();
+    let before = point.checked_sub(1).is_none_or(|index| slice.get(index).is_some_and(&holds));
+    if point <= slice.len() && before && slice.get(point).is_none_or(|item| !holds(item)) {
+        return point;
     }
-    let line = starts.partition_point(|start| *start <= offset).saturating_sub(1);
-    last.set(line);
-    line
+    let point = slice.partition_point(holds);
+    last.set(point);
+    point
 }
 
 /// The program tables a function's lowering reads, final once every function's rewrites
@@ -2077,6 +2085,7 @@ impl<'a> Compiler<'a> {
             text,
             source_line_starts,
             last_source_line: std::cell::Cell::new(0),
+            last_utf16_excess: Default::default(),
             source_comments: Vec::new(),
             source_utf16_excess,
             mode,
@@ -2569,15 +2578,14 @@ impl<'a> Compiler<'a> {
         let offset = (offset as usize).min(self.text.len());
         let line_index = self.source_line_index(offset);
         let line_start = self.source_line_starts[line_index];
-        let excess_before = |offset: usize| {
-            let index = self
-                .source_utf16_excess
-                .partition_point(|(character, _)| *character < offset);
+        let excess_before = |offset: usize, last: &std::cell::Cell<usize>| {
+            let index = partition_point_from(&self.source_utf16_excess, last, |(character, _)| *character < offset);
             index
                 .checked_sub(1)
                 .map_or(0, |index| self.source_utf16_excess[index].1)
         };
-        let column = offset - line_start - (excess_before(offset) - excess_before(line_start));
+        let [at_offset, at_line] = &self.last_utf16_excess;
+        let column = offset - line_start - (excess_before(offset, at_offset) - excess_before(line_start, at_line));
         SourcePosition {
             pc: 0,
             line: u32::try_from(line_index.saturating_add(1)).unwrap_or(u32::MAX),
