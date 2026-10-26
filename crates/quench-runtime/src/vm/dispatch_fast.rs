@@ -1606,7 +1606,7 @@ struct LaneContext<H: Host> {
     executing: *mut super::dispatch_frame::ExecutingProgram,
     /// The program's lane views by function, which a call reads when its
     /// callee's view is derived.
-    views: *const [std::cell::OnceCell<LaneView>],
+    views: *const [super::program_store::LaneViewCell],
     /// The program's constants, which constant operands index. A program's lane views are
     /// derived from its constants and replaced with them, so they hold for the run.
     constants: *const [Value],
@@ -6192,9 +6192,9 @@ unsafe fn lane_header_site<H: Host>(cx: *mut LaneContext<H>, ip: Ip) -> Option<*
     };
     let view = views
         .get(function as usize)
-        .and_then(std::cell::OnceCell::get)
+        .and_then(super::program_store::derived_lane_view)
         .filter(holds)
-        .or_else(|| views.iter().filter_map(std::cell::OnceCell::get).find(holds))?;
+        .or_else(|| views.iter().filter_map(super::program_store::derived_lane_view).find(holds))?;
     // SAFETY: a record of the view; a held header's `call_link` names its site.
     view.loops.get(usize::from(unsafe { (*ip).call_link.get() })).map(std::ptr::from_ref)
 }
@@ -11598,7 +11598,19 @@ script_handler! {
     #[inline(never)]
     fn lane_script_construct_keeping<>(cx, r, ip, i, view) {
         match lane_construct_keeping_activation(cx, r, ip, i) {
-            Ok((registers, base)) => next!(cx, registers, base, Carried::script(cx)),
+            Ok(KeepingConstruction::Activated(registers, base)) => next!(cx, registers, base, Carried::script(cx)),
+            Ok(KeepingConstruction::Finished(this)) => {
+                if i.a & crate::bytecode::RETURN_REGISTER == 0 {
+                    r.set(i.a, this);
+                    next!(cx, r, following(ip), Carried::script(cx))
+                }
+                if let Some(resumed) = lane_complete_activation(cx, this) {
+                    resume!(cx, resumed)
+                }
+                // The frame's own construct, which `lane_finishes_construction` admitted: the
+                // general loop returns the receiver from it.
+                lane_frame_return(unsafe { vm(cx) }, ip, this)
+            }
             Err(Some(next)) => next,
             Err(None) => {
                 requicken::<H>(ip, lane_script_construct::<H>);
@@ -11608,9 +11620,29 @@ script_handler! {
     }
 }
 
+/// What `lane_construct_keeping_activation` made of a construction.
+enum KeepingConstruction {
+    /// The callee's registers and first record.
+    Activated(Registers, Ip),
+    /// The construction's result, whose body ran without an activation: its site completes
+    /// with it.
+    Finished(Value),
+}
+
+/// Whether a construction at `i` may complete in the lane with a receiver its body finished
+/// without an activation: into a register, into the activation that returns it, or from the
+/// frame's own returning construct where `lane_returning_call_admitted` admits it, as
+/// `lane_script_construct` completes one.
+#[inline(always)]
+fn lane_finishes_construction<H: Host>(cx: *mut LaneContext<H>, i: &LaneInstruction) -> bool {
+    i.a & crate::bytecode::RETURN_REGISTER == 0
+        || !unsafe { vm(cx) }.lane_stack.activations.is_empty()
+        || lane_returning_call_admitted(cx)
+}
+
 /// `lane_script_construct_keeping`'s activation, under `lane_script_construct`'s admission:
-/// the callee's registers and first record, the record to continue at, or `None` for a
-/// construction of any target but a forwarding one. Out of line: the call target it passes
+/// the callee's registers and first record, or the receiver its body finished; the record
+/// to continue at, or `None` for a construction of any target but a forwarding one. Out of line: the call target it passes
 /// on lives in its frame, and a handler whose frame a callee addresses cannot dispatch its
 /// successor as a sibling call.
 #[inline(never)]
@@ -11619,21 +11651,19 @@ fn lane_construct_keeping_activation<H: Host>(
     r: Registers,
     ip: Ip,
     i: &LaneInstruction,
-) -> Result<(Registers, Ip), Option<Ip>> {
+) -> Result<KeepingConstruction, Option<Ip>> {
     let vm = unsafe { vm(cx) };
     let callee = r.get(i.b);
     if !unsafe { (*cx).script_calls && (*cx).script_constructs } || vm.construct_target.is_some() {
         return Err(Some(exit(ip)));
     }
+    let finishes = lane_finishes_construction(cx, i);
     // A plan holding for `callee` fixes its function, so the plan alone answers before its
     // target is resolved.
-    if i.a & crate::bytecode::RETURN_REGISTER == 0
-        && let Some(this) = lane_forwarded_fields(vm, callee, r, i)
-    {
+    if finishes && let Some(this) = lane_forwarded_fields(vm, callee, r, i) {
         // Allocating the receiver can make a collection due.
         note_allocation(vm);
-        r.set(i.a, this);
-        return Ok((r, following(ip)));
+        return Ok(KeepingConstruction::Finished(this));
     }
     // Matched rather than filtered: the combinators moved the target through copies.
     let Some(target) = lane_script_target(cx, callee) else {
@@ -11659,9 +11689,10 @@ fn lane_construct_keeping_activation<H: Host>(
     {
         // A forwarded method that only initializes `this` from its parameters, which the
         // forwarding passes the construction's arguments as: its adds alone, with neither
-        // activation, when the construction's result goes to a register. Its body completes
-        // with `undefined`, as the forwarding body then does, so [[Construct]] yields `this`.
-        if forwarded.initializes && i.a & crate::bytecode::RETURN_REGISTER == 0 {
+        // activation, where the construction completes in the lane (`lane_finishes_construction`).
+        // Its body completes with `undefined`, as the forwarding body then does, so
+        // [[Construct]] yields `this`.
+        if forwarded.initializes && finishes {
             // SAFETY: the context's program outlives the lane run, and the forwarded target is
             // one of its functions (`lane_script_target`).
             let code = unsafe { &*(*cx).code };
@@ -11673,8 +11704,7 @@ fn lane_construct_keeping_activation<H: Host>(
                 if let Some(fields) = fields {
                     lane_record_forwarded_fields(vm, callee, (forwarded.program, forwarded.function), this, &fields);
                 }
-                r.set(i.a, this);
-                return Ok((r, following(ip)));
+                return Ok(KeepingConstruction::Finished(this));
             }
         }
         let forwarder = SkippedForwarder {
@@ -11684,9 +11714,12 @@ fn lane_construct_keeping_activation<H: Host>(
             method,
         };
         return lane_activate_keeping::<H, false>(cx, r, ip, &forwarded, arguments, this, false, Some(forwarder))
+            .map(|(registers, base)| KeepingConstruction::Activated(registers, base))
             .map_err(Some);
     }
-    lane_activate_keeping::<H, false>(cx, r, ip, &target, arguments, this, true, None).map_err(Some)
+    lane_activate_keeping::<H, false>(cx, r, ip, &target, arguments, this, true, None)
+        .map(|(registers, base)| KeepingConstruction::Activated(registers, base))
+        .map_err(Some)
 }
 
 /// The finished receiver of a forwarding constructor's construction under `callee`'s
@@ -12324,7 +12357,7 @@ script_handler! {
         // SAFETY: the activation's registers hold its parameters from its first.
         let parameters = unsafe { std::slice::from_raw_parts(r.0, params) };
         // SAFETY: the program's views outlive the lane run.
-        let own = unsafe { &*(*cx).views }.get(function as usize).and_then(std::cell::OnceCell::get);
+        let own = unsafe { &*(*cx).views }.get(function as usize).and_then(super::program_store::derived_lane_view);
         let entered = own
             .and_then(|own| lane_tier_direct(vm, own, program, parameters))
             .or_else(|| lane_tier_enter(cx, function, i.b != 0, own, parameters));
@@ -13151,7 +13184,7 @@ lane_handler! {
         // SAFETY: the program's views outlive the lane run.
         let views = unsafe { &*(*cx).views };
         let stack = &mut vm.lane_stack;
-        if let Some(lane_view) = views.get(usize::from(i.b)).and_then(std::cell::OnceCell::get)
+        if let Some(lane_view) = views.get(usize::from(i.b)).and_then(super::program_store::derived_lane_view)
             && let Some(shape) = lane_view.activation
             && usize::from(shape.registers)
                 .saturating_mul(std::mem::size_of::<Value>())
@@ -13300,11 +13333,12 @@ lane_handler! {
     }
 }
 
-/// `lane_complete_activation`'s commonest completion: a JavaScript activation of the
-/// running program whose call keeps its result (`Completion::Plain`, a result register).
-/// It restores what that completion restores, without moving the activation out of the
-/// stack: the caller's registers, records, receiver and environments, and the call's
-/// result. `None` leaves every other completion to `lane_complete_activation`.
+/// `lane_complete_activation`'s commonest completion: a JavaScript activation whose call
+/// keeps its result (`Completion::Plain`, or `Completion::Cross` from another program, a
+/// result register). It restores what that completion restores, without moving the
+/// activation out of the stack: the caller's program, registers, records, receiver and
+/// environments, and the call's result. `None` leaves every other completion to
+/// `lane_complete_activation`.
 #[inline(always)]
 fn lane_return_plain<H: Host>(cx: *mut LaneContext<H>, value: Value) -> Option<(Registers, Ip)> {
     let vm = unsafe { vm(cx) };
@@ -13315,17 +13349,29 @@ fn lane_return_plain<H: Host>(cx: *mut LaneContext<H>, value: Value) -> Option<(
     };
     // SAFETY: the call record belongs to the caller's live view.
     let destination = unsafe { (*top.call).a };
-    if script.completion != Completion::Plain || destination & crate::bytecode::RETURN_REGISTER != 0 {
+    let crosses = match script.completion {
+        Completion::Plain => false,
+        Completion::Cross => true,
+        _ => return None,
+    };
+    if destination & crate::bytecode::RETURN_REGISTER != 0 {
         return None;
     }
     let (call, caller_registers, caller_base, window) = (top.call, top.caller_registers, top.caller_base, top.window);
     let (this, env, capture) = (script.caller_this, script.caller_env, script.caller_capture);
+    let caller_program = top.caller_program;
     // SAFETY: a script activation holds no drop glue and no Wasm storage
     // (`Activation::frame_storage_bytes`); its window starts within the values.
     unsafe {
         let len = stack.activations.len();
         stack.activations.set_len(len - 1);
         stack.values.set_len(window);
+    }
+    // The caller's memory view reads its program's records (`MemoryView::script`).
+    if crosses {
+        lane_enter_program(cx, caller_program);
+    }
+    unsafe {
         (*cx).registers = caller_registers;
         (*cx).base = caller_base;
         (*cx).memory = MemoryView::script(cx);

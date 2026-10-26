@@ -307,7 +307,7 @@ fn parenthesized_function_expressions_keep_their_records() {
                   function declared() { return 2; }";
     let program = Engine::specialize(source, "parenthesized-functions.js").unwrap();
     let kept = |name: &str| {
-        program
+        !program
             .functions
             .iter()
             .find(|slot| {
@@ -316,11 +316,52 @@ fn parenthesized_function_expressions_keep_their_records() {
                     .is_some_and(|atom| program.atoms[atom as usize] == *name)
             })
             .unwrap_or_else(|| panic!("{name} is compiled"))
-            .record()
-            .is_some()
+            .is_released()
     };
     assert!(kept("marked"));
     assert!(kept("factory"));
     assert!(!kept("released"));
     assert!(!kept("declared"));
+}
+
+#[test]
+fn records_lowered_on_first_read_match_records_lowered_at_load() {
+    // Each source reaches a lowering pass: numeric dispatch, plain locals promoted to frame
+    // registers, plain-local stores, `with`, handlers, generators, `arguments` and captures.
+    let sources = [
+        "function numeric(n) { let a = 0, b = 1, c = 2, d = 3; for (let i = 0; i < n; i++) { a = a + b * c - d; b = b + a * 2 - c; c = c * d + a - b; d = d - a + b * c; a = a ^ b; b = b | c; } return a + b + c + d; } numeric(10);",
+        "function plain(x) { var total = 0; for (var i = 0; i < x.length; i++) { total += x[i]; } return total; } plain([1, 2, 3]);",
+        "function scoped(o) { with (o) { return value + 1; } } scoped({ value: 1 });",
+        "function guarded(f) { try { return f(); } catch (error) { return error; } finally { f = null; } } guarded(() => 1);",
+        "function* counter(n) { for (let i = 0; i < n; i++) yield i; } [...counter(3)];",
+        "async function waits(p) { const value = await p; return value + 1; } waits(Promise.resolve(1));",
+        "function legacy() { return arguments.length + arguments[0]; } legacy(1, 2);",
+        "function outer() { let count = 0; function inner() { return ++count; } return [inner(), inner()]; } outer();",
+        "class Point { constructor(x) { this.x = x; } get double() { return this.x * 2; } static of(x) { return new Point(x); } } Point.of(2).double;",
+    ];
+    for source in sources {
+        let lazy = Engine::specialize(source, "lowering.js").unwrap();
+        crate::compile::LOWER_AT_LOAD.with(|flag| flag.set(true));
+        let eager = Engine::specialize(source, "lowering.js");
+        crate::compile::LOWER_AT_LOAD.with(|flag| flag.set(false));
+        let eager = eager.unwrap();
+        assert_eq!(lazy.functions.len(), eager.functions.len(), "{source}");
+        eager.prime_loop_decoding();
+        let mut compared = 0;
+        for index in 0..lazy.functions.len() {
+            if eager.functions[index].is_released() {
+                assert!(lazy.functions[index].is_released(), "function {index} of {source}");
+                continue;
+            }
+            // The root lowers at load; every other record waits for its first read.
+            assert_eq!(lazy.functions[index].record().is_some(), index == 0, "function {index} of {source}");
+            assert_eq!(
+                format!("{:?}", lazy.function(index)),
+                format!("{:?}", eager.function(index)),
+                "function {index} of {source}"
+            );
+            compared += 1;
+        }
+        assert!(compared > 0, "{source}");
+    }
 }

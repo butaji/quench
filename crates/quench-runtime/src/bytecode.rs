@@ -1388,10 +1388,15 @@ impl FunctionHeader {
 /// record, written once. Reading the record through `Deref` requires that it was compiled.
 /// Clones of a program share its records (installing an entry clones it into the VM); a
 /// change through `DerefMut` copies a shared record first.
+///
+/// A slot is in one of three states: compiled (`record` set); unlowered, holding the record
+/// its load finished but for the lowering its first read completes (`compile::lower_settled`);
+/// or released, its first read compiling the record again from source or decoding it.
 #[derive(Clone, Debug)]
 pub struct FunctionSlot {
     header: FunctionHeader,
     record: std::cell::OnceCell<std::rc::Rc<Function>>,
+    unlowered: std::cell::RefCell<Option<std::rc::Rc<Function>>>,
 }
 
 impl FunctionSlot {
@@ -1399,6 +1404,7 @@ impl FunctionSlot {
         Self {
             header: FunctionHeader::of(&function),
             record: std::cell::OnceCell::from(std::rc::Rc::new(function)),
+            unlowered: Default::default(),
         }
     }
 
@@ -1407,7 +1413,25 @@ impl FunctionSlot {
         Self {
             header,
             record: std::cell::OnceCell::new(),
+            unlowered: Default::default(),
         }
+    }
+
+    /// A function whose load settled its dispatch class, the header's last fact, and left
+    /// the rest of its lowering to its first read.
+    pub(crate) fn unlowered(function: Function) -> Self {
+        Self {
+            header: FunctionHeader::of(&function),
+            record: std::cell::OnceCell::new(),
+            unlowered: std::cell::RefCell::new(Some(std::rc::Rc::new(function))),
+        }
+    }
+
+    /// Whether the slot holds no record, compiled or unlowered: its first read compiles
+    /// the record again or decodes it.
+    #[cfg(test)]
+    pub(crate) fn is_released(&self) -> bool {
+        self.record.get().is_none() && self.unlowered.borrow().is_none()
     }
 
     #[inline(always)]
@@ -1424,6 +1448,7 @@ impl FunctionSlot {
     /// Drops the record, which its program compiles again on the function's next read.
     fn release(&mut self) {
         self.record.take();
+        self.unlowered.get_mut().take();
     }
 }
 
@@ -1842,6 +1867,13 @@ pub(crate) enum PlainLocalSlotIneligibility {
 }
 
 impl Function {
+    /// Releases the spare capacity of the tables a compilation grew, once it is finished.
+    pub(crate) fn shrink_to_fit(&mut self) {
+        self.code.shrink_to_fit();
+        self.wide.shrink_to_fit();
+        self.source_positions.shrink_to_fit();
+    }
+
     fn global_declarations_or_none(&self) -> Option<&GlobalDeclarations> {
         self.global_declarations.as_deref()
     }
@@ -3614,6 +3646,9 @@ pub struct ResidualProgram {
     pub(crate) encoded_records: Option<std::rc::Rc<EncodedRecords>>,
     /// Whether the program is known to be valid (`ValidationProof`).
     pub(crate) validated: ValidationProof,
+    /// The index of the `undefined` constant, which every compiled program holds and an
+    /// unlowered record's lowering reads, derived on first use.
+    pub(crate) undefined_constant: std::cell::OnceCell<u32>,
     /// What each function's closures read of the environments they close over, when the
     /// compiler derived it; without it a closure keeps its whole scope chain.
     pub(crate) closure_reads: Option<std::rc::Rc<ClosureReads>>,
@@ -3712,6 +3747,11 @@ impl ResidualProgram {
     #[inline(never)]
     fn recompile_function(&self, index: usize) -> &Function {
         self.functions[index].record.get_or_init(|| {
+            if let Some(unlowered) = self.functions[index].unlowered.borrow_mut().take() {
+                let function = self.lower_unlowered(unlowered);
+                function.decoded.prime_loop(&function.code, &function.wide);
+                return std::rc::Rc::new(function);
+            }
             crate::compile::compile_phase_boundary(crate::compile::CompilePhase::FirstCall);
             let deferred = self
                 .encoded_records
@@ -3731,6 +3771,37 @@ impl ResidualProgram {
             function.decoded.prime_loop(&function.code, &function.wide);
             std::rc::Rc::new(function)
         })
+    }
+
+    /// An unlowered record lowered against the finished program's tables, as its load
+    /// would have lowered it (`compile::lower_settled`), with its register roots.
+    #[cold]
+    #[inline(never)]
+    fn lower_unlowered(&self, unlowered: std::rc::Rc<Function>) -> Function {
+        let mut function = std::rc::Rc::unwrap_or_clone(unlowered);
+        let undefined_constant = *self.undefined_constant.get_or_init(|| {
+            let index = self
+                .constants
+                .iter()
+                .position(|constant| matches!(constant, Constant::Undefined))
+                .expect("a program with an unlowered record holds the `undefined` constant");
+            u32::try_from(index).expect("constant index fits u32")
+        });
+        crate::compile::lower_settled(
+            &mut function,
+            &crate::compile::LoweringTables {
+                methods: self,
+                field_sites: &self.field_sites,
+                superinstructions: &self.superinstructions,
+                specialized: self.specialized,
+                undefined_constant,
+            },
+            |atom| self.atoms.get(atom),
+        );
+        function.register_roots =
+            crate::compile::liveness::register_roots(&function, self, &self.field_sites, &self.superinstructions);
+        function.shrink_to_fit();
+        function
     }
 
     /// Compiles every released record again.
