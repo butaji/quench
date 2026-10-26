@@ -587,16 +587,47 @@ pub(super) fn fixed_register_local_facts(
         loops: u32,
         last_references: rustc_hash::FxHashMap<String, u32>,
         closures: Option<ClosureReach>,
+        /// Whether `closures` gathers what the functions and classes reach, or only that the
+        /// body makes one.
+        reaches: bool,
     }
 
     impl Facts {
+        fn new(reaches: bool) -> Self {
+            Self {
+                safe: true,
+                arguments: ArgumentsUse::None,
+                bound_names: FxHashSet::default(),
+                nested_written_names: FxHashSet::default(),
+                first_pass: None,
+                unordered: false,
+                loops: 0,
+                last_references: rustc_hash::FxHashMap::default(),
+                closures: None,
+                reaches,
+            }
+        }
+
+        fn walk(mut self, body: &[Statement<'_>], expression: Option<&Expression<'_>>) -> Self {
+            for statement in body {
+                self.visit_statement(statement);
+            }
+            if let Some(expression) = expression {
+                self.visit_expression(expression);
+            }
+            self
+        }
+
         /// A function or class the body makes: its name, when it declares one, binds in the
         /// body, and what it reaches of the body's bindings joins `closures`.
         fn make_closure(&mut self, name: Option<&oxc_ast::ast::BindingIdentifier<'_>>, visit: impl FnOnce(&mut ClosureReach)) {
             if let Some(name) = name {
                 self.bound_names.insert(name.name.to_string());
             }
-            visit(self.closures.get_or_insert_with(ClosureReach::default));
+            let reach = self.closures.get_or_insert_with(ClosureReach::default);
+            if self.reaches {
+                visit(reach);
+            }
         }
 
         /// Visits `x = e`, `x op= e` or `x++` standing as a whole statement or for-update:
@@ -849,22 +880,13 @@ pub(super) fn fixed_register_local_facts(
         }
     }
 
-    let mut facts = Facts {
-        safe: true,
-        arguments: ArgumentsUse::None,
-        bound_names: FxHashSet::default(),
-        nested_written_names: FxHashSet::default(),
-        first_pass: None,
-        unordered: false,
-        loops: 0,
-        last_references: rustc_hash::FxHashMap::default(),
-        closures: None,
-    };
-    for statement in body {
-        facts.visit_statement(statement);
-    }
-    if let Some(expression) = expression {
-        facts.visit_expression(expression);
+    // What the body's functions and classes reach is read only for a safe body that reads its
+    // `arguments` (`arguments_mapping_unobserved`), which few do: walking every nested function
+    // again for each body that encloses it was most of this pass. Such a body is walked again,
+    // gathering the reach.
+    let mut facts = Facts::new(false).walk(body, expression);
+    if facts.safe && facts.closures.is_some() && matches!(facts.arguments, ArgumentsUse::Reads) {
+        facts = Facts::new(true).walk(body, expression);
     }
     FixedRegisterLocalFacts {
         // Promotion keeps every local of a body that makes no function or class.

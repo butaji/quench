@@ -318,7 +318,6 @@ impl<H: Host> Vm<H> {
     /// `data_view_native`, which raises what this declines.
     pub(super) fn plain_data_view_access(
         &mut self,
-        p: &ResidualProgram,
         native: Native,
         this: Value,
         args: &[Value],
@@ -340,12 +339,24 @@ impl<H: Host> Vm<H> {
         {
             return None;
         }
-        if self.array_buffer_out_of_bounds(buffer, offset, length)
-            || index.saturating_add(data_view_width(native)) > length
-        {
+        let width = data_view_width(native);
+        if self.array_buffer_out_of_bounds(buffer, offset, length) || index.saturating_add(width) > length {
             return None;
         }
-        self.data_view_native(p, native, this, args).ok()
+        // The checks above are the general path's; what remains is the element itself.
+        let setter = data_view_setter(native);
+        let little_endian = width > 1
+            && args
+                .get(if setter { DATA_VIEW_SET_ENDIAN_ARGUMENT } else { DATA_VIEW_GET_ENDIAN_ARGUMENT })
+                .is_some_and(|value| self.truthy(*value));
+        if setter {
+            let value = args.get(DATA_VIEW_VALUE_ARGUMENT)?.immediate_number()?;
+            self.data_view_write(buffer, offset + index, width, data_view_bits_of_number(native, value), little_endian)
+                .ok()?;
+            return Some(Value::UNDEFINED);
+        }
+        let bits = self.data_view_read(buffer, offset + index, width, little_endian).ok()?;
+        Some(Value::number(data_view_number_of_bits(native, bits)))
     }
 
     pub(super) fn data_view_native(
@@ -412,71 +423,27 @@ impl<H: Host> Vm<H> {
         match native {
             Native::DataViewBufferGetter => Ok(buffer),
             Native::DataViewByteLengthGetter | Native::DataViewByteOffsetGetter => unreachable!(),
-            Native::DataViewGetUint8 => {
-                let value = match self.heap.get(buffer) {
-                    Some(Cell::ArrayBuffer { bytes, .. }) => bytes.read()
-                        .get(offset + index)
-                        .copied()
-                        .ok_or_else(|| JsError("DataView byte offset is out of range".into()))?,
-                    _ => return Err(JsError("DataView buffer is invalid".into())),
-                };
-                Ok(Value::number(value as f64))
-            }
-            Native::DataViewGetInt8 => {
-                let value = self.data_view_byte(buffer, offset + index)?;
-                Ok(Value::number((value as i8) as f64))
-            }
-            Native::DataViewGetUint16
-            | Native::DataViewGetInt16
-            | Native::DataViewGetUint32
-            | Native::DataViewGetInt32
-            | Native::DataViewGetFloat16
-            | Native::DataViewGetFloat32
-            | Native::DataViewGetFloat64
-            | Native::DataViewGetBigInt64
-            | Native::DataViewGetBigUint64 => {
-                let bits = self.data_view_read(buffer, offset + index, width, little_endian)?;
-                if matches!(
-                    native,
-                    Native::DataViewGetBigInt64 | Native::DataViewGetBigUint64
-                ) {
-                    let unsigned = num_bigint::BigInt::from(bits);
-                    let value = if native == Native::DataViewGetBigInt64 {
-                        let sign = num_bigint::BigInt::from(1_u8) << 63;
-                        if unsigned >= sign {
-                            unsigned - (num_bigint::BigInt::from(1_u8) << 64)
-                        } else {
-                            unsigned
-                        }
+            Native::DataViewGetBigInt64 | Native::DataViewGetBigUint64 => {
+                let unsigned = num_bigint::BigInt::from(self.data_view_read(buffer, offset + index, width, little_endian)?);
+                let value = if native == Native::DataViewGetBigInt64 {
+                    let sign = num_bigint::BigInt::from(1_u8) << 63;
+                    if unsigned >= sign {
+                        unsigned - (num_bigint::BigInt::from(1_u8) << 64)
                     } else {
                         unsigned
-                    };
-                    return Ok(self.heap.alloc(Cell::bigint(value)));
-                }
-                let value = match native {
-                    Native::DataViewGetInt16 => (bits as u16 as i16) as f64,
-                    Native::DataViewGetInt32 => (bits as u32 as i32) as f64,
-                    Native::DataViewGetFloat16 => super::number::half_to_f64(bits as u16),
-                    Native::DataViewGetFloat32 => f32::from_bits(bits as u32) as f64,
-                    Native::DataViewGetFloat64 => f64::from_bits(bits),
-                    _ => bits as f64,
+                    }
+                } else {
+                    unsigned
                 };
-                Ok(Value::number(value))
+                Ok(self.heap.alloc(Cell::bigint(value)))
             }
-            Native::DataViewSetUint8 | Native::DataViewSetInt8 => {
-                let value = self.to_number(
-                    p,
-                    args.get(DATA_VIEW_VALUE_ARGUMENT)
-                        .copied()
-                        .unwrap_or(Value::UNDEFINED),
-                )?;
-                if check_bounds() || self.array_buffer_out_of_bounds(buffer, offset, length) {
-                    return Err(self.data_view_write_error(p, buffer, offset, length));
-                }
-                self.data_view_write_byte(buffer, offset + index, Self::uint8_from_value(value))?;
-                Ok(Value::UNDEFINED)
+            native if !data_view_setter(native) => {
+                let bits = self.data_view_read(buffer, offset + index, width, little_endian)?;
+                Ok(Value::number(data_view_number_of_bits(native, bits)))
             }
-            Native::DataViewSetUint16
+            Native::DataViewSetUint8
+            | Native::DataViewSetInt8
+            | Native::DataViewSetUint16
             | Native::DataViewSetInt16
             | Native::DataViewSetUint32
             | Native::DataViewSetInt32
@@ -518,16 +485,7 @@ impl<H: Host> Vm<H> {
                 if check_bounds() || self.array_buffer_out_of_bounds(buffer, offset, length) {
                     return Err(self.data_view_write_error(p, buffer, offset, length));
                 }
-                let bits = match native {
-                    Native::DataViewSetFloat16 => super::number::f64_to_half(value) as u64,
-                    Native::DataViewSetFloat32 => (value as f32).to_bits() as u64,
-                    Native::DataViewSetFloat64 => value.to_bits(),
-                    Native::DataViewSetUint16 | Native::DataViewSetInt16 => {
-                        value.trunc().rem_euclid(65_536.0) as u64
-                    }
-                    _ => value.trunc().rem_euclid(4_294_967_296.0) as u64,
-                };
-                self.data_view_write(buffer, offset + index, width, bits, little_endian)?;
+                self.data_view_write(buffer, offset + index, width, data_view_bits_of_number(native, value), little_endian)?;
                 Ok(Value::UNDEFINED)
             }
             _ => unreachable!(),
@@ -550,15 +508,6 @@ impl<H: Host> Vm<H> {
         }
     }
 
-    fn data_view_byte(&self, buffer: Value, index: usize) -> Result<u8, JsError> {
-        match self.heap.get(buffer) {
-            Some(Cell::ArrayBuffer { bytes, .. }) => bytes.read()
-                .get(index)
-                .copied()
-                .ok_or_else(|| JsError("DataView byte offset is out of range".into())),
-            _ => Err(JsError("DataView buffer is invalid".into())),
-        }
-    }
 
     /// The `width` bytes at `index` as an unsigned integer in the given byte order: one read
     /// of the buffer for the whole field.
@@ -611,21 +560,29 @@ impl<H: Host> Vm<H> {
         Ok(())
     }
 
-    fn data_view_write_byte(
-        &mut self,
-        buffer: Value,
-        index: usize,
-        value: u8,
-    ) -> Result<(), JsError> {
-        let Some(Cell::ArrayBuffer { bytes, .. }) = self.heap.get_mut(buffer) else {
-            return Err(JsError("DataView buffer is invalid".into()));
-        };
-        let mut guard=bytes.make_mut();
-        let Some(slot) = guard.get_mut(index) else {
-            return Err(JsError("DataView byte offset is out of range".into()));
-        };
-        *slot = value;
-        Ok(())
+}
+
+/// The Number a non-BigInt DataView get reads: the field's bits as its element type.
+fn data_view_number_of_bits(native: Native, bits: u64) -> f64 {
+    match native {
+        Native::DataViewGetInt8 => f64::from(bits as u8 as i8),
+        Native::DataViewGetInt16 => f64::from(bits as u16 as i16),
+        Native::DataViewGetInt32 => f64::from(bits as u32 as i32),
+        Native::DataViewGetFloat16 => super::number::half_to_f64(bits as u16),
+        Native::DataViewGetFloat32 => f64::from(f32::from_bits(bits as u32)),
+        Native::DataViewGetFloat64 => f64::from_bits(bits),
+        _ => bits as f64,
+    }
+}
+
+/// The bits a non-BigInt DataView set writes for `value`: its float encoding, or for an
+/// integer type ToUint32, whose low bytes (`data_view_write`) are ToUint8 and ToUint16 too.
+fn data_view_bits_of_number(native: Native, value: f64) -> u64 {
+    match native {
+        Native::DataViewSetFloat16 => u64::from(super::number::f64_to_half(value)),
+        Native::DataViewSetFloat32 => u64::from((value as f32).to_bits()),
+        Native::DataViewSetFloat64 => value.to_bits(),
+        _ => u64::from(crate::value::number_to_u32(value)),
     }
 }
 

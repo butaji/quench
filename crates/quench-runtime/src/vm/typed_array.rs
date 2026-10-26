@@ -1128,12 +1128,9 @@ impl<H: Host> Vm<H> {
         })
     }
 
+    /// ToUint8: the low bits of ToUint32, as 2^8 divides 2^32.
     pub(super) fn uint8_from_value(number: f64) -> u8 {
-        if number.is_nan() || number == 0.0 {
-            0
-        } else {
-            number.trunc().rem_euclid(256.0) as u8
-        }
+        crate::value::number_to_u32(number) as u8
     }
 
     pub(super) fn uint8_clamped_from_value(number: f64) -> u8 {
@@ -1152,19 +1149,12 @@ impl<H: Host> Vm<H> {
         }
     }
 
+    /// ToUint16: the low bits of ToUint32, as 2^16 divides 2^32.
     pub(super) fn uint16_from_value(number: f64) -> u16 {
-        if number.is_nan() || number == 0.0 {
-            0
-        } else {
-            number.trunc().rem_euclid(65_536.0) as u16
-        }
+        crate::value::number_to_u32(number) as u16
     }
 
     pub(super) fn uint32_from_value(number: f64) -> u32 {
-        if number.is_nan() || number == 0.0 {
-            0
-        } else {
-            number.trunc().rem_euclid(4_294_967_296.0) as u32
-        }
+        crate::value::number_to_u32(number)
     }
 }

@@ -1289,7 +1289,7 @@ pub struct Function {
     /// Source local slots owned by a closure environment when this activation
     /// escapes. `None` retains legacy whole-frame promotion; `Some` is the
     /// selective layout, including an empty set for closure-only activations.
-    pub(crate) selective_capture_slots: Option<Vec<u16>>,
+    pub(crate) selective_capture_slots: Option<crate::heap::ThinBoxSlice<u16>>,
     /// Binding slots assigned stable frame registers by lowering.
     pub(crate) local_registers: crate::heap::ThinBoxSlice<LocalRegister>,
     /// The function was created while an enclosing `with` scope was active,
@@ -1313,7 +1313,7 @@ pub struct Function {
     /// Fixed-width view of `code`, derived once the function proves hot.
     pub(crate) decoded: HotDecoding,
     /// Lazily derived `plain_local_slots`; never serialized.
-    pub(crate) plain_locals: std::cell::OnceCell<Box<[bool]>>,
+    pub(crate) plain_locals: std::cell::OnceCell<crate::heap::ThinBoxSlice<bool>>,
     /// Lazily derived `declared_atoms`; never serialized.
     pub(crate) declared_atom_sets: std::cell::OnceCell<Box<DeclaredAtomSets>>,
     /// Lazily derived `activation_bindings_observable`; never serialized.
@@ -1330,7 +1330,7 @@ pub struct Function {
     /// Lazily derived `call_plan`; never serialized.
     pub(crate) call_plan: std::cell::OnceCell<CallPlan>,
     /// Lazily derived `initializer_stores`; never serialized.
-    pub(crate) initializer: std::cell::OnceCell<Option<Box<[InitializerStore]>>>,
+    pub(crate) initializer: std::cell::OnceCell<Option<crate::heap::ThinBoxSlice<InitializerStore>>>,
     pub(crate) handlers: crate::heap::ThinBoxSlice<Handler>,
     pub(crate) register_roots: RegisterRoots,
     /// A register that holds `undefined` for the whole activation, set at frame entry and
@@ -1342,6 +1342,13 @@ pub struct Function {
     /// The value every register holds when an activation starts.
     pub(crate) initial_register: InitialRegister,
 }
+
+// Every compiled function keeps one record for the program's life (a fastify server holds
+// about 4,400), so each word here is a per-function cost of an idle process: lists fixed
+// once compiled sit behind thin slices. `code`, `wide` and `source_positions` stay as the
+// compiler builds them: its passes rewrite them, and its rewrite loop measured slower when
+// their layout changed.
+const _: () = assert!(size_of::<Function>() == 408);
 
 /// The facts about a function that are read before its first call: when its closure is
 /// made, by `IsConstructor` and brand checks, by `Function.prototype.toString`, and by an
@@ -1613,17 +1620,17 @@ pub(crate) const HIDDEN_PARAMETER_PREFIX: &str = "\0quench:param:";
 #[derive(Clone, Debug, Default)]
 pub(crate) struct RegisterRoots {
     covered: bool,
-    dead_call_results: Box<[u32]>,
+    dead_call_results: crate::heap::ThinBoxSlice<u32>,
     masks: std::cell::OnceCell<std::rc::Rc<crate::compile::liveness::RegisterMasks>>,
 }
 
 impl RegisterRoots {
     pub(crate) fn new(covered: bool) -> Self {
-        Self::with_dead_call_results(covered, Box::default())
+        Self::with_dead_call_results(covered, Default::default())
     }
 
     /// `dead_call_results` in increasing pc order.
-    pub(crate) fn with_dead_call_results(covered: bool, dead_call_results: Box<[u32]>) -> Self {
+    pub(crate) fn with_dead_call_results(covered: bool, dead_call_results: crate::heap::ThinBoxSlice<u32>) -> Self {
         Self { covered, dead_call_results, masks: std::cell::OnceCell::new() }
     }
 
@@ -1717,10 +1724,29 @@ impl SourcePositions {
             u64::from(position.column)
         });
         self.last = Some(position);
-        self.checkpoints = std::cell::OnceCell::new();
+        // The checkpoints exist only once a lookup made them.
+        if self.checkpoints.get().is_some() {
+            self.checkpoints = std::cell::OnceCell::new();
+        }
     }
 
+    /// An empty table with room for `bytes` coded bytes.
+    pub(crate) fn with_capacity(bytes: usize) -> Self {
+        Self { bytes: Vec::with_capacity(bytes), last: None, checkpoints: std::cell::OnceCell::new() }
+    }
+
+    /// The bytes the entries are coded in.
+    pub(crate) fn coded_len(&self) -> usize {
+        self.bytes.len()
+    }
+
+    #[inline(always)]
     fn write(&mut self, mut value: u64) {
+        // Most deltas fit one byte.
+        if value < u64::from(LEB128_CONTINUATION) {
+            self.bytes.push(value as u8);
+            return;
+        }
         loop {
             let byte = (value & u64::from(!LEB128_CONTINUATION)) as u8;
             value >>= LEB128_PAYLOAD_BITS;
@@ -2443,7 +2469,9 @@ impl Function {
     /// The function's `initializer_stores`, derived on first use.
     #[inline(always)]
     pub(crate) fn initializer_stores(&self, constants: &[Constant]) -> Option<&[InitializerStore]> {
-        self.initializer.get_or_init(|| self.derive_initializer_stores(constants)).as_deref()
+        self.initializer
+            .get_or_init(|| self.derive_initializer_stores(constants).map(Into::into))
+            .as_deref()
     }
 
     /// The stores of a body whose whole effect is storing parameters into fields of `this`,
@@ -2845,8 +2873,7 @@ impl Function {
     pub(crate) fn plain_local(&self, program: &ResidualProgram, slot: usize) -> bool {
         self.plain_locals
             .get_or_init(|| {
-                self.plain_local_slots(&program.superinstructions)
-                    .into_boxed_slice()
+                self.plain_local_slots(&program.superinstructions).into()
             })
             .get(slot)
             .copied()

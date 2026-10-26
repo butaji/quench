@@ -92,6 +92,8 @@ impl<H: Host> Vm<H> {
             resolved_module_requests: Default::default(),
             host_beside_activations: std::cell::OnceCell::new(),
             lane_returned: None,
+            lane_native: None,
+            lane_native_returned: None,
             active_layout: Default::default(),
             active_constants: &[],
             active_field_entries: std::ptr::null(),

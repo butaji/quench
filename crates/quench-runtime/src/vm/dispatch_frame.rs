@@ -51,6 +51,14 @@ pub(super) struct PendingGeneralCall {
     pub(super) caller_program: Option<SavedProgram>,
 }
 
+/// Where a lane run that no general loop started left its frames (`Vm::lane_native_callback`):
+/// the program the innermost executes and the error a call the lane made raised there, which
+/// the general loop resumes with as it does after its own lane run.
+pub(super) struct LaneExit {
+    pub(super) executing: ExecutingProgram,
+    pub(super) raised: Option<JsError>,
+}
+
 /// The general loop's executing program: its id and the residual keeping it alive (`None`
 /// for the loop's entry program).
 pub(super) struct ExecutingProgram {
@@ -240,18 +248,7 @@ impl<H: Host> Vm<H> {
         args: &[Value],
         context: CallContext,
     ) -> Result<Value, JsError> {
-        match self.call_user_frame(p, id, parent, this, args, context)? {
-            FrameOutcome::Complete(value) | FrameOutcome::ConstructComplete { value, .. } => {
-                Ok(value)
-            }
-            FrameOutcome::ParameterInitializationComplete => Err(JsError(
-                "parameter initialization escaped a generator activation".into(),
-            )),
-            FrameOutcome::Await { .. } => Err(JsError("await requires async continuation".into())),
-            FrameOutcome::Yield { .. } => {
-                Err(JsError("yield requires generator continuation".into()))
-            }
-        }
+        self.call_user_frame(p, id, parent, this, args, context)?.into_value()
     }
 
     pub(super) fn call_user_frame(
@@ -440,6 +437,19 @@ impl<H: Host> Vm<H> {
     ) -> Result<FrameOutcome, JsError> {
         let frame_index = self.activate_user_frame(p, id, parent, this, args, context)?;
         let result = self.run_frame_general(p, frame_index);
+        self.complete_user_frame(p, result, capture_constructor_this)
+    }
+
+    /// Retire the innermost frame, a user activation that ran to `result` on the native
+    /// stack, and yield its outcome; a constructor's with its receiver when
+    /// `capture_constructor_this`.
+    #[inline(always)]
+    pub(super) fn complete_user_frame(
+        &mut self,
+        p: &ResidualProgram,
+        result: Result<FrameOutcome, JsError>,
+        capture_constructor_this: bool,
+    ) -> Result<FrameOutcome, JsError> {
         let mut frame = self.frames.pop().unwrap();
         self.deactivate_frame(&mut frame, &result);
         self.persist_global_lexical_bindings(p, &frame);
@@ -1353,6 +1363,7 @@ impl<H: Host> Vm<H> {
             initial_error,
             allow_inline_calls,
             &mut pending_calls,
+            None,
         );
         pending_calls.clear();
         self.pending_call_stacks.push(pending_calls);
@@ -1362,9 +1373,28 @@ impl<H: Host> Vm<H> {
         outcome
     }
 
+    /// Finish the frames a lane run left at frame `frame`'s PC (`LaneExit`), the calls pending
+    /// above the loop's entry frame in `pending_calls`: the general loop runs from there as it
+    /// runs after its own lane run, until the entry frame returns.
+    pub(super) fn run_frames_after_lane_exit(
+        &mut self,
+        entry_program: &ResidualProgram,
+        frame: usize,
+        pending_calls: &mut Vec<PendingGeneralCall>,
+        exit: LaneExit,
+    ) -> Result<FrameOutcome, JsError> {
+        let previous_global = self.realm.globals;
+        let caller_registers = self.active_registers;
+        let outcome = self.run_general_loop::<false>(entry_program, frame, None, None, true, pending_calls, Some(exit));
+        self.active_registers = caller_registers;
+        self.switch_realm_global(previous_global);
+        outcome
+    }
+
     /// The general dispatch loop of `run_frame_general_until`, whose caller restores the active
-    /// program and realm around it.
+    /// program and realm around it; from a lane `exit`, it resumes where that lane left.
     #[inline(always)]
+    #[allow(clippy::too_many_arguments)]
     fn run_general_loop<const STOPS: bool>(
         &mut self,
         entry_program: &ResidualProgram,
@@ -1373,12 +1403,16 @@ impl<H: Host> Vm<H> {
         initial_error: Option<JsError>,
         allow_inline_calls: bool,
         pending_calls: &mut Vec<PendingGeneralCall>,
+        exit: Option<LaneExit>,
     ) -> Result<FrameOutcome, JsError> {
         let p = entry_program;
-        let mut current_program: Option<Rc<ResidualProgram>> = None;
+        let (mut executing_program, mut current_program, raised) = match exit {
+            Some(LaneExit { executing, raised }) => (executing.id, executing.retained, Some(raised)),
+            None => (self.frames[frame].program, None, None),
+        };
         // The residual being executed: the entry program, or the one `current_program`
         // retains after a cross-program tail call. Updated only where that switch happens.
-        let mut executing_residual: *const ResidualProgram = entry_program;
+        let mut executing_residual: *const ResidualProgram = current_program.as_deref().unwrap_or(entry_program);
         let mut frame = frame;
         // The initial Wasm activation is allocated before the dispatch loop and has no
         // caller guard. Account it here so root and reentrant Wasm entries obey the same
@@ -1410,10 +1444,10 @@ impl<H: Host> Vm<H> {
                 feature = "profile-memory"
             ));
         let initial_function = self.frames[frame].function as usize;
-        let mut executing_program = self.frames[frame].program;
         let mut cursor = self.general_cursor(
             executing_program,
-            entry_program,
+            // SAFETY: as for `p` at the top of the loop.
+            unsafe { &*executing_residual },
             initial_function as u32,
             fast_lane,
         );
@@ -1457,6 +1491,18 @@ impl<H: Host> Vm<H> {
                 published_pc = &mut self.frames[frame].pc;
             }};
         }
+        // A lane exit resumes at its record, which the general path executes, or raises there
+        // the error of the call the lane made, as after the loop's own lane run.
+        let mut resumes_lane_exit = false;
+        match raised {
+            Some(Some(error)) => {
+                let throwing_pc = pc;
+                pc += 1;
+                unwind_at!(throwing_pc as u32, error);
+            }
+            Some(None) => resumes_lane_exit = true,
+            None => {}
+        }
         loop {
             // SAFETY: `executing_residual` points at `entry_program`, borrowed for the whole
             // call, or at the residual `current_program` keeps alive until it is replaced,
@@ -1471,7 +1517,8 @@ impl<H: Host> Vm<H> {
             // Return instruction, preserving the dispatch loop's frame and
             // constructor unwind path. Guard misses leave pc at zero.
             let mut native_step = None;
-            if pc == 0 {
+            let resumed = std::mem::take(&mut resumes_lane_exit);
+            if !resumed && pc == 0 {
                 match self.js_tier_frame_entry(p, frame, allow_inline_calls) {
                     super::compiled::JsTierFrameEntry::Interpreter => {}
                     super::compiled::JsTierFrameEntry::ContinueAt(return_pc)
@@ -1484,7 +1531,7 @@ impl<H: Host> Vm<H> {
                         native_step = Some(step);
                     }
                 }
-            } else {
+            } else if !resumed {
                 // A compiled caller resumes at the bytecode after a callout or
                 // at a hot loop header. Re-enter its shared CFG from that exact
                 // PC instead of sending the rest of the activation through the
@@ -1523,7 +1570,7 @@ impl<H: Host> Vm<H> {
                     }
                 }
             }
-            if native_step.is_none() && Self::lane_runs(cursor.lane, pc) {
+            if !resumed && native_step.is_none() && Self::lane_runs(cursor.lane, pc) {
                 let mut executing = ExecutingProgram { id: executing_program, retained: current_program.take() };
                 pc = self.run_fast_lane(
                     p,

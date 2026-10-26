@@ -246,11 +246,16 @@ impl<H: Host> Vm<H> {
         key: RootId,
         result: RootId,
     ) -> Result<(), JsError> {
-        let Some(descriptor) = self.own_property_descriptor_record(
-            p,
-            self.heap.root_value(target).unwrap(),
-            self.heap.root_value(key).unwrap(),
-        )?
+        let (target, key) = (self.heap.root_value(target).unwrap(), self.heap.root_value(key).unwrap());
+        // No own property constrains the result: the shape shows it without a descriptor.
+        if self
+            .string_key_atom(key)
+            .and_then(|atom| self.shape_own_presence(target, atom))
+            == Some(false)
+        {
+            return Ok(());
+        }
+        let Some(descriptor) = self.own_property_descriptor_record(p, target, key)?
         else {
             return Ok(());
         };

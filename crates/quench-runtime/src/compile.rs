@@ -1580,6 +1580,12 @@ struct Compiler<'a> {
     source: &'a str,
     text: &'a str,
     source_line_starts: std::borrow::Cow<'a, [usize]>,
+    /// The line start partition `source_position` found last, which the next position,
+    /// emitted from the same or a nearby node, most often falls on.
+    last_source_line: std::cell::Cell<usize>,
+    /// The UTF-16 excess partitions `source_position` found last, at a position and at its
+    /// line's start.
+    last_utf16_excess: [std::cell::Cell<usize>; 2],
     source_comments: Vec<Span>,
     /// Byte offset of each non-ASCII character with the running excess of
     /// UTF-8 bytes over UTF-16 units through it; columns count UTF-16 units.
@@ -1662,17 +1668,34 @@ type MethodSiteSpec = (Atom, u16, Vec<Register>, Option<(Atom, u16)>);
 /// Byte offset of each non-ASCII character of `text` with the running excess of UTF-8 bytes
 /// over UTF-16 units through it.
 fn source_utf16_excess(text: &str) -> Vec<(usize, usize)> {
-    if text.is_ascii() {
-        return Vec::new();
-    }
+    let bytes = text.as_bytes();
+    let mut table = Vec::new();
     let mut excess = 0;
-    text.char_indices()
-        .filter(|(_, character)| !character.is_ascii())
-        .map(|(offset, character)| {
-            excess += character.len_utf8() - character.len_utf16();
-            (offset, excess)
-        })
-        .collect()
+    let mut offset = 0;
+    while let Some(skipped) = ascii_prefix_len(&bytes[offset..]) {
+        offset += skipped;
+        let character = text[offset..].chars().next().expect("a non-ASCII byte starts a character");
+        excess += character.len_utf8() - character.len_utf16();
+        table.push((offset, excess));
+        offset += character.len_utf8();
+    }
+    table
+}
+
+/// The bytes of `bytes` before its first non-ASCII byte, `None` when every one is ASCII:
+/// a word of bytes at a time, as source text is nearly all ASCII.
+fn ascii_prefix_len(bytes: &[u8]) -> Option<usize> {
+    const WORD: usize = size_of::<u64>();
+    const HIGH_BITS: u64 = u64::from_ne_bytes([0x80; WORD]);
+    let mut words = bytes.chunks_exact(WORD);
+    let mut offset = 0;
+    for word in &mut words {
+        if u64::from_ne_bytes(word.try_into().expect("a whole word")) & HIGH_BITS != 0 {
+            break;
+        }
+        offset += WORD;
+    }
+    bytes[offset..].iter().position(|byte| !byte.is_ascii()).map(|position| offset + position)
 }
 
 /// The name prefix of a catch parameter's capture marker (`Compiler::capture_marker`).
@@ -1834,6 +1857,25 @@ fn lowers_at_load() -> bool {
 #[cfg(test)]
 thread_local! {
     pub(crate) static LOWER_AT_LOAD: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// The index of the line of `starts` holding `offset`: the last line start at or before it, or
+/// the first line when none is. `last`, the line found before, is tried first and updated.
+fn source_line_index(starts: &[usize], last: &std::cell::Cell<usize>, offset: usize) -> usize {
+    partition_point_from(starts, last, |start| *start <= offset).saturating_sub(1)
+}
+
+/// `slice.partition_point(holds)`, trying `last`, the point found before, first and updating
+/// it: positions are asked for in nearly source order, so most fall where the last did.
+fn partition_point_from<T>(slice: &[T], last: &std::cell::Cell<usize>, holds: impl Fn(&T) -> bool) -> usize {
+    let point = last.get();
+    let before = point.checked_sub(1).is_none_or(|index| slice.get(index).is_some_and(&holds));
+    if point <= slice.len() && before && slice.get(point).is_none_or(|item| !holds(item)) {
+        return point;
+    }
+    let point = slice.partition_point(holds);
+    last.set(point);
+    point
 }
 
 /// The program tables a function's lowering reads, final once every function's rewrites
@@ -2042,6 +2084,8 @@ impl<'a> Compiler<'a> {
             source,
             text,
             source_line_starts,
+            last_source_line: std::cell::Cell::new(0),
+            last_utf16_excess: Default::default(),
             source_comments: Vec::new(),
             source_utf16_excess,
             mode,
@@ -2532,25 +2576,26 @@ impl<'a> Compiler<'a> {
 
     fn source_position(&self, offset: u32) -> SourcePosition {
         let offset = (offset as usize).min(self.text.len());
-        let line_index = self
-            .source_line_starts
-            .partition_point(|start| *start <= offset)
-            .saturating_sub(1);
+        let line_index = self.source_line_index(offset);
         let line_start = self.source_line_starts[line_index];
-        let excess_before = |offset: usize| {
-            let index = self
-                .source_utf16_excess
-                .partition_point(|(character, _)| *character < offset);
+        let excess_before = |offset: usize, last: &std::cell::Cell<usize>| {
+            let index = partition_point_from(&self.source_utf16_excess, last, |(character, _)| *character < offset);
             index
                 .checked_sub(1)
                 .map_or(0, |index| self.source_utf16_excess[index].1)
         };
-        let column = offset - line_start - (excess_before(offset) - excess_before(line_start));
+        let [at_offset, at_line] = &self.last_utf16_excess;
+        let column = offset - line_start - (excess_before(offset, at_offset) - excess_before(line_start, at_line));
         SourcePosition {
             pc: 0,
             line: u32::try_from(line_index.saturating_add(1)).unwrap_or(u32::MAX),
             column: u32::try_from(column.saturating_add(1)).unwrap_or(u32::MAX),
         }
+    }
+
+    /// The index of the line holding `offset` (`source_line_index`).
+    fn source_line_index(&self, offset: usize) -> usize {
+        source_line_index(&self.source_line_starts, &self.last_source_line, offset)
     }
 
     /// Emits every function of `program`: all the compiler reads of its tree. `finish` makes

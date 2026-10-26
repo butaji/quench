@@ -46,7 +46,7 @@ fn atom_bytes(function: &Function) -> usize {
 /// Layout tables beside the code: registers, capture slots, binding sites and clones.
 fn layout_bytes(function: &Function) -> usize {
     slice_bytes::<LocalRegister>(&function.local_registers)
-        + function.selective_capture_slots.as_ref().map_or(0, bytes::<u16>)
+        + function.selective_capture_slots.as_deref().map_or(0, slice_bytes::<u16>)
         + slice_bytes::<BindingSite>(&function.binding_sites)
         + slice_bytes::<EnvironmentClone>(&function.environment_clones)
 }

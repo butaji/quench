@@ -25,6 +25,13 @@ const DENSE_ARENA_GROWTH_DIVISOR: usize = 3;
 /// so compaction recovers only what other classes leave idle; rewriting every live object's
 /// storage on each full collection cost source-map-wtb 3 s of 27 (TOD-137).
 const COMPACTION_RELEASED_SHARE_DIVISOR: usize = 4;
+/// The arena capacity a compaction keeps, as a multiple of the values it kept: the room one
+/// doubling of the compacted arena would give. Before, a load burst's growth stayed resident
+/// for good: a fastify server under 500 connections grew the arena to 654K values (5.2 MB)
+/// while full collections kept 48-250K, and returning the rest lowered the board's final
+/// peak 40.7 -> 37.8 MB (median of 8 rounds, bombardier, board phases, plain x86_64 build,
+/// 2026-10-26); V8-v7 RSS and Score and the npm-perf fastify workload were unchanged.
+const COMPACTED_CAPACITY_FACTOR: usize = 2;
 
 /// Compact per-object shape, integrity, and property-storage metadata.
 #[derive(Clone, Copy, Debug)]
@@ -562,6 +569,9 @@ impl ValueArena {
 
     pub(crate) fn finish_compaction(&mut self, length: usize) {
         self.values.truncate(length);
+        // A burst's growth stays resident past the compaction that frees it: keep the room
+        // the next doubling would give the live values, and return the rest.
+        self.values.shrink_to(length.saturating_mul(COMPACTED_CAPACITY_FACTOR));
         for bucket in &mut self.free {
             bucket.clear();
         }
