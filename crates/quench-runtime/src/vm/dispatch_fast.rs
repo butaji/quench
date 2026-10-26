@@ -11169,7 +11169,7 @@ fn lane_pure_native<H: Host>(
             Some(removed)
         }
         native if super::data_view::data_view_element(*native) => {
-            vm.plain_data_view_access(code, *native, receiver, args)
+            vm.plain_data_view_access(*native, receiver, args)
         }
         Native::ArrayUnshift => vm.plain_array_unshift(receiver, args),
         Native::ArrayShift => vm.plain_array_shift(receiver),
