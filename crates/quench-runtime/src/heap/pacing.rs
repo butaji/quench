@@ -51,6 +51,12 @@ pub(super) struct GenerationalPacing {
     /// collection would find dead, and each minor collection marks it all.
     pub(super) surviving_young_from: u32,
     pub(super) surviving_young_factor: usize,
+    /// Growth of the live set between two full collections, as a share of what the earlier
+    /// kept, within which the live set counts as steady (`PacingState::steady`). Only a steady
+    /// heap's young budget widens: a heap still growing, as while a program loads its
+    /// modules, keeps what its minor collections promote, and a wider budget only raised its
+    /// peak (npm top-300: +5-16 MB on the heaviest rows with the factor alone).
+    pub(super) steady_live_growth: Ratio,
     /// Growth of the old generation since the last full collection, as a share of what that
     /// collection kept, that makes the next collection full.
     pub(super) old_growth: Ratio,
@@ -106,6 +112,13 @@ pub(super) struct PacingState {
     probe_in: u32,
     /// Doublings of the allocation cap after full collections that reclaimed little.
     pub(super) cap_backoff: u32,
+    /// What the last full collection kept, which the next one compares its own with
+    /// (`steady`); zero before the first.
+    live_after_last_full: usize,
+    /// Whether the last full collection kept no more than the one before it, within
+    /// `steady_live_growth`: the live set has stopped growing, so what minor collections keep
+    /// dies before a full one (`surviving_young_budget`).
+    steady: bool,
 }
 
 impl PacingState {
@@ -156,6 +169,10 @@ impl GenerationalPacing {
             let survivors = (outcome.allocated as u64 * u64::from(state.survival) / u64::from(SURVIVAL_SCALE)) as usize;
             let expected = outcome.previous_live_weight.saturating_add(survivors);
             let reclaimed = expected.saturating_sub(outcome.live_weight);
+            state.steady = state.live_after_last_full != 0
+                && outcome.live
+                    <= state.live_after_last_full.saturating_add(self.steady_live_growth.of(state.live_after_last_full));
+            state.live_after_last_full = outcome.live;
             state.cap_backoff = if state.regime(self) == Regime::FullOnly
                 || reclaimed >= self.productive_full.of(expected)
             {
@@ -171,7 +188,7 @@ impl GenerationalPacing {
             state.survival = (state.survival + survival) / 2;
         }
         let young = NextCollection {
-            threshold: self.surviving_young_budget(outcome.live, state.survival),
+            threshold: self.surviving_young_budget(outcome.live, state.survival, state.steady),
             full: self.full_due(outcome.live_after_full, outcome.live, outcome.since_full, state.cap_backoff)
                 || self.weight_growth_due(outcome.live_weight_after_full, outcome.live_weight),
         };
@@ -200,10 +217,11 @@ impl GenerationalPacing {
     }
 
 
-    /// `young_budget` of a heap whose smoothed young survival is `survival`.
-    pub(super) fn surviving_young_budget(&self, live: usize, survival: u32) -> usize {
+    /// `young_budget` of a heap whose smoothed young survival is `survival`, and whose live
+    /// set has stopped growing when `steady`.
+    pub(super) fn surviving_young_budget(&self, live: usize, survival: u32, steady: bool) -> usize {
         let budget = self.young_budget(live);
-        if survival >= self.surviving_young_from {
+        if steady && survival >= self.surviving_young_from {
             budget.saturating_mul(self.surviving_young_factor)
         } else {
             budget
@@ -255,6 +273,7 @@ impl GenerationalPacing {
             maximum_young: read("QUENCH_GC_MAX_YOUNG", self.maximum_young),
             surviving_young_from: read("QUENCH_GC_SURVIVING_YOUNG_FROM", self.surviving_young_from as usize) as u32,
             surviving_young_factor: read("QUENCH_GC_SURVIVING_YOUNG_FACTOR", self.surviving_young_factor),
+            steady_live_growth: ratio("QUENCH_GC_STEADY_LIVE_GROWTH", self.steady_live_growth),
             old_growth: ratio("QUENCH_GC_OLD_GROWTH", self.old_growth),
             minimum_old_growth: read("QUENCH_GC_MIN_OLD_GROWTH", self.minimum_old_growth),
             allocation_cap: ratio("QUENCH_GC_ALLOCATION_CAP", self.allocation_cap),
@@ -364,6 +383,7 @@ pub(super) const THROUGHPUT_PACING: GenerationalPacing = GenerationalPacing {
     maximum_young: MAXIMUM_YOUNG,
     surviving_young_from: THROUGHPUT_SURVIVING_YOUNG_FROM,
     surviving_young_factor: THROUGHPUT_SURVIVING_YOUNG_FACTOR,
+    steady_live_growth: Ratio::new(1, 8),
     old_growth: Ratio::new(1, 1),
     minimum_old_growth: THROUGHPUT_MINIMUM_FULL_INTERVAL,
     allocation_cap: Ratio::new(1, 1),
@@ -402,6 +422,7 @@ pub(super) const MEMORY_FIRST_PACING: GenerationalPacing = GenerationalPacing {
     // RSS is this table's criterion: survival never widens the young budget.
     surviving_young_from: SURVIVAL_SCALE + 1,
     surviving_young_factor: 1,
+    steady_live_growth: Ratio::new(0, 1),
     old_growth: Ratio::new(1, 1),
     minimum_old_growth: MEMORY_FIRST_MINIMUM_ALLOCATION,
     allocation_cap: Ratio::new(1, 1),
@@ -536,12 +557,17 @@ mod tests {
         // Survival widens throughput's young budget past a quarter only, and never
         // memory-first's.
         let below = THROUGHPUT_SURVIVING_YOUNG_FROM - 1;
-        assert_eq!(throughput.surviving_young_budget(0, below), throughput.young_budget(0));
+        assert_eq!(throughput.surviving_young_budget(0, below, true), throughput.young_budget(0));
         assert_eq!(
-            throughput.surviving_young_budget(0, THROUGHPUT_SURVIVING_YOUNG_FROM),
+            throughput.surviving_young_budget(0, THROUGHPUT_SURVIVING_YOUNG_FROM, true),
             throughput.young_budget(0) * THROUGHPUT_SURVIVING_YOUNG_FACTOR
         );
-        assert_eq!(memory_first.surviving_young_budget(0, SURVIVAL_SCALE), memory_first.young_budget(0));
+        // A growing heap keeps its budget whatever survives.
+        assert_eq!(
+            throughput.surviving_young_budget(0, SURVIVAL_SCALE, false),
+            throughput.young_budget(0)
+        );
+        assert_eq!(memory_first.surviving_young_budget(0, SURVIVAL_SCALE, true), memory_first.young_budget(0));
         assert!(throughput.maximum_cap_backoff > memory_first.maximum_cap_backoff);
     }
 
