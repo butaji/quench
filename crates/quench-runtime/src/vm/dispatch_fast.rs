@@ -59,6 +59,9 @@ const _: () = assert!(std::mem::size_of::<LaneInstruction>() == 3 * std::mem::si
 #[derive(Clone, Copy)]
 union LaneOperand {
     imm: u32,
+    /// A `GetField` record's immediate and the receiver shape of its own-field hint
+    /// (`LaneInstruction::field_hint`).
+    field: FieldOperand,
     jump: isize,
     constant: Value,
     /// A loop's backward jump in compiled execution: its site (`LoopSite`), which holds the
@@ -66,7 +69,28 @@ union LaneOperand {
     site: *const LoopSite,
 }
 
+/// A `GetField` record's operand: its immediate, and the exact receiver shape its own-field
+/// hint names, `NO_FIELD_RECEIVER` for none. The hint's slot is the record's `call_link`,
+/// which no field record reads otherwise (`holds_no_call_link`).
+#[derive(Clone, Copy)]
+#[repr(C)]
+struct FieldOperand {
+    imm: u32,
+    shape: u32,
+}
+
 impl LaneInstruction {
+    /// The own-field hint of a `GetField` record: an exact receiver shape and the slot of its
+    /// own data field, as the site's primary entry proved it (`lane_get_field_own_refresh`).
+    /// Between shape compactions, which clear every hint (`LaneView::clear_field_hints`), a
+    /// shape's slots never change, so the pair holds whatever the entry holds now.
+    #[inline(always)]
+    fn field_hint(&self) -> super::FieldCache {
+        // SAFETY: the view writes `field` for every `GetField` record, the only records whose
+        // handlers read the hint.
+        super::FieldCache::own(unsafe { self.operand.field.shape }, self.call_link.get())
+    }
+
     #[inline(always)]
     fn imm(&self) -> u32 {
         // SAFETY: the view writes `imm` for every role other than a jump
@@ -229,6 +253,9 @@ pub(super) struct LaneView {
     tier_direct: std::cell::Cell<Option<super::compiled::DirectTierEntry>>,
     plain_backward_jump_sites: usize,
     osr_rejections: Option<Box<[(super::compiled::RegionRejection, usize)]>>,
+    /// The `GetField` records past the loop headers its sites hold, whose own-field hints a
+    /// shape compaction clears.
+    field_records: Box<[u32]>,
 }
 
 #[derive(Debug, Default)]
@@ -475,6 +502,30 @@ struct ActivationShape {
 }
 
 impl LaneView {
+    /// Forgets every own-field hint of its records (`LaneInstruction::field_hint`): a shape
+    /// compaction renumbers the shapes they name.
+    pub(super) fn clear_field_hints(&self) {
+        for &pc in &self.field_records {
+            let record = std::cell::UnsafeCell::raw_get(&self.records[pc as usize]);
+            // SAFETY: no handler runs during a collection, and each listed record is a
+            // `GetField` one, whose operand is `field`, and no loop's header.
+            unsafe {
+                (*record).operand.field.shape = super::NO_FIELD_RECEIVER;
+                (*record).call_link.set(NO_CALL_LINK);
+            }
+        }
+    }
+
+    /// How many of its records hold an own-field hint.
+    #[cfg(test)]
+    pub(super) fn held_field_hints(&self) -> usize {
+        self.field_records
+            .iter()
+            // SAFETY: each listed record is a `GetField` one, whose operand is `field`.
+            .filter(|&&pc| unsafe { (*self.records[pc as usize].get()).operand.field.shape } != super::NO_FIELD_RECEIVER)
+            .count()
+    }
+
     /// The address range its records span (`lane_exits::register_view`, `lane_header_site`).
     pub(super) fn record_range(&self) -> (usize, usize) {
         let start = self.records().addr();
@@ -4292,13 +4343,41 @@ script_handler! {
     /// read goes through `lane_get_field_miss`, which may move the record to a fitting
     /// handler.
     fn lane_get_field_own<THIS: bool>(cx, r, ip, i, view) {
+        // The record's own hint first (`LaneInstruction::field_hint`), which reads no entry.
+        let Some(value) = (unsafe { lane_known_field_base::<H, THIS>(cx, r, i.b) })
+            .and_then(|object| (unsafe { vm(cx) }).record_field_entry_hit(i.field_hint(), object))
+        else {
+            sibling!(lane_get_field_own_refresh::<H, THIS>, r, ip, Carried::script(cx))
+        };
+        r.set(i.a, value);
+        next!(cx, r, following(ip), Carried::script(cx))
+    }
+}
+
+script_handler! {
+    /// `lane_get_field_own` past its record's hint: the site's primary own entry, whose hit
+    /// becomes the hint; any other read goes through `lane_get_field_miss`.
+    #[inline(never)]
+    fn lane_get_field_own_refresh<THIS: bool>(cx, r, ip, i, view) {
         // SAFETY: the context's program outlives the lane run.
         let code = unsafe { &*(*cx).code };
+        let vm = unsafe { vm(cx) };
         let Some(value) = (unsafe { lane_known_field_base::<H, THIS>(cx, r, i.b) })
-            .and_then(|object| (unsafe { vm(cx) }).primary_own_field_hit(code, object, i.c))
+            .and_then(|object| vm.primary_own_field_hit(code, object, i.c))
         else {
             sibling!(lane_get_field_miss::<H>, r, ip, Carried::script(cx))
         };
+        // A held loop header's `call_link` names its site (`lane_header_site`), and such a
+        // record keeps no hint: an empty hint's link is `NO_CALL_LINK`, a held one's shape a
+        // recorded one.
+        let header = unsafe { (*ip).operand.field.shape } == super::NO_FIELD_RECEIVER && i.call_link.get() != NO_CALL_LINK;
+        if !header {
+            // SAFETY: as `requicken`; the hit proved the entry an own one of the receiver's
+            // shape.
+            let entry = vm.field_cache_entry(i.c);
+            unsafe { (*ip.cast_mut()).operand.field.shape = entry.receiver };
+            i.call_link.set(entry.slot);
+        }
         r.set(i.a, value);
         next!(cx, r, following(ip), Carried::script(cx))
     }
@@ -15147,6 +15226,9 @@ fn lane_operand(
         ImmediateRole::ConstantIndex => LaneOperand {
             constant: *constants.get(instruction.imm() as usize)?,
         },
+        _ if instruction.op() == Op::GetField => LaneOperand {
+            field: FieldOperand { imm: instruction.imm(), shape: super::NO_FIELD_RECEIVER },
+        },
         _ => LaneOperand {
             imm: instruction.imm(),
         },
@@ -16304,6 +16386,14 @@ fn derive_lane_view<'live, H: Host>(
             params: function.params,
             initial: function.initial_register.value(),
         });
+    let field_records = decoded
+        .iter()
+        .enumerate()
+        .filter(|&(pc, instruction)| {
+            instruction.op() == Op::GetField && !loops.iter().any(|site| site.hookable && site.header as usize == pc)
+        })
+        .map(|(pc, _)| pc as u32)
+        .collect();
     let records: Box<[std::cell::UnsafeCell<LaneInstruction>]> =
         records.into_iter().map(std::cell::UnsafeCell::new).collect();
     let first = std::cell::UnsafeCell::raw_get(records.as_ptr()).cast_const();
@@ -16332,6 +16422,7 @@ fn derive_lane_view<'live, H: Host>(
             .count(),
         osr_rejections: (!osr_rejections.is_empty())
             .then(|| osr_rejections.into_boxed_slice()),
+        field_records,
     }
 }
 
