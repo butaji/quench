@@ -1118,7 +1118,8 @@ fn relocate_source_positions(
         .iter()
         .filter(|position| source_instruction_survives(position.pc as usize, old_code, map))
         .collect::<Vec<_>>();
-    let mut relocated = crate::bytecode::SourcePositions::default();
+    // Relocation keeps or drops entries, so the old coding bounds the new one's.
+    let mut relocated = crate::bytecode::SourcePositions::with_capacity(source_positions.coded_len());
     let mut position_index = 0;
     let mut origin_pc = 0;
     let mut effective = None;
