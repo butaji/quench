@@ -479,6 +479,20 @@ impl<'a, H: Host> NativeContext<'a, H> {
         result.map_err(|error| self.error(error))
     }
 
+    /// A string's UTF-8 encoding without coercion, a lone surrogate encoded as the
+    /// replacement character; `None` denotes a non-string.
+    pub fn string_utf8(&mut self, root: RootId) -> Result<Option<Vec<u8>>, RootedError> {
+        let result = self.vm.embedding_string_utf8(root);
+        result.map_err(|error| self.error(error))
+    }
+
+    /// The length of a string's UTF-8 encoding without coercion or copying, a lone surrogate
+    /// counted as the replacement character; `None` denotes a non-string.
+    pub fn string_utf8_length(&mut self, root: RootId) -> Result<Option<usize>, RootedError> {
+        let result = self.vm.embedding_string_utf8_length(root);
+        result.map_err(|error| self.error(error))
+    }
+
     /// Apply the shared object integrity operation, including Proxy traps.
     pub fn prevent_extensions_rooted(&mut self, object: RootId) -> Result<bool, RootedError> {
         let result = self.vm.embedding_prevent_extensions(object);
