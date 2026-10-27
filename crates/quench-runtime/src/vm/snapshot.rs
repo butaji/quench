@@ -368,7 +368,7 @@ impl<H: Host> Vm<H> {
             instanceof_constructor_layouts: _,
             closure_shapes: _,
             resolver_function_shape: _,
-            iterator_result_shape: _,
+            iterator_result_header: _,
             reused_iterator_result: _,
             descriptor_shapes: _,
             descriptor_layout: _,
