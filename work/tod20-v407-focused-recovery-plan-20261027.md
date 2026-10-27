@@ -84,6 +84,36 @@ Only after the focused positive/regression gate and build provenance pass,
 rebuild and rerun the unchanged full 5,021-fixture census. Report all six
 classifications and transitions; focused results never count toward 4,000.
 
+## Source-only correctness review (not runtime validation)
+
+- Runtime `LoadImportMeta` allocates a null-prototype object, calls the host
+  initializer before caching that object, and propagates callback errors. The
+  candidate deletes only the host-added `url`, `filename`, `dirname`, and
+  `resolve` own properties before calling user code; ordinary file ESM remains
+  on the pre-existing path.
+- Each VM wrapper has a unique NUL-prefixed internal runtime ID. The
+  SourceTextModule wrapper keeps its public identifier for callback identity,
+  and the host temporarily maps IDs for VM dynamic-import resolution and stack
+  names. This covers duplicate public identifiers in the synchronous native
+  graph; the pinned Node oracle had already confirmed duplicate identifiers
+  with distinct callbacks.
+- Callback and exact module roots are retained only for synchronous native
+  graph evaluation; previous host maps are restored and retained roots are
+  released on both returned success and error. The wrapper marks graph modules
+  errored if that evaluation throws. The current TLA and mixed-source branches
+  bypass this evaluator and remain outside the candidate claim.
+- The VFS change requires `type: module` both at the extensionless request and
+  resolved target. That should preserve extensionless CommonJS and ordinary
+  filesystem fallback. The v406 ENOTDIR reproduction reaches the target
+  scenario at test line 379, but this source-level review cannot establish that
+  the candidate intercepts it correctly; the focused VFS fixtures above remain
+  required.
+- The callback-error-routing fallback remains unproven: reviewed production
+  constructors already root thrown JS values, and no caller demonstrating
+  `exception == None` with a thrown value was found. Do not claim it as a fix
+  without a reproducer covering exception identity, listener routing, final
+  formatting, and root release.
+
 ## Current execution constraint
 
 After the two single-fixture baseline runs, `/tmp` has 83,836,928 bytes free.
