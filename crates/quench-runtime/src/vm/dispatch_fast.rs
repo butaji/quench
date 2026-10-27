@@ -12859,13 +12859,16 @@ fn lane_activate_environment<H: Host>(
     let stack = &mut vm.lane_stack;
     let window = stack.values.len();
     let held = count + usize::from(WINDOW_LOCALS);
+    debug_assert!(fill_room::<SCRIPT_FILL_BLOCK>(held + locals) <= usize::from(target.room));
     // SAFETY: capacity holds the window (`ScriptCallTarget::room`); each slot is written
     // before the length covers it, and no activation's window moves.
     let callee_registers = unsafe {
         let registers = stack.values.as_mut_ptr().add(window);
-        fill_window::<SCRIPT_FILL_BLOCK>(registers, count, Value::UNDEFINED);
-        // Every slot starts `undefined` among the locals, parameter `k` local `k` with its
-        // argument where one was passed; the environment is made when one is needed.
+        // Every register and local starts `undefined`, filled in whole blocks within the
+        // target's room, which covers them (`ScriptCallTarget::room`); the entries are then
+        // written, and parameter `k` local `k` with its argument where one was passed. The
+        // environment is made when one is needed.
+        fill_window::<SCRIPT_FILL_BLOCK>(registers, held + locals, Value::UNDEFINED);
         let entries = registers.add(count);
         entries.add(usize::from(WINDOW_ENVIRONMENT)).write(Value::DELETED);
         entries
@@ -12885,9 +12888,6 @@ fn lane_activate_environment<H: Host>(
                 local.add(slot).write(value);
             }
             local.add(locals + slot).write(value);
-        }
-        for slot in bound..locals {
-            local.add(slot).write(Value::UNDEFINED);
         }
         if let Some(gathered) = gathered {
             local.add(usize::from(target.params) - 1).write(gathered);
