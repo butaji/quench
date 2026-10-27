@@ -1463,23 +1463,6 @@ impl Context for IsleContext<'_, '_, MInst, X64Backend> {
         None
     }
 
-    fn byte_rotate_i64x2_index(&mut self, left: u8, right: u8) -> Option<u8> {
-        let lane_bits = u64::BITS as u8;
-        let byte_bits = u8::BITS as u8;
-        if right == 0 || right >= lane_bits || u16::from(left) + u16::from(right) != u16::from(lane_bits)
-            || !right.is_multiple_of(byte_bits)
-        {
-            return None;
-        }
-        Some(right / byte_bits)
-    }
-
-    fn byte_rotate_i64x2_mask(&mut self, index: u8) -> VCodeConstant {
-        self.lower_ctx.use_constant(VCodeConstantData::WellKnown(
-            &I64X2_BYTE_ROTATE_MASKS[usize::from(index)],
-        ))
-    }
-
     #[inline]
     fn shuffle_0_31_mask(&mut self, mask: &VecMask) -> VCodeConstant {
         let mask = mask
@@ -2068,25 +2051,6 @@ impl IsleContext<'_, '_, MInst, X64Backend> {
         amode.clone().into()
     }
 }
-
-// Every byte rotation has one static mask identity. Repeated uses share
-// the existing WellKnown constant pool rather than allocating/emitting copies.
-static I64X2_BYTE_ROTATE_MASKS: [[u8; size_of::<u128>()]; size_of::<u64>()] = {
-    let lane_bytes = size_of::<u64>();
-    let vector_bytes = size_of::<u128>();
-    let mut masks = [[0; size_of::<u128>()]; size_of::<u64>()];
-    let mut right = 0;
-    while right < lane_bytes {
-        let mut index = 0;
-        while index < vector_bytes {
-            let lane_base = index / lane_bytes * lane_bytes;
-            masks[right][index] = (lane_base + (index + right) % lane_bytes) as u8;
-            index += 1;
-        }
-        right += 1;
-    }
-    masks
-};
 
 // Since x64 doesn't have 8x16 shifts and we must use a 16x8 shift instead, we
 // need to fix up the bits that migrate from one half of the lane to the

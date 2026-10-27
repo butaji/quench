@@ -501,21 +501,6 @@
                    (bitcast $I8X16 (little_or_native_endian _) (ishl $I64X2 x (u8_from_iconst 32)))))
       (x64_pshufd (put_in_xmm x) 0xb1))
 
-;; Byte-aligned rotations within i64 lanes use one byte shuffle when SSSE3
-;; is available. The half-lane case above keeps its cheaper immediate shuffle.
-(rule 8 (lower (bor $I8X16
-                   (bitcast $I8X16 (little_or_native_endian _) (ishl $I64X2 x (u8_from_iconst left)))
-                   (bitcast $I8X16 (little_or_native_endian _) (ushr $I64X2 x (u8_from_iconst right)))))
-      (if-let true (has_ssse3))
-      (if-let index (byte_rotate_i64x2_index left right))
-      (x64_pshufb (put_in_xmm x) (const_to_xmm_mem_128 (byte_rotate_i64x2_mask index))))
-(rule 7 (lower (bor $I8X16
-                   (bitcast $I8X16 (little_or_native_endian _) (ushr $I64X2 x (u8_from_iconst right)))
-                   (bitcast $I8X16 (little_or_native_endian _) (ishl $I64X2 x (u8_from_iconst left)))))
-      (if-let true (has_ssse3))
-      (if-let index (byte_rotate_i64x2_index left right))
-      (x64_pshufb (put_in_xmm x) (const_to_xmm_mem_128 (byte_rotate_i64x2_mask index))))
-
 ;; `{i,b}128`.
 
 (decl or_i128 (ValueRegs ValueRegs) ValueRegs)

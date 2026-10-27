@@ -4280,12 +4280,6 @@
 
 ;;;; Shuffle ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-;; Complementary byte-aligned shifts rotate bytes independently in each i64 lane.
-(decl pure partial byte_rotate_i64x2_index (u8 u8) u8)
-(extern constructor byte_rotate_i64x2_index byte_rotate_i64x2_index)
-(decl byte_rotate_i64x2_mask (u8) VCodeConstant)
-(extern constructor byte_rotate_i64x2_mask byte_rotate_i64x2_mask)
-
 ;; Produce a mask suitable for use with `pshufb` for permuting the argument to
 ;; shuffle, when the arguments are the same (i.e. `shuffle a a mask`). This will
 ;; map all indices in the range 0..31 to the range 0..15.
