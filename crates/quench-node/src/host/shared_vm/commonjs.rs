@@ -2924,6 +2924,9 @@ const getLinkedBinding = () => ({});
         if library_relative == Some(Path::new("lib/internal/util/inspect.js")) {
             crate::modules::console_shared_vm::note_inspect_loaded(context)?;
         }
+        if library_relative == Some(Path::new("lib/diagnostics_channel.js")) {
+            crate::modules::console_shared_vm::note_channels_loaded(context)?;
+        }
         if library_relative == Some(Path::new("lib/internal/console/global.js")) {
             // Node's bootstrap initializes the global console as it loads it; one loaded on
             // first use binds its streams before any module writes to it.
