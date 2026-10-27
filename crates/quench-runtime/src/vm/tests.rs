@@ -16622,6 +16622,9 @@ print(JSON.stringify(Object.keys(o).map((k) => Array.from(k, (ch) => ch.charCode
     let mut vm = Vm::new(TestHost::writing_to(output.clone()));
     vm.execute(&Engine::specialize(source, "quoted-keys.js").unwrap()).unwrap();
     assert_eq!(output.borrow().as_slice(), ["[[97],[55296],[98],[120,9,121],[56320,122]]|4|2|8|9|11,2,2"]);
+}
+
+#[test]
 fn lane_settled_async_calls_keep_their_promises_and_job_order() {
     // Non-suspending async callees run as settling lane activations
     // (`Completion::SettlesPromise`): returns, throws, thenables, an impure `then` read
