@@ -84,18 +84,10 @@ impl<H: Host> Vm<H> {
     pub(super) fn pure_string_method_call(
         &mut self,
         p: &ResidualProgram,
-        callee: Value,
+        native: Native,
         receiver: Value,
         args: &[Value],
     ) -> Option<Value> {
-        let Some(FunctionRecord {
-            kind: FunctionKind::Native(native),
-            ..
-        }) = self.heap.function(callee)
-        else {
-            return None;
-        };
-        let native = *native;
         if !native.is_pure_string_method()
             || !self.heap.is_string(receiver)
             || args.iter().any(|argument| self.is_object_like(*argument))
