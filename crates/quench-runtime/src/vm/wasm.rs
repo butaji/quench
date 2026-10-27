@@ -2107,6 +2107,68 @@ mod tests {
     }
 
     #[test]
+    fn memory_first_compile_bounds_instructions_in_flight_and_compiles_every_function() {
+        // More functions than workers, together past memory-first's in-flight bound, so the
+        // building thread waits for results before sending more.
+        const FUNCTIONS: usize = 8;
+        const STEPS: usize = 1_500;
+        let step = |function: usize, index: usize| (function * STEPS + index) as i32;
+        let body = |function: usize| {
+            let mut operators = vec![Operator::LocalGet { local_index: 0 }];
+            for index in 0..STEPS {
+                operators.extend([
+                    Operator::I32Const { value: step(function, index) },
+                    Operator::I32Add,
+                    Operator::I32Const { value: step(function, index).rotate_left(7) },
+                    Operator::I32Xor,
+                ]);
+            }
+            operators.push(Operator::End);
+            crate::WasmFunctionBody {
+                ty: crate::WasmCallableType::Embedded(crate::WasmSignature {
+                    params: vec![crate::WasmType::I32],
+                    results: vec![crate::WasmType::I32],
+                }),
+                locals: vec![],
+                operators: operators.into_iter().map(Ok),
+            }
+        };
+        let expected = |function: usize, argument: i32| {
+            (0..STEPS).fold(argument, |value, index| {
+                value.wrapping_add(step(function, index)) ^ step(function, index).rotate_left(7)
+            })
+        };
+        let module = crate::Engine::lower_wasm_module_with_state(
+            "memory-first-compile",
+            (0..FUNCTIONS).map(body),
+            &crate::WasmTypes::default(),
+            &[],
+            &[],
+            &[],
+        )
+        .unwrap();
+        let mut vm = Vm::new(crate::SystemHost);
+        vm.set_memory_policy(crate::MemoryPolicy::MemoryFirst);
+        vm.programs.compile_wasm_modules_at_first_entry();
+        vm.set_execution_mode(crate::ExecutionMode::Compiled);
+        let instance = vm.instantiate_wasm_module(&module).unwrap();
+        for function in 0..FUNCTIONS {
+            let argument = function as i32 * 1_000_003;
+            assert_eq!(
+                vm.invoke_wasm(&instance, function as u32, &[crate::WasmValue::I32(argument)]).unwrap(),
+                Some(crate::WasmValue::I32(expected(function, argument))),
+                "function {function}"
+            );
+        }
+        let compiled = vm
+            .programs
+            .find_shared(&module.program)
+            .and_then(|program| vm.programs.compiled(program).flatten())
+            .expect("compiled program");
+        assert!((0..FUNCTIONS).all(|function| compiled.native_entries(function) == Some(1)));
+    }
+
+    #[test]
     fn compiled_wasm_memory_copy_moves_overlapping_ranges_and_traps_out_of_bounds() {
         const PAGE: i32 = 65_536;
         let memarg = wasmparser::MemArg {
