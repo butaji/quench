@@ -81,9 +81,23 @@ pub(super) trait NumberArithmeticStage<T> {
 }
 
 macro_rules! number_arithmetic {
-    ($($operation:ident => $operator:ident, $stage_method:ident, $specialized_instruction:ident;)+) => {
+    ($($operation:ident => $operator:ident, $stage_method:ident, $specialized_instruction:ident, $symbol:tt, $float:ident, $checked:ident, $overflow:ident;)+) => {
         #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
         pub(super) enum NumberArithmetic { $($operation),+ }
+
+        impl NumberArithmeticStage<f64> for NumberF64Stage {
+            type Output = f64;
+            $(#[inline(always)]
+            fn $stage_method(&mut self, left: f64, right: f64) -> f64 { left $symbol right })+
+        }
+        struct CheckedInt32Stage;
+        impl NumberArithmeticStage<i32> for CheckedInt32Stage {
+            type Output = Option<i32>;
+            $(#[inline(always)]
+            fn $stage_method(&mut self, left: i32, right: i32) -> Self::Output {
+                number_arithmetic!(@checked left, right, $checked)
+            })+
+        }
 
         impl NumberArithmetic {
             #[inline(always)]
@@ -128,6 +142,10 @@ macro_rules! number_arithmetic {
             }
         }
     };
+    (@checked $left:ident, $right:ident, None) => {
+        { let _ = ($left, $right); unreachable!("division has a Float64 result") }
+    };
+    (@checked $left:ident, $right:ident, $method:ident) => { $left.$method($right) };
     (
         @specialized_instruction
         $instruction:ident,
@@ -145,12 +163,29 @@ macro_rules! number_arithmetic {
     };
 }
 
-number_arithmetic! {
-    Add => Addition, add, NumericAdd;
-    Subtract => Subtraction, subtract, None;
-    Multiply => Multiplication, multiply, NumericMultiply;
-    Divide => Division, divide, None;
+// The primitive views of each Number operation, including checked signed-int32
+// arithmetic. Backends consume these rows rather than maintain another mapping.
+macro_rules! number_arithmetic_rows {
+    ($consumer:ident) => { $consumer! {
+        Add => Addition, add, NumericAdd, +, fadd, checked_add, sadd_overflow;
+        Subtract => Subtraction, subtract, None, -, fsub, checked_sub, ssub_overflow;
+        Multiply => Multiplication, multiply, NumericMultiply, *, fmul, checked_mul, smul_overflow;
+        Divide => Division, divide, None, /, fdiv, None, None;
+    }};
 }
+pub(super) use number_arithmetic_rows;
+number_arithmetic_rows!(number_arithmetic);
+
+/// Sign of a non-overflowing zero product: at least one factor is zero, so
+/// the result is -0 exactly when either factor is negative. The caller must
+/// establish zero before interpreting this predicate; views supply primitives.
+macro_rules! int32_zero_product_sign {
+    ($left:expr, $right:expr, $or:expr, $negative:expr) => {{
+        let signs = ($or)($left, $right);
+        ($negative)(signs)
+    }};
+}
+pub(super) use int32_zero_product_sign;
 
 pub(super) trait NumberUnaryStage<T> {
     type Output;
@@ -356,27 +391,6 @@ fn number_bitwise_result(operation: NumberBitwise, left: i32, right: i32) -> Val
 }
 
 struct NumberF64Stage;
-
-impl NumberArithmeticStage<f64> for NumberF64Stage {
-    type Output = f64;
-
-    #[inline(always)]
-    fn add(&mut self, left: f64, right: f64) -> Self::Output {
-        left + right
-    }
-    #[inline(always)]
-    fn subtract(&mut self, left: f64, right: f64) -> Self::Output {
-        left - right
-    }
-    #[inline(always)]
-    fn multiply(&mut self, left: f64, right: f64) -> Self::Output {
-        left * right
-    }
-    #[inline(always)]
-    fn divide(&mut self, left: f64, right: f64) -> Self::Output {
-        left / right
-    }
-}
 
 impl NumberUnaryStage<f64> for NumberF64Stage {
     type Output = f64;
@@ -672,27 +686,14 @@ mod numeric_instruction_tests {
 }
 
 #[inline(always)]
-pub(super) fn numeric_integer_add_result(left: i32, right: i32) -> Value {
-    match left.checked_add(right) {
-        Some(sum) => Value::integer(sum),
-        None => Value::number(f64::from(left) + f64::from(right)),
+fn numeric_integer_arithmetic_result(operation: NumberArithmetic, left: i32, right: i32) -> Value {
+    match operation.apply(&mut CheckedInt32Stage, left, right) {
+        Some(0) if operation == NumberArithmetic::Multiply
+            && int32_zero_product_sign!(left, right, |l, r| l | r, |signs| signs < 0) =>
+                Value::number(-0.0),
+        Some(integer) => Value::integer(integer),
+        None => Value::number(number_arithmetic_result(operation, f64::from(left), f64::from(right))),
     }
-}
-
-#[inline(always)]
-pub(super) fn numeric_integer_multiply_result(left: i32, right: i32) -> Value {
-    match left.checked_mul(right) {
-        Some(0) if (left < 0) != (right < 0) => Value::number(-0.0),
-        Some(product) => Value::integer(product),
-        None => Value::number(f64::from(left) * f64::from(right)),
-    }
-}
-
-#[inline(always)]
-fn numeric_integer_subtract_result(left: i32, right: i32) -> Value {
-    left.checked_sub(right)
-        .map(Value::integer)
-        .unwrap_or_else(|| Value::number(f64::from(left) - f64::from(right)))
 }
 
 /// An arithmetic operator on two Numbers: `integer` when both are integers, else `number` on
@@ -756,12 +757,7 @@ fn number_arithmetic_values(
     if operation != NumberArithmetic::Divide
         && let Some((left, right)) = Value::int_pair(left, right)
     {
-        let value = match operation {
-            NumberArithmetic::Add => numeric_integer_add_result(left, right),
-            NumberArithmetic::Subtract => numeric_integer_subtract_result(left, right),
-            NumberArithmetic::Multiply => numeric_integer_multiply_result(left, right),
-            NumberArithmetic::Divide => unreachable!("division uses its Number fast path"),
-        };
+        let value = numeric_integer_arithmetic_result(operation, left, right);
         return Some((value, crate::profile::BinaryValuePath::IntegerFastPath));
     }
     let (left, right) = Value::number_pair(left, right)?;
@@ -774,9 +770,9 @@ fn number_arithmetic_values(
 #[inline(always)]
 fn numeric_integer_result(operator: BinaryOperator, left: i32, right: i32) -> Option<Value> {
     Some(match operator {
-        BinaryOperator::Addition => numeric_integer_add_result(left, right),
-        BinaryOperator::Subtraction => numeric_integer_subtract_result(left, right),
-        BinaryOperator::Multiplication => numeric_integer_multiply_result(left, right),
+        BinaryOperator::Addition => numeric_integer_arithmetic_result(NumberArithmetic::Add, left, right),
+        BinaryOperator::Subtraction => numeric_integer_arithmetic_result(NumberArithmetic::Subtract, left, right),
+        BinaryOperator::Multiplication => numeric_integer_arithmetic_result(NumberArithmetic::Multiply, left, right),
         BinaryOperator::Division => {
             if right == 0 || (left == 0 && right < 0) {
                 return None;
@@ -877,15 +873,12 @@ impl<H: Host> Vm<H> {
         left: Value,
         right: Value,
     ) -> Option<Value> {
-        const ADDITION: u32 = BinaryOperator::Addition as u32;
-        const SUBTRACTION: u32 = BinaryOperator::Subtraction as u32;
-        const MULTIPLICATION: u32 = BinaryOperator::Multiplication as u32;
         let (left, right) = Value::int_pair(left, right)?;
         // The common operators match the immediate directly; the rest go through the table.
         match operator {
-            ADDITION => Some(numeric_integer_add_result(left, right)),
-            SUBTRACTION => Some(numeric_integer_subtract_result(left, right)),
-            MULTIPLICATION => Some(numeric_integer_multiply_result(left, right)),
+            ADDITION => Some(numeric_integer_arithmetic_result(NumberArithmetic::Add, left, right)),
+            SUBTRACTION => Some(numeric_integer_arithmetic_result(NumberArithmetic::Subtract, left, right)),
+            MULTIPLICATION => Some(numeric_integer_arithmetic_result(NumberArithmetic::Multiply, left, right)),
             _ => numeric_integer_result(numeric_binary_operator(operator)?, left, right),
         }
     }

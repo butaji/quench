@@ -246,34 +246,42 @@ pub(super) fn emit_number_relation(
     )
 }
 
+/// Native primitive view; callers retain operands for float fallback or exact-PC recovery.
+struct EmitArithmetic<'a, 'f, const CHECKED: bool> {
+    builder: &'a mut FunctionBuilder<'f>,
+}
+
+macro_rules! emit_arithmetic_stages {
+    ($($operation:ident => $operator:ident, $method:ident, $instruction:ident, $symbol:tt, $float:ident, $checked:ident, $overflow:ident;)+) => {
+        impl super::operations::NumberArithmeticStage<ir::Value> for EmitArithmetic<'_, '_, false> {
+            type Output = ir::Value;
+            $(fn $method(&mut self, left: ir::Value, right: ir::Value) -> Self::Output {
+                self.builder.ins().$float(left, right)
+            })+
+        }
+        impl super::operations::NumberArithmeticStage<ir::Value> for EmitArithmetic<'_, '_, true> {
+            type Output = (ir::Value, ir::Value);
+            $(fn $method(&mut self, left: ir::Value, right: ir::Value) -> Self::Output {
+                emit_arithmetic_stages!(@checked self, left, right, $overflow)
+            })+
+        }
+    };
+    (@checked $stage:ident, $left:ident, $right:ident, None) => {
+        { let _ = ($left, $right); unreachable!("division has a Float64 result") }
+    };
+    (@checked $stage:ident, $left:ident, $right:ident, $opcode:ident) => {
+        $stage.builder.ins().$opcode($left, $right)
+    };
+}
+super::operations::number_arithmetic_rows!(emit_arithmetic_stages);
+
 pub(super) fn emit_number_arithmetic_operation(
     builder: &mut FunctionBuilder<'_>,
     operation: super::operations::NumberArithmetic,
     left: ir::Value,
     right: ir::Value,
 ) -> ir::Value {
-    struct Emit<'a, 'f> {
-        builder: &'a mut FunctionBuilder<'f>,
-    }
-
-    impl crate::vm::operations::NumberArithmeticStage<ir::Value> for Emit<'_, '_> {
-        type Output = ir::Value;
-
-        fn add(&mut self, left: ir::Value, right: ir::Value) -> Self::Output {
-            self.builder.ins().fadd(left, right)
-        }
-        fn subtract(&mut self, left: ir::Value, right: ir::Value) -> Self::Output {
-            self.builder.ins().fsub(left, right)
-        }
-        fn multiply(&mut self, left: ir::Value, right: ir::Value) -> Self::Output {
-            self.builder.ins().fmul(left, right)
-        }
-        fn divide(&mut self, left: ir::Value, right: ir::Value) -> Self::Output {
-            self.builder.ins().fdiv(left, right)
-        }
-    }
-
-    operation.apply(&mut Emit { builder }, left, right)
+    operation.apply(&mut EmitArithmetic::<false> { builder }, left, right)
 }
 
 pub(super) fn emit_number_unary_operation(
@@ -1199,39 +1207,23 @@ fn emit_js_int32_arithmetic(
     builder.switch_to_block(integer);
     let left_narrow = builder.ins().ireduce(types::I32, left_bits);
     let right_narrow = builder.ins().ireduce(types::I32, right_bits);
-    let left = builder.ins().sextend(types::I64, left_narrow);
-    let right = builder.ins().sextend(types::I64, right_narrow);
-    let wide = match arithmetic {
-        A::Add => builder.ins().iadd(left, right),
-        A::Subtract => builder.ins().isub(left, right),
-        A::Multiply => builder.ins().imul(left, right),
-        A::Divide => unreachable!("integer lowering is only used for add, subtract and multiply"),
-    };
-    let above_minimum = builder.ins().icmp_imm_s(
-        IntCC::SignedGreaterThanOrEqual,
-        wide,
-        i64::from(i32::MIN),
+    let (payload, overflow) = arithmetic.apply(
+        &mut EmitArithmetic::<true> { builder }, left_narrow, right_narrow,
     );
-    let below_maximum = builder.ins().icmp_imm_s(
-        IntCC::SignedLessThanOrEqual,
-        wide,
-        i64::from(i32::MAX),
-    );
-    let fits_i32 = builder.ins().band(above_minimum, below_maximum);
-    builder.ins().brif(fits_i32, result, &[], float, &[]);
+    builder.ins().brif(overflow, float, &[], result, &[]);
 
     builder.switch_to_block(result);
-    let payload = builder.ins().ireduce(types::I32, wide);
     let payload = builder.ins().uextend(types::I64, payload);
     let integer_bits = builder
         .ins()
         .bor_imm_u(payload, crate::value::ValueLayout::INT_TAG as i64);
     let encoded = if arithmetic == A::Multiply {
-        let left_negative = builder.ins().icmp_imm_s(IntCC::SignedLessThan, left, 0);
-        let right_negative = builder.ins().icmp_imm_s(IntCC::SignedLessThan, right, 0);
-        let signs_differ = builder.ins().icmp(IntCC::NotEqual, left_negative, right_negative);
-        let is_zero = builder.ins().icmp_imm_s(IntCC::Equal, wide, 0);
-        let negative_zero = builder.ins().band(signs_differ, is_zero);
+        let is_zero = builder.ins().icmp_imm_s(IntCC::Equal, payload, 0);
+        let zero_sign = super::operations::int32_zero_product_sign!(
+            left_narrow, right_narrow, |l, r| builder.ins().bor(l, r),
+            |signs| builder.ins().icmp_imm_s(IntCC::SignedLessThan, signs, 0)
+        );
+        let negative_zero = builder.ins().band(zero_sign, is_zero);
         let minus_zero = builder.ins().iconst(
             types::I64,
             Value::number(-0.0).to_bits() as i64,

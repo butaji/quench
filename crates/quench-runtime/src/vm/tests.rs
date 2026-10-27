@@ -14944,6 +14944,10 @@ fn js_jit_general_dispatch_speculates_number_arithmetic_and_falls_back_exactly()
         try { const result = left + right; return result; }
         catch (error) { return error instanceof TypeError; }
       }
+      function subtract(left, right) {
+        try { const result = left - right; return result; }
+        catch (error) { return error instanceof TypeError; }
+      }
       function negate(value) {
         try { return -value; }
         catch (error) { return error instanceof TypeError; }
@@ -14961,12 +14965,41 @@ fn js_jit_general_dispatch_speculates_number_arithmetic_and_falls_back_exactly()
         if (negate(index) !== -index) throw Error('unary minus');
         if (positive(index) !== index) throw Error('unary plus');
         if (multiply(index, 2) !== index * 2) throw Error('integer multiply');
+        if (subtract(index, 2) !== index - 2) throw Error('integer subtract');
       }
       if (combine(-2, -3) !== -5) throw Error('negative integer add');
       if (!Object.is(combine(-0, -0), -0)) throw Error('negative zero');
       if (combine(2147483647, 1) !== 2147483648) throw Error('integer boundary');
       if (!Object.is(multiply(0, -1), -0)) throw Error('integer multiply negative zero');
       if (multiply(50000, 50000) !== 2500000000) throw Error('integer multiply overflow');
+      // Explicit Number expectations ensure overflow uses the original operands,
+      // not a wrapped int32 payload. Exercise both signs and both zero factors.
+      for (const row of [
+        [2147483647, 2147483647, 4294967294, 0, 4611686014132420609],
+        [-2147483648, -2147483648, -4294967296, 0, 4611686018427387904],
+        [-2147483648, 1, -2147483647, -2147483649, -2147483648],
+        [2147483647, -1, 2147483646, 2147483648, -2147483647],
+        [-2147483648, -1, -2147483649, -2147483647, 2147483648],
+        [0, -2147483648, -2147483648, 2147483648, -0],
+        [-2147483648, 0, -2147483648, -2147483648, -0],
+        [0, 0, 0, 0, 0],
+        [46340, 46340, 92680, 0, 2147395600],
+        [46341, 46341, 92682, 0, 2147488281],
+      ]) {
+        if (!Object.is(combine(row[0], row[1]), row[2])) throw Error('checked add');
+        if (!Object.is(subtract(row[0], row[1]), row[3])) throw Error('checked subtract');
+        if (!Object.is(multiply(row[0], row[1]), row[4])) throw Error('checked multiply');
+      }
+      let conversions = '';
+      const leftObject = {valueOf() { conversions += 'L'; return -2147483648; }};
+      const rightObject = {valueOf() { conversions += 'R'; return -1; }};
+      if (multiply(leftObject, rightObject) !== 2147483648 || conversions !== 'LR') {
+        throw Error('multiply fallback effects');
+      }
+      conversions = '';
+      if (subtract(leftObject, rightObject) !== -2147483647 || conversions !== 'LR') {
+        throw Error('subtract fallback effects');
+      }
       if (combine('left', 'right') !== 'leftright') throw Error('string fallback');
       if (combine(Symbol('value'), 1) !== true) throw Error('throw fallback');
       if (!Number.isNaN(combine(NaN, 1))) throw Error('NaN result');
@@ -14992,7 +15025,7 @@ fn js_jit_general_dispatch_speculates_number_arithmetic_and_falls_back_exactly()
     compiled.programs.compile_general_baseline_when_hot();
     compiled.execute(&program).unwrap();
 
-    for name in ["combine", "negate", "positive", "multiply"] {
+    for name in ["combine", "subtract", "negate", "positive", "multiply"] {
         let function = program
             .functions
             .iter()
@@ -15016,6 +15049,7 @@ fn js_jit_general_dispatch_speculates_number_arithmetic_and_falls_back_exactly()
 
     for (name, operator) in [
         ("combine", oxc_ast::ast::BinaryOperator::Addition as u32),
+        ("subtract", oxc_ast::ast::BinaryOperator::Subtraction as u32),
         (
             "multiply",
             oxc_ast::ast::BinaryOperator::Multiplication as u32,

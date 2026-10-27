@@ -4731,8 +4731,8 @@ impl<'a, 'b> Lowering<'a, 'b> {
             _ => {}
         }
         let (result, overflow) = match operator {
-            NumberArithmetic::Add => self.body.builder.ins().sadd_overflow(left, right),
-            NumberArithmetic::Subtract => self.body.builder.ins().ssub_overflow(left, right),
+            NumberArithmetic::Add | NumberArithmetic::Subtract =>
+                operator.apply(&mut super::EmitArithmetic::<true> { builder: &mut self.body.builder }, left, right),
             NumberArithmetic::Multiply if self.proved(pc) => {
                 return self.body.builder.ins().imul(left, right);
             }
@@ -4743,7 +4743,9 @@ impl<'a, 'b> Lowering<'a, 'b> {
                 let product = if exact {
                     self.body.builder.ins().imul(left, right)
                 } else {
-                    let (product, overflow) = self.body.builder.ins().smul_overflow(left, right);
+                    let (product, overflow) = operator.apply(
+                        &mut super::EmitArithmetic::<true> { builder: &mut self.body.builder }, left, right,
+                    );
                     self.guard_int32(pc, overflow, Widening::Register(register));
                     product
                 };
@@ -4759,8 +4761,10 @@ impl<'a, 'b> Lowering<'a, 'b> {
                 self.body.builder.ins().brif(zero, signs_block, &[], done, &[]);
                 self.body.builder.switch_to_block(signs_block);
                 self.body.builder.seal_block(signs_block);
-                let signs = self.body.builder.ins().bor(left, right);
-                let negative = self.body.builder.ins().icmp_imm_s(IntCC::SignedLessThan, signs, 0);
+                let negative = super::super::operations::int32_zero_product_sign!(
+                    left, right, |l, r| self.body.builder.ins().bor(l, r),
+                    |signs| self.body.builder.ins().icmp_imm_s(IntCC::SignedLessThan, signs, 0)
+                );
                 self.guard_int32(pc, negative, Widening::Register(register));
                 self.body.builder.ins().jump(done, &[]);
                 // `done`'s predecessors are the test's block and the signs' passing branch,
