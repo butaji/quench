@@ -1797,7 +1797,7 @@ impl ProgramStore {
     }
 
     /// Compile a Wasm module whole at `work`, never by time: a deterministic test policy.
-    #[cfg(test)]
+    #[cfg(all(test, not(quench_profiled)))]
     pub(super) fn compile_wasm_modules_after_work(&mut self, work: u32) {
         self.wasm_module_compile = WasmModuleCompile { work, after: std::time::Duration::MAX };
     }

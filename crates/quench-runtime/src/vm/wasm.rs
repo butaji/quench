@@ -5738,6 +5738,8 @@ mod tests {
         assert!(vm.programs.wasm_tier(program, 2).is_none());
     }
 
+    // Loop work is credited at lane safepoints; profiled builds run no lane.
+    #[cfg(not(quench_profiled))]
     #[test]
     fn compiled_wasm_selective_tiering_promotes_a_function_by_its_loop_work() {
         // One entry runs this many iterations: below the call threshold in entries, far
@@ -5930,6 +5932,8 @@ mod tests {
         );
     }
 
+    // Loop work is credited at lane safepoints; profiled builds run no lane.
+    #[cfg(not(quench_profiled))]
     #[test]
     fn compiled_wasm_selective_module_compiles_whole_after_its_interpreted_work() {
         use super::super::program_store::WASM_JIT_BACKEDGES_PER_ENTRY;
