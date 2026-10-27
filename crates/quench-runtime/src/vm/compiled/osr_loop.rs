@@ -1548,7 +1548,7 @@ fn admit_region(
                 }
             }
             return Err(RegionAnalysisFailure::at(
-                RegionRejection::UnsupportedInstruction(Op::JumpBinaryFalse),
+                RegionRejection::UnsupportedInstruction(instructions[failure_offset].op()),
                 header,
                 failure_offset,
             ));
@@ -5226,6 +5226,24 @@ fn unary_operand(dfg: &ir::DataFlowGraph, value: ir::Value, opcode: ir::Opcode) 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn osr_tagged_definition_rejection_names_its_actual_opcode_and_pc() {
+        // A tagged arithmetic result is unsupported here. Its consumer may be a
+        // nullish branch, but that does not make the branch the failing definition.
+        let instruction = WideInstruction::new(
+            Op::Binary, 0, 1, 2, oxc_ast::ast::BinaryOperator::Addition as u32,
+        );
+        let failure = match admit_region(
+            vec![WideInstruction::new(Op::Move, 3, 1, 0, 0), instruction],
+            4, &[], &[], None, None, 17, &std::collections::BTreeSet::from([0]),
+        ) {
+            Ok(_) => panic!("tagged arithmetic must retain its existing rejection"),
+            Err(failure) => failure,
+        };
+        assert_eq!(failure.pc, 18);
+        assert_eq!(failure.reason, RegionRejection::UnsupportedInstruction(Op::Binary));
+    }
 
     #[test]
     fn osr_admission_keeps_wide_load_const_indices() {
