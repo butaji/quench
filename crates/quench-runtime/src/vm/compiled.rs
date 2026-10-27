@@ -13310,10 +13310,10 @@ impl<H: Host> Vm<H> {
                     .programs
                     .residual(program)
                     .is_some_and(|code| code.kind == crate::bytecode::ProgramKind::Wasm)
+                    && self.programs.wasm_module_starts_interpreted(program)
                 {
-                    // A Wasm module starts in the interpreter: its hot roots promote after the
-                    // entry gate below, and the whole module compiles once it runs long
-                    // (`WasmModuleTier`).
+                    // A Wasm module starts in the interpreter and compiles whole once it runs
+                    // long (`WasmModuleTier`); a small one compiles whole below, at once.
                     self.programs.set_compiled(program, None);
                     None
                 } else {

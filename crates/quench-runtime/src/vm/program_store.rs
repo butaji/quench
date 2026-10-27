@@ -292,6 +292,14 @@ impl WasmModuleCompile {
     }
 }
 
+/// The size, in bytecodes, up to which a Wasm module compiles whole at its first entry rather
+/// than starting in the interpreter: compiling it costs about what `WasmModuleCompile::after`
+/// would have spent interpreting it, so waiting buys nothing. Whole compiles take 3-7 us a
+/// bytecode (Linux x86_64): quicksort-wasm, 2,412, compiles in 16 ms and lost 13% of its
+/// JetStream Score waiting; source-map's module, 12,971, takes 67 ms, which its one short
+/// parse never repays.
+const WASM_JIT_EAGER_MODULE_BYTECODES: usize = 4096;
+
 /// How often, in work, a selective module reads the clock for `WasmModuleCompile::after`:
 /// often enough that a 20 ms bound lands within a few interpreted calls, rarely enough that
 /// the clock stays off an interpreted call's path.
@@ -1793,6 +1801,21 @@ impl ProgramStore {
     pub(super) fn note_wasm_module_entry(&mut self, id: ProgramId) -> bool {
         let policy = self.wasm_module_compile;
         self.entry_mut(id).is_some_and(|entry| entry.jit_tiers.note_wasm_module_work(1, policy))
+    }
+
+    /// Whether Wasm module `id` starts in the interpreter at its first entry: always under the
+    /// selective A/B arm, else when it is too large to compile whole at once as cheaply as
+    /// waiting (`WASM_JIT_EAGER_MODULE_BYTECODES`).
+    pub(super) fn wasm_module_starts_interpreted(&self, id: ProgramId) -> bool {
+        self.wasm_module_compile == WasmModuleCompile::NEVER
+            || self.entry(id).is_some_and(|entry| {
+                let code = &entry.residual;
+                (0..code.functions.len())
+                    .filter_map(|index| code.function_get(index))
+                    .map(|function| function.code.len())
+                    .sum::<usize>()
+                    > WASM_JIT_EAGER_MODULE_BYTECODES
+            })
     }
 
     /// Whether Wasm module `id` still runs selectively: its whole-module compile not yet
