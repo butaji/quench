@@ -504,3 +504,49 @@ setTimeout(() => console.log(log.join(' ')), 0);
     assert_eq!(quench.outcome(), RunResult::Pass, "{:?}", quench.worker);
     assert_eq!(quench.stdout, node.stdout);
 }
+
+#[test]
+fn bigint_conversions_and_wasm_export_calls_report_like_node() {
+    // ToBigInt and the BigInt constructor name the value they reject as V8 does, and a call
+    // of a Wasm export converts its arguments in order, once each, through the same
+    // conversions (i64 arguments are BigInts).
+    let source = r#"
+const cases = [[], [1.5], [NaN], [Infinity], [undefined], [null], [Symbol('s')], [Symbol()], ['x'], ['1.5'], [{}], [{ valueOf() { return 2.5; } }], [1e21], [-0], ['  12  ']];
+for (const args of cases)
+  try { console.log('ok', String(BigInt(...args))); } catch (e) { console.log(e.constructor.name + ': ' + e.message); }
+for (const v of [{ [Symbol.toPrimitive]() { return 1; } }, 1n, '0x10', '', 'abc', 12.0])
+  try { console.log('ok', String(BigInt.asUintN(8, v))); } catch (e) { console.log(e.constructor.name + ': ' + e.message); }
+try { 1n + 1; } catch (e) { console.log(e.constructor.name + ': ' + e.message); }
+// Export-call semantics: coercion order and side effects, f64, i64 <-> BigInt, missing
+// arguments, multi-value results, errors.
+const section = (id, bytes) => [id, bytes.length, ...bytes];
+const types = [3,
+  0x60, 2, 0x7f, 0x7c, 1, 0x7c,   // (i32, f64) -> f64
+  0x60, 1, 0x7e, 1, 0x7e,         // (i64) -> i64
+  0x60, 0, 2, 0x7f, 0x7f];        // () -> (i32, i32)
+const funcs = [3, 0, 1, 2];
+const name = (s) => [s.length, ...[...s].map((c) => c.charCodeAt(0))];
+const exps = [3, ...name("mix"), 0, 0, ...name("inc64"), 0, 1, ...name("pair"), 0, 2];
+const body = (code) => [code.length + 1, 0, ...code];
+const code = [3,
+  ...body([0x20, 0, 0xb7, 0x20, 1, 0xa0, 0x0b]),
+  ...body([0x20, 0, 0x42, 1, 0x7c, 0x0b]),
+  ...body([0x41, 1, 0x41, 2, 0x0b])];
+const bytes = new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0,
+  ...section(1, types), ...section(3, funcs), ...section(7, exps), ...section(10, code)]);
+const { mix, inc64, pair } = new WebAssembly.Instance(new WebAssembly.Module(bytes)).exports;
+const log = [];
+const tracked = (label, value) => ({ valueOf() { log.push(label); return value; } });
+const show = (f) => { try { return String(f()); } catch (e) { return e.constructor.name + ': ' + e.message; } };
+console.log(show(() => mix(tracked('a', 2.9), tracked('b', 0.25))), log.join(','));
+console.log(show(() => mix()), show(() => mix(-1, 1.5, 'extra')), show(() => mix(2 ** 32 + 5, NaN)));
+console.log(show(() => inc64(41n)), show(() => inc64(2n ** 63n - 1n)), show(() => inc64(1)));
+console.log(show(() => JSON.stringify(pair())), mix.length, inc64.length, pair.length, mix.name);
+console.log(show(() => mix({ valueOf() { throw new RangeError('boom'); } })));
+"#;
+    let node = observe_node_source(source);
+    assert!(node.status.success(), "Node oracle failed: {node:?}");
+    let quench = observe_source(source);
+    assert_eq!(quench.outcome(), RunResult::Pass, "{:?}", quench.worker);
+    assert_eq!(quench.stdout, node.stdout);
+}
