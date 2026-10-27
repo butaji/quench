@@ -16622,6 +16622,43 @@ print(JSON.stringify(Object.keys(o).map((k) => Array.from(k, (ch) => ch.charCode
     let mut vm = Vm::new(TestHost::writing_to(output.clone()));
     vm.execute(&Engine::specialize(source, "quoted-keys.js").unwrap()).unwrap();
     assert_eq!(output.borrow().as_slice(), ["[[97],[55296],[98],[120,9,121],[56320,122]]|4|2|8|9|11,2,2"]);
+fn lane_settled_async_calls_keep_their_promises_and_job_order() {
+    // Non-suspending async callees run as settling lane activations
+    // (`Completion::SettlesPromise`): returns, throws, thenables, an impure `then` read
+    // (settled in the materialized frame), nested and returned calls, native callbacks that
+    // collect, and reaction order stay as the general loop's settled frames make them.
+    let source = r#"
+      const out = [];
+      async function value(x) { return x; }
+      async function thrower(x) { if (x & 1) throw new Error("boom" + x); return "ok"; }
+      const thenableObject = { then(resolve) { resolve(70); } };
+      async function thenable(x) { return thenableObject; }
+      const tricky = { x: 5 };
+      Object.defineProperty(tricky, "then", { get() { out.push("then" + out.length); return undefined; } });
+      async function getterThen(x) { return tricky; }
+      async function nested(x) { return value(x + 1); }
+      async function collects(xs) { return xs.map((x) => { $262.gc(); return x * 2; }).join(""); }
+      function returnsCall(x) { return value(x); }
+      function drive(i) {
+        return [value(i), thrower(i).catch((e) => e.message), thenable(i), getterThen(i).then((o) => o.x),
+          nested(i), collects([i, i]), returnsCall(i)];
+      }
+      const order = [];
+      const all = [];
+      for (let i = 0; i < 40; i++) {
+        all.push(...drive(i));
+        value(i).then(() => order.push("a"));
+        Promise.resolve().then(() => order.push("b"));
+      }
+      Promise.all(all).then((values) => { const text = values.join(","); let hash = 0; for (let k = 0; k < text.length; k++) hash = (hash * 31 + text.charCodeAt(k)) | 0; print(values.slice(0, 14).join(",") + "|" + values.length + ":" + hash + "|" + out.length + ":" + out.slice(-2).join(",") + "|" + order.join("").slice(0, 8)); });
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()).with_test262());
+    vm.execute(&Engine::specialize(source, "lane-settled-async.js").unwrap()).unwrap();
+    assert_eq!(
+        output.borrow().as_slice(),
+        ["0,ok,70,5,1,00,0,1,boom1,70,5,2,22,1|280:-1226768622|40:then38,then39|abababab"]
+    );
 }
 
 #[test]

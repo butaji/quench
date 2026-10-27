@@ -1292,7 +1292,7 @@ impl<H: Host> Vm<H> {
         self.activate_frame(&mut frame);
         self.frames.push(frame);
         let result = match initial_error {
-            None => self.run_generator_frame(&execution_program, self.frames.len() - 1),
+            None => self.run_resumed_frame(&execution_program, self.frames.len() - 1),
             error => self.run_frame_general_with_error(&execution_program, self.frames.len() - 1, error),
         };
         let mut frame = self.frames.pop().expect("generator frame exists");

@@ -5402,13 +5402,35 @@ impl<H: Host> Vm<H> {
             let observed = self.plain_named_load(value, constructor_atom)?;
             return (observed == receiver).then_some(value);
         }
-        let then = if self.object_data(value).is_some() {
-            let then_atom = self.runtime_atoms.then;
-            self.plain_named_load(value, then_atom)?
-        } else {
-            Value::UNDEFINED
-        };
+        let then = self.plain_resolution_then(value)?;
         let promise = self.promise_object_with_parent(None).ok()?;
+        self.resolve_fresh_promise_plainly(p, promise, value, then).then_some(promise)
+    }
+
+    /// The `then` `promise_resolve_value` would read from a resolution `value`, where the read
+    /// observes nothing: `undefined` for a non-object, else its plain-data `then`
+    /// (`plain_named_load`). `None` where the read could run guest code.
+    pub(super) fn plain_resolution_then(&mut self, value: Value) -> Option<Value> {
+        if self.object_data(value).is_none() {
+            return Some(Value::UNDEFINED);
+        }
+        let then_atom = self.runtime_atoms.then;
+        self.plain_named_load(value, then_atom)
+    }
+
+    /// `promise_resolve_value` of a promise no one has observed yet, with the `then`
+    /// `plain_resolution_then` read from `value`, under a host that observes no promise
+    /// lifecycle: a callable `then` enqueues the thenable job, anything else fulfills the
+    /// promise, whose lack of reactions enqueues nothing. Neither runs guest code. `false`
+    /// when the promise is no promise record.
+    pub(super) fn resolve_fresh_promise_plainly(
+        &mut self,
+        p: &ResidualProgram,
+        promise: Value,
+        value: Value,
+        then: Value,
+    ) -> bool {
+        debug_assert!(!self.host.observes_promise_lifecycle());
         if self.is_function(then) {
             let execution_context = self.host.capture_job_context(None);
             self.realm.jobs.push_back(super::PendingJob::Thenable(ThenableJob {
@@ -5418,11 +5440,9 @@ impl<H: Host> Vm<H> {
                 promise,
                 execution_context,
             }));
-        } else {
-            // A fresh promise has no reactions, so the settle enqueues nothing.
-            self.promise_settle(p, promise, PromiseState::Fulfilled, value).ok()?;
+            return true;
         }
-        Some(promise)
+        self.promise_settle(p, promise, PromiseState::Fulfilled, value).is_ok()
     }
 
     /// Whether `promise`'s species steps provably answer the intrinsic `%Promise%`: its
