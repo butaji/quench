@@ -240,6 +240,15 @@ impl<'a> AliasAnalysis<'a> {
     }
 
     fn compute_block_input_states(&mut self, func: &Function) {
+        // A single incoming edge needs no meet. In particular, meeting its
+        // previous approximation with a revised loop state would invent a
+        // memory barrier at every successor, losing dominating loads.
+        let mut incoming_edges: SecondaryMap<Block, u8> = SecondaryMap::new();
+        for block in func.layout.blocks() {
+            visit_block_succs(func, block, |_inst, succ, _from_table| {
+                incoming_edges[succ] = incoming_edges[succ].saturating_add(1);
+            });
+        }
         let mut queue = vec![];
         let mut queue_set = FxHashSet::default();
         let entry = func.layout.entry_block().unwrap();
@@ -268,6 +277,13 @@ impl<'a> AliasAnalysis<'a> {
             visit_block_succs(func, block, |_inst, succ, _from_table| {
                 let succ_first_inst = func.layout.block_insts(succ).next().unwrap();
                 let updated = match self.block_input.get_mut(&succ) {
+                    Some(succ_state) if succ != entry && incoming_edges[succ] == 1 => {
+                        let changed = *succ_state != state;
+                        if changed {
+                            *succ_state = state.clone();
+                        }
+                        changed
+                    }
                     Some(succ_state) => succ_state.meet_from(&state, succ_first_inst),
                     None => {
                         self.block_input.insert(succ, state.clone());
