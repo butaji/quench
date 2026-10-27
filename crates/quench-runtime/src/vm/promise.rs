@@ -1670,6 +1670,16 @@ impl<H: Host> Vm<H> {
             .unwrap_or_else(|| std::rc::Rc::from(p.source_name.as_str()))
     }
 
+    fn resolve_dynamic_import_with_context(
+        &mut self,
+        referrer: &str,
+        specifier: &str,
+    ) -> Result<Option<ModuleSource>, String> {
+        let mut context = crate::NativeContext::new(self);
+        H::resolve_dynamic_import_with_context(&mut context, referrer, specifier)
+            .map_err(|error| context.finish_error(error).to_string())
+    }
+
     fn dynamic_import(&mut self, p: &ResidualProgram, args: &[Value]) -> Result<Value, JsError> {
         let promise = self.promise_object()?;
         let specifier = args.first().copied().unwrap_or(Value::UNDEFINED);
@@ -1683,7 +1693,7 @@ impl<H: Host> Vm<H> {
             let specifier = vm.to_string(p, specifier)?;
             let module_type = vm.validate_dynamic_import_options(p, options)?;
             let referrer = vm.active_script_or_module(p);
-            let resolution = vm.host.resolve_dynamic_import(&referrer, &specifier);
+            let resolution = vm.resolve_dynamic_import_with_context(&referrer, &specifier);
             match resolution {
                 Err(message) => return Err(vm.type_error(p, message)),
                 Ok(Some(module)) => {
@@ -2406,8 +2416,7 @@ impl<H: Host> Vm<H> {
             .filter(|request| request.phase == crate::bytecode::ModuleRequestPhase::Evaluation)
         {
             let dependency = self
-                .host
-                .resolve_dynamic_import(&module.name, &request.source)
+                .resolve_dynamic_import_with_context(&module.name, &request.source)
                 .map_err(|message| self.type_error(p, message))?;
             let Some(dependency) = dependency else {
                 return Err(self.type_error(p, "static module request was not resolved".into()));
@@ -2572,8 +2581,7 @@ impl<H: Host> Vm<H> {
         }
         for request in plan.requests {
             let dependency = self
-                .host
-                .resolve_dynamic_import(&module.name, &request.source)
+                .resolve_dynamic_import_with_context(&module.name, &request.source)
                 .map_err(|message| self.type_error(p, message))?
                 .ok_or_else(|| {
                     self.type_error(p, "static module request was not resolved".into())
@@ -2932,8 +2940,7 @@ impl<H: Host> Vm<H> {
         let mut values = Vec::with_capacity(imports.len());
         for import in imports {
             let module = self
-                .host
-                .resolve_dynamic_import(referrer, &import.source)
+                .resolve_dynamic_import_with_context(referrer, &import.source)
                 .map_err(|message| self.type_error(p, message))?
                 .ok_or_else(|| self.type_error(p, "module import was not resolved".into()))?;
             let local = self
@@ -3128,8 +3135,7 @@ impl<H: Host> Vm<H> {
         let resolved = requests
             .iter()
             .map(|request| {
-                self.host
-                    .resolve_dynamic_import(referrer, &request.source)
+                self.resolve_dynamic_import_with_context(referrer, &request.source)
                     .map_err(|message| self.type_error(p, message))?
                     .ok_or_else(|| {
                         self.type_error(p, "static module request was not resolved".into())
@@ -3479,8 +3485,7 @@ impl<H: Host> Vm<H> {
                     continue;
                 }
                 let dependency = self
-                    .host
-                    .resolve_dynamic_import(&module.name, &request.source)
+                    .resolve_dynamic_import_with_context(&module.name, &request.source)
                     .map_err(|message| self.type_error(p, message))?
                     .ok_or_else(|| {
                         self.type_error(p, "static module request was not resolved".into())
@@ -3601,8 +3606,7 @@ impl<H: Host> Vm<H> {
             .module_requests
             .iter()
             .map(|request| {
-                self.host
-                    .resolve_dynamic_import(&module.name, &request.source)
+                self.resolve_dynamic_import_with_context(&module.name, &request.source)
                     .map_err(|message| self.type_error(p, message))?
                     .ok_or_else(|| {
                         self.type_error(p, "static module request was not resolved".into())
@@ -3891,8 +3895,7 @@ impl<H: Host> Vm<H> {
                     && request.module_type.as_deref().unwrap_or("javascript") == "javascript"
             }) {
                 let dependency = self
-                    .host
-                    .resolve_dynamic_import(&parent.name, &request.source)
+                    .resolve_dynamic_import_with_context(&parent.name, &request.source)
                     .map_err(|message| self.type_error(p, message))?
                     .ok_or_else(|| {
                         self.type_error(p, "static module request was not resolved".into())
@@ -4022,8 +4025,7 @@ impl<H: Host> Vm<H> {
                 continue;
             }
             let dependency = self
-                .host
-                .resolve_dynamic_import(&module.name, &request.source)
+                .resolve_dynamic_import_with_context(&module.name, &request.source)
                 .map_err(|message| self.type_error(p, message))?
                 .ok_or_else(|| {
                     self.type_error(p, "static module request was not resolved".into())
@@ -4468,8 +4470,7 @@ impl<H: Host> Vm<H> {
                 bytes: Vec::new(),
             }));
         }
-        self.host
-            .resolve_dynamic_import(referrer, source)
+        self.resolve_dynamic_import_with_context(referrer, source)
             .map_err(|message| self.type_error(p, message))
     }
 
@@ -4856,8 +4857,7 @@ impl<H: Host> Vm<H> {
                     | crate::compile::StaticModuleReexport::Namespace { source, .. } => source,
                 };
                 let dependency = self
-                    .host
-                    .resolve_dynamic_import(&module.name, source)
+                    .resolve_dynamic_import_with_context(&module.name, source)
                     .map_err(|message| self.type_error(p, message))?;
                 let Some(dependency) = dependency else {
                     return Ok(StaticModuleGraph::LinkError);

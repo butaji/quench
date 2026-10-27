@@ -211,6 +211,23 @@ pub trait Host {
         Ok(None)
     }
 
+    /// Resolve one dynamic or static module request while the VM context is
+    /// available. Hosts that need guest-owned module projections can override
+    /// this hook; the default preserves the context-free resolver contract.
+    fn resolve_dynamic_import_with_context(
+        context: &mut crate::NativeContext<'_, Self>,
+        referrer: &str,
+        specifier: &str,
+    ) -> Result<Option<ModuleSource>, crate::RootedError>
+    where
+        Self: Sized,
+    {
+        context
+            .host_mut()
+            .resolve_dynamic_import(referrer, specifier)
+            .map_err(crate::RootedError::host)
+    }
+
     /// Host-defined value for `import.meta.url`. Embeddings that use file paths
     /// for source names can expose the corresponding URL without changing the
     /// source identity used by module resolution.
@@ -222,6 +239,20 @@ pub trait Host {
     /// leave this unset, matching the optional Node `import.meta.filename`.
     fn import_meta_filename(&mut self, _source_name: &str) -> Option<String> {
         None
+    }
+
+    /// Initialize host-specific properties on a freshly-created `import.meta`
+    /// object. The object is cached by the VM for its source module; hosts that
+    /// do not expose extra metadata keep the default empty behavior.
+    fn initialize_import_meta(
+        _context: &mut crate::NativeContext<'_, Self>,
+        _source_name: &str,
+        _import_meta: crate::RootId,
+    ) -> Result<(), crate::RootedError>
+    where
+        Self: Sized,
+    {
+        Ok(())
     }
 
     /// Display identity for source locations in captured stacks. This must not

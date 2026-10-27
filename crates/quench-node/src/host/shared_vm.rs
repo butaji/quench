@@ -41,6 +41,7 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "v8QueryObjects" (1) => crate::modules::v8_shared_vm::query_objects,
 
         method "nodeLibraryRequire" (1) => commonjs::require_node_library,
+        method "importMetaResolve" (1) => import_meta_resolve,
         method "nodeTestMock" (0) => crate::modules::test_shared_vm::mock,
         method "nodeTestNamespace" (0) => crate::modules::test_shared_vm::namespace,
         method "nodeTestRun" (0) => crate::modules::test_shared_vm::run,
@@ -1044,6 +1045,38 @@ pub(crate) fn operation(name: &str) -> HostFunctionId {
     HostFunctionId(u32::try_from(index).expect("Node binding index fits u32"))
 }
 
+pub(crate) fn import_meta_resolve(
+    context: &mut NativeContext<'_, NodeHost>,
+    _this: quench_runtime::RootId,
+    args: &[quench_runtime::RootId],
+) -> Result<quench_runtime::RootId, RootedError> {
+    let referrer = context.host_function_data()?;
+    let referrer = context
+        .string_text(referrer)?
+        .ok_or_else(|| RootedError::host("import.meta.resolve referrer is not a string"))?;
+    let specifier_value = args
+        .first()
+        .copied()
+        .unwrap_or_else(|| context.undefined());
+    let specifier = context.to_string(specifier_value)?;
+    if commonjs::is_builtin_specifier(&specifier) {
+        let name = specifier.strip_prefix("node:").unwrap_or(&specifier);
+        return Ok(context.string_rooted(&format!("node:{name}")));
+    }
+    let module = <NodeHost as quench_runtime::Host>::resolve_dynamic_import_with_context(
+        context,
+        &referrer,
+        &specifier,
+    )?
+    .ok_or_else(|| {
+        RootedError::host(format!(
+            "Cannot resolve module specifier '{specifier}' from {referrer}"
+        ))
+    })?;
+    let resolved = quench_runtime::Host::import_meta_url(context.host_mut(), &module.name);
+    Ok(context.string_rooted(&resolved))
+}
+
 impl quench_runtime::Host for NodeHost {
     fn can_block(&self) -> bool {
         true
@@ -1052,6 +1085,18 @@ impl quench_runtime::Host for NodeHost {
 
     fn proper_tail_calls(&self) -> bool {
         false
+    }
+
+    fn initialize_import_meta(
+        context: &mut NativeContext<'_, Self>,
+        source_name: &str,
+        import_meta: quench_runtime::RootId,
+    ) -> Result<(), RootedError> {
+        let referrer = context.string_rooted(source_name);
+        let resolve = context.host_function_with_data(operation("importMetaResolve"), referrer)?;
+        let key = context.string_rooted("resolve");
+        context.define_data_property_rooted(import_meta, key, resolve, true, true, true)?;
+        Ok(())
     }
 
     fn initialize_shadow_realm(
@@ -1382,6 +1427,26 @@ impl quench_runtime::Host for NodeHost {
             bytes,
             source,
         }))
+    }
+
+    fn resolve_dynamic_import_with_context(
+        context: &mut NativeContext<'_, Self>,
+        referrer: &str,
+        specifier: &str,
+    ) -> Result<Option<quench_runtime::ModuleSource>, RootedError> {
+        let preloaded = context
+            .host_mut()
+            .vm_module_sources
+            .get(&(referrer.to_owned(), specifier.to_owned()))
+            .cloned();
+        if preloaded.is_some() {
+            return Ok(preloaded);
+        }
+        if let Some(module) = commonjs::resolve_vfs_dynamic_import(context, referrer, specifier)? {
+            return Ok(Some(module));
+        }
+        Self::resolve_dynamic_import(context.host_mut(), referrer, specifier)
+            .map_err(RootedError::host)
     }
 
     fn import_meta_url(&mut self, source_name: &str) -> String {

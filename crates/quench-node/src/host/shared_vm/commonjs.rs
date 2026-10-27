@@ -541,8 +541,117 @@ fn install_vfs_globals(context: &mut Context<'_>) -> Result<(), RootedError> {
     };
     return resolveFile(candidate) || resolveDirectory(candidate);
   };
+  const resolveEsmPackagePath = (base, request) => {
+    if (typeof base !== 'string' || typeof request !== 'string' ||
+        request.startsWith('./') || request.startsWith('../') ||
+        request.startsWith('.\\') || request.startsWith('..\\') ||
+        path.isAbsolute(request) || request.includes(':')) return undefined;
+    const segments = request.split(/[\\/]/);
+    const packageSegments = segments[0].startsWith('@') ? 2 : 1;
+    if (segments.length < packageSegments) return undefined;
+    const packageName = segments.slice(0, packageSegments).join('/');
+    const subpath = segments.slice(packageSegments).join('/');
+    const layer = findLayer(base);
+    if (!layer) return undefined;
+    const isFile = (filename) => {
+      try { return layer.statSync(filename).isFile(); } catch { return false; }
+    };
+    const isDirectory = (directory) => {
+      try { return layer.statSync(directory).isDirectory(); } catch { return false; }
+    };
+    const isPackagePath = (filename, packagePath) =>
+      filename === packagePath || filename.startsWith(`${packagePath}${path.sep}`);
+    const resolveLegacyFile = (filename) => {
+      if (isFile(filename)) return filename;
+      if (path.extname(filename)) return undefined;
+      for (const extension of ['.js', '.json', '.node', '.mjs', '.cjs']) {
+        const candidate = `${filename}${extension}`;
+        if (isFile(candidate)) return candidate;
+      }
+      return undefined;
+    };
+    const conditionalTarget = (entry) => {
+      if (typeof entry === 'string') return entry;
+      if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return undefined;
+      for (const [condition, target] of Object.entries(entry)) {
+        if (condition === 'node' || condition === 'import' || condition === 'default') {
+          const selected = conditionalTarget(target);
+          if (selected !== undefined) return selected;
+        }
+      }
+      return undefined;
+    };
+    let parent = path.resolve(base);
+    const mountPoint = path.resolve(layer.mountPoint);
+    for (;;) {
+      const packagePath = path.join(parent, 'node_modules', packageName);
+      if (isDirectory(packagePath)) {
+        let pkg;
+        const packageJson = path.join(packagePath, 'package.json');
+        if (isFile(packageJson)) {
+          try { pkg = JSON.parse(layer.readFileSync(packageJson, 'utf8')); }
+          catch (cause) {
+            const error = new Error(`Invalid package config ${packageJson}. ${cause.message}`);
+            error.code = 'ERR_INVALID_PACKAGE_CONFIG';
+            error.path = packageJson;
+            throw error;
+          }
+        }
+        if (pkg && Object.hasOwn(pkg, 'exports')) {
+          const exports = pkg.exports;
+          let entry;
+          if (typeof exports === 'string') {
+            if (!subpath) entry = exports;
+          } else if (exports && typeof exports === 'object' && !Array.isArray(exports)) {
+            const keys = Object.keys(exports);
+            const isSubpathMap = keys.some((key) => key.startsWith('.'));
+            if (isSubpathMap) entry = exports[subpath ? `./${subpath}` : '.'];
+            else if (!subpath) entry = exports;
+          }
+          const target = conditionalTarget(entry);
+          if (typeof target !== 'string' || !target.startsWith('./')) return undefined;
+          const resolved = path.resolve(packagePath, target);
+          if (!isPackagePath(resolved, packagePath)) return undefined;
+          return isFile(resolved) ? resolved : undefined;
+        }
+        if (subpath) {
+          const resolved = path.resolve(packagePath, subpath);
+          return isPackagePath(resolved, packagePath) && isFile(resolved)
+            ? resolved : undefined;
+        }
+        if (pkg && typeof pkg.main === 'string' && pkg.main.length > 0) {
+          const main = path.resolve(packagePath, pkg.main);
+          if (isPackagePath(main, packagePath)) {
+            const file = resolveLegacyFile(main);
+            if (file) return file;
+            if (isDirectory(main)) {
+              for (const extension of ['.js', '.json', '.node']) {
+                const index = path.join(main, `index${extension}`);
+                if (isFile(index)) return index;
+              }
+            }
+          }
+        }
+        for (const extension of ['.js', '.json', '.node']) {
+          const index = path.join(packagePath, `index${extension}`);
+          if (isFile(index)) return index;
+        }
+        return undefined;
+      }
+      if (parent === mountPoint) break;
+      const next = path.dirname(parent);
+      if (next === parent || !(next === mountPoint || next.startsWith(`${mountPoint}${path.sep}`))) {
+        break;
+      }
+      parent = next;
+    }
+    return undefined;
+  };
   Object.defineProperty(globalThis, '__quenchVfsResolveModulePath', {
     configurable: true, value: resolveModulePath,
+  });
+  Object.defineProperty(globalThis, '__quenchVfsResolveEsmPackagePath', {
+    configurable: true, value: resolveEsmPackagePath,
   });
   Object.defineProperty(globalThis, '__quenchVfsModuleType', {
     configurable: true, value: moduleType,
@@ -3368,6 +3477,159 @@ fn resolve_vfs_module_path(
     let receiver = context.undefined();
     let resolved = context.call_rooted(resolve, receiver, &[base, specifier])?;
     Ok(context.string_text(resolved)?.map(PathBuf::from))
+}
+
+fn resolve_vfs_esm_package_path(
+    context: &mut Context<'_>,
+    base: &Path,
+    specifier: &str,
+) -> Result<Option<PathBuf>, RootedError> {
+    let global = context.global_root()?;
+    let resolve = get(context, global, "__quenchVfsResolveEsmPackagePath")?;
+    if !context.is_callable_rooted(resolve)? {
+        return Ok(None);
+    }
+    let base = context.string_rooted(&base.to_string_lossy());
+    let specifier = context.string_rooted(specifier);
+    let receiver = context.undefined();
+    let resolved = context.call_rooted(resolve, receiver, &[base, specifier])?;
+    Ok(context.string_text(resolved)?.map(PathBuf::from))
+}
+
+pub(crate) fn resolve_vfs_dynamic_import(
+    context: &mut Context<'_>,
+    referrer: &str,
+    specifier: &str,
+) -> Result<Option<quench_runtime::ModuleSource>, RootedError> {
+    if is_builtin_specifier(specifier) {
+        return Ok(None);
+    }
+    use std::path::Path;
+
+    let referrer_url = referrer
+        .starts_with("file:")
+        .then(|| url::Url::parse(referrer))
+        .transpose()
+        .map_err(|error| RootedError::host(error.to_string()))?;
+    let cwd = context.host_mut().shared_state().borrow().cwd.clone();
+    let cwd = cwd
+        .query_path()
+        .map_err(|error| RootedError::host(error.to_string()))?;
+    let referrer_path = match &referrer_url {
+        Some(url) => url
+            .to_file_path()
+            .map_err(|_| RootedError::host("invalid file URL referrer"))?,
+        None => {
+            let path = Path::new(referrer);
+            if path.is_absolute() {
+                path.to_path_buf()
+            } else if referrer.starts_with('<') || referrer.starts_with('[') {
+                cwd.clone()
+            } else {
+                cwd.join(path)
+            }
+        }
+    };
+    let base = if referrer.starts_with('<') || referrer.starts_with('[') {
+        referrer_path.clone()
+    } else {
+        referrer_path
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .to_path_buf()
+    };
+
+    let (request_path, requested_url, bare_package) = if specifier
+        .get(..5)
+        .is_some_and(|prefix| prefix.eq_ignore_ascii_case("file:"))
+    {
+        let url =
+            url::Url::parse(specifier).map_err(|error| RootedError::host(error.to_string()))?;
+        let encoded = url.path().to_ascii_lowercase();
+        if encoded.contains("%2f") || (cfg!(windows) && encoded.contains("%5c")) {
+            return Err(RootedError::host(
+                "File URL path must not include encoded path separators",
+            ));
+        }
+        let path = url
+            .to_file_path()
+            .map_err(|_| RootedError::host("invalid file module URL"))?;
+        (path, Some(url), false)
+    } else if specifier.starts_with("./")
+        || specifier.starts_with("../")
+        || Path::new(specifier).is_absolute()
+    {
+        let url = match &referrer_url {
+            Some(url) => url
+                .join(specifier)
+                .map_err(|error| RootedError::host(error.to_string()))?,
+            None => {
+                let absolute_referrer = if referrer_path.is_absolute() {
+                    referrer_path.clone()
+                } else {
+                    cwd.join(&referrer_path)
+                };
+                url::Url::from_file_path(absolute_referrer)
+                    .map_err(|_| RootedError::host("invalid file module referrer"))?
+                    .join(specifier)
+                    .map_err(|error| RootedError::host(error.to_string()))?
+            }
+        };
+        let path = url
+            .to_file_path()
+            .map_err(|_| RootedError::host("invalid file module URL"))?;
+        (path, Some(url), false)
+    } else {
+        (PathBuf::new(), None, true)
+    };
+    if !bare_package
+        && !matches!(
+            request_path.extension().and_then(|value| value.to_str()).unwrap_or(""),
+            "mjs" | "js" | "json"
+        )
+    {
+        return Ok(None);
+    }
+    let filename = if bare_package {
+        resolve_vfs_esm_package_path(context, &base, specifier)?
+    } else {
+        let request = request_path.to_string_lossy();
+        resolve_vfs_module_path(context, &base, &request)?
+    };
+    let Some(filename) = filename else {
+        return Ok(None);
+    };
+    let extension = filename.extension().and_then(|value| value.to_str()).unwrap_or("");
+    if !matches!(extension, "mjs" | "js" | "json") {
+        return Ok(None);
+    }
+    let Some(source) = read_vfs_module_source(context, &filename)? else {
+        return Ok(None);
+    };
+    if extension == "js" && vfs_module_type(context, &filename)?.as_deref() != Some("module") {
+        // Preserve NodeHost's existing CommonJS-to-ESM interop path until the
+        // VFS projection can provide the same named-export analysis.
+        return Ok(None);
+    }
+    let name = match requested_url.filter(|url| {
+        url.query().is_some_and(|value| !value.is_empty())
+            || url.fragment().is_some_and(|value| !value.is_empty())
+    }) {
+        Some(url) => {
+            let mut canonical = url::Url::from_file_path(&filename)
+                .map_err(|_| RootedError::host("invalid canonical module path"))?;
+            canonical.set_query(url.query().filter(|value| !value.is_empty()));
+            canonical.set_fragment(url.fragment().filter(|value| !value.is_empty()));
+            canonical.to_string()
+        }
+        None => filename.to_string_lossy().into_owned(),
+    };
+    let bytes = source.as_bytes().to_vec();
+    Ok(Some(quench_runtime::ModuleSource {
+        name,
+        source,
+        bytes,
+    }))
 }
 
 fn read_vfs_module_source(
