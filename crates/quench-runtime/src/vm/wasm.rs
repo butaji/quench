@@ -5777,6 +5777,7 @@ mod tests {
         let expected = Some((1..=ITERATIONS).fold(0i32, |sum, value| sum.wrapping_add(value)));
         let function = module.select_function(0).unwrap();
         let mut vm = Vm::new(crate::SystemHost);
+        vm.programs.keep_wasm_modules_selective();
         assert_eq!(vm.execute_wasm_i32(&function, &[]).unwrap(), expected);
         let program = vm
             .programs
@@ -6058,6 +6059,7 @@ mod tests {
         );
         let function = module.select_function(0).unwrap();
         let mut vm = Vm::new(crate::SystemHost);
+        vm.programs.keep_wasm_modules_selective();
         assert_eq!(vm.execute_wasm_i32(&function, &[]).unwrap(), Some(1_680));
         let program = vm
             .programs

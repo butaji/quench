@@ -712,6 +712,16 @@ impl JitTierManager {
         }
     }
 
+    /// Whether the module's hot functions compile one by one (`WasmTierState`): under the
+    /// selective A/B arm, which never compiles a module whole, or once a module's whole
+    /// compile was claimed without an artifact (it failed, or the budget refused it). A module
+    /// still waiting to compile whole runs interpreted until then: a short use (an npm
+    /// package's one source-map parse) runs faster in the interpreter than through root
+    /// compiles, and a long one would throw them away at its whole compile.
+    fn wasm_promotes_roots(&self, policy: WasmModuleCompile) -> bool {
+        policy == WasmModuleCompile::NEVER || !self.wasm_module_selective()
+    }
+
     fn wasm_module_selective(&self) -> bool {
         match self {
             Self::Wasm(tiers) => matches!(tiers.module, WasmModuleTier::Selective { .. }),
@@ -1758,10 +1768,11 @@ impl ProgramStore {
     /// cold unsupported root reaches the threshold. Terminal attempt state
     /// prevents repeated compile failures from turning hot calls into work.
     pub(super) fn note_wasm_tier_entry(&mut self, id: ProgramId, function: u32) -> bool {
+        let policy = self.wasm_module_compile;
         let Some(entry) = self.entry_mut(id) else {
             return false;
         };
-        entry.jit_tiers.note_wasm_entry(function, false)
+        entry.jit_tiers.wasm_promotes_roots(policy) && entry.jit_tiers.note_wasm_entry(function, false)
     }
 
     /// Credit `function` with one interpreter entry's worth of loop work, short of the
@@ -1771,7 +1782,9 @@ impl ProgramStore {
         let policy = self.wasm_module_compile;
         if let Some(entry) = self.entry_mut(id) {
             entry.jit_tiers.note_wasm_module_work(1, policy);
-            entry.jit_tiers.note_wasm_backedges(function);
+            if entry.jit_tiers.wasm_promotes_roots(policy) {
+                entry.jit_tiers.note_wasm_backedges(function);
+            }
         }
     }
 
@@ -1794,6 +1807,13 @@ impl ProgramStore {
         if self.wasm_module_compile != WasmModuleCompile::NEVER {
             self.wasm_module_compile = WasmModuleCompile::EAGER;
         }
+    }
+
+    /// Keep every Wasm module to its hot roots (`WasmModuleCompile::NEVER`): tests of root
+    /// promotion.
+    #[cfg(test)]
+    pub(super) fn keep_wasm_modules_selective(&mut self) {
+        self.wasm_module_compile = WasmModuleCompile::NEVER;
     }
 
     /// Compile a Wasm module whole at `work`, never by time: a deterministic test policy.
@@ -1837,6 +1857,9 @@ impl ProgramStore {
         // A due whole-module compile hands the call to the general dispatcher, which claims it.
         if entry.jit_tiers.note_wasm_module_work(1, policy) {
             return true;
+        }
+        if !entry.jit_tiers.wasm_promotes_roots(policy) {
+            return false;
         }
         if !entry
             .residual
