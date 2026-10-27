@@ -823,13 +823,20 @@ impl<H: Host> Vm<H> {
         object: Value,
         key: PropertyKey,
     ) -> Option<Option<Value>> {
-        // An array is ordinary for a symbol key: only index keys and `length` are exotic.
-        let symbol = key.symbol_value().is_some();
+        // An array is ordinary for any key but an index and `length`: a symbol, or a name such
+        // as `constructor`, which `ArraySpeciesCreate` reads of every array a method copies.
+        let array_ordinary = match key {
+            PropertyKey::Symbol(_) => true,
+            PropertyKey::String(atom) => {
+                atom != self.length_atom && !self.atom_class(atom).contains(AtomClass::ARRAY_INDEX)
+            }
+            PropertyKey::Private(_) => false,
+        };
         let mut current = object;
         loop {
             let data = match self.heap.ordinary_object(current) {
                 Some(data) => data,
-                None if symbol && self.heap.array(current).is_some() => self.heap.object(current)?,
+                None if array_ordinary && self.heap.array(current).is_some() => self.heap.object(current)?,
                 None => return None,
             };
             if data.is_module_namespace() || data.deferred_module().is_some() {
