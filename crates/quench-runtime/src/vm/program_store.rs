@@ -259,43 +259,15 @@ const WASM_JIT_MAX_TIER_ROOTS: usize = 32;
 /// entry through a short call, so a function entered rarely but looping hot promotes after
 /// `WASM_JIT_PROMOTION_ENTRIES` such stretches.
 pub(super) const WASM_JIT_BACKEDGES_PER_ENTRY: u32 = 1024;
-/// When a Wasm module running under `--jit` compiles whole (`WasmModuleTier`). It starts in
-/// the interpreter with its hot roots promoted, so a module used briefly pays only for them;
-/// one that runs long gets the code eager compilation would have made at its first entry.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) struct WasmModuleCompile {
-    /// The work (`WasmModuleTier::Selective`) at which the module compiles.
-    work: u32,
-    /// The time since the module's first work after which its next entry compiles it, for a
-    /// module whose work the counts undersell.
-    after: std::time::Duration,
-}
-
-impl WasmModuleCompile {
-    /// The default (npm's adaptive policy). source-map 0.7.4, one parse and lookups through
-    /// its Wasm consumer, best CPU ms of 3, eager / this / selective without escalation:
-    /// 100 mappings 160 / 38 / 38; 300: 171 / 154 / 45; 2,000: 266 / 261 / 151 (its module,
-    /// 13k bytecodes, compiles whole in 67 ms, which a short parse never repays; work alone,
-    /// without the time bound, compiles it at 300 mappings too). JetStream 3 --jit, eager
-    /// (one round) / this (median of 3): argon2 55.9 / 51.5, gcc-loops 78.0 / 68.3, quicksort
-    /// 106.6 / 88.8, tsf 28.0 / 29.3, zlib 35.6 / 33.0 (Linux x86_64, 4 vCPU, 2026-10-27).
-    pub(super) const ADAPTIVE: Self =
-        Self { work: 4096, after: std::time::Duration::from_millis(20) };
-    /// Never compile whole: hot roots only (`QUENCH_WASM_JIT_SELECTIVE`, for A/B runs).
-    const NEVER: Self = Self { work: u32::MAX, after: std::time::Duration::MAX };
-    /// Compile at the first entry, as eager compilation does: a conformance run that
-    /// exercises every module's compiled code, and tests of module-wide code.
-    pub(super) const EAGER: Self = Self { work: 1, after: std::time::Duration::ZERO };
-
-    fn due(self, work: u32, since_first: std::time::Duration) -> bool {
-        work >= self.work || since_first >= self.after
-    }
-}
-
-/// How often, in work, a selective module reads the clock for `WasmModuleCompile::after`:
-/// often enough that a 20 ms bound lands within a few interpreted calls, rarely enough that
-/// the clock stays off an interpreted call's path.
-const WASM_JIT_MODULE_CLOCK_INTERVAL: u32 = 16;
+/// The work (`WasmModuleTier::Selective`) after which a selective Wasm module compiles
+/// whole. JetStream 3 `--jit` Scores, eager / selective without escalation / escalation at
+/// 256 (Linux x86_64, 4 vCPU, 2026-10-27, median of 3 rounds; selective: 1 round): tsf
+/// 30.8 / 13.5 / 28.7, zlib 33.9 / 16.5 / 32.7, gcc-loops 83.7 / 78.8 / 73.2, quicksort
+/// 98.1 / 80.5 / 93.4, HashSet 26.5 / 23.1 / 25.5; max RSS within 2 MiB of eager. These
+/// modules reach it 4-28 ms into their run, before their whole-module compiles (16-177 ms);
+/// at 1024 and 4096 quicksort never escalated and lost a fifth of its Score, and tsf and zlib
+/// escalated later and lost a tenth.
+pub(super) const WASM_JIT_MODULE_ESCALATION_WORK: u32 = 256;
 const WASM_JIT_MAX_TIER_MAPPED_BYTES: usize = 4 * 1024 * 1024;
 /// The eager artifacts of Wasm modules together. A module's eager artifact is all of its code
 /// at once, compiled before its first call: held to the shared ceiling, a module larger than
@@ -464,15 +436,15 @@ struct WasmTiers {
     module: WasmModuleTier,
 }
 
-/// A Wasm module's lifecycle under `--jit`. It starts with no eager artifact, so a short use
-/// pays for the few functions it runs hot; once `WasmModuleCompile` says it runs long, the
-/// whole module compiles at once, as eager tiering would have from the start.
+/// Selective tiering's module lifecycle. A module starts with no eager artifact, so a short
+/// use pays for the few functions it runs hot; once its work passes
+/// `WASM_JIT_MODULE_ESCALATION_WORK` it is a long runner, and the whole module compiles at
+/// once, as eager tiering would have from the start.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum WasmModuleTier {
     /// The work observed so far: entries from the VM (interpreted calls, and host calls into
-    /// the module), and interpreted loop work as entries (`WASM_JIT_BACKEDGES_PER_ENTRY`);
-    /// and when the first came.
-    Selective { work: u32, first: Option<std::time::Instant> },
+    /// the module), and interpreted loop work as entries (`WASM_JIT_BACKEDGES_PER_ENTRY`).
+    Selective { work: u32 },
     /// The whole-module compile was claimed, eagerly or by escalation; its result is the
     /// program's `compiled`.
     Whole,
@@ -480,7 +452,7 @@ enum WasmModuleTier {
 
 impl Default for WasmModuleTier {
     fn default() -> Self {
-        Self::Selective { work: 0, first: None }
+        Self::Selective { work: 0 }
     }
 }
 
@@ -691,46 +663,29 @@ impl JitTierManager {
         }
     }
 
-    /// Count `work` more entries of a selective module; whether `policy` says its
-    /// whole-module compile is due (claimed by `claim_wasm_module_escalation`).
-    fn note_wasm_module_work(&mut self, work: u32, policy: WasmModuleCompile) -> bool {
+    /// Count `work` more entries of a selective module; whether its
+    /// whole-module compile is now due (claimed by `claim_wasm_module_escalation`).
+    fn note_wasm_module_work(&mut self, work: u32) -> bool {
         match self.wasm_tiers_mut().map(|tiers| &mut tiers.module) {
-            Some(WasmModuleTier::Selective { work: observed, first }) => {
-                let first = *first.get_or_insert_with(std::time::Instant::now);
-                let before = *observed;
+            Some(WasmModuleTier::Selective { work: observed }) => {
                 *observed = observed.saturating_add(work);
-                // A passed time bound counts as the work bound from then on, so every later
-                // entry, whichever path observes it, finds the compile due.
-                if *observed / WASM_JIT_MODULE_CLOCK_INTERVAL != before / WASM_JIT_MODULE_CLOCK_INTERVAL
-                    && policy.due(0, first.elapsed())
-                {
-                    *observed = (*observed).max(policy.work);
-                }
-                policy.due(*observed, std::time::Duration::ZERO)
+                *observed >= WASM_JIT_MODULE_ESCALATION_WORK
             }
             Some(WasmModuleTier::Whole) | None => false,
         }
     }
 
-    fn wasm_module_selective(&self) -> bool {
-        match self {
-            Self::Wasm(tiers) => matches!(tiers.module, WasmModuleTier::Selective { .. }),
-            Self::Empty => true,
-            Self::JavaScript(_) => false,
-        }
-    }
-
-    /// Claim the one whole-module compile of a selective module (`note_wasm_module_work`
-    /// said it is due), and retire its selective artifacts: the module artifact holds every
-    /// function they hold. Returns the retired artifacts' mapped bytes, or `None` when the
-    /// module is not selective.
+    /// Claim the one whole-module compile of a module whose work is due, and retire its
+    /// selective artifacts: the module artifact holds every function they hold. Returns the
+    /// retired artifacts' mapped bytes, or `None` when no compile is due.
     fn claim_wasm_module_escalation(&mut self) -> Option<(usize, usize)> {
         let tiers = match self {
             Self::Wasm(tiers) => tiers,
             Self::Empty | Self::JavaScript(_) => return None,
         };
-        if tiers.module == WasmModuleTier::Whole {
-            return None;
+        match tiers.module {
+            WasmModuleTier::Selective { work } if work >= WASM_JIT_MODULE_ESCALATION_WORK => {}
+            WasmModuleTier::Selective { .. } | WasmModuleTier::Whole => return None,
         }
         tiers.module = WasmModuleTier::Whole;
         let retired = tiers
@@ -936,8 +891,6 @@ pub(crate) struct ProgramStore {
     /// the compile (`general_promotion_due`); tests of the baseline's semantics compile it
     /// once hot.
     general_baseline_priced: bool,
-    /// When a selective Wasm module compiles whole (`WasmModuleTier`).
-    wasm_module_compile: WasmModuleCompile,
     /// Allocated only when opt-in JavaScript JIT diagnostics are requested.
     js_jit_diagnostics: Option<FxHashMap<(u32, u32), JsJitCounters>>,
     /// Whether ordinary JS functions promote to the general native dispatch tier
@@ -976,11 +929,6 @@ impl Default for ProgramStore {
             // payback model so guarded exits can be tested independently of
             // profitability. This is diagnostic-only and never set by score
             // harnesses.
-            wasm_module_compile: if super::compiled::jit_wasm_selective_enabled() {
-                WasmModuleCompile::NEVER
-            } else {
-                WasmModuleCompile::ADAPTIVE
-            },
             general_baseline_priced: !std::env::var_os(
                 "QUENCH_JS_JIT_UNPRICED_GENERAL_DISPATCH",
             )
@@ -1768,9 +1716,8 @@ impl ProgramStore {
     /// threshold: the entry that reaches it claims the compile (`note_wasm_tier_entry`), so
     /// promotion keeps one owner and a function compiles between calls, never inside a loop.
     pub(super) fn note_wasm_tier_backedges(&mut self, id: ProgramId, function: u32) {
-        let policy = self.wasm_module_compile;
         if let Some(entry) = self.entry_mut(id) {
-            entry.jit_tiers.note_wasm_module_work(1, policy);
+            entry.jit_tiers.note_wasm_module_work(1);
             entry.jit_tiers.note_wasm_backedges(function);
         }
     }
@@ -1778,28 +1725,7 @@ impl ProgramStore {
     /// Count an entry into a selective Wasm module from the VM; whether its whole-module
     /// compile is due (`WasmModuleTier`).
     pub(super) fn note_wasm_module_entry(&mut self, id: ProgramId) -> bool {
-        let policy = self.wasm_module_compile;
-        self.entry_mut(id).is_some_and(|entry| entry.jit_tiers.note_wasm_module_work(1, policy))
-    }
-
-    /// Whether Wasm module `id` still runs selectively: its whole-module compile not yet
-    /// claimed (`WasmModuleTier`).
-    pub(super) fn wasm_module_selective(&self, id: ProgramId) -> bool {
-        self.entry(id).is_some_and(|entry| entry.jit_tiers.wasm_module_selective())
-    }
-
-    /// Compile every Wasm module whole at its first entry (`WasmModuleCompile::EAGER`), unless
-    /// a selective A/B arm keeps modules to their hot roots (`WasmModuleCompile::NEVER`).
-    pub(super) fn compile_wasm_modules_at_first_entry(&mut self) {
-        if self.wasm_module_compile != WasmModuleCompile::NEVER {
-            self.wasm_module_compile = WasmModuleCompile::EAGER;
-        }
-    }
-
-    /// Compile a Wasm module whole at `work`, never by time: a deterministic test policy.
-    #[cfg(test)]
-    pub(super) fn compile_wasm_modules_after_work(&mut self, work: u32) {
-        self.wasm_module_compile = WasmModuleCompile { work, after: std::time::Duration::MAX };
+        self.entry_mut(id).is_some_and(|entry| entry.jit_tiers.note_wasm_module_work(1))
     }
 
     /// Record that the program's whole-module compile was claimed at its first call (eager
@@ -1830,12 +1756,11 @@ impl ProgramStore {
     /// hand it to the general dispatcher, whose normal entry hook records the
     /// final observation and claims the one-shot compile attempt.
     pub(super) fn note_wasm_tier_lane_entry(&mut self, id: ProgramId, function: u32) -> bool {
-        let policy = self.wasm_module_compile;
         let Some(entry) = self.entry_mut(id) else {
             return false;
         };
         // A due whole-module compile hands the call to the general dispatcher, which claims it.
-        if entry.jit_tiers.note_wasm_module_work(1, policy) {
+        if entry.jit_tiers.note_wasm_module_work(1) {
             return true;
         }
         if !entry
@@ -3804,18 +3729,6 @@ mod jit_code_cache_tests {
         JsTierState,
         WASM_JIT_MAX_TIER_MAPPED_BYTES, WASM_JIT_MAX_TIER_ROOTS,
     };
-
-    #[test]
-    fn wasm_module_compiles_whole_once_its_work_or_time_says_it_runs_long() {
-        use super::WasmModuleCompile as Policy;
-        let policy = Policy::ADAPTIVE;
-        assert!(!policy.due(1, std::time::Duration::ZERO));
-        assert!(!policy.due(policy.work - 1, policy.after / 2));
-        assert!(policy.due(policy.work, std::time::Duration::ZERO));
-        assert!(policy.due(1, policy.after));
-        assert!(Policy::EAGER.due(1, std::time::Duration::ZERO));
-        assert!(!Policy::NEVER.due(u32::MAX - 1, std::time::Duration::MAX / 2));
-    }
 
     #[test]
     fn general_dispatch_backedge_unpriced_mode_waits_for_work_floor() {

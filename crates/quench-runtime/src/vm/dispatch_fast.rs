@@ -17318,7 +17318,6 @@ impl<H: Host> Vm<H> {
         code.kind == crate::bytecode::ProgramKind::Wasm
             && self.execution_mode == super::ExecutionMode::Compiled
             && matches!(self.programs.compiled(program), Some(None))
-            && self.programs.wasm_module_selective(program)
     }
 
     /// Whether the instruction at `pc` of `view` runs in the lane.
