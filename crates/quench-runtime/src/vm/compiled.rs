@@ -3451,6 +3451,21 @@ unsafe extern "C" fn compiled_memory_fill(address: u64, byte: u64, length: u64) 
     0
 }
 
+/// `memory.copy` within one memory, whose ranges the caller checked: overlapping ranges copy
+/// as if through a temporary buffer.
+unsafe extern "C" fn compiled_memory_copy(destination: u64, source: u64, length: u64) -> i64 {
+    // Wasm32 operands are zero-extended before this call; they fit every supported host's
+    // address size.
+    unsafe {
+        std::ptr::copy(
+            source as usize as *const u8,
+            destination as usize as *mut u8,
+            length as usize,
+        );
+    }
+    0
+}
+
 /// The dispatcher-free second-call path for the exact Emscripten helper.
 /// Its memory proof is scoped to one native invocation and ordinary callouts
 /// revoke it before guest JavaScript can mutate a view or grow memory.
@@ -7194,7 +7209,7 @@ impl<H: Host> Analysis<'_, H> {
         // The memory register is read only by direct accesses through it.
         if memory_register.is_some_and(|memory| {
             !direct_access(op)
-                && !matches!(op, Op::WasmMemorySize | Op::WasmMemoryFill)
+                && !matches!(op, Op::WasmMemorySize | Op::WasmMemoryFill | Op::WasmMemoryCopy)
                 && op != Op::WasmInstanceBinding
                 && crate::bytecode::InstructionField::ALL.iter().any(|field| {
                     op.field_layout(*field).reads_register()
@@ -7350,6 +7365,20 @@ impl<H: Host> Analysis<'_, H> {
                 i32_value(state, instruction.b())?;
                 i32_value(state, instruction.c())?;
                 i32_value(state, destination)
+            }
+            // A copy within the function's one memory: both memory operands name it.
+            Op::WasmMemoryCopy => {
+                let (destination, source) = instruction.register_pair();
+                if Some(instruction.a()) != memory_register
+                    || Some(instruction.b()) != memory_register
+                    || state.get(instruction.a(), function.registers) != Some(Slot::Memory)
+                    || !memory_slot.is_some_and(|slot| self.supports_compiled_memory(slot))
+                {
+                    return None;
+                }
+                i32_value(state, destination)?;
+                i32_value(state, source)?;
+                i32_value(state, instruction.c())
             }
             Op::WasmIndirectTarget if self.callouts => {
                 let Slot::Binding(table) = state.get(instruction.b(), function.registers)? else {
@@ -9597,6 +9626,47 @@ impl<H: Host> Emitter<'_, '_, H> {
             let pages = self.body.core.builder.ins().ushr_imm_u(bytes, 16);
             let pages = self.body.core.builder.ins().ireduce(types::I32, pages);
             self.write(a, Kind::I32, pages);
+            return true;
+        }
+        if op == Op::WasmMemoryCopy {
+            let (destination, source) = instruction.register_pair();
+            let destination = self.read(destination, Kind::I32);
+            let destination = self.body.core.builder.ins().uextend(types::I64, destination);
+            let source = self.read(source, Kind::I32);
+            let source = self.body.core.builder.ins().uextend(types::I64, source);
+            let raw_length = self.read(c, Kind::I32);
+            let length = self.body.core.builder.ins().uextend(types::I64, raw_length);
+            let memory_length = self.body.core.builder.ins().load(
+                types::I64,
+                MemFlagsData::trusted(),
+                self.body.core.context,
+                CONTEXT_MEMORY_LENGTH,
+            );
+            // Both ranges are checked before any byte moves; 32-bit operands cannot overflow
+            // their 64-bit sums.
+            for start in [destination, source] {
+                let end = self.body.core.builder.ins().iadd(start, length);
+                let out_of_bounds =
+                    self.body.core.builder
+                        .ins()
+                        .icmp(IntCC::UnsignedGreaterThan, end, memory_length);
+                self.trap_if(out_of_bounds, crate::WasmTrap::OutOfBoundsMemory);
+            }
+            let destination = self.body.core.builder.ins().iadd(self.base, destination);
+            let source = self.body.core.builder.ins().iadd(self.base, source);
+            let mut signature = Signature::new(self.call_conv);
+            for _ in 0..3 {
+                signature.params.push(AbiParam::new(types::I64));
+            }
+            signature.returns.push(AbiParam::new(types::I64));
+            let signature = self.body.core.builder.import_signature(signature);
+            let target = self.body.core.builder.ins().iconst(
+                types::I64,
+                compiled_memory_copy as *const () as usize as i64,
+            );
+            self.body.core.builder
+                .ins()
+                .call_indirect(signature, target, &[destination, source, length]);
             return true;
         }
         if op == Op::WasmMemoryFill {
