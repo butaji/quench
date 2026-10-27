@@ -3104,6 +3104,14 @@ impl ProgramStore {
         Some((&entry.residual, entry.lane_views.of(&entry.residual), entry.constants.as_slice()))
     }
 
+    /// Forgets the own-field hints of every program's lane views: a shape compaction
+    /// renumbered the shapes they name.
+    pub(super) fn clear_field_hints(&self) {
+        for entry in self.programs.iter().flatten() {
+            entry.lane_views.clear_field_hints();
+        }
+    }
+
     /// A program's lane views by function, derived on first use.
     pub(super) fn lane_views(
         &self,
@@ -3741,6 +3749,13 @@ fn derive_lane_view<'s>(
 }
 
 impl LaneViews {
+    /// Forgets the own-field hints of every derived view (`LaneView::clear_field_hints`).
+    fn clear_field_hints(&self) {
+        for view in self.arena.borrow().iter().flatten() {
+            view.clear_field_hints();
+        }
+    }
+
     /// The table, one cell per function of `residual`. Its address is fixed once made, as
     /// the lane context's pointer to it requires.
     fn of(&self, residual: &ResidualProgram) -> &[LaneViewCell] {
