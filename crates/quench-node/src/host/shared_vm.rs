@@ -1126,6 +1126,9 @@ impl quench_runtime::Host for NodeHost {
     fn kept_compiled_program(&mut self, name: &str, parts: &[&str]) -> Option<quench_runtime::KeptBytes> {
         self.compile_cache.entry(name, parts)?.load()
     }
+    fn keeps_compiled_programs(&self) -> bool {
+        self.compile_cache.directory().is_some()
+    }
     fn keep_compiled_program(&mut self, name: &str, parts: &[&str], bytes: &[u8]) {
         if let Some(entry) = self.compile_cache.entry(name, parts) {
             entry.store(bytes);

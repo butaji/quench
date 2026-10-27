@@ -131,6 +131,13 @@ pub trait Host {
     /// Offers the host a compiled host program's compact form (`kept_compiled_program`).
     fn keep_compiled_program(&mut self, _name: &str, _parts: &[&str], _bytes: &[u8]) {}
 
+    /// Whether `keep_compiled_program` keeps what it is offered: a host without a compile
+    /// cache answers no, and the runtime then encodes nothing to offer it. Only a host that
+    /// keeps programs overrides both.
+    fn keeps_compiled_programs(&self) -> bool {
+        false
+    }
+
     /// A native compilation (a WebAssembly module's, or a JavaScript function's or loop
     /// region's) is about to start: like `at_collection_boundary`, the code about to run (the
     /// code generator) differs from the code that ran before it.
