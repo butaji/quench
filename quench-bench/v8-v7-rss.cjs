@@ -90,10 +90,26 @@ for (const fixture of selected) {
   if (!FIXTURES.includes(fixture)) usage(`unknown fixture ${fixture}`);
 }
 
+const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "v8-v7-rss-"));
+// The board's own executable stays mapped while it runs, so `rss-exec --evict` cannot drop
+// its page cache: a Quench measured with the binary running the board faulted in whole
+// cached folios (V8-v7 under memory-first, a freshly bolted static x86_64 binary, pinned,
+// 2026-10-27: 15.5-16.4 MB on every fixture, against 2.2-6.2 MB under another runner). That Quench
+// runs from a copy no other process maps.
+const sameFile = (left, right) => {
+  const [a, b] = [fs.statSync(left), fs.statSync(right)];
+  return a.dev === b.dev && a.ino === b.ino;
+};
+const measuredQuench = sameFile(process.execPath, quench) ? path.join(scratch, "quench-node") : quench;
+if (measuredQuench !== quench) {
+  fs.copyFileSync(quench, measuredQuench);
+  fs.chmodSync(measuredQuench, 0o755);
+}
+
 // Engines in the order each round runs them. Quench's two modes come first.
 const engines = [
-  { name: "quench", side: "quench", executable: quench, argv: [], env: {} },
-  { name: "quench --jit", side: "quench", executable: quench, argv: ["--jit"], env: {} },
+  { name: "quench", side: "quench", executable: measuredQuench, argv: [], env: {} },
+  { name: "quench --jit", side: "quench", executable: measuredQuench, argv: ["--jit"], env: {} },
 ];
 const qjs = option("--qjs", null);
 if (qjs) engines.push({ name: "qjs", side: "other", executable: qjs, argv: [], env: {} });
@@ -166,9 +182,8 @@ function rounds(script, cpu) {
   return { rows, valid, won: valid && quenchWorst < otherBest, verdict: { quenchWorst, otherBest } };
 }
 
-const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "v8-v7-rss-"));
 const base = fs.readFileSync(path.join(suite, "base.js"), "utf8");
-const report = { runs, rssExec, rssCpu, engines: engines.map(({ name, executable, argv, env }) => ({ name, executable, argv, env })), fixtures: {} };
+const report = { runs, rssExec, rssCpu, quench, engines: engines.map(({ name, executable, argv, env }) => ({ name, executable, argv, env })), fixtures: {} };
 let allWon = true;
 let allValid = true;
 try {

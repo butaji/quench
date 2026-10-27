@@ -3322,6 +3322,8 @@ fn module_namespace_operations_share_uninitialized_export_errors() {
             let program = compile("export let answer;", "uninitialized-module-export.mjs").unwrap();
             vm.initialize(&program).unwrap();
             let namespace = vm.object();
+            // A namespace takes its own dictionary shape, as `Vm::module_namespace` gives it.
+            vm.mark_object_dictionary(namespace, super::DictionaryTrigger::ModuleNamespace);
             let atom = vm.intern_atom("answer");
             vm.set_property(namespace, atom, Value::UNDEFINED).unwrap();
             let slot = program.function(0)

@@ -1040,6 +1040,16 @@ pub(crate) fn operation(name: &str) -> HostFunctionId {
     HostFunctionId(u32::from(position))
 }
 
+/// The small-object allocator's empty pages a collection boundary leaves resident
+/// (`quench_alloc::release_empty_pages`): enough for the next young generation's first
+/// allocations without refaulting. A server's collections empty pages of every phase's
+/// short-lived objects, which otherwise stay resident beside the heap's next peak. Under
+/// board load (500 connections; ping, query, JSON body, then 10-connection video; glibc
+/// production, same host, 3 runs each, 2026-10-27), final peak RSS against none returned:
+/// fastify 41.7-45.3 -> 39.4-40.8 MB, hono 43.0-49.4 -> 38.4-41.1 MB, throughput within
+/// noise on every phase. Returning all of them gave the same peaks; 256 left 40-53 MB.
+const RETAINED_EMPTY_ALLOCATOR_PAGES: usize = 64;
+
 /// The host operations that run beside a lane's frameless activations
 /// (`host_function_runs_beside_activations`).
 const BESIDE_ACTIVATIONS: &[&str] = &[
@@ -1089,7 +1099,9 @@ impl quench_runtime::Host for NodeHost {
     /// Splay 39800 -> 38988 KiB with the release before full collections).
     /// The allocator's free pages, which the collection's sweep just freed, leave with them
     /// (V8-v7 max RSS, static x86_64 unbolted, 2026-10-19: RegExp 6772-7044 -> 6664-6772 KiB,
-    /// EarleyBoyer 9048-9088 -> 8536-8576, the rest unchanged). Only under a policy that
+    /// EarleyBoyer 9048-9088 -> 8536-8576, the rest unchanged). Under every policy the
+    /// small-object allocator's empty pages past `RETAINED_EMPTY_ALLOCATOR_PAGES` leave too:
+    /// the collection just emptied them. Only under a policy that
     /// returns pages at collections (memory-first); every policy counts the collection for
     /// the release before output (`resident_pages::note_collection`).
     fn at_collection_boundary(&mut self, policy: quench_runtime::MemoryPolicy) {
@@ -1097,6 +1109,7 @@ impl quench_runtime::Host for NodeHost {
             crate::host::resident_pages::release_read_only_pages();
             crate::host::resident_pages::release_free_heap_pages();
         }
+        quench_alloc::release_empty_pages(RETAINED_EMPTY_ALLOCATOR_PAGES);
         crate::host::resident_pages::note_collection();
     }
 
