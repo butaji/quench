@@ -318,7 +318,17 @@ impl ValueArena {
         debug_assert!(!vector.has_inline_property_storage() && !vector.is_dictionary());
         debug_assert!(index < self.len(vector));
         // SAFETY: as for `get_unchecked`.
-        unsafe { *self.values.get_unchecked(vector.start() + index) }
+        unsafe { self.get_flat_at(vector.start(), index) }
+    }
+
+    /// `get_flat` of the vector whose storage starts at `start` (`ValueVec::start`).
+    ///
+    /// # Safety
+    /// As for `get_flat`: `start` is a live vector's start and `index` one of its values.
+    #[inline(always)]
+    pub(crate) unsafe fn get_flat_at(&self, start: usize, index: usize) -> Value {
+        // SAFETY: the caller's vector range was allocated from `values` and remains reserved.
+        unsafe { *self.values.get_unchecked(start + index) }
     }
 
     /// `get_unchecked` of a vector outside dictionary mode; `None` for a dictionary, whose
@@ -387,9 +397,17 @@ impl ValueArena {
     pub(crate) unsafe fn set_flat_unchecked(&mut self, vector: ValueVec, index: usize, value: Value) {
         debug_assert!(!vector.is_dictionary());
         // SAFETY: caller provides the same initialized-range invariant as get.
-        unsafe {
-            *self.values.get_unchecked_mut(vector.start() + index) = value;
-        }
+        unsafe { self.set_flat_at(vector.start(), index, value) }
+    }
+
+    /// `set_flat_unchecked` of the vector whose storage starts at `start` (`ValueVec::start`).
+    ///
+    /// # Safety
+    /// As for `get_flat_at`.
+    #[inline(always)]
+    pub(crate) unsafe fn set_flat_at(&mut self, start: usize, index: usize, value: Value) {
+        // SAFETY: the caller's vector range was allocated from `values` and remains reserved.
+        unsafe { *self.values.get_unchecked_mut(start + index) = value }
     }
 
     /// The address of an initialized flat slot, for a native no-allocation region that holds

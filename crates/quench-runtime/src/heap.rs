@@ -3086,6 +3086,12 @@ impl Heap {
     /// The slot exists and the object is not in dictionary storage.
     #[inline(always)]
     pub(crate) unsafe fn property_get_flat(&self, object: &Object, slot: usize) -> Value {
+        // Most objects keep their values in the arena and have no extras; their payload is
+        // their storage start, read here without decoding the other forms.
+        if let Some(start) = object.plain_storage_start() {
+            // SAFETY: the caller proves the slot exists outside dictionary storage.
+            return unsafe { self.properties.get_flat_at(start, slot) };
+        }
         if let Some(value) = object.inline_property(slot) {
             value
         } else {
@@ -3207,6 +3213,13 @@ impl Heap {
                 self.object_records.get_live_mut_unbarriered(record_id)
             }
         };
+        // As `property_get_flat`: arena values without extras need no other decoding.
+        if let Some(start) = data.plain_storage_start() {
+            // SAFETY: the caller proves that the property slot exists outside dictionary
+            // storage.
+            unsafe { self.properties.set_flat_at(start, slot, value) };
+            return true;
+        }
         if data.properties().has_inline_property_storage() {
             if !data.store_inline_narrow(slot, value) {
                 // Without `LOGS` the widening, which changes nothing before it, is left to the

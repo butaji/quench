@@ -1901,6 +1901,17 @@ impl Object {
         }
     }
 
+    /// The storage start of an object whose values live in the arena and that has no
+    /// extras: its payload word is then that start alone (`set_properties`), and its upper
+    /// half is zero, which an extras word (`EXTRAS_TAG`) never is. `None` for inline storage
+    /// or extras, whose start `storage_position` decodes.
+    #[inline(always)]
+    pub(crate) fn plain_storage_start(&self) -> Option<usize> {
+        let plain = self.meta & OBJECT_INLINE_STORAGE == 0 && self.payload >> u32::BITS == 0;
+        debug_assert!(!plain || self.extras_pointer().is_none());
+        plain.then_some(self.payload as usize)
+    }
+
     #[inline(always)]
     fn storage_position(&self) -> u32 {
         match self.extras() {
