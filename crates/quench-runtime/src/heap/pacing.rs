@@ -525,11 +525,16 @@ const SURVIVING_YOUNG_FROM: u32 = SURVIVAL_SCALE / 4;
 /// 121K -> 188K between its two.
 const STEADY_LIVE_GROWTH: Ratio = Ratio::new(1, 8);
 /// The young budget's factor past `SURVIVING_YOUNG_FROM` under throughput, on a steady heap
-/// only (`PacingState::steady`): eight gave EarleyBoyer Score x1.025 at max RSS 11.1 -> 15.1 MB
-/// (pinned, 11 runs, 2026-10-26; ungated x1.047). On npm's heaviest rows the steady gate keeps
-/// max RSS within 0.5 MB of the unwidened table and CPU within 5% (TOD-197); ungated, the
-/// factor raised it 5-16 MB.
-const THROUGHPUT_SURVIVING_YOUNG_FACTOR: usize = 8;
+/// only (`PacingState::steady`): two. Eight gave EarleyBoyer Score x1.025 at max RSS
+/// 11.1 -> 15.1 MB (pinned, 11 runs, 2026-10-26; ungated x1.047), and on npm's heaviest rows
+/// the steady gate kept max RSS within 0.5 MB of the unwidened table and CPU within 5%
+/// (TOD-197; ungated, the factor raised it 5-16 MB). On JetStream's steady heaps eight was
+/// mostly garbage: against two, max RSS geomean x1.07 over the 34 default rows for Score
+/// x1.006, web-ssr 106 -> 163 MB, prettier-wtb 42 -> 65, sync-fs 25 -> 42, hash-map 31 -> 45,
+/// doxbee-async 45 -> 54 (median of 3, Score +6.7%); one against two gave RSS x0.99 more
+/// for doxbee-async's Score x0.94 (one gc-tuning binary, cold, interleaved, x86_64 4 vCPU,
+/// 2026-10-27, v2-cloud-jet).
+const THROUGHPUT_SURVIVING_YOUNG_FACTOR: usize = 2;
 /// The young budget's factor past `SURVIVING_YOUNG_FROM` under memory-first: one, so
 /// memory-first's budget does not widen. Four, on a steady heap, gave EarleyBoyer Score
 /// 4002 -> 4629 at 7328 -> 7740 KiB but RegExp 6316 -> 6932 KiB for no Score (pinned, 7 runs,
