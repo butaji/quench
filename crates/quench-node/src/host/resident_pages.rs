@@ -72,6 +72,14 @@ pub fn release_read_only_pages_after_load() {
 /// from its file.
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 pub fn release_read_only_pages() {
+    // Under throughput a release comes at most once per `LOAD_RELEASE_INTERVAL`, whatever asks
+    // for it: bootstrap, output, exit and the paced phases each released, 15-20 times in a
+    // short npm scenario, and each release refaulted the run's code page by page.
+    let returns_pages = crate::shared_run::process_memory_policy()
+        .is_some_and(quench_runtime::MemoryPolicy::returns_pages_at_collections);
+    if !returns_pages && released_within(LOAD_RELEASE_INTERVAL) {
+        return;
+    }
     if let Ok(mut last) = LAST_RELEASE.lock() {
         *last = Some(std::time::Instant::now());
     }

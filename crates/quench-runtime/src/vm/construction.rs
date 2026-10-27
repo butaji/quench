@@ -349,7 +349,7 @@ impl<H: Host> Vm<H> {
     /// A closure's object allocated finished: its own `length`, `name` and `prototype` under
     /// `shape`, as the recorded adds would leave them, inline where they fit, else in the
     /// property arena.
-    fn finished_closure_object(
+    pub(super) fn finished_closure_object(
         &mut self,
         function_prototype: Value,
         shape: u32,
@@ -655,7 +655,12 @@ impl<H: Host> Vm<H> {
             .shape()
     }
 
+    /// `realm`'s `Object.prototype`: the VM field for the active realm, which follows it
+    /// (`REALM_FOLLOWING_PROTOTYPES`), and the intrinsics table for any other.
     pub(super) fn realm_object_prototype(&self, realm: Value) -> Value {
+        if realm == self.realm.globals {
+            return self.object_proto;
+        }
         self.realm
             .intrinsics
             .builtin_prototypes
@@ -664,7 +669,11 @@ impl<H: Host> Vm<H> {
             .unwrap_or(self.object_proto)
     }
 
+    /// `realm`'s `Function.prototype`, read as `realm_object_prototype` reads its object one.
     pub(super) fn realm_function_prototype(&self, realm: Value) -> Value {
+        if realm == self.realm.globals {
+            return self.function_proto;
+        }
         self.realm
             .intrinsics
             .builtin_prototypes

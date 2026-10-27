@@ -13,9 +13,27 @@ pub(super) struct GeneralCodeCursor {
     decoded: *const WideInstruction,
     /// The function's lane view, or null where the lane does not run.
     lane: *const dispatch_fast::LaneView,
-    /// The backward jumps the activation took in the general path while it may still gain a
-    /// view (`note_back_edge`); `None` once it cannot.
-    back_edges: Option<u16>,
+    /// The loop work the activation did in the general path while it may still gain a view
+    /// (`note_back_edge`); `None` once it cannot.
+    back_edges: Option<HotLoop>,
+}
+
+/// A view-less JavaScript activation's loops so far (`Vm::note_back_edge`).
+#[derive(Clone, Copy)]
+struct HotLoop {
+    /// Its back edges taken.
+    taken: u16,
+    /// The instructions those back edges spanned, and the span at which the loop has repaid
+    /// a view of the whole function (`LANE_VIEW_LOOP_PAYBACK` per instruction).
+    work: u32,
+    due: u32,
+}
+
+impl HotLoop {
+    fn of(function: &crate::bytecode::Function) -> Self {
+        let instructions = u32::try_from(function.code.len()).unwrap_or(u32::MAX);
+        Self { taken: 0, work: 0, due: instructions.saturating_mul(LANE_VIEW_LOOP_PAYBACK) }
+    }
 }
 
 /// The backward jumps a JavaScript activation takes in the general path before its function's
@@ -23,6 +41,16 @@ pub(super) struct GeneralCodeCursor {
 /// costs some hundreds of instructions per instruction of the function; a module body that
 /// loops a few times (over its exports, say) ran faster without one.
 const HOT_LOOP_BACK_EDGES: u16 = 16;
+
+/// The loop work, in instructions its back edges span per instruction of the function, after
+/// which a view-less activation derives its function's lane view (`HotLoop`). A view costs
+/// some hundreds of instructions per instruction of the whole function, so a short loop in a
+/// large body that runs once (a module body filling a table) ran
+/// faster without one. Measured in instructions, warm compile cache, against deriving at
+/// `HOT_LOOP_BACK_EDGES` alone (x86_64 VM, 2026-10-26): @babel/core -11.0% (one: +0.9%,
+/// four: -9.9%), and within 0.2% on schema-utils, axios, semver, ajv, eslint, jiti, undici
+/// and source-map.
+const LANE_VIEW_LOOP_PAYBACK: u32 = 8;
 
 /// A caller suspended by an in-loop frame push, resumed when its callee completes.
 pub(super) struct PendingGeneralCall {
@@ -134,21 +162,23 @@ impl<H: Host> Vm<H> {
             lane: view,
             // A JavaScript activation deferred its view; a loop that turns hot derives it.
             back_edges: (admitted && view.is_null() && program.kind != crate::bytecode::ProgramKind::Wasm)
-                .then_some(0),
+                .then(|| HotLoop::of(program.function(function as usize))),
             ..GeneralCodeCursor::new(program_id, program, function)
         }
     }
 
-    /// Counts a backward jump of `cursor`'s activation in the general path; at
-    /// `HOT_LOOP_BACK_EDGES` its function's lane view is derived, which the lane enters at the
-    /// loop's next instruction.
+    /// Counts a backward jump of `cursor`'s activation in the general path over `span`
+    /// instructions; at `HOT_LOOP_BACK_EDGES` of them, once their spans repay a view
+    /// (`HotLoop`), its function's lane view is derived, which the lane enters at the loop's
+    /// next instruction.
     #[inline(always)]
-    fn note_back_edge(&self, cursor: &mut GeneralCodeCursor) {
-        let Some(taken) = cursor.back_edges.as_mut() else {
+    fn note_back_edge(&self, cursor: &mut GeneralCodeCursor, span: usize) {
+        let Some(hot) = cursor.back_edges.as_mut() else {
             return;
         };
-        *taken += 1;
-        if *taken >= HOT_LOOP_BACK_EDGES {
+        hot.taken = hot.taken.saturating_add(1);
+        hot.work = hot.work.saturating_add(u32::try_from(span).unwrap_or(u32::MAX));
+        if hot.taken >= HOT_LOOP_BACK_EDGES && hot.work >= hot.due {
             cursor.back_edges = None;
             cursor.lane = self.hot_loop_lane_view(cursor.program, cursor.function);
         }
@@ -1931,7 +1961,7 @@ impl<H: Host> Vm<H> {
                     if truthy == (ins.op() == Op::JumpTrue) {
                         pc = ins.jump_target() as usize;
                         if pc <= instruction_pc {
-                            self.note_back_edge(&mut cursor);
+                            self.note_back_edge(&mut cursor, instruction_pc + 1 - pc);
                             self.note_js_general_dispatch_backedge(
                                 p,
                                 frame,
@@ -1960,7 +1990,7 @@ impl<H: Host> Vm<H> {
                         if !truthy {
                             pc = ins.jump_target() as usize;
                             if pc <= instruction_pc {
-                                self.note_back_edge(&mut cursor);
+                                self.note_back_edge(&mut cursor, instruction_pc + 1 - pc);
                                 self.note_js_general_dispatch_backedge(
                                     p,
                                     frame,
@@ -2124,7 +2154,7 @@ impl<H: Host> Vm<H> {
                 Op::Jump if !self.heap.should_collect() => {
                     pc = ins.jump_target() as usize;
                     if pc <= instruction_pc {
-                        self.note_back_edge(&mut cursor);
+                        self.note_back_edge(&mut cursor, instruction_pc + 1 - pc);
                         self.note_js_general_dispatch_backedge(
                             p,
                             frame,
