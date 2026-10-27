@@ -6434,6 +6434,30 @@ fn lane_loop_run<H: Host>(
                         "QUENCH_JS_JIT_OSR_EXIT program={} function={} header={} pc={pc}",
                         program.raw(), site.function, site.header,
                     );
+                    // Read recovered operands only for a non-inlined activation. These
+                    // getters neither coerce a guest value nor allocate guest storage.
+                    // Raw state distinguishes index/append/capacity guards without
+                    // changing native exits or inventing a second guard policy.
+                    if region.inlining.is_none() {
+                        // SAFETY: the lane's program and VM outlive this synchronous trace;
+                        // native execution has returned and restored the canonical registers.
+                        let body = unsafe { &*(*cx).code }.function_get(site.function as usize);
+                        if let Some((body, packed)) = body.and_then(|body| body.code.get(pc as usize).map(|packed| (body, *packed))) {
+                            let instruction = decoded_instruction(body, packed);
+                            if instruction.op() == Op::SetIndex {
+                                let key = r.get(instruction.register_c());
+                                let base = r.get(instruction.register_b());
+                                if let Some(array) = unsafe { vm(cx) }.heap.record_array(base) {
+                                    eprintln!(
+                                        "QUENCH_JS_JIT_OSR_SET_INDEX_EXIT program={} function={} header={} pc={pc} key_bits={:016x} key_number={:?} length={} capacity={}",
+                                        program.raw(), site.function, site.header,
+                                        key.to_bits(), key.as_number(),
+                                        array.elements().len(), array.elements().capacity(),
+                                    );
+                                }
+                            }
+                        }
+                    }
                 }
             }
             LoopOutcome::Widen(_) => {
