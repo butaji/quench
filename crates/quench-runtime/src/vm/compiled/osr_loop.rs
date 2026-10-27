@@ -1676,7 +1676,18 @@ fn admit_lifetime_roles(
     let mut canonical = flow.instructions.clone();
     for (offset, instruction) in canonical.iter_mut().enumerate() {
         if let Some(receiver) = object_reads(*instruction) {
-            let root = array_root(&flow, &values, header + offset as u32, receiver, &mut BTreeSet::new())?;
+            let root = match array_root(&flow, &values, header + offset as u32, receiver, &mut BTreeSet::new()) {
+                Some(root) => root,
+                None if instruction.op() == Op::GetIndex
+                    && values.reaching[offset].get(&receiver).is_some_and(|definitions| {
+                        !definitions.is_empty() && definitions.iter().all(|definition| {
+                            definition.checked_sub(flow.entry_count())
+                                .and_then(|index| flow.instructions.get(index))
+                                .is_some_and(|definition| definition.op() == Op::GetIndex)
+                        })
+                    }) => continue,
+                None => return None,
+            };
             let base = if instruction.op() == Op::GetIndex { Operand::register(root).0 } else { root };
             *instruction = WideInstruction::new(instruction.op(), instruction.a(), base, instruction.c(), instruction.imm());
         }
@@ -2001,12 +2012,21 @@ fn admit_register_roles(
         .filter(|(_, role)| matches!(role, Role::Tagged | Role::TaggedArray { .. }))
         .map(|(register, _)| *register)
         .collect();
+    // A value produced by an indexed read is never an entry snapshot. Only reads
+    // may use this dynamic receiver; writes retain the pinned, exclusive-backing contract.
+    let dynamic_arrays: std::collections::BTreeSet<Register> = defined_registers.iter().copied()
+        .filter(|register| instructions.iter().filter(|instruction| instruction.defined_register() == Some(*register))
+            .all(|instruction| instruction.op() == Op::GetIndex))
+        .filter(|register| !instructions.iter().any(|instruction| {
+            object_reads(*instruction) == Some(*register) && instruction.op() != Op::GetIndex
+        }))
+        .collect();
     let mut arrays: Vec<ArrayUse> = admission
         .roles
         .iter()
         .filter_map(|(register, role)| match role {
             Role::Array { written } | Role::TaggedArray { written }
-                if instructions.iter().any(|instruction| {
+                if !dynamic_arrays.contains(register) && instructions.iter().any(|instruction| {
                     matches!(instruction.op(), Op::GetIndex | Op::SetIndex | Op::RequireObjectCoercible)
                         && object_reads(*instruction) == Some(*register)
                 }) => Some(ArrayUse { register: *register, written: *written, field: None }),
@@ -3289,7 +3309,8 @@ fn counted_loop(
             }
             Op::GetIndex => {
                 let array = instruction.operand_b().register_index()?;
-                if let (true, Some(value)) = source(&state, pc, instruction.operand_c())? {
+                if region.arrays.iter().any(|entry| entry.register == array)
+                    && let (true, Some(value)) = source(&state, pc, instruction.operand_c())? {
                     candidates.push(Fact { pc, value, bound: Bound::Index(array) });
                 }
                 None
@@ -5316,8 +5337,29 @@ impl<'a, 'b> Lowering<'a, 'b> {
                 // An index sum just before checked this read's bounds (`index_sum`).
                 let bounded = self.bounded_reads.remove(&pc);
                 let base = instruction.operand_b().register_index()?;
-                let array = self.arrays[&base];
                 let key = self.operand(instruction.operand_c())?;
+                let Some(array) = self.arrays.get(&base).copied() else {
+                    let receiver = self.register(base);
+                    if receiver.representation != Representation::Tagged { return None; }
+                    let key = self.boxed(key);
+                    let result = self.result;
+                    self.body.builder.ins().store(flags(), key, result, 0);
+                    let selector = self.body.builder.ins().iconst(types::I64, super::OSR_DENSE_ARRAY_READ as i64);
+                    let context = self.body.core.context;
+                    let call = self.body.builder.ins().call_indirect(self.callout_signature, self.callout,
+                        &[context, selector, receiver.value, result]);
+                    let status = self.body.builder.inst_results(call)[0];
+                    let miss = self.body.builder.ins().icmp_imm_u(IntCC::NotEqual, status, 0);
+                    self.guard(pc, miss);
+                    let bits = self.body.builder.ins().load(types::I64, flags(), result, 0);
+                    let representation = self.result_representation();
+                    let otherwise = if representation == Representation::Int32 {
+                        self.widen_block(pc, Widening::Elements(base))
+                    } else { self.exit_block(pc) };
+                    let value = self.unbox(bits, representation, otherwise);
+                    self.define(instruction.result_register(), Typed { value, representation });
+                    return self.fall_through(pc);
+                };
                 let representation = if self.region.tagged_definition(pc - self.region.header) {
                     Representation::Tagged
                 } else {
@@ -5518,6 +5560,40 @@ fn unary_operand(dfg: &ir::DataFlowGraph, value: ir::Value, opcode: ir::Opcode) 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn osr_lifetime_nested_receiver_read_does_not_snapshot_overwritten_slot() {
+        let instructions = vec![
+            WideInstruction::new(Op::GetIndex, 1, Operand::register(0).0, Operand::register(3).0, 0),
+            WideInstruction::new(Op::GetIndex, 2, Operand::register(1).0, Operand::register(3).0, 0),
+            WideInstruction::new(Op::ToNumeric, 1, 3, 0, 0),
+            WideInstruction::new(Op::Jump, 0, 0, 0, 0),
+        ];
+        let region = admit_region(instructions, 4, &[], &[],
+            Some(std::rc::Rc::new(crate::compile::liveness::RegisterMasks::new(vec![15; 4]))),
+            Some(15), 0, &Default::default(),
+        ).unwrap_or_else(|failure| panic!("nested lifetime admission: {failure:?}"));
+        assert!(region.lifetime_roles.is_some());
+        assert!(region.tagged_definition(0));
+        assert!(!region.tagged_definition(2));
+        assert_eq!(region.arrays.len(), 1);
+        assert_eq!(region.arrays[0].register, 0);
+        assert_eq!(region.instructions[1].operand_b().register_index(), Some(1));
+    }
+
+    #[test]
+    fn osr_nested_receiver_store_retains_entry_identity_guard() {
+        let region = admit_region(vec![
+            WideInstruction::new(Op::GetIndex, 1, Operand::register(0).0, Operand::register(3).0, 0),
+            WideInstruction::new(Op::SetIndex, 2, 1, 3, 0),
+            WideInstruction::new(Op::Jump, 0, 0, 0, 0),
+        ], 4, &[], &[],
+            Some(std::rc::Rc::new(crate::compile::liveness::RegisterMasks::new(vec![15; 3]))),
+            Some(15), 0, &Default::default(),
+        ).unwrap_or_else(|failure| panic!("existing guarded store: {failure:?}"));
+        // Lowering::define checks GetIndex against this pinned identity before a store.
+        assert!(region.arrays.iter().any(|array| array.register == 1 && array.written));
+    }
 
     #[test]
     fn osr_lifetime_roles_keep_array_alias_and_numeric_overwrite_separate() {

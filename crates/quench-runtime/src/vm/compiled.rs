@@ -3367,6 +3367,8 @@ struct OsrProbePayload {
 const OSR_INITIALIZED_LOCAL_READ: u64 = u64::MAX;
 /// Reserve one dense append without storing a value or collecting.
 const OSR_RESERVE_ARRAY_APPEND: u64 = u64::MAX - 1;
+/// Read a present own dense element without allocation, coercion or collection.
+const OSR_DENSE_ARRAY_READ: u64 = u64::MAX - 2;
 
 /// A no-guest-effect JavaScript OSR helper. Capacity reserve may relocate a backing but
 /// never stores a guest value or collects; it refreshes all entry aliases and exits on debt.
@@ -3393,6 +3395,13 @@ unsafe extern "C" fn osr_probe<H: Host>(
         let payload = unsafe { &*context_ref.adapter_payload.cast::<OsrProbePayload>() };
         let program = payload.program.as_deref()?;
         let vm = unsafe { &mut *context_ref.vm.cast::<Vm<H>>() };
+        if cache_site == OSR_DENSE_ARRAY_READ {
+            // The generated caller seeds the scratch word with the tagged key. Neither
+            // lookup nor a miss allocates, collects, invokes guest code, or retains pointers.
+            // The current array record/backing is resolved anew after every native store.
+            let key = Value::from_bits(unsafe { result.read() });
+            return vm.dense_array_element(Value::from_bits(receiver_bits), key);
+        }
         if cache_site == OSR_RESERVE_ARRAY_APPEND {
             let receiver = Value::from_bits(receiver_bits);
             let (old, elements, length, capacity) = vm.reserve_native_array_append(receiver, osr_loop::MAX_INDEXED_LENGTH)?;

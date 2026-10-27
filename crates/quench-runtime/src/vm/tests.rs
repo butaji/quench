@@ -11987,6 +11987,94 @@ fn shared_osr_stores_guarded_numeric_own_fields_in_a_loop() {
 
 #[test]
 #[cfg(not(quench_profiled))]
+fn shared_osr_nested_array_reads_reload_receivers_and_preserve_effects() {
+    let source = r#"
+      function nestedGrow(rows, target, count, key) {
+        let sum = 0;
+        for (let i = 1; i < count; i++) {
+          let value = rows[i % 2][key];
+          target[i] = (value + i) | 0;
+          sum = (sum + target[i]) | 0;
+        }
+        return sum;
+      }
+      let checksum = 0;
+      for (let call = 0; call < 12; call++) {
+        const a = [call + 3];
+        const rows = [a, [7]];
+        checksum = (checksum + nestedGrow(rows, a, 3000, 0)) | 0;
+        rows[1] = [19];
+        checksum = (checksum + nestedGrow(rows, a, 3000, 0)) | 0;
+      }
+      print(checksum);
+      let effects = 0;
+      const key = { toString() { effects++; $262.gc(); return '0'; } };
+      print(nestedGrow([[3], [7]], [0], 4, key));
+      print(effects);
+      const thrown = {};
+      let same = false;
+      effects = 0;
+      const proto = Object.create(Array.prototype);
+      Object.defineProperty(proto, '0', { get() { effects++; $262.gc(); throw thrown; } });
+      const hole = [];
+      Object.setPrototypeOf(hole, proto);
+      try { nestedGrow([[3], hole], [0], 4, 0); } catch (error) { same = error === thrown; }
+      print(effects);
+      print(same);
+      effects = 0;
+      const accessor = [];
+      Object.defineProperty(accessor, '0', { get() { effects++; $262.gc(); return 11; } });
+      print(nestedGrow([[3], accessor], [0], 4, 0));
+      print(effects);
+      for (const key of [-1, 0.5, -0, 2147483647])
+        print(nestedGrow([[3], [7]], [0], 4, key));
+      globalThis.nestedSeed = [3];
+      globalThis.nestedRows = [nestedSeed, [7]];
+    "#;
+    let program = Engine::specialize(source, "osr-nested-array-read.js").unwrap();
+    let function_id = program.functions.iter().position(|function| {
+        function.header().name.is_some_and(|name| &program.atoms[name as usize] == "nestedGrow")
+    }).unwrap();
+    let expected = Rc::new(RefCell::new(Vec::new()));
+    let mut interpreter = Vm::new(TestHost::writing_to(expected.clone()).with_test262());
+    interpreter.execute(&program).unwrap();
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()).with_test262());
+    vm.set_execution_mode(crate::ExecutionMode::Compiled);
+    vm.programs.enable_js_jit_diagnostics();
+    vm.execute(&program).unwrap();
+    assert_eq!(*output.borrow(), *expected.borrow());
+    let native_runs = |vm: &Vm<TestHost>| {
+        vm.programs.lane_views(super::program_store::ProgramId::MAIN).unwrap()
+            .get(function_id).and_then(super::program_store::derived_lane_view).unwrap()
+            .osr_diagnostics().native_region_runs
+    };
+    let before = native_runs(&vm);
+    assert!(before > 0, "nested reads must execute in the native body");
+    let diagnostics = vm.programs.lane_views(super::program_store::ProgramId::MAIN).unwrap()
+        .get(function_id).and_then(super::program_store::derived_lane_view).unwrap().osr_diagnostics();
+    assert!(diagnostics.native_region_runs > diagnostics.exits + 10,
+        "nested probe must complete native bodies, not merely enter and exit: {diagnostics:?}");
+    assert_eq!(output.borrow().as_slice(), ["108737796", "23", "3", "1", "true", "31", "2", "0", "0", "23", "0"]);
+    vm.collect_now(&program);
+    let function_atom = vm.intern_atom("nestedGrow");
+    let function = vm.own_property(vm.realm.globals, function_atom).unwrap();
+    let rows_atom = vm.intern_atom("nestedRows");
+    let rows = vm.own_property(vm.realm.globals, rows_atom).unwrap();
+    let seed_atom = vm.intern_atom("nestedSeed");
+    let seed = vm.own_property(vm.realm.globals, seed_atom).unwrap();
+    let epoch = vm.heap.collection_epoch();
+    vm.heap.make_collection_due_after_growth_for_test();
+    let result = vm.call_value(&program, function, Value::UNDEFINED,
+        &[rows, seed, Value::integer(6000), Value::integer(0)]).unwrap();
+    let expected_sum: i32 = (1..6000).map(|i| i + if i % 2 == 1 { 7 } else { 3 }).sum();
+    assert_eq!(result, Value::integer(expected_sum));
+    assert!(native_runs(&vm) > before);
+    assert!(vm.heap.collection_epoch() > epoch, "nested receivers survive rooted debt exit");
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
 fn shared_osr_append_growth_refreshes_aliases_and_recovers_gc_debt() {
     let source = r#"
       function growAliases(a, b, reader, count) {
