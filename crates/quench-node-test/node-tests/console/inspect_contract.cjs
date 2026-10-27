@@ -1,8 +1,8 @@
 'use strict';
-// console.log of plain objects and short arrays of primitives, as `inspect` writes them with
-// default options on one line or one entry per line, and of every value that path leaves to
-// `inspect`: nesting, holes, accessors, quoted keys, escaped strings, other prototypes and
-// `util.inspect.custom`.
+// console.log of plain objects and short arrays, nested to and past `inspect`'s depth, as
+// `inspect` writes them with default options on one line or one entry per line, and of every
+// value that path leaves to `inspect`: circular references, holes, accessors, quoted keys,
+// escaped strings, other prototypes and `util.inspect.custom`.
 console.log({a:1});
 console.log({});
 console.log([]);
@@ -33,3 +33,25 @@ console.log({e:1}, [3]);
 var c={a:1}; c[Symbol.for('nodejs.util.inspect.custom')]=()=>'CUSTOM'; console.log(c);
 Object.prototype[Symbol.for('nodejs.util.inspect.custom')]=function(){return 'PROTO'}; console.log({z:1}); delete Object.prototype[Symbol.for('nodejs.util.inspect.custom')];
 console.log({x:1.5e300,y:-1e-7,z:Infinity});
+console.log({a:{b:1}});
+console.log([[1]]);
+console.log({a:{b:{c:{d:1}}}});
+console.log({a:{b:{c:{}}}});
+console.log({a:{b:{c:[]}}});
+console.log({a:[1,2,{x:1}], b:{c:'str', d:[true,null]}});
+console.log({user:{name:'Alice',age:30,tags:['a','b','c']},active:true,score:9.5});
+console.log({config:{server:{host:'localhost',port:8080},db:{user:'root',password:'secret',name:'app'}}});
+console.log([{id:1,name:'one'},{id:2,name:'two'},{id:3,name:'three'}]);
+console.log({list:[1,2,3,4,5,6,7]});
+console.log({a:{b:{c:{d:{e:1}}}}, z:1});
+console.log({nested:{deep:'x'.repeat(70)}});
+console.log({nested:{deep:'x'.repeat(60)}});
+var c={a:1}; c.self=c; console.log(c);
+var shared={v:1}; console.log({p:shared,q:shared});
+console.log([[[[1]]]]);
+console.log({k:[[1,2],[3,4]]});
+console.log({a:1,b:{c:2,d:{e:3,f:{g:4}}}});
+console.log({veryLongPropertyNameNumberOne:{inner:1},veryLongPropertyNameNumberTwo:{inner:2}});
+console.log([{a:1,b:2,c:3,d:4,e:5,f:6,g:7,h:8,i:9,j:10,k:11,l:12}]);
+console.log({m:new Map()}, {d:new Date(0)});
+console.log({f:function(){}}, {s:Symbol('x')});

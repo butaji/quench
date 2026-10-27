@@ -54,11 +54,11 @@ fn console_primitive_log_contract_matches_node() {
     assert_contract_matches_node("console/primitive_log_contract.cjs");
 }
 
-/// Plain objects and short arrays of primitives `console.log` writes before `inspect` loads,
+/// Plain and nested objects and short arrays `console.log` writes before `inspect` loads,
 /// and the values it leaves to `inspect`.
 #[test]
-fn console_flat_inspect_contract_matches_node() {
-    assert_contract_matches_node("console/flat_inspect_contract.cjs");
+fn console_inspect_contract_matches_node() {
+    assert_contract_matches_node("console/inspect_contract.cjs");
 }
 
 /// Stdio write encodings, callback timing and argument errors.

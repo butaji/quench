@@ -304,16 +304,63 @@ const INSPECT_CUSTOM: &str = "nodejs.util.inspect.custom";
 const SINGLE_QUOTE: char = '\'';
 const BACKSLASH: char = '\\';
 
-/// `inspect` with default options for a plain object, or an array of at most
-/// `MAX_UNGROUPED_ARRAY_ENTRIES`, whose own properties are enumerable data properties holding
-/// primitives (`formatRaw`, `formatProperty`, `reduceToSingleString`); `None` for any value
-/// whose output depends on more: a proxy, another prototype or constructor, a
-/// `Symbol.toStringTag` or `util.inspect.custom` member, a symbol, accessor or non-identifier
-/// key, a hole, a nested object or a string `strEscape` would change.
+/// `inspectDefaultOptions.depth`: deeper containers are written as `[Object]` or `[Array]`.
+const DEPTH: usize = 2;
+/// `inspectDefaultOptions.compact`: a container whose most recently inspected descendant is
+/// fewer levels below it shares one line, when its entries fit.
+const COMPACT: usize = 3;
+
+/// The state `inspect` threads through one value's containers (`ctx`).
+#[derive(Default)]
+struct Inspection {
+    /// `ctx.indentationLvl`.
+    indentation: usize,
+    /// `ctx.currentDepth`: the depth of the container inspected last.
+    current_depth: usize,
+    /// `ctx.seen`: the containers being inspected, a circular one of which `inspect` labels.
+    seen: Vec<RootId>,
+}
+
+/// `inspect` with default options for a plain object or an array of at most
+/// `MAX_UNGROUPED_ARRAY_ENTRIES` (`formatValue`), whose containers hold only primitives and
+/// such containers; `None` for any value whose output depends on more: a proxy or another
+/// builtin brand, another prototype or constructor, a `Symbol.toStringTag` or
+/// `util.inspect.custom` member, a symbol, accessor or non-identifier key, a hole, a circular
+/// reference, or a string `strEscape` would change.
 fn inspect_flat(context: &mut NativeContext<'_, NodeHost>, value: RootId) -> Result<Option<String>, RootedError> {
+    inspect_container(context, &mut Inspection::default(), value, 0)
+}
+
+/// `formatValue` of a property value at `recurse_times`.
+fn inspect_value(
+    context: &mut NativeContext<'_, NodeHost>, inspection: &mut Inspection, value: RootId, recurse_times: usize,
+) -> Result<Option<String>, RootedError> {
+    use quench_runtime::ValueType;
+    match context.value_type_rooted(value) {
+        Some(ValueType::Object) => inspect_container(context, inspection, value, recurse_times),
+        Some(ValueType::String) => {
+            let text = context.string_text(value)?.unwrap_or_default();
+            let split = text.len() > MIN_LINE_LENGTH
+                && text.len() + inspection.indentation + STRING_LINE_RESERVE > BREAK_LENGTH;
+            let plain = text.chars().all(|character| matches!(character, ' '..='~') && character != SINGLE_QUOTE && character != BACKSLASH);
+            Ok((plain && !split).then(|| format!("{SINGLE_QUOTE}{text}{SINGLE_QUOTE}")))
+        }
+        _ => inspect_primitive(context, value),
+    }
+}
+
+/// `formatRaw` and `reduceToSingleString` for a plain object or short array.
+fn inspect_container(
+    context: &mut NativeContext<'_, NodeHost>, inspection: &mut Inspection, value: RootId, recurse_times: usize,
+) -> Result<Option<String>, RootedError> {
     use quench_runtime::ValueType;
     for brand in INSPECTED_BRANDS {
         if context.has_builtin_brand_rooted(value, brand)? {
+            return Ok(None);
+        }
+    }
+    for &seen in &inspection.seen {
+        if context.strict_equal_rooted(seen, value)? {
             return Ok(None);
         }
     }
@@ -349,8 +396,9 @@ fn inspect_flat(context: &mut NativeContext<'_, NodeHost>, value: RootId) -> Res
             }
         }
     }
-    let keys = context.own_keys_rooted(value)?;
-    let mut entries = Vec::with_capacity(keys.len());
+    // The keys `formatProperty` writes, as (key root, name): an array's elements, then an
+    // object's enumerable own string keys.
+    let mut properties = Vec::new();
     let length = if array {
         let length_key = context.string_rooted("length");
         let length = context.get_property_rooted(value, length_key)?;
@@ -358,16 +406,14 @@ fn inspect_flat(context: &mut NativeContext<'_, NodeHost>, value: RootId) -> Res
         if length > MAX_UNGROUPED_ARRAY_ENTRIES {
             return Ok(None);
         }
+        for index in 0..length {
+            properties.push((context.string_rooted(&index.to_string()), None));
+        }
         length
     } else {
         0
     };
-    for index in 0..length {
-        let key = context.string_rooted(&index.to_string());
-        let Some(entry) = flat_entry(context, value, key)? else { return Ok(None) };
-        entries.push(entry);
-    }
-    for key in keys {
+    for key in context.own_keys_rooted(value)? {
         if context.value_type_rooted(key) != Some(ValueType::String) {
             return Ok(None);
         }
@@ -384,38 +430,48 @@ fn inspect_flat(context: &mut NativeContext<'_, NodeHost>, value: RootId) -> Res
         if array || !identifier_key(&name) || name == "__proto__" {
             return Ok(None);
         }
-        let Some(entry) = flat_entry(context, value, key)? else { return Ok(None) };
-        entries.push(format!("{name}: {entry}"));
+        properties.push((key, Some(name)));
     }
     let (open, close) = if array { ("[", "]") } else { ("{", "}") };
-    if entries.is_empty() {
+    if properties.is_empty() {
         return Ok(Some(format!("{open}{close}")));
     }
-    // `isBelowBreakLength` with no indentation and no base.
-    let start = entries.len() + open.len() + SINGLE_LINE_START;
-    let below = entries.len() + start + entries.len() <= BREAK_LENGTH
-        && entries.iter().map(String::len).sum::<usize>() + entries.len() + start <= BREAK_LENGTH;
-    Ok(Some(if below {
-        format!("{open} {} {close}", entries.join(", "))
-    } else {
-        let indentation = " ".repeat(ENTRY_INDENTATION);
-        format!("{open}\n{indentation}{}\n{close}", entries.join(&format!(",\n{indentation}")))
-    }))
-}
-
-/// The entry `formatProperty` writes for the own data property `key` of `holder` holding a
-/// primitive: a string as `strEscape` quotes it, when that only adds the quotes.
-fn flat_entry(context: &mut NativeContext<'_, NodeHost>, holder: RootId, key: RootId) -> Result<Option<String>, RootedError> {
-    use quench_runtime::ValueType;
-    let Some(fields) = context.own_property_fields_rooted(holder, key)? else { return Ok(None) };
-    let (Some(value), None, None) = (fields.value, fields.get, fields.set) else { return Ok(None) };
-    if context.value_type_rooted(value) != Some(ValueType::String) {
-        return inspect_primitive(context, value);
+    if recurse_times > DEPTH {
+        return Ok(Some(if array { "[Array]" } else { "[Object]" }.to_owned()));
     }
-    let text = context.string_text(value)?.unwrap_or_default();
-    let split = text.len() > MIN_LINE_LENGTH && text.len() > BREAK_LENGTH - ENTRY_INDENTATION - STRING_LINE_RESERVE;
-    let plain = text.chars().all(|character| matches!(character, ' '..='~') && character != SINGLE_QUOTE && character != BACKSLASH);
-    Ok((plain && !split).then(|| format!("{SINGLE_QUOTE}{text}{SINGLE_QUOTE}")))
+    let recurse_times = recurse_times + 1;
+    inspection.seen.push(value);
+    inspection.current_depth = recurse_times;
+    let mut entries = Vec::with_capacity(properties.len());
+    for (key, name) in properties {
+        let Some(fields) = context.own_property_fields_rooted(value, key)? else { return Ok(None) };
+        let (Some(property), None, None) = (fields.value, fields.get, fields.set) else { return Ok(None) };
+        inspection.indentation += ENTRY_INDENTATION;
+        let entry = inspect_value(context, inspection, property, recurse_times)?;
+        inspection.indentation -= ENTRY_INDENTATION;
+        let Some(entry) = entry else { return Ok(None) };
+        entries.push(match name {
+            Some(name) => format!("{name}: {entry}"),
+            None => entry,
+        });
+    }
+    inspection.seen.pop();
+    if inspection.current_depth - recurse_times < COMPACT {
+        // `isBelowBreakLength` with no base.
+        let start = entries.len() + inspection.indentation + open.len() + SINGLE_LINE_START;
+        let below = entries.len() + start + entries.len() <= BREAK_LENGTH
+            && entries.iter().map(String::len).sum::<usize>() + entries.len() + start <= BREAK_LENGTH;
+        let joined = entries.join(", ");
+        if below && !joined.contains('\n') {
+            return Ok(Some(format!("{open} {joined} {close}")));
+        }
+    }
+    let indentation = format!("\n{}", " ".repeat(inspection.indentation));
+    let entry_indentation = " ".repeat(ENTRY_INDENTATION);
+    Ok(Some(format!(
+        "{open}{indentation}{entry_indentation}{}{indentation}{close}",
+        entries.join(&format!(",{indentation}{entry_indentation}"))
+    )))
 }
 
 /// `keyStrRegExp`: a key `formatProperty` writes unquoted.
