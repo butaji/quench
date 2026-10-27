@@ -2889,8 +2889,8 @@ impl EnvironmentSlots {
         }
     }
 
-    /// The indexes a sparse storage lists, ascending.
-    fn sparse_indexes(&self) -> impl Iterator<Item = usize> + '_ {
+    /// The indexes a sparse storage lists, ascending; none for dense storage.
+    pub(crate) fn sparse_indexes(&self) -> impl Iterator<Item = usize> + '_ {
         let entries = if self.0.marked() {
             self.0.len().saturating_sub(SPARSE_ENTRIES_START) / SPARSE_ENTRY_WORDS
         } else {
