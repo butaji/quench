@@ -414,6 +414,8 @@ fn instance_initializer_plan_survives_round_trip_and_rejects_invalid_owners() {
         "instance-initializer.js",
     )
     .unwrap();
+    // The invalid variants below change records in place, which needs them compiled.
+    program.compile_released();
     let owner = (0..program.functions.len())
         .position(|index| program.function(index).instance_initializer.is_some())
         .unwrap();
@@ -647,6 +649,9 @@ fn compact_encoding_names_every_atom_by_its_text() {
         function* sequence() { yield shared; }
     "#;
     let program = crate::Engine::specialize(source, "compact-atoms.js").unwrap();
+    // Encoding builds a released record only for the time it writes it; the comparisons
+    // below read the original's records.
+    program.compile_released();
     let (bytes, order) = program.encode_compact();
     let names: Vec<std::rc::Rc<str>> =
         order.iter().map(|&atom| std::rc::Rc::from(&program.atoms[atom as usize])).collect();

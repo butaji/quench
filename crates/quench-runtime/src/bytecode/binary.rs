@@ -255,7 +255,6 @@ fn encode_program(program: &super::ResidualProgram, atoms: AtomEncoding) -> (Vec
             Constant::Undefined => out.u8(5),
         }
     }
-    program.compile_released();
     // Every record but the root's goes to the region after the body, which a decoder leaves
     // in place until the function's first read; the body names each by its place and checksum.
     let mut region = Vec::new();
@@ -265,7 +264,7 @@ fn encode_program(program: &super::ResidualProgram, atoms: AtomEncoding) -> (Vec
         out.u8(u8::from(deferred));
         write_function_header(&mut out, function.header());
         let body = std::mem::take(&mut out.bytes);
-        write_function(&mut out, function, program);
+        program.with_record(index, |record| write_function(&mut out, record, program));
         let record = std::mem::replace(&mut out.bytes, body);
         let length = u32::try_from(record.len()).expect("a function record fits u32 bytes");
         out.u32(length);
