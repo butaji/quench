@@ -994,7 +994,6 @@ impl<H: Host> Vm<H> {
         self.shape_attribute_memo.clear();
         self.object_shapes.reset();
         self.invalidate_field_caches();
-        self.programs.clear_field_hints();
         self.method_caches.fill([EMPTY_METHOD_CACHE; 2]);
         self.megamorphic_methods.clear();
         self.method_cache_atoms.clear();
