@@ -5714,4 +5714,128 @@ mod tests {
         assert_eq!(vm.execute_wasm_i32(&function, &[7, 2]).unwrap(), Some(3));
         assert!(vm.frames.is_empty());
     }
+    /// Builds a list of `nodes` words from `LIST_HEAD`, each holding the next one's address
+    /// and the last zero, then runs `walk` over it (locals: 0 the node count, 1 the address,
+    /// 2 and 3 the walk's) and returns local 2. The test-only floor forces every
+    /// backward jump through lane-loop recovery.
+    fn walk_list_at_safepoints(name: &str, nodes: i32, walk: Vec<Operator<'static>>) -> Option<crate::WasmValue> {
+        const WORD: i32 = 4;
+        const LIST_HEAD: i32 = WORD;
+        let memarg = wasmparser::MemArg {
+            align: 2,
+            max_align: 2,
+            offset: 0,
+            memory: 0,
+        };
+        let mut operators = vec![
+            Operator::I32Const { value: LIST_HEAD },
+            Operator::LocalSet { local_index: 1 },
+            Operator::Loop { blockty: wasmparser::BlockType::Empty },
+            // [address] = address + WORD, up to the last node.
+            Operator::LocalGet { local_index: 1 },
+            Operator::LocalGet { local_index: 1 },
+            Operator::I32Const { value: WORD },
+            Operator::I32Add,
+            Operator::I32Store { memarg },
+            Operator::LocalGet { local_index: 1 },
+            Operator::I32Const { value: WORD },
+            Operator::I32Add,
+            Operator::LocalTee { local_index: 1 },
+            Operator::LocalGet { local_index: 0 },
+            Operator::I32Const { value: WORD },
+            Operator::I32Mul,
+            Operator::I32LtU,
+            Operator::BrIf { relative_depth: 0 },
+            Operator::End,
+            // The last node ends the list.
+            Operator::LocalGet { local_index: 1 },
+            Operator::I32Const { value: 0 },
+            Operator::I32Store { memarg },
+            Operator::I32Const { value: LIST_HEAD },
+            Operator::LocalSet { local_index: 1 },
+        ];
+        operators.extend(walk);
+        operators.extend([Operator::LocalGet { local_index: 2 }, Operator::End]);
+        let module = crate::Engine::lower_wasm_module_with_state(
+            name,
+            [crate::WasmFunctionBody {
+                ty: crate::WasmCallableType::Embedded(crate::WasmSignature {
+                    params: vec![crate::WasmType::I32],
+                    results: vec![crate::WasmType::I32],
+                }),
+                locals: vec![wasmparser::ValType::I32; 3],
+                operators: operators.into_iter().map(Ok),
+            }],
+            &crate::WasmTypes::default(),
+            &[],
+            &[crate::WasmMemory {
+                ty: wasmparser::MemoryType {
+                    initial: 1,
+                    maximum: Some(1),
+                    memory64: false,
+                    shared: false,
+                    page_size_log2: None,
+                },
+                import: None,
+            }],
+            &[],
+        )
+        .unwrap();
+        let mut vm = Vm::new(crate::SystemHost);
+        let instance = vm.instantiate_wasm_module(&module).unwrap();
+        super::super::dispatch_fast::with_safepoint_floor(|| {
+            vm.invoke_wasm(&instance, 0, &[crate::WasmValue::I32(nodes)]).unwrap()
+        })
+    }
+
+    const WALK_MEMARG: wasmparser::MemArg = wasmparser::MemArg {
+        align: 2,
+        max_align: 2,
+        offset: 0,
+        memory: 0,
+    };
+
+    #[test]
+    fn lane_safepoint_resumes_a_list_reversal_with_its_carried_register() {
+        // CoreMark's `core_list_reverse` shape: the loop's head moves the list into the
+        // current node and loads the next one through it, and its latch stores the previous
+        // node, moves the current one there and tests the list. Both edges into the head
+        // carry the list register in the accumulator, which the head reads instead of the
+        // register (`edges_carry`); so must a safepoint that resumes it from the lane loop.
+        // Only builds that form sibling calls carry the accumulator (`ACCUMULATOR`), so an
+        // optimized test build (`cargo test --release`) is the one that checks it.
+        const NODES: i32 = 3_000;
+        const WORD: i32 = 4;
+        const LIST_HEAD: i32 = WORD;
+        // Locals: 1 the list, 2 the reversed list, 3 the current node.
+        let reverse = vec![
+            Operator::I32Const { value: 0 },
+            Operator::LocalSet { local_index: 2 },
+            Operator::I32Const { value: LIST_HEAD },
+            Operator::LocalSet { local_index: 3 },
+            Operator::LocalGet { local_index: 3 },
+            Operator::LocalSet { local_index: 1 },
+            Operator::Loop { blockty: wasmparser::BlockType::Empty },
+            Operator::LocalGet { local_index: 1 },
+            Operator::LocalSet { local_index: 3 },
+            Operator::LocalGet { local_index: 3 },
+            Operator::I32Load { memarg: WALK_MEMARG },
+            Operator::LocalSet { local_index: 1 },
+            Operator::LocalGet { local_index: 3 },
+            Operator::LocalGet { local_index: 2 },
+            Operator::I32Store { memarg: WALK_MEMARG },
+            Operator::LocalGet { local_index: 3 },
+            Operator::LocalSet { local_index: 2 },
+            Operator::LocalGet { local_index: 1 },
+            Operator::BrIf { relative_depth: 0 },
+            Operator::End,
+        ];
+        // The reversed list starts at the last node.
+        assert_eq!(
+            walk_list_at_safepoints("list-reversal", NODES, reverse),
+            Some(crate::WasmValue::I32(NODES * WORD))
+        );
+    }
+
+
 }

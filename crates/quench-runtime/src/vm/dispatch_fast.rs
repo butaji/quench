@@ -1630,6 +1630,8 @@ struct LaneContext<H: Host> {
     /// The running activation's `this`, or `DELETED` when the frame's binding decides
     /// it (`Vm::current_this`).
     this: Value,
+    /// The accumulator a safepoint carries when the lane loop resumes its target.
+    resumed_acc: Slot<Value>,
     /// The running JavaScript activation's environment, or `DELETED` for a VM frame.
     env: Value,
     /// The innermost capture slots of the running function, once a capture read found
@@ -1780,6 +1782,22 @@ const LANE_STACK_SLACK: usize = 64 * 1024;
 
 /// The floor that sends the next safepoint jump through the slow path.
 const COLLECTION_DUE_FLOOR: usize = crate::execution_interrupt::LANE_FLOOR_RAISED;
+
+#[cfg(test)]
+thread_local! {
+    static TEST_SAFEPOINT_FLOOR: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Exercise lane-loop recovery at each backward jump without changing production policy.
+#[cfg(test)]
+pub(super) fn with_safepoint_floor<T>(run: impl FnOnce() -> T) -> T {
+    struct Restore(bool);
+    impl Drop for Restore {
+        fn drop(&mut self) { TEST_SAFEPOINT_FLOOR.with(|floor| floor.set(self.0)); }
+    }
+    let _restore = Restore(TEST_SAFEPOINT_FLOOR.with(|floor| floor.replace(true)));
+    run()
+}
 
 /// The current stack address.
 #[cfg(quench_lane_tail_calls)]
@@ -6005,8 +6023,8 @@ fn lane_jump<H: Host>(
     if backward && below_floor() {
         // Scalar arguments only, so the slow path stays a sibling call.
         return match commit {
-            None => lane_safepoint::<H>(ip, target),
-            Some((register, value)) => lane_safepoint_writing::<H>(r, ip, target, register, value),
+            None => lane_safepoint::<H>(ip, target, view.acc),
+            Some((register, value)) => lane_safepoint_writing::<H>(r, ip, target, view.acc, register, value),
         };
     }
     if let Some((register, value)) = commit {
@@ -6038,7 +6056,7 @@ script_handler! {
         // every instruction record remains contiguous in this lane view.
         let at = |pc: u32| unsafe { header.offset(pc as isize - site.header as isize) };
         if below_floor() {
-            return lane_safepoint::<H>(ip, header);
+            return lane_safepoint::<H>(ip, header, Slot::unset());
         }
         // Keep the ordinary interpreter and JIT-off lane free of tier metadata
         // lookups. Only the opt-in shared JS baseline observes loop work here.
@@ -6177,7 +6195,7 @@ fn lane_loop_native<H: Host>(
             Some((frame, callee_pc)) => exit(lane_inlined_activation(cx, r, region, &entry, *frame, at(frame.call), pc, callee_pc)),
             None => exit(at(pc)),
         }),
-        LoopContinuation::Safepoint => LoopAttempt::Leave(lane_safepoint::<H>(record, header)),
+        LoopContinuation::Safepoint => LoopAttempt::Leave(lane_safepoint::<H>(record, header, Slot::unset())),
     }
 }
 
@@ -7754,15 +7772,19 @@ fn frame_memory_view<H: Host>(
 
 /// A taken safepoint jump below the stack floor: leave the lane when a
 /// collection is due, otherwise dispatch the target from the lane loop,
-/// which unwinds the stack. Out of line and reached by a sibling call, so a
+/// which unwinds the stack, with the accumulator carried by the jump.
+/// Out of line and reached by a sibling call, so a
 /// safepoint's fast path neither loads the context nor saves registers.
 #[cold]
 #[inline(never)]
-fn lane_safepoint<H: Host>(ip: Ip, target: Ip) -> Ip {
+fn lane_safepoint<H: Host>(ip: Ip, target: Ip, acc: Slot<Value>) -> Ip {
+    let cx = lane_context::<H>();
     // SAFETY: called only while a lane runs, from one of its handlers.
-    if unsafe { vm(lane_context::<H>()) }.heap.should_collect() || unsafe { vm(lane_context::<H>()) }.execution_interrupt.is_termination_requested() {
+    if unsafe { vm(cx) }.heap.should_collect() || unsafe { vm(cx) }.execution_interrupt.is_termination_requested() {
         return exit(ip);
     }
+    // SAFETY: the lane loop takes the carried value before dispatching the target.
+    unsafe { (*cx).resumed_acc = acc };
     target
 }
 
@@ -7773,10 +7795,11 @@ fn lane_safepoint_writing<H: Host>(
     r: Registers,
     ip: Ip,
     target: Ip,
+    acc: Slot<Value>,
     register: u16,
     value: Value,
 ) -> Ip {
-    let next = lane_safepoint::<H>(ip, target);
+    let next = lane_safepoint::<H>(ip, target, acc);
     if next == target {
         r.set(register, value);
     }
@@ -17127,6 +17150,8 @@ impl<H: Host> Vm<H> {
         } else {
             stack_pointer().saturating_sub(LANE_STACK_SLACK)
         };
+        #[cfg(test)]
+        let floor = if TEST_SAFEPOINT_FLOOR.with(std::cell::Cell::get) { COLLECTION_DUE_FLOOR } else { floor };
         // The floor lives in the VM's interrupt state, where a termination request raises it;
         // entry sets it before reading the request, the request raises it after setting
         // itself, so one of the two sees the other.
@@ -17169,6 +17194,7 @@ impl<H: Host> Vm<H> {
                     function.dispatch == crate::bytecode::DispatchClass::General
                 }),
             this: self.frame_lane_this(*frame),
+            resumed_acc: Slot::of(Value::UNDEFINED),
             env: Value::DELETED,
             capture: std::ptr::null(),
             outer: NO_OUTER_WALK,
@@ -17325,14 +17351,17 @@ impl<H: Host> Vm<H> {
 fn lane_dispatch<H: Host>(cx: *mut LaneContext<H>, mut ip: Ip) -> Ip {
     loop {
         // SAFETY: handlers have returned, so no other access is live.
-        let (view, registers) = unsafe { ((*cx).memory, (*cx).registers) };
+        let (view, registers, acc) = unsafe {
+            let acc = std::mem::replace(&mut (*cx).resumed_acc, Slot::of(Value::UNDEFINED));
+            ((*cx).memory, (*cx).registers, acc)
+        };
         let next = handler::<H>(ip)(
             registers,
             ip,
             view.bytes,
             view.reach,
             crate::value::IntegerEncoding::TAG,
-            Slot::of(Value::UNDEFINED),
+            acc,
         );
         let ip_next = next.map_addr(|address| address & !EXIT_TAG);
         if next.addr() & EXIT_TAG != 0 {
