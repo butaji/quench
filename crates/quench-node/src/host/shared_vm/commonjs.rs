@@ -157,8 +157,17 @@ fn real_path_for_kind(path: &Path) -> Result<std::borrow::Cow<'_, Path>, String>
 pub(crate) fn source_kind_of_real(path: &Path) -> Result<quench_runtime::SourceKind, String> {
     match declared_source_kind(path)? {
         Some(kind) => Ok(kind),
-        None => detect_source_kind(path),
+        None => {
+            let bytes = std::fs::read(path).map_err(|error| error.to_string())?;
+            Ok(detect_source_kind(&source_text(&bytes)))
+        }
     }
+}
+
+/// `source_kind_of_real` of a file whose bytes the caller already holds: detecting from
+/// them keeps a second copy of a large file (typescript.js, 9 MB) from being read alongside.
+pub(crate) fn source_kind_of_real_bytes(path: &Path, bytes: &[u8]) -> Result<quench_runtime::SourceKind, String> {
+    Ok(declared_source_kind(path)?.unwrap_or_else(|| detect_source_kind(&source_text(bytes))))
 }
 
 /// The goal a real path's extension or package scope declares; none when Node's syntax
@@ -243,25 +252,20 @@ pub(crate) fn source_text(bytes: &[u8]) -> std::borrow::Cow<'_, str> {
     }
 }
 
-fn detect_source_kind(path: &Path) -> Result<quench_runtime::SourceKind, String> {
-    let bytes = std::fs::read(path).map_err(|error| error.to_string())?;
-    let text = source_text(&bytes);
-    let text = text.strip_prefix('\u{feff}').unwrap_or(&text);
-    let text = if text.starts_with("#!") {
-        text.find('\n').map_or("", |newline| &text[newline..])
-    } else { text };
+fn detect_source_kind(text: &str) -> quench_runtime::SourceKind {
+    let text = script_body(text);
     // The goal follows from the text alone, which parsing it (twice, for a module) costs a
     // whole compilation of: typescript.js (9 MB) was parsed on every load. It is kept in the
     // compile cache, keyed by the exact text, as a compiled program is.
     let entry = text_facts_cache().entry(DETECTED_KIND_NAME, &[text]);
     if let Some(kind) = entry.as_ref().and_then(|entry| entry.load()).and_then(|bytes| detected_kind_of(bytes.as_ref().as_ref())) {
-        return Ok(kind);
+        return kind;
     }
     let kind = detect_text_kind(text);
     if let Some(entry) = entry {
         entry.store(&[detected_kind_byte(kind)]);
     }
-    Ok(kind)
+    kind
 }
 
 /// The compile-cache name a detected parse goal is kept under.
@@ -2885,15 +2889,20 @@ const getLinkedBinding = () => ({});
                     None if in_node_internal => context
                         .evaluate_specialized_library_body_rooted(&prefix, text.to_owned(), &suffix, &key)?,
                     None => {
-                        // Sized exactly: a formatted string grows by doubling, copying the module text each time.
-                        let wrapper_source = [prefix.as_str(), &text, &suffix].concat();
-                        // The wrapper holds the text now, so the file is released before
-                        // compiling it.
-                        drop(file_text);
+                        // The wrapper is built in the file's own buffer: growing a large one
+                        // remaps its pages, where a second copy of typescript.js (9 MB) was
+                        // briefly resident beside it. Its byte-order mark and `#!` line are
+                        // what the prefix replaces.
+                        let body_start = file_text.len() - text.len();
+                        let mut wrapper_source = file_text.into_owned();
+                        wrapper_source.reserve_exact(prefix.len() + suffix.len());
+                        wrapper_source.replace_range(..body_start, &prefix);
+                        wrapper_source.push_str(&suffix);
                         let wrapper = match evaluate_wrapper(context, &prefix, &wrapper_source, &key, is_main) {
                             Ok(wrapper) => wrapper,
                             Err(_) if declared.is_none()
-                                && source_kind(filename).map_err(RootedError::host)? == quench_runtime::SourceKind::Module =>
+                                && detect_source_kind(&wrapper_source[prefix.len()..wrapper_source.len() - suffix.len()])
+                                    == quench_runtime::SourceKind::Module =>
                             {
                                 drop(wrapper_source);
                                 return load_es_module(context, &key, module, filename, parent);

@@ -1302,7 +1302,7 @@ impl quench_runtime::Host for NodeHost {
         let source = if extension == "json" {
             commonjs::source_text(&bytes).into_owned()
         } else {
-            let kind = commonjs::source_kind_of_real(&path)?;
+            let kind = commonjs::source_kind_of_real_bytes(&path, &bytes)?;
             if kind == quench_runtime::SourceKind::Module {
                 String::from_utf8(bytes)
                     .map_err(|error| format!("module {} is not UTF-8: {error}", path.display()))?
