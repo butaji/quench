@@ -140,21 +140,35 @@ fn inline_directory(context: &mut Context<'_>) -> Result<PathBuf, RootedError> {
 
 /// Node's explicit extension/package parse-goal policy, before guest execution.
 pub(crate) fn source_kind(path: &Path) -> Result<quench_runtime::SourceKind, String> {
-    // Only a `.js` or extensionless file asks its package scope, which is its real path's.
+    let path = real_path_for_kind(path)?;
+    source_kind_of_real(&path)
+}
+
+/// The path whose package scope decides `path`'s goal: only a `.js` or extensionless file
+/// asks its package scope, which is its real path's.
+fn real_path_for_kind(path: &Path) -> Result<std::borrow::Cow<'_, Path>, String> {
     if matches!(path.extension().and_then(|extension| extension.to_str()), Some("js") | None) {
-        let path = crate::host::real_path::real_path(path).map_err(|error| error.to_string())?;
-        return source_kind_of_real(&path);
+        return crate::host::real_path::real_path(path).map(std::borrow::Cow::Owned).map_err(|error| error.to_string());
     }
-    source_kind_of_real(path)
+    Ok(std::borrow::Cow::Borrowed(path))
 }
 
 /// `source_kind` of a path that is already its real path, as a module the loader resolved.
 pub(crate) fn source_kind_of_real(path: &Path) -> Result<quench_runtime::SourceKind, String> {
+    match declared_source_kind(path)? {
+        Some(kind) => Ok(kind),
+        None => detect_source_kind(path),
+    }
+}
+
+/// The goal a real path's extension or package scope declares; none when Node's syntax
+/// detection of its text decides (`detect_source_kind`).
+fn declared_source_kind(path: &Path) -> Result<Option<quench_runtime::SourceKind>, String> {
     match path.extension().and_then(|extension| extension.to_str()) {
         // Node's `wasm` format is an ES module (`esm_wasm`).
-        Some("mjs" | "wasm") => return Ok(quench_runtime::SourceKind::Module),
-        Some("cjs" | "json" | "node") => return Ok(quench_runtime::SourceKind::Script),
-        Some(extension) if extension != "js" => return detect_source_kind(path),
+        Some("mjs" | "wasm") => return Ok(Some(quench_runtime::SourceKind::Module)),
+        Some("cjs" | "json" | "node") => return Ok(Some(quench_runtime::SourceKind::Script)),
+        Some(extension) if extension != "js" => return Ok(None),
         _ => {}
     }
     // Package scope is a filesystem/JSON question, not another resolution of
@@ -171,12 +185,9 @@ pub(crate) fn source_kind_of_real(path: &Path) -> Result<quench_runtime::SourceK
         let Some(explicit) = package_type(package)? else {
             continue;
         };
-        return match explicit {
-            Some(kind) => Ok(kind),
-            None => detect_source_kind(&path),
-        };
+        return Ok(explicit);
     }
-    detect_source_kind(&path)
+    Ok(None)
 }
 
 /// Node first accepts the CommonJS wrapper. Only syntax that cannot live in
@@ -2716,7 +2727,15 @@ fn load_with_resolution(
         }
         return get(context, cached, "exports");
     }
-    let is_esm = goal == EntryGoal::Node && source_kind(filename).map_err(RootedError::host)? == quench_runtime::SourceKind::Module;
+    // A file whose goal its text decides compiles as CommonJS first, as Node's loader does:
+    // only a wrapper that does not compile asks the text for ES module syntax, so a CommonJS
+    // file is parsed once, not again for detection (typescript.js: a 9 MB text's tree and
+    // tables, the peak of loading it).
+    let declared = match goal {
+        EntryGoal::Node => declared_source_kind(&real_path_for_kind(filename).map_err(RootedError::host)?)
+            .map_err(RootedError::host)?,
+        _ => Some(quench_runtime::SourceKind::Script),
+    };
     let is_main = parent.is_none() && context.host_mut().commonjs_entry.is_some();
     let module = module_record(context, filename, parent, is_main)?;
     if let Some(parent) = parent {
@@ -2730,17 +2749,9 @@ fn load_with_resolution(
         let name = context.string_rooted(&key);
         set(context, directory, specifier, name)?;
     }
-    if is_esm {
-        let retained = context.retain(module)?;
-        roots.borrow_mut().active_esm_requires.insert(key.clone(), retained);
-    }
     let result = (|| {
-        if is_esm {
-            let exports = require_es_module(context, filename, parent)?;
-            set(context, module, "exports", exports)?;
-            let loaded = context.boolean(true);
-            set(context, module, "loaded", loaded)?;
-            return Ok(exports);
+        if declared == Some(quench_runtime::SourceKind::Module) {
+            return load_es_module(context, &key, module, filename, parent);
         }
         if filename.extension().and_then(|extension| extension.to_str()) == Some("node") {
             // Module._extensions['.node']: process.dlopen(module, filename).
@@ -2879,13 +2890,16 @@ const getLinkedBinding = () => ({});
                         // The wrapper holds the text now, so the file is released before
                         // compiling it.
                         drop(file_text);
-                        let wrapper = evaluate_wrapper(
-                            context,
-                            &prefix,
-                            &wrapper_source,
-                            &key,
-                            is_main,
-                        )?;
+                        let wrapper = match evaluate_wrapper(context, &prefix, &wrapper_source, &key, is_main) {
+                            Ok(wrapper) => wrapper,
+                            Err(_) if declared.is_none()
+                                && source_kind(filename).map_err(RootedError::host)? == quench_runtime::SourceKind::Module =>
+                            {
+                                drop(wrapper_source);
+                                return load_es_module(context, &key, module, filename, parent);
+                            }
+                            Err(error) => return Err(error),
+                        };
                         // The compiled program keeps its own source; the module body runs
                         // inside this call, so the wrapper is released before it.
                         drop(wrapper_source);
@@ -2945,10 +2959,8 @@ const getLinkedBinding = () => ({});
         set(context, module, "loaded", loaded)?;
         Ok(exports)
     })();
-    if is_esm {
-        if let Some(retained) = roots.borrow_mut().active_esm_requires.remove(&key) {
-            context.release_root(retained);
-        }
+    if let Some(retained) = roots.borrow_mut().active_esm_requires.remove(&key) {
+        context.release_root(retained);
     }
     if result.is_err() {
         cache.remove(context, &key)?;
@@ -2980,6 +2992,24 @@ const getLinkedBinding = () => ({});
         }
     }
     result
+}
+
+/// `require` of an ES module: `module` is active until `load_with_resolution` finishes, so a
+/// cycle back to it is the error Node reports.
+fn load_es_module(
+    context: &mut Context<'_>,
+    key: &str,
+    module: RootId,
+    filename: &Path,
+    parent: Option<RootId>,
+) -> Result<RootId, RootedError> {
+    let retained = context.retain(module)?;
+    context.host_mut().shared_state().borrow_mut().active_esm_requires.insert(key.to_owned(), retained);
+    let exports = require_es_module(context, filename, parent)?;
+    set(context, module, "exports", exports)?;
+    let loaded = context.boolean(true);
+    set(context, module, "loaded", loaded)?;
+    Ok(exports)
 }
 
 /// A CommonJS module's executed text: its file without a byte-order mark or a leading
