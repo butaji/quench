@@ -11220,6 +11220,11 @@ fn lane_native_value<H: Host>(
         FunctionKind::Native(
             native @ (Native::RegExpExec | Native::RegExpTest | Native::StringReplace),
         ) => lane_regexp_call(cx, ip, i, native, callee, receiver, args),
+        // A generator's resumption runs its body, guest code that no in-place shortcut of
+        // `lane_string_or_native_call` makes.
+        FunctionKind::Native(
+            native @ (Native::GeneratorNext | Native::GeneratorReturn | Native::GeneratorThrow),
+        ) => lane_call_native(cx, ip, native, callee, receiver, args),
         FunctionKind::Native(native) => lane_string_or_native_call(cx, ip, native, callee, receiver, args),
         // Only natives run from the lane (`lane_call_native`).
         _ => None,
