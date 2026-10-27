@@ -450,6 +450,8 @@ fn vector_memory_boundaries_preserve_traps_effects_and_growth() {
     use quench_runtime::{ExecutionMode, WasmValue::I32};
     for offset in [0u32, 1, 17, u32::MAX] {
         let source = format!(r#"(module
+          (type $grow_type (func (result i32)))
+          (table funcref (elem $grow))
           (memory 1 2)
           (func (export "load") (param i32) (result i32)
             local.get 0 v128.load offset={offset} align=1 i32x4.extract_lane 0)
@@ -464,7 +466,8 @@ fn vector_memory_boundaries_preserve_traps_effects_and_growth() {
           (func (export "fill") i32.const 65504 i32.const 102 i32.const 32 memory.fill)
           (func $grow (export "grow") (result i32) i32.const 1 memory.grow)
           (func (export "grow_load") (param i32) (result i32)
-            call $grow drop local.get 0 v128.load offset={offset} align=1 i32x4.extract_lane 0)
+            i32.const 0 call_indirect (type $grow_type) drop
+            local.get 0 v128.load offset={offset} align=1 i32x4.extract_lane 0)
         )"#);
         let engine = crate::Engine::new().compile_wat(&source).unwrap();
         for mode in [ExecutionMode::Interpreted, ExecutionMode::Compiled] {
