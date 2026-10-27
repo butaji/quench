@@ -6401,7 +6401,7 @@ fn lane_loop_run<H: Host>(
     // SAFETY: `r` and `machine` are the running lane activation's storage and VM; the
     // callback executes no guest code, allocates nothing, and retains no VM references.
     let outcome = unsafe {
-        code.run::<H>(r.0, entry, machine, program, site.function, (*cx).frame, interrupt)
+        code.run::<H>(r.0, entry, region, machine, program, site.function, (*cx).frame, interrupt)
     };
     if site.diagnostics {
         site.native_entry_attempts

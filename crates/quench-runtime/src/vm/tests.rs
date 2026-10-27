@@ -11987,6 +11987,119 @@ fn shared_osr_stores_guarded_numeric_own_fields_in_a_loop() {
 
 #[test]
 #[cfg(not(quench_profiled))]
+fn shared_osr_append_growth_refreshes_aliases_and_recovers_gc_debt() {
+    let source = r#"
+      function growAliases(a, b, reader, count) {
+        let sum = 0;
+        for (let i = a.length; i < count; i++) {
+          if (i % 2 === 1) a[i] = i + 3;
+          else a[i] = i + 7;
+          b[0] = i * 3;
+          sum = (sum + reader[0] + a[i]) | 0;
+        }
+        return sum;
+      }
+      let checksum = 0;
+      for (let call = 0; call < 32; call++) {
+        const a = [1, 2, 3, 4];
+        checksum = (checksum + growAliases(a, a, a, 3000)) | 0;
+      }
+      print(checksum);
+      globalThis.growthSeed = [1, 2, 3, 4];
+    "#;
+    let program = Engine::specialize(source, "osr-append-alias-gc.js").unwrap();
+    let function_id = program.functions.iter().position(|function| {
+        function.header().name.is_some_and(|name| &program.atoms[name as usize] == "growAliases")
+    }).unwrap();
+    let expected = Rc::new(RefCell::new(Vec::new()));
+    let mut interpreter = Vm::new(TestHost::writing_to(expected.clone()));
+    interpreter.execute(&program).unwrap();
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    vm.set_execution_mode(crate::ExecutionMode::Compiled);
+    vm.programs.enable_js_jit_diagnostics();
+    vm.execute(&program).unwrap();
+    assert_eq!(*output.borrow(), *expected.borrow());
+    let native_runs = |vm: &Vm<TestHost>| {
+        vm.programs.lane_views(super::program_store::ProgramId::MAIN).unwrap()
+            .get(function_id).and_then(super::program_store::derived_lane_view).unwrap()
+            .osr_diagnostics().native_region_runs
+    };
+    let before_runs = native_runs(&vm);
+    assert!(before_runs > 0, "aliasing growth must execute natively");
+    vm.collect_now(&program);
+    let function_atom = vm.intern_atom("growAliases");
+    let function = vm.own_property(vm.realm.globals, function_atom).unwrap();
+    let seed_atom = vm.intern_atom("growthSeed");
+    let seed = vm.own_property(vm.realm.globals, seed_atom).unwrap();
+    let epoch = vm.heap.collection_epoch();
+    vm.heap.make_collection_due_after_growth_for_test();
+    let result = vm.call_value(&program, function, Value::UNDEFINED,
+        &[seed, seed, seed, Value::integer(6000)]).unwrap();
+    let expected_sum: i32 = (4..6000).map(|i| i * 3 + i + if i & 1 == 1 { 3 } else { 7 }).sum();
+    assert_eq!(result, Value::integer(expected_sum));
+    assert!(native_runs(&vm) > before_runs, "growth after debt must retain native reachability");
+    assert!(vm.heap.collection_epoch() > epoch, "growth debt must reach a rooted VM safepoint");
+    let elements = vm.heap.record_array(seed).unwrap().elements();
+    assert_eq!(elements.len(), 6000);
+    assert_eq!(elements[0], Value::integer(5999 * 3));
+    assert_eq!(elements[5999], Value::integer(6002));
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
+fn shared_osr_append_growth_preserves_key_effects_and_rejected_receivers() {
+    let source = r#"
+      function writeAt(a, key) {
+        'use strict';
+        let count = 0;
+        for (let i = 0; i < 128; i++) { count++; a[key] = i; }
+        return count;
+      }
+      let total = 0;
+      for (let warm = 0; warm < 32; warm++) total += writeAt([1, 2], 2);
+      let calls = 0;
+      const a = [1, 2];
+      const key = { toString() { calls++; $262.gc(); return '2'; } };
+      print(writeAt(a, key) + ',' + calls + ',' + a[2]);
+      const marker = {};
+      let throws = 0;
+      try { writeAt(a, { toString() { throws++; $262.gc(); throw marker; } }); }
+      catch (error) { print(error === marker); }
+      print(throws);
+      for (const key of [-1, 1.5, -0, 2147483647]) {
+        const target = [3, 4];
+        print(writeAt(target, key) + ',' + target[key]);
+      }
+      for (const target of [Object.freeze([1, 2]), Object.preventExtensions([1, 2])]) {
+        try { writeAt(target, 2); print('missed throw'); }
+        catch (error) { print(error instanceof TypeError); }
+      }
+      let setters = 0;
+      const inherited = [1, 2];
+      Object.setPrototypeOf(inherited, { set 2(value) { setters++; if (value === 7) throw marker; } });
+      try { writeAt(inherited, 2); }
+      catch (error) { print((error === marker) + ',' + setters); }
+      const original = [1, 2];
+      const copy = original.slice();
+      writeAt(copy, 2);
+      print(original.length + ',' + copy.length + ',' + copy[2]);
+    "#;
+    let program = Engine::specialize(source, "osr-append-key-effects.js").unwrap();
+    let expected = Rc::new(RefCell::new(Vec::new()));
+    let mut interpreter = Vm::new(TestHost::writing_to(expected.clone()).with_test262());
+    interpreter.execute(&program).unwrap();
+    assert_eq!(expected.borrow().as_slice(), ["128,128,127", "true", "1", "128,127", "128,127", "128,127", "128,127", "true", "true", "true,8", "2,3,127"]);
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()).with_test262());
+    vm.set_execution_mode(crate::ExecutionMode::Compiled);
+    vm.programs.enable_js_jit_diagnostics();
+    vm.execute(&program).unwrap();
+    assert_eq!(*output.borrow(), *expected.borrow());
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
 fn shared_osr_appends_and_fills_holes_in_place() {
     // The loops append at the length while the backing has room and fill holes below it.
     // Once a prototype holds an index, the entry declines, and the setter it defines runs.

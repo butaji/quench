@@ -1,4 +1,4 @@
-//! The loop tier: Cranelift code for a hot loop whose body makes no guest call or allocation,
+//! The loop tier: Cranelift code for a hot loop whose body makes no guest call or collection,
 //! entered at its backward jump in compiled execution. Effectful instructions can form
 //! exact-PC boundaries: native code writes back its live state and the existing lane runs
 //! the instruction and all following semantics.
@@ -23,9 +23,10 @@
 //! - every backward jump polls host termination, exiting at the jump so the interpreter's
 //!   safepoint runs.
 //!
-//! Native code before an effect boundary allocates, collects, and runs no guest code, so
-//! arrays, element storage, and captures it reads stay as they are. An effect boundary exits
-//! before those assumptions can be invalidated.
+//! Native code runs no guest code or collection. A guarded capacity helper can relocate
+//! array element storage, refreshing all aliased entry views before native code continues.
+//! Collection debt exits with live values restored before the VM can collect. Other effect
+//! boundaries exit before their effects.
 
 use crate::bytecode::{
     FieldBase, FieldLayout, FieldLookup, FieldSite, Function, ImmediateLayout, ImmediateRole, InstructionField, Op, Operand,
@@ -1234,7 +1235,7 @@ pub(crate) struct LoopEntry {
 
 /// The longest array a region indexes: a negative `i32` index zero-extends past it, so one
 /// unsigned comparison bounds every `i32` index.
-const MAX_INDEXED_LENGTH: usize = i32::MAX as usize;
+pub(super) const MAX_INDEXED_LENGTH: usize = i32::MAX as usize;
 /// The first record word counts executions of the region's own backward edge when shared
 /// GeneralDispatch pricing is enabled.
 const ENTRY_BACKEDGE_COUNT: usize = 0;
@@ -1304,6 +1305,22 @@ impl LoopEntry {
         self.push(length as u64);
         self.push(capacity.min(MAX_INDEXED_LENGTH) as u64);
         Some(())
+    }
+
+    /// Refresh every runtime alias after a no-GC backing reallocation. Length is
+    /// unchanged by reserve; read views may safely retain their conservative entry bound.
+    pub(super) fn refresh_array_backing(&mut self, region: &LoopRegion, old: *mut Value, elements: *mut Value, length: usize, capacity: usize) {
+        let start = ENTRY_CAPTURES + region.captures.len() + region.fields.len();
+        for index in 0..region.arrays.len() {
+            let base = start + ARRAY_WORDS * index;
+            debug_assert!(base + ARRAY_WORDS <= self.length);
+            // SAFETY: lane_loop_entry initialized all array words before native execution.
+            if unsafe { self.words[base].assume_init() } == old.addr() as u64 {
+                self.words[base].write(elements.addr() as u64);
+                self.words[base + 1].write(length as u64);
+                self.words[base + 2].write(capacity.min(MAX_INDEXED_LENGTH) as u64);
+            }
+        }
     }
 
     /// A warmed own-data field slot guarded by the VM during entry setup.
@@ -2738,6 +2755,7 @@ struct Fact {
 struct ArrayView {
     identity: ir::Value,
     elements: ir::Value,
+    entry_index: usize,
     access: ArrayAccess,
 }
 
@@ -2749,7 +2767,7 @@ enum ArrayAccess {
     Read { length: ir::Value },
     /// A written array's length is its backing's, which an append within `capacity`
     /// advances (`Lowering::store_index`): every array of one backing reads it alike.
-    Written { capacity: ir::Value },
+    Written,
 }
 
 /// An element index as an access uses it: a 64-bit index scaled by the element size, plus a
@@ -3882,7 +3900,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
             let base = arrays_start + ARRAY_WORDS * index;
             let elements = self.word(base);
             let access = if array.written {
-                ArrayAccess::Written { capacity: self.word(base + 2) }
+                ArrayAccess::Written
             } else {
                 ArrayAccess::Read { length: self.word(base + 1) }
             };
@@ -3892,7 +3910,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
                     types::I64, flags(), self.registers, i32::from(array.register) * WORD_BYTES,
                 ),
             };
-            self.arrays.insert(array.register, ArrayView { identity, elements, access });
+            self.arrays.insert(array.register, ArrayView { identity, elements, entry_index: base, access });
         }
         for index in 0..self.region.captures.len() {
             let bits = self.word(ENTRY_CAPTURES + index);
@@ -4752,12 +4770,23 @@ impl<'a, 'b> Lowering<'a, 'b> {
         self.guard(pc, beyond);
     }
 
+    /// A capacity helper may relocate a backing shared by several entry views. Reload
+    /// the authoritative entry word across calls; read-only regions keep their old fast path.
+    fn array_elements(&mut self, array: ArrayView) -> ir::Value {
+        if self.region.arrays.iter().any(|array| array.written) {
+            self.word(array.entry_index)
+        } else {
+            array.elements
+        }
+    }
+
     /// `array`'s length as an `i64`.
     fn length(&mut self, array: ArrayView) -> ir::Value {
         match array.access {
             ArrayAccess::Read { length } => length,
-            ArrayAccess::Written { .. } => {
-                let length = self.body.builder.ins().load(types::I32, flags(), array.elements, crate::heap::LENGTH_FROM_VALUES);
+            ArrayAccess::Written => {
+                let elements = self.array_elements(array);
+                let length = self.body.builder.ins().load(types::I32, flags(), elements, crate::heap::LENGTH_FROM_VALUES);
                 self.body.builder.ins().uextend(types::I64, length)
             }
         }
@@ -4771,7 +4800,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
         if self.proved(pc) {
             return;
         }
-        let ArrayAccess::Written { capacity } = array.access else {
+        let ArrayAccess::Written = array.access else {
             unreachable!("a region stores only into arrays it writes")
         };
         let length = self.length(array);
@@ -4785,11 +4814,29 @@ impl<'a, 'b> Lowering<'a, 'b> {
         self.body.builder.seal_block(append);
         let past = self.body.builder.ins().icmp(IntCC::NotEqual, index, length);
         self.guard(pc, past);
+        let capacity = self.word(array.entry_index + 2);
         let full = self.body.builder.ins().icmp(IntCC::UnsignedGreaterThanOrEqual, length, capacity);
-        self.guard(pc, full);
+        let grow = self.cold_block();
+        let ready = self.body.builder.create_block();
+        self.body.builder.ins().brif(full, grow, &[], ready, &[]);
+        self.body.builder.switch_to_block(grow);
+        self.body.builder.seal_block(grow);
+        let operation = self.body.builder.ins().iconst(types::I64, super::OSR_RESERVE_ARRAY_APPEND as i64);
+        let context = self.body.core.context;
+        let call = self.body.builder.ins().call_indirect(
+            self.callout_signature, self.callout,
+            &[context, operation, array.identity, self.result],
+        );
+        let status = self.body.builder.inst_results(call)[0];
+        let miss = self.body.builder.ins().icmp_imm_u(IntCC::NotEqual, status, 0);
+        self.guard(pc, miss);
+        self.body.builder.ins().jump(ready, &[]);
+        self.body.builder.switch_to_block(ready);
+        self.body.builder.seal_block(ready);
         let grown = self.body.builder.ins().iadd_imm_s(length, 1);
         let word = self.body.builder.ins().ireduce(types::I32, grown);
-        self.body.builder.ins().store(flags(), word, array.elements, crate::heap::LENGTH_FROM_VALUES);
+        let elements = self.array_elements(array);
+        self.body.builder.ins().store(flags(), word, elements, crate::heap::LENGTH_FROM_VALUES);
         self.body.builder.ins().jump(join, &[]);
         // The join's other predecessor is the append, which `current` dominates.
         self.chains.insert(join, chain);
@@ -5300,7 +5347,8 @@ impl<'a, 'b> Lowering<'a, 'b> {
                         element
                     }
                 };
-                let (address, displacement) = self.element_address(array.elements, element);
+                let elements = self.array_elements(array);
+                let (address, displacement) = self.element_address(elements, element);
                 // A hole is tagged, so unboxing sends it to the general path too. A Float64
                 // element loads straight into a float register.
                 let value = match representation {
@@ -5335,7 +5383,8 @@ impl<'a, 'b> Lowering<'a, 'b> {
                 let key = self.register(instruction.register_c());
                 let (index, element) = self.element_index(pc, key);
                 self.store_index(pc, array, index);
-                let (address, displacement) = self.element_address(array.elements, element);
+                let elements = self.array_elements(array);
+                let (address, displacement) = self.element_address(elements, element);
                 // A hole takes the value as an own data element: the entry found no prototype
                 // that holds an index (`LoopRegion::arrays`).
                 let value = self.register(instruction.register_a());

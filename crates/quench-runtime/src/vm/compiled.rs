@@ -3354,6 +3354,8 @@ type OsrProbeCallout = unsafe extern "C" fn(*mut CallContext, u64, u64, *mut u64
 
 #[repr(C)]
 struct OsrProbePayload {
+    region: *const LoopRegion,
+    entry: *mut LoopEntry,
     function: u32,
     frame: usize,
     program: Option<Rc<ResidualProgram>>,
@@ -3363,8 +3365,12 @@ struct OsrProbePayload {
 /// The OSR probe's first word is otherwise a cache site, which is bounded by `u16`.
 /// `u64::MAX` selects an initialized frame-owned local read; the second word is its slot.
 const OSR_INITIALIZED_LOCAL_READ: u64 = u64::MAX;
+/// Reserve one dense append without storing a value or collecting.
+const OSR_RESERVE_ARRAY_APPEND: u64 = u64::MAX - 1;
 
-/// A no-guest-effect JavaScript OSR helper. For a field probe, `receiver_bits` is passed in
+/// A no-guest-effect JavaScript OSR helper. Capacity reserve may relocate a backing but
+/// never stores a guest value or collects; it refreshes all entry aliases and exits on debt.
+/// For a field probe, `receiver_bits` is passed in
 /// the ABI's arguments word as a raw `Value` and the first word is its cache site. For an
 /// initialized-local read, the first word is `OSR_INITIALIZED_LOCAL_READ` and the second is
 /// a local slot. A miss returns before a guest-visible operation runs.
@@ -3387,6 +3393,20 @@ unsafe extern "C" fn osr_probe<H: Host>(
         let payload = unsafe { &*context_ref.adapter_payload.cast::<OsrProbePayload>() };
         let program = payload.program.as_deref()?;
         let vm = unsafe { &mut *context_ref.vm.cast::<Vm<H>>() };
+        if cache_site == OSR_RESERVE_ARRAY_APPEND {
+            let receiver = Value::from_bits(receiver_bits);
+            let (old, elements, length, capacity) = vm.reserve_native_array_append(receiver, osr_loop::MAX_INDEXED_LENGTH)?;
+            // SAFETY: both pointers refer to the current synchronous native invocation.
+            // No guest code or collector ran, so all entry identities remain rooted and live.
+            unsafe { (&mut *payload.entry).refresh_array_backing(&*payload.region, old, elements, length, capacity) };
+            let due = vm.heap.should_collect();
+            if payload.diagnostics_enabled && std::env::var_os("QUENCH_JS_JIT_TRACE_OSR_REJECT").is_some() {
+                eprintln!("QUENCH_JS_JIT_OSR_ARRAY_RESERVE function={} length={length} capacity={capacity} gc_due={due}", payload.function);
+            }
+            // Collection is never performed with native SSA values unrooted. A debt exit
+            // writes live values back at this SetIndex before the VM performs its store.
+            return (!due).then_some(Value::UNDEFINED);
+        }
         if cache_site == OSR_INITIALIZED_LOCAL_READ {
             if vm.lane_has_activations()
                 || vm.frames.get(payload.frame).is_none_or(|frame| frame.function != payload.function)
@@ -5100,12 +5120,14 @@ impl CompiledOsrRegion {
     /// # Safety
     /// `registers` is the running activation's register file, at least `Function::registers`
     /// long; `entry` was built for this region from the current values of its arrays and
-    /// captures, which nothing changes while the call runs; `vm` and `interrupt` belong to
+    /// captures. Capacity helpers may refresh array backing words without collecting;
+    /// `vm` and `interrupt` belong to
     /// this lane activation, which excludes other mutable VM access while native code runs.
     pub(super) unsafe fn run<H: Host>(
         &self,
         registers: *mut crate::value::Value,
         entry: &mut LoopEntry,
+        region: &LoopRegion,
         vm: *mut Vm<H>,
         program: ProgramId,
         function: u32,
@@ -5122,6 +5144,8 @@ impl CompiledOsrRegion {
             (vm.programs.get(program), vm.programs.js_jit_diagnostics_enabled())
         };
         let mut payload = OsrProbePayload {
+            region,
+            entry,
             function,
             frame,
             program: program_data,

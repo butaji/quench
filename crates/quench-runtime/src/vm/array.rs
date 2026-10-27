@@ -707,6 +707,32 @@ impl<H: Host> Vm<H> {
         Some(Value::number(final_length as f64))
     }
 
+    /// Reserve one native append, with no guest store, coercion, call or collection.
+    /// The current native frame keeps the receiver rooted. The caller must refresh every
+    /// alias of the old backing and leave native code before collecting any accrued debt.
+    pub(super) fn reserve_native_array_append(&mut self, array: Value, indexed_limit: usize) -> Option<(*mut Value, *mut Value, usize, usize)> {
+        if self.heap.should_collect() {
+            return None;
+        }
+        let length = self.dense_array_length(array)?;
+        if length >= indexed_limit || !self.prototypes_hold_no_index(array) {
+            return None;
+        }
+        let object = self.heap.record_array_store_mut_unlogged(array, Value::integer(0))?;
+        let elements = object.elements_mut();
+        if elements.owner_count() != 1 {
+            return None;
+        }
+        let elements = super::index::mutable_array_elements(elements);
+        let old = elements.as_mut_ptr();
+        let before = elements.capacity();
+        elements.reserve(1);
+        let backing = elements.as_mut_ptr();
+        let capacity = elements.capacity();
+        self.heap.charge_payload_growth((capacity - before) * size_of::<Value>());
+        Some((old, backing, length, capacity))
+    }
+
     /// `array[length] = value` on a dense array (`dense_array_length`) as one append, when
     /// no prototype claims the index (`inherited_index_unclaimed`).
     pub(super) fn append_dense_element(&mut self, this: Value, index: usize, value: Value) -> bool {
