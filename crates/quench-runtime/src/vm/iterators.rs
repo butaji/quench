@@ -3534,21 +3534,30 @@ impl<H: Host> Vm<H> {
     }
 
     pub(super) fn iterator_result(&mut self, value: Value, done: bool) -> Result<Value, JsError> {
-        let shape = match self.iterator_result_shape {
-            Some(shape) => shape,
-            None => {
-                // `ITERATOR_RESULT_VALUE_SLOT` and `ITERATOR_RESULT_DONE_SLOT` name these slots.
-                let atoms = [self.runtime_atoms.value, self.runtime_atoms.done];
-                let shape = self.literal_shape(&atoms);
-                self.iterator_result_shape = Some(shape);
-                shape
+        let prototype = self.realm_object_prototype(self.realm.globals);
+        // Its two slots are the inline ones, so the header of the realm's prototype and the
+        // shape, derived once, makes every result (`Heap::alloc_object_from_header`).
+        const _: () = assert!(crate::value_vec::INLINE_PROPERTY_COUNT == 2);
+        let header = match self.iterator_result_header {
+            Some((derived_for, header)) if derived_for == prototype => header,
+            cached => {
+                let shape = match cached {
+                    Some((_, header)) => header.shape(),
+                    None => {
+                        // `ITERATOR_RESULT_VALUE_SLOT` and `ITERATOR_RESULT_DONE_SLOT` name these slots.
+                        let atoms = [self.runtime_atoms.value, self.runtime_atoms.done];
+                        self.literal_shape(&atoms)
+                    }
+                };
+                let header = crate::heap::InlineObjectHeader::of(prototype, shape);
+                self.iterator_result_header = Some((prototype, header));
+                header
             }
         };
-        let prototype = self.realm_object_prototype(self.realm.globals);
-        Ok(self.heap.alloc_object_with_properties(
+        Ok(self.heap.alloc_object_from_header(
+            header,
             prototype,
-            shape,
-            &[value, if done { Value::TRUE } else { Value::FALSE }],
+            [value, if done { Value::TRUE } else { Value::FALSE }],
         ))
     }
 }

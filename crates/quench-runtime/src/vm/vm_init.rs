@@ -154,7 +154,7 @@ impl<H: Host> Vm<H> {
             closure_shapes: [None; 2],
             resolver_function_shape: None,
             closure_templates: Box::new([None; CLOSURE_TEMPLATES]),
-            iterator_result_shape: None,
+            iterator_result_header: None,
             reused_iterator_result: Value::UNDEFINED,
             descriptor_shapes: [None; 2],
             descriptor_layout: None,
