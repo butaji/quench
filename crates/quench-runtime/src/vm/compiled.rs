@@ -10321,6 +10321,26 @@ fn displacement_base(base: *mut u8) -> Option<i32> {
     i32::try_from(base as usize).ok()
 }
 
+/// The bytes of the unshared memory `binding` names and their guard reservation, if any,
+/// read under one borrow: a native entry needs both (`run_compiled_inner`). `None` when the
+/// memory is shared or its bytes are borrowed by a suspended host access, which the general
+/// path reports exactly.
+fn memory_and_guard<H: Host>(
+    vm: &Vm<H>,
+    binding: Value,
+) -> Option<((*mut u8, usize), Option<(*mut u8, usize)>)> {
+    let Some(Cell::WasmMemory { bytes, .. }) = vm.heap.get(binding) else {
+        return None;
+    };
+    let crate::wasm::memory::MemoryStorage::Unshared(state) = &**bytes else {
+        return None;
+    };
+    let mut state = state.try_borrow_mut().ok()?;
+    let guard = state.bytes.guard();
+    let view = (state.bytes.as_mut_ptr(), state.bytes.len());
+    (!view.0.is_null()).then_some((view, guard))
+}
+
 fn guarded_memory<H: Host>(vm: &Vm<H>, binding: Value) -> Option<(*mut u8, usize)> {
     memory_bytes(vm, binding, crate::wasm::memory::LinearBytes::guard)
 }
@@ -12878,8 +12898,7 @@ impl<H: Host> Vm<H> {
             let (base, length, guard, memory_binding) = match compiled.memory_slot {
                 Some(slot) => {
                     let binding = self.heap.environment_slot(env, slot as usize)?;
-                    let view = super::dispatch_fast::unshared_memory(self, binding)?;
-                    let guard = guarded_memory(self, binding);
+                    let (view, guard) = memory_and_guard(self, binding)?;
                     // Code compiled without bounds checks needs this memory's guard.
                     if compiled.guarded && guard.is_none() {
                         return None;

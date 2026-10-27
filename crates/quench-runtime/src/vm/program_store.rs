@@ -1516,6 +1516,12 @@ impl ProgramStore {
         self.entry(id)?.wasm_signatures.as_deref()
     }
 
+    /// The program's signature pool, shared: a caller that runs the program keeps its
+    /// signatures and declarations borrowed across the call without copying them.
+    pub(crate) fn wasm_signatures_shared(&self, id: ProgramId) -> Option<Rc<crate::wasm::WasmSignatures>> {
+        self.entry(id)?.wasm_signatures.clone()
+    }
+
     pub(crate) fn insert_module(&mut self, program: ResidualProgram) -> Option<ProgramId> {
         let id = self.insert(program)?;
         if let Some(entry) = self.entry_mut(id) {
