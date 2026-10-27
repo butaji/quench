@@ -736,6 +736,12 @@
       this[socketSymbol] = socket;
       this.server = owner;
       this.type = 'server';
+      // Node installs this internal listener on every server session. It
+      // consumes the session error and forwards it through the server's
+      // `sessionError` event, so a normal peer reset does not become an
+      // uncaught EventEmitter error when applications do not listen on the
+      // individual session.
+      this.on('error', (error) => this.server.emit('sessionError', error, this));
       this.closed = false;
       this.destroyed = false;
       this._id = binding.newSession(true);
