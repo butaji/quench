@@ -14172,6 +14172,11 @@ mod tests {
         #[derive(Clone, Copy, Debug)]
         enum Shape { Rotate, DistinctInputs, SignedRight, NonComplementaryShift }
         let isa = super::super::jit_backend::target_isa("speed").unwrap();
+        // A baseline x86-64 target has no optional SSSE3: it must retain
+        // the existing shifts/OR lowering while producing the same values.
+        let baseline = cranelift_codegen::isa::lookup(isa.triple().clone())
+            .unwrap().finish(isa.flags().clone()).unwrap();
+        for isa in [isa, baseline] {
         let cases = [0, 1, 2, u32::MAX as u64, 1 << 32, 1 << 63, i64::MAX as u64, u64::MAX, 0x0123_4567_89ab_cdef, 0xaaaa_5555_aaaa_5555];
         for rotate in 0..u64::BITS {
             for reversed in [false, true] {
@@ -14235,6 +14240,7 @@ mod tests {
                     }
                 }
             }
+        }
         }
     }
 

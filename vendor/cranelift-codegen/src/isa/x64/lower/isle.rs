@@ -1463,6 +1463,22 @@ impl Context for IsleContext<'_, '_, MInst, X64Backend> {
         None
     }
 
+    fn byte_rotate_i64x2_mask(&mut self, left: u8, right: u8) -> Option<VecMask> {
+        let lane_bits = u64::BITS as u8;
+        let byte_bits = u8::BITS as u8;
+        if right == 0 || right >= lane_bits || u16::from(left) + u16::from(right) != u16::from(lane_bits)
+            || !right.is_multiple_of(byte_bits)
+        {
+            return None;
+        }
+        let lane_bytes = lane_bits / byte_bits;
+        let vector_bytes = types::I64X2.bytes() as u8;
+        Some((0..vector_bytes).map(|index| {
+            let lane_base = index / lane_bytes * lane_bytes;
+            lane_base + (index + right / byte_bits) % lane_bytes
+        }).collect())
+    }
+
     #[inline]
     fn shuffle_0_31_mask(&mut self, mask: &VecMask) -> VCodeConstant {
         let mask = mask
