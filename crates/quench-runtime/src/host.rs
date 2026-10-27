@@ -136,7 +136,7 @@ pub trait Host {
     /// code generator) differs from the code that ran before it.
     fn before_native_compilation(&mut self) {}
 
-    /// A JavaScript native compilation has finished: the code generator's code and its
+    /// A native compilation has finished: the code generator's code and its
     /// scratch memory, freed by now, are no longer needed while the program runs on.
     fn after_native_compilation(&mut self) {}
 

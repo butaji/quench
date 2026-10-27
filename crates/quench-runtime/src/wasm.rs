@@ -1021,6 +1021,51 @@ mod tests {
     use super::*;
 
     #[test]
+    fn wasm_compilation_lifecycle_balances_attempts_and_skips_cached_calls() {
+        for (ty, value) in [
+            (WasmType::I32, WasmValue::I32(37)),
+            // Native entry signatures do not support V128; the rejected
+            // attempt must still complete its lifecycle before fallback.
+            (WasmType::V128, WasmValue::V128(u128::MAX - 37)),
+        ] {
+            let function = Engine::lower_wasm_module(
+                "compilation lifecycle",
+                0,
+                [WasmFunctionBody {
+                    ty: WasmCallableType::Embedded(WasmSignature {
+                        params: vec![ty],
+                        results: vec![ty],
+                    }),
+                    locals: vec![],
+                    operators: [Operator::LocalGet { local_index: 0 }, Operator::End]
+                        .into_iter()
+                        .map(Ok),
+                }],
+            )
+            .unwrap();
+            let events = Rc::new(std::cell::RefCell::new(Vec::new()));
+            let host =
+                crate::test_host::TestHost::default().with_compilation_events(Rc::clone(&events));
+            let mut runtime = crate::Runtime::new(host);
+            let instance = runtime.instantiate_wasm(&function).unwrap();
+            assert_eq!(
+                runtime.invoke_wasm(&instance, 0, &[value]).unwrap(),
+                Some(value)
+            );
+            assert!(events.borrow().is_empty());
+            runtime.set_execution_mode(crate::ExecutionMode::Compiled);
+            for _ in 0..2 {
+                assert_eq!(
+                    runtime.invoke_wasm(&instance, 0, &[value]).unwrap(),
+                    Some(value)
+                );
+                assert_eq!(&*events.borrow(), &["before", "after"], "{ty:?}");
+            }
+        }
+    }
+
+
+    #[test]
     fn lowering_rejects_invalid_control_structure_and_stack_domains() {
         for operators in [
             vec![Operator::Else, Operator::End],

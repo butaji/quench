@@ -36,6 +36,7 @@ pub(crate) struct TestHost {
     resolve: Option<Resolve>,
     module_source: Option<fn(&ModuleSource) -> bool>,
     state: Rc<dyn Any>,
+    compilation_events: Option<Rc<RefCell<Vec<&'static str>>>>,
 }
 
 impl Default for TestHost {
@@ -48,11 +49,19 @@ impl Default for TestHost {
             resolve: None,
             module_source: None,
             state: Rc::new(()),
+            compilation_events: None,
         }
     }
 }
 
 impl TestHost {
+    pub(crate) fn with_compilation_events(self, events: Rc<RefCell<Vec<&'static str>>>) -> Self {
+        Self {
+            compilation_events: Some(events),
+            ..self
+        }
+    }
+
     /// A host that writes into `lines`.
     pub(crate) fn writing_to(lines: Rc<RefCell<Vec<String>>>) -> Self {
         Self { lines, ..Self::default() }
@@ -108,6 +117,18 @@ impl TestHost {
 }
 
 impl Host for TestHost {
+    fn before_native_compilation(&mut self) {
+        if let Some(events) = &self.compilation_events {
+            events.borrow_mut().push("before");
+        }
+    }
+
+    fn after_native_compilation(&mut self) {
+        if let Some(events) = &self.compilation_events {
+            events.borrow_mut().push("after");
+        }
+    }
+
     fn write_line(&mut self, text: &str) {
         self.lines.borrow_mut().push(text.to_owned());
     }
