@@ -1275,7 +1275,9 @@
         (x64_punpcklwd lo hi)))
 
 ;; Special case for `i64x2.extmul_low_i32x4_u`.
-(rule 1 (lower (imul (multi_lane 64 2) (uwiden_low _ (and (value_type (multi_lane 32 4))
+;; Prefer the widening pattern even with AVX-512: pmuludq consumes the 32-bit
+;; lanes directly, avoiding two extensions and a full-width vpmullq.
+(rule 4 (lower (imul (multi_lane 64 2) (uwiden_low _ (and (value_type (multi_lane 32 4))
                                               x))
                              (uwiden_low _ (and (value_type (multi_lane 32 4))
                                               y))))
