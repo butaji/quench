@@ -45,7 +45,7 @@ flattening, the property arena and collection entries are not yet charged.
 
 `MemoryPolicy` (`heap/pacing.rs`, TOD-167) is the one authority for how a
 runtime trades memory for speed. A runtime chooses it once, at startup
-(`Runtime::set_memory_policy`), and it decides two things:
+(`Runtime::set_memory_policy`), and it decides, among others:
 
 | | `Throughput` (default) | `MemoryFirst` |
 |---|---|---|
@@ -55,6 +55,7 @@ runtime trades memory for speed. A runtime chooses it once, at startup
 | Full-collection minimum | 2^18 | 384 |
 | Allocation-cap back-off after unproductive fulls | up to 2 doublings | none |
 | Pages returned at collection boundaries | no | read-only and free heap pages |
+| Wasm IR held by compile workers at once (`WASM_COMPILE_INSTRUCTIONS_IN_FLIGHT`) | unbounded | 50,000 instructions |
 
 The throughput table is the JetStream lane's. The other lanes' measurements
 (npm, Score, web) bound each of its values; the doc comments on the constants

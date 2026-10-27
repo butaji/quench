@@ -10435,14 +10435,33 @@ fn compile_built(
 /// alive at once (each holds its whole body's IR) to a few per worker.
 const BUILT_FUNCTIONS_QUEUED_PER_WORKER: usize = 2;
 
+/// The Cranelift IR instructions the compile workers may hold at once, queued and compiling,
+/// under each memory policy (`MemoryPolicy`). Every worker holds its function's whole IR and
+/// Cranelift's working set grows with it, so the parallel compile of a whole module peaks
+/// with the functions in flight; a function heavier than the bound compiles alone. A bound
+/// on the count of queued functions did not move the peak (one queued per worker instead
+/// of two, memory-first `--jit`, tsf-wasm 43.5-44.5 MB either way).
+/// Memory-first bounds them at 50,000, about a third of tsf-wasm's 157k (its largest function
+/// 53.6k). JetStream `--jit`, memory-first, unpinned x86_64, 4 cores, median of 6,
+/// 2026-10-27: tsf-wasm max RSS 46.6 -> 42.0 MB, Score 23.2 -> 22.1, First 11.2 -> 10.0;
+/// sqlite3-wasm 73.6 -> 58.4 MB, Score 16.7 -> 16.2, First 2.96 -> 2.80. Throughput keeps
+/// every worker fed (unbounded; the same rows, median of 8, were unchanged).
+const WASM_COMPILE_INSTRUCTIONS_IN_FLIGHT: [Option<usize>; crate::MemoryPolicy::ALL.len()] =
+    [None, Some(50_000)];
+
+/// The compile result of the function at an index, with its instruction count, which leaves
+/// the in-flight bound when the result arrives.
+type CompiledBuilt = (usize, usize, Option<(Vec<u8>, Vec<Call>)>);
+
 /// Each of `count` functions' compiled body, by index, from the built functions `build`
 /// yields in any order: the building stays on this thread, which owns the VM, and the
 /// compiling, which needs only the function and the target, runs on one worker per
-/// available CPU. `None` when any function fails to build or compile, as the sequential
-/// artifact fails.
+/// available CPU, holding at most `policy`'s `WASM_COMPILE_INSTRUCTIONS_IN_FLIGHT`. `None`
+/// when any function fails to build or compile, as the sequential artifact fails.
 fn compile_built_functions(
     isa: &dyn cranelift_codegen::isa::TargetIsa,
     count: usize,
+    policy: crate::MemoryPolicy,
     build: impl Iterator<Item = Option<(usize, ir::Function)>>,
 ) -> Option<Vec<Option<(Vec<u8>, Vec<Call>)>>> {
     let workers = std::thread::available_parallelism()
@@ -10456,11 +10475,13 @@ fn compile_built_functions(
         }
         return Some(bodies);
     }
+    let bound = WASM_COMPILE_INSTRUCTIONS_IN_FLIGHT[policy as usize];
     let failed = std::sync::atomic::AtomicBool::new(false);
     let (work, queue) =
         std::sync::mpsc::sync_channel::<(usize, ir::Function)>(workers * BUILT_FUNCTIONS_QUEUED_PER_WORKER);
     let queue = std::sync::Mutex::new(queue);
-    let (done, results) = std::sync::mpsc::channel();
+    let (done, results) = std::sync::mpsc::channel::<CompiledBuilt>();
+    let mut place = |(index, _, body): CompiledBuilt| bodies[index] = body;
     let built_all = std::thread::scope(|scope| {
         for _ in 0..workers {
             let (queue, done, failed) = (&queue, done.clone(), &failed);
@@ -10468,28 +10489,40 @@ fn compile_built_functions(
                 loop {
                     let next = queue.lock().ok().and_then(|queue| queue.recv().ok());
                     let Some((index, func)) = next else { break };
-                    if failed.load(std::sync::atomic::Ordering::Relaxed) {
-                        continue;
+                    let instructions = func.dfg.num_insts();
+                    let body = if failed.load(std::sync::atomic::Ordering::Relaxed) {
+                        None
+                    } else {
+                        compile_built(isa, func)
+                    };
+                    if body.is_none() {
+                        failed.store(true, std::sync::atomic::Ordering::Relaxed);
                     }
-                    match compile_built(isa, func) {
-                        Some(body) => {
-                            let _ = done.send((index, body));
-                        }
-                        None => failed.store(true, std::sync::atomic::Ordering::Relaxed),
-                    }
+                    let _ = done.send((index, instructions, body));
                 }
             });
         }
         drop(done);
         let mut built_all = true;
+        // The instructions and the count of the functions sent and not yet compiled.
+        let (mut in_flight, mut pending) = (0, 0);
         for built in build {
-            let Some(built) = built else {
+            let Some((index, func)) = built else {
                 built_all = false;
                 break;
             };
-            if failed.load(std::sync::atomic::Ordering::Relaxed) || work.send(built).is_err() {
+            let instructions = func.dfg.num_insts();
+            while pending > 0 && bound.is_some_and(|bound| in_flight + instructions > bound) {
+                let Ok(result) = results.recv() else { break };
+                in_flight -= result.1;
+                pending -= 1;
+                place(result);
+            }
+            if failed.load(std::sync::atomic::Ordering::Relaxed) || work.send((index, func)).is_err() {
                 break;
             }
+            in_flight += instructions;
+            pending += 1;
         }
         drop(work);
         built_all
@@ -10497,9 +10530,7 @@ fn compile_built_functions(
     if !built_all || failed.into_inner() {
         return None;
     }
-    for (index, body) in results {
-        bodies[index] = Some(body);
-    }
+    results.into_iter().for_each(place);
     Some(bodies)
 }
 
@@ -12970,7 +13001,7 @@ impl<H: Host> Vm<H> {
             }
             Some((index, built?))
         });
-        let mut bodies = compile_built_functions(&*isa, count, build)?;
+        let mut bodies = compile_built_functions(&*isa, count, self.memory_policy(), build)?;
         for index in 0..count {
             if plans[index].is_none() {
                 continue;
