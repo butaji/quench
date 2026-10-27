@@ -374,6 +374,9 @@ impl<'a> Units<'a> {
             if start > last {
                 return None;
             }
+            if let [unit] = needle {
+                return memchr::memchr(*unit, &haystack[start..]).map(|offset| start + offset);
+            }
             return memchr::memmem::find(&haystack[start..], needle).map(|offset| start + offset);
         }
         let first = search.at(0);
@@ -1229,6 +1232,16 @@ impl JsString {
         }
         let mut parts = Vec::new();
         let mut cursor = 0;
+        if let (Units::Ascii(haystack), Units::Ascii(needle)) = (units, separator) {
+            // One searcher serves every match; occurrences come back non-overlapping, as split
+            // consumes them.
+            for offset in memchr::memmem::find_iter(haystack, needle) {
+                parts.push(Self::from_unit_run(units.slice(cursor..offset)));
+                cursor = offset + needle.len();
+            }
+            parts.push(Self::from_unit_run(units.slice(cursor..units.len())));
+            return parts;
+        }
         while let Some(offset) = units.find(separator, cursor) {
             parts.push(Self::from_unit_run(units.slice(cursor..offset)));
             cursor = offset + separator.len();

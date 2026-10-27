@@ -933,12 +933,14 @@ impl Native {
     /// (`Vm::materialize_deferred_lane`): `assert.deepEqual` calls `Object.prototype.toString`
     /// on every value it compares (10,210 materializations in the color-convert npm scenario),
     /// and TypeScript's CommonJS re-export helper (`__createBinding`) reads each export's
-    /// descriptor (208,883 in the typescript-eslint npm scenario).
+    /// descriptor (208,883 in the typescript-eslint npm scenario), and Express decodes each
+    /// query value with `decodeURIComponent` (one per request).
     pub(crate) fn runs_beside_activations(self) -> bool {
         matches!(
             self,
             Self::ObjectLiteralPrototype
                 | Self::ObjectKeys
+                | Self::ObjectAssign
                 | Self::ObjectDefineProperty
                 | Self::ObjectGetPrototypeOf
                 | Self::ObjectSetPrototypeOf
@@ -958,6 +960,10 @@ impl Native {
                 | Self::JsonParse
                 | Self::JsonStringify
                 | Self::ParseInt
+                | Self::EncodeUri
+                | Self::EncodeUriComponent
+                | Self::DecodeUri
+                | Self::DecodeUriComponent
                 | Self::ArrayShift
                 | Self::WeakMapSet
                 | Self::FinalizationRegistryRegister

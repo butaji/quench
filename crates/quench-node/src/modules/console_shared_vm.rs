@@ -206,7 +206,10 @@ fn sdk_keys_match(context: &mut NativeContext<'_, NodeHost>, keys: RootId) -> bo
 /// A writing method of the global console: `args` are the writer's index (`WRITERS`), bound
 /// ahead of the call's arguments.
 pub(crate) fn write(context: &mut NativeContext<'_, NodeHost>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
-    crate::host::resident_pages::release_before_output();
+    crate::host::resident_pages::around_output(|| write_line(context, args))
+}
+
+fn write_line(context: &mut NativeContext<'_, NodeHost>, args: &[RootId]) -> Result<RootId, RootedError> {
     let (&index, args) = args.split_first().ok_or_else(|| RootedError::host("console writer without its index"))?;
     let index = context.to_number(index)? as usize;
     let stream = *WRITERS.get(index).ok_or_else(|| RootedError::host("console writer index out of range"))?;
