@@ -59,6 +59,39 @@ fn collection_construction_survives_gc_in_iterator_and_entry_callbacks() {
 }
 
 #[test]
+fn whole_read_per_iteration_copies_keep_their_owners_slots() {
+    // Bindings enough that each iteration's copy of the script's root environment is sparse
+    // (`SPARSE_CLONE_MIN_SLOTS`); the root holds projections, so its copies are traced whole,
+    // and `eval` makes a closure read its chain whole.
+    const BINDINGS: usize = crate::heap::SPARSE_CLONE_MIN_SLOTS + 8;
+    let bindings = (0..BINDINGS).map(|index| format!("let a{index}={{v:{index}}};")).collect::<String>();
+    let source = format!(
+        r#"
+      {bindings}
+      const fs=[];
+      for (let i=0;i<4;i++) {{ const own={{i}}; fs.push(() => a5.v + a60.v + own.i + i, () => eval('a5.v + a60.v + own.i + i')); }}
+      $262.gc(); $262.gc();
+      const got=JSON.stringify(fs.map(f=>f()));
+      if (got!=='[65,65,67,67,69,69,71,71]') throw new Error(got);
+    "#
+    );
+    for specialized in [false, true] {
+        let mut vm = Vm::new(TestHost::default().with_test262());
+        let program = if specialized {
+            Engine::specialize(&source, "sparse-whole-read.js")
+        } else {
+            Engine::compile(crate::ExecutionRequest {
+                source: &source,
+                name: "sparse-whole-read.js",
+                kind: crate::SourceKind::Script,
+            })
+        }
+        .unwrap();
+        vm.execute(&program).unwrap();
+    }
+}
+
+#[test]
 fn array_definitions_reuse_accessor_slots_and_allow_frozen_same_values() {
     let source = r#"
       for(const index of [0,100000]) {
