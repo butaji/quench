@@ -2897,8 +2897,8 @@ impl<H: Host> Vm<H> {
         let local_slots = local_slots(root);
         let mut values = Vec::with_capacity(imports.len());
         for import in imports {
-            let module = &self
-                .host_resolved_module(referrer, &import.source)
+            let module_name = self
+                .resolved_module_name(referrer, &import.source)
                 .map_err(|error| self.module_load_error(p, error))?
                 .ok_or_else(|| self.type_error(p, "module import was not resolved".into()))?;
             let local = self
@@ -2910,13 +2910,16 @@ impl<H: Host> Vm<H> {
                 values.push((
                     local,
                     crate::vm::program_store::ModuleImport::Value(
-                        self.module_source_value(p, &module)?,
+                        {
+                            let module = self.imported_module(p, referrer, &import.source)?;
+                            self.module_source_value(p, &module)?
+                        },
                     ),
                 ));
                 continue;
             }
             let module_type = import.module_type.as_deref().unwrap_or("javascript");
-            let key = module_cache_key(&module.name, module_type);
+            let key = module_cache_key(&module_name, module_type);
             let outcome = self
                 .realm
                 .promise
@@ -2951,14 +2954,16 @@ impl<H: Host> Vm<H> {
                         pending_namespace
                     }
                     Some(ModuleOutcome::Pending(_))
-                        if self_import_referrer(referrer, &module.name) =>
+                        if self_import_referrer(referrer, &module_name) =>
                     {
+                        let module = self.imported_module(p, referrer, &import.source)?;
                         self.pending_self_import_namespace(p, &module, &key, pending_namespace)?
                     }
                     Some(ModuleOutcome::Errored(reason)) => {
                         return Err(JsError::thrown(reason, "module import failed".into()));
                     }
-                    None if self_import_referrer(referrer, &module.name) => {
+                    None if self_import_referrer(referrer, &module_name) => {
+                        let module = self.imported_module(p, referrer, &import.source)?;
                         match self.root_module_namespace(p, &module)? {
                             Some(namespace) => Some(namespace),
                             None => self.resolve_self_import_namespace(p, &module, active)?,
@@ -2971,7 +2976,7 @@ impl<H: Host> Vm<H> {
             };
             let Some(namespace) = namespace else {
                 if let crate::bytecode::ModuleImportName::Named(name) = &import.imported
-                    && Self::static_module_declares_export(&module, name) == Some(false)
+                    && Self::static_module_declares_export(&self.imported_module(p, referrer, &import.source)?, name) == Some(false)
                 {
                     return self
                         .missing_module_export(p, &import.source, name)
@@ -3349,9 +3354,27 @@ impl<H: Host> Vm<H> {
         }
         let module = self.host.resolve_dynamic_import(referrer, specifier)?;
         if let Some(module) = &module {
+            self.resolved_module_names.insert(key.clone(), module.name.clone());
             self.resolved_module_requests.insert(key, module.clone());
         }
         Ok(module)
+    }
+
+    /// The name of the module `host_resolved_module` resolves (referrer, specifier) to, from
+    /// the resolutions kept across collections when it has been resolved before.
+    fn resolved_module_name(&mut self, referrer: &str, specifier: &str) -> Result<Option<String>, crate::ModuleLoadError> {
+        let key = (referrer.to_owned(), specifier.to_owned());
+        if let Some(name) = self.resolved_module_names.get(&key) {
+            return Ok(Some(name.clone()));
+        }
+        Ok(self.host_resolved_module(referrer, specifier)?.map(|module| module.name))
+    }
+
+    /// The module an import of `p` resolves to, as an import binding needs it.
+    fn imported_module(&mut self, p: &ResidualProgram, referrer: &str, specifier: &str) -> Result<ModuleSource, JsError> {
+        self.host_resolved_module(referrer, specifier)
+            .map_err(|error| self.module_load_error(p, error))?
+            .ok_or_else(|| self.type_error(p, "module import was not resolved".into()))
     }
 
     fn resolve_module_request(

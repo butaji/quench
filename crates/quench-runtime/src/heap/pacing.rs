@@ -434,7 +434,7 @@ pub(super) const MEMORY_FIRST_PACING: GenerationalPacing = GenerationalPacing {
     // collection's back-off trades max RSS for fewer collections (v2-cloud-jet 551f170f7).
     maximum_cap_backoff: 0,
     survival_limit: SURVIVAL_SCALE / 2,
-    full_only_headroom: Ratio::new(1, 1),
+    full_only_headroom: MEMORY_FIRST_FULL_ONLY_HEADROOM,
     probe_interval: 4,
     weight_growth: Ratio::new(0, 1),
     minimum_external_budget: MEMORY_FIRST_MINIMUM_EXTERNAL_BUDGET,
@@ -457,6 +457,16 @@ const THROUGHPUT_MINIMUM_EXTERNAL_BUDGET: usize = 4 << 20;
 /// 1 MiB and 39.4-43.1 at 8 MiB); 256 KiB gave no lower peak. Memory-first trades the extra
 /// collections for it.
 const MEMORY_FIRST_MINIMUM_EXTERNAL_BUDGET: usize = 512 << 10;
+
+/// Memory-first lets half a live set of allocation pass between full collections once most of
+/// each young generation survives, not a whole one, which let the heap reach twice its live
+/// set. V8-v7 MemoryFirst, static x86_64 production build, 3 interleaved runs, worst max RSS /
+/// Score (2026-10-27): Splay 31668 -> 24792 KiB / 5388 -> 4617, EarleyBoyer 6704 -> 6072 /
+/// 4437 -> 3951, the six rows that stay generational unchanged; within the Score this table
+/// already trades for RSS (`YOUNG_MINIMUM_ALLOCATION`). A quarter cut Splay to 21596 KiB but
+/// its Score to 3411, and the TypeScript compiler on `@types/node` (live set about 70 MB)
+/// is within 1% either way at a half.
+const MEMORY_FIRST_FULL_ONLY_HEADROOM: Ratio = Ratio::new(1, 2);
 
 /// The fewest allocations between collections under memory-first, whatever survived: the
 /// pre-generational minimum headroom.
