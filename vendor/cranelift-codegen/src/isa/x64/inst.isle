@@ -3048,6 +3048,9 @@
 (decl x64_vpsraq_imm (XmmMem128 u8) Xmm)
 (rule (x64_vpsraq_imm src imm) (x64_vpsraq_f src imm))
 
+(decl x64_vprolq (XmmMem128 u8) Xmm)
+(rule (x64_vprolq src imm) (x64_vprolq_a src imm))
+
 ;; Helper for creating `pextr*` instructions.
 (decl x64_pextrb (Xmm u8) Gpr)
 (rule (x64_pextrb src lane) (x64_pextrb_a_or_avx src lane))

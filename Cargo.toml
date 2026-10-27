@@ -92,3 +92,4 @@ strip = "none"
 oxc_parser = { path = "vendor/oxc-parser" }
 oxc_regular_expression = { path = "vendor/oxc-regular-expression" }
 cranelift-codegen = { path = "vendor/cranelift-codegen" }
+cranelift-assembler-x64-meta = { path = "vendor/cranelift-assembler-x64-meta" }

@@ -496,6 +496,26 @@
                     (bitcast $I8X16 (little_or_native_endian _) (ishl $I64X2 x (u8_from_iconst 32)))
                     (bitcast $I8X16 (little_or_native_endian _) (ushr $I64X2 x (u8_from_iconst 32)))))
       (x64_pshufd (put_in_xmm x) 0xb1))
+
+;; Complementary logical shifts of the same lane value form a rotation.
+;; Keep the half-lane PSHUFD rules above higher priority, and retain the
+;; existing shift/OR lowering when the host lacks either EVEX feature.
+(decl pure partial i64_lane_rotate_left (u8 u8) u8)
+(extern constructor i64_lane_rotate_left i64_lane_rotate_left)
+(rule 8 (lower (bor $I8X16
+                   (bitcast $I8X16 (little_or_native_endian _) (ishl $I64X2 x (u8_from_iconst left)))
+                   (bitcast $I8X16 (little_or_native_endian _) (ushr $I64X2 x (u8_from_iconst right)))))
+      (if-let true (has_avx512f))
+      (if-let true (has_avx512vl))
+      (if-let amount (i64_lane_rotate_left left right))
+      (x64_vprolq (put_in_xmm x) amount))
+(rule 7 (lower (bor $I8X16
+                   (bitcast $I8X16 (little_or_native_endian _) (ushr $I64X2 x (u8_from_iconst right)))
+                   (bitcast $I8X16 (little_or_native_endian _) (ishl $I64X2 x (u8_from_iconst left)))))
+      (if-let true (has_avx512f))
+      (if-let true (has_avx512vl))
+      (if-let amount (i64_lane_rotate_left left right))
+      (x64_vprolq (put_in_xmm x) amount))
 (rule 9 (lower (bor $I8X16
                    (bitcast $I8X16 (little_or_native_endian _) (ushr $I64X2 x (u8_from_iconst 32)))
                    (bitcast $I8X16 (little_or_native_endian _) (ishl $I64X2 x (u8_from_iconst 32)))))
