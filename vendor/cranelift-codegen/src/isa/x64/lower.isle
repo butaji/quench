@@ -501,6 +501,24 @@
                    (bitcast $I8X16 (little_or_native_endian _) (ishl $I64X2 x (u8_from_iconst 32)))))
       (x64_pshufd (put_in_xmm x) 0xb1))
 
+;; Complementary shifts of the same i64 lanes are a rotation. Byte-aligned
+;; rotations can use one SSSE3 shuffle; keep the cheaper half-lane PSHUFD
+;; rules above at higher priority. Do not fold the source load into PSHUFB.
+(decl pure partial i64x2_rotate_byte_mask (u64 u64) u128)
+(extern constructor i64x2_rotate_byte_mask i64x2_rotate_byte_mask)
+(rule 8 (lower (bor $I8X16
+                   (bitcast $I8X16 (little_or_native_endian _) (ishl $I64X2 x (u8_from_iconst left)))
+                   (bitcast $I8X16 (little_or_native_endian _) (ushr $I64X2 x (u8_from_iconst right)))))
+      (if-let true (has_ssse3))
+      (if-let mask (i64x2_rotate_byte_mask left right))
+      (x64_pshufb (put_in_xmm x) (const_to_xmm_mem_128 (emit_u128_le_const mask))))
+(rule 7 (lower (bor $I8X16
+                   (bitcast $I8X16 (little_or_native_endian _) (ushr $I64X2 x (u8_from_iconst right)))
+                   (bitcast $I8X16 (little_or_native_endian _) (ishl $I64X2 x (u8_from_iconst left)))))
+      (if-let true (has_ssse3))
+      (if-let mask (i64x2_rotate_byte_mask left right))
+      (x64_pshufb (put_in_xmm x) (const_to_xmm_mem_128 (emit_u128_le_const mask))))
+
 ;; `{i,b}128`.
 
 (decl or_i128 (ValueRegs ValueRegs) ValueRegs)

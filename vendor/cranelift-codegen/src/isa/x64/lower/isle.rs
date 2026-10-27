@@ -1706,6 +1706,23 @@ impl Context for IsleContext<'_, '_, MInst, X64Backend> {
         XmmMemImm::unwrap_new(RegMemImm::imm(imm))
     }
 
+    fn i64x2_rotate_byte_mask(&mut self, left: u64, right: u64) -> Option<u128> {
+        let lane_bits = u64::BITS as u64;
+        let byte_bits = u8::BITS as u64;
+        if left == 0 || right == 0 || left.checked_add(right)? != lane_bits
+            || right % byte_bits != 0
+        {
+            return None;
+        }
+        let lane_bytes = std::mem::size_of::<u64>();
+        let rotation = (right / byte_bits) as usize;
+        let mask = std::array::from_fn::<_, { std::mem::size_of::<u128>() }, _>(|byte| {
+            let lane_start = byte / lane_bytes * lane_bytes;
+            (lane_start + (byte % lane_bytes + rotation) % lane_bytes) as u8
+        });
+        Some(u128::from_le_bytes(mask))
+    }
+
     fn insert_i8x16_lane_hole(&mut self, hole_idx: u8) -> VCodeConstant {
         let mask = -1i128 as u128;
         self.emit_u128_le_const(mask ^ (0xff << (hole_idx * 8)))
