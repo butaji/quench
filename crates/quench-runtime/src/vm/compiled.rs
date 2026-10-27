@@ -284,6 +284,25 @@ pub(super) fn emit_number_arithmetic_operation(
     operation.apply(&mut EmitArithmetic::<false> { builder }, left, right)
 }
 
+/// The shared Number remainder denotation, after the caller's Number guards.
+/// Native entries use the host calling convention. This pure scalar helper cannot
+/// enter the VM or collect, so it does not introduce an effect/recovery boundary.
+pub(super) fn emit_number_remainder(
+    builder: &mut FunctionBuilder<'_>,
+    pointer: ir::Type,
+    left: ir::Value,
+    right: ir::Value,
+) -> ir::Value {
+    let mut signature = Signature::new(builder.func.signature.call_conv);
+    signature.params.extend([AbiParam::new(types::F64), AbiParam::new(types::F64)]);
+    signature.returns.push(AbiParam::new(types::F64));
+    let signature = builder.import_signature(signature);
+    let address = super::operations::number_remainder as *const () as usize as i64;
+    let target = builder.ins().iconst(pointer, address);
+    let call = builder.ins().call_indirect(signature, target, &[left, right]);
+    builder.inst_results(call)[0]
+}
+
 pub(super) fn emit_number_unary_operation(
     builder: &mut FunctionBuilder<'_>,
     operation: super::operations::NumberUnary,

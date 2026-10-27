@@ -569,10 +569,18 @@ fn numeric_number_result(operator: BinaryOperator, left: f64, right: f64) -> f64
         return number_bitwise_f64_result(operation, left, right);
     }
     match operator {
-        BinaryOperator::Remainder => left % right,
+        BinaryOperator::Remainder => number_remainder(left, right),
         BinaryOperator::Exponential => exponentiate(left, right),
         _ => unreachable!("numeric operator table only contains numeric operators"),
     }
+}
+
+/// Number remainder after operand conversion. Also callable by the shared native
+/// emitter: no VM state, allocation, collection, guest effects, or integer traps.
+/// Floating remainder preserves negative zero and the Number NaN/infinity rules.
+#[inline]
+pub(super) extern "C" fn number_remainder(left: f64, right: f64) -> f64 {
+    left % right
 }
 
 #[cfg(test)]

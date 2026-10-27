@@ -11621,6 +11621,176 @@ fn js_jit_specialized_guard_misses_handoff_to_general_dispatch() {
 
 #[test]
 #[cfg(not(quench_profiled))]
+fn shared_osr_array_alias_lifetimes_preserve_coercion_throw_and_collection() {
+    let source = r#"
+      function expandWords(seed, count) {
+        const words = seed.slice();
+        const width = seed.length;
+        for (let i = width; i < count; i++) {
+          let value = words[i - 1];
+          if (i % width === 0) value = (value << 8) ^ (value >>> 24);
+          words[i] = words[i - width] ^ value;
+        }
+        return words[count - 1];
+      }
+      let checksum = 0;
+      for (let call = 0; call < 40; call++)
+        checksum = (checksum + expandWords([call + 1, 3, 7, 15], 65) * (call + 1)) | 0;
+      print(checksum);
+      let coercions = 0;
+      const value = { valueOf() { coercions++; $262.gc(); return 15; } };
+      print(expandWords([1, 3, 7, value], 8));
+      print(coercions);
+      const thrown = {};
+      let throws = 0;
+      let same = false;
+      try {
+        expandWords([1, 3, 7, { valueOf() { throws++; $262.gc(); throw thrown; } }], 8);
+      } catch (error) { same = error === thrown; }
+      print(throws);
+      print(same);
+      globalThis.lifetimeSeed = [1, 3, 7, 15];
+      print(expandWords(lifetimeSeed, 65));
+    "#;
+    let program = Engine::specialize(source, "osr-array-alias-lifetimes.js").unwrap();
+    let function_id = program.functions.iter().position(|function| {
+        function.header().name.is_some_and(|name| &program.atoms[name as usize] == "expandWords")
+    }).unwrap();
+    let expected = Rc::new(RefCell::new(Vec::new()));
+    let mut interpreter = Vm::new(TestHost::writing_to(expected.clone()).with_test262());
+    interpreter.execute(&program).unwrap();
+    assert_eq!(expected.borrow().as_slice(), ["2080387084", "3850", "3", "1", "true", "16777231"]);
+
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()).with_test262());
+    vm.set_execution_mode(crate::ExecutionMode::Compiled);
+    vm.programs.enable_js_jit_diagnostics();
+    vm.execute(&program).unwrap();
+    assert_eq!(*output.borrow(), *expected.borrow());
+    let native_runs = |vm: &Vm<TestHost>| {
+        vm.programs.lane_views(super::program_store::ProgramId::MAIN).unwrap()
+            .get(function_id).and_then(super::program_store::derived_lane_view).unwrap()
+            .osr_diagnostics().native_region_runs
+    };
+    let before = native_runs(&vm);
+    assert!(before > 0, "array/numeric lifetime loop must execute a native body");
+    vm.collect_now(&program);
+    let function_atom = vm.intern_atom("expandWords");
+    let function = vm.own_property(vm.realm.globals, function_atom).unwrap();
+    let seed_atom = vm.intern_atom("lifetimeSeed");
+    let seed = vm.own_property(vm.realm.globals, seed_atom).unwrap();
+    let result = vm.call_value(&program, function, Value::UNDEFINED, &[seed, Value::number(65.0)]).unwrap();
+    assert_eq!(result, Value::number(expected.borrow().last().unwrap().parse().unwrap()));
+    assert!(native_runs(&vm) > before, "native entry must recover after collection");
+    // Check native recovery before growth exits exhaust the unchanged tier budget,
+    // then exercise that budget and its interpreter continuation without resetting it.
+    for _ in 0..200 {
+        assert_eq!(vm.call_value(&program, function, Value::UNDEFINED,
+            &[seed, Value::number(65.0)]).unwrap(), result);
+    }
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
+fn shared_osr_remainder_preserves_number_edges_and_coercion() {
+    let source = r#"
+      function remainderLoop(left, right) {
+        let result = 0;
+        for (let i = 0; i < 64; i++) result = left % right;
+        return result;
+      }
+      for (let i = 0; i < 100; i++) remainderLoop(7, 3);
+      const pairs = [[-4, 2], [-0, 3], [4, -2], [1, 0], [1, -0],
+        [Infinity, 2], [-Infinity, 2], [2, Infinity], [-2, -Infinity],
+        [NaN, 2], [2, NaN], [-2147483648, -1], [0.5, 0.2], [5.5, 2]];
+      const results = [];
+      for (const pair of pairs) {
+        const value = remainderLoop(pair[0], pair[1]);
+        results.push(Object.is(value, -0) ? '-0' : String(value));
+      }
+      print(results.join(','));
+      let calls = 0;
+      print(remainderLoop({valueOf() {calls++; return 7;}}, 3));
+      print(calls);
+    "#;
+    let program = Engine::specialize(source, "osr-remainder-number-edges.js").unwrap();
+    let function_id = program.functions.iter().position(|function| {
+        function.header().name.is_some_and(|name| &program.atoms[name as usize] == "remainderLoop")
+    }).unwrap();
+    for compiled in [false, true] {
+        let output = Rc::new(RefCell::new(Vec::new()));
+        let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+        if compiled {
+            vm.set_execution_mode(crate::ExecutionMode::Compiled);
+            vm.programs.enable_js_jit_diagnostics();
+        }
+        vm.execute(&program).unwrap();
+        assert_eq!(output.borrow().as_slice(), [
+            "-0,-0,0,NaN,NaN,NaN,NaN,2,-2,NaN,NaN,-0,0.09999999999999998,1.5", "1", "64",
+        ]);
+        if compiled {
+            let views = vm.programs.lane_views(super::program_store::ProgramId::MAIN).unwrap();
+            let diagnostics = views.get(function_id).and_then(super::program_store::derived_lane_view)
+                .unwrap().osr_diagnostics();
+            assert!(diagnostics.native_region_runs > 0, "remainder must run natively: {diagnostics:?}");
+        }
+    }
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
+fn shared_osr_number_comparison_results_are_booleans() {
+    let source = r#"
+      function compareLoop(left, right) {
+        let answer = false;
+        let count = 0;
+        for (let i = 0; i < 2000; i++) {
+          answer = left === right || left < right;
+          if (answer) count++;
+        }
+        return [answer, count];
+      }
+      print(JSON.stringify(compareLoop(1, 2)));
+      print(JSON.stringify(compareLoop(0, -0)));
+      print(JSON.stringify(compareLoop(NaN, NaN)));
+      print(JSON.stringify(compareLoop(Infinity, 2)));
+      let calls = 0;
+      print(JSON.stringify(compareLoop({valueOf() {calls++; return 1;}}, 2)));
+      print(calls);
+      const thrown = {};
+      let throws = 0;
+      let same = false;
+      try { compareLoop({valueOf() {throws++; throw thrown;}}, 2); }
+      catch (error) {same = error === thrown;}
+      print(throws);
+      print(same);
+    "#;
+    let program = Engine::specialize(source, "osr-number-comparison-results.js").unwrap();
+    let function_id = program.functions.iter().position(|function| {
+        function.header().name.is_some_and(|name| &program.atoms[name as usize] == "compareLoop")
+    }).unwrap();
+    for compiled in [false, true] {
+        let output = Rc::new(RefCell::new(Vec::new()));
+        let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+        if compiled {
+            vm.set_execution_mode(crate::ExecutionMode::Compiled);
+            vm.programs.enable_js_jit_diagnostics();
+        }
+        vm.execute(&program).unwrap();
+        assert_eq!(output.borrow().as_slice(), [
+            "[true,2000]", "[true,2000]", "[false,0]", "[false,0]", "[true,2000]", "2000", "1", "true",
+        ]);
+        if compiled {
+            let views = vm.programs.lane_views(super::program_store::ProgramId::MAIN).unwrap();
+            let diagnostics = views.get(function_id).and_then(super::program_store::derived_lane_view)
+                .unwrap().osr_diagnostics();
+            assert!(diagnostics.native_region_runs > 0, "comparison results must run natively: {diagnostics:?}");
+        }
+    }
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
 fn shared_osr_compiles_a_guarded_numeric_field_loop() {
     let source = r#"
       function sum(item) {
