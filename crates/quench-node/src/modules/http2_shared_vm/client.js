@@ -562,6 +562,10 @@
       session.destroyed = true;
       binding.closeSession(nativeId);
       for (const stream of session._streams.values()) {
+        if (stream._writableState && !stream._writableState.ending && !stream._responseEnded && !stream.readableEnded && !stream.aborted) {
+          stream.aborted = true;
+          stream.emit('aborted');
+        }
         stream.push(null);
         stream.destroy();
       }

@@ -1047,6 +1047,10 @@
       }
       for (const stream of this._streams.values()) {
         if (!stream._h2Closed) {
+          if (!stream._writableState.ending && !stream.aborted) {
+            stream.aborted = true;
+            stream.emit('aborted');
+          }
           stream._h2Closed = true;
           if (!stream.readableEnded) stream.push(null);
           stream.emit('close');
