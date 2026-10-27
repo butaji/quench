@@ -11987,6 +11987,74 @@ fn shared_osr_stores_guarded_numeric_own_fields_in_a_loop() {
 
 #[test]
 #[cfg(not(quench_profiled))]
+fn shared_osr_numeric_mask_branches_preserve_conversion_and_nested_reads() {
+    let source = r#"
+      function maskedScan(values, mask) {
+        let sum = 0;
+        const length = values.length;
+        for (let i = 0; i < length; i++) if (values[i] & mask) sum++;
+        return sum;
+      }
+      function nestedSelect(rows, values, output, count) {
+        let sum = 0;
+        for (let i = count; i; i--) {
+          let value = values[i & 3 ? i : i - 4];
+          let result = i <= 4 || count - i < 4 ? value
+            : rows[0][value & 3] ^ rows[1][(value >>> 2) & 3];
+          output[count - i] = result;
+          sum = (sum + result) | 0;
+        }
+        return sum;
+      }
+      const values = [];
+      for (let i = 0; i < 64; i++) values.push(i);
+      let checksum = 0;
+      for (let call = 0; call < 100; call++) {
+        checksum += maskedScan(values, 3);
+        checksum += nestedSelect([[1,3,5,7], [11,13,17,19]], values, [], 64);
+      }
+      print(checksum);
+      print(maskedScan([-0, NaN, Infinity, -Infinity, 0.5, -1.5, 2147483647,
+        2147483648, 4294967295, 4294967296, 1e30, -1e30], 3));
+      let order = '';
+      const left = { valueOf() { order += 'L'; $262.gc(); return 7; } };
+      const right = { valueOf() { order += 'R'; $262.gc(); return 3; } };
+      print(maskedScan([left, left], right));
+      print(order);
+      const thrown = {};
+      let same = false;
+      try { maskedScan([left], { valueOf() { order += 'X'; throw thrown; } }); }
+      catch (error) { same = error === thrown; }
+      print(same);
+      print(order);
+      print(maskedScan([0n, 1n, 2n], 1n));
+      let mixed = false;
+      try { maskedScan([1n], 1); } catch (error) { mixed = error instanceof TypeError; }
+      print(mixed);
+    "#;
+    let program = Engine::specialize(source, "osr-numeric-mask-branch.js").unwrap();
+    let expected = Rc::new(RefCell::new(Vec::new()));
+    let mut interpreter = Vm::new(TestHost::writing_to(expected.clone()).with_test262());
+    interpreter.execute(&program).unwrap();
+    assert_eq!(expected.borrow().as_slice(), ["114000", "3", "2", "LRLR", "true", "LRLRLX", "1", "true"]);
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()).with_test262());
+    vm.set_execution_mode(crate::ExecutionMode::Compiled);
+    vm.programs.enable_js_jit_diagnostics();
+    vm.execute(&program).unwrap();
+    assert_eq!(*output.borrow(), *expected.borrow());
+    for name in ["maskedScan", "nestedSelect"] {
+        let function_id = program.functions.iter().position(|function| {
+            function.header().name.is_some_and(|atom| &program.atoms[atom as usize] == name)
+        }).unwrap();
+        let diagnostics = vm.programs.lane_views(super::program_store::ProgramId::MAIN).unwrap()
+            .get(function_id).and_then(super::program_store::derived_lane_view).unwrap().osr_diagnostics();
+        assert!(diagnostics.native_region_runs > diagnostics.exits + 10, "{name}: {diagnostics:?}");
+    }
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
 fn shared_osr_nested_array_reads_reload_receivers_and_preserve_effects() {
     let source = r#"
       function nestedGrow(rows, target, count, key) {

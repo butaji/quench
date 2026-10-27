@@ -1401,6 +1401,14 @@ fn arithmetic(instruction: Op, operator: u32) -> Option<Arithmetic> {
         .map(Arithmetic::Int32)
 }
 
+/// Fused numeric mask truthiness. Other arithmetic/heap truthiness stays on its
+/// existing path; both operands must satisfy the region's Number guards.
+fn bitwise_condition(instruction: WideInstruction) -> Option<NumberBitwise> {
+    (instruction.op() == Op::JumpBinaryFalse).then_some(())?;
+    NumberBitwise::from_operator(instruction.binary_operator_field())
+        .filter(|operation| *operation == NumberBitwise::And)
+}
+
 fn number_comparison(instruction: WideInstruction) -> Option<super::super::operations::NumberRelation> {
     (instruction.op() == Op::Binary)
         .then(|| super::super::operations::NumberRelation::from_operator(instruction.binary_operator()))
@@ -1733,7 +1741,13 @@ fn admit_lifetime_roles(
             field(InstructionField::B, instruction.b())?,
             field(InstructionField::C, instruction.c())?, instruction.imm()));
     }
-    let mut region = admit_register_roles(analysis, roots.len(), constants, &[], None, None, header, &BTreeSet::new()).ok()?;
+    let mut region = admit_register_roles(analysis, roots.len(), constants, &[], None, None, header, &BTreeSet::new())
+        .map_err(|failure| {
+            if std::env::var_os("QUENCH_JS_JIT_TRACE_OSR_REJECT").is_some() {
+                eprintln!("QUENCH_JS_JIT_OSR_LIFETIME_REJECT header={header} failure={failure:?}");
+            }
+            failure
+        }).ok()?;
     let tagged_entries = (0..flow.entry_count()).filter_map(|entry| {
         region.tagged.contains(identities.get(&values.find(entry))?)
             .then(|| flow.entry_register(entry)).flatten()
@@ -2227,7 +2241,7 @@ fn admit(
             } else if super::super::operations::NumberRelation::from_operator(
                 instruction.binary_operator_field(),
             )
-            .is_some()
+            .is_some() || bitwise_condition(instruction).is_some()
             {
                 admission.source(instruction.operand_b())?;
                 admission.source(instruction.operand_c())?;
@@ -5495,7 +5509,14 @@ impl<'a, 'b> Lowering<'a, 'b> {
                 }
                 let left = self.operand(instruction.operand_b())?;
                 let right = self.operand(instruction.operand_c())?;
-                let holds = self.relation(operator, left, right)?;
+                let holds = if let Some(operation) = bitwise_condition(instruction) {
+                    let left = self.int32(pc, left);
+                    let right = self.int32(pc, right);
+                    let bits = super::emit_number_bitwise_bits(&mut self.body.builder, operation, left, right);
+                    self.body.builder.ins().icmp_imm_u(IntCC::NotEqual, bits, 0)
+                } else {
+                    self.relation(operator, left, right)?
+                };
                 self.branch(pc, instruction.jump_target(), holds, false)
             }
             Op::JumpFalse | Op::JumpTrue => {
@@ -5560,6 +5581,18 @@ fn unary_operand(dfg: &ir::DataFlowGraph, value: ir::Value, opcode: ir::Opcode) 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn osr_numeric_bitwise_and_branch_is_lowerable() {
+        let branch = WideInstruction::new(Op::JumpBinaryFalse,
+            BinaryOperator::BitwiseAnd as u16, Operand::register(0).0,
+            Operand::register(1).0, 2);
+        let region = admit_region(vec![branch,
+            WideInstruction::new(Op::IncDec, 0, 0, 0, 1),
+            WideInstruction::new(Op::Jump, 0, 0, 0, 0),
+        ], 2, &[], &[], None, None, 0, &Default::default());
+        assert!(region.is_ok(), "fused numeric AND branch: {:?}", region.err());
+    }
 
     #[test]
     fn osr_lifetime_nested_receiver_read_does_not_snapshot_overwritten_slot() {
