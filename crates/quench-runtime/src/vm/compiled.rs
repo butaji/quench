@@ -13353,6 +13353,12 @@ impl<H: Host> Vm<H> {
             && self.programs.note_wasm_module_entry(program)
             && self.programs.claim_wasm_module_escalation(program)
         {
+            // The module's code is about to run natively, so the interpreter's views of it go
+            // first, and the compile reuses their memory, unless a frame of it is on the stack,
+            // whose lane run may hold their records. An interpreted run derives them again.
+            if !self.frames.iter().any(|frame| frame.program == program) {
+                self.programs.release_lane_views(program);
+            }
             let started = jit_diagnostics_enabled().then(std::time::Instant::now);
             let compiled = self.compile_program(program, env).map(Rc::new);
             if let Some(started) = started {

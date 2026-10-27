@@ -13,6 +13,16 @@ pub(super) fn constant(value: &StringLiteral<'_>) -> Constant {
     )
 }
 
+/// Whether `value` is well-formed Unicode, the `Constant::String` that `constant` makes: always
+/// without an escape, whose value is the literal's own UTF-8 text, else when its decoded units
+/// hold no lone surrogate. It allocates nothing for an escape-free literal, as a property key's
+/// test (`FunctionCompiler::static_key`) needs on every quoted key.
+pub(super) fn is_well_formed(value: &StringLiteral<'_>) -> bool {
+    value.raw.as_ref().is_none_or(|raw| {
+        !raw.as_str().contains('\\') || char::decode_utf16(decode_units(raw.as_str(), true)).all(|unit| unit.is_ok())
+    })
+}
+
 pub(super) fn template_constant(value: &TemplateElementValue<'_>) -> Constant {
     from_raw(
         Some(value.raw.as_str()),
