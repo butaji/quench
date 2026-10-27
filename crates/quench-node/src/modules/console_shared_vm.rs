@@ -229,9 +229,9 @@ fn write_line(context: &mut NativeContext<'_, NodeHost>, args: &[RootId]) -> Res
 }
 
 /// The line an SDK writer writes to `stream` for `args`, when it needs no format specifier, no
-/// colors and no `inspect` beyond a primitive's (`formatWithOptions`: a lone string as it is;
-/// strings as they are, other primitives as `formatPrimitive` with default options), joined
-/// by spaces.
+/// colors and no `inspect` beyond what `inspect_primitive` and `inspect_flat` reproduce
+/// (`formatWithOptions`: a lone string as it is; strings as they are, every other argument
+/// as `inspect` with default options), joined by spaces.
 fn plain_line(context: &mut NativeContext<'_, NodeHost>, stream: Stream, args: &[RootId]) -> Result<Option<String>, RootedError> {
     use quench_runtime::ValueType;
     if let [first, _, ..] = args {
@@ -240,34 +240,189 @@ fn plain_line(context: &mut NativeContext<'_, NodeHost>, stream: Stream, args: &
             return Ok(None);
         }
     }
+    let inspected = args.iter().any(|&arg| context.value_type_rooted(arg) != Some(ValueType::String));
+    if inspected && (cached(context, INSPECT_LOADED).is_some() || may_colorize(context, stream)?) {
+        return Ok(None);
+    }
     let mut parts = Vec::with_capacity(args.len());
-    let mut inspected = false;
     for &arg in args {
         let part = match context.value_type_rooted(arg) {
             Some(ValueType::String) => context.string_text(arg)?,
-            Some(ValueType::Number) => {
-                inspected = true;
-                let number = context.to_number(arg)?;
-                // `formatNumber`: `-0` as itself, every other number as `${number}`.
-                Some(if number == 0.0 && number.is_sign_negative() { "-0".to_owned() } else { context.to_string(arg)? })
-            }
-            Some(ValueType::BigInt) => {
-                inspected = true;
-                Some(context.to_string(arg)? + "n")
-            }
-            Some(ValueType::Boolean | ValueType::Undefined | ValueType::Null) => {
-                inspected = true;
-                Some(context.to_string(arg)?)
-            }
-            _ => None,
+            Some(ValueType::Object) => inspect_flat(context, arg)?,
+            _ => inspect_primitive(context, arg)?,
         };
         let Some(part) = part else { return Ok(None) };
         parts.push(part);
     }
-    if inspected && (cached(context, INSPECT_LOADED).is_some() || may_colorize(context, stream)?) {
+    Ok(Some(parts.join(" ") + "\n"))
+}
+
+/// `formatPrimitive` with default options for a primitive other than a string; `None` for
+/// any other value.
+fn inspect_primitive(context: &mut NativeContext<'_, NodeHost>, value: RootId) -> Result<Option<String>, RootedError> {
+    use quench_runtime::ValueType;
+    Ok(match context.value_type_rooted(value) {
+        Some(ValueType::Number) => {
+            let number = context.to_number(value)?;
+            // `formatNumber`: `-0` as itself, every other number as `${number}`.
+            Some(if number == 0.0 && number.is_sign_negative() { "-0".to_owned() } else { context.to_string(value)? })
+        }
+        Some(ValueType::BigInt) => Some(context.to_string(value)? + "n"),
+        Some(ValueType::Boolean | ValueType::Undefined | ValueType::Null) => Some(context.to_string(value)?),
+        _ => None,
+    })
+}
+
+/// `inspectDefaultOptions.breakLength`: the width a container's entries share one line within.
+const BREAK_LENGTH: usize = 80;
+/// `reduceToSingleString`'s constant start, "next to all other factors that may reduce
+/// `breakLength`".
+const SINGLE_LINE_START: usize = 10;
+/// Arrays of more entries are grouped into columns (`groupArrayElements`), which this path
+/// does not reproduce.
+const MAX_UNGROUPED_ARRAY_ENTRIES: usize = 6;
+/// The indentation `formatProperty` adds for a container's entries.
+const ENTRY_INDENTATION: usize = 2;
+/// `formatPrimitive` splits a string into lines past `kMinLineLength` and past
+/// `breakLength - indentationLvl - STRING_LINE_RESERVE` characters.
+const MIN_LINE_LENGTH: usize = 16;
+const STRING_LINE_RESERVE: usize = 4;
+/// The internal brands `formatValue` and `formatRaw` test before a value's prototype: each
+/// is written its own way whatever its prototype, and a proxy is inspected through its target.
+const INSPECTED_BRANDS: [quench_runtime::BuiltinBrand; 18] = {
+    use quench_runtime::BuiltinBrand::*;
+    [
+        Proxy, External, Date, RegExp, NativeError, Promise, Map, Set, WeakMap, WeakSet,
+        AnyArrayBuffer, ArrayBufferView, ArgumentsObject, GeneratorObject, MapIterator,
+        SetIterator, ModuleNamespaceObject, BoxedPrimitive,
+    ]
+};
+/// The registry key of `util.inspect.custom`.
+const INSPECT_CUSTOM: &str = "nodejs.util.inspect.custom";
+/// `strEscape`'s default quote; a string holding it, a backslash, or a character outside
+/// printable ASCII would be escaped or quoted otherwise, which this path leaves to `inspect`.
+const SINGLE_QUOTE: char = '\'';
+const BACKSLASH: char = '\\';
+
+/// `inspect` with default options for a plain object, or an array of at most
+/// `MAX_UNGROUPED_ARRAY_ENTRIES`, whose own properties are enumerable data properties holding
+/// primitives (`formatRaw`, `formatProperty`, `reduceToSingleString`); `None` for any value
+/// whose output depends on more: a proxy, another prototype or constructor, a
+/// `Symbol.toStringTag` or `util.inspect.custom` member, a symbol, accessor or non-identifier
+/// key, a hole, a nested object or a string `strEscape` would change.
+fn inspect_flat(context: &mut NativeContext<'_, NodeHost>, value: RootId) -> Result<Option<String>, RootedError> {
+    use quench_runtime::ValueType;
+    for brand in INSPECTED_BRANDS {
+        if context.has_builtin_brand_rooted(value, brand)? {
+            return Ok(None);
+        }
+    }
+    let array = context.is_array_rooted(value)?;
+    let global = context.global_root()?;
+    let Some(constructor) = context.startup_data_property_rooted(global, if array { "Array" } else { "Object" }) else {
+        return Ok(None);
+    };
+    let Some(prototype) = context.startup_data_property_rooted(constructor, "prototype") else { return Ok(None) };
+    let actual_prototype = context.prototype_rooted(value)?;
+    if !context.strict_equal_rooted(actual_prototype, prototype)? {
         return Ok(None);
     }
-    Ok(Some(parts.join(" ") + "\n"))
+    // `getConstructorName`: the first `constructor` data property on the chain names it.
+    let constructor_key = context.string_rooted("constructor");
+    if context.own_property_fields_rooted(value, constructor_key)?.is_some() {
+        return Ok(None);
+    }
+    let named = context.own_property_fields_rooted(prototype, constructor_key)?.and_then(|fields| fields.value);
+    match named {
+        Some(named) if context.strict_equal_rooted(named, constructor)? => {}
+        _ => return Ok(None),
+    }
+    let Some(symbol) = context.startup_data_property_rooted(global, "Symbol") else { return Ok(None) };
+    let Some(tag) = context.startup_data_property_rooted(symbol, "toStringTag") else { return Ok(None) };
+    let Some(symbol_for) = context.startup_data_property_rooted(symbol, "for") else { return Ok(None) };
+    let custom_key = context.string_rooted(INSPECT_CUSTOM);
+    let custom = context.call_rooted(symbol_for, symbol, &[custom_key])?;
+    for holder in [value, prototype] {
+        for key in [tag, custom] {
+            if context.own_property_fields_rooted(holder, key)?.is_some() {
+                return Ok(None);
+            }
+        }
+    }
+    let keys = context.own_keys_rooted(value)?;
+    let mut entries = Vec::with_capacity(keys.len());
+    let length = if array {
+        let length_key = context.string_rooted("length");
+        let length = context.get_property_rooted(value, length_key)?;
+        let length = context.to_number(length)? as usize;
+        if length > MAX_UNGROUPED_ARRAY_ENTRIES {
+            return Ok(None);
+        }
+        length
+    } else {
+        0
+    };
+    for index in 0..length {
+        let key = context.string_rooted(&index.to_string());
+        let Some(entry) = flat_entry(context, value, key)? else { return Ok(None) };
+        entries.push(entry);
+    }
+    for key in keys {
+        if context.value_type_rooted(key) != Some(ValueType::String) {
+            return Ok(None);
+        }
+        let name = context.string_text(key)?.unwrap_or_default();
+        if array && (name == "length" || name.parse::<usize>().is_ok_and(|index| index < length)) {
+            continue;
+        }
+        let Some(fields) = context.own_property_fields_rooted(value, key)? else { continue };
+        if fields.enumerable != Some(true) {
+            continue;
+        }
+        // An array's other enumerable keys follow its elements; the path leaves them to
+        // `inspect`, as it leaves keys `keyStrRegExp` quotes and `__proto__`.
+        if array || !identifier_key(&name) || name == "__proto__" {
+            return Ok(None);
+        }
+        let Some(entry) = flat_entry(context, value, key)? else { return Ok(None) };
+        entries.push(format!("{name}: {entry}"));
+    }
+    let (open, close) = if array { ("[", "]") } else { ("{", "}") };
+    if entries.is_empty() {
+        return Ok(Some(format!("{open}{close}")));
+    }
+    // `isBelowBreakLength` with no indentation and no base.
+    let start = entries.len() + open.len() + SINGLE_LINE_START;
+    let below = entries.len() + start + entries.len() <= BREAK_LENGTH
+        && entries.iter().map(String::len).sum::<usize>() + entries.len() + start <= BREAK_LENGTH;
+    Ok(Some(if below {
+        format!("{open} {} {close}", entries.join(", "))
+    } else {
+        let indentation = " ".repeat(ENTRY_INDENTATION);
+        format!("{open}\n{indentation}{}\n{close}", entries.join(&format!(",\n{indentation}")))
+    }))
+}
+
+/// The entry `formatProperty` writes for the own data property `key` of `holder` holding a
+/// primitive: a string as `strEscape` quotes it, when that only adds the quotes.
+fn flat_entry(context: &mut NativeContext<'_, NodeHost>, holder: RootId, key: RootId) -> Result<Option<String>, RootedError> {
+    use quench_runtime::ValueType;
+    let Some(fields) = context.own_property_fields_rooted(holder, key)? else { return Ok(None) };
+    let (Some(value), None, None) = (fields.value, fields.get, fields.set) else { return Ok(None) };
+    if context.value_type_rooted(value) != Some(ValueType::String) {
+        return inspect_primitive(context, value);
+    }
+    let text = context.string_text(value)?.unwrap_or_default();
+    let split = text.len() > MIN_LINE_LENGTH && text.len() > BREAK_LENGTH - ENTRY_INDENTATION - STRING_LINE_RESERVE;
+    let plain = text.chars().all(|character| matches!(character, ' '..='~') && character != SINGLE_QUOTE && character != BACKSLASH);
+    Ok((plain && !split).then(|| format!("{SINGLE_QUOTE}{text}{SINGLE_QUOTE}")))
+}
+
+/// `keyStrRegExp`: a key `formatProperty` writes unquoted.
+fn identifier_key(key: &str) -> bool {
+    let mut characters = key.chars();
+    characters.next().is_some_and(|first| first.is_ascii_alphabetic() || first == '_')
+        && characters.all(|character| character.is_ascii_alphanumeric() || character == '_')
 }
 
 /// Whether the SDK console could colorize `stream` (`shouldColorize`): `FORCE_COLOR` is set
