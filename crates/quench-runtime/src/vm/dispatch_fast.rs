@@ -10147,9 +10147,10 @@ script_handler! {
     /// `lane_script_call_full` of a non-suspending async target (`CallEntry::Settles`), out of
     /// line so the other calls keep their registers: the call makes its promise first, as
     /// `Vm::try_settling_call` does, then activates the body, whose return settles it
-    /// (`Completion::SettlesPromise`). A call passing values past the parameters, a full lane
-    /// stack, a `with` scope or a host observing promise lifecycles takes the general path,
-    /// which settles the promise in a frame. Any other callee takes the full form.
+    /// (`Completion::SettlesPromise`). A call passing values past the parameters, a `with`
+    /// scope or a host observing promise lifecycles takes the general path, which settles the
+    /// promise in a frame, and so does a full lane stack, which grows first
+    /// (`lane_script_call_frame`). Any other callee takes the full form.
     #[inline(never)]
     fn lane_script_call_settles<>(cx, r, ip, i, view) {
         let vm = unsafe { vm(cx) };
@@ -10164,13 +10165,15 @@ script_handler! {
         };
         let returns = i.a & crate::bytecode::RETURN_REGISTER != 0;
         if ImmediateLayout::argument_count(i.imm()) > target.params
-            || !lane_activation_room(vm, &target)
             || (returns && !lane_returning_call_admitted(cx))
             || vm.with_scope_entered
             || lane_crosses::<H, false>(cx, &target)
             || vm.host.observes_promise_lifecycle()
         {
             return exit(ip);
+        }
+        if !lane_activation_room(vm, &target) {
+            return lane_script_call_frame::<H>(ip);
         }
         let Some(this) = lane_call_this(vm, &target, r.get(i.c)) else {
             return exit(ip);

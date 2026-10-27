@@ -3403,6 +3403,7 @@ impl<'a> Compiler<'a> {
     fn promoted_local_plan(
         &mut self,
         eligible: bool,
+        async_body: bool,
         arguments_only: Option<usize>,
         own_arguments: Option<(bool, &[Atom])>,
         body: &[Statement<'_>],
@@ -3435,7 +3436,10 @@ impl<'a> Compiler<'a> {
             (_, None) => false,
             (_, Some((strict, _))) => strict || unaliased_arguments,
         };
-        if !eligible || !register_local_facts.safe || !arguments_allow_promotion {
+        // An async body that may suspend keeps its locals in frame slots; one that never
+        // awaits runs to completion as an ordinary body does (`CallPlan::settles_in_loop`).
+        let suspends = async_body && register_local_facts.suspends;
+        if !eligible || suspends || !register_local_facts.safe || !arguments_allow_promotion {
             return PromotedLocalPlan { unaliased_arguments, ..Default::default() };
         }
         let arguments_atom = self.atom("arguments");
@@ -3597,7 +3601,6 @@ impl<'a> Compiler<'a> {
             && options.defaults.is_some_and(FunctionCompiler::arguments_promotable_apart);
         let promote_plain_locals = parent.is_some()
             && (direct_parameters || hidden_parameters)
-            && !options.async_function
             && !options.generator
             && !options.derived_constructor
             && !options.class_initializer
@@ -3615,6 +3618,7 @@ impl<'a> Compiler<'a> {
             && !dynamic_eval;
         let PromotedLocalPlan { promoted_local_slots, clobbered_local_slots, unaliased_arguments } = self.promoted_local_plan(
             promote_plain_locals,
+            options.async_function,
             hidden_parameters.then_some(params.len()),
             Some((root_strict, &params)),
             body,
