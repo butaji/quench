@@ -14,9 +14,9 @@
 //! folio (V8-v7 under memory-first, bolted static x86_64, pinned, 2026-10-27: 15.5-16.4 MB
 //! on every fixture, against 1956-2112 KiB on an empty script once written). `--cpu N` runs
 //! the command on CPU N alone: since Linux 6.2 a process's resident counters are per-CPU, and
-//! its peak is taken from their approximate sum, so a process that migrates between CPUs reports a peak up to a few
-//! hundred KiB low at random (V8-v7 RayTrace on one binary, x86_64 4-vCPU VM, 2026-10-25:
-//! 2436-2824 KiB over 20 runs, 2796 in all 20 pinned).
+//! its peak is taken from their approximate sum, so a process that migrates between CPUs
+//! reports a peak up to a few hundred KiB low at random (V8-v7 RayTrace on one binary,
+//! x86_64 4-vCPU VM, 2026-10-25: 2436-2824 KiB over 20 runs, 2796 in all 20 pinned).
 //!
 //! The child is started with `posix_spawn`, which shares this process's memory until the
 //! exec, so the launcher's own pages never count toward the child's peak.
