@@ -2852,7 +2852,10 @@ fn jit_root_override() -> Result<Option<usize>, ()> {
     })
 }
 
-fn jit_wasm_selective_enabled() -> bool {
+/// Whether Wasm modules stay selective for good, compiling only their hot roots
+/// (`WasmModuleCompile::NEVER`): an A/B arm against the default, which compiles a long runner
+/// whole.
+pub(super) fn jit_wasm_selective_enabled() -> bool {
     JIT_WASM_SELECTIVE.enabled()
 }
 
@@ -11313,6 +11316,11 @@ impl<H: Host> Vm<H> {
         self.execution_mode = mode;
     }
 
+    /// Compile each Wasm module whole at its first entry (`Runtime::compile_wasm_eagerly`).
+    pub(crate) fn compile_wasm_eagerly(&mut self) {
+        self.programs.compile_wasm_modules_at_first_entry();
+    }
+
     pub(crate) fn execution_mode(&self) -> ExecutionMode {
         self.execution_mode
     }
@@ -13298,15 +13306,14 @@ impl<H: Host> Vm<H> {
                     self.programs.set_compiled(program, compiled.clone());
                     self.programs.settle_wasm_module_tier(program);
                     self.programs.compiled(program).flatten()
-                } else if jit_wasm_selective_enabled()
-                    && self
-                        .programs
-                        .residual(program)
-                        .is_some_and(|code| code.kind == crate::bytecode::ProgramKind::Wasm)
+                } else if self
+                    .programs
+                    .residual(program)
+                    .is_some_and(|code| code.kind == crate::bytecode::ProgramKind::Wasm)
                 {
-                    // Selective mode starts cold Wasm functions in the
-                    // interpreter. Hot roots are promoted after the entry
-                    // gate below, avoiding module-wide cold compilation.
+                    // A Wasm module starts in the interpreter: its hot roots promote after the
+                    // entry gate below, and the whole module compiles once it runs long
+                    // (`WasmModuleTier`).
                     self.programs.set_compiled(program, None);
                     None
                 } else {
