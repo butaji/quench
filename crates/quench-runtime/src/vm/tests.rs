@@ -140,6 +140,8 @@ fn lane_constructions_forward_plain_loaded_arguments() {
     assert_eq!(output.borrow().as_slice(), ["2003000 2005000"]);
 }
 
+// Profiled builds count interpreted work exactly and hold no hints to clear.
+#[cfg(not(quench_profiled))]
 #[test]
 fn shape_compaction_clears_own_field_hints() {
     // Read sites warmed on one layout hold its shape id as their own-field hint. A full
@@ -179,6 +181,38 @@ fn shape_compaction_clears_own_field_hints() {
     vm.collect_now(&program);
     assert!(vm.shapes.len() < shapes, "the collection compacted the shape table");
     assert_eq!(held(&vm), 0);
+}
+
+#[test]
+fn call_sites_test_each_target_their_link_names() {
+    // One call site links the target cache entry of a plain callee, which dies; after the
+    // collection, functions that need another entry (a kept `arguments`, values past their
+    // parameters) can take its handle, and so its entry. Each call still makes the tests its
+    // own target needs. Expected values are Node's (v26). It guards the plain call's tests;
+    // the trunk crash it follows (JetStream typescript-lib) it does not reproduce itself.
+    let source = r#"
+      function site(f, v) { return f(v, 2); }
+      function plain(i) { return function (x, y) { return x + y + i; }; }
+      var out = 0;
+      for (var round = 0; round < 40; round++) {
+        var f = plain(round);
+        for (var k = 0; k < 60; k++) out += site(f, k) - k - 2 - round;
+        f = null;
+        $262.gc();
+        for (var j = 0; j < 30; j++) {
+          var keeps = function () { return arguments.length * 100 + arguments[1]; };
+          var fewer = function (x) { return x; };
+          out += site(keeps, j) - 202;
+          out += site(fewer, j) - j;
+        }
+      }
+      print(String(out));
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()).with_test262());
+    let program = Engine::specialize(source, "call-link-reuse.js").unwrap();
+    vm.execute(&program).unwrap();
+    assert_eq!(output.borrow().as_slice(), ["0"]);
 }
 
 #[test]
