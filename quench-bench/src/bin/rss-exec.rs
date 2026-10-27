@@ -11,10 +11,10 @@
 //! run faults its executable in as a cold start does. It writes PATH's dirty pages back
 //! first, as the advice drops only clean pages; pages another process maps stay cached
 //! whatever it advises, so the board that runs this must not be PATH itself
-//! (`quench-bench/v8-v7-rss.cjs`). `--cpu N` runs
-//! the command on CPU N alone: since Linux 6.2 a process's resident counters are per-CPU, and
-//! its peak is taken from their approximate sum, so a process that migrates between CPUs
-//! reports a peak up to a few hundred KiB low at random (V8-v7 RayTrace on one binary,
+//! (`quench-bench/v8-v7-rss.cjs`). `--cpu N` runs the command on CPU N alone: since Linux
+//! 6.2 a process's resident counters are per-CPU, and its peak is taken from their
+//! approximate sum, so a process that migrates between CPUs reports a peak up to a few
+//! hundred KiB low at random (V8-v7 RayTrace on one binary,
 //! x86_64 4-vCPU VM, 2026-10-25: 2436-2824 KiB over 20 runs, 2796 in all 20 pinned).
 //!
 //! The child is started with `posix_spawn`, which shares this process's memory until the
