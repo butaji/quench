@@ -6422,10 +6422,19 @@ fn lane_loop_run<H: Host>(
                 site.native_region_runs
                     .set(site.native_region_runs.get().saturating_add(1));
             }
-            LoopOutcome::Exit(_) => {
+            LoopOutcome::Exit(pc) => {
                 site.native_region_runs
                     .set(site.native_region_runs.get().saturating_add(1));
                 site.native_exits.set(site.native_exits.get().saturating_add(1));
+                // Attribute a guard exit to its recovery PC before the lane resumes.
+                // Reuse the opt-in OSR trace; ordinary execution keeps no extra table
+                // or per-site allocation, and the exit budget is unchanged.
+                if std::env::var_os("QUENCH_JS_JIT_TRACE_OSR_REJECT").is_some() {
+                    eprintln!(
+                        "QUENCH_JS_JIT_OSR_EXIT program={} function={} header={} pc={pc}",
+                        program.raw(), site.function, site.header,
+                    );
+                }
             }
             LoopOutcome::Widen(_) => {
                 site.native_region_runs
