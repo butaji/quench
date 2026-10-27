@@ -408,7 +408,13 @@ impl<H: Host> Vm<H> {
     }
 
     pub(super) fn encode_cached_program(&self, program: &crate::ResidualProgram) -> Option<Vec<u8>> {
+        // The compilation is over either way (`CompilePhase::Encoding`); a host that keeps no
+        // programs is offered none, so nothing is encoded (async-fs, cold: 43 encodings,
+        // 2.4% of its instructions).
         crate::compile::compile_phase_boundary(crate::compile::CompilePhase::Encoding);
+        if !self.host.keeps_compiled_programs() {
+            return None;
+        }
         let (bytes, atoms) = program.encode_compact();
         atoms
             .iter()
