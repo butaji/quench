@@ -89,9 +89,9 @@ impl Compiler<'_> {
         let super::PromotedLocalPlan { promoted_local_slots, clobbered_local_slots, .. } = self.promoted_local_plan(
             parent.is_some()
                 && (direct_parameters || hidden_parameters)
-                && !value.r#async
                 && with_depth == 0
                 && !dynamic_eval,
+            value.r#async,
             hidden_parameters.then_some(value.params.items.len()),
             None,
             body_statements,

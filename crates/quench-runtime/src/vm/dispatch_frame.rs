@@ -1425,13 +1425,14 @@ impl<H: Host> Vm<H> {
     /// so profiling builds run the general path only.
     const FRAME_ENTRY_LANE_RUNS: bool = !cfg!(any(feature = "profile-aggregate", feature = "profile-memory"));
 
-    /// `run_frame_general_with_error` of a resumed generator's frame `frame` with no error to
-    /// raise. Without JS tiers the general loop would only enter the lane at the frame's PC
-    /// and take back the plain `yield` the lane stops at, so the lane runs from here and that
-    /// stop becomes the frame's outcome as the loop's `Op::Yield` step makes it. Any other stop
-    /// (another instruction, a pending call, a raised error, another frame or program) resumes
-    /// the general loop where the lane left (`run_frames_after_lane_exit`).
-    pub(super) fn run_generator_frame(&mut self, p: &ResidualProgram, frame: usize) -> Result<FrameOutcome, JsError> {
+    /// `run_frame_general_with_error` of a resumed generator's or async function's frame
+    /// `frame` with no error to raise. Without JS tiers the general loop would only enter the
+    /// lane at the frame's PC, so the lane runs from here. A generator's plain `yield` the lane
+    /// stops at becomes the frame's outcome as the loop's `Op::Yield` step makes it; any other
+    /// stop (another instruction, a pending call, a raised error, another frame or program, an
+    /// async function's `await`) resumes the general loop where the lane left
+    /// (`run_frames_after_lane_exit`).
+    pub(super) fn run_resumed_frame(&mut self, p: &ResidualProgram, frame: usize) -> Result<FrameOutcome, JsError> {
         let (program, function, pc) = (self.frames[frame].program, self.frames[frame].function, self.frames[frame].pc);
         // With JS tiers or JIT general dispatch the loop may run the resumed frame in a tier
         // instead of the lane, so only the tier-free loop's lane entry is mirrored here.
