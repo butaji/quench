@@ -12,6 +12,16 @@ use crate::heap::{WasmHostTarget, WasmObjectSlot};
 use crate::{WasmType, WasmValue};
 use wasmparser::ExternalKind;
 
+/// Arguments of a Wasm call that a JavaScript caller passes without a heap allocation.
+const WASM_INLINE_ARGUMENTS: usize = 8;
+
+/// Whether a value of `ty` may encode into a fresh heap cell (`Vm::encode_wasm_value`): 64-bit
+/// payloads outside the in-place range (`Vm::encode_bits64`) and vectors. 32-bit values encode
+/// in place and references as the values they are.
+fn encoding_allocates(ty: WasmType) -> bool {
+    matches!(ty, WasmType::I64 | WasmType::F64 | WasmType::V128)
+}
+
 const DIRECT_EMSCRIPTEN_COPY_ENV: &str = "QUENCH_WASM_EMSCRIPTEN_MEMCPY_DIRECT";
 const RAW_I32_EMSCRIPTEN_COPY_ENV: &str = "QUENCH_WASM_EMSCRIPTEN_MEMCPY_RAW_I32";
 const EARLY_IMPORT_EMSCRIPTEN_COPY_ENV: &str = "QUENCH_WASM_EMSCRIPTEN_MEMCPY_EARLY_IMPORT";
@@ -1378,7 +1388,8 @@ impl<H: Host> Vm<H> {
             .retain(|_, handle| heap.weak_value(*handle).is_some());
     }
 
-    fn call_wasm_exported_function(
+    #[inline(never)]
+    pub(super) fn call_wasm_exported_function(
         &mut self,
         p: &ResidualProgram,
         args: &[Value],
@@ -1386,60 +1397,97 @@ impl<H: Host> Vm<H> {
         let function = self
             .active_native_env()
             .ok_or_else(|| JsError::validation("missing Wasm exported function".into()))?;
+        let Some(&FunctionRecord {
+            kind: FunctionKind::User(program, index),
+            env: environment,
+            ..
+        }) = self.heap.function(function)
+        else {
+            return self.call_wasm_host_export(p, function, args);
+        };
+        // The pool is shared, so the signature and declarations stay borrowed across the
+        // call instead of being copied per call (JetStream richards-wasm calls a short export
+        // two million times an iteration).
+        let signatures = self
+            .programs
+            .wasm_signatures_shared(program)
+            .ok_or_else(|| JsError::validation("missing Wasm function signature".into()))?;
+        let signature = signatures
+            .defined_signature(index)
+            .ok_or_else(|| JsError::validation("missing Wasm function signature".into()))?;
+        let declarations = Some(&signatures.declarations);
+        let mut encoded: smallvec::SmallVec<[Value; WASM_INLINE_ARGUMENTS]> =
+            smallvec::SmallVec::with_capacity(signature.params.len());
+        if signature.params.iter().any(|ty| encoding_allocates(*ty)) {
+            // Every argument converts before any encodes: a conversion can run JavaScript,
+            // and an allocated encoding is not rooted.
+            let mut values: smallvec::SmallVec<[WasmValue; WASM_INLINE_ARGUMENTS]> =
+                smallvec::SmallVec::with_capacity(signature.params.len());
+            for (position, &ty) in signature.params.iter().enumerate() {
+                let value = args.get(position).copied().unwrap_or(Value::UNDEFINED);
+                values.push(self.js_to_wasm_value(p, value, ty, declarations)?);
+            }
+            encoded.extend(values.into_iter().map(|value| self.encode_wasm_value(value)));
+        } else {
+            for (position, &ty) in signature.params.iter().enumerate() {
+                let value = args.get(position).copied().unwrap_or(Value::UNDEFINED);
+                let value = self.js_to_wasm_value(p, value, ty, declarations)?;
+                encoded.push(self.encode_wasm_value(value));
+            }
+        }
+        let previous = self.replace_active_program(program);
+        let result = match self.run_compiled(program, environment, index, &encoded) {
+            Some(result) => result,
+            None => match self.programs.get(program) {
+                Some(residual) => self.call_user(
+                    &residual,
+                    index,
+                    environment,
+                    Value::UNDEFINED,
+                    &encoded,
+                    CallContext::Internal,
+                ),
+                None => Err(JsError::validation("missing Wasm program".into())),
+            },
+        };
+        self.set_active_program(previous);
+        let result = result?;
+        match signature.results.as_slice() {
+            [] => Ok(Value::UNDEFINED),
+            &[ty] => {
+                let value = self.decode_wasm_value_in(result, ty, declarations)?;
+                self.wasm_value_to_js(p, value, ty)
+            }
+            types => {
+                let results = self.decode_wasm_result_types(types, result, declarations)?;
+                self.wasm_results_to_js(p, results, types)
+            }
+        }
+    }
+
+    /// `call_wasm_exported_function` for an exported host function, which converts and
+    /// checks its own values.
+    fn call_wasm_host_export(
+        &mut self,
+        p: &ResidualProgram,
+        function: Value,
+        args: &[Value],
+    ) -> Result<Value, JsError> {
         let signature = self
             .wasm_callable_signature(function)
             .cloned()
             .ok_or_else(|| JsError::validation("missing Wasm function signature".into()))?;
-        let declarations = match self.heap.function(function) {
-            Some(FunctionRecord { kind: FunctionKind::User(program, _), .. }) => self
-                .programs
-                .wasm_signatures(*program)
-                .map(|signatures| signatures.declarations.clone()),
-            _ => None,
-        };
         let mut values = Vec::with_capacity(signature.params.len());
         for (position, &ty) in signature.params.iter().enumerate() {
             let value = args.get(position).copied().unwrap_or(Value::UNDEFINED);
-            values.push(self.js_to_wasm_value(p, value, ty, declarations.as_ref())?);
+            values.push(self.js_to_wasm_value(p, value, ty, None)?);
         }
         let encoded = values
             .into_iter()
             .map(|value| self.encode_wasm_value(value))
             .collect::<Vec<_>>();
-        let (result, declarations) = match self.heap.function(function) {
-            Some(FunctionRecord {
-                kind: FunctionKind::User(program, index),
-                env,
-                ..
-            }) => {
-                let (program, index, environment) = (*program, *index, *env);
-                let residual = self
-                    .programs
-                    .get(program)
-                    .ok_or_else(|| JsError::validation("missing Wasm program".into()))?;
-                let previous = self.replace_active_program(program);
-                let result = match self.run_compiled(program, environment, index, &encoded) {
-                    Some(result) => result,
-                    None => self.call_user(
-                        &residual,
-                        index,
-                        environment,
-                        Value::UNDEFINED,
-                        &encoded,
-                        CallContext::Internal,
-                    ),
-                };
-                self.set_active_program(previous);
-                (result?, declarations)
-            }
-            // A host function converts and checks its own values.
-            _ => (
-                self.call_value(p, function, Value::UNDEFINED, &encoded)?,
-                None,
-            ),
-        };
-        let results =
-            self.decode_wasm_result_types(&signature.results, result, declarations.as_ref())?;
+        let result = self.call_value(p, function, Value::UNDEFINED, &encoded)?;
+        let results = self.decode_wasm_result_types(&signature.results, result, None)?;
         self.wasm_results_to_js(p, results, &signature.results)
     }
 
