@@ -3136,6 +3136,29 @@ impl Heap {
         Some(unsafe { self.properties.flat_mut_ptr_unchecked(vector, slot) })
     }
 
+    /// `property_set` of each of `values` at slot `0..INLINE_PROPERTY_COUNT` of `object`,
+    /// whose shape has those slots, with one lookup and one write barrier: one payload store
+    /// when they pack there (`Object::store_packed_inline_values`), the arena's slots when
+    /// they live there, else `property_set` of each.
+    pub(crate) fn set_leading_properties(&mut self, object: Value, values: [Value; INLINE_PROPERTY_COUNT]) {
+        // The barrier remembers the owner of any reference stored; one test covers each.
+        let stored = values.into_iter().find(|value| value.heap_index().is_some()).unwrap_or(Value::UNDEFINED);
+        let data = self.object_store_mut(object, stored).expect("property owner is an object");
+        if data.store_packed_inline_values(values) {
+            return;
+        }
+        let vector = data.properties();
+        if vector.has_inline_property_storage() {
+            for (slot, value) in values.into_iter().enumerate() {
+                self.property_set(object, slot, value);
+            }
+            return;
+        }
+        for (slot, value) in values.into_iter().enumerate() {
+            self.properties.set(vector, slot, value);
+        }
+    }
+
     pub(crate) fn property_set(&mut self, object: Value, slot: usize, value: Value) {
         let vector = {
             let data = self

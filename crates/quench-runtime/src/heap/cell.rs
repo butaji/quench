@@ -2038,6 +2038,22 @@ impl Object {
 
     /// Stores the inline property slots: in the payload word when each value has a narrow
     /// form and the object has no extras, else in the extras.
+    /// Stores `values` in the inline slots as one payload word, when the object keeps them
+    /// there (inline storage, no extras) and each has a narrow form; `false` otherwise,
+    /// changing nothing.
+    pub(crate) fn store_packed_inline_values(&mut self, values: [Value; INLINE_PROPERTY_COUNT]) -> bool {
+        if !self.properties().has_inline_property_storage() || self.extras_pointer().is_some() {
+            return false;
+        }
+        match Self::pack_inline(values) {
+            Some(word) => {
+                self.payload = word;
+                true
+            }
+            None => false,
+        }
+    }
+
     fn store_inline_values(&mut self, values: [Value; INLINE_PROPERTY_COUNT]) {
         match (self.extras_mut_existing(), Self::pack_inline(values)) {
             (Some(extras), _) => extras.inline_properties.0 = values,

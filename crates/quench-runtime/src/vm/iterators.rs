@@ -3560,9 +3560,11 @@ impl<H: Host> Vm<H> {
             self.reused_iterator_result = result;
             return result;
         }
-        self.heap.property_set(result, ITERATOR_RESULT_VALUE_SLOT, value);
-        self.heap
-            .property_set(result, ITERATOR_RESULT_DONE_SLOT, if done { Value::TRUE } else { Value::FALSE });
+        let done = if done { Value::TRUE } else { Value::FALSE };
+        let mut slots = [Value::UNDEFINED; crate::value_vec::INLINE_PROPERTY_COUNT];
+        slots[ITERATOR_RESULT_VALUE_SLOT] = value;
+        slots[ITERATOR_RESULT_DONE_SLOT] = done;
+        self.heap.set_leading_properties(result, slots);
         result
     }
 
