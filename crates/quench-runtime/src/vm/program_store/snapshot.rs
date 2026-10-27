@@ -25,7 +25,6 @@ impl ProgramStore {
             js_jit_diagnostics: _,
             // Process configuration a restoring store reads again, and its diagnostics.
             general_baseline_priced: _,
-            wasm_module_compile: _,
             js_jit_general_dispatch_enabled: _,
             // Hotness counters are process-local and start fresh after restore.
             js_general_dispatch_work: _,
@@ -102,9 +101,6 @@ impl ProgramEntry {
             lane_deferred: _,
             compiled: _,
             jit_tiers: _,
-            wasm_module_entries: _,
-            wasm_module_first_entry: _,
-            wasm_module_compiles: _,
             scope,
             origin,
             script_or_module,
@@ -239,9 +235,6 @@ impl ProgramEntry {
             module,
             compiled: None,
             jit_tiers: JitTierManager::default(),
-            wasm_module_entries: 0,
-            wasm_module_first_entry: None,
-            wasm_module_compiles: false,
             scope,
             origin,
             script_or_module,

@@ -12698,25 +12698,6 @@ impl<H: Host> Vm<H> {
         Some(raw)
     }
 
-    /// Module-wide code for Wasm module `program`, reporting a failed compile under
-    /// `QUENCH_WASM_JIT_STATS`.
-    fn compile_whole_wasm_module(&mut self, program: ProgramId, env: Value) -> Option<Rc<CompiledProgram>> {
-        let started = jit_diagnostics_enabled().then(std::time::Instant::now);
-        let compiled = self.compile_program(program, env).map(Rc::new);
-        if let Some(started) = started
-            && compiled.is_none()
-        {
-            let total_functions = self.programs.get(program).map_or(0, |code| code.functions.len());
-            eprintln!(
-                "QUENCH_WASM_JIT_STATS {{\"program\":{},\"compile_attempts\":1,\"compile_failed\":true,\"total_functions\":{},\"compile_ns\":{}}}",
-                program.raw(),
-                total_functions,
-                started.elapsed().as_nanos(),
-            );
-        }
-        compiled
-    }
-
     fn run_compiled_inner(
         &mut self,
         program: ProgramId,
@@ -12785,38 +12766,44 @@ impl<H: Host> Vm<H> {
                     }
                     self.programs.set_compiled(program, compiled.clone());
                     self.programs.compiled(program).flatten()
-                } else if self
-                    .programs
-                    .residual(program)
-                    .is_some_and(|code| code.kind == crate::bytecode::ProgramKind::Wasm)
+                } else if jit_wasm_selective_enabled()
+                    && self
+                        .programs
+                        .residual(program)
+                        .is_some_and(|code| code.kind == crate::bytecode::ProgramKind::Wasm)
                 {
-                    // A Wasm module starts in the interpreter: its hot roots are promoted after
-                    // the entry gate below, and the whole module compiles once its entries show
-                    // it runs long enough to repay that (`WasmModuleCompile`), unless selective
-                    // mode keeps it to its roots.
+                    // Selective mode starts cold Wasm functions in the
+                    // interpreter. Hot roots are promoted after the entry
+                    // gate below, avoiding module-wide cold compilation.
                     self.programs.set_compiled(program, None);
                     None
                 } else {
+                    let diagnose = jit_diagnostics_enabled()
+                        && self
+                            .programs
+                            .get(program)
+                            .is_some_and(|code| code.kind == crate::bytecode::ProgramKind::Wasm);
+                    let started = diagnose.then(std::time::Instant::now);
                     let compiled = self.compile_program(program, env).map(Rc::new);
+                    if diagnose && compiled.is_none() {
+                        let total_functions = self
+                            .programs
+                            .get(program)
+                            .map_or(0, |code| code.functions.len());
+                        eprintln!(
+                            "QUENCH_WASM_JIT_STATS {{\"program\":{},\"compile_attempts\":1,\"compile_failed\":true,\"total_functions\":{},\"compile_ns\":{}}}",
+                            program.raw(),
+                            total_functions,
+                            started
+                                .expect("diagnostic timer started")
+                                .elapsed()
+                                .as_nanos(),
+                        );
+                    }
                     self.programs.set_compiled(program, compiled.clone());
                     self.programs.compiled(program).flatten()
                 }
             }
-        };
-        // A module whose entries passed the threshold compiles whole, as eager compilation
-        // would have at its first entry.
-        let baseline = if baseline.is_none()
-            && !wasm_root_only
-            && !wasm_root_first
-            && !jit_wasm_selective_enabled()
-            && self.programs.note_wasm_module_entry(program)
-        {
-            self.host.before_native_compilation();
-            let compiled = self.compile_whole_wasm_module(program, env);
-            self.programs.set_compiled(program, compiled);
-            self.programs.compiled(program).flatten()
-        } else {
-            baseline
         };
         // Root-first mode earns further tiering only after its selected root
         // produced an artifact. If admission fails, leave the workload in the
