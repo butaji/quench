@@ -9,12 +9,12 @@
 //! `rss-exec maxrss_kib=N status=S`; `status` is the exit code, or 128 plus the signal that
 //! ended it. `--evict PATH` drops PATH's cached pages first (`POSIX_FADV_DONTNEED`), so each
 //! run faults its executable in as a cold start does. It writes PATH's dirty pages back
-//! first, as the advice drops only clean ones: a binary measured right after
-//! llvm-bolt wrote it otherwise kept its whole image cached in large folios, and a fault mapped
-//! all of a folio (V8-v7 under memory-first, bolted static x86_64, pinned, 2026-10-27:
-//! 15.5-16.4 MB on every fixture, against 1956-2112 KiB on an empty script once written). `--cpu N` runs the command on CPU N
-//! alone: since Linux 6.2 a process's resident counters are per-CPU, and its peak is taken from
-//! their approximate sum, so a process that migrates between CPUs reports a peak up to a few
+//! first, as the advice drops only clean ones: a binary measured right after llvm-bolt wrote
+//! it otherwise kept its whole image cached in large folios, and a fault mapped all of a
+//! folio (V8-v7 under memory-first, bolted static x86_64, pinned, 2026-10-27: 15.5-16.4 MB
+//! on every fixture, against 1956-2112 KiB on an empty script once written). `--cpu N` runs
+//! the command on CPU N alone: since Linux 6.2 a process's resident counters are per-CPU, and
+//! its peak is taken from their approximate sum, so a process that migrates between CPUs reports a peak up to a few
 //! hundred KiB low at random (V8-v7 RayTrace on one binary, x86_64 4-vCPU VM, 2026-10-25:
 //! 2436-2824 KiB over 20 runs, 2796 in all 20 pinned).
 //!
