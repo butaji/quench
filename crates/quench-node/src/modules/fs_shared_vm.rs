@@ -623,6 +623,21 @@ const PROMISES_FACTORY: &str = quench_js_check::checked_js!(
   const throwIfAborted = (options) => {
     if (options?.signal?.aborted) throw abortError();
   };
+  const applyReadBuffer = (data, options) => {
+    const selected = options && typeof options === 'object' ? options.buffer : undefined;
+    if (selected === undefined) return data;
+    const encoding = typeof options.encoding === 'string' ? options.encoding : undefined;
+    const bytes = Buffer.isBuffer(data) ? data : Buffer.from(data, encoding);
+    const target = typeof selected === 'function' ? selected(bytes.length) : selected;
+    if (!Buffer.isBuffer(target) || target.length < bytes.length) {
+      const error = new RangeError('The buffer option must be a Buffer large enough to hold the file contents');
+      error.code = 'ERR_INVALID_ARG_VALUE';
+      throw error;
+    }
+    bytes.copy(target, 0, 0, bytes.length);
+    const result = target.subarray(0, bytes.length);
+    return encoding === undefined ? result : result.toString(encoding);
+  };
   const collectWriteData = async (data, options) => {
     if (typeof data === 'string' || ArrayBuffer.isView(data)) return data;
     if (data == null ||
@@ -657,7 +672,7 @@ const PROMISES_FACTORY: &str = quench_js_check::checked_js!(
     if (handle && typeof handle.readFile === 'function') return handle.readFile(args[1]);
     await new Promise((resolve) => setImmediate(resolve));
     throwIfAborted(args[1]);
-    return readFile(...args);
+    return applyReadBuffer(readFile(...args), args[1]);
   },
   writeFile: async (...args) => {
     // Preserve the caller's bytes before the first async boundary. The
@@ -873,7 +888,10 @@ const PROMISES_FACTORY: &str = quench_js_check::checked_js!(
           total += bytesRead;
         }
         const result = Buffer.concat(chunks, total);
-        return settings.encoding ? result.toString(settings.encoding) : result;
+        return applyReadBuffer(
+          settings.encoding ? result.toString(settings.encoding) : result,
+          settings,
+        );
       },
       pull: (...args) => {
         if (closed || closePromise || writerActive || readableWebStreamActive) {
