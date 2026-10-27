@@ -13888,9 +13888,14 @@ fn lane_complete_activation<H: Host>(cx: *mut LaneContext<H>, ip: Ip, mut value:
     }
     let vm = unsafe { vm(cx) };
     // A settling activation whose promise's resolution would observe the value returns it
-    // from its frame, whose pending call resolves the promise (`lane_settles_in_frame`).
-    if settling(vm.lane_stack.activations.last()?) && lane_settles_in_frame(vm, value) {
-        return Some(Resumed::Exit(lane_frame_return(vm, ip, value)));
+    // from its frame, whose pending call resolves the promise (`lane_settled_then`); else the
+    // `then` read here is the one its resolution uses.
+    let mut then = Value::UNDEFINED;
+    if settling(vm.lane_stack.activations.last()?) {
+        let Some(read) = lane_settled_then(vm, value) else {
+            return Some(Resumed::Exit(lane_frame_return(vm, ip, value)));
+        };
+        then = read;
     }
     let mut activation = vm.lane_stack.pop_activation()?;
     loop {
@@ -13915,7 +13920,7 @@ fn lane_complete_activation<H: Host>(cx: *mut LaneContext<H>, ip: Ip, mut value:
                 vm.lane_stack.forwarders.pop();
             }
             if script.completion == Completion::SettlesPromise {
-                value = lane_settle_promise(cx, value);
+                value = lane_settle_promise(cx, value, then);
             }
         }
         // SAFETY: the call record belongs to the caller's live view.
@@ -13926,7 +13931,14 @@ fn lane_complete_activation<H: Host>(cx: *mut LaneContext<H>, ip: Ip, mut value:
         // activation here or the frame in the general loop, which the exit hands it to.
         let in_frame = match vm.lane_stack.activations.last() {
             None => true,
-            Some(caller) => settling(caller) && lane_settles_in_frame(vm, value),
+            Some(caller) if settling(caller) => match lane_settled_then(vm, value) {
+                Some(read) => {
+                    then = read;
+                    false
+                }
+                None => true,
+            },
+            Some(_) => false,
         };
         if in_frame {
             return Some(Resumed::Exit(lane_frame_return(vm, activation.call, value)));
@@ -13941,24 +13953,27 @@ fn settling(activation: &Activation) -> bool {
     matches!(&activation.kind, ActivationKind::Script(script) if script.completion == Completion::SettlesPromise)
 }
 
-/// Whether a settling activation completing with `value` settles its promise in its frame
+/// The `then` a settling activation completing with `value` resolves its promise with
+/// (`Vm::plain_resolution_then`), read once; `None` where it settles the promise in its frame
 /// instead: its resolution would read the value's `then` impurely or run a lifecycle hook,
 /// either of which may run guest code. The frame's pending call resolves the promise as
 /// `Vm::promise_resolve_value` does.
 #[inline(always)]
-fn lane_settles_in_frame<H: Host>(vm: &mut Vm<H>, value: Value) -> bool {
-    vm.host.observes_promise_lifecycle() || vm.plain_resolution_then(value).is_none()
+fn lane_settled_then<H: Host>(vm: &mut Vm<H>, value: Value) -> Option<Value> {
+    if vm.host.observes_promise_lifecycle() {
+        return None;
+    }
+    vm.plain_resolution_then(value)
 }
 
 /// The completion of a settling activation (`Completion::SettlesPromise`) whose caller the
-/// lane restored, with `value`, which `lane_settles_in_frame` admitted: its promise, the
-/// innermost of `LaneStack::settling`, resolved with the value, which its call yields.
+/// lane restored, with `value` and the `then` `lane_settled_then` read from it: its promise,
+/// the innermost of `LaneStack::settling`, resolved with the value, which its call yields.
 #[inline(never)]
-fn lane_settle_promise<H: Host>(cx: *mut LaneContext<H>, value: Value) -> Value {
+fn lane_settle_promise<H: Host>(cx: *mut LaneContext<H>, value: Value, then: Value) -> Value {
     let vm = unsafe { vm(cx) };
     let root = vm.lane_stack.settling.pop().expect("each settling activation roots its promise");
     let promise = vm.release_settled_call_root(root);
-    let then = vm.plain_resolution_then(value).expect("the completion read `then` plainly");
     // SAFETY: the context's program, the caller's, outlives the lane run.
     let code = unsafe { &*(*cx).code };
     let settled = vm.resolve_fresh_promise_plainly(code, promise, value, then);
