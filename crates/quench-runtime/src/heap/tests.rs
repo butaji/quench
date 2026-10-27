@@ -1146,3 +1146,33 @@ fn wide_environment_clones_store_only_the_slots_they_do_not_share() {
     let narrow = environment(&mut heap, vec![Value::TRUE; 2].into());
     assert_eq!(heap.clone_environment_slots(narrow, &[0], &[]).unwrap().0.len(), 2);
 }
+
+#[test]
+#[cfg(not(feature = "profile-aggregate"))]
+fn memory_census_accounts_for_direct_and_legacy_vectors_across_collection() {
+    let mut heap = Heap::new();
+    let before = heap.memory_composition();
+    let direct = heap.alloc_v128([0x5a; crate::wasm::V128_BYTES]);
+    assert!(direct.direct_v128_index().is_some());
+    let legacy = heap.alloc_in_slot(Cell::WasmV128([0x66; crate::wasm::V128_BYTES]), false);
+    assert!(legacy.direct_v128_index().is_none());
+    let census = heap.memory_composition();
+    assert_eq!(census.cell_counts[CellKind::WasmV128 as usize], 2);
+    assert_eq!(census.direct_records, before.direct_records + 1);
+    assert_eq!(census.occupied_slots, before.occupied_slots + 2);
+    assert_eq!(census.v128_record_used_bytes, crate::wasm::V128_BYTES);
+    assert!(census.v128_record_reserved_bytes >= census.v128_record_used_bytes);
+    assert_eq!(census.used_bytes() - before.used_bytes(), crate::wasm::V128_BYTES + census.slot_size_bytes);
+    assert_eq!(census.cell_counts.iter().sum::<usize>(), census.occupied_slots);
+    let variant = census.cell_variant_names.iter().position(|name| *name == "wasm_v128").unwrap();
+    assert_eq!(census.cell_variant_counts[variant], 2);
+    heap.collect([direct]);
+    let rooted = heap.memory_composition();
+    assert_eq!(rooted.cell_counts[CellKind::WasmV128 as usize], 1);
+    assert_eq!(rooted.v128_record_used_bytes, crate::wasm::V128_BYTES);
+    assert_eq!(heap.v128(direct), Some([0x5a; crate::wasm::V128_BYTES]));
+    heap.collect([]);
+    let empty = heap.memory_composition();
+    assert_eq!(empty.cell_counts[CellKind::WasmV128 as usize], 0);
+    assert_eq!(empty.v128_record_used_bytes, 0);
+}

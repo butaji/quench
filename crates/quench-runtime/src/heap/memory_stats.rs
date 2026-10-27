@@ -25,6 +25,8 @@ pub struct HeapMemoryComposition {
     pub await_record_reserved_bytes: usize,
     pub iterator_record_reserved_bytes: usize,
     pub string_record_reserved_bytes: usize,
+    pub v128_record_reserved_bytes: usize,
+    pub v128_record_used_bytes: usize,
     pub legacy_cell_record_reserved_bytes: usize,
     pub free_slot_metadata_bytes: usize,
     pub slot_size_bytes: usize,
@@ -99,6 +101,7 @@ impl Heap {
             let direct_await = identity.direct_await_index().is_some();
             let direct_iterator = identity.direct_iterator_index().is_some();
             let direct_string = identity.direct_string_index().is_some();
+            let direct_v128 = identity.direct_v128_index().is_some();
             direct_records += usize::from(
                 direct_object
                     || direct_array
@@ -106,9 +109,12 @@ impl Heap {
                     || direct_promise
                     || direct_await
                     || direct_iterator
-                    || direct_string,
+                    || direct_string
+                    || direct_v128,
             );
-            let kind = if direct_string {
+            let kind = if direct_v128 {
+                CellKind::WasmV128 as usize
+            } else if direct_string {
                 CellKind::String as usize
             } else if direct_iterator {
                 CellKind::Iterator as usize
@@ -124,7 +130,9 @@ impl Heap {
                 Self::cell_kind(cell.expect("live legacy value has a Cell")) as usize
             };
             cell_counts[kind] += 1;
-            let variant_name = if direct_object {
+            let variant_name = if direct_v128 {
+                "wasm_v128"
+            } else if direct_object {
                 "object"
             } else if direct_array {
                 "array"
@@ -285,6 +293,8 @@ impl Heap {
             await_record_reserved_bytes: self.await_records.allocated_bytes(),
             iterator_record_reserved_bytes: self.iterator_records.allocated_bytes(),
             string_record_reserved_bytes: self.string_records.allocated_bytes(),
+            v128_record_reserved_bytes: self.v128_records.allocated_bytes(),
+            v128_record_used_bytes: self.v128_records.live_count() * crate::wasm::V128_BYTES,
             legacy_cell_record_reserved_bytes: 0,
             free_slot_metadata_bytes: self.free_by_slab.capacity() * size_of::<FreeSlotBitmap>()
                 + self.free_slabs.capacity() * size_of::<u32>(),
@@ -339,6 +349,7 @@ impl HeapMemoryComposition {
             + self.boxed_object_header_bytes
             + self.live_property_used_values * size_of::<crate::Value>()
             + self.cell_payload_bytes
+            + self.v128_record_used_bytes
             + self.sparse_array_sidecar_bytes
     }
 
@@ -353,6 +364,7 @@ impl HeapMemoryComposition {
             + self.await_record_reserved_bytes
             + self.iterator_record_reserved_bytes
             + self.string_record_reserved_bytes
+            + self.v128_record_reserved_bytes
             + self.legacy_cell_record_reserved_bytes
             + self.free_slot_metadata_bytes
             + self.boxed_object_header_bytes

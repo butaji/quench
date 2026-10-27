@@ -507,6 +507,7 @@ impl Heap {
         counts[CellKind::AwaitState as usize] = self.await_records.live_count();
         counts[CellKind::Iterator as usize] = self.iterator_records.live_count();
         counts[CellKind::String as usize] = self.string_records.live_count();
+        counts[CellKind::WasmV128 as usize] = self.v128_records.live_count();
         self.for_each_live_value(|identity| {
             // Every record family is counted above; only legacy slots hold a `Cell`.
             if identity.legacy_heap_index().is_none() {
@@ -556,6 +557,7 @@ impl Heap {
             + self.await_records.allocated_bytes()
             + self.iterator_records.allocated_bytes()
             + self.string_records.allocated_bytes()
+            + self.v128_records.allocated_bytes()
             + self.live_value_payload_bytes()
             + self
                 .sparse_arrays
@@ -573,7 +575,8 @@ impl Heap {
                 + self.function_records.high_water()
                 + self.promise_records.high_water()
                 + self.await_records.high_water()
-                + self.iterator_records.high_water(),
+                + self.iterator_records.high_water()
+                + self.v128_records.high_water(),
             self.slots.capacity() * size_of::<super::Slot>(),
             self.free_by_slab.capacity() * size_of::<FreeSlotBitmap>()
                 + self.free_slabs.capacity() * size_of::<u32>(),
@@ -754,4 +757,28 @@ fn cell_bytes(cell: &Cell) -> usize {
             Cell::Date { .. } => 0,
             Cell::RegExp { meta, .. } => meta.source.capacity(),
         }
+}
+
+#[cfg(all(test, not(feature = "profile-aggregate")))]
+mod vector_census_tests {
+    use super::*;
+
+    #[test]
+    fn profile_vector_counts_match_the_heap_census() {
+        let mut heap = Heap::new();
+        let before = heap.memory_stats();
+        let vector = heap.alloc_v128([0x5a; crate::wasm::V128_BYTES]);
+        assert!(vector.direct_v128_index().is_some());
+        let allocated = heap.memory_stats();
+        assert_eq!(allocated.0, before.0 + 1);
+        assert_eq!(allocated.3 - before.3, heap.v128_records.allocated_bytes());
+        heap.alloc_in_slot(Cell::WasmV128([0x66; crate::wasm::V128_BYTES]), false);
+        assert_eq!(heap.cell_counts(), heap.memory_composition().cell_counts);
+        assert_eq!(heap.cell_counts()[CellKind::WasmV128 as usize], 2);
+        heap.collect([vector]);
+        assert_eq!(heap.cell_counts(), heap.memory_composition().cell_counts);
+        assert_eq!(heap.cell_counts()[CellKind::WasmV128 as usize], 1);
+        heap.collect([]);
+        assert_eq!(heap.cell_counts()[CellKind::WasmV128 as usize], 0);
+    }
 }
