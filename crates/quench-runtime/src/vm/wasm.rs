@@ -1863,6 +1863,99 @@ mod tests {
     }
 
     #[test]
+    fn compiled_wasm_memory_copy_moves_overlapping_ranges_and_traps_out_of_bounds() {
+        const PAGE: i32 = 65_536;
+        let memarg = wasmparser::MemArg {
+            align: 2,
+            max_align: 2,
+            offset: 0,
+            memory: 0,
+        };
+        // copy(destination, source, length), then the word at 0 and the word at 4.
+        let module = crate::Engine::lower_wasm_module_with_state(
+            "compiled-memory-copy",
+            [
+                crate::WasmFunctionBody {
+                    ty: crate::WasmCallableType::Embedded(crate::WasmSignature {
+                        params: vec![crate::WasmType::I32; 3],
+                        results: vec![crate::WasmType::I32],
+                    }),
+                    locals: vec![],
+                    operators: vec![
+                        Operator::LocalGet { local_index: 0 },
+                        Operator::LocalGet { local_index: 1 },
+                        Operator::LocalGet { local_index: 2 },
+                        Operator::MemoryCopy { dst_mem: 0, src_mem: 0 },
+                        Operator::I32Const { value: 0 },
+                        Operator::I32Load { memarg },
+                        Operator::End,
+                    ]
+                    .into_iter()
+                    .map(Ok),
+                },
+                crate::WasmFunctionBody {
+                    ty: crate::WasmCallableType::Embedded(crate::WasmSignature {
+                        params: vec![crate::WasmType::I32; 2],
+                        results: vec![],
+                    }),
+                    locals: vec![],
+                    operators: vec![
+                        Operator::LocalGet { local_index: 0 },
+                        Operator::LocalGet { local_index: 1 },
+                        Operator::I32Store { memarg },
+                        Operator::End,
+                    ]
+                    .into_iter()
+                    .map(Ok),
+                },
+            ],
+            &crate::WasmTypes::default(),
+            &[],
+            &[crate::WasmMemory {
+                ty: wasmparser::MemoryType {
+                    initial: 1,
+                    maximum: Some(1),
+                    memory64: false,
+                    shared: false,
+                    page_size_log2: None,
+                },
+                import: None,
+            }],
+            &[],
+        )
+        .unwrap();
+        let mut vm = Vm::new(crate::SystemHost);
+        vm.set_execution_mode(crate::ExecutionMode::Compiled);
+        let instance = vm.instantiate_wasm_module(&module).unwrap();
+        let i32s = |values: &[i32]| values.iter().map(|value| crate::WasmValue::I32(*value)).collect::<Vec<_>>();
+        let copy = |vm: &mut Vm<crate::SystemHost>, args: &[i32]| vm.invoke_wasm(&instance, 0, &i32s(args));
+        vm.invoke_wasm(&instance, 1, &i32s(&[0, 0x0403_0201])).unwrap();
+        // Forward overlap: bytes 0..3 move up by one.
+        assert_eq!(copy(&mut vm, &[1, 0, 3]).unwrap(), Some(crate::WasmValue::I32(0x0302_0101)));
+        // Backward overlap: bytes 1..4 move down by one.
+        assert_eq!(copy(&mut vm, &[0, 1, 3]).unwrap(), Some(crate::WasmValue::I32(0x0303_0201)));
+        // A range past the end traps before any byte moves, from either side.
+        for args in [[PAGE - 2, 0, 4], [0, PAGE - 2, 4]] {
+            let error = copy(&mut vm, &args).unwrap_err();
+            assert_eq!(error.wasm_trap(), Some(crate::WasmTrap::OutOfBoundsMemory), "{args:?}");
+        }
+        assert_eq!(copy(&mut vm, &[0, 0, 0]).unwrap(), Some(crate::WasmValue::I32(0x0303_0201)));
+        // An empty copy at the end is in bounds; one byte further is not.
+        assert!(copy(&mut vm, &[PAGE, PAGE, 0]).is_ok());
+        assert!(copy(&mut vm, &[PAGE + 1, 0, 0]).is_err());
+        let program = vm
+            .programs
+            .find_shared(&module.program)
+            .expect("registered Wasm program");
+        let compiled = vm
+            .programs
+            .compiled(program)
+            .flatten()
+            .expect("memory.copy compiled");
+        assert!(compiled.native_entries(0).is_some_and(|entries| entries > 0));
+    }
+
+    #[test]
     fn compiled_wasm_memory_size_and_fill_preserve_bounds_and_results() {
         let memarg = wasmparser::MemArg {
             align: 2,
@@ -5383,6 +5476,256 @@ mod tests {
         assert!(matches!(vm.programs.compiled(program), Some(None)));
         assert!(vm.programs.wasm_tier(program, 1).is_none());
         assert!(vm.programs.wasm_tier(program, 2).is_none());
+    }
+
+    #[test]
+    fn compiled_wasm_selective_tiering_promotes_a_function_by_its_loop_work() {
+        // One entry runs this many iterations: below the call threshold in entries, far
+        // above it in backward jumps (`WASM_JIT_BACKEDGES_PER_ENTRY`).
+        const ITERATIONS: i32 = 40_000;
+        let root = vec![
+            Operator::I32Const { value: ITERATIONS },
+            Operator::LocalSet { local_index: 0 },
+            Operator::I32Const { value: 0 },
+            Operator::LocalSet { local_index: 1 },
+            Operator::Loop {
+                blockty: wasmparser::BlockType::Empty,
+            },
+            Operator::LocalGet { local_index: 1 },
+            Operator::LocalGet { local_index: 0 },
+            Operator::I32Add,
+            Operator::LocalSet { local_index: 1 },
+            Operator::LocalGet { local_index: 0 },
+            Operator::I32Const { value: -1 },
+            Operator::I32Add,
+            Operator::LocalTee { local_index: 0 },
+            Operator::BrIf { relative_depth: 0 },
+            Operator::End,
+            Operator::LocalGet { local_index: 1 },
+            Operator::End,
+        ];
+        let module = crate::Engine::lower_wasm_i32_module(
+            "compiled-wasm-selective-backedge-promotion",
+            0,
+            [(0, 2, true, root)]
+                .into_iter()
+                .map(|(params, locals, result, ops)| (params, locals, result, ops.into_iter().map(Ok))),
+        )
+        .unwrap();
+        let expected = Some((1..=ITERATIONS).fold(0i32, |sum, value| sum.wrapping_add(value)));
+        let function = module.select_function(0).unwrap();
+        let mut vm = Vm::new(crate::SystemHost);
+        assert_eq!(vm.execute_wasm_i32(&function, &[]).unwrap(), expected);
+        let program = vm
+            .programs
+            .find_shared(&function.module.program)
+            .expect("registered Wasm program");
+        vm.set_execution_mode(crate::ExecutionMode::Compiled);
+        // Selective mode: no eager artifact, as in `..._promotes_a_hot_fast_call_known`.
+        vm.programs.set_compiled(program, None);
+
+        assert_eq!(vm.execute_wasm_i32(&function, &[]).unwrap(), expected);
+        assert!(vm.programs.wasm_tier(program, 0).is_none(), "an entry never compiles mid-loop");
+        assert_eq!(
+            vm.programs.wasm_tier_entry_count(program, 0),
+            Some(super::super::program_store::WASM_JIT_PROMOTION_ENTRIES - 1),
+            "the loop's work stops one short of the threshold"
+        );
+        assert_eq!(vm.programs.wasm_tier_attempted(program, 0), Some(false));
+
+        assert_eq!(vm.execute_wasm_i32(&function, &[]).unwrap(), expected);
+        let tier = vm
+            .programs
+            .wasm_tier(program, 0)
+            .expect("the next entry promoted the looping function");
+        assert_eq!(tier.native_entries(0), Some(1));
+    }
+
+    /// Builds a list of `nodes` words from `LIST_HEAD`, each holding the next one's address
+    /// and the last zero, then runs `walk` over it (locals: 0 the node count, 1 the address,
+    /// 2 and 3 the walk's) and returns local 2: run in a selective
+    /// module, whose lane run raises the floor (`Vm::lane_credits_backedges`), so every
+    /// backward jump takes the safepoint.
+    fn walk_list_at_safepoints(name: &str, nodes: i32, walk: Vec<Operator<'static>>) -> Option<crate::WasmValue> {
+        const WORD: i32 = 4;
+        const LIST_HEAD: i32 = WORD;
+        let memarg = wasmparser::MemArg {
+            align: 2,
+            max_align: 2,
+            offset: 0,
+            memory: 0,
+        };
+        let mut operators = vec![
+            Operator::I32Const { value: LIST_HEAD },
+            Operator::LocalSet { local_index: 1 },
+            Operator::Loop { blockty: wasmparser::BlockType::Empty },
+            // [address] = address + WORD, up to the last node.
+            Operator::LocalGet { local_index: 1 },
+            Operator::LocalGet { local_index: 1 },
+            Operator::I32Const { value: WORD },
+            Operator::I32Add,
+            Operator::I32Store { memarg },
+            Operator::LocalGet { local_index: 1 },
+            Operator::I32Const { value: WORD },
+            Operator::I32Add,
+            Operator::LocalTee { local_index: 1 },
+            Operator::LocalGet { local_index: 0 },
+            Operator::I32Const { value: WORD },
+            Operator::I32Mul,
+            Operator::I32LtU,
+            Operator::BrIf { relative_depth: 0 },
+            Operator::End,
+            // The last node ends the list.
+            Operator::LocalGet { local_index: 1 },
+            Operator::I32Const { value: 0 },
+            Operator::I32Store { memarg },
+            Operator::I32Const { value: LIST_HEAD },
+            Operator::LocalSet { local_index: 1 },
+        ];
+        operators.extend(walk);
+        operators.extend([Operator::LocalGet { local_index: 2 }, Operator::End]);
+        let module = crate::Engine::lower_wasm_module_with_state(
+            name,
+            [crate::WasmFunctionBody {
+                ty: crate::WasmCallableType::Embedded(crate::WasmSignature {
+                    params: vec![crate::WasmType::I32],
+                    results: vec![crate::WasmType::I32],
+                }),
+                locals: vec![wasmparser::ValType::I32; 3],
+                operators: operators.into_iter().map(Ok),
+            }],
+            &crate::WasmTypes::default(),
+            &[],
+            &[crate::WasmMemory {
+                ty: wasmparser::MemoryType {
+                    initial: 1,
+                    maximum: Some(1),
+                    memory64: false,
+                    shared: false,
+                    page_size_log2: None,
+                },
+                import: None,
+            }],
+            &[],
+        )
+        .unwrap();
+        let mut vm = Vm::new(crate::SystemHost);
+        let instance = vm.instantiate_wasm_module(&module).unwrap();
+        let program = vm
+            .programs
+            .find_shared(&module.program)
+            .expect("registered Wasm program");
+        vm.set_execution_mode(crate::ExecutionMode::Compiled);
+        // Selective mode: no eager artifact.
+        vm.programs.set_compiled(program, None);
+        vm.invoke_wasm(&instance, 0, &[crate::WasmValue::I32(nodes)]).unwrap()
+    }
+
+    const WALK_MEMARG: wasmparser::MemArg = wasmparser::MemArg {
+        align: 2,
+        max_align: 2,
+        offset: 0,
+        memory: 0,
+    };
+
+    #[test]
+    fn lane_safepoint_resumes_a_list_reversal_with_its_carried_register() {
+        // CoreMark's `core_list_reverse` shape: the loop's head moves the list into the
+        // current node and loads the next one through it, and its latch stores the previous
+        // node, moves the current one there and tests the list. Both edges into the head
+        // carry the list register in the accumulator, which the head reads instead of the
+        // register (`edges_carry`); so must a safepoint that resumes it from the lane loop.
+        // Only builds that form sibling calls carry the accumulator (`ACCUMULATOR`), so an
+        // optimized test build (`cargo test --release`) is the one that checks it.
+        const NODES: i32 = 3_000;
+        const WORD: i32 = 4;
+        const LIST_HEAD: i32 = WORD;
+        // Locals: 1 the list, 2 the reversed list, 3 the current node.
+        let reverse = vec![
+            Operator::I32Const { value: 0 },
+            Operator::LocalSet { local_index: 2 },
+            Operator::I32Const { value: LIST_HEAD },
+            Operator::LocalSet { local_index: 3 },
+            Operator::LocalGet { local_index: 3 },
+            Operator::LocalSet { local_index: 1 },
+            Operator::Loop { blockty: wasmparser::BlockType::Empty },
+            Operator::LocalGet { local_index: 1 },
+            Operator::LocalSet { local_index: 3 },
+            Operator::LocalGet { local_index: 3 },
+            Operator::I32Load { memarg: WALK_MEMARG },
+            Operator::LocalSet { local_index: 1 },
+            Operator::LocalGet { local_index: 3 },
+            Operator::LocalGet { local_index: 2 },
+            Operator::I32Store { memarg: WALK_MEMARG },
+            Operator::LocalGet { local_index: 3 },
+            Operator::LocalSet { local_index: 2 },
+            Operator::LocalGet { local_index: 1 },
+            Operator::BrIf { relative_depth: 0 },
+            Operator::End,
+        ];
+        // The reversed list starts at the last node.
+        assert_eq!(
+            walk_list_at_safepoints("list-reversal", NODES, reverse),
+            Some(crate::WasmValue::I32(NODES * WORD))
+        );
+    }
+
+    #[test]
+    fn compiled_wasm_selective_module_compiles_whole_after_its_interpreted_work() {
+        use super::super::program_store::{WASM_JIT_BACKEDGES_PER_ENTRY, WASM_JIT_MODULE_ESCALATION_WORK};
+        // One entry loops through the module's escalation work, plus one entry's worth.
+        let iterations = i32::try_from(
+            (WASM_JIT_MODULE_ESCALATION_WORK + 1) * WASM_JIT_BACKEDGES_PER_ENTRY,
+        )
+        .unwrap();
+        let root = vec![
+            Operator::LocalGet { local_index: 0 },
+            Operator::LocalSet { local_index: 1 },
+            Operator::Loop {
+                blockty: wasmparser::BlockType::Empty,
+            },
+            Operator::LocalGet { local_index: 1 },
+            Operator::I32Const { value: -1 },
+            Operator::I32Add,
+            Operator::LocalTee { local_index: 1 },
+            Operator::BrIf { relative_depth: 0 },
+            Operator::End,
+            Operator::LocalGet { local_index: 0 },
+            Operator::End,
+        ];
+        let module = crate::Engine::lower_wasm_i32_module(
+            "compiled-wasm-selective-module-escalation",
+            0,
+            [(1, 1, true, root)]
+                .into_iter()
+                .map(|(params, locals, result, ops)| (params, locals, result, ops.into_iter().map(Ok))),
+        )
+        .unwrap();
+        let function = module.select_function(0).unwrap();
+        let mut vm = Vm::new(crate::SystemHost);
+        assert_eq!(vm.execute_wasm_i32(&function, &[1]).unwrap(), Some(1));
+        let program = vm
+            .programs
+            .find_shared(&function.module.program)
+            .expect("registered Wasm program");
+        vm.set_execution_mode(crate::ExecutionMode::Compiled);
+        // Selective mode: no eager artifact.
+        vm.programs.set_compiled(program, None);
+
+        assert_eq!(vm.execute_wasm_i32(&function, &[iterations]).unwrap(), Some(iterations));
+        assert!(
+            matches!(vm.programs.compiled(program), Some(None)),
+            "the module compiles between calls, never inside a loop"
+        );
+
+        assert_eq!(vm.execute_wasm_i32(&function, &[1]).unwrap(), Some(1));
+        let whole = vm
+            .programs
+            .compiled(program)
+            .flatten()
+            .expect("the next entry compiled the whole module");
+        assert_eq!(whole.native_entries(0), Some(1));
+        assert!(vm.programs.wasm_tier(program, 0).is_none(), "no selective artifact remains");
     }
 
     #[test]

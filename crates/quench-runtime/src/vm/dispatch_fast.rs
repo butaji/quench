@@ -1681,6 +1681,15 @@ struct LaneContext<H: Host> {
     /// The running activation's `this`, or `DELETED` when the frame's binding decides
     /// it (`Vm::current_this`).
     this: Value,
+    /// Backward jumps left before the running Wasm function is credited with an
+    /// interpreter entry's worth of loop work (`WASM_JIT_BACKEDGES_PER_ENTRY`), or `None`
+    /// when this run's code earns none (`Vm::lane_credits_backedges`). A crediting run keeps
+    /// its floor raised, so every backward jump reaches `lane_safepoint`, which counts: the
+    /// handlers stay as they are.
+    backedges_left: Option<u32>,
+    /// The accumulator the lane loop dispatches its next record with: the one a safepoint
+    /// jump carried to its target (`lane_safepoint`), else none.
+    resumed_acc: Slot<Value>,
     /// The running JavaScript activation's environment, or `DELETED` for a VM frame.
     env: Value,
     /// The innermost capture slots of the running function, once a capture read found
@@ -6097,14 +6106,39 @@ fn lane_jump<H: Host>(
     if backward && below_floor() {
         // Scalar arguments only, so the slow path stays a sibling call.
         return match commit {
-            None => lane_safepoint::<H>(ip, target),
-            Some((register, value)) => lane_safepoint_writing::<H>(r, ip, target, register, value),
+            None => lane_safepoint::<H>(ip, target, view.acc),
+            Some((register, value)) => lane_safepoint_writing::<H>(r, ip, target, view.acc, register, value),
         };
     }
     if let Some((register, value)) = commit {
         r.set(register, value);
     }
     next!(cx, r, target, view)
+}
+
+/// Count one backward jump of a crediting run (`LaneContext::backedges_left`); at the budget's
+/// end, credit the running Wasm function with one interpreter entry for the loop work
+/// (`ProgramStore::note_wasm_tier_backedges`) and refill it. A function entered once and
+/// looping hot (JetStream's tsf and zlib) then promotes at its next entry, as one called often
+/// does.
+fn lane_count_backedge<H: Host>(cx: *mut LaneContext<H>) {
+    // SAFETY: called from `lane_safepoint` with the run's context.
+    let Some(left) = (unsafe { (*cx).backedges_left }) else {
+        return;
+    };
+    if let Some(left) = left.checked_sub(1) {
+        unsafe { (*cx).backedges_left = Some(left) };
+        return;
+    }
+    let machine = unsafe { vm(cx) };
+    let program = unsafe { (*cx).program };
+    let function = machine
+        .lane_stack
+        .activations
+        .last()
+        .map_or(machine.frames[unsafe { (*cx).frame }].function, |activation| activation.function);
+    machine.programs.note_wasm_tier_backedges(program, function);
+    unsafe { (*cx).backedges_left = Some(super::program_store::WASM_JIT_BACKEDGES_PER_ENTRY) };
 }
 
 lane_handler! {
@@ -6130,7 +6164,7 @@ script_handler! {
         // every instruction record remains contiguous in this lane view.
         let at = |pc: u32| unsafe { header.offset(pc as isize - site.header as isize) };
         if below_floor() {
-            return lane_safepoint::<H>(ip, header);
+            return lane_safepoint::<H>(ip, header, Slot::unset());
         }
         // Keep the ordinary interpreter and JIT-off lane free of tier metadata
         // lookups. Only the opt-in shared JS baseline observes loop work here.
@@ -6269,7 +6303,7 @@ fn lane_loop_native<H: Host>(
             Some((frame, callee_pc)) => exit(lane_inlined_activation(cx, r, region, &entry, *frame, at(frame.call), pc, callee_pc)),
             None => exit(at(pc)),
         }),
-        LoopContinuation::Safepoint => LoopAttempt::Leave(lane_safepoint::<H>(record, header)),
+        LoopContinuation::Safepoint => LoopAttempt::Leave(lane_safepoint::<H>(record, header, Slot::unset())),
     }
 }
 
@@ -7837,15 +7871,21 @@ fn frame_memory_view<H: Host>(
 
 /// A taken safepoint jump below the stack floor: leave the lane when a
 /// collection is due, otherwise dispatch the target from the lane loop,
-/// which unwinds the stack. Out of line and reached by a sibling call, so a
+/// which unwinds the stack, with the accumulator `acc` the jump carries
+/// (`LaneContext::resumed_acc`): a loop head whose every edge carries a
+/// register reads it there. Out of line and reached by a sibling call, so a
 /// safepoint's fast path neither loads the context nor saves registers.
 #[cold]
 #[inline(never)]
-fn lane_safepoint<H: Host>(ip: Ip, target: Ip) -> Ip {
+fn lane_safepoint<H: Host>(ip: Ip, target: Ip, acc: Slot<Value>) -> Ip {
+    let cx = lane_context::<H>();
     // SAFETY: called only while a lane runs, from one of its handlers.
-    if unsafe { vm(lane_context::<H>()) }.heap.should_collect() || unsafe { vm(lane_context::<H>()) }.execution_interrupt.is_termination_requested() {
+    if unsafe { vm(cx) }.heap.should_collect() || unsafe { vm(cx) }.execution_interrupt.is_termination_requested() {
         return exit(ip);
     }
+    lane_count_backedge::<H>(cx);
+    // SAFETY: as above; the lane loop takes it before dispatching `target`.
+    unsafe { (*cx).resumed_acc = acc };
     target
 }
 
@@ -7856,10 +7896,11 @@ fn lane_safepoint_writing<H: Host>(
     r: Registers,
     ip: Ip,
     target: Ip,
+    acc: Slot<Value>,
     register: u16,
     value: Value,
 ) -> Ip {
-    let next = lane_safepoint::<H>(ip, target);
+    let next = lane_safepoint::<H>(ip, target, acc);
     if next == target {
         r.set(register, value);
     }
@@ -17266,6 +17307,15 @@ impl<H: Host> Vm<H> {
             .unwrap_or(std::ptr::null())
     }
 
+    /// Whether a lane run of `program` credits its functions' loop work: a Wasm program in
+    /// compiled execution without an eager artifact (selective tiering) promotes its functions
+    /// one by one, by calls and by loop work.
+    fn lane_credits_backedges(&self, code: &ResidualProgram, program: ProgramId) -> bool {
+        code.kind == crate::bytecode::ProgramKind::Wasm
+            && self.execution_mode == super::ExecutionMode::Compiled
+            && matches!(self.programs.compiled(program), Some(None))
+    }
+
     /// Whether the instruction at `pc` of `view` runs in the lane.
     #[inline(always)]
     pub(super) fn lane_runs(view: *const LaneView, pc: usize) -> bool {
@@ -17295,7 +17345,9 @@ impl<H: Host> Vm<H> {
         let view = unsafe { &*view };
         let base = view.records();
         let registers = Registers(self.frames[*frame].registers.as_mut_ptr());
-        let floor = if self.heap.should_collect() {
+        // A run that credits loop work keeps the floor raised, so its backward jumps count in
+        // `lane_safepoint` (`LaneContext::backedges_left`).
+        let floor = if self.heap.should_collect() || self.lane_credits_backedges(code, program) {
             COLLECTION_DUE_FLOOR
         } else {
             stack_pointer().saturating_sub(LANE_STACK_SLACK)
@@ -17342,6 +17394,10 @@ impl<H: Host> Vm<H> {
                     function.dispatch == crate::bytecode::DispatchClass::General
                 }),
             this: self.frame_lane_this(*frame),
+            resumed_acc: Slot::of(Value::UNDEFINED),
+            backedges_left: self
+                .lane_credits_backedges(code, program)
+                .then_some(super::program_store::WASM_JIT_BACKEDGES_PER_ENTRY),
             env: Value::DELETED,
             capture: std::ptr::null(),
             outer: NO_OUTER_WALK,
@@ -17498,14 +17554,17 @@ impl<H: Host> Vm<H> {
 fn lane_dispatch<H: Host>(cx: *mut LaneContext<H>, mut ip: Ip) -> Ip {
     loop {
         // SAFETY: handlers have returned, so no other access is live.
-        let (view, registers) = unsafe { ((*cx).memory, (*cx).registers) };
+        let (view, registers, acc) = unsafe {
+            let acc = std::mem::replace(&mut (*cx).resumed_acc, Slot::of(Value::UNDEFINED));
+            ((*cx).memory, (*cx).registers, acc)
+        };
         let next = handler::<H>(ip)(
             registers,
             ip,
             view.bytes,
             view.reach,
             crate::value::IntegerEncoding::TAG,
-            Slot::of(Value::UNDEFINED),
+            acc,
         );
         let ip_next = next.map_addr(|address| address & !EXIT_TAG);
         if next.addr() & EXIT_TAG != 0 {

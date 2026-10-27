@@ -127,17 +127,24 @@ impl<H: Host> Vm<H> {
             Some(Cell::BigInt(value)) => Ok(value.as_ref().clone()),
             _ if let Some(value) = self.heap.string(primitive)  => {
                 let Some(value) = crate::bigint::parse_string(&value.host_string()) else {
+                    let message = self.bigint_conversion_message(primitive);
                     return self
-                        .syntax_error_result(p, "invalid BigInt value")
+                        .syntax_error_result(p, &message)
                         .map(|_| num_bigint::BigInt::default());
                 };
                 Ok(value)
             }
-            _ => primitive
-                .as_bool()
-                .map(|value| num_bigint::BigInt::from(i32::from(value)))
-                .ok_or_else(|| self.type_error(p, "cannot convert value to BigInt".into())),
+            _ => match primitive.as_bool() {
+                Some(value) => Ok(num_bigint::BigInt::from(i32::from(value))),
+                None => Err(self.type_error(p, self.bigint_conversion_message(primitive))),
+            },
         }
+    }
+
+    /// V8's text for a primitive that does not convert to a BigInt (ToBigInt and the
+    /// `BigInt` constructor): the value as V8 details it (`detail_string`).
+    pub(super) fn bigint_conversion_message(&self, primitive: Value) -> String {
+        format!("Cannot convert {} to a BigInt", self.detail_string(primitive))
     }
 
     pub(super) fn to_property_key(
