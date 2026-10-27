@@ -12958,13 +12958,16 @@ fn lane_activate_environment<H: Host>(
     let stack = &mut vm.lane_stack;
     let window = stack.values.len();
     let held = count + usize::from(WINDOW_LOCALS);
+    debug_assert!(fill_room::<SCRIPT_FILL_BLOCK>(held + locals) <= usize::from(target.room));
     // SAFETY: capacity holds the window (`ScriptCallTarget::room`); each slot is written
     // before the length covers it, and no activation's window moves.
     let callee_registers = unsafe {
         let registers = stack.values.as_mut_ptr().add(window);
-        fill_window::<SCRIPT_FILL_BLOCK>(registers, count, Value::UNDEFINED);
-        // Every slot starts `undefined` among the locals, parameter `k` local `k` with its
-        // argument where one was passed; the environment is made when one is needed.
+        // Every register and local starts `undefined`, filled in whole blocks within the
+        // target's room, which covers them (`ScriptCallTarget::room`); the entries are then
+        // written, and parameter `k` local `k` with its argument where one was passed. The
+        // environment is made when one is needed.
+        fill_window::<SCRIPT_FILL_BLOCK>(registers, held + locals, Value::UNDEFINED);
         let entries = registers.add(count);
         entries.add(usize::from(WINDOW_ENVIRONMENT)).write(Value::DELETED);
         entries
@@ -12984,9 +12987,6 @@ fn lane_activate_environment<H: Host>(
                 local.add(slot).write(value);
             }
             local.add(locals + slot).write(value);
-        }
-        for slot in bound..locals {
-            local.add(slot).write(Value::UNDEFINED);
         }
         if let Some(gathered) = gathered {
             local.add(usize::from(target.params) - 1).write(gathered);
@@ -13066,8 +13066,12 @@ unsafe fn window_environment<H: Host>(
         let slots = crate::heap::EnvironmentSlots::from_values((0..in_place.len()).map(|slot| {
             if window.captured(slot) { *locals.add(slot) } else { Value::DELETED }
         }));
-        for slot in (0..in_place.len()).filter(|slot| window.captured(*slot)) {
-            locals.add(slot).write(Value::DELETED);
+        // Each captured local, one per bit of the mask, which names no slot past the locals.
+        debug_assert_eq!(captured.checked_shr(u32::from(window.locals)).unwrap_or(0), 0);
+        let mut remaining = captured;
+        while remaining != 0 {
+            locals.add(remaining.trailing_zeros() as usize).write(Value::DELETED);
+            remaining &= remaining - 1;
         }
         // A non-arrow binds its `this` where its closures' arrows find it
         // (`Vm::captured_lexical_this`), as a frame does when a closure or the body itself
