@@ -662,6 +662,14 @@ struct FieldCache {
     holder: u32,
     slot: u16,
 }
+
+impl FieldCache {
+    /// The entry of an own data field at `slot` of receivers of exact shape `receiver`.
+    #[inline(always)]
+    const fn own(receiver: u32, slot: u16) -> Self {
+        Self { receiver, holder: NO_FIELD_HOLDER, slot }
+    }
+}
 /// The internal keys of a bound function's environment object.
 const BOUND_TARGET_KEY: &str = "\0quench:bound-target";
 const BOUND_THIS_KEY: &str = "\0quench:bound-this";

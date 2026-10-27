@@ -933,12 +933,14 @@ impl Native {
     /// (`Vm::materialize_deferred_lane`): `assert.deepEqual` calls `Object.prototype.toString`
     /// on every value it compares (10,210 materializations in the color-convert npm scenario),
     /// and TypeScript's CommonJS re-export helper (`__createBinding`) reads each export's
-    /// descriptor (208,883 in the typescript-eslint npm scenario).
+    /// descriptor (208,883 in the typescript-eslint npm scenario), and Express decodes each
+    /// query value with `decodeURIComponent` (one per request).
     pub(crate) fn runs_beside_activations(self) -> bool {
         matches!(
             self,
             Self::ObjectLiteralPrototype
                 | Self::ObjectKeys
+                | Self::ObjectAssign
                 | Self::ObjectDefineProperty
                 | Self::ObjectGetPrototypeOf
                 | Self::ObjectSetPrototypeOf
@@ -958,6 +960,10 @@ impl Native {
                 | Self::JsonParse
                 | Self::JsonStringify
                 | Self::ParseInt
+                | Self::EncodeUri
+                | Self::EncodeUriComponent
+                | Self::DecodeUri
+                | Self::DecodeUriComponent
                 | Self::ArrayShift
                 | Self::WeakMapSet
                 | Self::FinalizationRegistryRegister
@@ -2883,8 +2889,8 @@ impl EnvironmentSlots {
         }
     }
 
-    /// The indexes a sparse storage lists, ascending.
-    fn sparse_indexes(&self) -> impl Iterator<Item = usize> + '_ {
+    /// The indexes a sparse storage lists, ascending; none for dense storage.
+    pub(crate) fn sparse_indexes(&self) -> impl Iterator<Item = usize> + '_ {
         let entries = if self.0.marked() {
             self.0.len().saturating_sub(SPARSE_ENTRIES_START) / SPARSE_ENTRY_WORDS
         } else {

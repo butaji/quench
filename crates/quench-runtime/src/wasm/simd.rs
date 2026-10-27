@@ -162,6 +162,29 @@ impl SimdKernel {
         let lane = (selector & SELECTOR_LANE_MASK) as u8;
         (u32::from(lane) < kernel.lanes).then_some((kernel, lane))
     }
+
+    /// The type of the operator's result, read off its own semantics: a kernel is pure and
+    /// total, so applied to zero operands it answers with a value of that type.
+    pub(crate) fn result_type(&self, lane: u8) -> WasmType {
+        self.apply_bits_typed(0, 0, lane).ty()
+    }
+
+    /// The operator applied to operands given as bits, its result as bits: a vector whole,
+    /// a scalar in the low bits (`ScalarBits`), as compiled code holds them.
+    pub(crate) fn apply_bits(&self, left: u128, right: u128, lane: u8) -> u128 {
+        match self.apply_bits_typed(left, right, lane) {
+            WasmValue::V128(bits) => bits,
+            value => u128::from(scalar(value)),
+        }
+    }
+
+    fn apply_bits_typed(&self, left: u128, right: u128, lane: u8) -> WasmValue {
+        let value = |ty, bits: u128| match ty {
+            WasmType::V128 => WasmValue::V128(bits),
+            ty => WasmValue::from_bits(ty, bits as u64),
+        };
+        (self.apply)(value(self.left, left), self.right.map(|ty| value(ty, right)), lane)
+    }
 }
 
 /// The lanes a lane immediate may name, from the operator's lane width when it has one.

@@ -2665,6 +2665,9 @@ fn float_unary_operator(op: Op, tag: u32) -> Option<(F64UnaryOperator, crate::Wa
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Slot {
     Value(Kind),
+    /// A 128-bit SIMD value. Only SIMD instructions, moves and vector accesses read it, so
+    /// it never meets a call, a return or a scalar view (`Emitter::vector`).
+    Vector,
     /// An instance binding: the environment slot it was loaded from.
     Binding(u32),
     /// The function's memory binding; only direct accesses read it.
@@ -3455,6 +3458,54 @@ unsafe extern "C" fn compiled_memory_fill(address: u64, byte: u64, length: u64) 
     // supported host's address size.
     unsafe {
         std::ptr::write_bytes(address as usize as *mut u8, byte as u8, length as usize);
+    }
+    0
+}
+
+/// Whether `field` of `instruction` is the unused second operand of a one-operand SIMD
+/// operator, which lowering leaves naming register 0 and nothing reads.
+fn unary_simd_spare(instruction: WideInstruction, field: crate::bytecode::InstructionField) -> bool {
+    instruction.op() == Op::WasmSimd
+        && field == crate::bytecode::InstructionField::C
+        && crate::wasm::simd::SimdKernel::of(instruction.imm())
+            .is_some_and(|(kernel, _)| kernel.right.is_none())
+}
+
+/// The machine type compiled code holds a Wasm vector in (`Slot::Vector`).
+const VECTOR_IR: ir::Type = types::I8X16;
+
+/// The words of a SIMD kernel callout (`compiled_simd_kernel`), by position: each operand
+/// and the result take two, low then high; a scalar sits in the low word.
+const SIMD_KERNEL_LEFT: usize = 0;
+const SIMD_KERNEL_RIGHT: usize = 2;
+const SIMD_KERNEL_RESULT: usize = 4;
+const SIMD_KERNEL_WORDS: usize = 6;
+
+/// Applies the SIMD operator `selector` names to the operand words at `words` and writes
+/// its result there (`SIMD_KERNEL_RESULT`): the kernel the interpreter runs, so compiled
+/// code needs no lowering of its own for an operator.
+unsafe extern "C" fn compiled_simd_kernel(selector: u64, words: *mut u64) {
+    let (kernel, lane) =
+        crate::wasm::simd::SimdKernel::of(selector as u32).expect("planned SIMD operator");
+    // SAFETY: the emitter passes its slot of SIMD_KERNEL_WORDS words.
+    let words = unsafe { std::slice::from_raw_parts_mut(words, SIMD_KERNEL_WORDS) };
+    let operand = |at: usize| u128::from(words[at]) | (u128::from(words[at + 1]) << u64::BITS);
+    let result = kernel.apply_bits(operand(SIMD_KERNEL_LEFT), operand(SIMD_KERNEL_RIGHT), lane);
+    words[SIMD_KERNEL_RESULT] = result as u64;
+    words[SIMD_KERNEL_RESULT + 1] = (result >> u64::BITS) as u64;
+}
+
+/// `memory.copy` within one memory, whose ranges the caller checked: overlapping ranges copy
+/// as if through a temporary buffer.
+unsafe extern "C" fn compiled_memory_copy(destination: u64, source: u64, length: u64) -> i64 {
+    // Wasm32 operands are zero-extended before this call; they fit every supported host's
+    // address size.
+    unsafe {
+        std::ptr::copy(
+            source as usize as *const u8,
+            destination as usize as *mut u8,
+            length as usize,
+        );
     }
     0
 }
@@ -6940,6 +6991,54 @@ impl<H: Host> Analysis<'_, H> {
         }
     }
 
+    /// The slot a constant defines: a vector's, or its machine kind's (`constant_kind`).
+    fn constant_slot(&self, value: Value) -> Slot {
+        if self.vm.heap.v128(value).is_some() {
+            Slot::Vector
+        } else {
+            Slot::Value(self.constant_kind(value))
+        }
+    }
+
+    /// A vector constant's bits.
+    fn constant_vector(&self, value: Value) -> Option<u128> {
+        self.vm.heap.v128(value).map(u128::from_le_bytes)
+    }
+
+    /// Check `register` names the function's memory for a vector access: the memory
+    /// register, or a register an instance binding loaded the same unshared memory into
+    /// (lowering binds the memory afresh for each such access), which then is the
+    /// function's compiled memory (`memory_slot`).
+    fn vector_memory(
+        &self,
+        function: &Function,
+        state: &AnalysisState,
+        register: u16,
+        memory_register: Option<u16>,
+        memory_slot: &mut Option<u32>,
+    ) -> Option<()> {
+        match state.get(register, function.registers)? {
+            Slot::Memory if Some(register) == memory_register => {}
+            Slot::Binding(slot)
+                if self.binds_unshared_memory(slot) && memory_slot.is_none_or(|known| known == slot) =>
+            {
+                *memory_slot = Some(slot);
+            }
+            _ => return None,
+        }
+        memory_slot.is_some_and(|slot| self.supports_compiled_memory(slot)).then_some(())
+    }
+
+    /// The byte offset a vector access adds to its address (`Op::WasmMemoryAddress`).
+    fn memory_offset(&self, index: usize) -> Option<u64> {
+        self.vm.decode_bits64(self.constant(index)?)
+    }
+
+    /// A shuffle's lane selectors: sixteen byte indices into its two operands.
+    fn shuffle_lanes(&self, index: usize) -> Option<[u8; crate::wasm::V128_BYTES]> {
+        self.vm.heap.v128(self.constant(index)?)
+    }
+
     fn constant_bits(&self, value: Value) -> i64 {
         match self.vm.decode_bits64(value) {
             Some(bits) => bits as i64,
@@ -7202,11 +7301,20 @@ impl<H: Host> Analysis<'_, H> {
         // The memory register is read only by direct accesses through it.
         if memory_register.is_some_and(|memory| {
             !direct_access(op)
-                && !matches!(op, Op::WasmMemorySize | Op::WasmMemoryFill)
+                && !matches!(
+                    op,
+                    Op::WasmMemorySize
+                        | Op::WasmMemoryFill
+                        | Op::WasmMemoryCopy
+                        | Op::WasmMemoryAddress
+                        | Op::WasmMemoryLoad
+                        | Op::WasmMemoryStore
+                )
                 && op != Op::WasmInstanceBinding
                 && crate::bytecode::InstructionField::ALL.iter().any(|field| {
                     op.field_layout(*field).reads_register()
                         && instruction.field_value(*field) == memory
+                        && !unary_simd_spare(instruction, *field)
                 })
         }) {
             return None;
@@ -7285,26 +7393,75 @@ impl<H: Host> Analysis<'_, H> {
                 let result = Kind::of(operator.result_type())?;
                 set(state, instruction.a(), Slot::Value(result))
             }
-            Op::Move => {
-                let kind = value(state, instruction.b())?;
-                set(state, instruction.a(), Slot::Value(kind))
-            }
+            Op::Move => match state.get(instruction.b(), function.registers)? {
+                Slot::Vector => set(state, instruction.a(), Slot::Vector),
+                _ => {
+                    let kind = value(state, instruction.b())?;
+                    set(state, instruction.a(), Slot::Value(kind))
+                }
+            },
             Op::LoadConst => {
                 let constant = self.constant(instruction.constant_index())?;
-                set(
-                    state,
-                    instruction.a(),
-                    Slot::Value(self.constant_kind(constant)),
-                )
+                set(state, instruction.a(), self.constant_slot(constant))
             }
             Op::WasmFillRegisters => {
                 let constant = self.constant(instruction.constant_index())?;
-                let kind = self.constant_kind(constant);
+                let slot = self.constant_slot(constant);
                 let window = instruction.register_window();
                 for offset in 0..window.count {
-                    set(state, window.base + offset, Slot::Value(kind))?;
+                    set(state, window.base + offset, slot)?;
                 }
                 Some(())
+            }
+            // A vector access's effective address: a 32-bit address plus the access's offset,
+            // as 64 bits, so the sum cannot wrap.
+            Op::WasmMemoryAddress => {
+                self.vector_memory(function, state, instruction.c(), memory_register, memory_slot)?;
+                self.memory_offset(instruction.constant_index())?;
+                i32_value(state, instruction.b())?;
+                set(state, instruction.a(), Slot::Value(Kind::I64))
+            }
+            Op::WasmMemoryLoad | Op::WasmMemoryStore => {
+                self.vector_memory(function, state, instruction.b(), memory_register, memory_slot)?;
+                if value(state, instruction.c())? != Kind::I64 {
+                    return None;
+                }
+                if op == Op::WasmMemoryLoad {
+                    (crate::wasm::memory::MemoryLoad::from_tag(instruction.imm())?
+                        == crate::wasm::memory::MemoryLoad::V128Load)
+                        .then_some(())?;
+                    set(state, instruction.a(), Slot::Vector)
+                } else {
+                    (crate::wasm::memory::MemoryStore::from_tag(instruction.imm())?
+                        == crate::wasm::memory::MemoryStore::V128Store)
+                        .then_some(())?;
+                    (state.get(instruction.a(), function.registers)? == Slot::Vector).then_some(())
+                }
+            }
+            Op::WasmSimd => {
+                let (kernel, lane) = crate::wasm::simd::SimdKernel::of(instruction.imm())?;
+                let operand = |register: u16, ty: crate::WasmType| match ty {
+                    crate::WasmType::V128 => {
+                        (state.get(register, function.registers)? == Slot::Vector).then_some(())
+                    }
+                    ty => (value(state, register)? == Kind::of(ty)?).then_some(()),
+                };
+                operand(instruction.b(), kernel.left)?;
+                if let Some(right) = kernel.right {
+                    operand(instruction.c(), right)?;
+                }
+                let result = match kernel.result_type(lane) {
+                    crate::WasmType::V128 => Slot::Vector,
+                    ty => Slot::Value(Kind::of(ty)?),
+                };
+                set(state, instruction.a(), result)
+            }
+            Op::WasmSimdShuffle => {
+                self.shuffle_lanes(instruction.constant_index())?;
+                for register in [instruction.b(), instruction.c()] {
+                    (state.get(register, function.registers)? == Slot::Vector).then_some(())?;
+                }
+                set(state, instruction.a(), Slot::Vector)
             }
             Op::WasmI32Unary => {
                 I32UnaryOperator::from_tag(instruction.imm())?;
@@ -7358,6 +7515,20 @@ impl<H: Host> Analysis<'_, H> {
                 i32_value(state, instruction.b())?;
                 i32_value(state, instruction.c())?;
                 i32_value(state, destination)
+            }
+            // A copy within the function's one memory: both memory operands name it.
+            Op::WasmMemoryCopy => {
+                let (destination, source) = instruction.register_pair();
+                if Some(instruction.a()) != memory_register
+                    || Some(instruction.b()) != memory_register
+                    || state.get(instruction.a(), function.registers) != Some(Slot::Memory)
+                    || !memory_slot.is_some_and(|slot| self.supports_compiled_memory(slot))
+                {
+                    return None;
+                }
+                i32_value(state, destination)?;
+                i32_value(state, source)?;
+                i32_value(state, instruction.c())
             }
             Op::WasmIndirectTarget if self.callouts => {
                 let Slot::Binding(table) = state.get(instruction.b(), function.registers)? else {
@@ -8224,6 +8395,12 @@ struct Emitter<'a, 'b, H: Host> {
     /// Copies of an unrolled body to emit right after its latch: the block, the loop, and the
     /// copy its back edge enters.
     pending_copies: Vec<(ir::Block, UnrolledLoop, usize, Option<ir::Block>)>,
+    /// Per register, its 128-bit SIMD variable (`Slot::Vector`), declared at its first
+    /// vector definition; scalar views never hold a vector.
+    vectors: Vec<Option<Variable>>,
+    /// The words a SIMD kernel callout reads its operands from and writes its result to
+    /// (`compiled_simd_kernel`), made at the first callout.
+    simd_words: Option<ir::StackSlot>,
 }
 
 impl<H: Host> Emitter<'_, '_, H> {
@@ -9510,6 +9687,294 @@ impl<H: Host> Emitter<'_, '_, H> {
     }
 
     /// Emit the instruction at `pc`; returns whether control falls through.
+    /// The SIMD variable of `register`.
+    fn vector(&mut self, register: u16) -> Variable {
+        let index = usize::from(register);
+        if self.vectors.len() <= index {
+            self.vectors.resize(index + 1, None);
+        }
+        if let Some(variable) = self.vectors[index] {
+            return variable;
+        }
+        let variable = self.body.core.builder.declare_var(VECTOR_IR);
+        self.vectors[index] = Some(variable);
+        variable
+    }
+
+    fn read_vector(&mut self, register: u16) -> ir::Value {
+        let variable = self.vector(register);
+        self.body.core.builder.use_var(variable)
+    }
+
+    /// Define `register` as the vector `value`, of any lane shape.
+    fn write_vector(&mut self, register: u16, value: ir::Value) {
+        let value = self.lanes(VECTOR_IR, value);
+        let variable = self.vector(register);
+        self.known.retain(|(known, _)| *known != register);
+        self.body.core.builder.def_var(variable, value);
+    }
+
+    /// `value`, a vector, viewed with the lane shape `ty`: the same bits.
+    fn lanes(&mut self, ty: ir::Type, value: ir::Value) -> ir::Value {
+        if self.body.core.builder.func.dfg.value_type(value) == ty {
+            return value;
+        }
+        let flags = MemFlagsData::new().with_endianness(ir::Endianness::Little);
+        self.body.core.builder.ins().bitcast(ty, flags, value)
+    }
+
+    /// The address of a vector access at the 64-bit effective address `register`, after
+    /// trapping unless all of its bytes are in the memory.
+    fn vector_address(&mut self, register: u16) -> ir::Value {
+        let address = self.read(register, Kind::I64);
+        let end = self
+            .body.core.builder
+            .ins()
+            .iadd_imm_u(address, crate::wasm::V128_BYTES as i64);
+        let memory_length = self.body.core.builder.ins().load(
+            types::I64,
+            MemFlagsData::trusted(),
+            self.body.core.context,
+            CONTEXT_MEMORY_LENGTH,
+        );
+        let out_of_bounds =
+            self.body.core.builder
+                .ins()
+                .icmp(IntCC::UnsignedGreaterThan, end, memory_length);
+        self.trap_if(out_of_bounds, crate::WasmTrap::OutOfBoundsMemory);
+        self.body.core.builder.ins().iadd(self.base, address)
+    }
+
+    /// The instructions that define or read vectors (`Slot::Vector`); `None` for any other.
+    fn vector_instruction(&mut self, pc: usize, instruction: WideInstruction) -> Option<bool> {
+        let (a, b, c) = (instruction.a(), instruction.b(), instruction.c());
+        match instruction.op() {
+            Op::Move if self.plan.operand(pc) == Slot::Vector => {
+                let value = self.read_vector(b);
+                self.write_vector(a, value);
+            }
+            Op::LoadConst | Op::WasmFillRegisters => {
+                let constant = self.analysis.constant(instruction.constant_index())?;
+                let bits = self.analysis.constant_vector(constant)?;
+                let registers = if instruction.op() == Op::LoadConst {
+                    a..a + 1
+                } else {
+                    let window = instruction.register_window();
+                    window.base..window.base + window.count
+                };
+                for register in registers {
+                    let value = self.vector_constant(bits);
+                    self.write_vector(register, value);
+                }
+            }
+            Op::WasmMemoryAddress => {
+                let offset = self
+                    .analysis
+                    .memory_offset(instruction.constant_index())
+                    .expect("planned");
+                let address = self.read(b, Kind::I32);
+                let address = self.body.core.builder.ins().uextend(types::I64, address);
+                // A memory32 offset is below 2^32, so the 64-bit sum cannot wrap.
+                let address = self.body.core.builder.ins().iadd_imm_u(address, offset as i64);
+                self.write(a, Kind::I64, address);
+            }
+            Op::WasmMemoryLoad => {
+                let address = self.vector_address(c);
+                let flags = self.flags(Region::LinearMemory);
+                let value = self.body.core.builder.ins().load(VECTOR_IR, flags, address, 0);
+                self.write_vector(a, value);
+            }
+            Op::WasmMemoryStore => {
+                let address = self.vector_address(c);
+                let value = self.read_vector(a);
+                let flags = self.flags(Region::LinearMemory);
+                self.body.core.builder.ins().store(flags, value, address, 0);
+            }
+            Op::WasmSimdShuffle => {
+                let lanes = self
+                    .analysis
+                    .shuffle_lanes(instruction.constant_index())
+                    .expect("planned");
+                let mask = self
+                    .body.core.builder
+                    .func
+                    .dfg
+                    .immediates
+                    .push(ir::ConstantData::from(lanes.to_vec()));
+                let (left, right) = (self.read_vector(b), self.read_vector(c));
+                let value = self.body.core.builder.ins().shuffle(left, right, mask);
+                self.write_vector(a, value);
+            }
+            Op::WasmSimd => self.simd(pc, instruction),
+            _ => return None,
+        }
+        Some(true)
+    }
+
+    fn vector_constant(&mut self, bits: u128) -> ir::Value {
+        let constant = self
+            .body.core.builder
+            .func
+            .dfg
+            .constants
+            .insert(ir::ConstantData::from(bits.to_le_bytes().to_vec()));
+        self.body.core.builder.ins().vconst(VECTOR_IR, constant)
+    }
+
+    /// A SIMD operator: one Cranelift instruction where one has its exact semantics, else
+    /// the operator's own kernel (`SimdKernel::apply_bits`), which the interpreter runs too.
+    fn simd(&mut self, pc: usize, instruction: WideInstruction) {
+        use crate::wasm::simd::SimdOperator as S;
+        let (a, b, c) = (instruction.a(), instruction.b(), instruction.c());
+        let (operator, _) = S::from_selector(instruction.imm()).expect("planned");
+        // Lane-wise integer arithmetic, bitwise logic and shifts: Cranelift reduces a vector
+        // shift's count modulo the lane width, as Wasm does.
+        let lanes = match operator {
+            S::V128And | S::V128Or | S::V128Xor | S::V128AndNot | S::V128Not => Some(VECTOR_IR),
+            S::I8x16Add | S::I8x16Sub => Some(types::I8X16),
+            S::I16x8Add | S::I16x8Sub | S::I16x8Shl | S::I16x8ShrU | S::I16x8ShrS => {
+                Some(types::I16X8)
+            }
+            S::I32x4Add | S::I32x4Sub | S::I32x4Shl | S::I32x4ShrU | S::I32x4ShrS => {
+                Some(types::I32X4)
+            }
+            S::I64x2Add | S::I64x2Sub | S::I64x2Shl | S::I64x2ShrU | S::I64x2ShrS => {
+                Some(types::I64X2)
+            }
+            _ => None,
+        };
+        if let Some(ty) = lanes {
+            let left = self.read_vector(b);
+            let left = self.lanes(ty, left);
+            let builder = &mut self.body.core.builder;
+            let value = match operator {
+                S::V128Not => builder.ins().bnot(left),
+                S::I16x8Shl | S::I32x4Shl | S::I64x2Shl
+                | S::I16x8ShrU | S::I32x4ShrU | S::I64x2ShrU
+                | S::I16x8ShrS | S::I32x4ShrS | S::I64x2ShrS => {
+                    let count = self.read(c, Kind::I32);
+                    let builder = &mut self.body.core.builder;
+                    match operator {
+                        S::I16x8Shl | S::I32x4Shl | S::I64x2Shl => builder.ins().ishl(left, count),
+                        S::I16x8ShrU | S::I32x4ShrU | S::I64x2ShrU => {
+                            builder.ins().ushr(left, count)
+                        }
+                        _ => builder.ins().sshr(left, count),
+                    }
+                }
+                _ => {
+                    let right = self.read_vector(c);
+                    let right = self.lanes(ty, right);
+                    let builder = &mut self.body.core.builder;
+                    match operator {
+                        S::V128And => builder.ins().band(left, right),
+                        S::V128Or => builder.ins().bor(left, right),
+                        S::V128Xor => builder.ins().bxor(left, right),
+                        S::V128AndNot => builder.ins().band_not(left, right),
+                        S::I8x16Add | S::I16x8Add | S::I32x4Add | S::I64x2Add => {
+                            builder.ins().iadd(left, right)
+                        }
+                        _ => builder.ins().isub(left, right),
+                    }
+                }
+            };
+            self.write_vector(a, value);
+            return;
+        }
+        if matches!(operator, S::I64x2ExtMulLowI32x4U) {
+            let (left, right) = (self.read_vector(b), self.read_vector(c));
+            let (left, right) = (self.lanes(types::I32X4, left), self.lanes(types::I32X4, right));
+            let builder = &mut self.body.core.builder;
+            let left = builder.ins().uwiden_low(left);
+            let right = builder.ins().uwiden_low(right);
+            let value = builder.ins().imul(left, right);
+            self.write_vector(a, value);
+            return;
+        }
+        self.simd_kernel(pc, instruction);
+    }
+
+    /// `simd` through the kernel: operands to words, `compiled_simd_kernel`, the result back.
+    fn simd_kernel(&mut self, _pc: usize, instruction: WideInstruction) {
+        let (a, b, c) = (instruction.a(), instruction.b(), instruction.c());
+        let (kernel, lane) = crate::wasm::simd::SimdKernel::of(instruction.imm()).expect("planned");
+        let word = types::I64.bytes();
+        let slot = match self.simd_words {
+            Some(slot) => slot,
+            None => {
+                let slot = self.body.core.builder.create_sized_stack_slot(ir::StackSlotData::new(
+                    ir::StackSlotKind::ExplicitSlot,
+                    SIMD_KERNEL_WORDS as u32 * word,
+                    crate::wasm::V128_BYTES.trailing_zeros() as u8,
+                ));
+                self.simd_words = Some(slot);
+                slot
+            }
+        };
+        let operand = |emitter: &mut Self, register: u16, ty: crate::WasmType, at: usize| {
+            let offset = (at as u32 * word) as i32;
+            let (low, high) = match ty {
+                crate::WasmType::V128 => {
+                    let value = emitter.read_vector(register);
+                    let value = emitter.lanes(types::I64X2, value);
+                    let builder = &mut emitter.body.core.builder;
+                    (builder.ins().extractlane(value, 0), builder.ins().extractlane(value, 1))
+                }
+                ty => {
+                    let kind = Kind::of(ty).expect("planned");
+                    let value = emitter.read(register, kind);
+                    let builder = &mut emitter.body.core.builder;
+                    let value = if kind == Kind::I32 {
+                        builder.ins().uextend(types::I64, value)
+                    } else {
+                        value
+                    };
+                    (value, builder.ins().iconst(types::I64, 0))
+                }
+            };
+            let builder = &mut emitter.body.core.builder;
+            builder.ins().stack_store(types::I64, low, slot, offset);
+            builder.ins().stack_store(types::I64, high, slot, offset + word as i32);
+        };
+        operand(self, b, kernel.left, SIMD_KERNEL_LEFT);
+        if let Some(right) = kernel.right {
+            operand(self, c, right, SIMD_KERNEL_RIGHT);
+        }
+        let mut signature = Signature::new(self.call_conv);
+        signature.params.push(AbiParam::new(types::I64));
+        signature.params.push(AbiParam::new(types::I64));
+        let signature = self.body.core.builder.import_signature(signature);
+        let target = self.body.core.builder.ins().iconst(
+            types::I64,
+            compiled_simd_kernel as *const () as usize as i64,
+        );
+        let selector = self
+            .body.core.builder
+            .ins()
+            .iconst(types::I64, i64::from(instruction.imm()));
+        let words = self.body.core.builder.ins().stack_addr(types::I64, slot, 0);
+        self.body.core.builder
+            .ins()
+            .call_indirect(signature, target, &[selector, words]);
+        let result = (SIMD_KERNEL_RESULT as u32 * word) as i32;
+        match kernel.result_type(lane) {
+            crate::WasmType::V128 => {
+                let value = self.body.core.builder.ins().stack_load(types::I64, VECTOR_IR, slot, result);
+                self.write_vector(a, value);
+            }
+            ty => {
+                let kind = Kind::of(ty).expect("planned");
+                let value = self.body.core.builder.ins().stack_load(types::I64, types::I64, slot, result);
+                let value = if kind == Kind::I32 {
+                    self.body.core.builder.ins().ireduce(types::I32, value)
+                } else {
+                    value
+                };
+                self.write(a, kind, value);
+            }
+        }
+    }
+
     fn instruction(
         &mut self,
         function: &Function,
@@ -9518,6 +9983,9 @@ impl<H: Host> Emitter<'_, '_, H> {
     ) -> bool {
         let op = instruction.op();
         let (a, b, c) = (instruction.a(), instruction.b(), instruction.c());
+        if let Some(done) = self.vector_instruction(pc, instruction) {
+            return done;
+        }
         if let Some(operator) = I32BinaryOperator::from_register_op(op) {
             let left = self.read(b, Kind::I32);
             let right = self.read(c, Kind::I32);
@@ -9605,6 +10073,47 @@ impl<H: Host> Emitter<'_, '_, H> {
             let pages = self.body.core.builder.ins().ushr_imm_u(bytes, 16);
             let pages = self.body.core.builder.ins().ireduce(types::I32, pages);
             self.write(a, Kind::I32, pages);
+            return true;
+        }
+        if op == Op::WasmMemoryCopy {
+            let (destination, source) = instruction.register_pair();
+            let destination = self.read(destination, Kind::I32);
+            let destination = self.body.core.builder.ins().uextend(types::I64, destination);
+            let source = self.read(source, Kind::I32);
+            let source = self.body.core.builder.ins().uextend(types::I64, source);
+            let raw_length = self.read(c, Kind::I32);
+            let length = self.body.core.builder.ins().uextend(types::I64, raw_length);
+            let memory_length = self.body.core.builder.ins().load(
+                types::I64,
+                MemFlagsData::trusted(),
+                self.body.core.context,
+                CONTEXT_MEMORY_LENGTH,
+            );
+            // Both ranges are checked before any byte moves; 32-bit operands cannot overflow
+            // their 64-bit sums.
+            for start in [destination, source] {
+                let end = self.body.core.builder.ins().iadd(start, length);
+                let out_of_bounds =
+                    self.body.core.builder
+                        .ins()
+                        .icmp(IntCC::UnsignedGreaterThan, end, memory_length);
+                self.trap_if(out_of_bounds, crate::WasmTrap::OutOfBoundsMemory);
+            }
+            let destination = self.body.core.builder.ins().iadd(self.base, destination);
+            let source = self.body.core.builder.ins().iadd(self.base, source);
+            let mut signature = Signature::new(self.call_conv);
+            for _ in 0..3 {
+                signature.params.push(AbiParam::new(types::I64));
+            }
+            signature.returns.push(AbiParam::new(types::I64));
+            let signature = self.body.core.builder.import_signature(signature);
+            let target = self.body.core.builder.ins().iconst(
+                types::I64,
+                compiled_memory_copy as *const () as usize as i64,
+            );
+            self.body.core.builder
+                .ins()
+                .call_indirect(signature, target, &[destination, source, length]);
             return true;
         }
         if op == Op::WasmMemoryFill {
@@ -10123,6 +10632,8 @@ impl<'a, H: Host> Analysis<'a, H> {
             },
             backedge: None,
             pending_copies: Vec::new(),
+            vectors: Vec::new(),
+            simd_words: None,
         };
         // Registers start at i32 zero, as an activation's register file does.
         for register in 0..function.registers {
@@ -10319,6 +10830,26 @@ impl<'a, H: Host> Analysis<'a, H> {
 /// displacement.
 fn displacement_base(base: *mut u8) -> Option<i32> {
     i32::try_from(base as usize).ok()
+}
+
+/// The bytes of the unshared memory `binding` names and their guard reservation, if any,
+/// read under one borrow: a native entry needs both (`run_compiled_inner`). `None` when the
+/// memory is shared or its bytes are borrowed by a suspended host access, which the general
+/// path reports exactly.
+fn memory_and_guard<H: Host>(
+    vm: &Vm<H>,
+    binding: Value,
+) -> Option<((*mut u8, usize), Option<(*mut u8, usize)>)> {
+    let Some(Cell::WasmMemory { bytes, .. }) = vm.heap.get(binding) else {
+        return None;
+    };
+    let crate::wasm::memory::MemoryStorage::Unshared(state) = &**bytes else {
+        return None;
+    };
+    let mut state = state.try_borrow_mut().ok()?;
+    let guard = state.bytes.guard();
+    let view = (state.bytes.as_mut_ptr(), state.bytes.len());
+    (!view.0.is_null()).then_some((view, guard))
 }
 
 fn guarded_memory<H: Host>(vm: &Vm<H>, binding: Value) -> Option<(*mut u8, usize)> {
@@ -12718,7 +13249,7 @@ impl<H: Host> Vm<H> {
                 .programs
                 .residual(program)
                 .is_some_and(|code| code.kind == crate::bytecode::ProgramKind::Wasm);
-        let baseline = match self.programs.compiled(program) {
+        let mut baseline = match self.programs.compiled(program) {
             Some(compiled) => compiled,
             None => {
                 if self
@@ -12765,6 +13296,7 @@ impl<H: Host> Vm<H> {
                         );
                     }
                     self.programs.set_compiled(program, compiled.clone());
+                    self.programs.settle_wasm_module_tier(program);
                     self.programs.compiled(program).flatten()
                 } else if jit_wasm_selective_enabled()
                     && self
@@ -12801,10 +13333,39 @@ impl<H: Host> Vm<H> {
                         );
                     }
                     self.programs.set_compiled(program, compiled.clone());
+                    self.programs.settle_wasm_module_tier(program);
                     self.programs.compiled(program).flatten()
                 }
             }
         };
+        // A selective module whose interpreted work came due compiles whole (`WasmModuleTier`).
+        if baseline.is_none()
+            && !wasm_root_only
+            && !wasm_root_first
+            && matches!(self.programs.compiled(program), Some(None))
+            && self.programs.note_wasm_module_entry(program)
+            && self.programs.claim_wasm_module_escalation(program)
+        {
+            let started = jit_diagnostics_enabled().then(std::time::Instant::now);
+            let compiled = self.compile_program(program, env).map(Rc::new);
+            if let Some(started) = started {
+                let bytecodes: usize = self.programs.residual(program).map_or(0, |code| {
+                    (0..code.functions.len())
+                        .filter_map(|index| code.function_get(index))
+                        .map(|function| function.code.len())
+                        .sum()
+                });
+                eprintln!(
+                    "QUENCH_WASM_JIT_STATS {{\"program\":{},\"module_escalated\":true,\"compiled\":{},\"bytecodes\":{},\"compile_ns\":{}}}",
+                    program.raw(),
+                    compiled.is_some(),
+                    bytecodes,
+                    started.elapsed().as_nanos(),
+                );
+            }
+            self.programs.set_compiled(program, compiled);
+            baseline = self.programs.compiled(program).flatten();
+        }
         // Root-first mode earns further tiering only after its selected root
         // produced an artifact. If admission fails, leave the workload in the
         // interpreter instead of silently becoming ordinary selective JIT.
@@ -12848,8 +13409,7 @@ impl<H: Host> Vm<H> {
             let (base, length, guard, memory_binding) = match compiled.memory_slot {
                 Some(slot) => {
                     let binding = self.heap.environment_slot(env, slot as usize)?;
-                    let view = super::dispatch_fast::unshared_memory(self, binding)?;
-                    let guard = guarded_memory(self, binding);
+                    let (view, guard) = memory_and_guard(self, binding)?;
                     // Code compiled without bounds checks needs this memory's guard.
                     if compiled.guarded && guard.is_none() {
                         return None;

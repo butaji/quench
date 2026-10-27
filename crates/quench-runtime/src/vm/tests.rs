@@ -59,6 +59,39 @@ fn collection_construction_survives_gc_in_iterator_and_entry_callbacks() {
 }
 
 #[test]
+fn whole_read_per_iteration_copies_keep_their_owners_slots() {
+    // Bindings enough that each iteration's copy of the script's root environment is sparse
+    // (`SPARSE_CLONE_MIN_SLOTS`); the root holds projections, so its copies are traced whole,
+    // and `eval` makes a closure read its chain whole.
+    const BINDINGS: usize = crate::heap::SPARSE_CLONE_MIN_SLOTS + 8;
+    let bindings = (0..BINDINGS).map(|index| format!("let a{index}={{v:{index}}};")).collect::<String>();
+    let source = format!(
+        r#"
+      {bindings}
+      const fs=[];
+      for (let i=0;i<4;i++) {{ const own={{i}}; fs.push(() => a5.v + a60.v + own.i + i, () => eval('a5.v + a60.v + own.i + i')); }}
+      $262.gc(); $262.gc();
+      const got=JSON.stringify(fs.map(f=>f()));
+      if (got!=='[65,65,67,67,69,69,71,71]') throw new Error(got);
+    "#
+    );
+    for specialized in [false, true] {
+        let mut vm = Vm::new(TestHost::default().with_test262());
+        let program = if specialized {
+            Engine::specialize(&source, "sparse-whole-read.js")
+        } else {
+            Engine::compile(crate::ExecutionRequest {
+                source: &source,
+                name: "sparse-whole-read.js",
+                kind: crate::SourceKind::Script,
+            })
+        }
+        .unwrap();
+        vm.execute(&program).unwrap();
+    }
+}
+
+#[test]
 fn array_definitions_reuse_accessor_slots_and_allow_frozen_same_values() {
     let source = r#"
       for(const index of [0,100000]) {
@@ -138,6 +171,81 @@ fn lane_constructions_forward_plain_loaded_arguments() {
     let program = Engine::specialize(source, "lane-forwarding-construct.js").unwrap();
     vm.execute(&program).unwrap();
     assert_eq!(output.borrow().as_slice(), ["2003000 2005000"]);
+}
+
+// Profiled builds count interpreted work exactly and hold no hints to clear.
+#[cfg(not(quench_profiled))]
+#[test]
+fn shape_compaction_clears_own_field_hints() {
+    // Read sites warmed on one layout hold its shape id as their own-field hint. A full
+    // collection that compacts the shape table renumbers ids, after which an old id can name
+    // another layout, so the compaction clears every hint (`LaneView::clear_field_hints`).
+    const SITES: usize = 64;
+    let reads: String = (0..SITES).map(|k| format!("function read{k}(o) {{ return o.a + 0; }}\n")).collect();
+    let calls: String = (0..SITES).map(|k| format!("read{k},")).collect();
+    let source = format!(
+        r#"
+      {reads}
+      var sites = [{calls}], sum = 0;
+      function T(a, b) {{ this.a = a; this.b = b; }}
+      function drive(read, o, n) {{ var s = 0; for (var i = 0; i < n; i++) s += read(o); return s; }}
+      for (var k = 0; k < sites.length; k++) sum += drive(sites[k], new T(k, -1), 50);
+      // Layouts no object keeps, so the next full collection compacts the table.
+      for (var k = 0; k < 20000; k++) {{ var o = {{}}; o['junk' + k] = k; }}
+      print(String(sum));
+    "#
+    );
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    let program = Engine::specialize(&source, "field-hints-compaction.js").unwrap();
+    vm.execute(&program).unwrap();
+    assert_eq!(output.borrow().as_slice(), [(50 * (0..SITES).sum::<usize>()).to_string()]);
+    let held = |vm: &Vm<TestHost>| {
+        vm.programs
+            .lane_views(super::program_store::ProgramId::MAIN)
+            .into_iter()
+            .flatten()
+            .filter_map(super::program_store::derived_lane_view)
+            .map(|view| view.held_field_hints())
+            .sum::<usize>()
+    };
+    assert!(held(&vm) >= SITES);
+    let shapes = vm.shapes.len();
+    vm.collect_now(&program);
+    assert!(vm.shapes.len() < shapes, "the collection compacted the shape table");
+    assert_eq!(held(&vm), 0);
+}
+
+#[test]
+fn call_sites_test_each_target_their_link_names() {
+    // One call site links the target cache entry of a plain callee, which dies; after the
+    // collection, functions that need another entry (a kept `arguments`, values past their
+    // parameters) can take its handle, and so its entry. Each call still makes the tests its
+    // own target needs. Expected values are Node's (v26). It guards the plain call's tests;
+    // the trunk crash it follows (JetStream typescript-lib) it does not reproduce itself.
+    let source = r#"
+      function site(f, v) { return f(v, 2); }
+      function plain(i) { return function (x, y) { return x + y + i; }; }
+      var out = 0;
+      for (var round = 0; round < 40; round++) {
+        var f = plain(round);
+        for (var k = 0; k < 60; k++) out += site(f, k) - k - 2 - round;
+        f = null;
+        $262.gc();
+        for (var j = 0; j < 30; j++) {
+          var keeps = function () { return arguments.length * 100 + arguments[1]; };
+          var fewer = function (x) { return x; };
+          out += site(keeps, j) - 202;
+          out += site(fewer, j) - j;
+        }
+      }
+      print(String(out));
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()).with_test262());
+    let program = Engine::specialize(source, "call-link-reuse.js").unwrap();
+    vm.execute(&program).unwrap();
+    assert_eq!(output.borrow().as_slice(), ["0"]);
 }
 
 #[test]
