@@ -348,7 +348,9 @@ impl<H: Host> Vm<H> {
 
     /// A closure's object allocated finished: its own `length`, `name` and `prototype` under
     /// `shape`, as the recorded adds would leave them, inline where they fit, else in the
-    /// property arena.
+    /// property arena. Inline: a closure's making is mostly this, and its object returns
+    /// through no temporary.
+    #[inline(always)]
     pub(super) fn finished_closure_object(
         &mut self,
         function_prototype: Value,
