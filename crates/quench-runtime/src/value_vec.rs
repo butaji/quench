@@ -17,7 +17,21 @@ pub(crate) const INLINE_PROPERTY_COUNT: usize = 2;
 /// by storing a value they cannot hold before that; a range for its first values would regrow
 /// as it grows past them.
 const MIN_CAPACITY: usize = (INLINE_PROPERTY_COUNT + 1).next_power_of_two();
-const BUCKETS: usize = 32;
+/// Range capacities are the size classes `capacity_class` derives: powers of two from
+/// `MIN_CAPACITY` and the three-quarter steps between them, one free list each.
+const BUCKETS: usize = 64;
+/// The capacity of a range holding `len` values: the smallest power of two from
+/// `MIN_CAPACITY`, or three-quarter step between two (6, 12, 24, ...), that holds them. The
+/// half steps leave a range at most a third unused where powers of two left it half unused
+/// (typescript-lib: 1.6M of 6.7M live slots idle).
+const fn capacity_class(len: usize) -> usize {
+    if len <= MIN_CAPACITY {
+        return MIN_CAPACITY;
+    }
+    let power = len.next_power_of_two();
+    let step = power / 2 + power / 4;
+    if len <= step { step } else { power }
+}
 const DENSE_ARENA_RESERVE_THRESHOLD: usize = 65_536;
 const DENSE_ARENA_GROWTH_DIVISOR: usize = 3;
 /// Released values on the free lists, as a share (`1 / divisor`) of the arena's length, that
@@ -179,7 +193,7 @@ impl Default for ValueArena {
     fn default() -> Self {
         Self {
             values: vec![],
-            free: Default::default(),
+            free: [const { Vec::new() }; BUCKETS],
             released_values: 0,
             shape_lengths: vec![0],
             dictionaries: FxHashMap::default(),
@@ -224,7 +238,7 @@ impl ValueArena {
 
     pub(crate) fn read_snapshot(reader: &mut crate::snapshot::Reader<'_>) -> crate::snapshot::SnapshotResult<Self> {
         let values = reader.values()?;
-        let mut free: [Vec<u32>; BUCKETS] = Default::default();
+        let mut free: [Vec<u32>; BUCKETS] = [const { Vec::new() }; BUCKETS];
         for bucket in &mut free {
             *bucket = reader.u32s()?;
         }
@@ -473,12 +487,7 @@ impl ValueArena {
     /// a dictionary.
     #[inline(always)]
     pub(crate) fn run_of(&mut self, values: &[Value]) -> Option<u32> {
-        let capacity = values
-            .len()
-            .max(MIN_CAPACITY)
-            .checked_next_power_of_two()
-            .expect("property vector capacity overflow");
-        let start = self.allocate(capacity, MAX_ARENA_START)?;
+        let start = self.allocate(capacity_class(values.len()), MAX_ARENA_START)?;
         self.values[start..start + values.len()].copy_from_slice(values);
         Some(start as u32)
     }
@@ -629,13 +638,7 @@ impl ValueArena {
     fn grow(&mut self, vector: &mut ValueVec, max_start: usize) {
         let len = self.len(*vector);
         let capacity = self.capacity(*vector);
-        let next = if capacity == 0 {
-            MIN_CAPACITY
-        } else {
-            capacity
-                .checked_mul(2)
-                .expect("property arena capacity overflow")
-        };
+        let next = capacity_class(capacity + 1);
         let Some(start) = self.allocate(next, max_start) else {
             let values = if self.has_compact_range(*vector) {
                 self.values[vector.start()..vector.start() + len].to_vec()
@@ -684,14 +687,14 @@ impl ValueArena {
     }
 
     /// The capacity of the range of an ordered (neither inline nor dictionary) `vector` of
-    /// `len` values: ranges are allocated at powers of two from `MIN_CAPACITY`, and an empty
-    /// vector without a range has none.
+    /// `len` values: ranges are allocated at the size classes of `capacity_class`, and an
+    /// empty vector without a range has none.
     #[inline(always)]
     fn ordered_capacity(vector: ValueVec, len: usize) -> usize {
         match (len, vector.start() != EMPTY_START as usize) {
             (0, false) => 0,
             (0, true) => MIN_CAPACITY,
-            (length, _) => length.next_power_of_two().max(MIN_CAPACITY),
+            (length, _) => capacity_class(length),
         }
     }
 
@@ -775,9 +778,12 @@ impl ValueArena {
         id
     }
 
+    /// The free list of a size class (`capacity_class`): two per doubling, the power of two
+    /// and the three-quarter step below the next one.
     fn bucket(capacity: usize) -> usize {
-        debug_assert!(capacity >= MIN_CAPACITY && capacity.is_power_of_two());
-        let bucket = capacity.trailing_zeros() as usize - MIN_CAPACITY.trailing_zeros() as usize;
+        debug_assert_eq!(capacity_class(capacity), capacity, "a range capacity is a size class");
+        let octave = (capacity.ilog2() - MIN_CAPACITY.ilog2()) as usize;
+        let bucket = 2 * octave + usize::from(!capacity.is_power_of_two());
         assert!(bucket < BUCKETS, "property arena bucket overflow");
         bucket
     }
@@ -798,7 +804,19 @@ mod tests {
             values.set_auxiliary(value + 1);
         }
         assert_eq!(arena.get(values, 8).unwrap().as_number(), Some(8.0));
-        assert_eq!(arena.vector_stats(values), (9, 16));
+        assert_eq!(arena.vector_stats(values), (9, 12));
+    }
+
+    #[test]
+    fn size_classes_step_by_powers_of_two_and_three_quarters() {
+        let classes: Vec<_> = (0..=33).map(capacity_class).collect();
+        assert_eq!(&classes[..=MIN_CAPACITY], &[MIN_CAPACITY; MIN_CAPACITY + 1]);
+        assert_eq!([classes[5], classes[6], classes[7], classes[9], classes[13], classes[17], classes[25], classes[33]], [6, 6, 8, 12, 16, 24, 32, 48]);
+        // Each class has its own free list, in increasing order.
+        let buckets: Vec<_> = [4, 6, 8, 12, 16, 24, 32, 48].into_iter().map(ValueArena::bucket).collect();
+        assert_eq!(buckets, (0..8).collect::<Vec<_>>());
+        // A range grows to the next class.
+        assert_eq!(capacity_class(12 + 1), 16);
     }
 
     #[test]
