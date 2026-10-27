@@ -1095,10 +1095,14 @@ impl Engine {
         compiler.private_name_overrides = private_aliases;
         compiler.capture_script_completion = capture_script_completion;
         compiler.eval_context = eval_context;
-        compiler.eval_annex_b_collisions = early::annex_b_function_names(&parsed.program.body)
-            .into_iter()
-            .filter_map(|(span, name)| annex_b_forbidden_names.contains(&name).then_some(span))
-            .collect();
+        // Only an eval's caller forbids names (its lexical bindings); without one no function
+        // collides, and the walk would find nothing to keep.
+        if !annex_b_forbidden_names.is_empty() {
+            compiler.eval_annex_b_collisions = early::annex_b_function_names(&parsed.program.body)
+                .into_iter()
+                .filter_map(|(span, name)| annex_b_forbidden_names.contains(&name).then_some(span))
+                .collect();
+        }
         let emitted = compiler.program(&parsed.program, module_goal, inherited_strict);
         #[cfg(feature = "profile-memory")]
         if std::env::var_os("QUENCH_MEMORY").is_some() {
