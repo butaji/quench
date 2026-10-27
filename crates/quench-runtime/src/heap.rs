@@ -510,8 +510,14 @@ pub(crate) struct Heap {
     free_slabs: Vec<u32>,
     free_slots: usize,
     external_bytes: usize,
-    allocations: usize,
-    allocations_since_full: usize,
+    /// The allocation weight charged since the heap was made or reset: one per cell or
+    /// record plus its payload (`charge_allocation`). Pacing reads the weight since the last
+    /// collection and since the last full one by subtracting the marks taken then.
+    allocated: usize,
+    /// `allocated` when the last collection ran.
+    allocated_at_collection: usize,
+    /// `allocated` when the last full collection ran.
+    allocated_at_full: usize,
     /// Payload the live and not yet swept cells and records own (`Cell::payload_bytes`):
     /// allocation and growth add it, reclamation subtracts it. Pacing measures live
     /// weight with it, in the units allocation is charged in.
@@ -542,7 +548,9 @@ pub(crate) struct Heap {
     /// sweep's lists so they do not regrow from empty (and reallocate) every collection.
     property_owner_counts: (usize, usize),
     old_live: usize,
-    threshold: usize,
+    /// The `allocated` weight at which the next collection is due: the last collection's
+    /// mark plus the young budget pacing planned (`set_young_budget`).
+    collect_at: usize,
     total_allocations: u64,
     collections: u64,
     /// The prototypes `mark_prototype` marked last, most recent first, which keep their
@@ -775,7 +783,7 @@ impl Heap {
             free_by_slab: Vec::with_capacity(12),
             free_slabs: Vec::with_capacity(12),
             free_slots: 0,
-            threshold: MemoryPolicy::default().pacing().minimum_young,
+            collect_at: MemoryPolicy::default().pacing().minimum_young,
             max_threshold: MemoryPolicy::default().pacing().minimum_young,
             external_collection_budget: MemoryPolicy::default().pacing().minimum_external_budget,
             ..Self::default()
@@ -786,8 +794,8 @@ impl Heap {
     pub(crate) fn set_memory_policy(&mut self, policy: MemoryPolicy) {
         debug_assert_eq!(self.collections, 0, "the memory policy is chosen at startup");
         self.memory_policy = policy;
-        self.threshold = self.pacing().minimum_young;
-        self.max_threshold = self.threshold;
+        self.max_threshold = 0;
+        self.set_young_budget(self.pacing().minimum_young);
         self.external_collection_budget = self.pacing().minimum_external_budget;
     }
     pub(crate) fn memory_policy(&self) -> MemoryPolicy {
@@ -800,7 +808,7 @@ impl Heap {
     /// Explicit collection remains available; only threshold collection stops.
     #[cfg(test)]
     pub(crate) fn retain_allocations_for_test(&mut self) {
-        self.threshold = usize::MAX;
+        self.collect_at = usize::MAX;
     }
 
     #[cfg(test)]
@@ -1032,8 +1040,7 @@ impl Heap {
         self.charge_materialized_text();
         let weight = 1 + payload / payload_unit();
         self.payload_bytes = self.payload_bytes.saturating_add(payload);
-        self.allocations += weight;
-        self.allocations_since_full = self.allocations_since_full.saturating_add(weight);
+        self.allocated += weight;
         self.total_allocations += 1;
         self.charge_external_growth(external);
     }
@@ -1123,8 +1130,7 @@ impl Heap {
         let environment = if cfg!(feature = "profile-aggregate") {
             self.alloc(cell)
         } else {
-            self.allocations += 1;
-            self.allocations_since_full = self.allocations_since_full.saturating_add(1);
+            self.allocated += 1;
             self.total_allocations += 1;
             self.alloc_in_slot(cell, self.tracks_young_cells())
         };
@@ -1220,8 +1226,7 @@ impl Heap {
     /// An object record of `object`, else a slot: one allocation, with no external bytes.
     #[inline(always)]
     fn insert_object_record(&mut self, object: Object) -> Value {
-        self.allocations += 1;
-        self.allocations_since_full = self.allocations_since_full.saturating_add(1);
+        self.allocated += 1;
         self.total_allocations += 1;
         match self.object_records.try_insert(object) {
             Ok(record_id) => {
@@ -1258,8 +1263,7 @@ impl Heap {
     /// external bytes.
     #[inline(always)]
     fn insert_function_record(&mut self, function: FunctionRecord) -> Value {
-        self.allocations += 1;
-        self.allocations_since_full = self.allocations_since_full.saturating_add(1);
+        self.allocated += 1;
         self.total_allocations += 1;
         match self.function_records.try_insert(function) {
             Ok(record_id) => {
@@ -1283,8 +1287,7 @@ impl Heap {
         if cfg!(feature = "profile-aggregate") {
             return self.alloc(Cell::AwaitState(Box::new(state)));
         }
-        self.allocations += 1;
-        self.allocations_since_full = self.allocations_since_full.saturating_add(1);
+        self.allocated += 1;
         self.total_allocations += 1;
         match self.await_records.try_insert(state) {
             Ok(record_id) => Value::direct_await(record_id),
@@ -1301,8 +1304,7 @@ impl Heap {
         if cfg!(feature = "profile-aggregate") {
             return self.alloc(Cell::WasmV128(bytes));
         }
-        self.allocations += 1;
-        self.allocations_since_full = self.allocations_since_full.saturating_add(1);
+        self.allocated += 1;
         self.total_allocations += 1;
         match self.v128_records.try_insert(bytes) {
             Ok(record_id) => Value::direct_v128(record_id),
@@ -1345,8 +1347,7 @@ impl Heap {
         let payload = string.flat_unit_bytes();
         let weight = 1 + payload / payload_unit();
         self.payload_bytes = self.payload_bytes.saturating_add(payload);
-        self.allocations += weight;
-        self.allocations_since_full = self.allocations_since_full.saturating_add(weight);
+        self.allocated += weight;
         self.total_allocations += 1;
         match self.string_records.try_insert(string) {
             Ok(record_id) => Value::direct_string(record_id),
@@ -1360,8 +1361,7 @@ impl Heap {
         }
         self.mark_prototype(iterator.object.proto());
         // An iterator's weight is one allocation, and it holds no payload or external bytes.
-        self.allocations += 1;
-        self.allocations_since_full = self.allocations_since_full.saturating_add(1);
+        self.allocated += 1;
         self.total_allocations += 1;
         match self.iterator_records.try_insert(iterator) {
             Ok(record_id) => {
@@ -1388,8 +1388,7 @@ impl Heap {
         }
         self.mark_prototype(promise.object.proto());
         // A promise's weight is one allocation, and it holds no payload or external bytes.
-        self.allocations += 1;
-        self.allocations_since_full = self.allocations_since_full.saturating_add(1);
+        self.allocated += 1;
         self.total_allocations += 1;
         match self.promise_records.try_insert(promise) {
             Ok(record_id) => {
@@ -1665,8 +1664,9 @@ impl Heap {
         self.external_since_collection = 0;
         self.external_collection_budget = self.pacing().minimum_external_budget;
         self.payload_bytes = 0;
-        self.allocations = 0;
-        self.allocations_since_full = 0;
+        self.allocated = 0;
+        self.allocated_at_collection = 0;
+        self.allocated_at_full = 0;
         self.live_after_full = 0;
         self.live_at_environment_trim = None;
         self.full_due = false;
@@ -1674,12 +1674,12 @@ impl Heap {
         self.live_weight_after_previous = 0;
         self.live_weight_after_full = 0;
         self.old_live = 0;
-        self.threshold = self.pacing().minimum_young;
         self.total_allocations = 0;
         self.collections = 0;
         self.peak_live = 0;
         self.peak_survivors = 0;
-        self.max_threshold = self.pacing().minimum_young;
+        self.max_threshold = 0;
+        self.set_young_budget(self.pacing().minimum_young);
         self.properties.reset();
         self.remembered_marks.clear();
         self.remembered.clear();
@@ -1709,15 +1709,14 @@ impl Heap {
         let pending = self.uncharged_payload_bytes.saturating_add(bytes);
         let weight = pending / payload_unit();
         self.uncharged_payload_bytes = pending % payload_unit();
-        self.allocations += weight;
-        self.allocations_since_full = self.allocations_since_full.saturating_add(weight);
+        self.allocated += weight;
     }
     /// Accounts new backing-store bytes; past the external budget a collection is due.
     pub(crate) fn charge_external_growth(&mut self, bytes: usize) {
         self.external_bytes += bytes;
         self.external_since_collection = self.external_since_collection.saturating_add(bytes);
         if self.external_since_collection >= self.external_collection_budget {
-            self.threshold = self.threshold.min(self.allocations);
+            self.collect_at = self.collect_at.min(self.allocated);
         }
     }
     /// Charges text made on demand (`wtf16::take_materialized_bytes`) as payload allocation.
@@ -1732,12 +1731,25 @@ impl Heap {
         // Allocation weight only: the payload ledger (`payload_bytes`) follows the strings
         // themselves, whose sweep releases what they own.
         let weight = bytes / payload_unit();
-        self.allocations = self.allocations.saturating_add(weight);
-        self.allocations_since_full = self.allocations_since_full.saturating_add(weight);
+        self.allocated += weight;
     }
 
     pub fn should_collect(&self) -> bool {
-        self.allocations >= self.threshold
+        self.allocated >= self.collect_at
+    }
+    /// The weight charged since the last collection.
+    fn allocated_since_collection(&self) -> usize {
+        self.allocated - self.allocated_at_collection
+    }
+    /// The weight charged since the last full collection.
+    fn allocated_since_full(&self) -> usize {
+        self.allocated - self.allocated_at_full
+    }
+    /// Makes the next collection due once `budget` more weight than at the last collection
+    /// has been charged, and records the largest budget planned (`Heap::stats`).
+    pub(super) fn set_young_budget(&mut self, budget: usize) {
+        self.collect_at = self.allocated_at_collection.saturating_add(budget);
+        self.max_threshold = self.max_threshold.max(budget);
     }
     /// The host contexts of promises freed since the last call.
     pub(crate) fn take_abandoned_contexts(&mut self) -> AbandonedHostContexts {
@@ -1747,7 +1759,7 @@ impl Heap {
         self.full_due
             || self.pacing().allocation_cap_reached(
                 self.live_after_full,
-                self.allocations_since_full,
+                self.allocated_since_full(),
                 self.pacing_state.cap_backoff,
             )
     }
@@ -1767,7 +1779,7 @@ impl Heap {
     /// Make a collection due at the next safepoint.
     #[cfg(test)]
     pub(crate) fn make_collection_due_for_test(&mut self) {
-        self.threshold = self.allocations;
+        self.collect_at = self.allocated;
     }
     pub(crate) fn root(&mut self, value: Value) -> RootId {
         self.roots.insert(value)
@@ -1833,7 +1845,7 @@ impl Heap {
         self.collections += 1;
         self.marked_prototypes = [None; MARKED_PROTOTYPE_WAYS];
         #[cfg(feature = "profile-aggregate")]
-        let allocations_between_collections = self.allocations as u64;
+        let allocations_between_collections = self.allocated_since_collection() as u64;
         #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
         let mark_started = std::time::Instant::now();
         #[cfg(feature = "profile-aggregate")]
@@ -2203,11 +2215,12 @@ impl Heap {
         // Live weight in the units allocation is charged in: one per cell or record plus
         // its payload.
         let live_weight = live + self.payload_bytes / payload_unit();
-        let allocated = std::mem::take(&mut self.allocations);
+        let allocated = self.allocated_since_collection();
+        self.allocated_at_collection = self.allocated;
         self.external_since_collection = 0;
         self.external_collection_budget = self.external_bytes.max(self.pacing().minimum_external_budget);
         if full {
-            self.allocations_since_full = 0;
+            self.allocated_at_full = self.allocated;
             self.old_live = legacy_live;
             self.young.clear();
             self.remembered.clear();
@@ -2220,6 +2233,7 @@ impl Heap {
         if trims_environments && closure_reads.is_some() {
             self.live_at_environment_trim = Some(live);
         }
+        let since_full = self.allocated_since_full();
         let next = self.pacing().plan(
             &mut self.pacing_state,
             pacing::CollectionOutcome {
@@ -2230,7 +2244,7 @@ impl Heap {
                 live_after_full: self.live_after_full,
                 live_weight_after_full: self.live_weight_after_full,
                 allocated,
-                since_full: self.allocations_since_full,
+                since_full,
             },
         );
         #[cfg(all(feature = "gc-tuning", feature = "profile-gc-time"))]
@@ -2243,10 +2257,10 @@ impl Heap {
         }
         #[cfg(feature = "gc-tuning")]
         if std::env::var_os("QUENCH_GC_TRACE").is_some() {
-            eprintln!("gc full={full} live={live} prev={} after_full={} alloc={} since_full={} next={next:?} state={:?}", self.live_weight_after_previous, self.live_after_full, allocated, self.allocations_since_full, self.pacing_state);
+            eprintln!("gc full={full} live={live} prev={} after_full={} alloc={} since_full={} next={next:?} state={:?}", self.live_weight_after_previous, self.live_after_full, allocated, self.allocated_since_full(), self.pacing_state);
         }
         self.live_weight_after_previous = live_weight;
-        self.threshold = next.threshold;
+        self.set_young_budget(next.threshold);
         self.full_due = next.full;
         #[cfg(feature = "profile-aggregate")]
         {
@@ -2274,7 +2288,6 @@ impl Heap {
             }
         }
         self.peak_survivors = self.peak_survivors.max(live);
-        self.max_threshold = self.max_threshold.max(self.threshold);
         self.collection_state = CollectionState::Idle;
         #[cfg(feature = "profile-memory")]
         self.memory_profile.collection_finished();
