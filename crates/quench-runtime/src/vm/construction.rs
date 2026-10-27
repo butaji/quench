@@ -349,7 +349,7 @@ impl<H: Host> Vm<H> {
     /// A closure's object allocated finished: its own `length`, `name` and `prototype` under
     /// `shape`, as the recorded adds would leave them, inline where they fit, else in the
     /// property arena.
-    fn finished_closure_object(
+    pub(super) fn finished_closure_object(
         &mut self,
         function_prototype: Value,
         shape: u32,

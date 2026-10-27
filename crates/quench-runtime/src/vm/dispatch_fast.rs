@@ -2479,14 +2479,38 @@ script_handler! {
 }
 
 script_handler! {
-    /// `CloneEnv` in the lane's own frame while that frame holds no captured environment:
-    /// nothing to copy, as the general path finds (`Vm::clone_frame_environment`). A
-    /// captured frame's copy replaces the environment the lane reads through, and an
-    /// activation's would be its window's, so both take the general path.
+    /// `CloneEnv` in the lane's own frame, as the general path makes it
+    /// (`Vm::clone_frame_environment`): nothing to copy while the frame holds no captured
+    /// environment, else the frame's environment replaced by its copy (a `for (let ...)`
+    /// iteration's, which a closure in the body captures), after which the run's capture
+    /// caches name the old environment and are dropped. An activation's environment is its
+    /// window's, so its clone takes the general path.
     fn lane_clone_env<>(cx, r, ip, i, view) {
         let vm = unsafe { vm(cx) };
-        if !vm.lane_stack.activations.is_empty() || vm.frames[unsafe { (*cx).frame }].captured {
+        if !vm.lane_stack.activations.is_empty() {
             return exit(ip);
+        }
+        let frame = unsafe { (*cx).frame };
+        if vm.frames[frame].captured {
+            // SAFETY: the context's program outlives the lane run, and `ip` is a record of the
+            // running function's view.
+            let (code, pc) = unsafe { (&*(*cx).code, ip.offset_from((*cx).base) as usize) };
+            let body = code.function(vm.frames[frame].function as usize);
+            let Some(plan) = body.environment_clones.get(decoded_instruction(body, body.code[pc]).environment_clone_index())
+            else {
+                return exit(ip);
+            };
+            // It checks the environment before it allocates the copy, so an error leaves the
+            // frame for the general path to raise it from.
+            if vm.clone_frame_environment(frame, &plan.fresh, &plan.reset).is_err() {
+                return exit(ip);
+            }
+            note_allocation(vm);
+            unsafe {
+                (*cx).capture = std::ptr::null();
+                (*cx).outer = NO_OUTER_WALK;
+                (*cx).frame_storage = NO_FRAME_STORAGE;
+            }
         }
         next!(cx, r, following(ip), Carried::script(cx))
     }
@@ -11223,6 +11247,21 @@ fn lane_pure_native<H: Host>(
             let value = vm.heap.alloc_string(super::wtf16::JsString::from_str(&text));
             note_allocation(vm);
             Some(value)
+        }
+        // `Number(value)` of a primitive whose ToNumber reads no cell but a string's text, as
+        // Node's `utf8Write` converts its offset and length; a BigInt, a Symbol and any object
+        // take the general call.
+        Native::Number if !args.is_empty() => vm.primitive_to_number(argument).map(Value::number),
+        // `Number.prototype.toString` of a Number primitive in decimal, as a status code's
+        // `toString()` reads; a wrapper object, another radix or a radix to coerce take the
+        // general call.
+        Native::NumberString
+            if args.first().is_none_or(|radix| radix.is_undefined() || radix.as_number() == Some(10.0)) =>
+        {
+            let number = receiver.as_number()?;
+            let text = vm.heap.alloc_string(super::number::number_to_decimal(number).into());
+            note_allocation(vm);
+            Some(text)
         }
         Native::GlobalIsNaN | Native::GlobalIsFinite => {
             super::number::global_number_predicate(*native, vm.primitive_to_number(argument)?).map(Value::boolean)

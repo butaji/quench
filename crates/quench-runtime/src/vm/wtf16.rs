@@ -321,6 +321,15 @@ impl<'a> Units<'a> {
         self.iter().collect()
     }
 
+    /// These units' UTF-8 encoding, each lone surrogate encoded as the replacement character
+    /// (`utf8_len` counts it): an ASCII run's bytes as they are stored.
+    pub(crate) fn to_utf8(self) -> Vec<u8> {
+        match self {
+            Self::Ascii(bytes) => bytes.to_vec(),
+            Self::Wide(units) => String::from_utf16_lossy(units).into_bytes(),
+        }
+    }
+
     /// The length of these units' UTF-8 encoding, each lone surrogate encoded as the
     /// replacement character, as V8's `String::Utf8Length` counts it: an ASCII run's length,
     /// or a wide run's code points summed without copying the units.
