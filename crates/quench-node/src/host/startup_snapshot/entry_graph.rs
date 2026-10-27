@@ -87,11 +87,15 @@ impl Scan {
             if self.seen.len() > SCANNED_FILES {
                 return None;
             }
-            let bytes = std::fs::read(&path).ok()?;
-            self.bytes += bytes.len();
+            // The budget is checked against the file's length before reading it: a large
+            // module (typescript.js, 9 MB) ends the scan without being read whole first.
+            let mut file = std::fs::File::open(&path).ok()?;
+            self.bytes = self.bytes.saturating_add(usize::try_from(file.metadata().ok()?.len()).ok()?);
             if self.bytes > SCANNED_BYTES {
                 return None;
             }
+            let mut bytes = Vec::new();
+            std::io::Read::read_to_end(&mut file, &mut bytes).ok()?;
             let specifiers = match path.extension().and_then(|extension| extension.to_str()) {
                 Some("json") => Vec::new(),
                 Some("node") => return None,
