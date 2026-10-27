@@ -516,8 +516,9 @@ impl LaneView {
         }
     }
 
-    /// How many of its records hold an own-field hint.
-    #[cfg(test)]
+    /// How many of its records hold an own-field hint. Profiled builds derive no lane views,
+    /// so only the unprofiled test reads it.
+    #[cfg(all(test, not(quench_profiled)))]
     pub(super) fn held_field_hints(&self) -> usize {
         self.field_records
             .iter()
