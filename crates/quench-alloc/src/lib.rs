@@ -127,7 +127,17 @@ struct Heap {
     remote_pages: AtomicPtr<Page>,
     /// The next heap in `ABANDONED`.
     next_abandoned: *mut Heap,
+    /// Empty pages returned to the kernel (`release_empty_pages`), taken before the chunk's
+    /// untouched remainder: the addresses on a stack mapped on first release and faulted in
+    /// as it grows, since a returned page's own header, where the empty pool links it, reads
+    /// as zero once the kernel takes it.
+    decommitted: *mut usize,
+    decommitted_len: usize,
 }
+
+/// The most returned pages a heap records, a quarter of a chunk's: pages past it stay in the
+/// empty pool, resident.
+const DECOMMITTED_CAPACITY: usize = CHUNK_BYTES / PAGE_BYTES / 4;
 
 /// A heap and the flag that serializes its use, for heaps no single thread owns.
 struct LockedHeap {
@@ -320,6 +330,17 @@ fn take_chunk() -> Option<usize> {
     (protected == 0).then_some(chunk)
 }
 
+/// Returns the calling thread's empty pages beyond the first `keep` to the kernel, as a host
+/// does after a collection has emptied them; they come back zeroed when next used, before any
+/// untouched page of the chunk.
+pub fn release_empty_pages(keep: usize) {
+    let heap = thread_heap();
+    if !heap.is_null() {
+        // SAFETY: the calling thread owns its heap.
+        unsafe { (*heap).release_empty(keep) };
+    }
+}
+
 /// Whether `block` lies in this allocator's pages.
 #[inline(always)]
 pub fn owns(block: *const u8) -> bool {
@@ -381,6 +402,8 @@ impl Heap {
         chunk_end: 0,
         remote_pages: AtomicPtr::new(ptr::null_mut()),
         next_abandoned: ptr::null_mut(),
+        decommitted: ptr::null_mut(),
+        decommitted_len: 0,
     };
 
     /// A block of `class`, or null when no page can be had.
@@ -495,6 +518,11 @@ impl Heap {
             self.empty = unsafe { (*page).next };
             return page;
         }
+        if self.decommitted_len > 0 {
+            self.decommitted_len -= 1;
+            // SAFETY: entries below the length were written by `release_empty`.
+            return unsafe { *self.decommitted.add(self.decommitted_len) } as *mut Page;
+        }
         if self.chunk_next == self.chunk_end {
             let Some(chunk) = take_chunk() else {
                 return ptr::null_mut();
@@ -506,6 +534,47 @@ impl Heap {
         let page = self.chunk_next as *mut Page;
         self.chunk_next += PAGE_BYTES;
         page
+    }
+
+    /// Returns the empty pool's pages past the first `keep` to the kernel, recording them in
+    /// `decommitted`.
+    unsafe fn release_empty(&mut self, keep: usize) {
+        if self.decommitted.is_null() {
+            // SAFETY: a fresh anonymous mapping for the address stack, faulted as it grows.
+            let mapped = unsafe {
+                libc::mmap(
+                    ptr::null_mut(),
+                    DECOMMITTED_CAPACITY * std::mem::size_of::<usize>(),
+                    libc::PROT_READ | libc::PROT_WRITE,
+                    libc::MAP_PRIVATE | libc::MAP_ANONYMOUS | libc::MAP_NORESERVE,
+                    -1,
+                    0,
+                )
+            };
+            if mapped == libc::MAP_FAILED {
+                return;
+            }
+            self.decommitted = mapped.cast();
+        }
+        // An empty pool's page has no block in use, so the kernel may take its contents; it
+        // comes back zeroed, and `init_page` writes its header before any block is used.
+        let mut kept = 0;
+        let mut link: *mut *mut Page = &mut self.empty;
+        // SAFETY: empty pages are linked through `next` and none is in use.
+        unsafe {
+            while !(*link).is_null() {
+                let page = *link;
+                if kept < keep || self.decommitted_len == DECOMMITTED_CAPACITY {
+                    kept += 1;
+                    link = &mut (*page).next;
+                    continue;
+                }
+                *link = (*page).next;
+                libc::madvise(page.cast(), PAGE_BYTES, libc::MADV_DONTNEED);
+                *self.decommitted.add(self.decommitted_len) = page as usize;
+                self.decommitted_len += 1;
+            }
+        }
     }
 
     unsafe fn link_partial(&mut self, page: *mut Page, class: usize) {
@@ -781,6 +850,57 @@ mod tests {
         assert_eq!(state.chunk_next, reserved_before);
         for block in reused {
             unsafe { allocator.dealloc(block, large) };
+        }
+    }
+
+    #[test]
+    fn released_empty_pages_return_zeroed_before_fresh_ones() {
+        let allocator = enabled();
+        let layout = Layout::from_size_align(512, 16).unwrap();
+        let per_page = (PAGE_BYTES - PAGE_HEADER_BYTES) / 512;
+        let blocks: Vec<*mut u8> = (0..per_page * 8)
+            .map(|_| unsafe {
+                let block = allocator.alloc(layout);
+                block.write_bytes(0xa5, layout.size());
+                block
+            })
+            .collect();
+        for block in &blocks {
+            unsafe { allocator.dealloc(*block, layout) };
+        }
+        let empty_pages = |state: &Heap| {
+            let mut count = 0;
+            let mut page = state.empty;
+            while !page.is_null() {
+                count += 1;
+                page = unsafe { (*page).next };
+            }
+            count
+        };
+        let state = unsafe { &*thread_heap() };
+        let (empty_before, returned_before) = (empty_pages(state), state.decommitted_len);
+        assert!(empty_before > 1);
+        release_empty_pages(1);
+        let state = unsafe { &*thread_heap() };
+        assert_eq!(empty_pages(state), 1);
+        assert_eq!(state.decommitted_len, returned_before + empty_before - 1);
+        // The returned pages serve the next pages a class takes, zeroed, and the chunk's
+        // untouched remainder stays untouched.
+        let reserved_before = state.chunk_next;
+        let other = Layout::from_size_align(256, 16).unwrap();
+        let reused: Vec<*mut u8> = (0..empty_before * ((PAGE_BYTES - PAGE_HEADER_BYTES) / 256))
+            .map(|_| unsafe { allocator.alloc(other) })
+            .collect();
+        let state = unsafe { &*thread_heap() };
+        assert_eq!(state.chunk_next, reserved_before);
+        // Every block of a returned page reads as zero; the kept page keeps what it held.
+        let zeroed = reused
+            .iter()
+            .filter(|block| unsafe { std::slice::from_raw_parts(**block, other.size()) }.iter().all(|byte| *byte == 0))
+            .count();
+        assert!(zeroed >= (empty_before - 1) * ((PAGE_BYTES - PAGE_HEADER_BYTES) / 256));
+        for block in &reused {
+            unsafe { allocator.dealloc(*block, other) };
         }
     }
 

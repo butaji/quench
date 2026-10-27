@@ -499,12 +499,20 @@ impl<H: Host> Vm<H> {
     /// Writes element `index` of the typed array `view` describes; an index past its
     /// current length, or a detached or shrunken buffer, writes nothing.
     fn typed_array_write_view(&mut self, view: TypedArrayView, index: usize, value: &TypedArrayElement) {
-        let width = view.kind.width();
         let encoded = Self::typed_array_element_bytes(view.kind, value);
-        if let Some(Cell::ArrayBuffer { bytes, detached: false, .. }) = self.heap.get_mut(view.buffer)
-            && let Some(start) = view.element(index, bytes.len())
-        {
-            bytes.make_mut()[start..start + width].copy_from_slice(&encoded[..width]);
+        let Some(Cell::ArrayBuffer { bytes, detached: false, .. }) = self.heap.get_mut(view.buffer) else {
+            return;
+        };
+        // An owned store no other cell shares is written in place (`BufferBytes::lane_mut`);
+        // any other is unshared or locked first.
+        if let Some(store) = bytes.lane_mut() {
+            if let Some(start) = view.element(index, store.len()) {
+                store_element(store, start, view.kind.width(), &encoded);
+            }
+            return;
+        }
+        if let Some(start) = view.element(index, bytes.len()) {
+            store_element(&mut bytes.make_mut(), start, view.kind.width(), &encoded);
         }
     }
 
@@ -767,5 +775,21 @@ impl TypedArrayView {
             self.length
         };
         (index < length).then(|| self.offset + index * width)
+    }
+}
+
+/// Writes the first `width` bytes of `encoded` at `start` of `store`, as fixed-width moves:
+/// a slice copy of the element's runtime width is a `memcpy` call.
+#[inline(always)]
+fn store_element(store: &mut [u8], start: usize, width: usize, encoded: &[u8; MAX_TYPED_ARRAY_ELEMENT_WIDTH]) {
+    fn fixed<const WIDTH: usize>(store: &mut [u8], start: usize, encoded: &[u8; MAX_TYPED_ARRAY_ELEMENT_WIDTH]) {
+        let source: &[u8; WIDTH] = encoded[..WIDTH].try_into().expect("an element fits the encoding");
+        store[start..start + WIDTH].copy_from_slice(source);
+    }
+    match width {
+        1 => store[start] = encoded[0],
+        2 => fixed::<2>(store, start, encoded),
+        4 => fixed::<4>(store, start, encoded),
+        _ => fixed::<MAX_TYPED_ARRAY_ELEMENT_WIDTH>(store, start, encoded),
     }
 }

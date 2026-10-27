@@ -1105,6 +1105,15 @@ fn this_read_body(body: &Function) -> bool {
 }
 
 impl ScriptCallTarget {
+    /// No legacy `arguments` reflection observes its activation: a strict function's or an
+    /// arrow's (`Function::has_restricted_legacy_caller_access`), which its `this` binding
+    /// names. A call passing values past its parameters need not keep them, as its frame
+    /// would not (`Vm::initialize_frame_invocation`); a sloppy function's keeps them.
+    #[inline(always)]
+    fn drops_extra_arguments(&self) -> bool {
+        !matches!(self.this_binding, ThisBinding::Sloppy)
+    }
+
     /// It keeps the values it was passed for a forwarded `arguments`.
     #[inline(always)]
     fn forwards(&self) -> bool {
@@ -11170,58 +11179,70 @@ fn lane_native_value<H: Host>(
     args: &[Value],
 ) -> Option<Value> {
     let vm = unsafe { vm(cx) };
-    match kind {
+    // Only natives run from the lane (`lane_call_native`).
+    let FunctionKind::Native(native) = kind else {
+        return None;
+    };
+    // Each shortcut answers its native's common case; a miss falls through to the one call of
+    // `lane_string_or_native_call` below.
+    match native {
         // The JIT-mode DataView lane (`js_jit_dataview_float64_enabled`); a miss takes the
         // native, which coerces and throws.
-        FunctionKind::Native(native @ (Native::DataViewGetFloat64 | Native::DataViewSetFloat64))
+        Native::DataViewGetFloat64 | Native::DataViewSetFloat64
             if vm.execution_mode == super::ExecutionMode::Compiled
                 && vm.programs.js_jit_dataview_float64_enabled() =>
         {
             let value = vm.lane_data_view_float64(native, receiver, args);
             if value.is_some() {
                 vm.programs.note_js_jit_dataview_float64(native == Native::DataViewSetFloat64);
+                return value;
             }
-            value.or_else(|| lane_string_or_native_call(cx, ip, callee, receiver, args))
         }
-        FunctionKind::Native(Native::ArrayPush) => vm.array_push_dense(receiver, args),
-        FunctionKind::Native(Native::ArrayPop) => vm.array_pop_dense(receiver),
-        FunctionKind::Native(Native::StringCharCodeAt) if !args.is_empty() => {
-            string_char_code_at(vm, receiver, args[0])
-                .or_else(|| lane_string_or_native_call(cx, ip, callee, receiver, args))
+        Native::ArrayPush => return vm.array_push_dense(receiver, args),
+        Native::ArrayPop => return vm.array_pop_dense(receiver),
+        Native::StringCharCodeAt if !args.is_empty() => {
+            if let Some(value) = string_char_code_at(vm, receiver, args[0]) {
+                return Some(value);
+            }
         }
-        FunctionKind::Native(
-            native @ (Native::MapGet
-            | Native::MapHas
-            | Native::SetHas
-            | Native::WeakMapGet
-            | Native::WeakMapHas
-            | Native::WeakSetHas),
-        ) => {
+        Native::MapGet
+        | Native::MapHas
+        | Native::SetHas
+        | Native::WeakMapGet
+        | Native::WeakMapHas
+        | Native::WeakSetHas => {
             let key = args.first().copied().unwrap_or(Value::UNDEFINED);
-            vm.pure_collection_lookup(native, receiver, key)
-                .or_else(|| lane_string_or_native_call(cx, ip, callee, receiver, args))
+            if let Some(value) = vm.pure_collection_lookup(native, receiver, key) {
+                return Some(value);
+            }
         }
-        FunctionKind::Native(Native::MapSet) if vm.map_set(receiver, args) => {
+        Native::MapSet if vm.map_set(receiver, args) => {
             note_allocation(vm);
-            Some(receiver)
+            return Some(receiver);
         }
-        FunctionKind::Native(Native::ObjectCreate)
-            if args.get(1).is_none_or(|properties| properties.is_undefined()) =>
-        {
+        Native::ObjectCreate if args.get(1).is_none_or(|properties| properties.is_undefined()) => {
             let proto = args.first().copied().unwrap_or(Value::UNDEFINED);
-            vm.object_create(proto)
-                .inspect(|_| note_allocation(vm))
-                .or_else(|| lane_string_or_native_call(cx, ip, callee, receiver, args))
+            if let Some(object) = vm.object_create(proto) {
+                note_allocation(vm);
+                return Some(object);
+            }
         }
-        FunctionKind::Native(Native::ArrayIsArray) => vm
-            .steady_is_array(args.first().copied().unwrap_or(Value::UNDEFINED))
-            .map(|holds| if holds { Value::TRUE } else { Value::FALSE })
-            .or_else(|| lane_string_or_native_call(cx, ip, callee, receiver, args)),
-        FunctionKind::Native(
-            native @ (Native::RegExpExec | Native::RegExpTest | Native::StringReplace),
-        ) => lane_regexp_call(cx, ip, i, native, callee, receiver, args),
-        _ => lane_string_or_native_call(cx, ip, callee, receiver, args),
+        Native::ArrayIsArray => {
+            if let Some(holds) = vm.steady_is_array(args.first().copied().unwrap_or(Value::UNDEFINED)) {
+                return Some(if holds { Value::TRUE } else { Value::FALSE });
+            }
+        }
+        Native::RegExpExec | Native::RegExpTest | Native::StringReplace => {
+            return lane_regexp_call(cx, ip, i, native, callee, receiver, args);
+        }
+        // A generator's resumption runs its body, guest code that no in-place shortcut of
+        // `lane_string_or_native_call` makes.
+        Native::GeneratorNext | Native::GeneratorReturn | Native::GeneratorThrow => {
+            return lane_call_native(cx, ip, native, callee, receiver, args);
+        }
+        _ => {}
     }
+    lane_string_or_native_call(cx, ip, native, callee, receiver, args)
 }
 
 /// `charCodeAt` of a flat string at an integer index: the unit there, or NaN outside the
@@ -11315,7 +11336,7 @@ fn lane_regexp_call<H: Host>(
         _ => None,
     };
     let Some(result) = steady else {
-        return lane_string_or_native_call(cx, ip, callee, receiver, args);
+        return lane_string_or_native_call(cx, ip, native, callee, receiver, args);
     };
     // The call's allocations may make a collection due, which the lane's safepoints take.
     note_allocation(vm);
@@ -11329,10 +11350,13 @@ fn lane_regexp_call<H: Host>(
 }
 
 /// A lane native call that `lane_native_call` does not make inline: a pure string method in
-/// place, else the native through `lane_call_native`.
+/// place, else the native through `lane_call_native`. Inline into its two callers: a native
+/// call otherwise pays this layer's own frame.
+#[inline(always)]
 fn lane_string_or_native_call<H: Host>(
     cx: *mut LaneContext<H>,
     ip: Ip,
+    native: Native,
     callee: Value,
     receiver: Value,
     args: &[Value],
@@ -11340,17 +11364,17 @@ fn lane_string_or_native_call<H: Host>(
     let vm = unsafe { vm(cx) };
     // SAFETY: the context's program outlives the lane run.
     let code = unsafe { &*(*cx).code };
-    if let Some(value) = vm.pure_string_method_call(code, callee, receiver, args) {
+    if let Some(value) = vm.pure_string_method_call(code, native, receiver, args) {
         return Some(value);
     }
-    if let Some(value) = lane_pure_native(vm, code, callee, receiver, args) {
+    if let Some(value) = lane_pure_native(vm, code, native, callee, receiver, args) {
         return Some(value);
     }
-    if let Some(value) = lane_promise_native(vm, code, callee, receiver, args) {
+    if let Some(value) = lane_promise_native(vm, code, native, callee, receiver, args) {
         note_allocation(vm);
         return Some(value);
     }
-    lane_call_native(cx, ip, callee, receiver, args)
+    lane_call_native(cx, ip, native, callee, receiver, args)
 }
 
 /// A lane call of a promise native whose steps provably observe nothing, answered in place
@@ -11362,22 +11386,14 @@ fn lane_string_or_native_call<H: Host>(
 fn lane_promise_native<H: Host>(
     vm: &mut Vm<H>,
     code: &ResidualProgram,
+    native: Native,
     callee: Value,
     receiver: Value,
     args: &[Value],
 ) -> Option<Value> {
-    let (native, env) = match vm.heap.function(callee) {
-        Some(FunctionRecord {
-            kind:
-                FunctionKind::Native(
-                    native @ (Native::PromiseThen | Native::PromiseCatch | Native::PromiseResolve),
-                ),
-            env,
-            ..
-        }) => (*native, *env),
-        _ => return None,
-    };
-    if !env.is_null() {
+    if !matches!(native, Native::PromiseThen | Native::PromiseCatch | Native::PromiseResolve)
+        || !vm.heap.function(callee).is_some_and(|function| function.env.is_null())
+    {
         return None;
     }
     match native {
@@ -11434,13 +11450,12 @@ fn lane_promise_native<H: Host>(
 fn lane_pure_native<H: Host>(
     vm: &mut Vm<H>,
     code: &ResidualProgram,
+    native: Native,
     callee: Value,
     receiver: Value,
     args: &[Value],
 ) -> Option<Value> {
-    let Some(FunctionRecord { kind: FunctionKind::Native(native), .. }) = vm.heap.function(callee) else {
-        return None;
-    };
+    let native = &native;
     let argument = args.first().copied().unwrap_or(Value::UNDEFINED);
     match native {
         Native::ArrayIndexOf => vm.dense_index_of(receiver, args),
@@ -11541,27 +11556,26 @@ fn lane_pure_native<H: Host>(
 fn lane_call_native<H: Host>(
     cx: *mut LaneContext<H>,
     ip: Ip,
+    native: Native,
     callee: Value,
     receiver: Value,
     args: &[Value],
 ) -> Option<Value> {
     let vm = unsafe { vm(cx) };
-    let native = match vm.heap.function(callee) {
-        Some(FunctionRecord {
-            kind: FunctionKind::Native(native),
-            ..
-        }) if native.runs_from_lane() => *native,
-        _ => return None,
-    };
+    if !native.runs_from_lane() {
+        return None;
+    }
     // A unary Math function of a Number runs no guest code and observes no frame, so it
     // runs from any activation.
-    if let Some(value) = args.first().and_then(|value| value.as_number())
+    if native.is_math_function()
+        && let Some(value) = args.first().and_then(|value| value.as_number())
         && let Some(result) = super::number::math_unary(native, value)
     {
         return Some(Value::number(result));
     }
     // So do `Math.max` and its kin of Numbers (`math_numbers`).
-    if let Some(numbers) = args
+    if native.is_math_function()
+        && let Some(numbers) = args
         .iter()
         .map(|value| value.as_number())
         .collect::<Option<smallvec::SmallVec<[f64; super::number::MATH_INLINE_ARGUMENTS]>>>()
@@ -12654,8 +12668,9 @@ fn lane_activate<H: Host>(
         return Err(exit(ip));
     }
     // Values past the parameters stay observable (legacy `f.arguments`, a frame made of the
-    // activation): the keeping activation holds them after the registers.
-    if argc > target.params {
+    // activation): the keeping activation holds them after the registers. A callee no legacy
+    // reflection observes is passed its parameters alone, as its frame would keep them.
+    if argc > target.params && (!target.drops_extra_arguments() || target.forwards()) {
         return lane_activate_keeping::<H, true>(
             cx,
             r,
@@ -12670,7 +12685,9 @@ fn lane_activate<H: Host>(
     if !lane_activation_room(vm, target) {
         return Err(lane_script_call_frame::<H>(ip));
     }
-    Ok(lane_push_activation::<H, true, false>(cx, r, ip, target, arguments, this, constructs))
+    // SAFETY: the call's window of `r` holds its `argc` values.
+    let passed = unsafe { r.0.add(usize::from(arguments)).cast_const() };
+    Ok(lane_push_passed::<H, true, false>(cx, r, ip, target, passed, argc.min(target.params), this, constructs))
 }
 
 /// Whether the lane stack takes `target`'s activation: capacity, the guest-call budget and

@@ -924,6 +924,11 @@ impl<H: Host> Vm<H> {
         if native == Native::WasmExportedFunction {
             return self.call_wasm_exported_function(p, args);
         }
+        // Nor does a generator's resumption, once per value a `for-of` or spread draws from it
+        // (`call_collection_native` routes these alike).
+        if matches!(native, Native::GeneratorNext | Native::GeneratorReturn | Native::GeneratorThrow) {
+            return self.generator_prototype_method(p, native, this, args);
+        }
         // The string and RegExp methods belong to none of the families below.
         if native.is_string_regexp_or_math() {
             return self.call_native_table(p, native, this, args);
