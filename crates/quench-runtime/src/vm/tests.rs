@@ -16609,6 +16609,22 @@ fn lane_framed_calls_and_returns_keep_frames_and_their_semantics() {
 }
 
 #[test]
+fn quoted_keys_with_lone_surrogates_and_escapes_keep_their_semantics() {
+    // A quoted key is a static name only when well-formed (`string::is_well_formed`): lone
+    // surrogates, escapes, a quoted `__proto__` and quoted class method names as Node gives them.
+    let source = r#"
+const o = { "a": 1, "\uD800": 2, "b": 3, "__proto__": { p: 4 }, "x\ty": 5, "\uDC00z": 7 };
+class C { "\uD800m"() { return 8; } "ok"() { return 9; } }
+const c = new C();
+print(JSON.stringify(Object.keys(o).map((k) => Array.from(k, (ch) => ch.charCodeAt(0)))) + "|" + o.p + "|" + o["\uD800"] + "|" + c["\uD800m"]() + "|" + c.ok() + "|" + Object.getOwnPropertyNames(C.prototype).map((k) => k.length).join());
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    vm.execute(&Engine::specialize(source, "quoted-keys.js").unwrap()).unwrap();
+    assert_eq!(output.borrow().as_slice(), ["[[97],[55296],[98],[120,9,121],[56320,122]]|4|2|8|9|11,2,2"]);
+}
+
+#[test]
 fn lane_arrows_take_this_from_their_environment() {
     // Arrows called as frameless activations read `this` from the environment they
     // closed over: call/apply/bind receivers are ignored, a derived constructor's
