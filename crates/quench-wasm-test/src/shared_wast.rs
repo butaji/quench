@@ -103,6 +103,8 @@ impl Store {
         // The spec runner selects the execution mode for its workers.
         if std::env::var_os(EXECUTION_MODE_VARIABLE).is_some_and(|mode| mode == "jit") {
             runtime.set_execution_mode(quench_runtime::ExecutionMode::Compiled);
+            // Every module's compiled code, not only its hot roots: a conformance run.
+            runtime.compile_wasm_eagerly();
         }
         let mut store = Self {
             runtime,
