@@ -185,6 +185,20 @@ No implementation or candidate result exists yet; these unchanged v406/v386
 failures cannot be counted as candidate progress. Constructor export visibility
 and initialization-cycle safety remain the first design probe.
 
+## Constructor initialization probe
+
+Source inspection found an existing lazy pattern that may avoid the cycle:
+`initialize_promises_glob_policy` loads `internal/fs/promises.js` through
+`commonjs::node_library_module` only after the public `fs` module has been
+cached. Its CommonJS loader returns the module record, whose official Node
+source exposes `FileHandle` alongside `exports`. A candidate can likely defer
+obtaining that cached constructor until the first `open()` call, instead of
+loading it while `fs_shared_vm` is constructing `fs.promises`. This is a
+design path, not verified behavior: confirm which module record shape Quench
+returns and that the internal module's binding initialization remains safe
+before relying on it. The fallback CommonJS binding path and startup ordering
+must be kept consistent with the primary `internal_fs_binding.rs` adapter.
+
 Other reviewed clusters remain lower priority until a single root is sharper:
 the HTTP/1+HTTP/2 socket-handoff theory is medium-low confidence and spans
 different protocol failures; nested TLS is an exact two-fixture root but needs
