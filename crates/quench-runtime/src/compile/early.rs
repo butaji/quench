@@ -525,6 +525,9 @@ pub(super) struct FixedRegisterLocalFacts {
     /// What the functions and classes the body makes may do to its bindings
     /// (`ClosureReach`); `None` when it makes none.
     closures: Option<ClosureReach>,
+    /// The body itself may suspend at an `await` (a `for await`, an `await using`), not
+    /// counting the functions it makes.
+    pub(super) suspends: bool,
 }
 
 /// What functions and classes nested in a body may reach of its bindings, read without
@@ -590,6 +593,8 @@ pub(super) fn fixed_register_local_facts(
         /// Whether `closures` gathers what the functions and classes reach, or only that the
         /// body makes one.
         reaches: bool,
+        /// The body itself awaits: an `await`, a `for await` or an `await using`.
+        suspends: bool,
     }
 
     impl Facts {
@@ -605,6 +610,7 @@ pub(super) fn fixed_register_local_facts(
                 last_references: rustc_hash::FxHashMap::default(),
                 closures: None,
                 reaches,
+                suspends: false,
             }
         }
 
@@ -822,6 +828,7 @@ pub(super) fn fixed_register_local_facts(
         }
 
         fn visit_for_of_statement(&mut self, statement: &oxc_ast::ast::ForOfStatement<'a>) {
+            self.suspends |= statement.r#await;
             self.loops += 1;
             walk::walk_for_of_statement(self, statement);
             self.loops -= 1;
@@ -867,6 +874,16 @@ pub(super) fn fixed_register_local_facts(
             walk::walk_unary_expression(self, expression);
         }
 
+        fn visit_await_expression(&mut self, expression: &oxc_ast::ast::AwaitExpression<'a>) {
+            self.suspends = true;
+            walk::walk_await_expression(self, expression);
+        }
+
+        fn visit_variable_declaration(&mut self, declaration: &oxc_ast::ast::VariableDeclaration<'a>) {
+            self.suspends |= declaration.kind == oxc_ast::ast::VariableDeclarationKind::AwaitUsing;
+            walk::walk_variable_declaration(self, declaration);
+        }
+
         fn visit_function(&mut self, function: &Function<'a>, flags: ScopeFlags) {
             self.make_closure(function.id.as_ref(), |reach| reach.visit_function(function, flags));
         }
@@ -898,6 +915,7 @@ pub(super) fn fixed_register_local_facts(
         bound_names: facts.bound_names,
         nested_written_names: facts.nested_written_names,
         closures: facts.closures,
+        suspends: facts.suspends,
     }
 }
 
