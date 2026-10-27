@@ -258,7 +258,7 @@ fn detect_source_kind(text: &str) -> quench_runtime::SourceKind {
     // whole compilation of: typescript.js (9 MB) was parsed on every load. It is kept in the
     // compile cache, keyed by the exact text, as a compiled program is.
     let entry = text_facts_cache().entry(DETECTED_KIND_NAME, &[text]);
-    if let Some(kind) = entry.as_ref().and_then(|entry| entry.load()).and_then(|bytes| detected_kind_of(bytes.as_ref().as_ref())) {
+    if let Some(kind) = entry.as_ref().and_then(detected_kind_in) {
         return kind;
     }
     let kind = detect_text_kind(text);
@@ -266,6 +266,15 @@ fn detect_source_kind(text: &str) -> quench_runtime::SourceKind {
         entry.store(&[detected_kind_byte(kind)]);
     }
     kind
+}
+
+/// The parse goal an earlier detection of `text` kept in the compile cache, computing none.
+fn cached_source_kind(text: &str) -> Option<quench_runtime::SourceKind> {
+    text_facts_cache().entry(DETECTED_KIND_NAME, &[script_body(text)]).as_ref().and_then(detected_kind_in)
+}
+
+fn detected_kind_in(entry: &crate::host::compile_cache::CacheEntry) -> Option<quench_runtime::SourceKind> {
+    entry.load().and_then(|bytes| detected_kind_of(bytes.as_ref().as_ref()))
 }
 
 /// The compile-cache name a detected parse goal is kept under.
@@ -2888,6 +2897,12 @@ const getLinkedBinding = () => ({});
                     // its records, as an embedded one does, and goes through the same cache.
                     None if in_node_internal => context
                         .evaluate_specialized_library_body_rooted(&prefix, text.to_owned(), &suffix, &key)?,
+                    // A text an earlier run detected as a module loads as one, without the
+                    // CommonJS compile that would fail again (a failed compile is not cached).
+                    None if declared.is_none() && cached_source_kind(text) == Some(quench_runtime::SourceKind::Module) => {
+                        drop(file_text);
+                        return load_es_module(context, &key, module, filename, parent);
+                    }
                     None => {
                         // The wrapper is built in the file's own buffer: growing a large one
                         // remaps its pages, where a second copy of typescript.js (9 MB) was
