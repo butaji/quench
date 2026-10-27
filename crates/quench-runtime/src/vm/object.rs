@@ -4164,22 +4164,25 @@ impl<H: Host> Vm<H> {
         }
         next
     }
-    /// The shape `object` had before `shape` added `key` at `slot`, its last slot, when
-    /// deleting `key` can return the object to it: a plain add from an ordinary shape, and
-    /// storage that the shorter length still describes (`ValueArena::drops_last_in_place`).
-    fn shape_before_last_add(&self, object: Value, shape: u32, key: PropertyKey, slot: usize) -> Option<u32> {
-        let entry = &self.shapes[shape as usize];
-        let ShapeTransition::Add { key: added, slot: added_slot, .. } = entry.transition else {
+    /// The shape an object of `shape` had before `shape` added `key` at `slot`, its last slot,
+    /// when deleting `key` can return the object to it: a plain add from an ordinary shape,
+    /// then only redefinitions of that slot (an accessor is added as data, then given its
+    /// descriptor).
+    fn shape_before_last_add(&self, shape: u32, key: PropertyKey, slot: usize) -> Option<u32> {
+        let mut added_shape = shape;
+        while let ShapeTransition::Descriptor { slot: redefined, .. } = self.shapes[added_shape as usize].transition {
+            let parent = self.shapes[added_shape as usize].parent;
+            if redefined as usize != slot || self.shapes[parent as usize].storage_len() != self.shapes[added_shape as usize].storage_len() {
+                return None;
+            }
+            added_shape = parent;
+        }
+        let ShapeTransition::Add { key: added, slot: added_slot, .. } = self.shapes[added_shape as usize].transition else {
             return None;
         };
-        let parent = entry.parent;
-        (added == key
-            && added_slot as usize == slot
-            && self.shape_appends_one_slot(parent, shape)
-            && self.object_data(object).is_some_and(|data| {
-                crate::value_vec::ValueArena::drops_last_in_place(data.properties(), entry.storage_len())
-            }))
-        .then_some(parent)
+        let parent = self.shapes[added_shape as usize].parent;
+        (added == key && added_slot as usize == slot && self.shape_appends_one_slot(parent, added_shape))
+            .then_some(parent)
     }
 
     pub(super) fn delete_shape_property(&mut self, object: Value, key: PropertyKey) {
@@ -4189,9 +4192,19 @@ impl<H: Host> Vm<H> {
         let Some(slot) = self.property_shape_slot(shape, key) else {
             return;
         };
-        if let Some(parent) = self.shape_before_last_add(object, shape, key, slot) {
+        if let Some(parent) = self.shape_before_last_add(shape, key, slot) {
             // The object returns to the shape it had before adding `key`: transient keys added
             // and deleted in turn (an object used as a stack of entries) fork no shapes.
+            let data = self.object_data(object).expect("object survived property deletion");
+            let kept = self.shapes[parent as usize].storage_len();
+            if !crate::value_vec::ValueArena::drops_last_in_place(data.properties(), kept + 1) {
+                // The shorter length names a smaller arena range, so the values move to one;
+                // the object owns the same edges, which its write barrier already logged.
+                let values = (0..kept)
+                    .map(|index| self.heap.property_get(data, index).unwrap_or(Value::DELETED))
+                    .collect::<Vec<_>>();
+                self.heap.initialize_object_properties(object, parent, &values);
+            }
             self.object_data_mut(object)
                 .expect("object survived property deletion")
                 .set_shape(parent);
