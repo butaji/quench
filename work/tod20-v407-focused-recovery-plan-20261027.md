@@ -144,3 +144,67 @@ cgroup. No build or test process is live. A prior rustc reached about 1.1 GB
 RSS. Do not start another fixture, build or link at this headroom. The six CLI
 originals and all census evidence remain preserved; the denied archive/removal
 operation is not authorized by this document.
+
+## Next reproduced shared-root experiment: promise FileHandle identity
+
+Read-only comparison of the three persistent v386/v406 failures confirms one
+specific cause. Node 26.12.1's `internal/fs/promises.js` defines a private-brand
+`FileHandle`; `fs/promises.open()` constructs it from the raw owner returned by
+`internalBinding('fs').openFileHandle`. The three aggregate/op/close error
+fixtures replace `FileHandle.prototype.fd` with a throwing getter and verify
+that high-level `readFile`, `writeFile`, and `truncate` paths observe it and
+close the handle. A prototype-only shim cannot pass Node's private brand.
+
+Quench's `fs_shared_vm.rs::PROMISES_FACTORY.open` currently calls `openSync`
+and returns a plain object with its own data `fd` and closure-based operations.
+That own field shadows the canonical prototype getter. The bootstrap
+`__quenchInternalFsBinding.openFileHandle` returns `undefined` whenever Node
+passes the promise request, and the CommonJS fallback only implements a
+synchronous leak diagnostic. This makes a descriptor-backed raw owner the
+missing generic adapter, rather than another test-specific getter workaround.
+
+After a safe candidate build becomes possible, test the smallest complete
+adapter seam: provide promise-mode `openFileHandle` with one descriptor owner
+implementing `fd`, `close`, `closeSync`, and `getAsyncId`, then create handles
+with the canonical cached `FileHandle` constructor. Ensure `readFile`,
+`writeFile`, and `truncate` read the live `handle.fd` and call the live
+`handle.close`, retaining one descriptor owner and Node's error precedence.
+Do not fake the private brand with `Object.setPrototypeOf`. Confirm Node's
+aggregate order is `[operationError, closeError]` and that a getter failure
+causes one close attempt before coding the rejection shape.
+
+The first focused cohort is `test-fs-promises-file-handle-op-errors.js`,
+`test-fs-promises-file-handle-close-errors.js`, and
+`test-fs-promises-file-handle-aggregate-errors.js`, plus controls for ordinary
+`open` brand/prototype/`FileHandle.isFileHandle`, close once/idempotence,
+`test-fs-promises-readfile.js`,
+`test-fs-promises-readfile-buffer-option.js`, and
+`test-fs-promises-file-handle-read-worker.js`. Include an explicit getter
+throw/close override check for getter count, close count, and error identity.
+No implementation or candidate result exists yet; these unchanged v406/v386
+failures cannot be counted as candidate progress. Constructor export visibility
+and initialization-cycle safety remain the first design probe.
+
+Other reviewed clusters remain lower priority until a single root is sharper:
+the HTTP/1+HTTP/2 socket-handoff theory is medium-low confidence and spans
+different protocol failures; nested TLS is an exact two-fixture root but needs
+layered transport composition; Abort dependent cleanup is an exact small
+cluster; worker IPC requires a main-thread route/ack protocol, not a shallow
+export. These counts remain diagnostic and do not replace the official full
+census gate.
+
+## Fresh process and resource checkpoint (2026-10-27 22:41 UTC)
+
+No live cargo, rustc, Quench, Node, or `run-parallel` process exists; matching
+historical runner and fixture children are zombies only. The frozen v406 CLI
+and runner still hash to `7ddaef7181aba0a97dfc2e06dfc5305d5e218766eb8462d9b6f1505756d375ad`
+and `9385e8714a3867413f32a117878472c212f9b6e415c1d0f045974f3b2946677a`.
+The current five-file source diff remains
+`bf8ac113d4902c8f5c4ccbb66850478f0d67ed4aacddde06bfde59c5b418d4d3` and
+passes `git diff --check`; this does not validate runtime behavior. The overlay
+still has zero free bytes and `/tmp` has 83,824,640 bytes. Cgroup memory is
+16,981,970,944 / 17,179,869,184 bytes (about 189 MiB headroom); OOM counters
+remain 551 / 166. `/dev/shm` is empty, but another link would compete for the
+same cgroup memory and `/tmp` lacks room for the known executable alone plus
+build intermediates. No build, candidate test, archive, move, or deletion was
+started.
