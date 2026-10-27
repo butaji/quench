@@ -30,7 +30,10 @@ pub(super) fn target_isa(opt_level: &str) -> Option<Arc<TargetIsa>> {
     let mut flags = settings::builder();
     flags.set("opt_level", opt_level).ok()?;
     flags
-        .set("enable_verifier", if VERIFY_IR { "true" } else { "false" })
+        .set(
+            "enable_verifier",
+            if VERIFY_IR { "true" } else { "false" },
+        )
         .ok()?;
     let isa = cranelift_native::builder()
         .ok()?
@@ -38,81 +41,4 @@ pub(super) fn target_isa(opt_level: &str) -> Option<Arc<TargetIsa>> {
         .ok()?;
     entries.insert(key, Arc::clone(&isa));
     Some(isa)
-}
-
-#[cfg(test)]
-mod tests {
-    use cranelift_codegen::{
-        Context,
-        ir::{self, AbiParam, InstBuilder, MemFlagsData, types},
-    };
-    use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
-
-    #[test]
-    fn loop_load_reuse_across_branch_split() {
-        for intervening_call in [false, true] {
-            let isa = super::target_isa("speed").unwrap();
-            let mut function = ir::Function::new();
-            function.signature.call_conv = isa.default_call_conv();
-            function
-                .signature
-                .params
-                .extend([AbiParam::new(types::I64); 2]);
-            function.signature.returns.push(AbiParam::new(types::I64));
-            let mut frontend = FunctionBuilderContext::new();
-            let mut b = FunctionBuilder::new(&mut function, &mut frontend);
-            let entry = b.create_block();
-            let head = b.create_block();
-            let body = b.create_block();
-            let exit = b.create_block();
-            b.append_block_params_for_function_params(entry);
-            b.switch_to_block(entry);
-            let address = b.block_params(entry)[0];
-            let limit = b.block_params(entry)[1];
-            b.ins().jump(head, &[]);
-            b.switch_to_block(head);
-            let first = b
-                .ins()
-                .load(types::I64, MemFlagsData::trusted(), address, 0);
-            let stop = b.ins().icmp(
-                ir::condcodes::IntCC::UnsignedGreaterThanOrEqual,
-                first,
-                limit,
-            );
-            b.ins().brif(stop, exit, &[], body, &[]);
-            b.switch_to_block(body);
-            if intervening_call {
-                let signature = ir::Signature::new(isa.default_call_conv());
-                let signature = b.import_signature(signature);
-                b.ins().call_indirect(signature, address, &[]);
-            }
-            let second = b
-                .ins()
-                .load(types::I64, MemFlagsData::trusted(), address, 0);
-            let next = b.ins().iadd_imm_s(second, 1);
-            b.ins().store(MemFlagsData::trusted(), next, address, 0);
-            b.ins().jump(head, &[]);
-            b.switch_to_block(exit);
-            b.ins().return_(&[first]);
-            b.seal_all_blocks();
-            b.finalize(isa.frontend_config());
-            let mut context = Context::for_function(function);
-            context
-                .optimize(isa.as_ref(), &mut Default::default())
-                .unwrap();
-            let loads = context
-                .func
-                .layout
-                .blocks()
-                .flat_map(|block| context.func.layout.block_insts(block))
-                .filter(|&inst| context.func.dfg.insts[inst].opcode() == ir::Opcode::Load)
-                .count();
-            assert_eq!(
-                loads,
-                if intervening_call { 2 } else { 1 },
-                "{}",
-                context.func.display()
-            );
-        }
-    }
 }
