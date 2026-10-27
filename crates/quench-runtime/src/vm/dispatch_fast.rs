@@ -10232,8 +10232,9 @@ script_handler! {
         };
         let Some(value) = value else {
             // An activation keeping values past the parameters, a full lane stack or another
-            // program's target takes the general form (`lane_activate`).
-            if argc > target.params
+            // program's target takes the general form (`lane_activate`). A callee that drops
+            // the values past its parameters is passed those alone, as `lane_activate` passes them.
+            if (argc > target.params && !target.drops_extra_arguments())
                 || !lane_activation_room(vm, target)
                 || (returns && !lane_returning_call_admitted(cx))
                 || vm.with_scope_entered
@@ -10241,7 +10242,10 @@ script_handler! {
             {
                 sibling!(lane_script_call_general::<H>, r, ip, Carried::script(cx))
             }
-            let (registers, base) = lane_push_activation::<H, false, false>(cx, r, ip, target, arguments, this, false);
+            // SAFETY: the call's window of `r` holds its `argc` values.
+            let passed = unsafe { r.0.add(usize::from(arguments)).cast_const() };
+            let (registers, base) =
+                lane_push_passed::<H, false, false>(cx, r, ip, target, passed, argc.min(target.params), this, false);
             next!(cx, registers, base, Carried::script(cx))
         };
         if !returns {
