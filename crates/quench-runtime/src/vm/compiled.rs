@@ -12600,12 +12600,12 @@ impl<H: Host> Vm<H> {
 
     /// Compile every function of `program` that has a compiled denotation,
     /// with `env` as the instance whose bindings fix global types and memory.
-    fn compile_program(&mut self, program: ProgramId, env: Value) -> Option<CompiledProgram> {
+    fn compile_program(&self, program: ProgramId, env: Value) -> Option<CompiledProgram> {
         self.compile_program_with_diagnostics(program, env, jit_diagnostics_enabled())
     }
 
     fn compile_program_with_diagnostics(
-        &mut self,
+        &self,
         program: ProgramId,
         env: Value,
         diagnostics_enabled: bool,
@@ -12615,7 +12615,7 @@ impl<H: Host> Vm<H> {
     }
 
     fn compile_program_with_diagnostics_and_root(
-        &mut self,
+        &self,
         program: ProgramId,
         env: Value,
         diagnostics_enabled: bool,
@@ -12635,26 +12635,6 @@ impl<H: Host> Vm<H> {
     /// path. This is an opt-in diagnostic tier; normal root compilation keeps
     /// its current closure behavior.
     fn compile_program_with_diagnostics_and_root_mode(
-        &mut self,
-        program: ProgramId,
-        env: Value,
-        diagnostics_enabled: bool,
-        root: Option<usize>,
-        root_only: bool,
-    ) -> Option<CompiledProgram> {
-        if self.programs.get(program)?.kind != crate::bytecode::ProgramKind::Wasm {
-            return None;
-        }
-        self.host.before_native_compilation();
-        // The build owns compiler scratch. Return from it before notifying
-        // the host, including rejected attempts, so only the artifact lives
-        // across the completion boundary.
-        let compiled = self.build_wasm_program(program, env, diagnostics_enabled, root, root_only);
-        self.host.after_native_compilation();
-        compiled
-    }
-
-    fn build_wasm_program(
         &self,
         program: ProgramId,
         env: Value,
@@ -13244,6 +13224,13 @@ impl<H: Host> Vm<H> {
         let baseline = match self.programs.compiled(program) {
             Some(compiled) => compiled,
             None => {
+                if self
+                    .programs
+                    .residual(program)
+                    .is_some_and(|code| code.kind == crate::bytecode::ProgramKind::Wasm)
+                {
+                    self.host.before_native_compilation();
+                }
                 if wasm_root_only || wasm_root_first {
                     // This explicit diagnostic mode compiles only the
                     // function named by QUENCH_WASM_JIT_ROOT. Root-only mode
