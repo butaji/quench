@@ -14167,6 +14167,78 @@ mod tests {
     }
 
     #[test]
+    #[cfg(all(target_arch = "x86_64", unix))]
+    fn native_vector_rotations_preserve_near_matches_and_unaligned_accesses() {
+        #[derive(Clone, Copy, Debug)]
+        enum Shape { Rotate, DistinctInputs, SignedRight, NonComplementaryShift }
+        let isa = super::super::jit_backend::target_isa("speed").unwrap();
+        let cases = [0, 1, 2, u32::MAX as u64, 1 << 32, 1 << 63, i64::MAX as u64, u64::MAX, 0x0123_4567_89ab_cdef, 0xaaaa_5555_aaaa_5555];
+        for rotate in 0..u64::BITS {
+            for reversed in [false, true] {
+                for shape in [Shape::Rotate, Shape::DistinctInputs, Shape::SignedRight, Shape::NonComplementaryShift] {
+                    let mut signature = Signature::new(isa.default_call_conv());
+                    signature.params.extend([AbiParam::new(types::I64); 3]);
+                    let mut function = ir::Function::with_name_signature(UserFuncName::user(0, 0), signature);
+                    let mut context = FunctionBuilderContext::new();
+                    let mut builder = FunctionBuilder::new(&mut function, &mut context);
+                    let block = builder.create_block();
+                    builder.append_block_params_for_function_params(block);
+                    builder.switch_to_block(block);
+                    builder.seal_block(block);
+                    let args = builder.block_params(block).to_vec();
+                    let memory = MemFlagsData::new().with_notrap();
+                    let cast = MemFlagsData::new().with_endianness(ir::Endianness::Little);
+                    let first = builder.ins().load(types::I8X16, memory, args[0], 0);
+                    let first = builder.ins().bitcast(types::I64X2, cast, first);
+                    let second = if matches!(shape, Shape::DistinctInputs) {
+                        let value = builder.ins().load(types::I8X16, memory, args[1], 0);
+                        builder.ins().bitcast(types::I64X2, cast, value)
+                    } else { first };
+                    let left_amount = u64::BITS - rotate - u32::from(matches!(shape, Shape::NonComplementaryShift));
+                    let left_count = builder.ins().iconst(types::I32, i64::from(left_amount));
+                    let right_count = builder.ins().iconst(types::I32, i64::from(rotate));
+                    let left = builder.ins().ishl(first, left_count);
+                    let right = if matches!(shape, Shape::SignedRight) {
+                        builder.ins().sshr(second, right_count)
+                    } else { builder.ins().ushr(second, right_count) };
+                    let left = builder.ins().bitcast(types::I8X16, cast, left);
+                    let right = builder.ins().bitcast(types::I8X16, cast, right);
+                    let value = if reversed { builder.ins().bor(right, left) } else { builder.ins().bor(left, right) };
+                    builder.ins().store(memory, value, args[2], 0);
+                    builder.ins().return_(&[]);
+                    builder.finalize(isa.frontend_config());
+                    let code = compile_native_function(function, isa.as_ref(), usize::MAX, CodeMemory::new).unwrap();
+                    // SAFETY: generated code accesses exactly sixteen bytes at
+                    // each pointer, promises no alignment, and stays live here.
+                    let run = unsafe { std::mem::transmute::<*mut u8, unsafe extern "C" fn(*const u8, *const u8, *mut u8)>(code.pointer()) };
+                    for offset in [0, 1, 7] {
+                        for (index, input) in cases.into_iter().enumerate() {
+                            let left = [input, cases[(index + 3) % cases.len()]];
+                            let right = if matches!(shape, Shape::DistinctInputs) { [!left[1], !left[0]] } else { left };
+                            let mut first = [0u8; 32];
+                            let mut second = [0u8; 32];
+                            let mut output = [0xa5u8; 32];
+                            for lane in 0..2 {
+                                let start = offset + lane * std::mem::size_of::<u64>();
+                                first[start..start + 8].copy_from_slice(&left[lane].to_le_bytes());
+                                second[start..start + 8].copy_from_slice(&right[lane].to_le_bytes());
+                            }
+                            unsafe { run(first.as_ptr().add(offset), second.as_ptr().add(offset), output.as_mut_ptr().add(offset)) };
+                            for lane in 0..2 {
+                                let right = if matches!(shape, Shape::SignedRight) { (right[lane] as i64).wrapping_shr(rotate) as u64 } else { right[lane].wrapping_shr(rotate) };
+                                let expected = left[lane].wrapping_shl(left_amount) | right;
+                                let start = offset + lane * std::mem::size_of::<u64>();
+                                assert_eq!(&output[start..start + 8], &expected.to_le_bytes(), "{shape:?}, rotate={rotate}, reversed={reversed}, offset={offset}");
+                            }
+                            assert!(output[..offset].iter().chain(output[offset + 16..].iter()).all(|byte| *byte == 0xa5));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
     fn native_alias_regions_preserve_overlapping_untagged_accesses() {
         let isa = super::super::jit_backend::target_isa("speed").unwrap();
         for tagged_load in [false, true] {

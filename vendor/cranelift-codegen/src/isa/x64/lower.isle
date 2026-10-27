@@ -489,6 +489,18 @@
 (rule 6 (lower (bor ty @ (multi_lane _bits _lanes) x y))
       (sse_or ty x y))
 
+;; Rotating each i64 lane by half its width swaps its two i32 halves.
+;; PSHUFD selector 0xb1 selects lanes [1, 0, 3, 2]. Keep the input in a
+;; register so legacy PSHUFD does not strengthen the source load's alignment.
+(rule 10 (lower (bor $I8X16
+                    (bitcast $I8X16 (little_or_native_endian _) (ishl $I64X2 x (u8_from_iconst 32)))
+                    (bitcast $I8X16 (little_or_native_endian _) (ushr $I64X2 x (u8_from_iconst 32)))))
+      (x64_pshufd (put_in_xmm x) 0xb1))
+(rule 9 (lower (bor $I8X16
+                   (bitcast $I8X16 (little_or_native_endian _) (ushr $I64X2 x (u8_from_iconst 32)))
+                   (bitcast $I8X16 (little_or_native_endian _) (ishl $I64X2 x (u8_from_iconst 32)))))
+      (x64_pshufd (put_in_xmm x) 0xb1))
+
 ;; `{i,b}128`.
 
 (decl or_i128 (ValueRegs ValueRegs) ValueRegs)
