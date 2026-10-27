@@ -24,7 +24,7 @@ const DENSE_ARENA_GROWTH_DIVISOR: usize = 3;
 /// make a full collection compact the arena. Freed ranges are reused within their size class,
 /// so compaction recovers only what other classes leave idle; rewriting every live object's
 /// storage on each full collection cost source-map-wtb 3 s of 27 (TOD-137).
-const COMPACTION_RELEASED_SHARE_DIVISOR: usize = 4;
+const COMPACTION_RELEASED_SHARE_DIVISOR: usize = 8;
 /// The arena capacity a compaction keeps, as a multiple of the values it kept: the room one
 /// doubling of the compacted arena would give. Before, a load burst's growth stayed resident
 /// for good: a fastify server under 500 connections grew the arena to 654K values (5.2 MB)
