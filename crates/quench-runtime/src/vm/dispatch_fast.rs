@@ -1105,6 +1105,15 @@ fn this_read_body(body: &Function) -> bool {
 }
 
 impl ScriptCallTarget {
+    /// No legacy `arguments` reflection observes its activation: a strict function's or an
+    /// arrow's (`Function::has_restricted_legacy_caller_access`), which its `this` binding
+    /// names. A call passing values past its parameters need not keep them, as its frame
+    /// would not (`Vm::initialize_frame_invocation`); a sloppy function's keeps them.
+    #[inline(always)]
+    fn drops_extra_arguments(&self) -> bool {
+        !matches!(self.this_binding, ThisBinding::Sloppy)
+    }
+
     /// It keeps the values it was passed for a forwarded `arguments`.
     #[inline(always)]
     fn forwards(&self) -> bool {
@@ -12659,8 +12668,9 @@ fn lane_activate<H: Host>(
         return Err(exit(ip));
     }
     // Values past the parameters stay observable (legacy `f.arguments`, a frame made of the
-    // activation): the keeping activation holds them after the registers.
-    if argc > target.params {
+    // activation): the keeping activation holds them after the registers. A callee no legacy
+    // reflection observes is passed its parameters alone, as its frame would keep them.
+    if argc > target.params && (!target.drops_extra_arguments() || target.forwards()) {
         return lane_activate_keeping::<H, true>(
             cx,
             r,
@@ -12675,7 +12685,9 @@ fn lane_activate<H: Host>(
     if !lane_activation_room(vm, target) {
         return Err(lane_script_call_frame::<H>(ip));
     }
-    Ok(lane_push_activation::<H, true, false>(cx, r, ip, target, arguments, this, constructs))
+    // SAFETY: the call's window of `r` holds its `argc` values.
+    let passed = unsafe { r.0.add(usize::from(arguments)).cast_const() };
+    Ok(lane_push_passed::<H, true, false>(cx, r, ip, target, passed, argc.min(target.params), this, constructs))
 }
 
 /// Whether the lane stack takes `target`'s activation: capacity, the guest-call budget and
