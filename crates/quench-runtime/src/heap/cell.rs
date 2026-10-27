@@ -1912,6 +1912,17 @@ impl Object {
         plain.then_some(self.payload as usize)
     }
 
+    /// `plain_storage_start` of an object outside dictionary storage, whose start bits are
+    /// then an arena start rather than a dictionary id (`ValueVec::is_dictionary`): the
+    /// fast case of a read that also serves dictionaries (`Heap::property_get_shaped`).
+    #[inline(always)]
+    pub(crate) fn plain_shaped_start(&self) -> Option<usize> {
+        if self.auxiliary & crate::value_vec::DICTIONARY_STORAGE != 0 {
+            return None;
+        }
+        self.plain_storage_start()
+    }
+
     #[inline(always)]
     fn storage_position(&self) -> u32 {
         match self.extras() {

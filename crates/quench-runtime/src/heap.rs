@@ -3072,6 +3072,11 @@ impl Heap {
     /// As for `property_get_unchecked`.
     #[inline(always)]
     pub(crate) unsafe fn property_get_shaped(&self, object: &Object, slot: usize) -> Option<Value> {
+        // As `property_get_flat`, for an object outside dictionary storage.
+        if let Some(start) = object.plain_shaped_start() {
+            // SAFETY: the caller proves that the property slot exists.
+            return Some(unsafe { self.properties.get_flat_at(start, slot) });
+        }
         if let Some(value) = object.inline_property(slot) {
             Some(value)
         } else {
