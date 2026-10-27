@@ -12673,6 +12673,63 @@ fn shared_osr_captured_and_parameter_callees_preserve_gc_throw_and_coercion_once
 
 #[test]
 #[cfg(not(quench_profiled))]
+fn shared_osr_inlines_plain_captured_callee_with_identity_guard() {
+    for strict in [false, true] {
+        let source = r#"
+          (function scope() {
+            let identity = function identity(x) { 'use strict'; return x; };
+            function callShape(n, value) {
+              let sum = 0;
+              for (let i = 0; i < n; i++) sum += identity(value);
+              return sum;
+            }
+            let sum = 0;
+            for (let warm = 0; warm < 40; warm++) sum += callShape(2000, 2);
+            print(sum);
+            print(callShape(10, 2147483647));
+            let coercions = 0;
+            print(callShape(10, { valueOf() { coercions++; $262.gc(); return 3; } }));
+            print(coercions);
+            identity = function replacement(x) { 'use strict'; return x + 7; };
+            $262.gc();
+            print(callShape(20, 2));
+            let effects = 0;
+            const marker = {};
+            const value = { valueOf() {
+              effects++; $262.gc();
+              identity = function after(x) { 'use strict'; return 11; };
+              print(callShape(3, 2));
+              if (effects === 1) throw marker;
+              return 3;
+            } };
+            try { callShape(20, value); } catch (error) { print(error === marker); }
+            print(effects);
+            print(callShape(20, 2));
+          })();
+        "#;
+        let source = source.replace("'use strict';", if strict { "'use strict';" } else { "" });
+        let program = Engine::specialize(&source, "captured-inline-identity.js").unwrap();
+        let function = program.functions.iter().position(|function| {
+            function.header().name.is_some_and(|name| &program.atoms[name as usize] == "callShape")
+        }).unwrap();
+        let expected = Rc::new(RefCell::new(Vec::new()));
+        Vm::new(TestHost::writing_to(expected.clone()).with_test262()).execute(&program).unwrap();
+        assert_eq!(expected.borrow().as_slice(), ["160000", "21474836470", "30", "10", "180", "33", "true", "1", "220"]);
+        let output = Rc::new(RefCell::new(Vec::new()));
+        let mut vm = Vm::new(TestHost::writing_to(output.clone()).with_test262());
+        vm.set_execution_mode(crate::ExecutionMode::Compiled);
+        vm.programs.enable_js_jit_diagnostics();
+        vm.execute(&program).unwrap();
+        assert_eq!(*output.borrow(), *expected.borrow());
+        let diagnostics = vm.programs.lane_views(super::program_store::ProgramId::MAIN).unwrap()
+            .get(function).and_then(super::program_store::derived_lane_view).unwrap().osr_diagnostics();
+        assert!(diagnostics.native_region_runs > diagnostics.exits + 20,
+            "captured callee must execute completed native bodies, not call-boundary exits: {diagnostics:?}");
+    }
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
 fn shared_osr_call_result_is_not_an_incoming_number() {
     for bypass in [false, true] {
         let call = if bypass {

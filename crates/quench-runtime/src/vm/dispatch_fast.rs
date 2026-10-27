@@ -110,6 +110,9 @@ pub(super) struct LoopSite {
     /// The admitted region; a loop whose calls run inlined makes its region once it is hot
     /// (`lane_inlining_region`), when its callees are known.
     region: std::cell::OnceCell<super::compiled::LoopRegion>,
+    /// One guarded-inline attempt for an admitted call-boundary region, before compiling.
+    /// Failure retains the original exact-PC effect boundary.
+    inline_region: std::cell::OnceCell<Option<Box<super::compiled::LoopRegion>>>,
     /// The loop's header and backward jump PCs.
     header: u32,
     backedge: u32,
@@ -142,6 +145,10 @@ pub(super) struct LoopSite {
 }
 
 impl LoopSite {
+    fn active_region(&self) -> Option<&super::compiled::LoopRegion> {
+        self.inline_region.get().and_then(|region| region.as_deref()).or_else(|| self.region.get())
+    }
+
     fn is_admitted(&self) -> bool {
         !self.promotion_only
             && self.analysis_failure.is_none_or(|failure| {
@@ -280,37 +287,41 @@ pub(super) struct OsrSiteDiagnostics {
 impl LaneView {
     /// OSR tier coverage and outcomes, for opt-in JIT diagnostics.
     pub(super) fn osr_diagnostics(&self) -> OsrDiagnostics {
-        let mut sites = self.loops.iter().map(|site| OsrSiteDiagnostics {
-            header_pc: site.header,
-            backedge_pc: site.backedge,
-            status: if site.promotion_only {
-                OsrSiteStatus::PromotionOnly
-            } else if site.analysis_failure.is_some_and(|failure| {
-                failure.reason == super::compiled::RegionRejection::UnsupportedInstruction(Op::Call)
-            }) {
-                OsrSiteStatus::CallBoundary
-            } else if site.analysis_failure.is_some() {
-                OsrSiteStatus::Rejected
-            } else {
-                OsrSiteStatus::Admitted
-            },
-            failure: site.analysis_failure,
-            call_boundary_pcs: site.call_boundary_pcs.as_deref().unwrap_or_default().to_vec(),
-            admitted: site.is_admitted(),
-            deferred_call: site.call_boundary_pcs.as_deref().is_some_and(|pcs| !pcs.is_empty())
-                || site.analysis_failure.is_some_and(|failure| {
+        let mut sites = self.loops.iter().map(|site| {
+            let call_boundary_pcs = site.active_region().map_or_else(
+                || site.call_boundary_pcs.as_deref().unwrap_or_default().to_vec(),
+                super::compiled::LoopRegion::call_boundary_pcs,
+            );
+            let deferred_call = !call_boundary_pcs.is_empty();
+            OsrSiteDiagnostics {
+                header_pc: site.header,
+                backedge_pc: site.backedge,
+                status: if site.promotion_only {
+                    OsrSiteStatus::PromotionOnly
+                } else if site.analysis_failure.is_some_and(|failure| {
                     failure.reason == super::compiled::RegionRejection::UnsupportedInstruction(Op::Call)
-                }),
-            tier_threshold_reached: site.taken.get() >= LOOP_TIER_THRESHOLD,
-            lane_backedge_count: site.lane_backedge_count.get(),
-            analysis_rejection: site.analysis_failure.map(|failure| failure.reason),
-            compile_attempts: u64::from(site.compile_attempts.get()),
-            compile_successes: u64::from(site.compile_successes.get()),
-            native_entry_attempts: site.native_entry_attempts.get(),
-            native_region_runs: site.native_region_runs.get(),
-            entry_guard_misses: site.entry_guard_misses.get(),
-            exits: u64::from(site.native_exits.get()),
-            widenings: u64::from(site.widenings.get()),
+                }) {
+                    OsrSiteStatus::CallBoundary
+                } else if site.analysis_failure.is_some() {
+                    OsrSiteStatus::Rejected
+                } else {
+                    OsrSiteStatus::Admitted
+                },
+                failure: site.analysis_failure,
+                call_boundary_pcs,
+                admitted: site.is_admitted(),
+                deferred_call,
+                tier_threshold_reached: site.taken.get() >= LOOP_TIER_THRESHOLD,
+                lane_backedge_count: site.lane_backedge_count.get(),
+                analysis_rejection: site.analysis_failure.map(|failure| failure.reason),
+                compile_attempts: u64::from(site.compile_attempts.get()),
+                compile_successes: u64::from(site.compile_successes.get()),
+                native_entry_attempts: site.native_entry_attempts.get(),
+                native_region_runs: site.native_region_runs.get(),
+                entry_guard_misses: site.entry_guard_misses.get(),
+                exits: u64::from(site.native_exits.get()),
+                widenings: u64::from(site.widenings.get()),
+            }
         }).collect::<Vec<_>>();
         sites.sort_unstable_by_key(|site| (site.header_pc, site.backedge_pc));
         OsrDiagnostics {
@@ -6127,6 +6138,9 @@ script_handler! {
                 }
             },
         };
+        let region = if region.has_captured_call() && region.inlining.is_none() {
+            site.inline_region.get_or_init(|| lane_inlining_region(cx, r, site).map(Box::new)).as_deref().unwrap_or(region)
+        } else { region };
         match lane_loop_native::<H>(cx, r, ip, header, site, region) {
             LoopAttempt::Declined => lane_at_header!(cx, r, header, site),
             LoopAttempt::At(next) => next!(cx, r, next, Carried::script(cx)),
@@ -6245,7 +6259,7 @@ script_handler! {
         if !below_floor()
             && site.exits.get() < LOOP_TIER_MAX_EXITS
             && site.declines.get() < LOOP_TIER_MAX_DECLINES
-            && let Some(region) = site.region.get()
+            && let Some(region) = site.active_region()
         {
             match lane_loop_native::<H>(cx, r, ip, ip, site, region) {
                 LoopAttempt::Declined => {}
@@ -6667,6 +6681,9 @@ fn lane_inlined_target<H: Host>(
     receiver: Value,
     frame: &super::compiled::InlineFrame,
 ) -> Option<*const ScriptCallTarget> {
+    if let super::compiled::InlineGuard::Capture(slot) = frame.guard {
+        (lane_capture_value(cx, 0, slot)? == frame.callee).then_some(())?;
+    }
     let vm = unsafe { vm(cx) };
     let target_pointer = vm.script_call_entry(frame.callee)?;
     // SAFETY: as `Vm::script_call_entry`; nothing below resolves a target.
@@ -6676,7 +6693,9 @@ fn lane_inlined_target<H: Host>(
         && unsafe { (*cx).script_calls }
         && !vm.with_scope_entered
         && lane_activation_room(vm, target)
-        && lane_call_this(vm, target, receiver) == Some(receiver))
+        && lane_call_this(vm, target, receiver).is_some_and(|bound| {
+            bound == receiver || matches!(frame.guard, super::compiled::InlineGuard::Capture(_))
+        }))
     .then_some(target_pointer)
 }
 
@@ -6717,13 +6736,16 @@ fn lane_inlining_region<H: Host>(
     let constants = machine.programs.constants(program).to_vec();
     // The callee is the last of the fields its read reads through, each read from the
     // registers and the fields before it as they are now.
-    let mut resolve = |chain: &[super::compiled::FieldUse]| -> Option<super::compiled::InlineCallee<'_>> {
+    let mut resolve = |chain: &[super::compiled::FieldUse], capture: Option<u16>| -> Option<super::compiled::InlineCallee<'_>> {
         let mut values = Vec::with_capacity(chain.len());
         for field in chain {
             let value = lane_region_field(cx, r, field, |index| values[index])?;
             values.push(value);
         }
-        let callee = *values.last()?;
+        let callee = match capture {
+            Some(slot) => lane_capture_value(cx, 0, slot)?,
+            None => *values.last()?,
+        };
         let vm = unsafe { vm(cx) };
         // SAFETY: as `Vm::script_call_entry`; nothing below resolves a target.
         let target = unsafe { &*vm.script_call_entry(callee)? };
@@ -6771,6 +6793,8 @@ fn lane_inlined_activation<H: Host>(
     // SAFETY: as `Vm::script_call_entry`; `call` is the call's record in the running view.
     let (target, arguments) =
         unsafe { (&*target, ImmediateLayout::call_window_base((*call).imm())) };
+    let receiver = lane_call_this(unsafe { vm(cx) }, target, receiver)
+        .expect("entry checked the receiver's effect-free binding");
     let (registers, _) =
         lane_push_activation::<H, false>(cx, r, call, target, arguments, receiver, false);
     let inlining = region.inlining.as_ref().expect("an inlining region");
@@ -16488,6 +16512,7 @@ fn install_loop_sites<'live, H: Host>(
                     analysis_failure,
                     call_boundary_pcs: diagnostics.then(|| call_boundary_pcs.into_boxed_slice()),
                     region,
+                    inline_region: std::cell::OnceCell::new(),
                     header,
                     backedge: pc as u32,
                     jump: records[pc].jump(),

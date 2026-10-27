@@ -237,6 +237,14 @@ impl LoopRegion {
             .map(|(offset, _)| self.header.saturating_add(offset as u32))
             .collect()
     }
+
+    pub(crate) fn has_captured_call(&self) -> bool {
+        self.instructions.iter().enumerate().any(|(offset, instruction)| {
+            instruction.op() == Op::Call && self.instructions[..offset].iter().rev()
+                .find(|definition| definition.defined_register() == Some(instruction.register_b()))
+                .is_some_and(|definition| definition.op() == Op::LoadCapture && definition.capture_depth() == 0)
+        })
+    }
 }
 
 /// Why a backward jump was excluded from OSR before native code generation.
@@ -646,13 +654,19 @@ fn tagged_registers_with_failure(
 /// parameters the call's arguments and the others the caller registers they were moved
 /// from, its receiver the caller's.
 #[derive(Clone, Copy, Debug)]
+pub(crate) enum InlineGuard {
+    Field(usize),
+    /// A depth-zero plain capture, checked by the VM at every native entry.
+    Capture(u16),
+}
+
+#[derive(Clone, Copy, Debug)]
 pub(crate) struct InlineFrame {
     /// The caller's PC of the call.
     pub(crate) call: u32,
-    /// The function inlined, which the cached field `field` (`LoopRegion::fields`) held when
-    /// the region was made: the entry guards it still does.
+    /// The function inlined; `guard` verifies its current field or capture at entry.
     pub(crate) callee: Value,
-    pub(crate) field: usize,
+    pub(crate) guard: InlineGuard,
     /// The caller register holding the call's receiver, which the region never writes.
     pub(crate) receiver: Register,
     /// The callee's register 0 in the region.
@@ -865,7 +879,7 @@ pub(super) fn inline_region<'a>(
     live: &crate::compile::liveness::RegisterMasks,
     header: u32,
     backedge: u32,
-    resolve: &mut dyn FnMut(&[FieldUse]) -> Option<InlineCallee<'a>>,
+    resolve: &mut dyn FnMut(&[FieldUse], Option<u16>) -> Option<InlineCallee<'a>>,
 ) -> Option<LoopRegion> {
     let (start, end) = (header as usize, backedge as usize);
     (start <= end && end < decoded.len()).then_some(())?;
@@ -884,7 +898,7 @@ pub(super) fn inline_region<'a>(
         callee: InlineCallee<'b>,
         /// The path the callee's read reads it through, from a root the region does not
         /// write (a receiver given its own register reads through its path).
-        callee_path: FieldPath,
+        callee_path: Option<FieldPath>,
         /// Where leaving in the call's setup resumes: the receiver's own read, else the
         /// callee's.
         resume: u32,
@@ -910,13 +924,20 @@ pub(super) fn inline_region<'a>(
         // The callee's read: the last write of its register before the call, in a straight run.
         let read_offset = (0..offset).rev().find(|index| caller[*index].defined_register() == Some(function_register))?;
         let read = header + read_offset as u32;
-        let mut callee_path = field_path(caller[read_offset], sites, &std::collections::BTreeMap::new())?;
+        let definition = caller[read_offset];
+        let capture = (definition.op() == Op::LoadCapture
+            && definition.capture_depth() == 0 && definition.result_flags() == 0)
+            .then(|| definition.capture_slot());
+        let mut callee_path = if capture.is_some() { None } else {
+            Some(field_path(definition, sites, &std::collections::BTreeMap::new())?)
+        };
         // A receiver the region writes is the call's own: a field read right before the
         // callee's, which reads the callee from it (`this.m.am(…)`), and nothing else
         // reads until the call, nor after it. The region gives that read a register of its
         // own, holding the field's value (`held_registers`), and the setup resumes at it.
         let mut resume_offset = read_offset;
         if defines(receiver) {
+            let callee_path = callee_path.as_mut()?;
             let own = read_offset.checked_sub(1)?;
             let receiver_path = field_path(caller[own], sites, &std::collections::BTreeMap::new())?;
             (caller[own].defined_register() == Some(receiver)
@@ -947,12 +968,18 @@ pub(super) fn inline_region<'a>(
         .then_some(())?;
         // The callee as the read finds it now.
         let mut chain = Vec::new();
-        intern_field(&mut chain, &callee_path, true);
-        let callee = resolve(&chain)?;
+        if let Some(path) = &callee_path { intern_field(&mut chain, path, true); }
+        let callee = resolve(&chain, capture)?;
         (callee.params == argc && usize::from(argc) <= MAX_INLINE_PARAMS).then_some(())?;
         let reached = reachable(&callee.instructions);
         let body = || callee.instructions.iter().copied().zip(reached.iter()).filter(|(_, reached)| **reached).map(|(instruction, _)| instruction);
         body().all(|instruction| inlinable(instruction.op()) && instruction.result_flags() == 0).then_some(())?;
+        // A captured call may bind undefined to the global receiver. Keep this slice
+        // receiver-independent; recovery still performs the ordinary binding below.
+        if capture.is_some() {
+            body().all(|instruction| instruction.op() != Op::GetField
+                || field_base(instruction, sites) != Some(FieldBase::THIS)).then_some(())?;
+        }
         // A parameter read as an object is bound to the caller register its argument was
         // moved from in the setup, which the region never writes; any other is a Number it
         // copies.
@@ -981,7 +1008,7 @@ pub(super) fn inline_region<'a>(
                 frame: InlineFrame {
                     call: pc,
                     callee: callee.callee,
-                    field: usize::MAX,
+                    guard: capture.map_or(InlineGuard::Field(usize::MAX), InlineGuard::Capture),
                     receiver,
                     base,
                     registers: callee.registers,
@@ -1139,7 +1166,10 @@ pub(super) fn inline_region<'a>(
         let mut frame = site.frame;
         let written = frame.receiver >= caller_registers || defines(frame.receiver);
         (!written || held.contains_key(&frame.receiver)).then_some(())?;
-        let FieldPath { root, steps } = site.callee_path;
+        let Some(FieldPath { root, steps }) = site.callee_path else {
+            frames.push(frame);
+            continue;
+        };
         let path = match root {
             FieldReceiver::Register(register) => match held.get(&register) {
                 Some(path) => FieldPath { root: path.root, steps: path.steps.iter().copied().chain(steps).collect() },
@@ -1151,7 +1181,7 @@ pub(super) fn inline_region<'a>(
         if let FieldReceiver::Register(register) = path.root {
             (!defines(register)).then_some(())?;
         }
-        frame.field = intern_field(&mut region.fields, &path, true);
+        frame.guard = InlineGuard::Field(intern_field(&mut region.fields, &path, true));
         frames.push(frame);
     }
     (region.fields.len() <= MAX_REGION_FIELDS).then_some(())?;
@@ -3971,14 +4001,17 @@ impl<'a, 'b> Lowering<'a, 'b> {
         }
         if let Some(inlining) = &self.region.inlining {
             // The scratch registers' address follows arrays and field-store slots; each
-            // inlined callee is still the function its field held when the region was made.
+            // field-resolved callee is still the function it held when the region was made.
+            // Capture identities are checked by lane_inlined_target before this entry;
+            // the admitted body cannot modify bindings or run guest calls.
             self.scratch = Some(self.word(
                 arrays_start
                     + ARRAY_WORDS * self.region.arrays.len()
                     + self.region.field_store_sites.len(),
             ));
             for frame in inlining.frames.clone() {
-                let held = self.fields[frame.field].value;
+                let InlineGuard::Field(field) = frame.guard else { continue };
+                let held = self.fields[field].value;
                 let other = self.body.builder.ins().icmp_imm_u(IntCC::NotEqual, held, frame.callee.to_bits() as i64);
                 let otherwise = self.not_entered(None);
                 self.pass_unless(other, otherwise);

@@ -50,7 +50,7 @@ use std::rc::{Rc, Weak};
 #[path = "compiled/osr_loop.rs"]
 mod osr_loop;
 pub(super) use osr_loop::{
-    ArrayUse, FieldReceiver, FieldUse, InlineCallee, InlineFrame, LoopEntry, LoopOutcome, LoopRegion, NativeFieldLoad,
+    ArrayUse, FieldReceiver, FieldUse, InlineCallee, InlineFrame, InlineGuard, LoopEntry, LoopOutcome, LoopRegion, NativeFieldLoad,
     Observation, RegionAnalysisFailure, RegionRejection, Widening,
 };
 
@@ -5204,7 +5204,7 @@ pub(super) fn analyze_inlining_osr_region<'a>(
     live: &crate::compile::liveness::RegisterMasks,
     header: u32,
     backedge: u32,
-    resolve: &mut dyn FnMut(&[FieldUse]) -> Option<InlineCallee<'a>>,
+    resolve: &mut dyn FnMut(&[FieldUse], Option<u16>) -> Option<InlineCallee<'a>>,
 ) -> Option<LoopRegion> {
     osr_loop::inline_region(function, decoded, constants, sites, live, header, backedge, resolve)
 }
