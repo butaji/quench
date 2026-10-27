@@ -5271,22 +5271,24 @@ fn lane_set_field<H: Host>(
         vm.cached_field_write_hit(code, object, i.imm(), r.get(i.a), i.c)
     };
     if !stored {
-        if private || vm.lane_stack.activations.is_empty() {
+        if private {
             return exit(ip);
         }
-        return lane_set_field_beside_activations(cx, r, ip, object, i);
+        return lane_set_field_in_place(cx, r, ip, object, i);
     }
     // Adding a property can allocate.
     note_allocation(vm);
     next!(cx, r, following(ip), Carried::script(cx))
 }
 
-/// `lane_set_field` of a public name past its caches within a frameless activation: the
-/// general store made in place (`lane_in_place`), as `lane_get_field_beside_activations`
-/// makes a read, strict as its record is.
+/// `lane_set_field` of a public name past its caches: the general store made in place
+/// (`lane_in_place`), in the frame's own run or beside frameless activations, strict as its
+/// record is. A store that adds a property to receivers of many shapes (zod's schema
+/// initializers in the playwright npm scenario: 51K of its 79K lane exits) otherwise left the
+/// lane at every store.
 #[cold]
 #[inline(never)]
-fn lane_set_field_beside_activations<H: Host>(
+fn lane_set_field_in_place<H: Host>(
     cx: *mut LaneContext<H>,
     r: Registers,
     ip: Ip,
@@ -5294,8 +5296,9 @@ fn lane_set_field_beside_activations<H: Host>(
     i: &LaneInstruction,
 ) -> Ip {
     let vm = unsafe { vm(cx) };
-    let Some(function) = vm.lane_stack.activations.last().map(|activation| activation.function) else {
-        return exit(ip);
+    let function = match vm.lane_stack.activations.last() {
+        Some(activation) => activation.function,
+        None => vm.frames[unsafe { (*cx).frame }].function,
     };
     // SAFETY: the context's program outlives the lane run, and `ip` is a record of the
     // innermost activation's view.
