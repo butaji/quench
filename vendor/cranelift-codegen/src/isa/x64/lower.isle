@@ -1281,9 +1281,23 @@
                                               x))
                              (uwiden_low _ (and (value_type (multi_lane 32 4))
                                               y))))
-      (let ((x2 Xmm (x64_pshufd x 0x50))
-            (y2 Xmm (x64_pshufd y 0x50)))
-        (x64_pmuludq x2 y2)))
+      (x64_pmuludq (unsigned_low_widen_mul_operand x)
+                   (unsigned_low_widen_mul_operand y)))
+
+;; pmuludq reads the even 32-bit lanes. If a preceding shuffle already selects
+;; lanes 0 and 2 into its low two lanes, it and the widening multiply's packing
+;; shuffle cancel for every lane the multiply reads. Upper shuffle lanes do not
+;; contribute to the product. Otherwise keep the ordinary packing shuffle.
+(decl unsigned_low_widen_mul_operand (Value) Xmm)
+(rule (unsigned_low_widen_mul_operand value) (x64_pshufd value 0x50))
+(rule 2 (unsigned_low_widen_mul_operand
+         (bitcast _ _ (shuffle _ x y (pshufd_lhs_imm imm))))
+      (if-let 8 (u8_and imm 15))
+      x)
+(rule 1 (unsigned_low_widen_mul_operand
+         (bitcast _ _ (shuffle _ x y (pshufd_rhs_imm imm))))
+      (if-let 8 (u8_and imm 15))
+      y)
 
 ;;;; Rules for `iabs` ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 

@@ -14169,40 +14169,62 @@ mod tests {
     #[test]
     fn native_unsigned_widening_multiply_preserves_lane_products() {
         let isa = super::super::jit_backend::target_isa("speed").unwrap();
-        let mut signature = Signature::new(isa.default_call_conv());
-        signature.params.extend([AbiParam::new(types::I64); 3]);
-        let mut function = ir::Function::with_name_signature(UserFuncName::user(0, 0), signature);
-        let mut context = FunctionBuilderContext::new();
-        let mut builder = FunctionBuilder::new(&mut function, &mut context);
-        let block = builder.create_block();
-        builder.append_block_params_for_function_params(block);
-        builder.switch_to_block(block);
-        builder.seal_block(block);
-        let args = builder.block_params(block).to_vec();
-        let left = builder.ins().load(types::I32X4, MemFlagsData::trusted(), args[0], 0);
-        let right = builder.ins().load(types::I32X4, MemFlagsData::trusted(), args[1], 0);
-        let left = builder.ins().uwiden_low(left);
-        let right = builder.ins().uwiden_low(right);
-        let product = builder.ins().imul(left, right);
-        builder.ins().store(MemFlagsData::trusted(), product, args[2], 0);
-        builder.ins().return_(&[]);
-        builder.finalize(isa.frontend_config());
-        let code = compile_native_function(function, isa.as_ref(), usize::MAX, CodeMemory::new).unwrap();
-        // SAFETY: generated code reads two four-u32 inputs and writes two u64 outputs.
-        // All arrays below outlive the call, as does the executable code mapping.
-        let multiply = unsafe {
-            std::mem::transmute::<*mut u8, unsafe extern "C" fn(*const u32, *const u32, *mut u64)>(code.pointer())
-        };
-        let cases = [0, 1, 2, 0xffff, 0x10000, 0x7fff_ffff, 0x8000_0000, u32::MAX];
-        for a in cases {
-            for b in cases {
-                // Different lane values and poisoned unused lanes expose lane selection
-                // errors as well as accidental signed extension or truncation.
-                let left = [a, !b, u32::MAX, 0];
-                let right = [b, !a, 0, u32::MAX];
-                let mut actual = [0u64; 2];
-                unsafe { multiply(left.as_ptr(), right.as_ptr(), actual.as_mut_ptr()) };
-                assert_eq!(actual, [u64::from(a) * u64::from(b), u64::from(!b) * u64::from(!a)]);
+        // Exhaust both single-input shuffle encodings and all lane selectors,
+        // including the unaffected cases, against scalar unsigned products.
+        for shuffle in std::iter::once(None).chain(
+            (0..=u8::MAX).flat_map(|mask| [Some((mask, false)), Some((mask, true))]),
+        ) {
+            let mut signature = Signature::new(isa.default_call_conv());
+            signature.params.extend([AbiParam::new(types::I64); 3]);
+            let mut function = ir::Function::with_name_signature(UserFuncName::user(0, 0), signature);
+            let mut context = FunctionBuilderContext::new();
+            let mut builder = FunctionBuilder::new(&mut function, &mut context);
+            let block = builder.create_block();
+            builder.append_block_params_for_function_params(block);
+            builder.switch_to_block(block);
+            builder.seal_block(block);
+            let args = builder.block_params(block).to_vec();
+            let mut input = |address| {
+                let value = builder.ins().load(types::I8X16, MemFlagsData::trusted(), address, 0);
+                let value = if let Some((selector, rhs)) = shuffle {
+                    let lanes: Vec<u8> = (0..16).map(|byte| {
+                        ((selector >> ((byte / 4) * 2)) & 3) * 4 + byte % 4 + if rhs { 16 } else { 0 }
+                    }).collect();
+                    let mask = builder.func.dfg.immediates.push(ir::ConstantData::from(lanes));
+                    let poison = builder.func.dfg.constants.insert(ir::ConstantData::from(vec![0x5a; 16]));
+                    let poison = builder.ins().vconst(types::I8X16, poison);
+                    let (left, right) = if rhs { (poison, value) } else { (value, poison) };
+                    builder.ins().shuffle(left, right, mask)
+                } else { value };
+                builder.ins().bitcast(types::I32X4, MemFlagsData::new().with_endianness(ir::Endianness::Little), value)
+            };
+            let left = input(args[0]);
+            let right = input(args[1]);
+            let left = builder.ins().uwiden_low(left);
+            let right = builder.ins().uwiden_low(right);
+            let product = builder.ins().imul(left, right);
+            builder.ins().store(MemFlagsData::trusted(), product, args[2], 0);
+            builder.ins().return_(&[]);
+            builder.finalize(isa.frontend_config());
+            let code = compile_native_function(function, isa.as_ref(), usize::MAX, CodeMemory::new).unwrap();
+            // SAFETY: generated code reads two four-u32 inputs and writes two u64 outputs.
+            // All arrays below outlive the call, as does the executable code mapping.
+            let multiply = unsafe {
+                std::mem::transmute::<*mut u8, unsafe extern "C" fn(*const u32, *const u32, *mut u64)>(code.pointer())
+            };
+            let cases = [0, 1, 2, 0xffff, 0x10000, 0x7fff_ffff, 0x8000_0000, u32::MAX];
+            for a in cases {
+                for b in cases {
+                    // Different lane values and poisoned unused lanes expose lane selection
+                    // errors as well as accidental signed extension or truncation.
+                    let left = [a, !b, u32::MAX, 0];
+                    let right = [b, !a, 0, u32::MAX];
+                    let mut actual = [0u64; 2];
+                    unsafe { multiply(left.as_ptr(), right.as_ptr(), actual.as_mut_ptr()) };
+                    let indices = shuffle.map_or([0, 1], |(selector, _)| [usize::from(selector & 3), usize::from((selector >> 2) & 3)]);
+                    let expected = indices.map(|index| u64::from(left[index]) * u64::from(right[index]));
+                    assert_eq!(actual, expected, "shuffle {shuffle:?}, inputs {left:?} * {right:?}");
+                }
             }
         }
     }
