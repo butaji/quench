@@ -1421,6 +1421,10 @@ impl<H: Host> Vm<H> {
         outcome
     }
 
+    /// Whether a frame entry may run the lane at all: instruction profiling observes every PC,
+    /// so profiling builds run the general path only.
+    const FRAME_ENTRY_LANE_RUNS: bool = !cfg!(any(feature = "profile-aggregate", feature = "profile-memory"));
+
     /// `run_frame_general_with_error` of a resumed generator's frame `frame` with no error to
     /// raise. Without JS tiers the general loop would only enter the lane at the frame's PC
     /// and take back the plain `yield` the lane stops at, so the lane runs from here and that
@@ -1429,7 +1433,9 @@ impl<H: Host> Vm<H> {
     /// the general loop where the lane left (`run_frames_after_lane_exit`).
     pub(super) fn run_generator_frame(&mut self, p: &ResidualProgram, frame: usize) -> Result<FrameOutcome, JsError> {
         let (program, function, pc) = (self.frames[frame].program, self.frames[frame].function, self.frames[frame].pc);
-        let lane_runs = !cfg!(any(feature = "profile-aggregate", feature = "profile-memory"))
+        // With JS tiers or JIT general dispatch the loop may run the resumed frame in a tier
+        // instead of the lane, so only the tier-free loop's lane entry is mirrored here.
+        let lane_runs = Self::FRAME_ENTRY_LANE_RUNS
             && !self.js_tier_runs()
             && !self.programs.js_jit_general_dispatch_enabled();
         let cursor = self.general_cursor(program, p, function, lane_runs);
@@ -1524,14 +1530,8 @@ impl<H: Host> Vm<H> {
         } else {
             self.enter_stack()?
         };
-        // Parameter-initialization stops and instruction profiling observe
-        // every PC, so they run the general path only.
-        let fast_lane = !STOPS
-            && stop_pc.is_none()
-            && !cfg!(any(
-                feature = "profile-aggregate",
-                feature = "profile-memory"
-            ));
+        // Parameter-initialization stops observe every PC, so they run the general path only.
+        let fast_lane = !STOPS && stop_pc.is_none() && Self::FRAME_ENTRY_LANE_RUNS;
         let initial_function = self.frames[frame].function as usize;
         let mut cursor = self.general_cursor(
             executing_program,
