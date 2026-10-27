@@ -367,7 +367,10 @@ impl<H: Host> Vm<H> {
         let initial_error = resume
             .rejected
             .then(|| JsError::thrown(value, "await rejected".into()));
-        let result = self.run_frame_general_with_error(p, self.frames.len() - 1, initial_error);
+        let result = match initial_error {
+            Some(error) => self.run_frame_general_with_error(p, self.frames.len() - 1, Some(error)),
+            None => self.run_resumed_frame(p, self.frames.len() - 1),
+        };
         let mut frame = self.frames.pop().expect("resumed frame exists");
         self.deactivate_frame(&mut frame, &result);
         let result = match result {

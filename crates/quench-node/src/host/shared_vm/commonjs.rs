@@ -150,11 +150,29 @@ pub(crate) fn source_kind(path: &Path) -> Result<quench_runtime::SourceKind, Str
 
 /// `source_kind` of a path that is already its real path, as a module the loader resolved.
 pub(crate) fn source_kind_of_real(path: &Path) -> Result<quench_runtime::SourceKind, String> {
+    source_kind_detected_by(path, || {
+        let bytes = std::fs::read(path).map_err(|error| error.to_string())?;
+        Ok(detect_source_kind(&source_text(&bytes)))
+    })
+}
+
+/// `source_kind_of_real` of a file whose bytes the caller already holds: detecting from
+/// them keeps a second copy of a large file (typescript.js, 9 MB) from being read alongside.
+pub(crate) fn source_kind_of_real_bytes(path: &Path, bytes: &[u8]) -> Result<quench_runtime::SourceKind, String> {
+    source_kind_detected_by(path, || Ok(detect_source_kind(&source_text(bytes))))
+}
+
+/// The parse goal of a real path, from its extension, else its package scope's `"type"`,
+/// else `detect`ing it from the file's text.
+fn source_kind_detected_by(
+    path: &Path,
+    detect: impl FnOnce() -> Result<quench_runtime::SourceKind, String>,
+) -> Result<quench_runtime::SourceKind, String> {
     match path.extension().and_then(|extension| extension.to_str()) {
         // Node's `wasm` format is an ES module (`esm_wasm`).
         Some("mjs" | "wasm") => return Ok(quench_runtime::SourceKind::Module),
         Some("cjs" | "json" | "node") => return Ok(quench_runtime::SourceKind::Script),
-        Some(extension) if extension != "js" => return detect_source_kind(path),
+        Some(extension) if extension != "js" => return detect(),
         _ => {}
     }
     // Package scope is a filesystem/JSON question, not another resolution of
@@ -173,10 +191,10 @@ pub(crate) fn source_kind_of_real(path: &Path) -> Result<quench_runtime::SourceK
         };
         return match explicit {
             Some(kind) => Ok(kind),
-            None => detect_source_kind(&path),
+            None => detect(),
         };
     }
-    detect_source_kind(&path)
+    detect()
 }
 
 /// Node first accepts the CommonJS wrapper. Only syntax that cannot live in
@@ -232,25 +250,20 @@ pub(crate) fn source_text(bytes: &[u8]) -> std::borrow::Cow<'_, str> {
     }
 }
 
-fn detect_source_kind(path: &Path) -> Result<quench_runtime::SourceKind, String> {
-    let bytes = std::fs::read(path).map_err(|error| error.to_string())?;
-    let text = source_text(&bytes);
-    let text = text.strip_prefix('\u{feff}').unwrap_or(&text);
-    let text = if text.starts_with("#!") {
-        text.find('\n').map_or("", |newline| &text[newline..])
-    } else { text };
+fn detect_source_kind(text: &str) -> quench_runtime::SourceKind {
+    let text = script_body(text);
     // The goal follows from the text alone, which parsing it (twice, for a module) costs a
     // whole compilation of: typescript.js (9 MB) was parsed on every load. It is kept in the
     // compile cache, keyed by the exact text, as a compiled program is.
     let entry = text_facts_cache().entry(DETECTED_KIND_NAME, &[text]);
     if let Some(kind) = entry.as_ref().and_then(|entry| entry.load()).and_then(|bytes| detected_kind_of(bytes.as_ref().as_ref())) {
-        return Ok(kind);
+        return kind;
     }
     let kind = detect_text_kind(text);
     if let Some(entry) = entry {
         entry.store(&[detected_kind_byte(kind)]);
     }
-    Ok(kind)
+    kind
 }
 
 /// The compile-cache name a detected parse goal is kept under.
@@ -2874,11 +2887,15 @@ const getLinkedBinding = () => ({});
                     None if in_node_internal => context
                         .evaluate_specialized_library_body_rooted(&prefix, text.to_owned(), &suffix, &key)?,
                     None => {
-                        // Sized exactly: a formatted string grows by doubling, copying the module text each time.
-                        let wrapper_source = [prefix.as_str(), &text, &suffix].concat();
-                        // The wrapper holds the text now, so the file is released before
-                        // compiling it.
-                        drop(file_text);
+                        // The wrapper is built in the file's own buffer: growing a large one
+                        // remaps its pages, where a second copy of typescript.js (9 MB) was
+                        // briefly resident beside it. Its byte-order mark and `#!` line are
+                        // what the prefix replaces.
+                        let body_start = file_text.len() - text.len();
+                        let mut wrapper_source = file_text.into_owned();
+                        wrapper_source.reserve_exact(prefix.len() + suffix.len());
+                        wrapper_source.replace_range(..body_start, &prefix);
+                        wrapper_source.push_str(&suffix);
                         let wrapper = evaluate_wrapper(
                             context,
                             &prefix,

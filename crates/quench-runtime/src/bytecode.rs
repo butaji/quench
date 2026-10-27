@@ -1582,7 +1582,9 @@ pub(crate) struct CallPlan {
     /// The activation's whole state is its registers, plus the values it was passed when it
     /// forwards them: it reaches no local but a forwarded `arguments` binding, and legacy
     /// reflection, if any, reads its parameter registers or the forwarded values. A lane
-    /// may run such a body without a frame.
+    /// may run such a body without a frame: an ordinary body (`in_loop`), a base class
+    /// constructor's construction, or a `settles_in_loop` body with no rest parameter or
+    /// `arguments` binding, whose return settles its call's promise (`CallEntry::Settles`).
     pub(crate) registers_only: bool,
     /// The activation's state is its registers, its frame locals and the environment its
     /// closures capture, which it may make on entry: an ordinary body but for the closures
@@ -2149,9 +2151,14 @@ impl Function {
     /// constructor's body that reaches none of its implicit bindings (`new.target`, `super`
     /// and the like read hidden names) needs none to run frameless when constructed.
     fn binding_reads_beside_class(&self, atoms: &AtomTable) -> bool {
-        self.is_async
-            || self.is_generator
-            || self.derived_constructor
+        self.is_async || self.is_generator || self.body_binding_reads(atoms)
+    }
+
+    /// `binding_reads_beside_class` but for a suspendable kind's own: what the body itself
+    /// reads. A non-suspending async body reaching none runs as an ordinary one would
+    /// (`CallPlan::settles_in_loop`), its promise held by its call.
+    fn body_binding_reads(&self, atoms: &AtomTable) -> bool {
+        self.derived_constructor
             // A field initializer or static block keeps its instance's implicit bindings; an
             // arrow inside one (also `class_initializer`) binds none of its own.
             || (self.class_initializer && !self.is_arrow)
@@ -2310,22 +2317,23 @@ impl Function {
                 .iter()
                 .filter(|entry| entry.local < self.params)
                 .count();
+            // Laid out as its registers whatever kind of function it is: an ordinary
+            // body's layout, or a non-suspending async body's (`settles_registers_only`).
+            let registers_layout_of_any_kind = self.parent.is_some()
+                && !self.derived_constructor
+                && self.self_binding_slot.is_none()
+                && !self.parameter_eval_arguments_error
+                && !self.inherited_with_scope
+                && promoted_parameters == usize::from(self.params)
+                // A plain activation makes no closure, whichever bindings it would see.
+                && !self.instructions().any(|instruction| instruction.op() == Op::MakeClosure);
+            let registers_layout = registers_layout_of_any_kind && !self.is_generator && !self.is_async;
             // Plain but for an `arguments` binding.
             // An arrow's `this` is its environment's, which its activation binds
             // (`Vm::lexical_activation_this`). One that reaches `super` reads a hidden name
             // (`activation_binding_reads`) or its home as a capture, as any closure reads one.
             // Ordinary but for a rest parameter, which a frameless activation gathers
             // (`CallEntry::Gathers`) and a plain frame does not.
-            let registers_layout = self.parent.is_some()
-                && !self.derived_constructor
-                && self.self_binding_slot.is_none()
-                && !self.parameter_eval_arguments_error
-                && !self.inherited_with_scope
-                && !self.is_generator
-                && !self.is_async
-                && promoted_parameters == usize::from(self.params)
-                // A plain activation makes no closure, whichever bindings it would see.
-                && !self.instructions().any(|instruction| instruction.op() == Op::MakeClosure);
             let ordinary_with_rest = registers_layout && !self.activation_binding_reads(atoms);
             // A base class constructor laid out as an ordinary function runs frameless when
             // constructed (`lane_script_construct`); its calls, which throw, keep a frame.
@@ -2334,6 +2342,12 @@ impl Function {
                 && !self.rest
                 && !self.binding_reads_beside_class(atoms);
             let ordinary = ordinary_with_rest && !self.rest;
+            // A non-suspending async body laid out as an ordinary one's, which keeps no
+            // passed values: its activation settles its call's promise.
+            let settles_with_registers = registers_layout_of_any_kind
+                && !self.body_binding_reads(atoms)
+                && !self.rest
+                && self.arguments_slot.is_none();
             // A field initializer is an ordinary method call on the instance whose
             // activation keeps its implicit bindings (`activation_binding_reads`); only the
             // derived instance initializer, which `super()` runs, is entered natively.
@@ -2411,7 +2425,7 @@ impl Function {
                 forwards_arguments,
                 keeps_arguments: kept_arguments.is_some(),
                 reads_passed_arguments: self.reads_passed_arguments_only(),
-                registers_only: (ordinary_with_rest && in_loop || constructs_frameless)
+                registers_only: (ordinary_with_rest && in_loop || constructs_frameless || settles_in_loop && settles_with_registers)
                     && self.initial_register == InitialRegister::Undefined
                     && if self.arguments_slot.is_none() {
                         // A rest body's activation keeps every value passed
@@ -2420,6 +2434,7 @@ impl Function {
                     } else {
                         reaches_only_forwarded_arguments
                     },
+
             }
         }
     }
@@ -3910,7 +3925,7 @@ impl ResidualProgram {
         Some(position)
     }
 
-    pub const FORMAT_VERSION: u8 = 110;
+    pub const FORMAT_VERSION: u8 = 111;
     pub const RUNTIME_ABI_FINGERPRINT: u64 = {
         const ABI_SIGNATURE: u64 = 0x5251_4a00_0000_0000;
         const FORMAT_VERSION_SHIFT: u32 = 16;
