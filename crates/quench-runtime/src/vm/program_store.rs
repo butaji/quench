@@ -3553,7 +3553,8 @@ mod general_promotion_tests {
     }
 }
 
-#[cfg(test)]
+// Profiled builds deliberately disable JS function tiers (`Vm::js_tier_runs`).
+#[cfg(all(test, not(quench_profiled)))]
 mod lane_diagnostic_tests {
     #[test]
     fn plain_lane_calls_remain_visible_after_numeric_tier_rejection() {
