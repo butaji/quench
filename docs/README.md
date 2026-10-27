@@ -701,6 +701,16 @@ calls up to a large budget, since a call costs it a frame and a dispatch, while
 the compiled mode keeps every call, since Cranelift calls cheaply and a copied
 body only adds register pressure. The residual's meaning is the same in both.
 
+Compiled code holds a Wasm vector in a 128-bit Cranelift variable (`Slot::Vector`) that
+only SIMD instructions, moves and full-width vector accesses read; a function passing or
+returning vectors, or reading one any other way, stays interpreted. Lane-wise integer
+add/sub, shifts, bitwise logic, shuffles and `i64x2.extmul_low_i32x4_u` lower to Cranelift
+vector instructions; every other operator calls its own kernel (`SimdKernel::apply_bits`),
+the one the interpreter runs, so both modes agree bit for bit. `memory.copy` within the
+function's memory checks both ranges, then moves the bytes as memmove does. JetStream 3
+argon2-wasm `--jit`, whose compression rounds are SIMD: 0.52 → 55.9 (Node 26.12.0: 107.3;
+Linux x86_64, one round, 2026-10-27); its argon2id hashes match Node's.
+
 `QUENCH_WASM_JIT_PERF_MAP` (diagnostics) names each compiled Wasm function in
 `/tmp/perf-PID.map` for `perf report` and writes the module's code to
 `/tmp/quench-jit-PID-BASE.bin` for `objdump -b binary --adjust-vma=0xBASE`; the
