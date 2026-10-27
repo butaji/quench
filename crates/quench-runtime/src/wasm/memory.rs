@@ -42,8 +42,9 @@ pub(crate) const MEMORY32_LIMIT: usize = u32::MAX as usize + 1;
 pub(crate) const HOST_PAGE: usize = 4096;
 
 /// The reservation a guarded memory32 needs: every index plus offset plus
-/// the widest scalar access, rounded up to a host page.
+/// a full SIMD access, rounded up to a host page.
 pub(crate) const GUARDED_RESERVATION: usize = MEMORY32_LIMIT * 2 + HOST_PAGE;
+const _: () = assert!(super::V128_BYTES <= HOST_PAGE);
 
 /// Where a guarded reservation is asked to start: low enough that its base
 /// fits a signed 32-bit displacement, so compiled code can address the

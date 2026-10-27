@@ -2657,6 +2657,9 @@ fn float_unary_operator(op: Op, tag: u32) -> Option<(F64UnaryOperator, crate::Wa
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Slot {
     Value(Kind),
+    /// An unsigned memory32 index plus a validated memory32 offset, without wrapping.
+    /// Moves preserve this proof; arithmetic and mixed joins discard it.
+    Memory32Address,
     /// A 128-bit SIMD value. Only SIMD instructions, moves and vector accesses read it, so
     /// it never meets a call, a return or a scalar view (`Emitter::vector`).
     Vector,
@@ -2679,15 +2682,19 @@ impl Slot {
     const DEFAULT: Self = Self::Value(Kind::I32);
 
     fn join(self, other: Self) -> Self {
-        if self == other { self } else { Self::Conflict }
+        match (self, other) {
+            (a, b) if a == b => a,
+            (Self::Memory32Address, Self::Value(Kind::I64))
+            | (Self::Value(Kind::I64), Self::Memory32Address) => Self::Value(Kind::I64),
+            _ => Self::Conflict,
+        }
     }
 }
 
 /// Register facts at one bytecode position. Most Wasm temporaries have the
 /// default i32 representation, so retaining a full `registers`-sized vector
 /// at every reachable instruction wastes memory. This stores only deviations
-/// from that default; joins still apply the same `Slot` lattice to every
-/// register because two different deviations meet at `Conflict`.
+/// from that default; joins apply the same `Slot` lattice to every register.
 #[derive(Clone, Debug)]
 struct AnalysisState {
     slots: Vec<(u16, Slot)>,
@@ -6567,9 +6574,9 @@ impl CompiledJsFunction {
 struct Plan {
     params: Vec<crate::WasmType>,
     result: Option<crate::WasmType>,
-    /// Per instruction, `None` when unreachable, else what its `b` register
-    /// holds on entry: the one analysis fact a denotation reads (a moved or
-    /// selected value's kind, a global's binding, an import reference). The
+    /// Per instruction, `None` when unreachable, else the denotation's operand
+    /// fact: `c` for vector memory accesses (effective address), `b` otherwise
+    /// (a moved value's kind, a global's binding, an import reference). The
     /// full register states exist only while planning.
     operands: Vec<Option<Slot>>,
 }
@@ -6589,7 +6596,7 @@ impl Plan {
         self.operands[pc].is_some()
     }
 
-    /// The analysis fact for the `b` register of reachable instruction `pc`.
+    /// The selected operand fact of reachable instruction `pc`.
     fn operand(&self, pc: usize) -> Slot {
         self.operands[pc].expect("reachable")
     }
@@ -7023,7 +7030,8 @@ impl<H: Host> Analysis<'_, H> {
 
     /// The byte offset a vector access adds to its address (`Op::WasmMemoryAddress`).
     fn memory_offset(&self, index: usize) -> Option<u64> {
-        self.vm.decode_bits64(self.constant(index)?)
+        let offset = self.vm.decode_bits64(self.constant(index)?)?;
+        u32::try_from(offset).ok().map(u64::from)
     }
 
     /// A shuffle's lane selectors: sixteen byte indices into its two operands.
@@ -7219,11 +7227,11 @@ impl<H: Host> Analysis<'_, H> {
             .zip(&instructions)
             .map(|(state, instruction)| {
                 let state = state.as_ref()?;
-                Some(
-                    state
-                        .get(instruction.b(), function.registers)
-                        .unwrap_or(Slot::Conflict),
-                )
+                let operand = match instruction.op() {
+                    Op::WasmMemoryLoad | Op::WasmMemoryStore => instruction.c(),
+                    _ => instruction.b(),
+                };
+                Some(state.get(operand, function.registers).unwrap_or(Slot::Conflict))
             })
             .collect();
         if let Some(started) = plan_started {
@@ -7282,6 +7290,7 @@ impl<H: Host> Analysis<'_, H> {
         let value =
             |state: &AnalysisState, register: u16| match state.get(register, function.registers)? {
                 Slot::Value(kind) => Some(kind),
+                Slot::Memory32Address => Some(Kind::I64),
                 _ => None,
             };
         let i32_value = |state: &AnalysisState, register: u16| {
@@ -7386,7 +7395,9 @@ impl<H: Host> Analysis<'_, H> {
                 set(state, instruction.a(), Slot::Value(result))
             }
             Op::Move => match state.get(instruction.b(), function.registers)? {
-                Slot::Vector => set(state, instruction.a(), Slot::Vector),
+                slot @ (Slot::Vector | Slot::Memory32Address) => {
+                    set(state, instruction.a(), slot)
+                }
                 _ => {
                     let kind = value(state, instruction.b())?;
                     set(state, instruction.a(), Slot::Value(kind))
@@ -7411,7 +7422,7 @@ impl<H: Host> Analysis<'_, H> {
                 self.vector_memory(function, state, instruction.c(), memory_register, memory_slot)?;
                 self.memory_offset(instruction.constant_index())?;
                 i32_value(state, instruction.b())?;
-                set(state, instruction.a(), Slot::Value(Kind::I64))
+                set(state, instruction.a(), Slot::Memory32Address)
             }
             Op::WasmMemoryLoad | Op::WasmMemoryStore => {
                 self.vector_memory(function, state, instruction.b(), memory_register, memory_slot)?;
@@ -8457,6 +8468,7 @@ impl<H: Host> Emitter<'_, '_, H> {
     fn operand_kind(&self, pc: usize) -> Kind {
         match self.plan.operand(pc) {
             Slot::Value(kind) => kind,
+            Slot::Memory32Address => Kind::I64,
             _ => Kind::I32,
         }
     }
@@ -9715,10 +9727,18 @@ impl<H: Host> Emitter<'_, '_, H> {
         self.body.core.builder.ins().bitcast(ty, flags, value)
     }
 
-    /// The address of a vector access at the 64-bit effective address `register`, after
-    /// trapping unless all of its bytes are in the memory.
-    fn vector_address(&mut self, register: u16) -> ir::Value {
+    /// Address and effect flags for a full-width vector access. A proven memory32
+    /// address fits the guard reservation, including the vector's last byte. Keep
+    /// this access trapping: even an unused load must fault before later effects.
+    fn vector_address(&mut self, pc: usize, register: u16) -> (ir::Value, MemFlagsData) {
         let address = self.read(register, Kind::I64);
+        if self.guarded && self.plan.operand(pc) == Slot::Memory32Address {
+            let flags = MemFlagsData::new()
+                .with_trap_code(Some(ir::TrapCode::HEAP_OUT_OF_BOUNDS))
+                .with_endianness(ir::Endianness::Little)
+                .with_alias_region(Some(self.regions[Region::LinearMemory as usize]));
+            return (self.body.core.builder.ins().iadd(self.base, address), flags);
+        }
         let end = self
             .body.core.builder
             .ins()
@@ -9734,7 +9754,8 @@ impl<H: Host> Emitter<'_, '_, H> {
                 .ins()
                 .icmp(IntCC::UnsignedGreaterThan, end, memory_length);
         self.trap_if(out_of_bounds, crate::WasmTrap::OutOfBoundsMemory);
-        self.body.core.builder.ins().iadd(self.base, address)
+        let address = self.body.core.builder.ins().iadd(self.base, address);
+        (address, self.flags(Region::LinearMemory))
     }
 
     /// The instructions that define or read vectors (`Slot::Vector`); `None` for any other.
@@ -9771,15 +9792,13 @@ impl<H: Host> Emitter<'_, '_, H> {
                 self.write(a, Kind::I64, address);
             }
             Op::WasmMemoryLoad => {
-                let address = self.vector_address(c);
-                let flags = self.flags(Region::LinearMemory);
+                let (address, flags) = self.vector_address(pc, c);
                 let value = self.body.core.builder.ins().load(VECTOR_IR, flags, address, 0);
                 self.write_vector(a, value);
             }
             Op::WasmMemoryStore => {
-                let address = self.vector_address(c);
+                let (address, flags) = self.vector_address(pc, c);
                 let value = self.read_vector(a);
-                let flags = self.flags(Region::LinearMemory);
                 self.body.core.builder.ins().store(flags, value, address, 0);
             }
             Op::WasmSimdShuffle => {
@@ -14606,9 +14625,15 @@ mod tests {
 
     #[test]
     fn sparse_analysis_states_preserve_register_joins() {
-        const FACTS: [Slot; 7] = [
+        assert_eq!(Slot::Memory32Address.join(Slot::Memory32Address), Slot::Memory32Address);
+        assert_eq!(Slot::Memory32Address.join(Slot::Value(Kind::I64)), Slot::Value(Kind::I64));
+        assert_eq!(Slot::Value(Kind::I64).join(Slot::Memory32Address), Slot::Value(Kind::I64));
+        assert_eq!(Slot::Memory32Address.join(Slot::DEFAULT), Slot::Conflict);
+        const FACTS: [Slot; 9] = [
             Slot::DEFAULT,
             Slot::Value(Kind::I64),
+            Slot::Memory32Address,
+            Slot::Vector,
             Slot::Binding(7),
             Slot::Memory,
             Slot::Import(9),

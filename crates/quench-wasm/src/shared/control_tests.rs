@@ -442,3 +442,71 @@ fn runaway_call_indirect_exhausts_the_stack_in_both_modes() {
         .join()
         .unwrap();
 }
+
+/// A full vector access traps before any partial store or subsequent effect,
+/// including when the loaded value is unused. Growth retains the same semantics.
+#[test]
+fn vector_memory_boundaries_preserve_traps_effects_and_growth() {
+    use quench_runtime::{ExecutionMode, WasmValue::I32};
+    for offset in [0u32, 1, 17, u32::MAX] {
+        let source = format!(r#"(module
+          (memory 1 2)
+          (func (export "load") (param i32) (result i32)
+            local.get 0 v128.load offset={offset} align=1 i32x4.extract_lane 0)
+          (func (export "drop") (param i32) (result i32)
+            i32.const 0 i32.const 33 i32.store8
+            local.get 0 v128.load offset={offset} align=1 drop
+            i32.const 0 i32.const 44 i32.store8 i32.const 7)
+          (func (export "store") (param i32)
+            local.get 0 v128.const i32x4 0x5a5a5a5a 0x5a5a5a5a 0x5a5a5a5a 0x5a5a5a5a
+            v128.store offset={offset} align=1)
+          (func (export "byte") (param i32) (result i32) local.get 0 i32.load8_u)
+          (func (export "fill") i32.const 65504 i32.const 102 i32.const 32 memory.fill)
+          (func $grow (export "grow") (result i32) i32.const 1 memory.grow)
+          (func (export "grow_load") (param i32) (result i32)
+            call $grow drop local.get 0 v128.load offset={offset} align=1 i32x4.extract_lane 0)
+        )"#);
+        let engine = crate::Engine::new().compile_wat(&source).unwrap();
+        for mode in [ExecutionMode::Interpreted, ExecutionMode::Compiled] {
+            let module = engine.lower_shared_module_for(mode).unwrap();
+            let mut runtime = Runtime::new(TestHost);
+            runtime.set_execution_mode(mode);
+            let instance = runtime.instantiate_wasm_module(&module).unwrap();
+            let mut call = |index, args: &[quench_runtime::WasmValue]| {
+                runtime.invoke_wasm(&instance, index, args)
+                    .map_err(|error| error.wasm_trap())
+            };
+            if offset < 65520 {
+                for address in [0, 1, 15, 31, 65520 - offset] {
+                    assert_eq!(call(2, &[I32(address as i32)]), Ok(None), "{mode:?} offset={offset}");
+                    assert_eq!(call(0, &[I32(address as i32)]), Ok(Some(I32(0x5a5a5a5a))));
+                }
+                assert_eq!(call(1, &[I32(32)]), Ok(Some(I32(7))));
+                assert_eq!(call(3, &[I32(0)]), Ok(Some(I32(44))));
+            }
+            for suffix in 0..16 {
+                let address = 65536 - suffix;
+                assert_eq!(call(4, &[]), Ok(None));
+                for index in [0, 1, 2] {
+                    assert_eq!(call(index, &[I32(address)]), Err(Some(WasmTrap::OutOfBoundsMemory)),
+                        "{mode:?} offset={offset} suffix={suffix} function={index}");
+                }
+                assert_eq!(call(3, &[I32(0)]), Ok(Some(I32(33))));
+                for address in 65504..65536 {
+                    assert_eq!(call(3, &[I32(address)]), Ok(Some(I32(102))), "trapping store changed prefix");
+                }
+            }
+            for index in [0, 1, 2] {
+                assert_eq!(call(index, &[I32(-1)]), Err(Some(WasmTrap::OutOfBoundsMemory)));
+            }
+            if offset < 65520 {
+                assert_eq!(call(6, &[I32(65536)]), Ok(Some(I32(0))));
+                assert_eq!(call(2, &[I32(65536)]), Ok(None));
+                assert_eq!(call(0, &[I32(65536)]), Ok(Some(I32(0x5a5a5a5a))));
+            } else {
+                assert_eq!(call(5, &[]), Ok(Some(I32(1))));
+                assert_eq!(call(0, &[I32(1)]), Err(Some(WasmTrap::OutOfBoundsMemory)));
+            }
+        }
+    }
+}
