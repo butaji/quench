@@ -1,8 +1,8 @@
 'use strict';
-// console.log of plain objects and short arrays, nested to and past `inspect`'s depth, as
-// `inspect` writes them with default options on one line or one entry per line, and of every
+// console.log of plain objects and arrays, nested to and past `inspect`'s depth and long
+// arrays grouped into columns, as `inspect` writes them with default options, and of every
 // value that path leaves to `inspect`: circular references, holes, accessors, quoted keys,
-// escaped strings, other prototypes and `util.inspect.custom`.
+// escaped strings, arrays past `maxArrayLength`, other prototypes and `util.inspect.custom`.
 console.log({a:1});
 console.log({});
 console.log([]);
@@ -55,3 +55,20 @@ console.log({veryLongPropertyNameNumberOne:{inner:1},veryLongPropertyNameNumberT
 console.log([{a:1,b:2,c:3,d:4,e:5,f:6,g:7,h:8,i:9,j:10,k:11,l:12}]);
 console.log({m:new Map()}, {d:new Date(0)});
 console.log({f:function(){}}, {s:Symbol('x')});
+console.log([1,2,3,4,5,6,7]);
+console.log(Array.from({length:30},(_,i)=>i));
+console.log(Array.from({length:100},(_,i)=>i*i));
+console.log(Array.from({length:101},(_,i)=>i));
+console.log(['a','bb','ccc','dddd','eeeee','ffffff','ggggggg']);
+console.log(Array.from({length:26},(_,i)=>String.fromCharCode(97+i).repeat(i%5+1)));
+console.log([1,'a',2,'b',3,'c',4,'d']);
+console.log([10n,20n,300n,4n,5n,6n,7n,8n]);
+console.log([1.5,-2,NaN,Infinity,-0,1e21,3,4,5,6]);
+console.log([true,false,null,undefined,true,false,null,undefined]);
+console.log({arr:Array.from({length:20},(_,i)=>i)});
+console.log([[1,2],[3,4],[5,6],[7,8],[9,10],[11,12],[13,14]]);
+console.log([{a:1},{a:2},{a:3},{a:4},{a:5},{a:6},{a:7}]);
+console.log(['x'.repeat(30),'y','z','w','v','u','t']);
+console.log(Array.from({length:12},(_,i)=>'item number '+i));
+console.log({a:{b:Array.from({length:15},(_,i)=>i*1000)}});
+console.log(Array.from({length:7},()=>({name:'some longer text here',v:1})));

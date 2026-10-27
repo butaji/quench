@@ -278,9 +278,26 @@ const BREAK_LENGTH: usize = 80;
 /// `reduceToSingleString`'s constant start, "next to all other factors that may reduce
 /// `breakLength`".
 const SINGLE_LINE_START: usize = 10;
-/// Arrays of more entries are grouped into columns (`groupArrayElements`), which this path
-/// does not reproduce.
+/// `inspectDefaultOptions.maxArrayLength`: longer arrays end in `... n more items`, which this
+/// path leaves to `inspect`.
+const MAX_ARRAY_LENGTH: usize = 100;
+/// Arrays of more entries are grouped into columns (`groupArrayElements`).
 const MAX_UNGROUPED_ARRAY_ENTRIES: usize = 6;
+/// `groupArrayElements`: the comma and space after each entry.
+const SEPARATOR_SPACE: usize = 2;
+/// `groupArrayElements` groups only when this many entries fit next to each other...
+const MIN_GROUPED_COLUMNS: usize = 3;
+/// ...and no entry is longer than this share of all of them, or every entry is at most
+/// `SHORT_ENTRY_WIDTH` wide.
+const GROUPED_LENGTH_SHARE: f64 = 5.0;
+const SHORT_ENTRY_WIDTH: usize = 6;
+/// `groupArrayElements`'s expected character height in widths, which makes its grid square.
+const APPROX_CHAR_HEIGHTS: f64 = 2.5;
+/// `groupArrayElements`'s reduction of the widest entry before its bias.
+const BIASED_MAX_OFFSET: f64 = 3.0;
+/// `groupArrayElements`'s columns per `compact` level, and its most columns.
+const GROUPED_COLUMNS_PER_COMPACT: usize = 4;
+const MAX_GROUPED_COLUMNS: usize = 15;
 /// The indentation `formatProperty` adds for a container's entries.
 const ENTRY_INDENTATION: usize = 2;
 /// `formatPrimitive` splits a string into lines past `kMinLineLength` and past
@@ -322,7 +339,7 @@ struct Inspection {
 }
 
 /// `inspect` with default options for a plain object or an array of at most
-/// `MAX_UNGROUPED_ARRAY_ENTRIES` (`formatValue`), whose containers hold only primitives and
+/// `MAX_ARRAY_LENGTH` (`formatValue`), whose containers hold only primitives and
 /// such containers; `None` for any value whose output depends on more: a proxy or another
 /// builtin brand, another prototype or constructor, a `Symbol.toStringTag` or
 /// `util.inspect.custom` member, a symbol, accessor or non-identifier key, a hole, a circular
@@ -403,7 +420,7 @@ fn inspect_container(
         let length_key = context.string_rooted("length");
         let length = context.get_property_rooted(value, length_key)?;
         let length = context.to_number(length)? as usize;
-        if length > MAX_UNGROUPED_ARRAY_ENTRIES {
+        if length > MAX_ARRAY_LENGTH {
             return Ok(None);
         }
         for index in 0..length {
@@ -443,9 +460,11 @@ fn inspect_container(
     inspection.seen.push(value);
     inspection.current_depth = recurse_times;
     let mut entries = Vec::with_capacity(properties.len());
+    let mut numeric = true;
     for (key, name) in properties {
         let Some(fields) = context.own_property_fields_rooted(value, key)? else { return Ok(None) };
         let (Some(property), None, None) = (fields.value, fields.get, fields.set) else { return Ok(None) };
+        numeric &= matches!(context.value_type_rooted(property), Some(ValueType::Number | ValueType::BigInt));
         inspection.indentation += ENTRY_INDENTATION;
         let entry = inspect_value(context, inspection, property, recurse_times)?;
         inspection.indentation -= ENTRY_INDENTATION;
@@ -456,7 +475,11 @@ fn inspect_container(
         });
     }
     inspection.seen.pop();
-    if inspection.current_depth - recurse_times < COMPACT {
+    let count = entries.len();
+    if array && count > MAX_UNGROUPED_ARRAY_ENTRIES {
+        entries = group_array_elements(entries, numeric, inspection.indentation);
+    }
+    if inspection.current_depth - recurse_times < COMPACT && entries.len() == count {
         // `isBelowBreakLength` with no base.
         let start = entries.len() + inspection.indentation + open.len() + SINGLE_LINE_START;
         let below = entries.len() + start + entries.len() <= BREAK_LENGTH
@@ -472,6 +495,57 @@ fn inspect_container(
         "{open}{indentation}{entry_indentation}{}{indentation}{close}",
         entries.join(&format!(",{indentation}{entry_indentation}"))
     )))
+}
+
+/// `groupArrayElements` for an array's `entries`, every one ASCII, when their widths allow:
+/// rows of columns, numbers right-aligned (`numeric`) and other values left-aligned.
+fn group_array_elements(entries: Vec<String>, numeric: bool, indentation: usize) -> Vec<String> {
+    // `getStringWidth` of ASCII: every character from the space up.
+    let widths = entries.iter().map(|entry| entry.bytes().filter(|&byte| byte >= b' ').count()).collect::<Vec<_>>();
+    let total = widths.iter().map(|width| width + SEPARATOR_SPACE).sum::<usize>();
+    let max_width = widths.iter().copied().max().unwrap_or(0);
+    let actual_max = max_width + SEPARATOR_SPACE;
+    if actual_max * MIN_GROUPED_COLUMNS + indentation >= BREAK_LENGTH
+        || !(total as f64 / actual_max as f64 > GROUPED_LENGTH_SHARE || max_width <= SHORT_ENTRY_WIDTH)
+    {
+        return entries;
+    }
+    let count = entries.len();
+    let average_bias = (actual_max as f64 - total as f64 / count as f64).sqrt();
+    let biased_max = (actual_max as f64 - BIASED_MAX_OFFSET - average_bias).max(1.0);
+    let columns = ((APPROX_CHAR_HEIGHTS * biased_max * count as f64).sqrt() / biased_max).round() as usize;
+    let columns = columns
+        .min((BREAK_LENGTH - indentation) / actual_max)
+        .min(COMPACT * GROUPED_COLUMNS_PER_COMPACT)
+        .min(MAX_GROUPED_COLUMNS);
+    if columns <= 1 {
+        return entries;
+    }
+    let column_widths = (0..columns)
+        .map(|column| widths.iter().skip(column).step_by(columns).copied().max().unwrap_or(0) + SEPARATOR_SPACE)
+        .collect::<Vec<_>>();
+    let pad = |text: String, width: usize| {
+        let fill = " ".repeat(width.saturating_sub(text.len()));
+        if numeric { fill + &text } else { text + &fill }
+    };
+    let mut rows = Vec::with_capacity(count.div_ceil(columns));
+    for start in (0..count).step_by(columns) {
+        let end = (start + columns).min(count);
+        let mut row = String::new();
+        for index in start..end - 1 {
+            let width = column_widths[index - start] + entries[index].len() - widths[index];
+            row += &pad(format!("{}, ", entries[index]), width);
+        }
+        let last = end - 1;
+        row += &if numeric {
+            let width = column_widths[last - start] + entries[last].len() - widths[last] - SEPARATOR_SPACE;
+            pad(entries[last].clone(), width)
+        } else {
+            entries[last].clone()
+        };
+        rows.push(row);
+    }
+    rows
 }
 
 /// `keyStrRegExp`: a key `formatProperty` writes unquoted.
