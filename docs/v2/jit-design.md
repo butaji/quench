@@ -1,5 +1,8 @@
 # Quench JIT design
 
+For the implemented extension seams, consumer acceptance matrix, policy controls,
+diagnostic limits and runnable example, see [Extending the shared JIT foundation](jit-extension-guide.md).
+
 ## Goal
 
 Make `quench-node` score at least 20% above every measured peer on JetStream 3.0 in both no-JIT and JIT modes, while using less maximum RSS in JIT mode. These are separate performance goals: JIT tier work cannot improve no-JIT execution because no-JIT never enters compiled tiers. Keep the interpreted mode as the default and preserve its results. Use one OXC frontend, one residual bytecode representation and the same `Vm`, heap and host APIs in both modes. TypeScript is erased by the existing frontend; Wasm keeps its current decoder and enters that same VM.
