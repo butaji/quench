@@ -1863,6 +1863,99 @@ mod tests {
     }
 
     #[test]
+    fn compiled_wasm_memory_copy_moves_overlapping_ranges_and_traps_out_of_bounds() {
+        const PAGE: i32 = 65_536;
+        let memarg = wasmparser::MemArg {
+            align: 2,
+            max_align: 2,
+            offset: 0,
+            memory: 0,
+        };
+        // copy(destination, source, length), then the word at 0 and the word at 4.
+        let module = crate::Engine::lower_wasm_module_with_state(
+            "compiled-memory-copy",
+            [
+                crate::WasmFunctionBody {
+                    ty: crate::WasmCallableType::Embedded(crate::WasmSignature {
+                        params: vec![crate::WasmType::I32; 3],
+                        results: vec![crate::WasmType::I32],
+                    }),
+                    locals: vec![],
+                    operators: vec![
+                        Operator::LocalGet { local_index: 0 },
+                        Operator::LocalGet { local_index: 1 },
+                        Operator::LocalGet { local_index: 2 },
+                        Operator::MemoryCopy { dst_mem: 0, src_mem: 0 },
+                        Operator::I32Const { value: 0 },
+                        Operator::I32Load { memarg },
+                        Operator::End,
+                    ]
+                    .into_iter()
+                    .map(Ok),
+                },
+                crate::WasmFunctionBody {
+                    ty: crate::WasmCallableType::Embedded(crate::WasmSignature {
+                        params: vec![crate::WasmType::I32; 2],
+                        results: vec![],
+                    }),
+                    locals: vec![],
+                    operators: vec![
+                        Operator::LocalGet { local_index: 0 },
+                        Operator::LocalGet { local_index: 1 },
+                        Operator::I32Store { memarg },
+                        Operator::End,
+                    ]
+                    .into_iter()
+                    .map(Ok),
+                },
+            ],
+            &crate::WasmTypes::default(),
+            &[],
+            &[crate::WasmMemory {
+                ty: wasmparser::MemoryType {
+                    initial: 1,
+                    maximum: Some(1),
+                    memory64: false,
+                    shared: false,
+                    page_size_log2: None,
+                },
+                import: None,
+            }],
+            &[],
+        )
+        .unwrap();
+        let mut vm = Vm::new(crate::SystemHost);
+        vm.set_execution_mode(crate::ExecutionMode::Compiled);
+        let instance = vm.instantiate_wasm_module(&module).unwrap();
+        let i32s = |values: &[i32]| values.iter().map(|value| crate::WasmValue::I32(*value)).collect::<Vec<_>>();
+        let copy = |vm: &mut Vm<crate::SystemHost>, args: &[i32]| vm.invoke_wasm(&instance, 0, &i32s(args));
+        vm.invoke_wasm(&instance, 1, &i32s(&[0, 0x0403_0201])).unwrap();
+        // Forward overlap: bytes 0..3 move up by one.
+        assert_eq!(copy(&mut vm, &[1, 0, 3]).unwrap(), Some(crate::WasmValue::I32(0x0302_0101)));
+        // Backward overlap: bytes 1..4 move down by one.
+        assert_eq!(copy(&mut vm, &[0, 1, 3]).unwrap(), Some(crate::WasmValue::I32(0x0303_0201)));
+        // A range past the end traps before any byte moves, from either side.
+        for args in [[PAGE - 2, 0, 4], [0, PAGE - 2, 4]] {
+            let error = copy(&mut vm, &args).unwrap_err();
+            assert_eq!(error.wasm_trap(), Some(crate::WasmTrap::OutOfBoundsMemory), "{args:?}");
+        }
+        assert_eq!(copy(&mut vm, &[0, 0, 0]).unwrap(), Some(crate::WasmValue::I32(0x0303_0201)));
+        // An empty copy at the end is in bounds; one byte further is not.
+        assert!(copy(&mut vm, &[PAGE, PAGE, 0]).is_ok());
+        assert!(copy(&mut vm, &[PAGE + 1, 0, 0]).is_err());
+        let program = vm
+            .programs
+            .find_shared(&module.program)
+            .expect("registered Wasm program");
+        let compiled = vm
+            .programs
+            .compiled(program)
+            .flatten()
+            .expect("memory.copy compiled");
+        assert!(compiled.native_entries(0).is_some_and(|entries| entries > 0));
+    }
+
+    #[test]
     fn compiled_wasm_memory_size_and_fill_preserve_bounds_and_results() {
         let memarg = wasmparser::MemArg {
             align: 2,
