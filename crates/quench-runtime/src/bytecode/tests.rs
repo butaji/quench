@@ -748,3 +748,26 @@ fn derived_function_facts_round_trip_and_match_their_derivation() {
     }
     assert_eq!(decoded.validate(), Ok(()));
 }
+
+#[test]
+fn encoding_builds_released_records_as_compiling_them_all_would() {
+    // Encoding builds each released record only while it writes it; the bytes are those of
+    // a program whose released records were all compiled again first.
+    let sources = [
+        "function outer(a){ const f = x => x + a; class K { m(){ return f(1); } static s(){ return 2; } get g(){ return 3; } } return new K().m() + K.s(); }\nouter(1);",
+        "var ns; (function(ns){ function a(){ return b(); } function b(){ return 1; } ns.a = a; ns.c = { d(){ return a(); }, e: () => ns.a() }; })(ns || (ns = {}));\nns.c.d();",
+        "function* gen(){ yield 1; } async function f(){ await 0; return [...gen()].map(v => v * 2); }\nf();",
+    ];
+    for (index, source) in sources.into_iter().enumerate() {
+        let name = format!("released-encoding-{index}.js");
+        let streamed = crate::Engine::specialize(source, &name).unwrap();
+        let eager = crate::Engine::specialize(source, &name).unwrap();
+        assert!(
+            streamed.functions.iter().any(|slot| slot.record().is_none()),
+            "the program releases replayable records"
+        );
+        eager.compile_released();
+        assert_eq!(streamed.encode_compact().0, eager.encode_compact().0);
+        assert!(streamed.functions.iter().any(|slot| slot.record().is_none()), "encoding keeps them released");
+    }
+}
