@@ -240,7 +240,7 @@
       (construct_overflow_op (CC.O) (x64_mul8_with_flags_paired true x y)))
 
 (rule 3 (lower (smul_overflow _ x y @ (value_type (ty_int_ref_16_to_64 ty))))
-      (construct_overflow_op (CC.O) (x64_mul_lo_with_flags_paired ty true x y)))
+      (construct_overflow_op (CC.O) (x64_imul_with_flags_paired ty x y)))
 
 ;;;; Rules for `sadd_sat` ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 

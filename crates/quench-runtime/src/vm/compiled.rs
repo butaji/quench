@@ -13612,6 +13612,50 @@ mod tests {
     }
 
     #[test]
+    #[cfg(all(target_arch = "x86_64", unix))]
+    fn native_checked_signed_multiply_preserves_product_and_overflow() {
+        let isa = super::super::jit_backend::target_isa("speed").unwrap();
+        for ty in [types::I16, types::I32, types::I64] {
+            let mut signature = Signature::new(isa.default_call_conv());
+            signature.params.extend([AbiParam::new(types::I64); 3]);
+            let mut function = ir::Function::with_name_signature(UserFuncName::user(0, 0), signature);
+            let mut context = FunctionBuilderContext::new();
+            let mut builder = FunctionBuilder::new(&mut function, &mut context);
+            let block = builder.create_block();
+            builder.append_block_params_for_function_params(block);
+            builder.switch_to_block(block);
+            builder.seal_block(block);
+            let args = builder.block_params(block).to_vec();
+            let left = if ty == types::I64 { args[0] } else { builder.ins().ireduce(ty, args[0]) };
+            let right = if ty == types::I64 { args[1] } else { builder.ins().ireduce(ty, args[1]) };
+            let (product, overflow) = builder.ins().smul_overflow(left, right);
+            let product = if ty == types::I64 { product } else { builder.ins().sextend(types::I64, product) };
+            let overflow = builder.ins().uextend(types::I64, overflow);
+            builder.ins().store(MemFlagsData::trusted(), product, args[2], 0);
+            builder.ins().store(MemFlagsData::trusted(), overflow, args[2], std::mem::size_of::<i64>() as i32);
+            builder.ins().return_(&[]);
+            builder.finalize(isa.frontend_config());
+            let code = compile_native_function(function, isa.as_ref(), usize::MAX, CodeMemory::new).unwrap();
+            // SAFETY: the generated signature is (i64, i64, pointer) -> void; its only
+            // memory accesses write the two i64 slots supplied below. Code stays live.
+            let multiply = unsafe { std::mem::transmute::<*mut u8, unsafe extern "C" fn(i64, i64, *mut i64)>(code.pointer()) };
+            let bits = ty.bits();
+            let min = -(1i128 << (bits - 1));
+            let max = (1i128 << (bits - 1)) - 1;
+            let cases = [min, min + 1, -46341, -2, -1, 0, 1, 2, 46341, max - 1, max];
+            for left in cases.into_iter().filter(|value| (min..=max).contains(value)) {
+                for right in cases.into_iter().filter(|value| (min..=max).contains(value)) {
+                    let exact = left * right;
+                    let wrapped = (exact << (128 - bits)) >> (128 - bits);
+                    let mut actual = [0i64; 2];
+                    unsafe { multiply(left as i64, right as i64, actual.as_mut_ptr()) };
+                    assert_eq!(actual, [wrapped as i64, i64::from(!(min..=max).contains(&exact))], "{ty}: {left} * {right}");
+                }
+            }
+        }
+    }
+
+    #[test]
     fn native_entry_sampling_is_sparse_and_deterministic() {
         assert!(!native_entry_sample_due(0));
         assert!(!native_entry_sample_due(1));

@@ -2104,10 +2104,19 @@
 (extern constructor writable_invalid_gpr writable_invalid_gpr)
 
 ;; Helper for creating `imul` instructions.
+(decl x64_imul_raw (Type Gpr GprMem) AssemblerOutputs)
+(rule (x64_imul_raw ty @ $I16 src1 src2) (x64_imulw_rm_raw src1 (gpr_mem_16_for_ty ty src2)))
+(rule (x64_imul_raw ty @ $I32 src1 src2) (x64_imull_rm_raw src1 (gpr_mem_32_for_ty ty src2)))
+(rule (x64_imul_raw ty @ $I64 src1 src2) (x64_imulq_rm_raw src1 (gpr_mem_64_for_ty ty src2)))
+
 (decl x64_imul (Type Gpr GprMem) Gpr)
-(rule (x64_imul ty @ $I16 src1 src2) (x64_imulw_rm src1 (gpr_mem_16_for_ty ty src2)))
-(rule (x64_imul ty @ $I32 src1 src2) (x64_imull_rm src1 (gpr_mem_32_for_ty ty src2)))
-(rule (x64_imul ty @ $I64 src1 src2) (x64_imulq_rm src1 (gpr_mem_64_for_ty ty src2)))
+(rule (x64_imul ty src1 src2) (emit_ret_gpr (x64_imul_raw ty src1 src2)))
+
+;; Signed low-half multiplication exposes the same overflow flag in its two-operand
+;; form without reserving the accumulator/high-half register pair.
+(decl x64_imul_with_flags_paired (Type Gpr GprMem) ProducesFlags)
+(rule (x64_imul_with_flags_paired ty src1 src2)
+      (asm_produce_flags (x64_imul_raw ty src1 src2)))
 
 ;; Helper for creating `imul` instructions with an immediate operand. Match
 ;; 8-bit immediates first to allow a smaller instruction encoding.
