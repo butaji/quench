@@ -329,6 +329,7 @@ impl<H: Host> Vm<H> {
             symbol_load_proofs: _,
             private_site_homes: _,
             array_iteration_proof: _,
+            for_in_own_keys: _,
             species_slot_proof: _,
             index_free_chain_proof: _,
             function_name_shapes: _,

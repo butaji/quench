@@ -336,28 +336,91 @@ pub(super) fn parse_integer(text: &str, mut radix: i32) -> f64 {
     sign * super::number::integer_digits_value(&input[..digits_end], radix as u32)
 }
 
+/// The digits `Number.prototype.toString(radix)` spells, after their sign.
+const RADIX_DIGITS: &[u8; 36] = b"0123456789abcdefghijklmnopqrstuvwxyz";
+
+/// `Number::toString(number, radix)` for a finite `number` and a radix in 2..=36 other than
+/// 10, which the caller spells in decimal: V8's `DoubleToRadixCString`, which Node's output
+/// follows. Fraction digits stop where they no longer distinguish the double from its
+/// neighbours (half the gap to the next double, scaled with each digit), the last rounds to
+/// even and may carry into the integer part, and integer digits below the double's precision
+/// are zeros.
 pub(super) fn number_to_radix(number: f64, radix: u32) -> String {
-    if radix == 10 || !number.is_finite() || number.fract() != 0.0 {
-        return if number.fract() == 0.0 {
-            format!("{number:.0}")
-        } else {
-            number.to_string()
-        };
-    }
-    if number == 0.0 {
-        return "0".into();
-    }
+    let base = f64::from(radix);
     let negative = number < 0.0;
-    let mut value = number.abs();
-    let alphabet = b"0123456789abcdefghijklmnopqrstuvwxyz";
-    let mut digits = Vec::new();
-    while value >= 1.0 {
-        let digit = (value % f64::from(radix)) as usize;
-        digits.push(alphabet[digit] as char);
-        value = (value / f64::from(radix)).floor();
+    let value = number.abs();
+    let mut integer = value.floor();
+    let mut fraction = value - integer;
+    // Half the distance to the next double, at least the least positive one.
+    let mut delta = (0.5 * (next_double(value) - value)).max(next_double(0.0));
+    let mut fraction_digits = Vec::new();
+    if fraction >= delta {
+        loop {
+            fraction *= base;
+            delta *= base;
+            let digit = fraction as usize;
+            fraction_digits.push(digit);
+            fraction -= digit as f64;
+            let rounds_up = fraction > 0.5 || (fraction == 0.5 && digit & 1 == 1);
+            if rounds_up && fraction + delta > 1.0 {
+                // Round up, carrying through every written digit at the radix's last value.
+                loop {
+                    match fraction_digits.pop() {
+                        None => {
+                            integer += 1.0;
+                            break;
+                        }
+                        Some(last) if last + 1 < radix as usize => {
+                            fraction_digits.push(last + 1);
+                            break;
+                        }
+                        Some(_) => {}
+                    }
+                }
+                break;
+            }
+            if fraction < delta {
+                break;
+            }
+        }
+    }
+    let mut integer_digits = Vec::new();
+    // Digits below the double's precision are zeros.
+    while binary_exponent(integer / base) > 0 {
+        integer /= base;
+        integer_digits.push(b'0');
+    }
+    loop {
+        let remainder = integer % base;
+        integer_digits.push(RADIX_DIGITS[remainder as usize]);
+        integer = (integer - remainder) / base;
+        if integer <= 0.0 {
+            break;
+        }
     }
     if negative {
-        digits.push('-');
+        integer_digits.push(b'-');
     }
-    digits.iter().rev().collect()
+    integer_digits.reverse();
+    let mut text = String::from_utf8(integer_digits).expect("radix digits are ASCII");
+    if !fraction_digits.is_empty() {
+        text.push('.');
+        text.extend(fraction_digits.into_iter().map(|digit| char::from(RADIX_DIGITS[digit])));
+    }
+    text
+}
+
+/// The least double greater than the finite, non-negative `value`.
+fn next_double(value: f64) -> f64 {
+    f64::from_bits(value.to_bits() + 1)
+}
+
+/// The power of two that scales a double's integer significand to its value (V8's
+/// `Double::Exponent`): the subnormal exponent for a subnormal or zero.
+fn binary_exponent(value: f64) -> i32 {
+    const SIGNIFICAND_BITS: u32 = f64::MANTISSA_DIGITS - 1;
+    const EXPONENT_MASK: u64 = (1 << (64 - 1 - SIGNIFICAND_BITS)) - 1;
+    const BIAS: i32 = f64::MAX_EXP - 1 + SIGNIFICAND_BITS as i32;
+    let biased = ((value.to_bits() >> SIGNIFICAND_BITS) & EXPONENT_MASK) as i32;
+    if biased == 0 { 1 - BIAS } else { biased - BIAS }
 }
