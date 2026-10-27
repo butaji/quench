@@ -12890,6 +12890,45 @@ print(out);
 
 #[test]
 #[cfg(not(quench_profiled))]
+fn shared_osr_wrapping_left_shift_preserves_negative_zero_products() {
+    let source = r#"
+function shiftedZero(a, n) {
+  var negatives = 0;
+  for (var i = 0; i < n; i++) {
+    var shifted = (a[i] & 0x7fffffff) << 1;
+    var product = shifted * 0;
+    if (1 / product < 0) negatives++;
+  }
+  return negatives;
+}
+var a = [];
+for (var i = 0; i < 400; i++) a.push(i % 2 ? 0x40000000 : 1);
+var result = 0;
+for (var j = 0; j < 100; j++) result = shiftedZero(a, 400);
+print(result);
+"#;
+    let program = Engine::specialize(source, "osr-wrapping-shift-zero.js").unwrap();
+    let function_id = program.functions.iter().position(|function| {
+        function.header().name.is_some_and(|name| &program.atoms[name as usize] == "shiftedZero")
+    }).unwrap();
+    for policy in crate::MemoryPolicy::ALL {
+        let output = Rc::new(RefCell::new(Vec::new()));
+        let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+        vm.set_memory_policy(policy);
+        vm.set_execution_mode(crate::ExecutionMode::Compiled);
+        vm.programs.enable_js_jit_diagnostics();
+        vm.execute(&program).unwrap();
+        assert_eq!(output.borrow().as_slice(), ["200"], "{policy:?}");
+        if super::compiled::loop_tier_compiles(policy) {
+            let views = vm.programs.lane_views(super::program_store::ProgramId::MAIN).unwrap();
+            let diagnostics = super::program_store::derived_lane_view(&views[function_id]).unwrap().osr_diagnostics();
+            assert!(diagnostics.native_region_runs > 0, "{policy:?}: {diagnostics:?}");
+        }
+    }
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
 fn shared_osr_wraps_sums_only_int32_conversions_read() {
     // `u` leaves the `i32`s but is read only by `|` and `>>`, which see it modulo 2^32;
     // `v`, the same sum, is compared, so it must hold the exact Number.

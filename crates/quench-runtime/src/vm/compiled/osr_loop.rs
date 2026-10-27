@@ -2643,7 +2643,17 @@ fn exact_range(instruction: WideInstruction, operand: &dyn Fn(Operand) -> Option
                         let count = (count & 31) as u32;
                         match shift {
                             Bitwise::ShiftRight => (left.0 >> count, left.1 >> count),
-                            _ => (left.0 << count, left.1 << count),
+                            _ => {
+                                let shifted = (left.0 << count, left.1 << count);
+                                // Left shift wraps modulo 2^32. A mathematical interval
+                                // crossing that boundary cannot be intersected with i32:
+                                // wrapped negatives (and their zero-product signs) survive.
+                                if shifted.0 >= INT32_RANGE.0 && shifted.1 <= INT32_RANGE.1 {
+                                    shifted
+                                } else {
+                                    INT32_RANGE
+                                }
+                            },
                         }
                     }
                     _ => INT32_RANGE,
