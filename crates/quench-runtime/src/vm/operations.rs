@@ -919,6 +919,11 @@ impl<H: Host> Vm<H> {
         this: Value,
         args: &[Value],
     ) -> Result<Value, JsError> {
+        // A JavaScript call of a Wasm export takes no family test first: calls across the
+        // boundary are a hot path (JetStream richards-wasm).
+        if native == Native::WasmExportedFunction {
+            return self.call_wasm_exported_function(p, args);
+        }
         // The string and RegExp methods belong to none of the families below.
         if native.is_string_regexp_or_math() {
             return self.call_native_table(p, native, this, args);

@@ -1291,11 +1291,10 @@ impl<H: Host> Vm<H> {
         let previous_global = self.switch_realm_global(realm);
         self.activate_frame(&mut frame);
         self.frames.push(frame);
-        let result = self.run_frame_general_with_error(
-            &execution_program,
-            self.frames.len() - 1,
-            initial_error,
-        );
+        let result = match initial_error {
+            None => self.run_generator_frame(&execution_program, self.frames.len() - 1),
+            error => self.run_frame_general_with_error(&execution_program, self.frames.len() - 1, error),
+        };
         let mut frame = self.frames.pop().expect("generator frame exists");
         self.deactivate_frame(&mut frame, &result);
         self.set_active_program(previous_program);

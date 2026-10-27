@@ -5561,6 +5561,11 @@ impl<H: Host> Vm<H> {
         constructor: Value,
         value: Value,
     ) -> Result<Value, JsError> {
+        // A promise whose `constructor` read runs no guest code and names `constructor` is
+        // itself, as the [[Get]] below would find.
+        if self.is_promise(value) && self.promise_constructor_data(value) == Some(constructor) {
+            return Ok(value);
+        }
         let constructor = self.heap.root(constructor);
         let value = self.heap.root(value);
         let outcome = (|| {
@@ -5590,6 +5595,21 @@ impl<H: Host> Vm<H> {
         self.heap.release_root(constructor);
         self.heap.release_root(value);
         outcome
+    }
+
+    /// `promise.constructor` where its read runs no guest code: absent from the promise's own
+    /// shape, which answers for it (`shape_property_lookup`), and a data property of its
+    /// prototype's. A getter reads as `undefined` here (`slot_data_value`), which names no
+    /// constructor. `None` leaves the read to [[Get]].
+    fn promise_constructor_data(&self, promise: Value) -> Option<Value> {
+        let atom = self.runtime_atoms.constructor;
+        let own = self.shape_property_lookup(promise, atom)?;
+        if self.shape_slot(own.shape(), atom).is_some() {
+            return None;
+        }
+        let holder = self.shape_property_lookup(own.proto(), atom)?;
+        let slot = self.shape_slot(holder.shape(), atom)?;
+        self.slot_data_value(holder, slot)
     }
 
     fn finally_handler_function(

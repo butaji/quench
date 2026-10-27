@@ -3,11 +3,11 @@
 //! The SDK console loads inspect, errors, validators, buffer and the primordials, more than the
 //! rest of a run usually allocates. The global `console` is therefore the object Node's
 //! `internal/console/global.js` makes, built ahead of it: the same prototype shape, the SDK's
-//! own keys in its order (`CONSOLE_KEYS`), and `Symbol.toStringTag`. Every key but `log` is a
-//! lazy member that loads the SDK, whose own properties the console then adopts (`adopt`);
-//! `log` stays a function of the SDK's name and length that writes a call of plain strings to
-//! `process.stdout` as the SDK would until the SDK is loaded, and calls the SDK's `log`
-//! otherwise. Listing the console's keys with its symbols loads the SDK first.
+//! own keys in its order (`CONSOLE_KEYS`), and `Symbol.toStringTag`. Every key but the writing
+//! methods (`WRITERS`) is a lazy member that loads the SDK, whose own properties the console
+//! then adopts (`adopt`). Each writer stays a function of the SDK's name and length that
+//! writes a call of plain strings and primitives to its stream as the SDK would until the SDK
+//! is loaded (`plain_line`), and calls the SDK's method otherwise. Listing the console's keys with its symbols loads the SDK first.
 use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 
@@ -20,9 +20,17 @@ const ADOPTING: &str = "\0node/console/adopting";
 /// The streams the unloaded console wrote to, which the SDK console then keeps.
 const STDOUT: &str = "\0node/console/stdout";
 const STDERR: &str = "\0node/console/stderr";
+/// Set once `internal/util/inspect.js` has loaded: from then on its options
+/// (`inspect.defaultOptions`) may differ from Node's defaults, so `log` leaves every
+/// non-string argument to the SDK.
+const INSPECT_LOADED: &str = "\0node/console/inspect-loaded";
+/// The variable that makes Node's console colorize output that is not a terminal
+/// (`internal/util/colors.js` `shouldColorize`).
+const FORCE_COLOR: &str = "FORCE_COLOR";
 
 /// The own string keys of the SDK's global console after Node's bootstrap, in order, with
-/// whether each is enumerable. `log` comes first and stays the global console's own.
+/// whether each is enumerable. The writers (`WRITERS`) come first and stay the global
+/// console's own.
 const CONSOLE_KEYS: [(&str, bool); 26] = [
     ("log", true),
     ("info", true),
@@ -52,6 +60,38 @@ const CONSOLE_KEYS: [(&str, bool); 26] = [
     ("_stderr", false),
 ];
 
+/// The stream a writing method writes to: the process property and its cache key.
+#[derive(Clone, Copy)]
+enum Stream {
+    Stdout,
+    Stderr,
+}
+
+impl Stream {
+    fn property(self) -> &'static str {
+        match self {
+            Stream::Stdout => "stdout",
+            Stream::Stderr => "stderr",
+        }
+    }
+
+    fn cache_key(self) -> &'static str {
+        match self {
+            Stream::Stdout => STDOUT,
+            Stream::Stderr => STDERR,
+        }
+    }
+}
+
+/// The SDK console's writing methods (`consoleMethods` in `internal/console/constructor.js`),
+/// the first `CONSOLE_KEYS` in order: `log`, `info` and `debug` format for stdout, `warn` and
+/// `error` for stderr.
+const WRITERS: [Stream; 5] = [Stream::Stdout, Stream::Stdout, Stream::Stdout, Stream::Stderr, Stream::Stderr];
+
+/// Set once `lib/diagnostics_channel.js` has loaded: a `console.*` channel may then have
+/// subscribers, which only the SDK's methods publish to.
+const CHANNELS_LOADED: &str = "\0node/console/channels-loaded";
+
 /// The `%` that starts a format specifier in the SDK's `formatWithOptions`.
 const FORMAT_SPECIFIER: char = '%';
 
@@ -74,10 +114,10 @@ pub(crate) fn facade(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     let console = context.object_rooted()?;
     let prototype = context.object_rooted()?;
     context.set_prototype_rooted(console, prototype)?;
-    // Bound to the console, as the SDK binds every method of its global console.
-    // Called directly: compiling a helper would fault the compiler back in after the entry's
-    // compilation released it.
-    let log = context.host_function(crate::host::shared_vm::operation("consoleLog"))?;
+    // Bound to the console, as the SDK binds every method of its global console, and to the
+    // writer's index. Called directly: compiling a helper would fault the compiler back in
+    // after the entry's compilation released it.
+    let write = context.host_function(crate::host::shared_vm::operation("consoleWrite"))?;
     let global = context.global_root()?;
     let function_key = context.string_rooted("Function");
     let function = context.get_property_rooted(global, function_key)?;
@@ -85,17 +125,19 @@ pub(crate) fn facade(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     let function_prototype = context.get_property_rooted(function, prototype_key)?;
     let bind_key = context.string_rooted("bind");
     let bind = context.get_property_rooted(function_prototype, bind_key)?;
-    let log = context.call_rooted(bind, log, &[console])?;
-    let (log_key, enumerable) = CONSOLE_KEYS[0];
-    let key = context.string_rooted(log_key);
-    context.define_data_property_rooted(console, key, log, true, enumerable, true)?;
     let name = context.string_rooted("name");
-    context.define_data_property_rooted(log, name, key, false, false, true)?;
     let length = context.string_rooted("length");
     let variadic = context.number(0.0);
-    context.define_data_property_rooted(log, length, variadic, false, false, true)?;
+    for (index, &(writer_key, enumerable)) in CONSOLE_KEYS[..WRITERS.len()].iter().enumerate() {
+        let index = context.number(index as f64);
+        let method = context.call_rooted(bind, write, &[console, index])?;
+        let key = context.string_rooted(writer_key);
+        context.define_data_property_rooted(console, key, method, true, enumerable, true)?;
+        context.define_data_property_rooted(method, name, key, false, false, true)?;
+        context.define_data_property_rooted(method, length, variadic, false, false, true)?;
+    }
     let initializer = context.host_function(crate::host::shared_vm::operation("consoleLoad"))?;
-    context.define_lazy_holder_keys_rooted(console, &CONSOLE_KEYS[1..], initializer)?;
+    context.define_lazy_holder_keys_rooted(console, &CONSOLE_KEYS[WRITERS.len()..], initializer)?;
     let symbol_key = context.string_rooted("Symbol");
     let symbol = context.get_property_rooted(global, symbol_key)?;
     let tag_key = context.string_rooted("toStringTag");
@@ -124,9 +166,9 @@ pub(crate) fn adopt(context: &mut NativeContext<'_, NodeHost>, module: RootId, s
     let stdout = cached(context, STDOUT).unwrap_or_else(|| context.undefined());
     let stderr = cached(context, STDERR).unwrap_or_else(|| context.undefined());
     let adopt = context.evaluate_script_rooted(
-        "(sdk, console, stdout, stderr) => {\n\
+        "(sdk, console, stdout, stderr, writers) => {\n\
            for (const key of Reflect.ownKeys(sdk)) {\n\
-             if (key === 'log') continue;\n\
+             if (writers.includes(key)) continue;\n\
              if (key === Symbol.toStringTag) delete console[key];\n\
              Reflect.defineProperty(console, key, Reflect.getOwnPropertyDescriptor(sdk, key));\n\
            }\n\
@@ -136,8 +178,10 @@ pub(crate) fn adopt(context: &mut NativeContext<'_, NodeHost>, module: RootId, s
          }",
         "node:internal/console/adopt.js",
     )?;
+    let writers = CONSOLE_KEYS[..WRITERS.len()].iter().map(|(key, _)| context.string_rooted(key)).collect::<Vec<_>>();
+    let writers = context.array_rooted(&writers)?;
     let undefined = context.undefined();
-    let keys = context.call_rooted(adopt, undefined, &[sdk, console, stdout, stderr])?;
+    let keys = context.call_rooted(adopt, undefined, &[sdk, console, stdout, stderr, writers])?;
     debug_assert!(sdk_keys_match(context, keys), "CONSOLE_KEYS follows the SDK console's keys");
     let exports = context.string_rooted("exports");
     context.set_property_rooted(module, exports, console, module)?;
@@ -159,38 +203,113 @@ fn sdk_keys_match(context: &mut NativeContext<'_, NodeHost>, keys: RootId) -> bo
         })
 }
 
-/// The global console's `log`.
-pub(crate) fn log(context: &mut NativeContext<'_, NodeHost>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
-    crate::host::resident_pages::release_before_output();
-    if cached(context, SDK_CONSOLE).is_none() {
-        let mut parts = Vec::with_capacity(args.len());
-        for &arg in args {
-            match context.string_text(arg)? {
-                Some(text) => parts.push(text),
-                None => break,
-            }
-        }
-        let plain = parts.len() == args.len()
-            && parts.first().is_none_or(|first| !first.contains(FORMAT_SPECIFIER));
-        if plain {
-            return write_stream(context, STDOUT, "stdout", &(parts.join(" ") + "\n"));
-        }
-        let console = facade(context)?;
-        context.materialize_lazy_data_property_rooted(console, CONSOLE_KEYS[1].0)?;
-    }
-    let sdk = cached(context, SDK_CONSOLE).ok_or_else(|| RootedError::host("SDK console did not load"))?;
-    let key = context.string_rooted(CONSOLE_KEYS[0].0);
-    let log = context.get_property_rooted(sdk, key)?;
-    context.call_rooted(log, sdk, args)
+/// A writing method of the global console: `args` are the writer's index (`WRITERS`), bound
+/// ahead of the call's arguments.
+pub(crate) fn write(context: &mut NativeContext<'_, NodeHost>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+    crate::host::resident_pages::around_output(|| write_line(context, args))
 }
 
-/// Writes `text` to `process[name]`, the stream cached as `cache_key` once first written,
-/// as the SDK console does, which ignores write errors.
-fn write_stream(
-    context: &mut NativeContext<'_, NodeHost>, cache_key: &str, name: &str, text: &str,
-) -> Result<RootId, RootedError> {
-    let stream = match cached(context, cache_key) {
-        Some(stream) => stream,
+fn write_line(context: &mut NativeContext<'_, NodeHost>, args: &[RootId]) -> Result<RootId, RootedError> {
+    let (&index, args) = args.split_first().ok_or_else(|| RootedError::host("console writer without its index"))?;
+    let index = context.to_number(index)? as usize;
+    let stream = *WRITERS.get(index).ok_or_else(|| RootedError::host("console writer index out of range"))?;
+    if cached(context, SDK_CONSOLE).is_none() {
+        if cached(context, CHANNELS_LOADED).is_none() {
+            if let Some(text) = plain_line(context, stream, args)? {
+                return write_stream(context, stream, &text);
+            }
+        }
+        let console = facade(context)?;
+        context.materialize_lazy_data_property_rooted(console, CONSOLE_KEYS[WRITERS.len()].0)?;
+    }
+    let sdk = cached(context, SDK_CONSOLE).ok_or_else(|| RootedError::host("SDK console did not load"))?;
+    let key = context.string_rooted(CONSOLE_KEYS[index].0);
+    let method = context.get_property_rooted(sdk, key)?;
+    context.call_rooted(method, sdk, args)
+}
+
+/// The line an SDK writer writes to `stream` for `args`, when it needs no format specifier, no
+/// colors and no `inspect` beyond a primitive's (`formatWithOptions`: a lone string as it is;
+/// strings as they are, other primitives as `formatPrimitive` with default options), joined
+/// by spaces.
+fn plain_line(context: &mut NativeContext<'_, NodeHost>, stream: Stream, args: &[RootId]) -> Result<Option<String>, RootedError> {
+    use quench_runtime::ValueType;
+    if let [first, _, ..] = args {
+        let first = *first;
+        if context.string_text(first)?.is_some_and(|text| text.contains(FORMAT_SPECIFIER)) {
+            return Ok(None);
+        }
+    }
+    let mut parts = Vec::with_capacity(args.len());
+    let mut inspected = false;
+    for &arg in args {
+        let part = match context.value_type_rooted(arg) {
+            Some(ValueType::String) => context.string_text(arg)?,
+            Some(ValueType::Number) => {
+                inspected = true;
+                let number = context.to_number(arg)?;
+                // `formatNumber`: `-0` as itself, every other number as `${number}`.
+                Some(if number == 0.0 && number.is_sign_negative() { "-0".to_owned() } else { context.to_string(arg)? })
+            }
+            Some(ValueType::BigInt) => {
+                inspected = true;
+                Some(context.to_string(arg)? + "n")
+            }
+            Some(ValueType::Boolean | ValueType::Undefined | ValueType::Null) => {
+                inspected = true;
+                Some(context.to_string(arg)?)
+            }
+            _ => None,
+        };
+        let Some(part) = part else { return Ok(None) };
+        parts.push(part);
+    }
+    if inspected && (cached(context, INSPECT_LOADED).is_some() || may_colorize(context, stream)?) {
+        return Ok(None);
+    }
+    Ok(Some(parts.join(" ") + "\n"))
+}
+
+/// Whether the SDK console could colorize `stream` (`shouldColorize`): `FORCE_COLOR` is set
+/// or the stream is a terminal.
+fn may_colorize(context: &mut NativeContext<'_, NodeHost>, stream: Stream) -> Result<bool, RootedError> {
+    let process = context
+        .host_mut()
+        .shared_state()
+        .borrow()
+        .process_module
+        .ok_or_else(|| RootedError::host("process is not initialized"))?;
+    let key = context.string_rooted("env");
+    let env = context.get_property_rooted(process, key)?;
+    let key = context.string_rooted(FORCE_COLOR);
+    let force = context.get_property_rooted(env, key)?;
+    if context.value_type_rooted(force) != Some(quench_runtime::ValueType::Undefined) {
+        return Ok(true);
+    }
+    let key = context.string_rooted(stream.property());
+    let stream = context.get_property_rooted(process, key)?;
+    let key = context.string_rooted("isTTY");
+    let terminal = context.get_property_rooted(stream, key)?;
+    context.truthy_rooted(terminal)
+}
+
+/// Called as `internal/util/inspect.js` finishes loading (`INSPECT_LOADED`).
+pub(crate) fn note_inspect_loaded(context: &mut NativeContext<'_, NodeHost>) -> Result<(), RootedError> {
+    let marker = context.boolean(true);
+    cache(context, INSPECT_LOADED, marker)
+}
+
+/// Called as `diagnostics_channel.js` finishes loading (`CHANNELS_LOADED`).
+pub(crate) fn note_channels_loaded(context: &mut NativeContext<'_, NodeHost>) -> Result<(), RootedError> {
+    let marker = context.boolean(true);
+    cache(context, CHANNELS_LOADED, marker)
+}
+
+/// Writes `text` to `process[stream]`, the stream cached once first written, as the SDK
+/// console does, which ignores write errors.
+fn write_stream(context: &mut NativeContext<'_, NodeHost>, stream: Stream, text: &str) -> Result<RootId, RootedError> {
+    let stream = match cached(context, stream.cache_key()) {
+        Some(cached_stream) => cached_stream,
         None => {
             let process = context
                 .host_mut()
@@ -198,10 +317,10 @@ fn write_stream(
                 .borrow()
                 .process_module
                 .ok_or_else(|| RootedError::host("process is not initialized"))?;
-            let key = context.string_rooted(name);
-            let stream = context.get_property_rooted(process, key)?;
-            cache(context, cache_key, stream)?;
-            stream
+            let key = context.string_rooted(stream.property());
+            let value = context.get_property_rooted(process, key)?;
+            cache(context, stream.cache_key(), value)?;
+            value
         }
     };
     let key = context.string_rooted("write");
@@ -215,29 +334,11 @@ fn write_stream(
 const WARNING_KEY: &str = "error";
 
 /// What Node's `writeOut` writes a warning with, read when it first writes one: the global
-/// console's `error`. While that is still the SDK's pending member, a writer that writes a
-/// line as the SDK's `error` writes one string (`warning_write`), so a warning does not
-/// load the SDK.
+/// console's `error`, a writer that writes one string without loading the SDK.
 pub(crate) fn warning_writer(context: &mut NativeContext<'_, NodeHost>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
     let console = facade(context)?;
-    if context.is_pending_lazy_data_property_rooted(console, WARNING_KEY)? {
-        return context.host_function(crate::host::shared_vm::operation("consoleWarningWrite"));
-    }
     let key = context.string_rooted(WARNING_KEY);
     context.get_property_rooted(console, key)
-}
-
-/// The SDK's `error` with one string: the string and a newline on `process.stderr`, or the
-/// SDK's own `error` once the SDK is loaded (its group indentation, its stream).
-pub(crate) fn warning_write(context: &mut NativeContext<'_, NodeHost>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
-    if let Some(sdk) = cached(context, SDK_CONSOLE) {
-        let key = context.string_rooted(WARNING_KEY);
-        let error = context.get_property_rooted(sdk, key)?;
-        return context.call_rooted(error, sdk, args);
-    }
-    let undefined = context.undefined();
-    let message = context.to_string(args.first().copied().unwrap_or(undefined))?;
-    write_stream(context, STDERR, "stderr", &(message + "\n"))
 }
 
 pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
