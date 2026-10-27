@@ -14167,6 +14167,50 @@ mod tests {
     }
 
     #[test]
+    fn native_alias_regions_preserve_overlapping_untagged_accesses() {
+        let isa = super::super::jit_backend::target_isa("speed").unwrap();
+        for tagged_load in [false, true] {
+            for tagged_store in [false, true] {
+                let mut signature = Signature::new(isa.default_call_conv());
+                signature.params.push(AbiParam::new(types::I64));
+                signature.returns.push(AbiParam::new(types::I64));
+                let mut function = ir::Function::with_name_signature(UserFuncName::user(0, 0), signature);
+                let region = function.dfg.alias_regions.insert(ir::AliasRegionData {
+                    user_id: 0,
+                    description: "overlapping test accesses".into(),
+                });
+                let mut context = FunctionBuilderContext::new();
+                let mut builder = FunctionBuilder::new(&mut function, &mut context);
+                let block = builder.create_block();
+                builder.append_block_params_for_function_params(block);
+                builder.switch_to_block(block);
+                builder.seal_block(block);
+                let address = builder.block_params(block)[0];
+                let load_flags = MemFlagsData::trusted().with_alias_region(tagged_load.then_some(region));
+                let store_flags = MemFlagsData::trusted().with_alias_region(tagged_store.then_some(region));
+                let first = builder.ins().load(types::I64, load_flags, address, 0);
+                let zero = builder.ins().iconst(types::I64, 0);
+                builder.ins().store(store_flags, zero, address, 0);
+                let second = builder.ins().load(types::I64, load_flags, address, 0);
+                let result = builder.ins().iadd(first, second);
+                builder.ins().return_(&[result]);
+                builder.finalize(isa.frontend_config());
+                let code = compile_native_function(function, isa.as_ref(), usize::MAX, CodeMemory::new).unwrap();
+                // SAFETY: the generated function reads and writes one live u64,
+                // and its executable mapping remains alive throughout each call.
+                let run = unsafe {
+                    std::mem::transmute::<*mut u8, unsafe extern "C" fn(*mut u64) -> u64>(code.pointer())
+                };
+                for input in [0, 1, 42, i64::MAX as u64, u64::MAX] {
+                    let mut memory = input;
+                    assert_eq!(unsafe { run(&mut memory) }, input, "load tagged={tagged_load}, store tagged={tagged_store}");
+                    assert_eq!(memory, 0);
+                }
+            }
+        }
+    }
+
+    #[test]
     fn native_unsigned_widening_multiply_preserves_lane_products() {
         let isa = super::super::jit_backend::target_isa("speed").unwrap();
         // Exhaust both single-input shuffle encodings and all lane selectors,

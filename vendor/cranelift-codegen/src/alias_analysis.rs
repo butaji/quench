@@ -95,6 +95,9 @@ impl LastStores {
             self.last_fence = inst.into();
             self.other = inst.into();
         } else if opcode.can_store() {
+            // An untagged load may alias every store, including one whose
+            // region is known. Tagged loads still use their disjoint regions.
+            self.other = inst.into();
             if let Some(memflags) = func.dfg.insts[inst].memflags() {
                 match func.dfg.mem_flags[memflags].alias_region() {
                     Some(region) => self.regions[region] = inst.into(),
@@ -105,14 +108,12 @@ impl LastStores {
                         // forward stale values past this store.
                         self.regions.clear();
                         self.last_fence = inst.into();
-                        self.other = inst.into();
                     }
                 }
             } else {
                 // Store with no memflags: must clobber everything.
                 self.regions.clear();
                 self.last_fence = inst.into();
-                self.other = inst.into();
             }
         }
     }
