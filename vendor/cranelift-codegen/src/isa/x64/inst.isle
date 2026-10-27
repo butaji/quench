@@ -4281,7 +4281,9 @@
 ;;;; Shuffle ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 ;; Complementary byte-aligned shifts rotate bytes independently in each i64 lane.
-(decl pure partial byte_rotate_i64x2_mask (u8 u8) VecMask)
+(decl pure partial byte_rotate_i64x2_index (u8 u8) u8)
+(extern constructor byte_rotate_i64x2_index byte_rotate_i64x2_index)
+(decl byte_rotate_i64x2_mask (u8) VCodeConstant)
 (extern constructor byte_rotate_i64x2_mask byte_rotate_i64x2_mask)
 
 ;; Produce a mask suitable for use with `pshufb` for permuting the argument to
