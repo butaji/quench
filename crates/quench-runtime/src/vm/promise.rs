@@ -1253,17 +1253,25 @@ impl<H: Host> Vm<H> {
     }
 
     pub(super) fn native_with_realm(&mut self, kind: Native, env: Value, realm: Value) -> Value {
-        let function = self.heap.alloc_function(FunctionRecord {
-            object: Self::empty_object(self.realm_function_prototype(realm)),
-            realm,
-            kind: FunctionKind::Native(kind),
-            env,
-        });
         let promise_resolver = !env.is_null()
             && matches!(
                 kind,
                 Native::PromiseResolve | Native::PromiseReject | Native::PromiseAggregateJob
             );
+        let function_prototype = self.realm_function_prototype(realm);
+        // Every promise makes two resolving functions, whose own `length` (1) and `name` ("")
+        // reach the shape the first one's adds recorded: the next ones are made finished there.
+        if promise_resolver && let Some(shape) = self.resolver_function_shape {
+            let name = self.atom_string(self.runtime_atoms.empty);
+            let object = self.finished_closure_object(function_prototype, shape, [Value::number(1.0), name], None);
+            return self.heap.alloc_function(FunctionRecord { object, realm, kind: FunctionKind::Native(kind), env });
+        }
+        let function = self.heap.alloc_function(FunctionRecord {
+            object: Self::empty_object(function_prototype),
+            realm,
+            kind: FunctionKind::Native(kind),
+            env,
+        });
         let anonymous_capability_executor =
             !env.is_null() && kind == Native::PromiseCapabilityExecutor;
         let anonymous_proxy_revoke = !env.is_null() && kind == Native::ProxyRevoke;
@@ -1287,8 +1295,8 @@ impl<H: Host> Vm<H> {
             );
         }
         if promise_resolver || anonymous_capability_executor || anonymous_proxy_revoke {
-            let atom = self.intern_atom("name");
-            let empty_name = self.heap.alloc_string("".into());
+            let atom = self.runtime_atoms.name;
+            let empty_name = self.atom_string(self.runtime_atoms.empty);
             let _ = self.set_property_with_attributes(
                 function,
                 atom,
@@ -1302,6 +1310,12 @@ impl<H: Host> Vm<H> {
                     setter: None,
                 },
             );
+        }
+        if promise_resolver {
+            self.resolver_function_shape = self
+                .object_data(function)
+                .map(crate::heap::Object::shape)
+                .filter(|&shape| !self.shape_is_dictionary(shape));
         }
         function
     }
@@ -5547,6 +5561,11 @@ impl<H: Host> Vm<H> {
         constructor: Value,
         value: Value,
     ) -> Result<Value, JsError> {
+        // A promise whose `constructor` read runs no guest code and names `constructor` is
+        // itself, as the [[Get]] below would find.
+        if self.is_promise(value) && self.promise_constructor_data(value) == Some(constructor) {
+            return Ok(value);
+        }
         let constructor = self.heap.root(constructor);
         let value = self.heap.root(value);
         let outcome = (|| {
@@ -5576,6 +5595,21 @@ impl<H: Host> Vm<H> {
         self.heap.release_root(constructor);
         self.heap.release_root(value);
         outcome
+    }
+
+    /// `promise.constructor` where its read runs no guest code: absent from the promise's own
+    /// shape, which answers for it (`shape_property_lookup`), and a data property of its
+    /// prototype's. A getter reads as `undefined` here (`slot_data_value`), which names no
+    /// constructor. `None` leaves the read to [[Get]].
+    fn promise_constructor_data(&self, promise: Value) -> Option<Value> {
+        let atom = self.runtime_atoms.constructor;
+        let own = self.shape_property_lookup(promise, atom)?;
+        if self.shape_slot(own.shape(), atom).is_some() {
+            return None;
+        }
+        let holder = self.shape_property_lookup(own.proto(), atom)?;
+        let slot = self.shape_slot(holder.shape(), atom)?;
+        self.slot_data_value(holder, slot)
     }
 
     fn finally_handler_function(
