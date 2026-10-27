@@ -2006,6 +2006,9 @@ impl Host for EntryCacheHost {
         let key = (name.to_owned(), parts.iter().map(|part| (*part).to_owned()).collect());
         self.kept.borrow().get(&key).cloned().map(|bytes: Vec<u8>| Rc::new(bytes) as crate::KeptBytes)
     }
+    fn keeps_compiled_programs(&self) -> bool {
+        true
+    }
     fn keep_compiled_program(&mut self, name: &str, parts: &[&str], bytes: &[u8]) {
         let key = (name.to_owned(), parts.iter().map(|part| (*part).to_owned()).collect());
         self.kept.borrow_mut().insert(key, bytes.to_vec());
