@@ -12967,8 +12967,12 @@ unsafe fn window_environment<H: Host>(
         let slots = crate::heap::EnvironmentSlots::from_values((0..in_place.len()).map(|slot| {
             if window.captured(slot) { *locals.add(slot) } else { Value::DELETED }
         }));
-        for slot in (0..in_place.len()).filter(|slot| window.captured(*slot)) {
-            locals.add(slot).write(Value::DELETED);
+        // Each captured local, one per bit of the mask, which names no slot past the locals.
+        debug_assert_eq!(captured.checked_shr(u32::from(window.locals)).unwrap_or(0), 0);
+        let mut remaining = captured;
+        while remaining != 0 {
+            locals.add(remaining.trailing_zeros() as usize).write(Value::DELETED);
+            remaining &= remaining - 1;
         }
         // A non-arrow binds its `this` where its closures' arrows find it
         // (`Vm::captured_lexical_this`), as a frame does when a closure or the body itself
