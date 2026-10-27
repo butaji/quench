@@ -1301,9 +1301,13 @@ impl LoopEntry {
     /// `MAX_INDEXED_LENGTH` declines the entry.
     pub(crate) fn push_array(&mut self, elements: *mut Value, length: usize, capacity: usize) -> Option<()> {
         (length <= MAX_INDEXED_LENGTH).then_some(())?;
-        self.push(elements.addr() as u64);
-        self.push(length as u64);
-        self.push(capacity.min(MAX_INDEXED_LENGTH) as u64);
+        let end = self.length + ARRAY_WORDS;
+        self.words[self.length..end].copy_from_slice(&[
+            std::mem::MaybeUninit::new(elements.addr() as u64),
+            std::mem::MaybeUninit::new(length as u64),
+            std::mem::MaybeUninit::new(capacity.min(MAX_INDEXED_LENGTH) as u64),
+        ]);
+        self.length = end;
         Some(())
     }
 
@@ -5580,6 +5584,36 @@ fn unary_operand(dfg: &ir::DataFlowGraph, value: ir::Value, opcode: ir::Opcode) 
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn array_entry_descriptor_boundaries_preserve_layout_and_rejection() {
+        use super::*;
+        let mut values = [Value::UNDEFINED; 1];
+        let pointer = values.as_mut_ptr();
+        for start in [ENTRY_CAPTURES, ENTRY_WORDS - ARRAY_WORDS] {
+            for length in [0, MAX_INDEXED_LENGTH] {
+                let mut entry = LoopEntry::new();
+                entry.length = start;
+                assert_eq!(entry.push_array(pointer, length, usize::MAX), Some(()));
+                assert_eq!(entry.length, start + ARRAY_WORDS);
+                // SAFETY: the successful append initialized precisely these words.
+                let actual = entry.words[start..entry.length]
+                    .iter().map(|word| unsafe { word.assume_init() }).collect::<Vec<_>>();
+                assert_eq!(actual, [pointer.addr() as u64, length as u64, MAX_INDEXED_LENGTH as u64]);
+            }
+        }
+        let mut entry = LoopEntry::new();
+        entry.push_array(pointer, 1, 1).unwrap();
+        let before = entry.length;
+        assert_eq!(entry.push_array(pointer, MAX_INDEXED_LENGTH + 1, usize::MAX), None);
+        assert_eq!(entry.length, before);
+        // SAFETY: the first descriptor was initialized before the rejected append.
+        assert_eq!(unsafe { entry.words[ENTRY_CAPTURES + 1].assume_init() }, 1);
+        assert_eq!(entry.push_array(pointer, 0, 0), Some(()));
+        assert_eq!(entry.length, before + ARRAY_WORDS);
+        // SAFETY: the second successful descriptor initialized its capacity word.
+        assert_eq!(unsafe { entry.words[before + 2].assume_init() }, 0);
+    }
+
     use super::*;
 
     #[test]
