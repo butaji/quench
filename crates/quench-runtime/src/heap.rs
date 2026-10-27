@@ -3089,6 +3089,7 @@ impl Heap {
         // Most objects keep their values in the arena and have no extras; their payload is
         // their storage start, read here without decoding the other forms.
         if let Some(start) = object.plain_storage_start() {
+            debug_assert!(!object.properties().is_dictionary(), "the caller matched an exact shape");
             // SAFETY: the caller proves the slot exists outside dictionary storage.
             return unsafe { self.properties.get_flat_at(start, slot) };
         }
@@ -3215,6 +3216,7 @@ impl Heap {
         };
         // As `property_get_flat`: arena values without extras need no other decoding.
         if let Some(start) = data.plain_storage_start() {
+            debug_assert!(!data.properties().is_dictionary(), "the caller matched an exact shape");
             // SAFETY: the caller proves that the property slot exists outside dictionary
             // storage.
             unsafe { self.properties.set_flat_at(start, slot, value) };
