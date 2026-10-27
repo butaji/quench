@@ -16469,7 +16469,11 @@ fn derive_lane_view<'live, H: Host>(
     } else {
         LANE_ENTRY_MIN_CALL_RUN
     };
-    let runs = lane_runs_ahead(&decoded, &exits, min_run);
+    // A resumed JavaScript loop body's straight tail jumps back to its head, so its run
+    // continues there; a Wasm body resumes nowhere, and following its jumps only made more
+    // of its PCs entries, whose lane runs a `return_call` chain left at once (TOD-19:
+    // `return_call_ref.wast` 510 -> 797 ms).
+    let runs = lane_runs_ahead(&decoded, &exits, min_run, !wasm);
     let entries: Box<[bool]> = runs
         .iter()
         .zip(&reads_accumulator)
@@ -17206,12 +17210,12 @@ fn may_loop(function: &Function) -> bool {
 }
 
 /// How many lane records control reaches from each PC before one that exits, counted up
-/// to `cap`: a `Jump` continues at its target, as a resumed loop body does, and any other
-/// record at the next PC. Each pass extends every count by one step, so `cap` passes reach
-/// the fixed point the capped counts allow.
-fn lane_runs_ahead(decoded: &[WideInstruction], exits: &[bool], cap: usize) -> Vec<usize> {
+/// to `cap`: where `follows_jumps`, a `Jump` continues at its target, as a resumed loop body
+/// does, and any other record at the next PC. Each pass extends every count by one step, so
+/// `cap` passes reach the fixed point the capped counts allow; without jumps one pass does.
+fn lane_runs_ahead(decoded: &[WideInstruction], exits: &[bool], cap: usize, follows_jumps: bool) -> Vec<usize> {
     let next = |pc: usize| match decoded[pc].op() {
-        Op::Jump => decoded[pc].imm() as usize,
+        Op::Jump if follows_jumps => decoded[pc].imm() as usize,
         _ => pc + 1,
     };
     let mut runs = vec![0usize; exits.len()];
