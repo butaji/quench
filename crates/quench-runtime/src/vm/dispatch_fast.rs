@@ -6750,7 +6750,7 @@ fn lane_inlined_activation<H: Host>(
     let (target, arguments) =
         unsafe { (&*target, ImmediateLayout::call_window_base((*call).imm())) };
     let (registers, _) =
-        lane_push_activation::<H, false>(cx, r, call, target, arguments, receiver, false);
+        lane_push_activation::<H, false, false>(cx, r, call, target, arguments, receiver, false);
     let inlining = region.inlining.as_ref().expect("an inlining region");
     for register in 0..frame.registers {
         let value = match frame.bound.get(usize::from(register)).copied().flatten() {
@@ -9952,7 +9952,7 @@ script_handler! {
             return exit(ip);
         }
         let arguments = ImmediateLayout::call_window_base(i.imm());
-        let (registers, base) = lane_push_activation::<H, false>(cx, r, ip, target, arguments, this, false);
+        let (registers, base) = lane_push_activation::<H, false, false>(cx, r, ip, target, arguments, this, false);
         next!(cx, registers, base, Carried::script(cx))
     }
 }
@@ -10068,7 +10068,7 @@ script_handler! {
             {
                 sibling!(lane_script_call_general::<H>, r, ip, Carried::script(cx))
             }
-            let (registers, base) = lane_push_activation::<H, false>(cx, r, ip, target, arguments, this, false);
+            let (registers, base) = lane_push_activation::<H, false, false>(cx, r, ip, target, arguments, this, false);
             next!(cx, registers, base, Carried::script(cx))
         };
         if !returns {
@@ -10189,7 +10189,7 @@ script_handler! {
         let root = vm.heap.root(promise);
         vm.lane_stack.settling.push(root);
         let arguments = ImmediateLayout::call_window_base(i.imm());
-        let (registers, base) = lane_push_activation::<H, false>(cx, r, ip, &target, arguments, this, false);
+        let (registers, base) = lane_push_activation::<H, false, true>(cx, r, ip, &target, arguments, this, false);
         next!(cx, registers, base, Carried::script(cx))
     }
 }
@@ -12506,7 +12506,7 @@ fn lane_activate<H: Host>(
     if !lane_activation_room(vm, target) {
         return Err(lane_script_call_frame::<H>(ip));
     }
-    Ok(lane_push_activation::<H, true>(cx, r, ip, target, arguments, this, constructs))
+    Ok(lane_push_activation::<H, true, false>(cx, r, ip, target, arguments, this, constructs))
 }
 
 /// Whether the lane stack takes `target`'s activation: capacity, the guest-call budget and
@@ -12620,7 +12620,7 @@ fn lane_crosses<H: Host, const MAY_CROSS: bool>(cx: *mut LaneContext<H>, target:
 /// callers (the fast call forms) have sent another program's target to the general form
 /// (`lane_crosses`).
 #[inline(always)]
-fn lane_push_activation<H: Host, const GENERAL: bool>(
+fn lane_push_activation<H: Host, const GENERAL: bool, const SETTLES: bool>(
     cx: *mut LaneContext<H>,
     r: Registers,
     ip: Ip,
@@ -12631,14 +12631,15 @@ fn lane_push_activation<H: Host, const GENERAL: bool>(
 ) -> (Registers, Ip) {
     // SAFETY: `ip` is a record of the running view, whose window of `r` holds its values.
     let (passed, argc) = unsafe { (r.0.add(usize::from(arguments)).cast_const(), ImmediateLayout::argument_count((*ip).imm())) };
-    lane_push_passed::<H, GENERAL>(cx, r, ip, target, passed, argc, this, constructs)
+    lane_push_passed::<H, GENERAL, SETTLES>(cx, r, ip, target, passed, argc, this, constructs)
 }
 
 /// `lane_push_activation` of the `argc` values at `passed`, at most `target`'s parameters
-/// and `FIXED_ARGUMENT_COPIES`, for the call record at `ip`.
+/// and `FIXED_ARGUMENT_COPIES`, for the call record at `ip`; `SETTLES` for a settling
+/// target's call (`Completion::SettlesPromise`).
 #[inline(always)]
 #[allow(clippy::too_many_arguments)]
-fn lane_push_passed<H: Host, const GENERAL: bool>(
+fn lane_push_passed<H: Host, const GENERAL: bool, const SETTLES: bool>(
     cx: *mut LaneContext<H>,
     r: Registers,
     ip: Ip,
@@ -12648,6 +12649,9 @@ fn lane_push_passed<H: Host, const GENERAL: bool>(
     this: Value,
     constructs: bool,
 ) -> (Registers, Ip) {
+    // Only `lane_script_call_settles` activates a settling target, and it says so statically,
+    // so the other call forms decide the completion without reading the target's entry.
+    debug_assert_eq!(SETTLES, target.settles(), "a settling target activates through its own call form");
     let vm = unsafe { vm(cx) };
     let count = usize::from(target.registers);
     let stack = &mut vm.lane_stack;
@@ -12679,7 +12683,7 @@ fn lane_push_passed<H: Host, const GENERAL: bool>(
             caller_this: unsafe { (*cx).this },
             caller_env: unsafe { (*cx).env },
             caller_capture: unsafe { (*cx).capture },
-            completion: Completion::of(constructs, cross, target.settles()),
+            completion: Completion::of(constructs, cross, SETTLES),
             forwards: false,
             environment: false,
         }),
@@ -12726,7 +12730,7 @@ fn lane_push_callback<H: Host>(
         && passed <= usize::from(FIXED_ARGUMENT_COPIES)
         && lane_activation_room(vm, target)
     {
-        let (_, start) = lane_push_passed::<H, false>(cx, r, call, target, args.as_ptr(), passed as u16, this, false);
+        let (_, start) = lane_push_passed::<H, false, false>(cx, r, call, target, args.as_ptr(), passed as u16, this, false);
         return Some(start);
     }
     let arguments = ActivationArguments::Kept(args.as_ptr(), args.len());
@@ -12842,7 +12846,7 @@ fn lane_activate_environment<H: Host>(
             caller_this: unsafe { (*cx).this },
             caller_env: unsafe { (*cx).env },
             caller_capture: unsafe { (*cx).capture },
-            completion: Completion::of(false, cross, target.settles()),
+            completion: Completion::of(false, cross, false),
             forwards: false,
             environment: true,
         }),
@@ -13234,7 +13238,7 @@ fn lane_activate_keeping<H: Host, const MAY_CROSS: bool>(
             completion: if forwarder.is_some() {
                 Completion::Forwarder
             } else {
-                Completion::of(constructs, cross, target.settles())
+                Completion::of(constructs, cross, false)
             },
             forwards: keeps,
             environment: false,
