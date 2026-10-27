@@ -1703,6 +1703,14 @@ impl ProgramStore {
         self.entry(id).map(|entry| entry.residual.clone())
     }
 
+    /// Drop the lane views `id` derived (`LaneViews`); a later interpreted run derives them
+    /// again. The caller ensures no lane run of `id` holds their records.
+    pub(super) fn release_lane_views(&mut self, id: ProgramId) {
+        if let Some(entry) = self.entry_mut(id) {
+            entry.lane_views = LaneViews::default();
+        }
+    }
+
     pub(crate) fn set_constants(&mut self, id: ProgramId, constants: Vec<Value>) {
         if let Some(entry) = self.entry_mut(id) {
             entry.const_arrays = vec![None; constants.len()];
