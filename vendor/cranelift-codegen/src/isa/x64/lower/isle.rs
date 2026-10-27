@@ -553,12 +553,6 @@ impl Context for IsleContext<'_, '_, MInst, X64Backend> {
         (val.bits() as u8) & self.shift_mask(ty)
     }
 
-    fn i64_lane_rotate_left(&mut self, left: u8, right: u8) -> Option<u8> {
-        let bits = crate::ir::types::I64X2.lane_bits();
-        (left != 0 && right != 0 && u32::from(left) + u32::from(right) == bits)
-            .then_some(left)
-    }
-
     #[inline]
     fn simm32_from_value(&mut self, val: Value) -> Option<GprMemImm> {
         let imm = self.i64_from_iconst(val)?;
