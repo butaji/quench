@@ -12718,7 +12718,7 @@ impl<H: Host> Vm<H> {
                 .programs
                 .residual(program)
                 .is_some_and(|code| code.kind == crate::bytecode::ProgramKind::Wasm);
-        let baseline = match self.programs.compiled(program) {
+        let mut baseline = match self.programs.compiled(program) {
             Some(compiled) => compiled,
             None => {
                 if self
@@ -12765,6 +12765,7 @@ impl<H: Host> Vm<H> {
                         );
                     }
                     self.programs.set_compiled(program, compiled.clone());
+                    self.programs.settle_wasm_module_tier(program);
                     self.programs.compiled(program).flatten()
                 } else if jit_wasm_selective_enabled()
                     && self
@@ -12801,10 +12802,39 @@ impl<H: Host> Vm<H> {
                         );
                     }
                     self.programs.set_compiled(program, compiled.clone());
+                    self.programs.settle_wasm_module_tier(program);
                     self.programs.compiled(program).flatten()
                 }
             }
         };
+        // A selective module whose interpreted work came due compiles whole (`WasmModuleTier`).
+        if baseline.is_none()
+            && !wasm_root_only
+            && !wasm_root_first
+            && matches!(self.programs.compiled(program), Some(None))
+            && self.programs.note_wasm_module_entry(program)
+            && self.programs.claim_wasm_module_escalation(program)
+        {
+            let started = jit_diagnostics_enabled().then(std::time::Instant::now);
+            let compiled = self.compile_program(program, env).map(Rc::new);
+            if let Some(started) = started {
+                let bytecodes: usize = self.programs.residual(program).map_or(0, |code| {
+                    (0..code.functions.len())
+                        .filter_map(|index| code.function_get(index))
+                        .map(|function| function.code.len())
+                        .sum()
+                });
+                eprintln!(
+                    "QUENCH_WASM_JIT_STATS {{\"program\":{},\"module_escalated\":true,\"compiled\":{},\"bytecodes\":{},\"compile_ns\":{}}}",
+                    program.raw(),
+                    compiled.is_some(),
+                    bytecodes,
+                    started.elapsed().as_nanos(),
+                );
+            }
+            self.programs.set_compiled(program, compiled);
+            baseline = self.programs.compiled(program).flatten();
+        }
         // Root-first mode earns further tiering only after its selected root
         // produced an artifact. If admission fails, leave the workload in the
         // interpreter instead of silently becoming ordinary selective JIT.
