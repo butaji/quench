@@ -818,16 +818,25 @@ enum Completion {
     /// native receives. Made a frame, it is the entry frame of the general loop that finishes
     /// it, which no pending call names.
     ReturnsToNative,
+    /// A plain call of a non-suspending async function of the caller's program
+    /// (`CallEntry::Settles`): its return resolves the promise the call made, which
+    /// `LaneStack::settling` keeps, and the call yields that promise. Made a frame, its
+    /// pending call settles it (`PendingGeneralCall::settles`).
+    SettlesPromise,
 }
 
 impl Completion {
-    /// The completion of an activation a `new` made or not, of the caller's program or not.
-    fn of(constructs: bool, cross: bool) -> Self {
-        match (constructs, cross) {
-            (false, false) => Self::Plain,
-            (false, true) => Self::Cross,
-            (true, false) => Self::Constructs,
-            (true, true) => Self::CrossConstructs,
+    /// The completion of an activation a `new` made or not, of the caller's program or not,
+    /// of a target whose return settles its call's promise or not. Only a plain call of the
+    /// caller's program settles one (`lane_script_call_settles`).
+    fn of(constructs: bool, cross: bool, settles: bool) -> Self {
+        debug_assert!(!settles || !constructs && !cross, "only a plain call of its own program settles");
+        match (constructs, cross, settles) {
+            (false, false, true) => Self::SettlesPromise,
+            (false, false, false) => Self::Plain,
+            (false, true, _) => Self::Cross,
+            (true, false, _) => Self::Constructs,
+            (true, true, _) => Self::CrossConstructs,
         }
     }
 
@@ -940,6 +949,11 @@ enum CallEntry {
     /// activation's window holds its environment and locals after its registers
     /// (`lane_activate_environment`). Only a plain call activates it.
     Environment,
+    /// An async function whose body never suspends, laid out as its registers
+    /// (`CallPlan::settles_registers_only`): only a plain call of its own program activates
+    /// it (`lane_script_call_settles`), whose promise its return settles
+    /// (`Completion::SettlesPromise`).
+    Settles,
 }
 
 impl CallEntry {
@@ -1043,6 +1057,12 @@ impl ScriptCallTarget {
     #[inline(always)]
     fn forwards(&self) -> bool {
         matches!(self.entry, CallEntry::Keeps | CallEntry::Gathers)
+    }
+
+    /// Its activation's return settles its call's promise (`Completion::SettlesPromise`).
+    #[inline(always)]
+    fn settles(&self) -> bool {
+        self.entry == CallEntry::Settles
     }
 }
 
@@ -1393,6 +1413,10 @@ pub(super) struct LaneStack {
     /// The forwarding constructors whose activations constructions skipped, one per
     /// `Completion::Forwarder` activation, innermost last.
     forwarders: Vec<SkippedForwarder>,
+    /// The rooted promises of the `Completion::SettlesPromise` activations, innermost last:
+    /// each activation's return resolves its own, which its frame's pending call takes when
+    /// it materializes (`PendingGeneralCall::settles`).
+    settling: Vec<crate::heap::RootId>,
     /// The iterators the activations' `for-of` loops would close, each with the index of
     /// the activation whose loop pushed it (`IteratorCleanupPush`), innermost last: a
     /// frame's `active_iterators`, which the activation's frame takes when it materializes.
@@ -1431,6 +1455,7 @@ impl Default for LaneStack {
             construct_plans: Box::new([EMPTY_CONSTRUCT_PLAN; CONSTRUCT_PLANS]),
             read_memos: Box::new([EMPTY_READ_MEMO; READ_MEMOS]),
             forwarders: Vec::new(),
+            settling: Vec::new(),
             iterators: Vec::new(),
             forwarded_methods: Vec::new(),
             activation_limit: std::cell::Cell::new(0),
@@ -2940,7 +2965,7 @@ fn lane_return_value_general<H: Host>(cx: *mut LaneContext<H>, ip: Ip, value: Va
     if let Some(resumed) = lane_complete_cross_activation(cx, value) {
         resume!(cx, resumed)
     }
-    if let Some(resumed) = lane_complete_activation(cx, value) {
+    if let Some(resumed) = lane_complete_activation(cx, ip, value) {
         resume!(cx, resumed)
     }
     if !unsafe { (*cx).inline_calls } && unsafe { (*cx).script_calls } {
@@ -9257,6 +9282,7 @@ impl<H: Host> Vm<H> {
         let mut caller = unsafe { (*cx).frame };
         let mut registers = std::mem::take(&mut self.lane_stack.values);
         let mut forwarders = std::mem::take(&mut self.lane_stack.forwarders).into_iter();
+        let mut settling = std::mem::take(&mut self.lane_stack.settling).into_iter();
         let iterators = std::mem::take(&mut self.lane_stack.iterators);
         let states = ActivationState::of(&activations, cx);
         for (depth, (activation, state)) in activations.drain(..).zip(states).enumerate() {
@@ -9293,6 +9319,12 @@ impl<H: Host> Vm<H> {
                 .and_then(|script| script.completion.constructs().then_some(state.this));
             // A native's callback is the entry frame of the loop that finishes it.
             let to_native = activation.script().is_some_and(|script| script.completion == Completion::ReturnsToNative);
+            // A settling activation's frame settles its promise as the general loop's
+            // in-place push of the call would (`Vm::try_settling_call`).
+            let settles = activation
+                .script()
+                .is_some_and(|script| script.completion == Completion::SettlesPromise)
+                .then(|| settling.next().expect("each settling activation roots its promise"));
             let call_guard = match activation.kind {
                 ActivationKind::Script(script) => {
                     let argc = usize::from(script.argc);
@@ -9426,7 +9458,7 @@ impl<H: Host> Vm<H> {
                     call_pc: call_pc as u32,
                     destination: result & crate::bytecode::REGISTER_MASK,
                     construct_this,
-                    settles: None,
+                    settles,
                     returns: result & crate::bytecode::RETURN_REGISTER != 0,
                     call_guard,
                     caller_program,
@@ -9434,6 +9466,7 @@ impl<H: Host> Vm<H> {
             }
             caller += 1;
         }
+        debug_assert!(settling.next().is_none(), "every settling root belongs to an activation");
         self.lane_stack.values = registers;
         self.lane_stack.values.clear();
         self.lane_stack.activations = activations;
@@ -9627,8 +9660,14 @@ impl<H: Host> Vm<H> {
             && self
                 .lane_view_any(program, function)
                 .is_some_and(|view| unsafe { &*view }.environment_window.is_some());
+        // A non-suspending async body of the running program activates for its plain calls,
+        // whose promise its return settles (`CallEntry::Settles`); across programs, or under a
+        // host that observes promise lifecycles, its calls take a frame.
+        let settles = plan.settles_in_loop && !cross && !numeric && !self.host.observes_promise_lifecycle();
+        // A non-suspending async body runs in registers only as a settling activation.
+        let registers_only = plan.registers_only && (settles || !plan.settles_in_loop);
         // Across programs a construction leaves its calls a frame.
-        let view = if !(plan.registers_only || environment)
+        let view = if !(registers_only || environment)
             || numeric
                 && body
                     .code
@@ -9694,6 +9733,7 @@ impl<H: Host> Vm<H> {
             }
         });
         if !environment
+            && !settles
             && !cross
             && !body.rest
             && !plan.keeps_arguments
@@ -9735,11 +9775,13 @@ impl<H: Host> Vm<H> {
             // completes across programs as a call does (`Completion::CrossConstructs`); a
             // forwarding one runs its program's keeping construction
             // (`lane_construct_keeping_activation`), which another program's caller does not.
-            constructs: shape.constructs && !environment && !body.rest && !(cross && plan.keeps_arguments),
-            initializes: shape.initializes && !environment && !cross && !body.rest,
+            constructs: shape.constructs && !environment && !settles && !body.rest && !(cross && plan.keeps_arguments),
+            initializes: shape.initializes && !environment && !settles && !cross && !body.rest,
             // A read target answers its call through the callee's own field sites, which
             // only its program's caches index.
-            entry: if body.is_class_constructor {
+            entry: if settles {
+                CallEntry::Settles
+            } else if body.is_class_constructor {
                 shape.entry
             } else if environment {
                 CallEntry::Environment
@@ -9852,6 +9894,7 @@ script_handler! {
         });
         let handler: Handler = match entry {
             Some(CallEntry::Environment) => lane_script_call_environment::<H>,
+            Some(CallEntry::Settles) => lane_script_call_settles::<H>,
             Some(CallEntry::Keeps | CallEntry::Gathers) => lane_script_call_keeping::<H>,
             Some(_) => lane_script_call_full::<H>,
             None => sibling!(lane_script_call_resolve::<H>, r, ip, Carried::script(cx)),
@@ -9990,6 +10033,9 @@ script_handler! {
         if target.entry == CallEntry::Environment {
             sibling!(lane_script_call_environment::<H>, r, ip, Carried::script(cx))
         }
+        if target.settles() {
+            sibling!(lane_script_call_settles::<H>, r, ip, Carried::script(cx))
+        }
         if target.forwards() {
             sibling!(lane_script_call_keeping::<H>, r, ip, Carried::script(cx))
         }
@@ -10047,7 +10093,7 @@ script_handler! {
             .filter(|_| unsafe { (*cx).script_calls } && !lane_constructing(vm, callee));
         // SAFETY: as `Vm::script_call_entry`; nothing below resolves a target or collects.
         let Some(target) = target.map(|target| unsafe { &*target }).filter(|target| {
-            !matches!(target.entry, CallEntry::Frame | CallEntry::Environment) && !target.forwards()
+            !matches!(target.entry, CallEntry::Frame | CallEntry::Environment | CallEntry::Settles) && !target.forwards()
         }) else {
             sibling!(lane_script_call_full::<H>, r, ip, Carried::script(cx))
         };
@@ -10094,6 +10140,54 @@ script_handler! {
             Ok((registers, base)) => next!(cx, registers, base, Carried::script(cx)),
             Err(next) => next,
         }
+    }
+}
+
+script_handler! {
+    /// `lane_script_call_full` of a non-suspending async target (`CallEntry::Settles`), out of
+    /// line so the other calls keep their registers: the call makes its promise first, as
+    /// `Vm::try_settling_call` does, then activates the body, whose return settles it
+    /// (`Completion::SettlesPromise`). A call passing values past the parameters, a full lane
+    /// stack, a `with` scope or a host observing promise lifecycles takes the general path,
+    /// which settles the promise in a frame. Any other callee takes the full form.
+    #[inline(never)]
+    fn lane_script_call_settles<>(cx, r, ip, i, view) {
+        let vm = unsafe { vm(cx) };
+        let callee = r.get(i.b);
+        let target = vm
+            .script_call_entry(callee)
+            .filter(|_| unsafe { (*cx).script_calls } && !lane_constructing(vm, callee));
+        // SAFETY: as `Vm::script_call_entry`; the target is copied before anything allocates.
+        let Some(target) = target.map(|target| unsafe { *target }).filter(ScriptCallTarget::settles) else {
+            requicken::<H>(ip, lane_script_call_full::<H>);
+            sibling!(lane_script_call_full::<H>, r, ip, Carried::script(cx))
+        };
+        let returns = i.a & crate::bytecode::RETURN_REGISTER != 0;
+        if ImmediateLayout::argument_count(i.imm()) > target.params
+            || !lane_activation_room(vm, &target)
+            || (returns && !lane_returning_call_admitted(cx))
+            || vm.with_scope_entered
+            || lane_crosses::<H, false>(cx, &target)
+            || vm.host.observes_promise_lifecycle()
+        {
+            return exit(ip);
+        }
+        let Some(this) = lane_call_this(vm, &target, r.get(i.c)) else {
+            return exit(ip);
+        };
+        #[cfg(feature = "profile-lane-exits")]
+        profile_script_call_target(cx, ip, callee, &target);
+        // Without lifecycle hooks the promise's allocation runs no guest code and collects
+        // nothing (`note_allocation` makes a collection due at the next frame boundary).
+        let Ok(promise) = vm.promise_object() else {
+            return exit(ip);
+        };
+        note_allocation(vm);
+        let root = vm.heap.root(promise);
+        vm.lane_stack.settling.push(root);
+        let arguments = ImmediateLayout::call_window_base(i.imm());
+        let (registers, base) = lane_push_activation::<H, false>(cx, r, ip, &target, arguments, this, false);
+        next!(cx, registers, base, Carried::script(cx))
     }
 }
 
@@ -10442,7 +10536,7 @@ script_handler! {
         };
         note_allocation(vm);
         if returns {
-            let Some(resumed) = lane_complete_activation(cx, array) else {
+            let Some(resumed) = lane_complete_activation(cx, ip, array) else {
                 unreachable!("a returning lane construction has an activation caller");
             };
             resume!(cx, resumed)
@@ -11016,7 +11110,7 @@ fn lane_native_complete<H: Host>(
     // The call may have made the lane's activations frames, so the running function's
     // registers and caller are read again.
     if i.a & crate::bytecode::RETURN_REGISTER != 0 {
-        let Some(resumed) = lane_complete_activation(cx, value) else {
+        let Some(resumed) = lane_complete_activation(cx, ip, value) else {
             // A frame of a script run retires in place, as its `Return` would.
             if unsafe { !(*cx).inline_calls && (*cx).script_calls } {
                 return lane_return_script_frame(cx, ip, value, true);
@@ -11522,7 +11616,7 @@ script_handler! {
                 next!(cx, r, following(ip), Carried::script(cx))
             }
             requicken::<H>(ip, lane_planned_construct_returned::<H>);
-            if let Some(resumed) = lane_complete_activation(cx, this) {
+            if let Some(resumed) = lane_complete_activation(cx, ip, this) {
                 resume!(cx, resumed)
             }
             return lane_frame_return(vm, ip, this);
@@ -11554,7 +11648,7 @@ script_handler! {
                 r.set(i.a, this);
                 next!(cx, r, following(ip), Carried::script(cx))
             }
-            if let Some(resumed) = lane_complete_activation(cx, this) {
+            if let Some(resumed) = lane_complete_activation(cx, ip, this) {
                 resume!(cx, resumed)
             }
             // The frame's own construct: the general loop returns the receiver from it, unless
@@ -11613,7 +11707,7 @@ script_handler! {
         };
         // Allocating the receiver can make a collection due.
         note_allocation(vm);
-        if let Some(resumed) = lane_complete_activation(cx, this) {
+        if let Some(resumed) = lane_complete_activation(cx, ip, this) {
             resume!(cx, resumed)
         }
         lane_frame_return(vm, ip, this)
@@ -11684,7 +11778,7 @@ script_handler! {
                     r.set(i.a, this);
                     next!(cx, r, following(ip), Carried::script(cx))
                 }
-                if let Some(resumed) = lane_complete_activation(cx, this) {
+                if let Some(resumed) = lane_complete_activation(cx, ip, this) {
                     resume!(cx, resumed)
                 }
                 // The frame's own construct, which `lane_finishes_construction` admitted: the
@@ -12329,7 +12423,7 @@ fn lane_script_target<H: Host>(cx: *mut LaneContext<H>, callee: Value) -> Option
     // The cached entry is tested in place and copied once.
     let active = vm.active_program;
     let admits = move |target: &ScriptCallTarget| {
-        target.program == active && !matches!(target.entry, CallEntry::Frame | CallEntry::Environment)
+        target.program == active && !matches!(target.entry, CallEntry::Frame | CallEntry::Environment | CallEntry::Settles)
     };
     if let Some(entry) = vm.script_call_entry(callee) {
         // SAFETY: the entry is read before anything else touches the cache.
@@ -12582,7 +12676,7 @@ fn lane_push_passed<H: Host, const GENERAL: bool>(
             caller_this: unsafe { (*cx).this },
             caller_env: unsafe { (*cx).env },
             caller_capture: unsafe { (*cx).capture },
-            completion: Completion::of(constructs, cross),
+            completion: Completion::of(constructs, cross, target.settles()),
             forwards: false,
             environment: false,
         }),
@@ -12745,7 +12839,7 @@ fn lane_activate_environment<H: Host>(
             caller_this: unsafe { (*cx).this },
             caller_env: unsafe { (*cx).env },
             caller_capture: unsafe { (*cx).capture },
-            completion: Completion::of(false, cross),
+            completion: Completion::of(false, cross, target.settles()),
             forwards: false,
             environment: true,
         }),
@@ -13137,7 +13231,7 @@ fn lane_activate_keeping<H: Host, const MAY_CROSS: bool>(
             completion: if forwarder.is_some() {
                 Completion::Forwarder
             } else {
-                Completion::of(constructs, cross)
+                Completion::of(constructs, cross, target.settles())
             },
             forwards: keeps,
             environment: false,
@@ -13414,7 +13508,7 @@ lane_handler! {
         if let Some(resumed) = lane_complete_cross_activation(cx, r.get(i.a)) {
             resume!(cx, resumed)
         }
-        if let Some(resumed) = lane_complete_activation(cx, r.get(i.a)) {
+        if let Some(resumed) = lane_complete_activation(cx, ip, r.get(i.a)) {
             resume!(cx, resumed)
         }
         lane_return_frame::<H>(r, ip)
@@ -13600,16 +13694,22 @@ fn lane_resume_after_call(activation: &Activation, memory: MemoryView, value: Va
     Resumed::At(activation.caller_registers, following(activation.call), view)
 }
 
-/// Complete the innermost lane activation with `value`, as a return from it does: its
-/// caller resumes after the call with the value in the call's result register, or, for a
-/// call that returns its callee's completion, completes in turn. `None` when no activation
-/// runs: the running function is a VM frame.
+/// Complete the innermost lane activation with `value`, which the record at `ip` of that
+/// activation returns, as a return from it does: its caller resumes after the call with the
+/// value in the call's result register, or, for a call that returns its callee's
+/// completion, completes in turn. `None` when no activation runs: the running function is a
+/// VM frame.
 #[inline(always)]
-fn lane_complete_activation<H: Host>(cx: *mut LaneContext<H>, mut value: Value) -> Option<Resumed> {
+fn lane_complete_activation<H: Host>(cx: *mut LaneContext<H>, ip: Ip, mut value: Value) -> Option<Resumed> {
     if let Some(resumed) = lane_complete_plain_chain(cx, value) {
         return Some(resumed);
     }
     let vm = unsafe { vm(cx) };
+    // A settling activation whose promise's resolution would observe the value returns it
+    // from its frame, whose pending call resolves the promise (`lane_settles_in_frame`).
+    if settling(vm.lane_stack.activations.last()?) && lane_settles_in_frame(vm, value) {
+        return Some(Resumed::Exit(lane_frame_return(vm, ip, value)));
+    }
     let mut activation = vm.lane_stack.pop_activation()?;
     loop {
         let (caller_memory, this) = lane_restore_caller(cx, &activation);
@@ -13632,6 +13732,9 @@ fn lane_complete_activation<H: Host>(cx: *mut LaneContext<H>, mut value: Value) 
                 value = this;
                 vm.lane_stack.forwarders.pop();
             }
+            if script.completion == Completion::SettlesPromise {
+                value = lane_settle_promise(cx, value);
+            }
         }
         // SAFETY: the call record belongs to the caller's live view.
         if unsafe { (*activation.call).a } & crate::bytecode::RETURN_REGISTER == 0 {
@@ -13639,11 +13742,46 @@ fn lane_complete_activation<H: Host>(cx: *mut LaneContext<H>, mut value: Value) 
         }
         // The call returns its callee's completion: its caller completes in turn, an
         // activation here or the frame in the general loop, which the exit hands it to.
-        let Some(caller) = vm.lane_stack.pop_activation() else {
-            return Some(Resumed::Exit(lane_frame_return(vm, activation.call, value)));
+        let in_frame = match vm.lane_stack.activations.last() {
+            None => true,
+            Some(caller) => settling(caller) && lane_settles_in_frame(vm, value),
         };
-        activation = caller;
+        if in_frame {
+            return Some(Resumed::Exit(lane_frame_return(vm, activation.call, value)));
+        }
+        activation = vm.lane_stack.pop_activation().expect("the caller activation is the innermost");
     }
+}
+
+/// Whether `activation` settles its call's promise (`Completion::SettlesPromise`).
+#[inline(always)]
+fn settling(activation: &Activation) -> bool {
+    matches!(&activation.kind, ActivationKind::Script(script) if script.completion == Completion::SettlesPromise)
+}
+
+/// Whether a settling activation completing with `value` settles its promise in its frame
+/// instead: its resolution would read the value's `then` impurely or run a lifecycle hook,
+/// either of which may run guest code. The frame's pending call resolves the promise as
+/// `Vm::promise_resolve_value` does.
+#[inline(always)]
+fn lane_settles_in_frame<H: Host>(vm: &mut Vm<H>, value: Value) -> bool {
+    vm.host.observes_promise_lifecycle() || vm.plain_resolution_then(value).is_none()
+}
+
+/// The completion of a settling activation (`Completion::SettlesPromise`) whose caller the
+/// lane restored, with `value`, which `lane_settles_in_frame` admitted: its promise, the
+/// innermost of `LaneStack::settling`, resolved with the value, which its call yields.
+#[inline(never)]
+fn lane_settle_promise<H: Host>(cx: *mut LaneContext<H>, value: Value) -> Value {
+    let vm = unsafe { vm(cx) };
+    let root = vm.lane_stack.settling.pop().expect("each settling activation roots its promise");
+    let promise = vm.release_settled_call_root(root);
+    let then = vm.plain_resolution_then(value).expect("the completion read `then` plainly");
+    // SAFETY: the context's program, the caller's, outlives the lane run.
+    let code = unsafe { &*(*cx).code };
+    let settled = vm.resolve_fresh_promise_plainly(code, promise, value, then);
+    debug_assert!(settled, "a settling call's promise is a promise record");
+    promise
 }
 
 /// The value-producing records that may return their result from the frame
