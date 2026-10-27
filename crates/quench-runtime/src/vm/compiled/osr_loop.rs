@@ -2504,6 +2504,7 @@ struct Fact {
 /// An array as native code indexes it: its element pointer and how its length is known.
 #[derive(Clone, Copy)]
 struct ArrayView {
+    identity: ir::Value,
     elements: ir::Value,
     access: ArrayAccess,
 }
@@ -3643,7 +3644,13 @@ impl<'a, 'b> Lowering<'a, 'b> {
             } else {
                 ArrayAccess::Read { length: self.word(base + 1) }
             };
-            self.arrays.insert(array.register, ArrayView { elements, access });
+            let identity = match array.field {
+                Some(index) => self.word(fields_start + index),
+                None => self.body.builder.ins().load(
+                    types::I64, flags(), self.registers, i32::from(array.register) * WORD_BYTES,
+                ),
+            };
+            self.arrays.insert(array.register, ArrayView { identity, elements, access });
         }
         for index in 0..self.region.captures.len() {
             let bits = self.word(ENTRY_CAPTURES + index);
@@ -4321,6 +4328,16 @@ impl<'a, 'b> Lowering<'a, 'b> {
     /// result register, which names the web through the PC.
     fn define(&mut self, register: Register, value: Typed) {
         debug_assert_eq!(number_definition(self.region.instructions[(self.pc - self.region.header) as usize]), Some(register));
+        // GetIndex can produce another array used by this region. Its backing view was
+        // pinned at entry, so a different receiver must leave before replaying this pure
+        // dense-element read. Otherwise subsequent stores would target the old array.
+        if self.region.instructions[(self.pc - self.region.header) as usize].op() == Op::GetIndex
+            && let Some(array) = self.arrays.get(&register).copied()
+        {
+            let bits = self.boxed(value);
+            let changed = self.body.builder.ins().icmp(IntCC::NotEqual, bits, array.identity);
+            self.guard(self.pc, changed);
+        }
         let web = self.webs.defined(self.region, self.pc);
         let representation = self.representations[web];
         let value = match (representation, value.representation) {

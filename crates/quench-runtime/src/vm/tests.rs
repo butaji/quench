@@ -17893,3 +17893,85 @@ print(JSON.stringify(out));
     vm.execute(&Engine::specialize(source, "constant-left.js").unwrap()).unwrap();
     assert_eq!(output.borrow().as_slice(), [r#"["0f1t0f1t0f1t0f1t0f1t0f0f1t1t1t","0f1t0f1t0f1t0f1t0f1t0f0f1t1t1t","0f0f1t1t1t0f1t0f0f0f0f0f0f0f1t","0f1t0f1t0f1t0f1t0f1t0f0f0f1t1t","1t0f1t0f0f1t0f1t1t0f0f0f0f0f0f","0f0f0f0f0f1t0f1t0f0f0f0f0f0f0f","1t0f1t0f0f1t0f1t1t0f0f0f0f0f0f","0f1t0f1t0f1t0f1t0f1t0f0f0f1t1t","0f0f1t1t1t0f0f1t0f0f0f0f0f0f1t","0f0f0f0f0f1t0f1t1t0f0f0f0f0f0f","0f1t0f1t0f1t0f1t0f1t0f0f0f1t1t","0f1t0f1t0f1t0f1t0f1t1t0f0f1t1t","0f0f0f0f0f1t0f1t0f0f1t0f0f0f0f","0f0f1t1t1t0f0f1t0f0f0f0f0f0f1t","0f1t0f1t0f1t0f1t0f1t0f0f0f1t1t","1t0f1t0f0f1t0f1t1t0f0f0f0f0f0f","1t0f1t0f0f1t0f1t1t0f0f0f0f0f0f","1t0f1t0f0f1t0f1t1t0f0f0f0f0f0f","0f1t0f1t0f1t0f1t0f1t0f0f0f1t1t","EEEEEEEE0f1t0f1tEEEE0fEE0fEEEE",true,false,true,3,67]"#]);
 }
+
+#[test]
+#[cfg(not(quench_profiled))]
+fn shared_osr_guards_replaced_nested_array_receivers() {
+    let program = Engine::compile(crate::ExecutionRequest::script(
+        r#"
+          function fill(rows, column) {
+            for (let row = 0; row < 4; row++) rows[row][column] = column * 4 + row;
+          }
+          function sumRows(rows, column) {
+            let sum = 0;
+            for (let row = 0; row < 4; row++) sum += rows[row][column];
+            return sum;
+          }
+          const rows = [[], [], [], []];
+          for (let call = 0; call < 500; call++) fill(rows, call);
+          let errors = 0;
+          for (let row = 0; row < 4; row++) {
+            for (let column = 0; column < 500; column++) {
+              if (rows[row][column] !== column * 4 + row) errors++;
+            }
+          }
+          print(errors);
+          let total = 0;
+          for (let column = 0; column < 500; column++) total += sumRows(rows, column);
+          print(total);
+          print(rows.map(row => row.length).join(','));
+          let stores = 0;
+          const thrown = {};
+          const proxy = new Proxy([], { set() { stores++; throw thrown; } });
+          let same = false;
+          try { fill([[], proxy, [], []], 0); } catch (error) { same = error === thrown; }
+          print(stores);
+          print(same);
+        "#,
+        "osr-nested-array-receiver.js",
+    ))
+    .unwrap();
+    let function_ids: Vec<_> = ["fill", "sumRows"]
+        .into_iter()
+        .map(|expected| {
+            program
+                .functions
+                .iter()
+                .position(|function| {
+                    function
+                        .header()
+                        .name
+                        .is_some_and(|name| &program.atoms[name as usize] == expected)
+                })
+                .unwrap()
+        })
+        .collect();
+    for mode in [
+        crate::ExecutionMode::Interpreted,
+        crate::ExecutionMode::Compiled,
+    ] {
+        let output = Rc::new(RefCell::new(Vec::new()));
+        let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+        vm.set_execution_mode(mode);
+        vm.programs.enable_js_jit_diagnostics();
+        vm.execute(&program).unwrap();
+        assert_eq!(
+            output.borrow().as_slice(),
+            ["0", "1999000", "500,500,500,500", "1", "true"]
+        );
+        if mode == crate::ExecutionMode::Compiled {
+            let views = vm
+                .programs
+                .lane_views(super::program_store::ProgramId::MAIN)
+                .unwrap();
+            for &function_id in &function_ids {
+                let view = views
+                    .get(function_id)
+                    .and_then(super::program_store::derived_lane_view)
+                    .unwrap();
+                let diagnostics = view.osr_diagnostics();
+                assert!(diagnostics.native_region_runs > 0, "{diagnostics:?}");
+            }
+        }
+    }
+}
