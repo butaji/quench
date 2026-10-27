@@ -1240,11 +1240,7 @@ fn class_method_name(key: &PropertyKey<'_>) -> Option<String> {
     match key {
         PropertyKey::StaticIdentifier(id) => Some(id.name.to_string()),
         PropertyKey::PrivateIdentifier(id) => Some(id.name.to_string()),
-        PropertyKey::StringLiteral(value)
-            if !matches!(super::string::constant(value), Constant::StringUnits(_)) =>
-        {
-            Some(value.value.to_string())
-        }
+        PropertyKey::StringLiteral(value) if super::string::is_well_formed(value) => Some(value.value.to_string()),
         PropertyKey::NumericLiteral(value) => Some(crate::number_to_string::format(value.value)),
         PropertyKey::BigIntLiteral(value) => Some(value.value.to_string()),
         _ => None,
