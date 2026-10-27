@@ -1863,6 +1863,244 @@ mod tests {
     }
 
     #[test]
+    fn compiled_wasm_simd_matches_the_interpreter_bit_for_bit() {
+        // Vector accesses, the operators compiled code lowers itself (i64x2 add and shift,
+        // xor, shuffle, extending multiply) and ones it runs through their kernels (i32x4
+        // multiply, popcount, a lane extracted to a scalar), over the same memory in both
+        // execution modes.
+        const WORDS: i32 = 16;
+        const SOURCE: i32 = 64;
+        const TARGET: i32 = 128;
+        let memarg = |offset| wasmparser::MemArg {
+            align: 0,
+            max_align: 4,
+            offset,
+            memory: 0,
+        };
+        let word = |offset| wasmparser::MemArg {
+            align: 2,
+            max_align: 2,
+            offset,
+            memory: 0,
+        };
+        let mut lanes = [0u8; 16];
+        for (index, lane) in lanes.iter_mut().enumerate() {
+            *lane = (index as u8 * 7) % 32;
+        }
+        // simd(source, target, shift): the combination stored at target, a lane after it.
+        let simd = vec![
+            Operator::LocalGet { local_index: 1 },
+            Operator::LocalGet { local_index: 0 },
+            Operator::V128Load { memarg: memarg(0) },
+            Operator::LocalGet { local_index: 0 },
+            Operator::V128Load { memarg: memarg(16) },
+            Operator::I64x2Add,
+            Operator::LocalGet { local_index: 2 },
+            Operator::I64x2Shl,
+            Operator::LocalGet { local_index: 0 },
+            Operator::V128Load { memarg: memarg(0) },
+            Operator::LocalGet { local_index: 0 },
+            Operator::V128Load { memarg: memarg(16) },
+            Operator::I8x16Shuffle { lanes },
+            Operator::V128Xor,
+            Operator::LocalGet { local_index: 0 },
+            Operator::V128Load { memarg: memarg(0) },
+            Operator::I64x2ExtMulLowI32x4U,
+            Operator::LocalGet { local_index: 0 },
+            Operator::V128Load { memarg: memarg(16) },
+            Operator::I32x4Mul,
+            Operator::I8x16Popcnt,
+            Operator::V128Store { memarg: memarg(0) },
+            Operator::LocalGet { local_index: 1 },
+            Operator::LocalGet { local_index: 1 },
+            Operator::V128Load { memarg: memarg(0) },
+            Operator::I32x4ExtractLane { lane: 2 },
+            Operator::I32Store { memarg: word(16) },
+            Operator::End,
+        ];
+        let store = vec![
+            Operator::LocalGet { local_index: 0 },
+            Operator::LocalGet { local_index: 1 },
+            Operator::I32Store { memarg: word(0) },
+            Operator::End,
+        ];
+        let load = vec![
+            Operator::LocalGet { local_index: 0 },
+            Operator::I32Load { memarg: word(0) },
+            Operator::End,
+        ];
+        let body = |params: usize, result: bool, operators: Vec<Operator<'static>>| crate::WasmFunctionBody {
+            ty: crate::WasmCallableType::Embedded(crate::WasmSignature {
+                params: vec![crate::WasmType::I32; params],
+                results: if result { vec![crate::WasmType::I32] } else { vec![] },
+            }),
+            locals: vec![],
+            operators: operators.into_iter().map(Ok),
+        };
+        let module = crate::Engine::lower_wasm_module_with_state(
+            "compiled-simd",
+            [body(3, false, simd), body(2, false, store), body(1, true, load)],
+            &crate::WasmTypes::default(),
+            &[],
+            &[crate::WasmMemory {
+                ty: wasmparser::MemoryType {
+                    initial: 1,
+                    maximum: Some(1),
+                    memory64: false,
+                    shared: false,
+                    page_size_log2: None,
+                },
+                import: None,
+            }],
+            &[],
+        )
+        .unwrap();
+        let run = |mode: crate::ExecutionMode, shift: i32| {
+            let mut vm = Vm::new(crate::SystemHost);
+            vm.set_execution_mode(mode);
+            let instance = vm.instantiate_wasm_module(&module).unwrap();
+            for index in 0..WORDS {
+                let value = (index + 1).wrapping_mul(0x9E37_79B9_u32 as i32);
+                vm.invoke_wasm(
+                    &instance,
+                    1,
+                    &[crate::WasmValue::I32(SOURCE + index * 4), crate::WasmValue::I32(value)],
+                )
+                .unwrap();
+            }
+            vm.invoke_wasm(
+                &instance,
+                0,
+                &[
+                    crate::WasmValue::I32(SOURCE),
+                    crate::WasmValue::I32(TARGET),
+                    crate::WasmValue::I32(shift),
+                ],
+            )
+            .unwrap();
+            let words = (0..5)
+                .map(|index| vm.invoke_wasm(&instance, 2, &[crate::WasmValue::I32(TARGET + index * 4)]).unwrap())
+                .collect::<Vec<_>>();
+            let native = vm
+                .programs
+                .find_shared(&module.program)
+                .and_then(|program| vm.programs.compiled(program).flatten())
+                .and_then(|compiled| compiled.native_entries(0));
+            (words, native)
+        };
+        // A shift count past the lane width wraps, as Wasm's does.
+        for shift in [0, 5, 63, 64, 70] {
+            let (interpreted, _) = run(crate::ExecutionMode::Interpreted, shift);
+            let (compiled, native) = run(crate::ExecutionMode::Compiled, shift);
+            assert_eq!(compiled, interpreted, "shift {shift}");
+            assert!(native.is_some_and(|entries| entries > 0), "the SIMD function ran natively");
+        }
+        // A vector access past the end traps in compiled code too.
+        let mut vm = Vm::new(crate::SystemHost);
+        vm.set_execution_mode(crate::ExecutionMode::Compiled);
+        let instance = vm.instantiate_wasm_module(&module).unwrap();
+        let error = vm
+            .invoke_wasm(
+                &instance,
+                0,
+                &[
+                    crate::WasmValue::I32(65_536 - 24),
+                    crate::WasmValue::I32(TARGET),
+                    crate::WasmValue::I32(1),
+                ],
+            )
+            .unwrap_err();
+        assert_eq!(error.wasm_trap(), Some(crate::WasmTrap::OutOfBoundsMemory));
+    }
+
+    #[test]
+    fn compiled_wasm_vector_accesses_compile_without_a_memory_register() {
+        // A function whose only accesses are vector ones has no memory register
+        // (`memory_register`): its accesses read the memory through the binding each loads.
+        let memarg = |offset| wasmparser::MemArg {
+            align: 0,
+            max_align: 4,
+            offset,
+            memory: 0,
+        };
+        let word = wasmparser::MemArg {
+            align: 2,
+            max_align: 2,
+            offset: 0,
+            memory: 0,
+        };
+        // double(address): the two i64 lanes at address, added to themselves, at address + 16.
+        let double = vec![
+            Operator::LocalGet { local_index: 0 },
+            Operator::LocalGet { local_index: 0 },
+            Operator::V128Load { memarg: memarg(0) },
+            Operator::LocalGet { local_index: 0 },
+            Operator::V128Load { memarg: memarg(0) },
+            Operator::I64x2Add,
+            Operator::V128Store { memarg: memarg(16) },
+            Operator::End,
+        ];
+        let store = vec![
+            Operator::LocalGet { local_index: 0 },
+            Operator::LocalGet { local_index: 1 },
+            Operator::I32Store { memarg: word },
+            Operator::End,
+        ];
+        let load = vec![
+            Operator::LocalGet { local_index: 0 },
+            Operator::I32Load { memarg: word },
+            Operator::End,
+        ];
+        let body = |params: usize, result: bool, operators: Vec<Operator<'static>>| crate::WasmFunctionBody {
+            ty: crate::WasmCallableType::Embedded(crate::WasmSignature {
+                params: vec![crate::WasmType::I32; params],
+                results: if result { vec![crate::WasmType::I32] } else { vec![] },
+            }),
+            locals: vec![],
+            operators: operators.into_iter().map(Ok),
+        };
+        let module = crate::Engine::lower_wasm_module_with_state(
+            "compiled-vector-binding",
+            [body(1, false, double), body(2, false, store), body(1, true, load)],
+            &crate::WasmTypes::default(),
+            &[],
+            &[crate::WasmMemory {
+                ty: wasmparser::MemoryType {
+                    initial: 1,
+                    maximum: Some(1),
+                    memory64: false,
+                    shared: false,
+                    page_size_log2: None,
+                },
+                import: None,
+            }],
+            &[],
+        )
+        .unwrap();
+        let function = module.residual().function_get(0).expect("double");
+        assert_eq!(super::super::dispatch_fast::memory_register(function), None);
+        let mut vm = Vm::new(crate::SystemHost);
+        vm.set_execution_mode(crate::ExecutionMode::Compiled);
+        let instance = vm.instantiate_wasm_module(&module).unwrap();
+        let i32s = |values: &[i32]| values.iter().map(|value| crate::WasmValue::I32(*value)).collect::<Vec<_>>();
+        for (index, value) in [0x7fff_ffff, 1, -1, 3].into_iter().enumerate() {
+            vm.invoke_wasm(&instance, 1, &i32s(&[index as i32 * 4, value])).unwrap();
+        }
+        vm.invoke_wasm(&instance, 0, &i32s(&[0])).unwrap();
+        let words = (4..8)
+            .map(|index| vm.invoke_wasm(&instance, 2, &i32s(&[index * 4])).unwrap())
+            .collect::<Vec<_>>();
+        // Lane 0 is 0x00000001_7fffffff, lane 1 is 0x00000003_ffffffff; each doubles.
+        assert_eq!(words, i32s(&[-2, 2, -2, 7]).into_iter().map(Some).collect::<Vec<_>>());
+        let compiled = vm
+            .programs
+            .find_shared(&module.program)
+            .and_then(|program| vm.programs.compiled(program).flatten())
+            .expect("compiled program");
+        assert_eq!(compiled.native_entries(0), Some(1));
+    }
+
+    #[test]
     fn compiled_wasm_memory_copy_moves_overlapping_ranges_and_traps_out_of_bounds() {
         const PAGE: i32 = 65_536;
         let memarg = wasmparser::MemArg {
