@@ -422,13 +422,32 @@ impl Heap {
                     return;
                 }
                 let source = trace.source.expect("edges are traced only with a source");
-                for slot in (0..slots.len()).filter_map(|slot| u16::try_from(slot).ok()) {
+                let mut read = |slot: u16| {
                     // A projection's reads go through it, and its stores check only that it
                     // is initialized.
                     if program.is_some_and(|program| source.slot_is_projection(program, function, slot)) {
                         read_initialization(slots, partial, slot, pending);
                     } else {
                         read_slot(slots, partial, slot, work, pending);
+                    }
+                };
+                match slots.default_owner() {
+                    // A per-iteration copy: its unlisted slots are its default owner's, the
+                    // environment it was copied from, so code running in it reads that owner
+                    // whole. One edge there, rather than one per unlisted slot, reads every
+                    // copy of one owner in the owner's slots, at most adding the slots the
+                    // copies list (playwright, npm lane 2026-10-27: 198K binary searches and
+                    // as many slot edges, 6% of the run).
+                    Some(owner) => {
+                        for slot in slots.sparse_indexes().filter_map(|slot| u16::try_from(slot).ok()) {
+                            read(slot);
+                        }
+                        pending.push(EnvironmentEdge::Whole { environment: owner });
+                    }
+                    None => {
+                        for slot in (0..slots.len()).filter_map(|slot| u16::try_from(slot).ok()) {
+                            read(slot);
+                        }
                     }
                 }
                 if has_parent {
