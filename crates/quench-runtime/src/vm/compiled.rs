@@ -7691,10 +7691,12 @@ enum Region {
     LinearMemory,
     /// Global values, which live in heap cells.
     Globals,
+    /// Mutable native call context, disjoint from guest memory and global cells.
+    Context,
 }
 
 impl Region {
-    const ALL: [Self; 2] = [Self::LinearMemory, Self::Globals];
+    const ALL: [Self; 3] = [Self::LinearMemory, Self::Globals, Self::Context];
     const COUNT: usize = Self::ALL.len();
 }
 
@@ -8403,6 +8405,20 @@ impl<H: Host> Emitter<'_, '_, H> {
             .with_alias_region(Some(self.regions[region as usize]))
     }
 
+    /// Linear-memory stores cannot change the context's length. Calls and unknown
+    /// stores still invalidate this mutable load; it is deliberately not readonly.
+    fn memory_length(&mut self) -> ir::Value {
+        // Context words use native byte order, unlike guest linear memory.
+        let flags = MemFlagsData::trusted()
+            .with_alias_region(Some(self.regions[Region::Context as usize]));
+        self.body.core.builder.ins().load(
+            types::I64,
+            flags,
+            self.body.core.context,
+            CONTEXT_MEMORY_LENGTH,
+        )
+    }
+
     fn read(&mut self, register: u16, kind: Kind) -> ir::Value {
         self.read_typed(register, kind.integer())
     }
@@ -8508,12 +8524,7 @@ impl<H: Host> Emitter<'_, '_, H> {
         self.body.core.builder.switch_to_block(first_attempt);
         let one = self.body.core.builder.ins().iconst(types::I32, 1);
         self.body.core.builder.def_var(attempt, one);
-        let memory_length = self.body.core.builder.ins().load(
-            types::I64,
-            MemFlagsData::trusted(),
-            self.body.core.context,
-            CONTEXT_MEMORY_LENGTH,
-        );
+        let memory_length = self.memory_length();
         let minimum_length = self
             .body.core.builder
             .ins()
@@ -9723,12 +9734,7 @@ impl<H: Host> Emitter<'_, '_, H> {
             .body.core.builder
             .ins()
             .iadd_imm_u(address, crate::wasm::V128_BYTES as i64);
-        let memory_length = self.body.core.builder.ins().load(
-            types::I64,
-            MemFlagsData::trusted(),
-            self.body.core.context,
-            CONTEXT_MEMORY_LENGTH,
-        );
+        let memory_length = self.memory_length();
         let out_of_bounds =
             self.body.core.builder
                 .ins()
@@ -10056,12 +10062,7 @@ impl<H: Host> Emitter<'_, '_, H> {
             return true;
         }
         if op == Op::WasmMemorySize {
-            let bytes = self.body.core.builder.ins().load(
-                types::I64,
-                MemFlagsData::trusted(),
-                self.body.core.context,
-                CONTEXT_MEMORY_LENGTH,
-            );
+            let bytes = self.memory_length();
             let pages = self.body.core.builder.ins().ushr_imm_u(bytes, 16);
             let pages = self.body.core.builder.ins().ireduce(types::I32, pages);
             self.write(a, Kind::I32, pages);
@@ -10075,12 +10076,7 @@ impl<H: Host> Emitter<'_, '_, H> {
             let source = self.body.core.builder.ins().uextend(types::I64, source);
             let raw_length = self.read(c, Kind::I32);
             let length = self.body.core.builder.ins().uextend(types::I64, raw_length);
-            let memory_length = self.body.core.builder.ins().load(
-                types::I64,
-                MemFlagsData::trusted(),
-                self.body.core.context,
-                CONTEXT_MEMORY_LENGTH,
-            );
+            let memory_length = self.memory_length();
             // Both ranges are checked before any byte moves; 32-bit operands cannot overflow
             // their 64-bit sums.
             for start in [destination, source] {
@@ -10115,12 +10111,7 @@ impl<H: Host> Emitter<'_, '_, H> {
             let raw_length = self.read(c, Kind::I32);
             let length = self.body.core.builder.ins().uextend(types::I64, raw_length);
             let end = self.body.core.builder.ins().iadd(destination, length);
-            let memory_length = self.body.core.builder.ins().load(
-                types::I64,
-                MemFlagsData::trusted(),
-                self.body.core.context,
-                CONTEXT_MEMORY_LENGTH,
-            );
+            let memory_length = self.memory_length();
             let out_of_bounds =
                 self.body.core.builder
                     .ins()
