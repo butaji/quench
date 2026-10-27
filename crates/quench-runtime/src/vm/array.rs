@@ -949,7 +949,13 @@ impl<H: Host> Vm<H> {
         length: usize,
     ) -> Result<Value, JsError> {
         let mut constructor = if self.is_array(p, source)? {
-            self.get_property(p, source, self.runtime_atoms.constructor)?
+            // An array's `constructor` is a data property of its chain where none runs guest code
+            // (`plain_property_lookup`); a Proxy or an accessor takes the general read.
+            let key = PropertyKey::string(self.runtime_atoms.constructor);
+            match self.plain_property_lookup(source, key) {
+                Some(found) => found.unwrap_or(Value::UNDEFINED),
+                None => self.get_property(p, source, self.runtime_atoms.constructor)?,
+            }
         } else {
             Value::UNDEFINED
         };

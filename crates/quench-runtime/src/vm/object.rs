@@ -899,6 +899,7 @@ impl<H: Host> Vm<H> {
         self.symbol_write_proofs.clear();
         self.symbol_load_proofs.clear();
         self.array_iteration_proof = None;
+        self.for_in_own_keys = None;
         self.species_slot_proof.set(None);
         self.index_free_chain_proof.set(None);
         self.enumerable_keys.clear();
@@ -909,6 +910,7 @@ impl<H: Host> Vm<H> {
         self.accessor_field_caches.clear();
         self.instanceof_constructor_layouts = [None; INSTANCEOF_CONSTRUCTOR_LAYOUTS];
         self.closure_shapes = [None; 2];
+        self.resolver_function_shape = None;
         self.function_name_shapes.clear();
         self.closure_templates.fill(None);
         self.iterator_result_shape = None;

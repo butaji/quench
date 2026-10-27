@@ -1852,6 +1852,7 @@ pub(crate) struct Vm<H> {
     /// Lane private-name sites' homes (`private_site_home`).
     private_site_homes: private_site_home::PrivateSiteHomes,
     array_iteration_proof: Option<iterators::ArrayIterationProof>,
+    for_in_own_keys: Option<object_static::ForInOwnKeys>,
     species_slot_proof: std::cell::Cell<Option<object_get::SpeciesSlotProof>>,
     index_free_chain_proof: std::cell::Cell<Option<object::IndexFreeChainProof>>,
     enumerable_keys: enumerable_key_memo::EnumerableKeyMemo,
@@ -1924,6 +1925,9 @@ pub(crate) struct Vm<H> {
     /// `prototype` (`construction::ClosureShapes`); derived from shapes, so field-cache
     /// invalidation clears it.
     closure_shapes: [Option<construction::ClosureShapes>; 2],
+    /// The shape a promise's resolving function's own `length` and `name` reach
+    /// (`Vm::native_with_realm`); derived from shapes, so field-cache invalidation clears it.
+    resolver_function_shape: Option<u32>,
     /// The parts of a recorded closure that depend on its function and realm alone
     /// (`construction::ClosureTemplate`); derived from shapes, so field-cache invalidation
     /// clears it.
@@ -2838,6 +2842,7 @@ impl<H: Host> Vm<H> {
         self.symbol_load_proofs.clear();
         self.private_site_homes.clear();
         self.array_iteration_proof = None;
+        self.for_in_own_keys = None;
         self.species_slot_proof.set(None);
         self.index_free_chain_proof.set(None);
         self.enumerable_keys.clear();
@@ -2922,6 +2927,7 @@ impl<H: Host> Vm<H> {
         self.programs.reset(program.clone());
         self.instanceof_constructor_layouts = [None; INSTANCEOF_CONSTRUCTOR_LAYOUTS];
         self.closure_shapes = [None; 2];
+        self.resolver_function_shape = None;
         self.function_name_shapes.clear();
         self.closure_templates.fill(None);
         self.iterator_result_shape = None;

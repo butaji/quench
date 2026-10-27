@@ -51,6 +51,12 @@ pub(super) struct GenerationalPacing {
     /// collection would find dead, and each minor collection marks it all.
     pub(super) surviving_young_from: u32,
     pub(super) surviving_young_factor: usize,
+    /// Growth of the live set between two full collections, as a share of what the earlier
+    /// kept, within which the live set counts as steady (`PacingState::steady`). Only a steady
+    /// heap's young budget widens: a heap still growing, as while a program loads its
+    /// modules, keeps what its minor collections promote, and a wider budget only raised its
+    /// peak (npm top-300: +5-16 MB on the heaviest rows with the factor alone).
+    pub(super) steady_live_growth: Ratio,
     /// Growth of the old generation since the last full collection, as a share of what that
     /// collection kept, that makes the next collection full.
     pub(super) old_growth: Ratio,
@@ -106,6 +112,13 @@ pub(super) struct PacingState {
     probe_in: u32,
     /// Doublings of the allocation cap after full collections that reclaimed little.
     pub(super) cap_backoff: u32,
+    /// What the last full collection kept, which the next one compares its own with
+    /// (`steady`); zero before the first.
+    live_after_last_full: usize,
+    /// Whether the last full collection kept no more than the one before it, within
+    /// `steady_live_growth`: the live set has stopped growing, so what minor collections keep
+    /// dies before a full one (`surviving_young_budget`).
+    steady: bool,
 }
 
 impl PacingState {
@@ -156,6 +169,10 @@ impl GenerationalPacing {
             let survivors = (outcome.allocated as u64 * u64::from(state.survival) / u64::from(SURVIVAL_SCALE)) as usize;
             let expected = outcome.previous_live_weight.saturating_add(survivors);
             let reclaimed = expected.saturating_sub(outcome.live_weight);
+            state.steady = state.live_after_last_full != 0
+                && outcome.live
+                    <= state.live_after_last_full.saturating_add(self.steady_live_growth.of(state.live_after_last_full));
+            state.live_after_last_full = outcome.live;
             state.cap_backoff = if state.regime(self) == Regime::FullOnly
                 || reclaimed >= self.productive_full.of(expected)
             {
@@ -171,7 +188,7 @@ impl GenerationalPacing {
             state.survival = (state.survival + survival) / 2;
         }
         let young = NextCollection {
-            threshold: self.surviving_young_budget(outcome.live, state.survival),
+            threshold: self.surviving_young_budget(outcome.live, state.survival, state.steady),
             full: self.full_due(outcome.live_after_full, outcome.live, outcome.since_full, state.cap_backoff)
                 || self.weight_growth_due(outcome.live_weight_after_full, outcome.live_weight),
         };
@@ -200,10 +217,11 @@ impl GenerationalPacing {
     }
 
 
-    /// `young_budget` of a heap whose smoothed young survival is `survival`.
-    pub(super) fn surviving_young_budget(&self, live: usize, survival: u32) -> usize {
+    /// `young_budget` of a heap whose smoothed young survival is `survival`, and whose live
+    /// set has stopped growing when `steady`.
+    pub(super) fn surviving_young_budget(&self, live: usize, survival: u32, steady: bool) -> usize {
         let budget = self.young_budget(live);
-        if survival >= self.surviving_young_from {
+        if steady && survival >= self.surviving_young_from {
             budget.saturating_mul(self.surviving_young_factor)
         } else {
             budget
@@ -255,6 +273,7 @@ impl GenerationalPacing {
             maximum_young: read("QUENCH_GC_MAX_YOUNG", self.maximum_young),
             surviving_young_from: read("QUENCH_GC_SURVIVING_YOUNG_FROM", self.surviving_young_from as usize) as u32,
             surviving_young_factor: read("QUENCH_GC_SURVIVING_YOUNG_FACTOR", self.surviving_young_factor),
+            steady_live_growth: ratio("QUENCH_GC_STEADY_LIVE_GROWTH", self.steady_live_growth),
             old_growth: ratio("QUENCH_GC_OLD_GROWTH", self.old_growth),
             minimum_old_growth: read("QUENCH_GC_MIN_OLD_GROWTH", self.minimum_old_growth),
             allocation_cap: ratio("QUENCH_GC_ALLOCATION_CAP", self.allocation_cap),
@@ -338,8 +357,9 @@ impl MemoryPolicy {
 
 /// Throughput pacing, the default (TOD-167): the JetStream lane's table (v2-cloud-jet), which
 /// the other lanes' measurements bound. Young collections run every eighth of a live set, at
-/// least `THROUGHPUT_MINIMUM_YOUNG` and at most `MAXIMUM_YOUNG` weight, eight times that past a
-/// quarter's young survival (`THROUGHPUT_SURVIVING_YOUNG_FROM`); a full one once the
+/// least `THROUGHPUT_MINIMUM_YOUNG` and at most `MAXIMUM_YOUNG` weight
+/// (`THROUGHPUT_SURVIVING_YOUNG_FACTOR` times that past a quarter's young survival on a steady
+/// heap); a full one once the
 /// old generation has doubled or one live set of allocation has passed since the last one, at
 /// least `THROUGHPUT_MINIMUM_FULL_INTERVAL` apart; an unproductive full collection doubles the
 /// allocation cap, at most twice; past half survival, full collections with one live set
@@ -362,8 +382,9 @@ pub(super) const THROUGHPUT_PACING: GenerationalPacing = GenerationalPacing {
     young: Ratio::new(1, 8),
     minimum_young: THROUGHPUT_MINIMUM_YOUNG,
     maximum_young: MAXIMUM_YOUNG,
-    surviving_young_from: THROUGHPUT_SURVIVING_YOUNG_FROM,
+    surviving_young_from: SURVIVING_YOUNG_FROM,
     surviving_young_factor: THROUGHPUT_SURVIVING_YOUNG_FACTOR,
+    steady_live_growth: STEADY_LIVE_GROWTH,
     old_growth: Ratio::new(1, 1),
     minimum_old_growth: THROUGHPUT_MINIMUM_FULL_INTERVAL,
     allocation_cap: Ratio::new(1, 1),
@@ -399,9 +420,10 @@ pub(super) const MEMORY_FIRST_PACING: GenerationalPacing = GenerationalPacing {
     young: Ratio::new(1, 64),
     minimum_young: YOUNG_MINIMUM_ALLOCATION,
     maximum_young: MAXIMUM_YOUNG,
-    // RSS is this table's criterion: survival never widens the young budget.
-    surviving_young_from: SURVIVAL_SCALE + 1,
-    surviving_young_factor: 1,
+    // RSS is this table's first criterion (`MEMORY_FIRST_SURVIVING_YOUNG_FACTOR`).
+    surviving_young_from: SURVIVING_YOUNG_FROM,
+    surviving_young_factor: MEMORY_FIRST_SURVIVING_YOUNG_FACTOR,
+    steady_live_growth: STEADY_LIVE_GROWTH,
     old_growth: Ratio::new(1, 1),
     minimum_old_growth: MEMORY_FIRST_MINIMUM_ALLOCATION,
     allocation_cap: Ratio::new(1, 1),
@@ -489,22 +511,32 @@ const THROUGHPUT_MINIMUM_FULL_INTERVAL: usize = 1 << 18;
 /// 728 -> 719 / 97.6 -> 93.6, playwright 476 -> 472 / 77.9 -> 77.9, jsdom (median of 15)
 /// 500 -> 428 / 85.6 -> 83.8; packages without full collections within noise.
 const THROUGHPUT_SURVIVAL_LIMIT: u32 = SURVIVAL_SCALE * 3 / 4;
-/// Smoothed young survival from which throughput's young budget widens
-/// (`GenerationalPacing::surviving_young_from`): a quarter. V8-v7 survival
+/// Smoothed young survival from which a steady heap's young budget widens, under either
+/// policy (`GenerationalPacing::surviving_young_from`): a quarter. V8-v7 survival
 /// (QUENCH_GC_TRACE, per 1024): RayTrace 1, Crypto 5, DeltaBlue 20, RegExp 116,
 /// EarleyBoyer 322; Splay's 950 collects fully (`THROUGHPUT_SURVIVAL_LIMIT`). A larger young
 /// budget for every heap cost RayTrace x0.89 of Score (its young generations are all garbage
 /// and a larger one only leaves the caches), where EarleyBoyer, whose minor collections each
 /// marked about 4.8M instructions' worth of survivors, gained.
-const THROUGHPUT_SURVIVING_YOUNG_FROM: u32 = SURVIVAL_SCALE / 4;
-/// The young budget's factor past `THROUGHPUT_SURVIVING_YOUNG_FROM`: eight, a budget of
-/// 393216 for a small heap. EarleyBoyer's Boyer half crosses it and its Earley half stays
-/// below (survival 10-87 there, 170-457 in Boyer's). Against factor four, EarleyBoyer Score
-/// x1.042 (20/31) at max RSS 12.7 -> 15.0 MB; sixteen x0.99 (14/31) at 21.3 MB (one gc-tuning
-/// binary, 31 interleaved pairs, x86_64 4 vCPU, 2026-10-26). Four against none: x1.017
-/// (17/31), fixed-work instructions 9.00G -> 8.81G; RayTrace, Splay, DeltaBlue and RegExp
-/// unchanged.
+const SURVIVING_YOUNG_FROM: u32 = SURVIVAL_SCALE / 4;
+/// Live-set growth between full collections within which a heap counts as steady
+/// (`GenerationalPacing::steady_live_growth`): an eighth. EarleyBoyer's live set after each
+/// full collection moves within 6-10K weight in both directions; a loading jsdom grows
+/// 121K -> 188K between its two.
+const STEADY_LIVE_GROWTH: Ratio = Ratio::new(1, 8);
+/// The young budget's factor past `SURVIVING_YOUNG_FROM` under throughput, on a steady heap
+/// only (`PacingState::steady`): eight gave EarleyBoyer Score x1.025 at max RSS 11.1 -> 15.1 MB
+/// (pinned, 11 runs, 2026-10-26; ungated x1.047). On npm's heaviest rows the steady gate keeps
+/// max RSS within 0.5 MB of the unwidened table and CPU within 5% (TOD-197); ungated, the
+/// factor raised it 5-16 MB.
 const THROUGHPUT_SURVIVING_YOUNG_FACTOR: usize = 8;
+/// The young budget's factor past `SURVIVING_YOUNG_FROM` under memory-first: one, so
+/// memory-first's budget does not widen. Four, on a steady heap, gave EarleyBoyer Score
+/// 4002 -> 4629 at 7328 -> 7740 KiB but RegExp 6316 -> 6932 KiB for no Score (pinned, 7 runs,
+/// 2026-10-26): one warm-up window of RegExp crosses a quarter's survival. Neither requiring
+/// up to four steady full collections nor a steady tolerance up to one live set separates the
+/// two; a survival threshold does only in a 288-320 band, too narrow to hold beyond V8-v7.
+const MEMORY_FIRST_SURVIVING_YOUNG_FACTOR: usize = 1;
 
 #[cfg(test)]
 mod tests {
@@ -533,15 +565,26 @@ mod tests {
             assert!(throughput.young_budget(live) >= memory_first.young_budget(live));
         }
         assert!(throughput.minimum_allocation_cap > memory_first.minimum_allocation_cap);
-        // Survival widens throughput's young budget past a quarter only, and never
-        // memory-first's.
-        let below = THROUGHPUT_SURVIVING_YOUNG_FROM - 1;
-        assert_eq!(throughput.surviving_young_budget(0, below), throughput.young_budget(0));
+        // Survival widens a steady heap's young budget past a quarter only.
+        let below = SURVIVING_YOUNG_FROM - 1;
+        assert_eq!(throughput.surviving_young_budget(0, below, true), throughput.young_budget(0));
         assert_eq!(
-            throughput.surviving_young_budget(0, THROUGHPUT_SURVIVING_YOUNG_FROM),
+            throughput.surviving_young_budget(0, SURVIVING_YOUNG_FROM, true),
             throughput.young_budget(0) * THROUGHPUT_SURVIVING_YOUNG_FACTOR
         );
-        assert_eq!(memory_first.surviving_young_budget(0, SURVIVAL_SCALE), memory_first.young_budget(0));
+        // A growing heap keeps its budget whatever survives.
+        assert_eq!(
+            throughput.surviving_young_budget(0, SURVIVAL_SCALE, false),
+            throughput.young_budget(0)
+        );
+        assert_eq!(
+            memory_first.surviving_young_budget(0, SURVIVAL_SCALE, true),
+            memory_first.young_budget(0) * MEMORY_FIRST_SURVIVING_YOUNG_FACTOR
+        );
+        assert_eq!(
+            memory_first.surviving_young_budget(0, SURVIVAL_SCALE, false),
+            memory_first.young_budget(0)
+        );
         assert!(throughput.maximum_cap_backoff > memory_first.maximum_cap_backoff);
     }
 
