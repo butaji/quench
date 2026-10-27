@@ -1095,10 +1095,14 @@ impl Engine {
         compiler.private_name_overrides = private_aliases;
         compiler.capture_script_completion = capture_script_completion;
         compiler.eval_context = eval_context;
-        compiler.eval_annex_b_collisions = early::annex_b_function_names(&parsed.program.body)
-            .into_iter()
-            .filter_map(|(span, name)| annex_b_forbidden_names.contains(&name).then_some(span))
-            .collect();
+        // Only an eval's caller forbids names (its lexical bindings); without one no function
+        // collides, and the walk would find nothing to keep.
+        if !annex_b_forbidden_names.is_empty() {
+            compiler.eval_annex_b_collisions = early::annex_b_function_names(&parsed.program.body)
+                .into_iter()
+                .filter_map(|(span, name)| annex_b_forbidden_names.contains(&name).then_some(span))
+                .collect();
+        }
         let emitted = compiler.program(&parsed.program, module_goal, inherited_strict);
         #[cfg(feature = "profile-memory")]
         if std::env::var_os("QUENCH_MEMORY").is_some() {
@@ -1316,28 +1320,6 @@ struct ModuleParts {
     requests: Vec<crate::bytecode::ModuleRequest>,
     imports: Vec<crate::bytecode::ModuleImportBinding>,
     link_plan: Option<crate::bytecode::ModuleLinkPlan>,
-}
-
-fn source_function_count(program: &Program<'_>) -> usize {
-    struct Counter(usize);
-    impl<'a> oxc_ast_visit::Visit<'a> for Counter {
-        fn visit_function(
-            &mut self,
-            function: &oxc_ast::ast::Function<'a>,
-            flags: oxc_syntax::scope::ScopeFlags,
-        ) {
-            self.0 += 1;
-            oxc_ast_visit::walk::walk_function(self, function, flags);
-        }
-
-        fn visit_arrow_function_expression(&mut self, arrow: &ArrowFunctionExpression<'a>) {
-            self.0 += 1;
-            oxc_ast_visit::walk::walk_arrow_function_expression(self, arrow);
-        }
-    }
-    let mut counter = Counter(0);
-    oxc_ast_visit::Visit::visit_program(&mut counter, program);
-    counter.0
 }
 
 fn has_top_level_await(statements: &[Statement<'_>]) -> bool {
@@ -2607,9 +2589,6 @@ impl<'a> Compiler<'a> {
         inherited_strict: bool,
     ) -> Result<(Self, ModuleParts), Vec<Diagnostic>> {
         self.source_comments = program.comments.iter().map(|comment| comment.span).collect();
-        // One slot per source function and the root, reserved once: grown by doubling, the
-        // slots of a large script stood up to twice its functions beside its tree.
-        self.functions.reserve_exact(source_function_count(program) + 1);
         self.module_goal = module_goal;
         let module_requests = if module_goal {
             module_requests(&program.body)
@@ -2631,9 +2610,11 @@ impl<'a> Compiler<'a> {
                 .iter()
                 .any(|directive| directive.directive == "use strict");
         let async_module = module_goal && has_top_level_await(&program.body);
-        if let Some(name) =
-            early::strict_restricted_assignment_early_error(program, self.root_strict)
-        {
+        let facts = early::function_tree_facts(program, self.root_strict);
+        // One slot per source function and the root, reserved once: grown by doubling, the
+        // slots of a large script stood up to twice its functions beside its tree.
+        self.functions.reserve_exact(facts.functions + 1);
+        if let Some(name) = facts.restricted_assignment {
             self.reject(
                 Span::default(),
                 format!("SyntaxError: assignment to {name} is not allowed in strict mode"),
@@ -2650,7 +2631,7 @@ impl<'a> Compiler<'a> {
         if let Some(error) = early::strict_binding_early_error(program, self.root_strict) {
             self.reject(Span::default(), error);
         }
-        if let Some(error) = early::parameter_early_error(program, self.root_strict) {
+        if let Some(error) = facts.parameter_error {
             self.reject(Span::default(), error);
         }
         self.compile_function(

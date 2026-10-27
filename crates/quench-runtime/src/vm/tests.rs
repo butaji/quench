@@ -144,6 +144,36 @@ fn strict_terminal_calls_preserve_catch_and_finally_handlers() {
 }
 
 #[test]
+fn lane_calls_passing_extra_values_keep_them_only_for_legacy_reflection() {
+    // A lane call passing more values than its callee's parameters keeps them for a sloppy
+    // callee, whose `f.arguments` and caller's `arguments` read them, and passes a strict
+    // function, an arrow or a method its parameters alone (`drops_extra_arguments`).
+    let source = r#"
+      function sloppy(a) { return sloppy.arguments.length + ":" + Array.prototype.join.call(sloppy.arguments, ","); }
+      function viaCaller(a) { return inner(); }
+      function inner() { return Array.prototype.join.call(inner.caller.arguments, ","); }
+      function strict(a, b) { "use strict"; return a + b; }
+      const arrow = (a) => a * 2;
+      const object = { method(a) { return a + 1; } };
+      function run() {
+        let out = "";
+        let sum = 0;
+        for (let i = 0; i < 2000; i++) {
+          out = sloppy(i, 2, 3) + "|" + viaCaller(i, 5, 6);
+          sum += strict(i, 1, 2, 3) + arrow(i, 9, 9) + object.method(i, 8);
+        }
+        return out + "|" + sum;
+      }
+      print(run());
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    let program = Engine::specialize(source, "lane-extra-values.js").unwrap();
+    vm.execute(&program).unwrap();
+    assert_eq!(output.borrow().as_slice(), ["3:1999,2,3|1999,5,6|8000000"]);
+}
+
+#[test]
 fn lane_constructions_forward_plain_loaded_arguments() {
     // A loop the lane runs constructs through a forwarding constructor
     // (`this.initialize.apply(this, arguments)`): its frameless activation reads the
@@ -3292,6 +3322,8 @@ fn module_namespace_operations_share_uninitialized_export_errors() {
             let program = compile("export let answer;", "uninitialized-module-export.mjs").unwrap();
             vm.initialize(&program).unwrap();
             let namespace = vm.object();
+            // A namespace takes its own dictionary shape, as `Vm::module_namespace` gives it.
+            vm.mark_object_dictionary(namespace, super::DictionaryTrigger::ModuleNamespace);
             let atom = vm.intern_atom("answer");
             vm.set_property(namespace, atom, Value::UNDEFINED).unwrap();
             let slot = program.function(0)

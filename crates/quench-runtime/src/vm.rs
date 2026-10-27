@@ -1937,11 +1937,11 @@ pub(crate) struct Vm<H> {
     /// (`construction::ClosureTemplate`); derived from shapes, so field-cache invalidation
     /// clears it.
     closure_templates: Box<[Option<construction::ClosureTemplate>; CLOSURE_TEMPLATES]>,
-    /// The shape of an iterator result `{ value, done }` (`Vm::iterator_result`); derived
-    /// from shapes, so field-cache invalidation clears it.
-    iterator_result_shape: Option<u32>,
+    /// The header of an iterator result `{ value, done }` (`Vm::iterator_result`) and the
+    /// prototype it was derived for; derived from shapes, so field-cache invalidation clears it.
+    iterator_result_header: Option<(Value, crate::heap::InlineObjectHeader)>,
     /// The one `{ value, done }` result a lane iterator step reuses (`Vm::reused_iterator_result`),
-    /// `undefined` until the first; cleared with `iterator_result_shape`.
+    /// `undefined` until the first; cleared with `iterator_result_header`.
     reused_iterator_result: Value,
     /// The shapes of a complete data and accessor property descriptor object
     /// (`Vm::property_descriptor_object`), indexed by `accessor`; derived from shapes, so
@@ -2935,7 +2935,7 @@ impl<H: Host> Vm<H> {
         self.resolver_function_shape = None;
         self.function_name_shapes.clear();
         self.closure_templates.fill(None);
-        self.iterator_result_shape = None;
+        self.iterator_result_header = None;
         self.reused_iterator_result = Value::UNDEFINED;
         self.descriptor_shapes = [None; 2];
         self.descriptor_layout = None;

@@ -913,7 +913,7 @@ impl<H: Host> Vm<H> {
         self.resolver_function_shape = None;
         self.function_name_shapes.clear();
         self.closure_templates.fill(None);
-        self.iterator_result_shape = None;
+        self.iterator_result_header = None;
         self.reused_iterator_result = Value::UNDEFINED;
         self.descriptor_shapes = [None; 2];
         self.descriptor_layout = None;
@@ -1388,10 +1388,7 @@ impl<H: Host> Vm<H> {
             return self.own_field_entry_hit(cache, receiver);
         }
         let holder = self.heap.object_record_by_id(receiver.proto_link().object_record_id()?);
-        if cache.receiver != receiver.exact_shape()
-            || holder.is_module_namespace()
-            || cache.holder != holder.exact_shape()
-        {
+        if cache.receiver != receiver.exact_shape() || !cached_holder_matches(holder, cache.holder) {
             return None;
         }
         // SAFETY: as `cached_ordinary_holder_field_value`.
@@ -1728,10 +1725,8 @@ impl<H: Host> Vm<H> {
                 return Some(value);
             }
             let holder = self.heap.record_prototype(receiver)?;
-            if holder.is_module_namespace() {
-                return None;
-            }
             let entry = set.get(shape, holder.exact_shape())?;
+            debug_assert!(cached_holder_matches(holder, entry.holder));
             // SAFETY: as for the inline holder entries below.
             let value = unsafe { self.heap.property_get_flat(holder, usize::from(entry.slot)) };
             self.profile.field_cache_hit(2, 1);
@@ -1749,7 +1744,7 @@ impl<H: Host> Vm<H> {
             }
             // A prototype outside the records takes the slow path.
             let holder = self.heap.record_prototype(receiver)?;
-            if holder.is_module_namespace() || holder.exact_shape() != entry.holder {
+            if !cached_holder_matches(holder, entry.holder) {
                 continue;
             }
             // SAFETY: both immutable shapes and the property slot were recorded together
@@ -2129,7 +2124,7 @@ impl<H: Host> Vm<H> {
             Some(record) => self.heap.object_record_by_id(record),
             None => self.heap.object(receiver.proto())?,
         };
-        if holder.is_module_namespace() || cache.holder != holder.exact_shape() {
+        if !cached_holder_matches(holder, cache.holder) {
             return None;
         }
         // SAFETY: both immutable shapes and the property slot were recorded together after
@@ -2156,8 +2151,8 @@ impl<H: Host> Vm<H> {
         // matching entry proves what the lookup would. An array's length and elements are no
         // shape slots, so no entry names them.
         let holder = match self.heap.record_prototype(receiver) {
-            Some(holder) if !holder.is_module_namespace() => holder,
-            _ => self.shape_property_lookup(receiver.proto(), atom)?,
+            Some(holder) => holder,
+            None => self.shape_property_lookup(receiver.proto(), atom)?,
         };
         // SAFETY: the active program's layout reserves every compiler-emitted site.
         let cache = unsafe { self.field_caches.get_unchecked(site) };
@@ -2743,6 +2738,13 @@ impl<H: Host> Vm<H> {
     ) -> Option<(u32, usize, Value)> {
         let holder_value = self.object_data(receiver_value)?.proto();
         let holder = self.shape_property_lookup(holder_value, atom)?;
+        // A module namespace's [[Get]] is exotic: no field cache names it as a holder. A
+        // namespace's shape descends from its own dictionary transition
+        // (`DictionaryTrigger::ModuleNamespace`), which no other object takes, so a cached
+        // holder shape never matches a namespace (`cached_holder_matches`).
+        if holder.is_module_namespace() {
+            return None;
+        }
         let holder_shape = holder.shape();
         let slot = self.shape_slot(holder_shape, atom)?;
         if self
@@ -4264,4 +4266,14 @@ pub(super) struct IndexFreeChainProof {
     first: Value,
     epoch: u64,
     array: Option<Value>,
+}
+
+/// Whether the prototype `holder` has the exact shape `shape` a field cache recorded for a
+/// holder. Caches never record a module namespace (`immediate_prototype_data_field`), whose
+/// shape no other object shares, so a match is never a namespace and needs no test of it.
+#[inline(always)]
+fn cached_holder_matches(holder: &crate::heap::Object, shape: u32) -> bool {
+    let matches = holder.exact_shape() == shape;
+    debug_assert!(!matches || !holder.is_module_namespace(), "a field cache names no module namespace");
+    matches
 }

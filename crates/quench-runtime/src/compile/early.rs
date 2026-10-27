@@ -362,20 +362,6 @@ impl<'a> Visit<'a> for StrictOctalNumericEarlyError {
     }
 }
 
-pub(super) fn parameter_early_error(
-    program: &Program<'_>,
-    inherited_strict: bool,
-) -> Option<String> {
-    let mut validator = ParameterEarlyErrors {
-        strict: inherited_strict,
-        in_parameters: false,
-        async_parameters: false,
-        yield_parameters_forbidden: false,
-        error: None,
-    };
-    validator.visit_program(program);
-    validator.error
-}
 
 /// Whether a function with these parameters and body can observe a binding of `name` its
 /// own scope would hold: a reference anywhere in them, or a direct eval, which can name it
@@ -1096,79 +1082,6 @@ impl ParameterEarlyErrors {
     }
 }
 
-impl<'a> Visit<'a> for ParameterEarlyErrors {
-    fn visit_function(&mut self, function: &Function<'a>, flags: ScopeFlags) {
-        let own_strict = function.body.as_ref().is_some_and(|body| {
-            body.directives
-                .iter()
-                .any(|directive| directive.directive == "use strict")
-        });
-        self.validate_function(&function.params, own_strict);
-        if let Some(body) = &function.body {
-            self.validate_parameter_body(&function.params, &body.statements);
-        }
-        let previous = self.strict;
-        let previous_parameters = self.in_parameters;
-        let previous_async = self.async_parameters;
-        let previous_yield = self.yield_parameters_forbidden;
-        self.strict |= own_strict;
-        self.in_parameters = false;
-        self.async_parameters = function.r#async;
-        self.yield_parameters_forbidden = function.generator;
-        walk::walk_function(self, function, flags);
-        self.strict = previous;
-        self.in_parameters = previous_parameters;
-        self.async_parameters = previous_async;
-        self.yield_parameters_forbidden = previous_yield;
-    }
-
-    fn visit_arrow_function_expression(&mut self, function: &ArrowFunctionExpression<'a>) {
-        let own_strict = match &function.body {
-            oxc_ast::ast::ArrowFunctionBody::FunctionBody(body) => body
-                .directives
-                .iter()
-                .any(|directive| directive.directive == "use strict"),
-            _ => false,
-        };
-        self.validate_function(&function.params, own_strict);
-        if let oxc_ast::ast::ArrowFunctionBody::FunctionBody(body) = &function.body {
-            self.validate_parameter_body(&function.params, &body.statements);
-        }
-        let previous = self.strict;
-        let previous_parameters = self.in_parameters;
-        let previous_async = self.async_parameters;
-        let previous_yield = self.yield_parameters_forbidden;
-        self.strict |= own_strict;
-        self.in_parameters = false;
-        self.async_parameters = function.r#async;
-        self.yield_parameters_forbidden = false;
-        walk::walk_arrow_function_expression(self, function);
-        self.strict = previous;
-        self.in_parameters = previous_parameters;
-        self.async_parameters = previous_async;
-        self.yield_parameters_forbidden = previous_yield;
-    }
-
-    fn visit_formal_parameters(&mut self, params: &FormalParameters<'a>) {
-        let previous = self.in_parameters;
-        self.in_parameters = true;
-        walk::walk_formal_parameters(self, params);
-        self.in_parameters = previous;
-    }
-
-    fn visit_identifier_reference(&mut self, identifier: &oxc_ast::ast::IdentifierReference<'a>) {
-        let name = identifier.name.as_str();
-        if name == "yield" && (self.strict || self.in_parameters && self.yield_parameters_forbidden)
-        {
-            self.error = Some("SyntaxError: yield identifier is not allowed here".into());
-        } else if name == "await" && self.in_parameters && self.async_parameters {
-            self.error =
-                Some("SyntaxError: await identifier is not allowed in async parameters".into());
-        }
-        walk::walk_identifier_reference(self, identifier);
-    }
-}
-
 fn validate_strict_statements(
     statements: &[Statement<'_>],
     inherited_strict: bool,
@@ -1774,81 +1687,172 @@ pub(super) fn collect_pattern_names(pattern: &BindingPattern<'_>, names: &mut im
     }
 }
 
-pub(super) fn strict_restricted_assignment_early_error(
-    program: &Program<'_>,
-    strict: bool,
-) -> Option<&'static str> {
-    let mut validator = StrictRestrictedAssignmentEarlyError {
-        strict,
-        found: None,
+/// What one walk of a program finds of its functions: their number, which sizes the
+/// compiler's function table, and the first restricted assignment and the last parameter
+/// error that `StrictRestrictedAssignmentEarlyError` and `ParameterEarlyErrors` report. Their
+/// strictness differs (a class method is strict for the first, not the second), so each keeps
+/// its own.
+pub(super) struct FunctionTreeFacts {
+    pub(super) functions: usize,
+    pub(super) restricted_assignment: Option<&'static str>,
+    pub(super) parameter_error: Option<String>,
+}
+
+pub(super) fn function_tree_facts(program: &Program<'_>, strict: bool) -> FunctionTreeFacts {
+    let mut walk = FunctionTreeWalk {
+        functions: 0,
+        restricted: StrictRestrictedAssignmentEarlyError { strict, found: None },
+        parameters: ParameterEarlyErrors {
+            strict,
+            in_parameters: false,
+            async_parameters: false,
+            yield_parameters_forbidden: false,
+            error: None,
+        },
     };
-    validator.visit_program(program);
-    validator.found
+    walk.visit_program(program);
+    FunctionTreeFacts {
+        functions: walk.functions,
+        restricted_assignment: walk.restricted.found,
+        parameter_error: walk.parameters.error,
+    }
 }
 
-struct StrictRestrictedAssignmentEarlyError {
+struct FunctionTreeWalk {
+    functions: usize,
+    restricted: StrictRestrictedAssignmentEarlyError,
+    parameters: ParameterEarlyErrors,
+}
+
+/// What each check keeps of its enclosing function, restored when the walk leaves one.
+#[derive(Clone, Copy)]
+struct EnclosingFunction {
+    restricted_strict: bool,
     strict: bool,
-    found: Option<&'static str>,
+    in_parameters: bool,
+    async_parameters: bool,
+    yield_parameters_forbidden: bool,
 }
 
-impl<'a> Visit<'a> for StrictRestrictedAssignmentEarlyError {
+impl FunctionTreeWalk {
+    fn enclosing(&self) -> EnclosingFunction {
+        EnclosingFunction {
+            restricted_strict: self.restricted.strict,
+            strict: self.parameters.strict,
+            in_parameters: self.parameters.in_parameters,
+            async_parameters: self.parameters.async_parameters,
+            yield_parameters_forbidden: self.parameters.yield_parameters_forbidden,
+        }
+    }
+
+    fn restore(&mut self, enclosing: EnclosingFunction) {
+        self.restricted.strict = enclosing.restricted_strict;
+        self.parameters.strict = enclosing.strict;
+        self.parameters.in_parameters = enclosing.in_parameters;
+        self.parameters.async_parameters = enclosing.async_parameters;
+        self.parameters.yield_parameters_forbidden = enclosing.yield_parameters_forbidden;
+    }
+}
+
+fn has_use_strict(directives: &[oxc_ast::ast::Directive<'_>]) -> bool {
+    directives.iter().any(|directive| directive.directive == "use strict")
+}
+
+impl<'a> Visit<'a> for FunctionTreeWalk {
     fn visit_function(&mut self, function: &Function<'a>, flags: ScopeFlags) {
-        let own_strict = function.body.as_ref().is_some_and(|body| {
-            body.directives
-                .iter()
-                .any(|directive| directive.directive == "use strict")
-        });
-        let previous = self.strict;
-        self.strict |= own_strict || flags.is_strict_mode();
+        self.functions += 1;
+        let own_strict = function.body.as_ref().is_some_and(|body| has_use_strict(&body.directives));
+        self.parameters.validate_function(&function.params, own_strict);
+        if let Some(body) = &function.body {
+            self.parameters.validate_parameter_body(&function.params, &body.statements);
+        }
+        let enclosing = self.enclosing();
+        self.restricted.strict |= own_strict || flags.is_strict_mode();
+        self.parameters.strict |= own_strict;
+        self.parameters.in_parameters = false;
+        self.parameters.async_parameters = function.r#async;
+        self.parameters.yield_parameters_forbidden = function.generator;
         walk::walk_function(self, function, flags);
-        self.strict = previous;
+        self.restore(enclosing);
     }
 
     fn visit_arrow_function_expression(&mut self, function: &ArrowFunctionExpression<'a>) {
+        self.functions += 1;
         let own_strict = match &function.body {
-            oxc_ast::ast::ArrowFunctionBody::FunctionBody(body) => body
-                .directives
-                .iter()
-                .any(|directive| directive.directive == "use strict"),
+            oxc_ast::ast::ArrowFunctionBody::FunctionBody(body) => has_use_strict(&body.directives),
             _ => false,
         };
-        let previous = self.strict;
-        self.strict |= own_strict;
+        self.parameters.validate_function(&function.params, own_strict);
+        if let oxc_ast::ast::ArrowFunctionBody::FunctionBody(body) = &function.body {
+            self.parameters.validate_parameter_body(&function.params, &body.statements);
+        }
+        let enclosing = self.enclosing();
+        self.restricted.strict |= own_strict;
+        self.parameters.strict |= own_strict;
+        self.parameters.in_parameters = false;
+        self.parameters.async_parameters = function.r#async;
+        self.parameters.yield_parameters_forbidden = false;
         walk::walk_arrow_function_expression(self, function);
-        self.strict = previous;
+        self.restore(enclosing);
+    }
+
+    fn visit_formal_parameters(&mut self, params: &FormalParameters<'a>) {
+        let previous = self.parameters.in_parameters;
+        self.parameters.in_parameters = true;
+        walk::walk_formal_parameters(self, params);
+        self.parameters.in_parameters = previous;
+    }
+
+    fn visit_identifier_reference(&mut self, identifier: &oxc_ast::ast::IdentifierReference<'a>) {
+        let parameters = &mut self.parameters;
+        let name = identifier.name.as_str();
+        if name == "yield"
+            && (parameters.strict || parameters.in_parameters && parameters.yield_parameters_forbidden)
+        {
+            parameters.error = Some("SyntaxError: yield identifier is not allowed here".into());
+        } else if name == "await" && parameters.in_parameters && parameters.async_parameters {
+            parameters.error =
+                Some("SyntaxError: await identifier is not allowed in async parameters".into());
+        }
+        walk::walk_identifier_reference(self, identifier);
     }
 
     fn visit_assignment_expression(&mut self, expression: &AssignmentExpression<'a>) {
-        if self.strict
+        if self.restricted.strict
             && let Some(name) = expression
                 .left
                 .as_simple_assignment_target()
-                .and_then(Self::restricted_target)
+                .and_then(StrictRestrictedAssignmentEarlyError::restricted_target)
         {
-            self.found.get_or_insert(name);
+            self.restricted.found.get_or_insert(name);
         }
         walk::walk_assignment_expression(self, expression);
     }
 
     fn visit_update_expression(&mut self, expression: &UpdateExpression<'a>) {
-        if self.strict
-            && let Some(name) = Self::restricted_target(&expression.argument)
+        if self.restricted.strict
+            && let Some(name) = StrictRestrictedAssignmentEarlyError::restricted_target(&expression.argument)
         {
-            self.found.get_or_insert(name);
+            self.restricted.found.get_or_insert(name);
         }
         walk::walk_update_expression(self, expression);
     }
 
     fn visit_unary_expression(&mut self, expression: &UnaryExpression<'a>) {
-        if self.strict
+        if self.restricted.strict
             && expression.operator == oxc_syntax::operator::UnaryOperator::Delete
             && let Expression::Identifier(identifier) = &expression.argument
-            && let Some(name) = Self::restricted_name(identifier.name.as_str())
+            && let Some(name) = StrictRestrictedAssignmentEarlyError::restricted_name(identifier.name.as_str())
         {
-            self.found.get_or_insert(name);
+            self.restricted.found.get_or_insert(name);
         }
         walk::walk_unary_expression(self, expression);
     }
+}
+
+struct StrictRestrictedAssignmentEarlyError {
+    strict: bool,
+    found: Option<&'static str>,
 }
 
 impl StrictRestrictedAssignmentEarlyError {
