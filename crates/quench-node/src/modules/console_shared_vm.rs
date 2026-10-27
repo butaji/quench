@@ -5,9 +5,9 @@
 //! `internal/console/global.js` makes, built ahead of it: the same prototype shape, the SDK's
 //! own keys in its order (`CONSOLE_KEYS`), and `Symbol.toStringTag`. Every key but `log` is a
 //! lazy member that loads the SDK, whose own properties the console then adopts (`adopt`);
-//! `log` stays a function of the SDK's name and length that writes a call of plain strings to
-//! `process.stdout` as the SDK would until the SDK is loaded, and calls the SDK's `log`
-//! otherwise. Listing the console's keys with its symbols loads the SDK first.
+//! `log` stays a function of the SDK's name and length that writes a call of plain strings and
+//! primitives to `process.stdout` as the SDK would until the SDK is loaded (`plain_line`), and
+//! calls the SDK's `log` otherwise. Listing the console's keys with its symbols loads the SDK first.
 use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 
@@ -20,6 +20,13 @@ const ADOPTING: &str = "\0node/console/adopting";
 /// The streams the unloaded console wrote to, which the SDK console then keeps.
 const STDOUT: &str = "\0node/console/stdout";
 const STDERR: &str = "\0node/console/stderr";
+/// Set once `internal/util/inspect.js` has loaded: from then on its options
+/// (`inspect.defaultOptions`) may differ from Node's defaults, so `log` leaves every
+/// non-string argument to the SDK.
+const INSPECT_LOADED: &str = "\0node/console/inspect-loaded";
+/// The variable that makes Node's console colorize output that is not a terminal
+/// (`internal/util/colors.js` `shouldColorize`).
+const FORCE_COLOR: &str = "FORCE_COLOR";
 
 /// The own string keys of the SDK's global console after Node's bootstrap, in order, with
 /// whether each is enumerable. `log` comes first and stays the global console's own.
@@ -163,17 +170,8 @@ fn sdk_keys_match(context: &mut NativeContext<'_, NodeHost>, keys: RootId) -> bo
 pub(crate) fn log(context: &mut NativeContext<'_, NodeHost>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
     crate::host::resident_pages::release_before_output();
     if cached(context, SDK_CONSOLE).is_none() {
-        let mut parts = Vec::with_capacity(args.len());
-        for &arg in args {
-            match context.string_text(arg)? {
-                Some(text) => parts.push(text),
-                None => break,
-            }
-        }
-        let plain = parts.len() == args.len()
-            && parts.first().is_none_or(|first| !first.contains(FORMAT_SPECIFIER));
-        if plain {
-            return write_stream(context, STDOUT, "stdout", &(parts.join(" ") + "\n"));
+        if let Some(text) = plain_line(context, args)? {
+            return write_stream(context, STDOUT, "stdout", &text);
         }
         let console = facade(context)?;
         context.materialize_lazy_data_property_rooted(console, CONSOLE_KEYS[1].0)?;
@@ -182,6 +180,75 @@ pub(crate) fn log(context: &mut NativeContext<'_, NodeHost>, _: RootId, args: &[
     let key = context.string_rooted(CONSOLE_KEYS[0].0);
     let log = context.get_property_rooted(sdk, key)?;
     context.call_rooted(log, sdk, args)
+}
+
+/// The line the SDK's `log` writes for `args`, when it needs no format specifier, no
+/// colors and no `inspect` beyond a primitive's (`formatWithOptions`: strings as they are,
+/// other primitives as `formatPrimitive` with default options), joined by spaces.
+fn plain_line(context: &mut NativeContext<'_, NodeHost>, args: &[RootId]) -> Result<Option<String>, RootedError> {
+    use quench_runtime::ValueType;
+    if let Some(&first) = args.first() {
+        if context.string_text(first)?.is_some_and(|text| text.contains(FORMAT_SPECIFIER)) {
+            return Ok(None);
+        }
+    }
+    let mut parts = Vec::with_capacity(args.len());
+    let mut inspected = false;
+    for &arg in args {
+        let part = match context.value_type_rooted(arg) {
+            Some(ValueType::String) => context.string_text(arg)?,
+            Some(ValueType::Number) => {
+                inspected = true;
+                let number = context.to_number(arg)?;
+                // `formatNumber`: `-0` as itself, every other number as `${number}`.
+                Some(if number == 0.0 && number.is_sign_negative() { "-0".to_owned() } else { context.to_string(arg)? })
+            }
+            Some(ValueType::BigInt) => {
+                inspected = true;
+                Some(context.to_string(arg)? + "n")
+            }
+            Some(ValueType::Boolean | ValueType::Undefined | ValueType::Null) => {
+                inspected = true;
+                Some(context.to_string(arg)?)
+            }
+            _ => None,
+        };
+        let Some(part) = part else { return Ok(None) };
+        parts.push(part);
+    }
+    if inspected && (cached(context, INSPECT_LOADED).is_some() || stdout_may_colorize(context)?) {
+        return Ok(None);
+    }
+    Ok(Some(parts.join(" ") + "\n"))
+}
+
+/// Whether the SDK console could colorize `process.stdout` (`shouldColorize`): `FORCE_COLOR`
+/// is set or the stream is a terminal.
+fn stdout_may_colorize(context: &mut NativeContext<'_, NodeHost>) -> Result<bool, RootedError> {
+    let process = context
+        .host_mut()
+        .shared_state()
+        .borrow()
+        .process_module
+        .ok_or_else(|| RootedError::host("process is not initialized"))?;
+    let key = context.string_rooted("env");
+    let env = context.get_property_rooted(process, key)?;
+    let key = context.string_rooted(FORCE_COLOR);
+    let force = context.get_property_rooted(env, key)?;
+    if context.value_type_rooted(force) != Some(quench_runtime::ValueType::Undefined) {
+        return Ok(true);
+    }
+    let key = context.string_rooted("stdout");
+    let stdout = context.get_property_rooted(process, key)?;
+    let key = context.string_rooted("isTTY");
+    let terminal = context.get_property_rooted(stdout, key)?;
+    context.truthy_rooted(terminal)
+}
+
+/// Called as `internal/util/inspect.js` finishes loading (`INSPECT_LOADED`).
+pub(crate) fn note_inspect_loaded(context: &mut NativeContext<'_, NodeHost>) -> Result<(), RootedError> {
+    let marker = context.boolean(true);
+    cache(context, INSPECT_LOADED, marker)
 }
 
 /// Writes `text` to `process[name]`, the stream cached as `cache_key` once first written,

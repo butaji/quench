@@ -2921,6 +2921,9 @@ const getLinkedBinding = () => ({});
             let absent = context.undefined();
             context.call_rooted(initialize, absent, &[debug])?;
         }
+        if library_relative == Some(Path::new("lib/internal/util/inspect.js")) {
+            crate::modules::console_shared_vm::note_inspect_loaded(context)?;
+        }
         if library_relative == Some(Path::new("lib/internal/console/global.js")) {
             // Node's bootstrap initializes the global console as it loads it; one loaded on
             // first use binds its streams before any module writes to it.
