@@ -19,7 +19,7 @@ credit the unbuilt five-file worktree diff.
   but predate the current uncommitted source diff. Never use their results as
   candidate credit.
 - Current five-file production diff SHA-256:
-  `5dcbbdff830a98f38a11f3720cfd8feaea7006e21d1cfa1d6767641b09f3b862`.
+  `bf8ac113d4902c8f5c4ccbb66850478f0d67ed4aacddde06bfde59c5b418d4d3`.
 
 ## Exact baseline reproductions
 
@@ -53,31 +53,38 @@ QUENCH_NODE_TEST_EXECUTABLE="$CANDIDATE_EXE" \
   --filter "$FILTER" --jobs 1 --timeout-secs 60 --results "$RESULT"
 ```
 
-The selected exact fixture names are `test-vm-module-import-meta.js`,
-`test-vm-module-after-evaluate.js`, `test-vm-module-reevaluate.js`,
-`test-vm-module-link-shared-deps.js`,
-`test-vm-module-evaluate-source-text-module.js`, `test-vfs-require.js`, and
-`test-vfs-import.mjs`. The first and sixth must move from the reproduced v406
-FAIL to PASS. The other fixtures are regression controls and must not lose any
-baseline PASS status when compared with a same-runner/same-inventory v406
-cohort; rerun any unstable transition before attributing it.
+First collect a matched v406 family cohort with the same runner and fixture
+root; the two one-fixture JSON files above cannot establish regression
+transitions for the rest of either family. Then require no attributed
+pass-to-fail/timeout/crash transition in the selected controls.
 
-1. VM metadata positives and lifecycle: `test-vm-module-import-meta.js`,
-   `test-vm-module-after-evaluate.js`, `test-vm-module-reevaluate.js`,
-   `test-vm-module-link-shared-deps.js`, and
-   `test-vm-module-evaluate-source-text-module.js`.
-2. VM regressions: ordinary file-ESM `import.meta.resolve`, absent callback
-   defaults/prototype/own keys, exact callback receiver and module identity,
-   duplicate public identifiers with distinct callbacks, callback throw and
-   module errored-state behavior. Keep TLA and mixed-source graphs explicitly
-   outside the claimed pass set until they use a native async module path.
-3. VFS positive and controls: full `test-vfs-require.js` and
-   `test-vfs-import.mjs`; then verify CJS extensionless fallback and ordinary
-   filesystem extensionless resolution remain unchanged.
-4. Callback-error-routing fallback: do not spend a full cohort on the current
-   defensive patch unless a targeted test can construct
+1. VM core: `test-vm-module-import-meta.js`,
+   `test-vm-module-reevaluate.js`, `test-vm-module-link-shared-deps.js`, and
+   `test-vm-module-evaluate-source-text-module.js`. The
+   `test-vm-module-after-evaluate.js` file exercises a separate microtask queue
+   issue and is not a focused control for this patch.
+2. VM assertions not covered by those fixtures: ordinary file-ESM
+   `import.meta.resolve`, absent-callback defaults/prototype/own keys, exact
+   callback receiver and module identity, duplicate public identifiers with
+   distinct callbacks, callback throw and errored-module behavior. Add a
+   custom-identifier stack assertion: an error from
+   `new SourceTextModule('throw new Error("x")', { identifier: 'custom-name' })`
+   should retain the caller identifier in its frame. A Node 24.19 read-only
+   oracle showed `at custom-name:1:7`; confirm formatting with Node v26.12.1.
+   Add a path-like explicit VM identifier and an ordinary file-ESM stack control
+   to verify only the VM identifier path uses the verbatim mapping.
+   Keep TLA and mixed-source graphs outside the claim until they use a native
+   async module path.
+3. VFS: `test-vfs-require.js` and `test-vfs-import.mjs`; the latter has no
+   extensionless case and is only an ordinary VFS ESM control. Add targeted
+   VFS probes for an exact extensionless CommonJS file, nested `type: commonjs`
+   under a module package, module-scope `.js`/`.mjs` siblings, and
+   extensionless directory/package-main resolution. Use a separate ordinary
+   filesystem extensionless probe; the VFS fixtures do not cover it.
+4. Callback-error-routing fallback: do not spend a full cohort on this
+   defensive patch unless a targeted test constructs
    `RootedError.exception == None` with `JsError::thrown_value() == Some` and
-   verify identity, handler routing, formatting and root release. Existing
+   verifies identity, handler routing, formatting and root release. Existing
    production callers reviewed so far do not demonstrate that state.
 
 Only after the focused positive/regression gate and build provenance pass,
@@ -107,7 +114,16 @@ classifications and transitions; focused results never count toward 4,000.
   filesystem fallback. The v406 ENOTDIR reproduction reaches the target
   scenario at test line 379, but this source-level review cannot establish that
   the candidate intercepts it correctly; the focused VFS fixtures above remain
-  required.
+  required. In other preserved v406 full-suite runs, this fixture failed earlier
+  at line 19 (CJS require) or line 242 (VFS path handling); the single-fixture
+  line-379 failure is one reproduction, not proof those separate failures are
+  fixed.
+- Stack formatting must use the public SourceTextModule identifier verbatim.
+  The candidate change in `shared_vm.rs::stack_source_name` now returns that
+  identifier directly for mapped VM modules; an independent Node 24.19 oracle
+  observed `at custom-name:1:7`, but Node v26.12.1 comparison and Quench
+  behavior validation remain pending. Normal file ESM continues through the
+  original URL formatting path.
 - The callback-error-routing fallback remains unproven: reviewed production
   constructors already root thrown JS values, and no caller demonstrating
   `exception == None` with a thrown value was found. Do not claim it as a fix
@@ -116,14 +132,15 @@ classifications and transitions; focused results never count toward 4,000.
 
 ## Current execution constraint
 
-After the two single-fixture baseline runs, `/tmp` has 83,836,928 bytes free.
-The latest recheck found cgroup memory at 17,153,531,904 / 17,179,869,184
-bytes, leaving about 25 MiB; OOM counters remain 551 / 166. The overlay backing
-`/workspace` has zero available bytes. `/dev/shm` is a separate tmpfs with
-9,441,337,344 nominal bytes free, but shares the same cgroup; `memory.stat`
-shows about 9.35 GB of charged shmem. No build or test process is live. The required
-release link was estimated to need about 200 MB free and Rust compilation has
-previously reached about 1.1 GB RSS. Do not start another fixture, build or
-link at this headroom. The six CLI originals and all census evidence remain
-preserved; the denied archive/removal operation is not authorized by this
-document.
+The latest independent mount/cgroup audit found zero bytes available on the
+`/workspace` overlay and 83,824,640 bytes free on `/tmp`. Existing Quench
+executables are 84–152 MB, and no existing rlib/fingerprint matches this
+worktree; 152 MB is only a lower bound to materialize one comparable executable,
+so `/tmp` is short at least 68 MB before build intermediates. Cgroup memory
+samples ranged from 17,157,578,752 to 17,178,279,936 of 17,179,869,184 bytes
+(about 21 MiB to 1.5 MiB headroom), with no swap and OOM counters 551 / 166.
+`/dev/shm` has 9,441,337,344 nominal bytes free but is charged to this same
+cgroup. No build or test process is live. A prior rustc reached about 1.1 GB
+RSS. Do not start another fixture, build or link at this headroom. The six CLI
+originals and all census evidence remain preserved; the denied archive/removal
+operation is not authorized by this document.
