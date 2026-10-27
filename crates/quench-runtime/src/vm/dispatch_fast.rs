@@ -1640,7 +1640,11 @@ pub(super) struct LaneNativeCall {
 }
 
 /// Lane state that handlers read rarely; the hot state travels in handler
-/// arguments so it stays in machine registers across dispatches.
+/// arguments so it stays in machine registers across dispatches. Its fields keep their
+/// declared order: a plain call saves and restores `this`, `env` and `capture` together
+/// (`lane_push_passed`), so they stay adjacent, and the Wasm tier's rarely read counters
+/// come last.
+#[repr(C)]
 struct LaneContext<H: Host> {
     vm: *mut Vm<H>,
     /// The executing program, which every inline call stays within.
@@ -1682,15 +1686,6 @@ struct LaneContext<H: Host> {
     /// The running activation's `this`, or `DELETED` when the frame's binding decides
     /// it (`Vm::current_this`).
     this: Value,
-    /// Backward jumps left before the running Wasm function is credited with an
-    /// interpreter entry's worth of loop work (`WASM_JIT_BACKEDGES_PER_ENTRY`), or `None`
-    /// when this run's code earns none (`Vm::lane_credits_backedges`). A crediting run keeps
-    /// its floor raised, so every backward jump reaches `lane_safepoint`, which counts: the
-    /// handlers stay as they are.
-    backedges_left: Option<u32>,
-    /// The accumulator the lane loop dispatches its next record with: the one a safepoint
-    /// jump carried to its target (`lane_safepoint`), else none.
-    resumed_acc: Slot<Value>,
     /// The running JavaScript activation's environment, or `DELETED` for a VM frame.
     env: Value,
     /// The innermost capture slots of the running function, once a capture read found
@@ -1704,6 +1699,15 @@ struct LaneContext<H: Host> {
     /// The storage of the environment a frame run's captured locals live in, once a local
     /// access found it (`lane_frame_storage`).
     frame_storage: FrameStorage,
+    /// Backward jumps left before the running Wasm function is credited with an
+    /// interpreter entry's worth of loop work (`WASM_JIT_BACKEDGES_PER_ENTRY`), or `None`
+    /// when this run's code earns none (`Vm::lane_credits_backedges`). A crediting run keeps
+    /// its floor raised, so every backward jump reaches `lane_safepoint`, which counts: the
+    /// handlers stay as they are.
+    backedges_left: Option<u32>,
+    /// The accumulator the lane loop dispatches its next record with: the one a safepoint
+    /// jump carried to its target (`lane_safepoint`), else none.
+    resumed_acc: Slot<Value>,
 }
 
 /// The slot storage of environment `env`, which frame `frame` held when a lane local access
