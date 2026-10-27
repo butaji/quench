@@ -1303,6 +1303,20 @@ fn emit_js_guard(
     builder.seal_block(passed);
 }
 
+/// Byte offset of a Value element in native address arithmetic.
+fn emit_value_index_offset(builder: &mut FunctionBuilder<'_>, index: ir::Value) -> ir::Value {
+    let stride = std::mem::size_of::<Value>();
+    assert!(stride.is_power_of_two());
+    // Widen before scaling: an in-bounds int32 index can have a byte offset
+    // larger than u32::MAX. Scaling in the key's type would wrap to another slot.
+    let index = match builder.func.dfg.value_type(index) {
+        types::I32 => builder.ins().uextend(types::I64, index),
+        types::I64 => index,
+        _ => unreachable!("Value element indices are i32 or i64"),
+    };
+    builder.ins().ishl_imm_u(index, i64::from(stride.trailing_zeros()))
+}
+
 /// Lower a present dense own-array read. The receiver and key come from the
 /// canonical tagged frame on every execution; the record and its current
 /// backing are also reloaded per access so receiver changes and COW writes are
@@ -1412,8 +1426,7 @@ fn emit_js_dense_array_get(
         .icmp(IntCC::UnsignedLessThan, index, length);
     emit_js_guard(builder, index_is_present, fallback);
 
-    let value_offset = builder.ins().ishl_imm_u(index, 3);
-    let value_offset = builder.ins().uextend(types::I64, value_offset);
+    let value_offset = emit_value_index_offset(builder, index);
     let values = builder.ins().iadd_imm_s(
         header,
         i64::try_from(ARRAY.header_values_offset).expect("array values offset fits i64"),
@@ -14158,6 +14171,36 @@ mod tests {
             "{\"function\":1,\"import_index\":5,\"module\":\"host\\\\api\",\"name\":\"line\\nfeed\",\"count\":2}"
         );
         assert_eq!(json_string("\u{1}\t"), "\"\\u0001\\t\"");
+    }
+
+    #[test]
+    #[cfg(all(target_arch = "x86_64", unix))]
+    fn native_value_index_offset_preserves_large_indices() {
+        let isa = super::super::jit_backend::target_isa("speed").unwrap();
+        for ty in [types::I32, types::I64] {
+            let mut signature = Signature::new(isa.default_call_conv());
+            signature.params.push(AbiParam::new(types::I64));
+            signature.returns.push(AbiParam::new(types::I64));
+            let mut function = ir::Function::with_name_signature(UserFuncName::user(0, 0), signature);
+            let mut context = FunctionBuilderContext::new();
+            let mut builder = FunctionBuilder::new(&mut function, &mut context);
+            let block = builder.create_block();
+            builder.append_block_params_for_function_params(block);
+            builder.switch_to_block(block);
+            builder.seal_block(block);
+            let index = builder.block_params(block)[0];
+            let index = if ty == types::I32 { builder.ins().ireduce(ty, index) } else { index };
+            let offset = emit_value_index_offset(&mut builder, index);
+            builder.ins().return_(&[offset]);
+            builder.finalize(isa.frontend_config());
+            let code = compile_native_function(function, isa.as_ref(), usize::MAX, CodeMemory::new).unwrap();
+            // SAFETY: the generated function has this signature, accesses no memory,
+            // and its executable allocation remains live throughout these calls.
+            let offset = unsafe { std::mem::transmute::<*mut u8, unsafe extern "C" fn(u64) -> u64>(code.pointer()) };
+            for index in [0, 1, (1 << 29) - 1, 1 << 29, (1 << 29) + 1, i32::MAX as u64] {
+                assert_eq!(unsafe { offset(index) }, index * std::mem::size_of::<Value>() as u64, "{ty}: index {index}");
+            }
+        }
     }
 
     #[test]

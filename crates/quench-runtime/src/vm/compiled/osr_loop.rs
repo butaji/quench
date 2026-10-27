@@ -4821,7 +4821,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
 
     /// The address of an element with the byte displacement its access carries.
     fn element_address(&mut self, elements: ir::Value, index: ElementIndex) -> (ir::Value, i32) {
-        let offset = self.body.builder.ins().imul_imm_u(index.wide, i64::from(WORD_BYTES));
+        let offset = super::emit_value_index_offset(&mut self.body.builder, index.wide);
         let offset = if self.pointer == types::I64 {
             offset
         } else {
