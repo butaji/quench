@@ -18,6 +18,8 @@ credit the unbuilt five-file worktree diff.
 - These binaries report runtime commit `967bdc3f18982122e0cc6f5406c82266fc4430a2`,
   but predate the current uncommitted source diff. Never use their results as
   candidate credit.
+- Current five-file production diff SHA-256:
+  `5dcbbdff830a98f38a11f3720cfd8feaea7006e21d1cfa1d6767641b09f3b862`.
 
 ## Exact baseline reproductions
 
@@ -39,6 +41,26 @@ Use the preserved runner with `QUENCH_NODE_TEST_EXECUTABLE` set to the newly
 built candidate CLI. Keep the official root, one job and 60-second case
 deadlines. Capture machine JSON and preserve the exact candidate CLI, runner,
 source-diff, fixture-inventory and result hashes.
+
+For each fixture below, invoke the runner in this form, changing `FILTER` and
+`RESULT` so every observation has its own output file:
+
+```sh
+QUENCH_NODE_TEST_EXECUTABLE="$CANDIDATE_EXE" \
+  /tmp/tod20-v164-session-target/release/run-parallel \
+  --all \
+  --parallel-dir /tmp/tod20-node-v26.12.1-official-source/test/parallel \
+  --filter "$FILTER" --jobs 1 --timeout-secs 60 --results "$RESULT"
+```
+
+The selected exact fixture names are `test-vm-module-import-meta.js`,
+`test-vm-module-after-evaluate.js`, `test-vm-module-reevaluate.js`,
+`test-vm-module-link-shared-deps.js`,
+`test-vm-module-evaluate-source-text-module.js`, `test-vfs-require.js`, and
+`test-vfs-import.mjs`. The first and sixth must move from the reproduced v406
+FAIL to PASS. The other fixtures are regression controls and must not lose any
+baseline PASS status when compared with a same-runner/same-inventory v406
+cohort; rerun any unstable transition before attributing it.
 
 1. VM metadata positives and lifecycle: `test-vm-module-import-meta.js`,
    `test-vm-module-after-evaluate.js`, `test-vm-module-reevaluate.js`,
@@ -65,8 +87,11 @@ classifications and transitions; focused results never count toward 4,000.
 ## Current execution constraint
 
 After the two single-fixture baseline runs, `/tmp` has 83,836,928 bytes free.
-Cgroup memory is 17,153,998,848 / 17,179,869,184 bytes, leaving about 25 MiB;
-OOM counters remain 551 / 166. No build or test process is live. The required
+The latest recheck found cgroup memory at 17,153,531,904 / 17,179,869,184
+bytes, leaving about 25 MiB; OOM counters remain 551 / 166. The overlay backing
+`/workspace` has zero available bytes. `/dev/shm` is a separate tmpfs with
+9,441,337,344 nominal bytes free, but shares the same cgroup; `memory.stat`
+shows about 9.35 GB of charged shmem. No build or test process is live. The required
 release link was estimated to need about 200 MB free and Rust compilation has
 previously reached about 1.1 GB RSS. Do not start another fixture, build or
 link at this headroom. The six CLI originals and all census evidence remain
