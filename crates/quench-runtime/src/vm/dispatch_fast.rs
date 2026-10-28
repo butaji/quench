@@ -4434,13 +4434,16 @@ script_handler! {
 script_handler! {
     /// `GetField` of a register or `this` at a site past one shape
     /// (`Vm::field_site_polymorphic`): its inline megamorphic entries; any other read takes
-    /// `lane_get_field_hashed`.
+    /// `lane_get_field_hashed`, which a site whose entries moved to the hash runs from then on.
     fn lane_get_field_polymorphic<THIS: bool>(cx, r, ip, i, view) {
         // SAFETY: the context's program outlives the lane run.
         let code = unsafe { &*(*cx).code };
         let Some(value) = (unsafe { lane_known_field_base::<H, THIS>(cx, r, i.b) })
             .and_then(|object| (unsafe { vm(cx) }).inline_polymorphic_field_hit(code, object, i.c))
         else {
+            if (unsafe { vm(cx) }).field_site_hashed(i.c) {
+                requicken::<H>(ip, lane_get_field_hashed::<H, THIS>);
+            }
             sibling!(lane_get_field_hashed::<H, THIS>, r, ip, Carried::script(cx))
         };
         r.set(i.a, value);
