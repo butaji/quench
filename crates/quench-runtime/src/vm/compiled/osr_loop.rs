@@ -227,6 +227,10 @@ pub(crate) enum RegionRejection {
     FieldLimit,
     FieldStoreLimit,
     FieldMutation,
+    /// An array the region indexes is a register it also defines: the region reads its
+    /// arrays at entry (`LoopRegion::arrays`), so it would index the entry's array after the
+    /// register named another, as the row of `a[e][f]` in a loop over `e`.
+    ArrayRedefined,
 }
 
 /// A loop analysis failure attributed to the function PC whose requirement blocked it.
@@ -1760,6 +1764,15 @@ fn admit_region(
         .filter(|(_, role)| matches!(role, Role::Tagged | Role::TaggedArray { .. }))
         .map(|(register, _)| *register)
         .collect();
+    // An indexed register the region defines would be read as the array it held at entry.
+    for (register, role) in &admission.roles {
+        if !matches!(role, Role::Array { .. } | Role::TaggedArray { .. }) {
+            continue;
+        }
+        if let Some(offset) = instructions.iter().position(|instruction| instruction.defined_register() == Some(*register)) {
+            return Err(RegionAnalysisFailure::at(RegionRejection::ArrayRedefined, header, offset));
+        }
+    }
     let mut arrays: Vec<ArrayUse> = admission
         .roles
         .iter()

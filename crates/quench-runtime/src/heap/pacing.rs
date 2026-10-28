@@ -358,7 +358,7 @@ impl MemoryPolicy {
 
 /// Throughput pacing, the default (TOD-167): the JetStream lane's table (v2-cloud-jet), which
 /// the other lanes' measurements bound. Young collections run every eighth of a live set, at
-/// least `THROUGHPUT_MINIMUM_YOUNG` and at most `MAXIMUM_YOUNG` weight
+/// least `THROUGHPUT_MINIMUM_YOUNG` and at most `THROUGHPUT_MAXIMUM_YOUNG` weight
 /// (`THROUGHPUT_SURVIVING_YOUNG_FACTOR` times that past a quarter's young survival on a steady
 /// heap); a full one once the
 /// old generation has doubled or one live set of allocation has passed since the last one, at
@@ -382,7 +382,7 @@ impl MemoryPolicy {
 pub(super) const THROUGHPUT_PACING: GenerationalPacing = GenerationalPacing {
     young: Ratio::new(1, 8),
     minimum_young: THROUGHPUT_MINIMUM_YOUNG,
-    maximum_young: MAXIMUM_YOUNG,
+    maximum_young: THROUGHPUT_MAXIMUM_YOUNG,
     surviving_young_from: SURVIVING_YOUNG_FROM,
     surviving_young_factor: THROUGHPUT_SURVIVING_YOUNG_FACTOR,
     steady_live_growth: STEADY_LIVE_GROWTH,
@@ -471,8 +471,8 @@ const MEMORY_FIRST_FULL_ONLY_HEADROOM: Ratio = Ratio::new(1, 2);
 /// The fewest allocations between collections under memory-first, whatever survived: the
 /// pre-generational minimum headroom.
 const MEMORY_FIRST_MINIMUM_ALLOCATION: usize = 384;
-/// The most allocations between young collections, however large the live set, under either
-/// policy. Without it the young budget is eight live sets: a server whose startup leaves a
+/// The most allocations between young collections, however large the live set, under
+/// memory-first. Without it the young budget is eight live sets: a server whose startup leaves a
 /// few hundred thousand live cells (the Node library plus a framework) allocated millions
 /// between collections, and its peak RSS was mostly garbage. Measured with the `gc-tuning`
 /// build, Linux x86_64, 4 vCPU, 500 connections (evidence/web-gc-young-cap-linux-2026-10-19):
@@ -504,13 +504,23 @@ const YOUNG_MINIMUM_ALLOCATION: usize = 1 << 12;
 /// interleaved runs, x86_64 4 vCPU, 2026-10-25; Score / max RSS): stanford-crypto-aes +10% /
 /// 34.8 -> 30.4 MB, bigint-noble-ed25519 +4% / 31.4 -> 28.7, UniPoker flat / 22.1 -> 19.9,
 /// hash-map flat / 27.3 -> 25.9, pbkdf2 and sha256 within noise, acorn-wtb +4% / +2.6 MB.
-const THROUGHPUT_MINIMUM_YOUNG: usize = 3 << 14;
+/// Raised to 2^19 for Score, which this table serves (memory-first keeps RSS first): V8-v7
+/// fixed work, gc-tuning build, callgrind main thread, 2^19 young with the full interval at
+/// 2^21 against 3 << 14 and 2^18 (v2-cloud-c, x86_64 4 vCPU, 2026-10-28): EarleyBoyer x0.838,
+/// RegExp x0.883, Splay x0.889, Crypto x0.974, DeltaBlue x0.980, RayTrace x0.982, Richards
+/// x0.994, NavierStokes x0.993 of instructions; stock Score, 7 CPU-alternating pairs:
+/// EarleyBoyer x1.08, RayTrace x1.05, Splay x1.03.
+const THROUGHPUT_MINIMUM_YOUNG: usize = 1 << 19;
+/// The most allocations between young collections under throughput: its minimum, so every
+/// young generation is that size (`GenerationalPacing::young_budget`).
+const THROUGHPUT_MAXIMUM_YOUNG: usize = THROUGHPUT_MINIMUM_YOUNG;
 /// The fewest allocations, or old-generation growth, between full collections under
 /// throughput: the JetStream, Score and web lanes' common minimum (v2-cloud-jet, v2-cloud-c,
 /// v2-web). Against memory-first's 384 the Score lane's table, which shares it, ran the Earley
 /// half of EarleyBoyer in about 1190M instructions instead of 2318M, with 816 fewer
-/// collections of the whole live set (v2-cloud-c, x86_64 4 vCPU).
-const THROUGHPUT_MINIMUM_FULL_INTERVAL: usize = 1 << 18;
+/// collections of the whole live set (v2-cloud-c, x86_64 4 vCPU). Four young generations
+/// (`THROUGHPUT_MINIMUM_YOUNG`), so a young collection is not due as a full one too.
+const THROUGHPUT_MINIMUM_FULL_INTERVAL: usize = 1 << 21;
 /// Smoothed young survival past which throughput collects fully (`Regime::FullOnly`): three
 /// quarters. npm module loading keeps about 52% of each young generation (QUENCH_GC_TRACE,
 /// typescript-eslint: 531/1024), and at half the heap went FullOnly and fully re-marked the
@@ -613,14 +623,21 @@ mod tests {
 
     fn full_collection_follows_old_growth_or_the_allocation_cap_under(pacing: GenerationalPacing) {
         let live = 1 << 20;
-        let growth = pacing.old_growth.of(live);
+        // The growth and the allocation that make a full collection due, each at least the
+        // table's minimum interval.
+        let growth = pacing.old_growth.of(live).max(pacing.minimum_old_growth);
+        let cap = pacing.allocation_cap.of(live).max(pacing.minimum_allocation_cap);
         assert!(!pacing.full_due(live, live + growth - 1, 0, 0));
         assert!(pacing.full_due(live, live + growth, 0, 0));
-        assert!(pacing.full_due(live, live, pacing.allocation_cap.of(live), 0));
+        assert!(!pacing.full_due(live, live, cap - 1, 0));
+        assert!(pacing.full_due(live, live, cap, 0));
         assert_eq!(pacing.young_budget(0), pacing.minimum_young);
-        // A live set whose young share lies between the minimum and the maximum budget.
-        let between = pacing.minimum_young * 2 * pacing.young.denominator / pacing.young.numerator;
-        assert_eq!(pacing.young_budget(between), pacing.young.of(between));
+        // A live set whose young share lies between the minimum and the maximum budget, in a
+        // table whose budget may grow with the live set.
+        if pacing.minimum_young < pacing.maximum_young {
+            let between = pacing.minimum_young * 2 * pacing.young.denominator / pacing.young.numerator;
+            assert_eq!(pacing.young_budget(between), pacing.young.of(between));
+        }
         let huge = pacing.maximum_young * 1024;
         assert_eq!(pacing.young_budget(huge), pacing.maximum_young);
     }

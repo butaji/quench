@@ -1830,6 +1830,14 @@ impl<H: Host> Vm<H> {
         self.megamorphic_field_indices.get(self.field_cache_index(site)) != NO_MEGAMORPHIC_FIELD
     }
 
+    /// Whether the site's megamorphic entries moved to the hash (`FieldCacheSet::overflow`),
+    /// which only `polymorphic_field_hit` probes.
+    pub(super) fn field_site_hashed(&self, site: u16) -> bool {
+        let table_index = self.megamorphic_field_indices.get(self.field_cache_index(site));
+        table_index != NO_MEGAMORPHIC_FIELD
+            && self.megamorphic_fields.get(table_index as usize).is_some_and(|set| set.overflow.is_some())
+    }
+
     /// An own-data slot from a site's inline megamorphic entries; the hashed overflow is
     /// left to `cached_field_value`.
     #[inline(always)]
