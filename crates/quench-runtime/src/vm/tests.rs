@@ -15114,6 +15114,99 @@ fn js_jit_general_dispatch_reads_own_fields_through_the_field_cache_and_falls_ba
 
 #[test]
 #[cfg(not(quench_profiled))]
+fn js_jit_general_dispatch_stores_own_fields_through_the_field_cache_and_falls_back_exactly() {
+    let source = r#"
+      function writeField(object, value) { object.value = value; }
+      // Three own properties keep the values in the property arena.
+      const first = { value: 0, other: 1, more: 2 };
+      const second = { other: 3, more: 4, value: 0 };
+      for (let index = 0; index < 64; index++) {
+        writeField(index % 2 === 0 ? first : second, index);
+      }
+      if (first.value !== 62 || second.value !== 63) throw Error('alternating shapes');
+
+      const target = { other: 5 };
+      writeField(first, target);
+      if (first.value !== target) throw Error('heap value fallback');
+
+      let setterValue;
+      const accessor = { other: 1, more: 2, set value(value) { setterValue = value; } };
+      writeField(accessor, 7);
+      if (setterValue !== 7) throw Error('setter fallback');
+
+      const frozen = Object.freeze({ value: 8, other: 1, more: 2 });
+      writeField(frozen, 9);
+      if (frozen.value !== 8) throw Error('frozen fallback');
+
+      const seen = [];
+      const proxy = new Proxy({ value: 0, other: 1, more: 2 }, { set(target, key, value) {
+        seen.push(key);
+        target[key] = value;
+        return true;
+      } });
+      writeField(proxy, 10);
+      if (seen.join() !== 'value') throw Error('proxy fallback');
+
+      // A method cache naming the property makes its stores take the VM path, which
+      // invalidates the cached method.
+      const methods = { other: 1, more: 2, value() { return 1; } };
+      for (let index = 0; index < 8; index++) if (methods.value() !== 1) throw Error('method');
+      writeField(methods, function () { return 2; });
+      if (methods.value() !== 2) throw Error('method cache invalidation');
+      writeField(first, 11);
+      if (first.value !== 11) throw Error('cached shape after misses');
+    "#;
+    let program = Engine::compile(crate::ExecutionRequest::script(
+        source,
+        "js-jit-general-own-field-store.js",
+    ))
+    .unwrap();
+    let function = program
+        .functions
+        .iter()
+        .position(|function| {
+            function
+                .header()
+                .name
+                .or(function.header().inferred_name)
+                .is_some_and(|atom| &program.atoms[atom as usize] == "writeField")
+        })
+        .unwrap() as u32;
+
+    let mut interpreter = Vm::new(TestHost::default());
+    interpreter.execute(&program).unwrap();
+
+    let mut compiled = Vm::new(TestHost::default());
+    compiled.programs.enable_js_general_dispatch();
+    compiled.set_execution_mode(crate::ExecutionMode::Compiled);
+    compiled.programs.compile_general_baseline_when_hot();
+    compiled.execute(&program).unwrap();
+
+    let Some(super::program_store::JsTierState::Compiled(native)) = compiled
+        .programs
+        .js_tier(super::program_store::ProgramId::MAIN, function)
+    else {
+        panic!("writeField should use the general JavaScript compiler");
+    };
+    assert!(native.is_general_dispatch());
+    assert!(native.native_entries() > 0);
+    let body = program.function(function as usize);
+    let set_field_pcs = body
+        .code
+        .iter()
+        .enumerate()
+        .filter_map(|(pc, packed)| {
+            (super::dispatch_fast::decoded_instruction(body, *packed).op()
+                == crate::bytecode::Op::SetField)
+                .then_some(pc)
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(set_field_pcs.len(), 1);
+    assert!(native.general_dispatch_pc_is_native(set_field_pcs[0]));
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
 fn js_jit_general_dispatch_batches_fallback_islands_before_native_ops() {
     let source = r#"
       const captured = { value: 2 };
