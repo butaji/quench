@@ -1461,7 +1461,7 @@ impl<H: Host> Vm<H> {
             },
         };
         self.set_active_program(previous);
-        let result = result?;
+        let result = result.map_err(|error| self.trap_raised_in_javascript(p, error))?;
         match signature.results.as_slice() {
             [] => Ok(Value::UNDEFINED),
             &[ty] => {
@@ -1473,6 +1473,22 @@ impl<H: Host> Vm<H> {
                 self.wasm_results_to_js(p, results, types)
             }
         }
+    }
+
+    /// `error`, leaving Wasm for the JavaScript that called an export: a trap gets its
+    /// `RuntimeError` here, while its JavaScript callers are on the frame stack (deferred lane
+    /// activations become frames first), as V8 captures the stack at the throw; made where a
+    /// handler takes it, its stack would name only the handler's frame. It stays a trap
+    /// (`JsError::wasm_trap`), which no Wasm handler catches.
+    fn trap_raised_in_javascript(&mut self, p: &ResidualProgram, mut error: JsError) -> JsError {
+        let Some(trap) = error.wasm_trap().filter(|_| error.thrown_value().is_none()) else {
+            return error;
+        };
+        self.materialize_deferred_lane();
+        if let Some(object) = self.wasm_js_error(p, Native::WasmRuntimeError, trap.to_string()).thrown_value() {
+            error.replace_thrown_value(object);
+        }
+        error
     }
 
     /// `call_wasm_exported_function` for an exported host function, which converts and

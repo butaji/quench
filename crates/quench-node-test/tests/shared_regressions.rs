@@ -507,7 +507,8 @@ setTimeout(() => console.log(log.join(' ')), 0);
 
 /// A Wasm export called from a lane's frameless activations runs beside them
 /// (`Native::runs_beside_activations`): its results, the stack its JavaScript import observes
-/// (the activations, then frames, in order), and its trap are a frame-stack call's.
+/// (the activations, then frames, in order), and its trap are a frame-stack call's. The
+/// trap's `RuntimeError` names the JavaScript callers it left, not the frame that caught it.
 #[test]
 fn wasm_export_calls_beside_frameless_activations_report_like_node() {
     let source = r#"
@@ -534,7 +535,7 @@ function outer(n) { let sum = 0; for (let i = 2; i < n; i++) sum += middle(i); r
 console.log(outer(3000), outer(3000));
 function calls(x) { return middle(x); }
 calls(1);
-try { calls(0); } catch (e) { console.log(e.constructor.name, e.message); }
+try { calls(0); } catch (e) { console.log(e.constructor.name, e.message, callers(e.stack)); }
 "#;
     let node = observe_node_source(source);
     assert!(node.status.success(), "Node oracle failed: {node:?}");
