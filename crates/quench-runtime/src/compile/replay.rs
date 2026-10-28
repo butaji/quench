@@ -256,9 +256,13 @@ fn constant_hashes(constants: &[crate::bytecode::Constant]) -> Vec<(u64, u32)> {
 
 /// One function of a compilation at load: reserved while it compiles, then compiled, or
 /// finished and released when a replay can make its record again.
+/// An entry is boxed when it holds anything: a large program's compilation keeps an entry
+/// per function while most of them are released, and an inline record (408 bytes) left
+/// each released entry that large (typescript.js: 21.7K entries, 8.9 MB at its compile's
+/// peak).
 pub(super) enum FunctionEntry {
     Reserved,
-    Compiled(crate::bytecode::Function),
+    Compiled(Box<crate::bytecode::Function>),
     Released(Box<ReleasedFunction>),
 }
 
@@ -324,7 +328,7 @@ impl<'a> FunctionTable<'a> {
 
     pub(super) fn set(&mut self, id: u32, function: crate::bytecode::Function) {
         match self {
-            Self::Owned(entries) => entries[id as usize] = FunctionEntry::Compiled(function),
+            Self::Owned(entries) => entries[id as usize] = FunctionEntry::Compiled(Box::new(function)),
             Self::Replay { target, record, .. } => {
                 assert_eq!(id, *target, "a replay makes only its target's record");
                 *record = Some(function);
@@ -387,7 +391,7 @@ impl<'a> FunctionTable<'a> {
         };
         let entry = entries.get_mut(id as usize)?;
         match std::mem::replace(entry, FunctionEntry::Reserved) {
-            FunctionEntry::Compiled(function) => Some(function),
+            FunctionEntry::Compiled(function) => Some(*function),
             other => {
                 *entry = other;
                 None
@@ -420,7 +424,7 @@ impl<'a> FunctionTable<'a> {
     pub(super) fn into_entries(self) -> Vec<FunctionEntry> {
         match self {
             Self::Owned(entries) => entries,
-            Self::Replay { record, .. } => record.into_iter().map(FunctionEntry::Compiled).collect(),
+            Self::Replay { record, .. } => record.into_iter().map(|record| FunctionEntry::Compiled(Box::new(record))).collect(),
         }
     }
 
@@ -1005,5 +1009,15 @@ pub(crate) fn verify(program: &crate::bytecode::ResidualProgram) {
     ));
     if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
         let _ = file.write_all((lines.join("\n") + "\n").as_bytes());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    /// An entry costs a pointer plus its tag however large a record is: a released entry,
+    /// which most of a large program's are while it compiles, holds nothing else.
+    #[test]
+    fn function_entries_hold_records_out_of_line() {
+        assert_eq!(size_of::<super::FunctionEntry>(), 2 * size_of::<usize>());
     }
 }

@@ -4433,13 +4433,32 @@ script_handler! {
 
 script_handler! {
     /// `GetField` of a register or `this` at a site past one shape
-    /// (`Vm::field_site_polymorphic`): its megamorphic entries; any other read takes
-    /// `lane_get_field`.
+    /// (`Vm::field_site_polymorphic`): its inline megamorphic entries; any other read takes
+    /// `lane_get_field_hashed`.
     fn lane_get_field_polymorphic<THIS: bool>(cx, r, ip, i, view) {
         // SAFETY: the context's program outlives the lane run.
         let code = unsafe { &*(*cx).code };
         let Some(value) = (unsafe { lane_known_field_base::<H, THIS>(cx, r, i.b) })
             .and_then(|object| (unsafe { vm(cx) }).inline_polymorphic_field_hit(code, object, i.c))
+        else {
+            sibling!(lane_get_field_hashed::<H, THIS>, r, ip, Carried::script(cx))
+        };
+        r.set(i.a, value);
+        next!(cx, r, following(ip), Carried::script(cx))
+    }
+}
+
+script_handler! {
+    /// `lane_get_field_polymorphic` past its inline entries: the site's hashed entries, own or
+    /// of the immediate prototype (`Vm::polymorphic_field_hit`), as an AST walk reads `type`
+    /// of a node of any of dozens of shapes. Out of line, so the inline probe keeps no hash
+    /// temporaries across its dispatch; any other read takes `lane_get_field`.
+    #[inline(never)]
+    fn lane_get_field_hashed<THIS: bool>(cx, r, ip, i, view) {
+        // SAFETY: the context's program outlives the lane run.
+        let code = unsafe { &*(*cx).code };
+        let Some(value) = (unsafe { lane_known_field_base::<H, THIS>(cx, r, i.b) })
+            .and_then(|object| (unsafe { vm(cx) }).polymorphic_field_hit(code, object, i.c))
         else {
             sibling!(lane_get_field::<H>, r, ip, Carried::script(cx))
         };
@@ -5105,6 +5124,14 @@ fn lane_cached_field<H: Host>(
 ) -> Option<Value> {
     let probe = {
         let vm = unsafe { vm(cx) };
+        // A string's own `length`, which its chain never shadows, as a tokenizer's
+        // `this.input.length` reads: no cache records a primitive's, and the probes below
+        // all decline it (`Vm::cached_string_field_hit`).
+        if atom == vm.length_atom
+            && let Some(text) = vm.heap.string(object)
+        {
+            return Some(Value::number(text.len() as f64));
+        }
         // A typed array's geometry, which no field cache records (`AtomClass::VIRTUAL_FIELD`).
         if vm.atom_class(atom).contains(super::object::AtomClass::VIRTUAL_FIELD)
             && let Some(value) = vm.typed_array_geometry_read(object, atom)
@@ -5632,6 +5659,34 @@ script_handler! {
 }
 
 script_handler! {
+    /// An own-field store at a site past one shape that adds nothing (`lane_set_field_miss`):
+    /// the slot its megamorphic entries record for the receiver's shape
+    /// (`Vm::polymorphic_own_field_store_hit`), as a parser's `this.pos =` reads a parser
+    /// whose shape grows while it runs. A miss takes the general cached write, and moves
+    /// there for good once the site adds properties.
+    #[inline(never)]
+    fn lane_set_field_polymorphic<THIS: bool>(cx, r, ip, i, view) {
+        // SAFETY: the context's program outlives the lane run.
+        let code = unsafe { &*(*cx).code };
+        let object = if THIS { unsafe { lane_fixed_this(cx) } } else { Some(r.get(i.b)) };
+        let stored = object.is_some_and(|object| {
+            unsafe { vm(cx) }.polymorphic_own_field_store_hit(code, object, i.imm(), r.get(i.a), i.c)
+        });
+        if !stored {
+            let general: Handler = if THIS { lane_set_this_field::<H> } else { lane_set_object_field::<H> };
+            if unsafe { vm(cx) }.field_site_adds(i.c) {
+                requicken::<H>(ip, general);
+            }
+            if THIS {
+                sibling!(lane_set_this_field::<H>, r, ip, Carried::script(cx))
+            }
+            sibling!(lane_set_object_field::<H>, r, ip, Carried::script(cx))
+        }
+        next!(cx, r, following(ip), Carried::script(cx))
+    }
+}
+
+script_handler! {
     /// A miss of an own-field store (`lane_set_object_field_own`, `lane_set_this_field_own`):
     /// a site that adds properties or went polymorphic moves to the general cached write
     /// (`lane_set_object_field`, `lane_set_this_field`), which the store itself takes.
@@ -5648,6 +5703,8 @@ script_handler! {
             Some(if THIS { lane_set_this_field::<H> } else { lane_set_object_field::<H> })
         } else if adds && !polymorphic && vm.field_add_atom_eligible(i.imm()) {
             Some(if THIS { lane_set_this_field_add::<H> } else { lane_set_object_field_add::<H> })
+        } else if polymorphic && !adds && !cell_receiver {
+            Some(lane_set_field_polymorphic::<H, THIS>)
         } else if adds || polymorphic || cell_receiver {
             Some(if THIS { lane_set_this_field::<H> } else { lane_set_object_field::<H> })
         } else {
@@ -10549,6 +10606,13 @@ script_handler! {
             && vm.programs.unresolved_names_are_global(unsafe { (*cx).program }, function)
             && (!vm.atom_class(i.imm()).contains(AtomClass::INTERNAL)
                 || crate::bytecode::INTERNAL_GLOBAL_BINDINGS.contains(&vm.atom_name(i.imm())));
+        // The global object's `undefined` is non-writable and non-configurable, and no global
+        // lexical declaration may shadow it (GlobalDeclarationInstantiation rejects a
+        // restricted global property), so a global read of it is always `undefined`.
+        if global && vm.atom_name(i.imm()) == UNDEFINED_GLOBAL {
+            requicken::<H>(ip, lane_load_undefined_global::<H, KIND>);
+            sibling!(lane_load_undefined_global::<H, KIND>, r, ip, Carried::script(cx))
+        }
         if global {
             requicken::<H>(ip, lane_load_global_name::<H, KIND>);
             sibling!(lane_load_global_name::<H, KIND>, r, ip, Carried::script(cx))
@@ -10559,6 +10623,21 @@ script_handler! {
         }
         requicken::<H>(ip, lane_exit::<H>);
         exit(ip)
+    }
+}
+
+/// The global value property `lane_load_name_first` answers without a lookup.
+const UNDEFINED_GLOBAL: &str = "undefined";
+
+script_handler! {
+    /// A `LoadName` of the global `undefined` (`lane_load_name_first`): its value, which no
+    /// binding can change.
+    fn lane_load_undefined_global<KIND: u8>(cx, r, ip, i, view) {
+        r.set(i.a, Value::UNDEFINED);
+        if KIND == LOAD_NAME_CALL {
+            r.set(i.b, Value::UNDEFINED);
+        }
+        next!(cx, r, following(ip), Carried::script(cx))
     }
 }
 
@@ -11260,6 +11339,16 @@ fn lane_native_value<H: Host>(
         Native::GeneratorNext | Native::GeneratorReturn | Native::GeneratorThrow => {
             return lane_call_native(cx, ip, native, callee, receiver, args);
         }
+        // Neither a string method nor a pure native: the promise shortcut, else the native.
+        Native::PromiseThen | Native::PromiseCatch | Native::PromiseResolve => {
+            // SAFETY: the context's program outlives the lane run.
+            let code = unsafe { &*(*cx).code };
+            if let Some(value) = lane_promise_native(vm, code, native, callee, receiver, args) {
+                note_allocation(vm);
+                return Some(value);
+            }
+            return lane_call_native(cx, ip, native, callee, receiver, args);
+        }
         _ => {}
     }
     lane_string_or_native_call(cx, ip, native, callee, receiver, args)
@@ -11369,8 +11458,8 @@ fn lane_regexp_call<H: Host>(
     }
 }
 
-/// A lane native call that `lane_native_call` does not make inline: a pure string method in
-/// place, else the native through `lane_call_native`. Inline into its two callers: a native
+/// A lane native call that `lane_native_call` does not make inline: a pure string method or
+/// a pure native in place, else the native through `lane_call_native`. Inline into its two callers: a native
 /// call otherwise pays this layer's own frame.
 #[inline(always)]
 fn lane_string_or_native_call<H: Host>(
@@ -11388,10 +11477,6 @@ fn lane_string_or_native_call<H: Host>(
         return Some(value);
     }
     if let Some(value) = lane_pure_native(vm, code, native, callee, receiver, args) {
-        return Some(value);
-    }
-    if let Some(value) = lane_promise_native(vm, code, native, callee, receiver, args) {
-        note_allocation(vm);
         return Some(value);
     }
     lane_call_native(cx, ip, native, callee, receiver, args)
