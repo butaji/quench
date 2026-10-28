@@ -5659,6 +5659,34 @@ script_handler! {
 }
 
 script_handler! {
+    /// An own-field store at a site past one shape that adds nothing (`lane_set_field_miss`):
+    /// the slot its megamorphic entries record for the receiver's shape
+    /// (`Vm::polymorphic_own_field_store_hit`), as a parser's `this.pos =` reads a parser
+    /// whose shape grows while it runs. A miss takes the general cached write, and moves
+    /// there for good once the site adds properties.
+    #[inline(never)]
+    fn lane_set_field_polymorphic<THIS: bool>(cx, r, ip, i, view) {
+        // SAFETY: the context's program outlives the lane run.
+        let code = unsafe { &*(*cx).code };
+        let object = if THIS { unsafe { lane_fixed_this(cx) } } else { Some(r.get(i.b)) };
+        let stored = object.is_some_and(|object| {
+            unsafe { vm(cx) }.polymorphic_own_field_store_hit(code, object, i.imm(), r.get(i.a), i.c)
+        });
+        if !stored {
+            let general: Handler = if THIS { lane_set_this_field::<H> } else { lane_set_object_field::<H> };
+            if unsafe { vm(cx) }.field_site_adds(i.c) {
+                requicken::<H>(ip, general);
+            }
+            if THIS {
+                sibling!(lane_set_this_field::<H>, r, ip, Carried::script(cx))
+            }
+            sibling!(lane_set_object_field::<H>, r, ip, Carried::script(cx))
+        }
+        next!(cx, r, following(ip), Carried::script(cx))
+    }
+}
+
+script_handler! {
     /// A miss of an own-field store (`lane_set_object_field_own`, `lane_set_this_field_own`):
     /// a site that adds properties or went polymorphic moves to the general cached write
     /// (`lane_set_object_field`, `lane_set_this_field`), which the store itself takes.
@@ -5675,6 +5703,8 @@ script_handler! {
             Some(if THIS { lane_set_this_field::<H> } else { lane_set_object_field::<H> })
         } else if adds && !polymorphic && vm.field_add_atom_eligible(i.imm()) {
             Some(if THIS { lane_set_this_field_add::<H> } else { lane_set_object_field_add::<H> })
+        } else if polymorphic && !adds && !cell_receiver {
+            Some(lane_set_field_polymorphic::<H, THIS>)
         } else if adds || polymorphic || cell_receiver {
             Some(if THIS { lane_set_this_field::<H> } else { lane_set_object_field::<H> })
         } else {

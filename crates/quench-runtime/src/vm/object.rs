@@ -1432,6 +1432,45 @@ impl<H: Host> Vm<H> {
         true
     }
 
+    /// `primary_own_field_store_hit` at a site past one shape (`field_site_polymorphic`): the
+    /// own-data slot its megamorphic entries, inline or hashed, record for the receiver's
+    /// exact shape, stored with the write barrier.
+    #[inline(always)]
+    pub(super) fn polymorphic_own_field_store_hit(
+        &mut self,
+        p: &ResidualProgram,
+        object: Value,
+        atom: Atom,
+        value: Value,
+        site: u16,
+    ) -> bool {
+        debug_assert!(self.lane_admits(p));
+        if self.method_caches_may_name(atom) {
+            return false;
+        }
+        let Some(record_id) = object.direct_object_index() else {
+            return false;
+        };
+        let receiver = self.heap.object_record_by_id(record_id);
+        if receiver.is_module_namespace() || receiver.is_arguments_object() {
+            return false;
+        }
+        let (index, shape) = (self.field_cache_index(site), receiver.exact_shape());
+        let Some(slot) = self
+            .inline_megamorphic_field_slot(index, shape)
+            .or_else(|| self.hashed_megamorphic_own_field_slot(index, shape))
+        else {
+            return false;
+        };
+        // SAFETY: as for `primary_own_field_store_hit`: the entry was recorded for this exact
+        // shape's own data slot.
+        if !unsafe { self.heap.record_property_set_flat::<true>(record_id, usize::from(slot), value) } {
+            return false;
+        }
+        self.profile.field_cache_hit(2, 0);
+        true
+    }
+
     /// The add `cached_field_add_hit` makes for a lane: an ordinary record's cached add,
     /// without the specialization test (`Vm::lane_admits`) or the store probe before it. The
     /// caller proved `atom` eligible (`field_add_atom_eligible`) for the site.

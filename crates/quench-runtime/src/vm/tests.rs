@@ -182,6 +182,31 @@ fn lane_generator_iteration_steps_keep_generator_semantics() {
 }
 
 #[test]
+fn lane_polymorphic_field_stores_keep_assignment_semantics() {
+    // A store site past one shape writes each recorded shape's slot in the lane; a receiver
+    // that gains the property, a frozen one and an accessor still take the general store.
+    let source = r#"
+      const out = [];
+      class P { constructor(k) { this["w" + k] = k; this.pos = 0; } step(v) { this.pos = v; } }
+      const ps = []; for (let k = 0; k < 6; k++) ps.push(new P(k));
+      for (let r = 0; r < 100; r++) for (const p of ps) p.step(r + p.pos);
+      out.push(ps.map((p) => p.pos).join(","));
+      function set(o, v) { o.x = v; }
+      const os = [{ x: 0, a: 1 }, { x: 0, b: 1 }, { x: 0, c: 1 }];
+      for (let r = 0; r < 50; r++) for (const o of os) set(o, r);
+      const fresh = {}; set(fresh, "added"); out.push(fresh.x, os.map((o) => o.x).join(","));
+      const frozen = Object.freeze({ x: 1, a: 1 }); set(frozen, 9); out.push(frozen.x);
+      const acc = { a: 1, set x(v) { out.push("setter " + v); } }; set(acc, 5);
+      print(out.join(" "));
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    let program = Engine::specialize(source, "lane-polymorphic-stores.js").unwrap();
+    vm.execute(&program).unwrap();
+    assert_eq!(output.borrow().as_slice(), ["4950,4950,4950,4950,4950,4950 added 49,49,49 1 setter 5"]);
+}
+
+#[test]
 fn lane_global_undefined_reads_keep_binding_semantics() {
     // A static global read of `undefined` answers its value in the lane, while a direct
     // eval's `var undefined` and a `with` object's property still shadow it, and neither an
