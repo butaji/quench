@@ -2387,9 +2387,10 @@ impl Function {
             let environment_activation = in_loop
                 && self.parent.is_some()
                 && !self.is_class_constructor
-                // A rest list binding directly fills its slot with the gathered array
+                // Each argument fills its own slot, a hidden one where the list binds its names
+                // apart; a rest list binding directly fills its slot with the gathered array
                 // (`lane_activate_environment`).
-                && self.parameters_own_their_slots(|atom| atoms.get(atom))
+                && self.arguments_own_their_slots(|atom| atoms.get(atom))
                 && self.self_binding_slot.is_none()
                 && !self.inherited_with_scope
                 && self.local_registers.is_empty()

@@ -17408,8 +17408,7 @@ fn specialize_environment_window<H: Host>(
     decoded: &[WideInstruction],
     records: &mut [LaneInstruction],
 ) -> Option<EnvironmentWindow> {
-    if function.locals == 0
-        || u32::from(function.locals) > u64::BITS
+    if u32::from(function.locals) > u64::BITS
         || (function.arguments_slot.is_some() && !function.reads_passed_arguments_only())
         || !function.local_registers.is_empty()
         || function.selective_capture_slots.is_none()
