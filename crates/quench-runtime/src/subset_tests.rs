@@ -540,3 +540,35 @@ print(out.join(" "));
 "#;
     assert_eq!(output(source), ["3,4,5,6 14 12 e7 610 1500500 2 object 3 12502500"]);
 }
+
+#[test]
+fn closures_of_parameter_lists_binding_apart_split_their_activation() {
+    // A list with defaults or patterns keeps each argument in a hidden slot no closure
+    // names, so a closure-making body splits its activation as a simple list's does
+    // (`selective_layout_is_safe`): only captured bindings live in its environment.
+    let source = r#"
+const out = [];
+function g(e, t = 3) { let k = e + t; const f = () => k; return f(); }
+out.push(g(1), g(1, 10));
+function q(a, { b, c = a } = {}) { const add = (x) => x + a + b + c; return add(1); }
+out.push(q(1, { b: 2 }), q(5, { b: 1, c: 0 }));
+function cnt(n = 0, step = 1) { const fs = []; for (let i = 0; i < 3; i++) { fs.push(() => n + i * step); } return fs.map((f) => f()).join(); }
+out.push(cnt(), cnt(10, 5));
+function argsOf(a, b = 2) { const f = () => arguments.length + a + b; a = 100; return [f(), arguments[0]].join(); }
+out.push(argsOf(1), argsOf(1, 1, 1));
+function thr(a, b = a * 2) { const f = () => { throw b; }; try { f(); } catch (e) { return e + a; } }
+out.push(thr(4));
+function rec(n, acc = []) { const push = () => acc.push(n); push(); return n ? rec(n - 1, acc) : acc.join(""); }
+out.push(rec(5));
+function hot(x, y = 1) { const m = () => x * y; return m(); }
+let s = 0; for (let i = 0; i < 20000; i++) s += hot(i, 2); out.push(s);
+function tdz(a = 1) { const f = () => z; let r; try { r = f(); } catch (e) { r = e.constructor.name; } let z = a; return r + f(); }
+out.push(tdz());
+print(out.join(" "));
+"#;
+    let program = Engine::specialize(source, "parameters-apart-split.js").unwrap();
+    program.compile_released();
+    assert_eq!(program.functions[1].selective_capture_slots.as_deref(), Some(&[4][..]));
+    program.validate().unwrap();
+    assert_eq!(output(source), ["4 11 5 7 0,1,2 10,15,20 103,1 104,1 12 543210 399980000 ReferenceError1"]);
+}

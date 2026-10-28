@@ -225,12 +225,7 @@ pub(super) fn apply_function(
         // No closure of this activation can exist, and no nested function captures
         // its locals: a per-iteration or block copy of the environment is unobservable
         // under the same layout conditions that let a closure's activation split.
-        // Each argument must still arrive in a slot of its own, though its name may bind
-        // apart from it (`Function::arguments_own_their_slots`): no environment holds it.
-        if captured.is_empty()
-            && activation_is_private(function, id, inputs)
-            && function.arguments_own_their_slots(|atom| atoms.get(atom))
-        {
+        if captured.is_empty() && selective_layout_is_safe(function, id, inputs, atoms) {
             remove_unobservable_clones(function, &captured);
         }
         return;
@@ -328,8 +323,10 @@ fn inherited_dynamic_scope(functions: &[FunctionFacts]) -> Vec<bool> {
 /// a nested function, or a module body, whose environment nothing outside it reads by name.
 fn selective_layout_is_safe(function: &Function, id: usize, inputs: &LayoutInputs, atoms: &CompilerAtoms<'_>) -> bool {
     activation_is_private(function, id, inputs)
-        // A rest list binding directly names each parameter's own slot, as a simple one does.
-        && function.parameters_own_their_slots(|atom| atoms.get(atom))
+        // Each argument arrives in a slot of its own, which no closure names: a simple list's
+        // or a directly binding rest list's parameter, or the hidden slot of a list binding
+        // its names apart (`Function::arguments_own_their_slots`), whose bindings are locals.
+        && function.arguments_own_their_slots(|atom| atoms.get(atom))
 }
 
 /// Whether nothing outside the function's own code reads its environment by name or

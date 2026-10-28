@@ -127,9 +127,9 @@ pub(crate) fn source_binding_name(name: &str) -> &str {
 /// Whether a local named `name` must live in its function's environment whatever its
 /// captures: other hidden bindings (lexical `this`, `new.target`, home objects, private
 /// names, ...) are reached by name, not only through capture slots. A renamed block binding
-/// is reached only through its slot.
+/// and a hidden argument slot (`HIDDEN_PARAMETER_PREFIX`) are reached only through their slots.
 pub(crate) fn local_name_requires_environment(name: &str) -> bool {
-    name.starts_with('\0') && !name.starts_with(BLOCK_BINDING_MARKER)
+    name.starts_with('\0') && !name.starts_with(BLOCK_BINDING_MARKER) && !name.starts_with(HIDDEN_PARAMETER_PREFIX)
 }
 /// The prefix of a class's home-object binding, which private brand checks and `super`
 /// resolve by name through the enclosing environments.
