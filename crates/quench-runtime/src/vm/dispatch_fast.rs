@@ -10576,6 +10576,13 @@ script_handler! {
             && vm.programs.unresolved_names_are_global(unsafe { (*cx).program }, function)
             && (!vm.atom_class(i.imm()).contains(AtomClass::INTERNAL)
                 || crate::bytecode::INTERNAL_GLOBAL_BINDINGS.contains(&vm.atom_name(i.imm())));
+        // The global object's `undefined` is non-writable and non-configurable, and no global
+        // lexical declaration may shadow it (GlobalDeclarationInstantiation rejects a
+        // restricted global property), so a global read of it is always `undefined`.
+        if global && vm.atom_name(i.imm()) == UNDEFINED_GLOBAL {
+            requicken::<H>(ip, lane_load_undefined_global::<H, KIND>);
+            sibling!(lane_load_undefined_global::<H, KIND>, r, ip, Carried::script(cx))
+        }
         if global {
             requicken::<H>(ip, lane_load_global_name::<H, KIND>);
             sibling!(lane_load_global_name::<H, KIND>, r, ip, Carried::script(cx))
@@ -10586,6 +10593,21 @@ script_handler! {
         }
         requicken::<H>(ip, lane_exit::<H>);
         exit(ip)
+    }
+}
+
+/// The global value property `lane_load_name_first` answers without a lookup.
+const UNDEFINED_GLOBAL: &str = "undefined";
+
+script_handler! {
+    /// A `LoadName` of the global `undefined` (`lane_load_name_first`): its value, which no
+    /// binding can change.
+    fn lane_load_undefined_global<KIND: u8>(cx, r, ip, i, view) {
+        r.set(i.a, Value::UNDEFINED);
+        if KIND == LOAD_NAME_CALL {
+            r.set(i.b, Value::UNDEFINED);
+        }
+        next!(cx, r, following(ip), Carried::script(cx))
     }
 }
 

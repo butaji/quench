@@ -182,6 +182,28 @@ fn lane_generator_iteration_steps_keep_generator_semantics() {
 }
 
 #[test]
+fn lane_global_undefined_reads_keep_binding_semantics() {
+    // A static global read of `undefined` answers its value in the lane, while a direct
+    // eval's `var undefined` and a `with` object's property still shadow it, and neither an
+    // eval's own `let` nor a write to the global changes it.
+    let source = r#"
+      const out = [];
+      function f() { eval("var undefined = 1"); let s; for (let i = 0; i < 3; i++) s = undefined; return s; }
+      function g(o) { with (o) { let s; for (let i = 0; i < 3; i++) s = undefined; return s; } }
+      function h() { let s = 0; for (let i = 0; i < 1000; i++) s = typeof undefined + (undefined === void 0); return s; }
+      out.push(f(), g({ undefined: "w" }), g({}), h());
+      (0, eval)("let undefined = 3");
+      globalThis.undefined = 7; out.push(h());
+      print(out.join(" "));
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    let program = Engine::specialize(source, "lane-global-undefined.js").unwrap();
+    vm.execute(&program).unwrap();
+    assert_eq!(output.borrow().as_slice(), ["1 w  undefinedtrue undefinedtrue"]);
+}
+
+#[test]
 fn lane_field_reads_of_strings_and_hashed_sites_keep_lookup_semantics() {
     // A string's `length` read in the lane answers its own length, whatever its chain holds,
     // while other receivers at the same site read theirs; a site past its inline shapes
