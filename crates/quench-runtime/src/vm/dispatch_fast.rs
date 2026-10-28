@@ -9547,6 +9547,19 @@ impl<H: Host> Vm<H> {
         }
     }
 
+    /// Whether the activations of a lane native call deferred beside them (`lane_deferred`)
+    /// run a function of `program`: the innermost runs its lane context's program, and each
+    /// names its caller's, the outermost's being a frame's.
+    pub(super) fn deferred_activations_run(&self, program: ProgramId) -> bool {
+        let Some(DeferredLaneCall { cx, .. }) = &self.lane_deferred else {
+            return false;
+        };
+        // SAFETY: the deferred call's lane runs, so its context lives.
+        let innermost = unsafe { (*cx.cast::<LaneContext<H>>()).program };
+        innermost == program
+            || self.lane_stack.activations.iter().any(|activation| activation.caller_program == program)
+    }
+
     /// Make a deferred lane native call's activations frames (`DeferredLaneCall`), as
     /// `lane_call_native` would have before calling: at every point that observes the frame
     /// stack while a native runs, which guest code, a stack capture and a collection do.
