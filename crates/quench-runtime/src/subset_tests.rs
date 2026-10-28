@@ -722,3 +722,37 @@ print(out.length + " " + h + " " + out[out.length - 3].slice(0, 60));
 "#;
     assert_eq!(output(source), ["103 -1900204906 0,7,14,21,56,70,84,98,112,126,140,154,84,91,98,105,112,119,1"]);
 }
+
+#[test]
+fn nested_reads_past_their_primary_entries_keep_their_values() {
+    // A nested `GetField` whose steps miss their primary own entries reads the polymorphic
+    // entries and a string's own `length` (`lane_nested_polymorphic_value`): strings of
+    // astral and accented code points, arrays and an object with its own `length`, a middle
+    // step over many shapes, an inherited one, then a getter installed on its prototype and
+    // a primitive in its place. Node 26 prints the same.
+    let source = r#"
+const out = [];
+function P(input) { this.input = input; this.pos = 0; }
+P.prototype.len = function () { return this.input.length; };
+P.prototype.kind = function () { return this.node.type.label; };
+const inputs = ["abc", "", "héllo", "😀x", [1, 2, 3], { length: 7 }, "z".repeat(40)];
+let total = 0;
+for (let round = 0; round < 300; round++) for (const input of inputs) total += new P(input).len();
+out.push(total);
+// Nested reads over many node shapes, then a shape whose middle step changes.
+const shapes = [];
+for (let k = 0; k < 12; k++) { const o = { type: { label: "t" + k } }; o["extra" + k] = k; shapes.push(o); }
+let labels = "";
+for (let round = 0; round < 200; round++) for (const node of shapes) { const p = new P("x"); p.node = node; labels = p.kind(); }
+out.push(labels);
+const proto = { label: "inherited" };
+const node = { type: Object.create(proto) };
+for (let round = 0; round < 50; round++) { const p = new P("x"); p.node = node; labels = p.kind(); }
+out.push(labels);
+Object.defineProperty(proto, "label", { get() { return "getter"; } });
+const p = new P("x"); p.node = node; out.push(p.kind());
+node.type = "str"; out.push(String(p.kind()));
+print(out.join(" "));
+"#;
+    assert_eq!(output(source), ["18300 t11 inherited getter undefined"]);
+}

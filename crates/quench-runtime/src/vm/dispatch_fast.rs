@@ -5018,6 +5018,39 @@ unsafe fn lane_nested_own_value<H: Host>(
     nested_own_field_hit(vm, code, site, base)
 }
 
+/// `lane_nested_own_value` past the primary own entries: each step's site's entries, the
+/// primary own one or the polymorphic ones, inline or hashed (`Vm::polymorphic_field_hit`),
+/// as an AST walk's `node.loc.start` reads nodes of many shapes, and a string's own `length`,
+/// as a tokenizer's `this.input.length` reads (`lane_cached_field`); none runs guest code. Out
+/// of line, so the primary probe keeps its registers; `None` leaves the read to
+/// `lane_get_field`.
+///
+/// # Safety
+/// As for `lane_nested_own_value`.
+#[inline(never)]
+unsafe fn lane_nested_polymorphic_value<H: Host>(
+    cx: *mut LaneContext<H>,
+    r: Registers,
+    i: &LaneInstruction,
+) -> Option<Value> {
+    // SAFETY: the context's program outlives the lane run; a nested record names its site.
+    let code = unsafe { &*(*cx).code };
+    let site = unsafe { code.field_sites.get_unchecked(i.imm() as usize) };
+    let base = unsafe { lane_field_base(cx, r, site.base) }?;
+    let vm = unsafe { vm(cx) };
+    let step = |vm: &mut Vm<H>, object: Value, cache: u16| {
+        vm.primary_own_field_hit(code, object, cache).or_else(|| vm.polymorphic_field_hit(code, object, cache))
+    };
+    let first = step(vm, base, site.first.1)?;
+    match site.second {
+        None => Some(first),
+        Some((atom, _)) if atom == vm.length_atom => vm
+            .array_length_field(first, atom)
+            .or_else(|| vm.heap.string(first).map(|text| Value::number(text.len() as f64))),
+        Some((_, cache)) => step(vm, first, cache),
+    }
+}
+
 /// A nested site's read of `base` where both steps hit primary own entries
 /// (`lane_nested_own_value`), which runs no guest code.
 #[inline(always)]
@@ -5039,7 +5072,9 @@ script_handler! {
     /// A nested `GetField` whose steps hit primary own entries (`lane_nested_own_value`);
     /// any other read takes `lane_get_field`.
     fn lane_get_field_nested<>(cx, r, ip, i, view) {
-        let Some(value) = (unsafe { lane_nested_own_value(cx, r, i) }) else {
+        let Some(value) = (unsafe { lane_nested_own_value(cx, r, i) })
+            .or_else(|| unsafe { lane_nested_polymorphic_value(cx, r, i) })
+        else {
             sibling!(lane_get_field::<H>, r, ip, Carried::script(cx))
         };
         r.set(i.a, value);
