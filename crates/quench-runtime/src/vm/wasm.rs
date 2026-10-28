@@ -3386,6 +3386,88 @@ mod tests {
     }
 
     #[test]
+    fn compiled_wasm_indirect_call_site_keeps_a_certificate_per_target() {
+        // One `call_indirect` site alternates between two table entries: both stay certified,
+        // as a certificate per site would hold only the last (`reference_dispatch_entries`).
+        let target = crate::WasmSignature {
+            params: vec![],
+            results: vec![crate::WasmType::I32],
+        };
+        let returns = |value: i32| crate::WasmFunctionBody {
+            ty: crate::WasmCallableType::Embedded(target.clone()),
+            locals: vec![],
+            operators: vec![Operator::I32Const { value }, Operator::End].into_iter().map(Ok),
+        };
+        let caller = crate::WasmFunctionBody {
+            ty: crate::WasmCallableType::Embedded(crate::WasmSignature {
+                params: vec![crate::WasmType::I32],
+                results: vec![crate::WasmType::I32],
+            }),
+            locals: vec![],
+            operators: vec![
+                Operator::LocalGet { local_index: 0 },
+                Operator::CallIndirect {
+                    type_index: 0,
+                    table_index: 0,
+                },
+                Operator::End,
+            ]
+            .into_iter()
+            .map(Ok),
+        };
+        let module = crate::Engine::lower_wasm_module_with_elements(
+            "compiled-indirect-call-polymorphic-site",
+            [returns(21), returns(4), caller],
+            &crate::WasmTypes::from_functions([wasmparser::FuncType::new([], [wasmparser::ValType::I32])]),
+            &[],
+            &[],
+            &[],
+            &[crate::WasmTable {
+                ty: wasmparser::TableType {
+                    element_type: wasmparser::RefType::FUNCREF,
+                    table64: false,
+                    initial: 2,
+                    maximum: Some(2),
+                    shared: false,
+                },
+                initializer: crate::WasmReferenceInitializer::Function(0).into(),
+            }],
+            &[crate::WasmElement {
+                mode: crate::WasmElementMode::Active {
+                    table: 0,
+                    offset: crate::WasmValue::I32(0).into(),
+                },
+                element_type: wasmparser::RefType::FUNCREF,
+                items: vec![
+                    crate::WasmReferenceInitializer::Function(0),
+                    crate::WasmReferenceInitializer::Function(1),
+                ]
+                .into(),
+            }],
+        )
+        .unwrap();
+        let mut vm = Vm::new(crate::SystemHost);
+        vm.programs.compile_wasm_modules_at_first_entry();
+        vm.set_execution_mode(crate::ExecutionMode::Compiled);
+        let instance = vm.instantiate_wasm_module(&module).unwrap();
+        for _ in 0..3 {
+            for (index, expected) in [(0, 21), (1, 4)] {
+                assert_eq!(
+                    vm.invoke_wasm(&instance, 2, &[crate::WasmValue::I32(index)]).unwrap(),
+                    Some(crate::WasmValue::I32(expected))
+                );
+            }
+        }
+        let compiled = vm
+            .programs
+            .find_shared(&module.program)
+            .and_then(|program| vm.programs.compiled(program).flatten())
+            .expect("compiled program");
+        assert!(compiled.reference_fast_cache_matches_target(0, 0));
+        assert!(compiled.reference_fast_cache_matches_target(1, 1));
+    }
+
+    #[test]
     fn compiled_wasm_indirect_call_reuses_artifact_local_native_target() {
         let signature = crate::WasmSignature {
             params: vec![],

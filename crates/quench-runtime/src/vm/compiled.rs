@@ -3684,18 +3684,43 @@ type ReferenceCallout = unsafe extern "C" fn(
 ) -> i64;
 type DiagnosticReferenceCallout = ReferenceCallout;
 
-/// A monomorphic target certificate for one same-artifact indirect-call site.
-/// The body pointer is owned by this artifact's code mapping. The VM publishes
-/// the epoch last after a successful target return and a table-slot recheck;
+/// A target certificate for same-artifact indirect calls: element `index` of instance `env`'s
+/// table in binding `table` is this artifact's `function`, of type `signature`, whose code is
+/// `body`. An
+/// artifact's call sites share its certificates, one per table index's low bits
+/// (`reference_dispatch_entries`). The body pointer is owned by this artifact's code mapping.
+/// The VM publishes the epoch last after a successful target return and a table-slot recheck;
 /// a nonzero epoch is the validity bit.
 #[repr(C)]
 #[derive(Clone, Copy)]
 struct FastReferenceCache {
     epoch: u64,
     env: Value,
+    table: u64,
     index: u64,
+    signature: u64,
     function: u64,
     body: u64,
+}
+
+/// Certificates an artifact keeps per indirect call site (`reference_dispatch_entries`): a site
+/// whose targets vary dispatches through all of them (JetStream richards-wasm sends each task
+/// through one site to one of four functions; a certificate per site held only the last).
+const REFERENCE_DISPATCH_ENTRIES_PER_SITE: usize = 4;
+
+/// The most certificates an artifact keeps, however many sites it has: a direct-mapped cache
+/// whose collisions cost only a callout.
+const MAX_REFERENCE_DISPATCH_ENTRIES: usize = 256;
+
+/// The certificates of an artifact with `sites` indirect call sites, indexed by the table
+/// index's low bits: a power of two, none without sites.
+fn reference_dispatch_entries(sites: usize) -> usize {
+    if sites == 0 {
+        return 0;
+    }
+    (sites * REFERENCE_DISPATCH_ENTRIES_PER_SITE)
+        .next_power_of_two()
+        .min(MAX_REFERENCE_DISPATCH_ENTRIES)
 }
 
 impl Default for FastReferenceCache {
@@ -3703,7 +3728,9 @@ impl Default for FastReferenceCache {
         Self {
             epoch: 0,
             env: Value::NULL,
+            table: 0,
             index: 0,
+            signature: 0,
             function: 0,
             body: 0,
         }
@@ -4422,7 +4449,9 @@ unsafe fn reference_callout_inner<H: Host, const DIAGNOSTICS: bool>(
                 let cache = unsafe { &mut *fast_cache };
                 cache.epoch = 0;
                 cache.env = context.env;
+                cache.table = u64::from(table_slot);
                 cache.index = index;
+                cache.signature = signature_index;
                 cache.function = function as u64;
                 cache.body = body;
                 cache.epoch = vm.wasm_reference_epoch.get();
@@ -4804,8 +4833,9 @@ pub(super) struct CompiledProgram {
     /// site. The vector is only pointers until a site becomes hot, and each
     /// cache weakly references its callee artifact to avoid Rc cycles.
     reference_call_caches: std::cell::RefCell<Vec<Option<Box<IndirectCallCacheEntry>>>>,
-    /// Stable per-site target certificates for native direct dispatch. These
-    /// do not retain heap values and are invalidated by the VM epoch.
+    /// Target certificates for native direct dispatch, by table index
+    /// (`reference_dispatch_entries`). These do not retain heap values and are
+    /// invalidated by the VM epoch.
     reference_fast_caches: Box<[UnsafeCell<FastReferenceCache>]>,
     /// The owner and bytecode PC for each entry in `reference_call_caches`.
     reference_cache_sites: Vec<(usize, usize, u32)>,
@@ -5067,10 +5097,14 @@ impl CompiledProgram {
     #[cfg(test)]
     pub(super) fn reference_fast_cache_matches_target(
         &self,
-        site: usize,
+        index: usize,
         target_function: usize,
     ) -> bool {
-        let Some(cache) = self.reference_fast_caches.get(site) else {
+        let entries = self.reference_fast_caches.len();
+        let Some(cache) = (entries != 0)
+            .then(|| self.reference_fast_caches.get(index & (entries - 1)))
+            .flatten()
+        else {
             return false;
         };
         let Some(body) = self.table.get(target_function).copied() else {
@@ -8658,6 +8692,9 @@ struct Emitter<'a, 'b, H: Host> {
     blocks: Vec<Option<ir::Block>>,
     /// Dense ids for the compiled artifact's actual indirect call sites.
     reference_site_ids: &'a [(usize, usize)],
+    /// The artifact's certificate count less one (`reference_dispatch_entries`), which selects
+    /// a table index's certificate.
+    reference_dispatch_mask: u64,
     /// Selects the diagnostics ABI at compile time; both ABIs carry site ids.
     diagnostics_enabled: bool,
     base: ir::Value,
@@ -9566,10 +9603,16 @@ impl<H: Host> Emitter<'_, '_, H> {
             self.body.core.context,
             CONTEXT_REFERENCE_FAST_CACHES,
         );
-        let fast_cache = self.body.core.builder.ins().iadd_imm_s(
-            fast_cache_base,
-            (site_id * std::mem::size_of::<FastReferenceCache>()) as i64,
-        );
+        // The certificate of the index's low bits (`reference_dispatch_entries`).
+        let entry = self
+            .body.core.builder
+            .ins()
+            .band_imm_u(index, self.reference_dispatch_mask as i64);
+        let entry_offset = self
+            .body.core.builder
+            .ins()
+            .imul_imm_u(entry, std::mem::size_of::<FastReferenceCache>() as i64);
+        let fast_cache = self.body.core.builder.ins().iadd(fast_cache_base, entry_offset);
         let cached_epoch = self.body.core.builder.ins().load(
             types::I64,
             MemFlagsData::trusted(),
@@ -9633,8 +9676,30 @@ impl<H: Host> Emitter<'_, '_, H> {
             std::mem::offset_of!(FastReferenceCache, index) as i32,
         );
         let index_matches = self.body.core.builder.ins().icmp(IntCC::Equal, index, cached_index);
+        let cached_signature = self.body.core.builder.ins().load(
+            types::I64,
+            MemFlagsData::trusted(),
+            fast_cache,
+            std::mem::offset_of!(FastReferenceCache, signature) as i32,
+        );
+        let signature_matches = self
+            .body.core.builder
+            .ins()
+            .icmp(IntCC::Equal, signature_index, cached_signature);
+        let cached_table = self.body.core.builder.ins().load(
+            types::I64,
+            MemFlagsData::trusted(),
+            fast_cache,
+            std::mem::offset_of!(FastReferenceCache, table) as i32,
+        );
+        let table_matches = self.body.core.builder.ins().icmp(IntCC::Equal, table_slot, cached_table);
+        let signature_matches = self.body.core.builder.ins().band(signature_matches, table_matches);
         let epoch_and_env_match = self.body.core.builder.ins().band(epoch_matches, env_matches);
-        let cache_matches = self.body.core.builder.ins().band(epoch_and_env_match, index_matches);
+        let index_and_signature_match = self.body.core.builder.ins().band(index_matches, signature_matches);
+        let cache_matches = self
+            .body.core.builder
+            .ins()
+            .band(epoch_and_env_match, index_and_signature_match);
         self.body.core.builder
             .ins()
             .brif(cache_matches, check_entry, &[], slow_call, &[]);
@@ -10843,6 +10908,7 @@ impl<'a, H: Host> Analysis<'a, H> {
         fixed_base: Option<i32>,
         globals: &[u32],
         reference_site_ids: &'a [(usize, usize)],
+        reference_dispatch_mask: u64,
         diagnostics_enabled: bool,
     ) -> Option<ir::Function> {
         let function = &self.code.function(index);
@@ -10937,6 +11003,7 @@ impl<'a, H: Host> Analysis<'a, H> {
             plan,
             blocks: vec![None; function.code.len()],
             reference_site_ids,
+            reference_dispatch_mask,
             diagnostics_enabled,
             base,
             length,
@@ -13287,6 +13354,7 @@ impl<H: Host> Vm<H> {
                 fixed_base,
                 &globals,
                 &reference_site_ids[index],
+                reference_dispatch_entries(reference_cache_count).saturating_sub(1) as u64,
                 diagnostics_enabled,
             );
             if let Some(started) = body_build_started {
@@ -13434,7 +13502,7 @@ impl<H: Host> Vm<H> {
                     .take(reference_cache_count)
                     .collect(),
             ),
-            reference_fast_caches: (0..reference_cache_count)
+            reference_fast_caches: (0..reference_dispatch_entries(reference_cache_count))
                 .map(|_| UnsafeCell::new(FastReferenceCache::default()))
                 .collect::<Vec<_>>()
                 .into_boxed_slice(),
@@ -13687,8 +13755,10 @@ impl<H: Host> Vm<H> {
         {
             // The module's code is about to run natively, so the interpreter's views of it go
             // first, and the compile reuses their memory, unless a frame of it is on the stack,
-            // whose lane run may hold their records. An interpreted run derives them again.
-            if !self.frames.iter().any(|frame| frame.program == program) {
+            // whose lane run may hold their records, or a lane's activations are deferred
+            // beside this call (`runs_beside_activations`), which are frames not on it. An
+            // interpreted run derives them again.
+            if self.lane_deferred.is_none() && !self.frames.iter().any(|frame| frame.program == program) {
                 self.programs.release_lane_views(program);
             }
             let started = jit_diagnostics_enabled().then(std::time::Instant::now);
