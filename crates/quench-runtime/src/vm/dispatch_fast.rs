@@ -14595,7 +14595,26 @@ enum MemoLeaf {
     Nested { base: u16, field: super::FieldCache, second: super::FieldCache },
 }
 
+/// The memo shapes `lane_script_call_memo` takes as its parameter: a leaf's step
+/// (`MemoLeaf::shape`), with `MEMO_FORWARD` set for a leaf a forwarding body reaches
+/// (`MemoRead::Forward`), so a site's handler makes its memo's steps with no dispatch on them.
+const MEMO_FIELD: u8 = 0;
+const MEMO_ELEMENT: u8 = 1;
+const MEMO_LENGTH: u8 = 2;
+const MEMO_NESTED: u8 = 3;
+const MEMO_FORWARD: u8 = 4;
+
 impl MemoLeaf {
+    /// Its step's memo shape.
+    fn shape(&self) -> u8 {
+        match self {
+            Self::Field { .. } => MEMO_FIELD,
+            Self::Element { .. } => MEMO_ELEMENT,
+            Self::Length { .. } => MEMO_LENGTH,
+            Self::Nested { .. } => MEMO_NESTED,
+        }
+    }
+
     /// The memo form of `read`, whose hits the active program's caches just answered; `None`
     /// for a polymorphic or inherited read.
     fn of<H: Host>(vm: &Vm<H>, code: &ResidualProgram, read: LeafRead) -> Option<Self> {
@@ -14621,24 +14640,28 @@ impl MemoLeaf {
         })
     }
 
-    /// `LeafRead::run` of the read this memo records.
+    /// `LeafRead::run` of the read this memo records, of the step `shape` names (a constant
+    /// where it inlines); `None` for a memo of another step.
     #[inline(always)]
-    fn run<H: Host>(&self, vm: &Vm<H>, arguments: ReadArguments, this: Value) -> Option<Value> {
+    fn run<H: Host>(&self, shape: u8, vm: &Vm<H>, arguments: ReadArguments, this: Value) -> Option<Value> {
         let base = |base: u16| lane_read_base(crate::bytecode::FieldBase(base), arguments, this);
         match *self {
-            Self::Field { base: field_base, field } => vm.record_field_entry_hit(field, base(field_base)?),
-            Self::Element { base: field_base, field, index } => {
+            Self::Field { base: field_base, field } if shape == MEMO_FIELD => {
+                vm.record_field_entry_hit(field, base(field_base)?)
+            }
+            Self::Element { base: field_base, field, index } if shape == MEMO_ELEMENT => {
                 let array = vm.record_field_entry_hit(field, base(field_base)?)?;
                 vm.direct_dense_element(array, arguments.get(index)?)
             }
-            Self::Length { base: field_base, field } => {
+            Self::Length { base: field_base, field } if shape == MEMO_LENGTH => {
                 let array = vm.record_field_entry_hit(field, base(field_base)?)?;
                 vm.array_length_field(array, vm.length_atom)
             }
-            Self::Nested { base: field_base, field, second } => {
+            Self::Nested { base: field_base, field, second } if shape == MEMO_NESTED => {
                 let object = vm.record_field_entry_hit(field, base(field_base)?)?;
                 vm.record_field_entry_hit(second, object)
             }
+            _ => None,
         }
     }
 }
@@ -14662,6 +14685,39 @@ enum MemoRead {
         method_this: ThisBinding,
         read: MemoLeaf,
     },
+}
+
+impl MemoRead {
+    /// Its memo shape (`MEMO_FIELD` .. `MEMO_FORWARD`).
+    fn shape(&self) -> u8 {
+        match self {
+            Self::Leaf(read) => read.shape(),
+            Self::Forward { read, .. } => MEMO_FORWARD | read.shape(),
+        }
+    }
+}
+
+/// The `lane_script_call_memo` instantiation of memo shape `shape` (`MemoRead::shape`).
+fn script_call_memo_handler<H: Host>(shape: u8) -> Handler {
+    const _: () = assert!(MEMO_NESTED < MEMO_FORWARD);
+    macro_rules! shapes {
+        ($($shape:expr),*) => {
+            match shape {
+                $(shape if shape == $shape => lane_script_call_memo::<H, { $shape }> as Handler,)*
+                _ => unreachable!("a memo shape is a leaf step, forwarded or not"),
+            }
+        };
+    }
+    shapes!(
+        MEMO_FIELD,
+        MEMO_ELEMENT,
+        MEMO_LENGTH,
+        MEMO_NESTED,
+        MEMO_FORWARD | MEMO_FIELD,
+        MEMO_FORWARD | MEMO_ELEMENT,
+        MEMO_FORWARD | MEMO_LENGTH,
+        MEMO_FORWARD | MEMO_NESTED
+    )
 }
 
 /// A call site's memo of its read (`MemoRead`), valid for `callee` in the generation and
@@ -14776,6 +14832,7 @@ fn lane_memoize_read<H: Host>(
             None => return,
         }
     };
+    let handler = script_call_memo_handler::<H>(read.shape());
     vm.lane_stack.read_memos[read_memo_index(site)] = ReadMemo {
         site,
         callee: target.callee,
@@ -14784,7 +14841,7 @@ fn lane_memoize_read<H: Host>(
         this_binding: target.this_binding,
         read,
     };
-    requicken::<H>(site, lane_script_call_memo::<H>);
+    requicken::<H>(site, handler);
 }
 
 /// The value the memo of the call record at `ip` answers its call with (`ReadMemo`); `None`
@@ -14794,7 +14851,7 @@ fn lane_memoize_read<H: Host>(
 /// # Safety
 /// `cx` is the running lane's context and `ip` its call record `i`.
 #[inline(always)]
-unsafe fn lane_memo_read<H: Host>(
+unsafe fn lane_memo_read<H: Host, const SHAPE: u8>(
     cx: *mut LaneContext<H>,
     r: Registers,
     ip: Ip,
@@ -14817,9 +14874,12 @@ unsafe fn lane_memo_read<H: Host>(
         base: ImmediateLayout::call_window_base(i.imm()),
         passed: ImmediateLayout::argument_count(i.imm()),
     };
+    let leaf = SHAPE & !MEMO_FORWARD;
     match &held.read {
-        MemoRead::Leaf(read) => read.run(vm, arguments, this),
-        MemoRead::Forward { base, field, method_field, params, method, method_this, read } => {
+        MemoRead::Leaf(read) if SHAPE & MEMO_FORWARD == 0 => read.run(leaf, vm, arguments, this),
+        MemoRead::Forward { base, field, method_field, params, method, method_this, read }
+            if SHAPE & MEMO_FORWARD != 0 =>
+        {
             let base = lane_read_base(crate::bytecode::FieldBase(*base), arguments, this)?;
             let receiver = vm.record_field_entry_hit(*field, base)?;
             if vm.record_field_entry_hit(*method_field, receiver)? != *method {
@@ -14827,22 +14887,24 @@ unsafe fn lane_memo_read<H: Host>(
             }
             let method_this = lane_receiver_this(vm, *method_this, receiver)?;
             // The call passes the parameters in order, so its argument `k` is parameter `k`.
-            read.run(vm, arguments.within(*params), method_this)
+            read.run(leaf, vm, arguments.within(*params), method_this)
         }
+        _ => None,
     }
 }
 
 script_handler! {
     /// `lane_script_call_full` at a site whose read call made a memo (`lane_memoize_read`): the
-    /// memo's hits answer the call as the read target's would. A call the memo does not
+    /// memo's hits, of its shape `SHAPE` (`MemoRead::shape`), answer the call as the read
+    /// target's would. A call the memo does not
     /// answer, or a returning call the frame does not admit (`lane_returning_call_admitted`),
     /// takes the full form, which the site then keeps.
-    fn lane_script_call_memo<>(cx, r, ip, i, view) {
+    fn lane_script_call_memo<SHAPE: u8>(cx, r, ip, i, view) {
         let returns = i.a & crate::bytecode::RETURN_REGISTER != 0;
         let value = if !unsafe { (*cx).script_calls } || (returns && !lane_returning_call_admitted(cx)) {
             None
         } else {
-            unsafe { lane_memo_read(cx, r, ip, i) }
+            unsafe { lane_memo_read::<H, SHAPE>(cx, r, ip, i) }
         };
         let Some(value) = value else {
             requicken::<H>(ip, lane_script_call_full::<H>);
