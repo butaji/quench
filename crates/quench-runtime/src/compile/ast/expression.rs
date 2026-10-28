@@ -27,8 +27,12 @@ impl FunctionCompiler<'_, '_> {
         let previous = self
             .current_source_position
             .replace((position.line, position.column));
+        let start = self.next_reg;
         let result = self.expression_at_current_position(expression, debug_name);
         self.current_source_position = previous;
+        // An expression hands its consumer one register: every temporary it allocated
+        // besides its result is dead once it completes, and the next one reuses them.
+        self.next_reg = if result >= start { result + 1 } else { start };
         result
     }
 
