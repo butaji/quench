@@ -572,3 +572,28 @@ print(out.join(" "));
     program.validate().unwrap();
     assert_eq!(output(source), ["4 11 5 7 0,1,2 10,15,20 103,1 104,1 12 543210 399980000 ReferenceError1"]);
 }
+
+#[test]
+fn subclasses_sharing_a_parent_constructor_keep_an_add_entry_per_prototype_chain() {
+    // Receivers of one shape under different prototypes reach the parent's stores; each
+    // chain keeps its own add entry (`FieldAddCacheSet::find_for`), and a setter a later
+    // prototype gains still runs for the store it intercepts.
+    let source = r#"
+class Base { constructor(k, p, e) { this.pos = p; this.end = e; this.kind = k; this.id = 0; this.parent = void 0; } }
+class A extends Base { constructor(k, p, e) { super(k, p, e); } a() { return 1; } }
+class B extends Base { constructor(k, p, e) { super(k, p, e); } b() { return 2; } b2() {} }
+class C extends Base { constructor(k, p, e) { super(k, p, e); } }
+let s = 0, keys = "";
+for (let i = 0; i < 3000; i++) {
+  const o = i % 3 === 0 ? new A(i, 1, 2) : i % 3 === 1 ? new B(i, 3, 4) : new C(i, 5, 6);
+  s += o.pos + o.end + o.kind + (o.a ? o.a() : 0) + (o.b ? o.b() : 0);
+  if (i < 3) keys += Object.keys(o).join(",") + ":" + Object.getPrototypeOf(o).constructor.name + ";";
+}
+// A prototype that gains a setter for a later field must see the store run it.
+let seen = 0;
+Object.defineProperty(B.prototype, "id", { set(v) { seen++; }, configurable: true });
+const late = new B(1, 2, 3);
+print(s + " " + keys + " " + seen + " " + Object.keys(late).join(","));
+"#;
+    assert_eq!(output(source), ["4522500 pos,end,kind,id,parent:A;pos,end,kind,id,parent:B;pos,end,kind,id,parent:C; 1 pos,end,kind,parent"]);
+}
