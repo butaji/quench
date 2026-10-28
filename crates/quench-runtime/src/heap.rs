@@ -968,10 +968,10 @@ impl Heap {
     }
 
     #[cfg(test)]
-    pub(crate) fn debug_holders(&self, target: Value) -> Vec<String> {
+    pub(crate) fn debug_holders(&self, target: Value) -> Vec<(String, Value)> {
         let mut found = Vec::new();
         if self.roots.values().any(|value| value == target) {
-            found.push("root table".to_owned());
+            found.push(("root table".to_owned(), Value::UNDEFINED));
         }
         for (index, slot) in self.slots.iter().enumerate() {
             let Some(cell) = &slot.cell else { continue };
@@ -979,7 +979,7 @@ impl Heap {
             let mut last_proto = Value::UNDEFINED;
             Self::children(Value::heap(index as u32), cell, &self.properties, &mut edges, &mut |_, _, _, _, _| {}, GcTraceKind::VerifyFull, &mut last_proto);
             if edges.contains(&target) {
-                found.push(format!("slot {index} {:?} marked={}", cell.profile_variant_name(), Self::marked(&self.marks, index)));
+                found.push((format!("slot {index} {:?} marked={}", cell.profile_variant_name(), Self::marked(&self.marks, index)), Value::heap(index as u32)));
             }
         }
         let mut ids = Vec::new();
@@ -990,7 +990,8 @@ impl Heap {
             let mut edges = Vec::new();
             self.owner_edges(owner, &mut edges, &mut |_, _, _, _, _| {});
             if edges.contains(&target) {
-                found.push(format!("record {owner:?}"));
+                let kind = if owner.direct_object_index().is_some() { "object" } else if owner.direct_array_index().is_some() { "array" } else if owner.direct_function_index().is_some() { "function" } else { "other" };
+                found.push((format!("record {kind} {owner:?}"), owner));
             }
         }
         found

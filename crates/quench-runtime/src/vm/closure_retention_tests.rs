@@ -499,13 +499,10 @@ fn check_case(case: &Case, runs: u32) {
                     let mut next = Vec::new();
                     for value in &frontier {
                         let holders = vm.heap.debug_holders(*value);
-                        eprintln!("DIAG depth {depth} {value:?} held by {holders:?}");
-                        for holder in holders {
-                            if let Some(rest) = holder.strip_prefix("slot ") {
-                                let index: u32 = rest.split(' ').next().unwrap().parse().unwrap();
-                                next.push(Value::heap(index));
-                            } else if let Some(rest) = holder.strip_prefix("record ") {
-                                let _ = rest;
+                        eprintln!("DIAG depth {depth} {value:?} held by {:?}", holders.iter().map(|(name, _)| name).collect::<Vec<_>>());
+                        for (_, holder) in holders {
+                            if !holder.is_undefined() && !next.contains(&holder) {
+                                next.push(holder);
                             }
                         }
                     }
