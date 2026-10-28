@@ -2858,6 +2858,34 @@ script_handler! {
 }
 
 script_handler! {
+    /// `lane_update_get_index` whose read element the next record, an arithmetic operator
+    /// (`lane_operator` or `lane_operator_numbers` of `OP`), takes as an operand, the
+    /// `t + a[++i]` of compiled loops (`specialize_updated_index_operators`): the update, the
+    /// read and that Number operation as one record. A step the fast path leaves runs its
+    /// own record, which stays in place.
+    fn lane_update_get_index_operator<DECREMENT: bool, OP: u32>(cx, r, ip, i, view) {
+        let Some(index) = super::dispatch::number_increment(r.get(i.b), DECREMENT) else {
+            return exit(ip);
+        };
+        r.set(i.a, index);
+        // SAFETY: the triple is three records, the third never the view's last.
+        let read = unsafe { &*following(ip) };
+        let Some(element) = (unsafe { vm(cx) }).direct_dense_element(r.get(read.b), index) else {
+            next!(cx, r, following(ip), Carried::script(cx))
+        };
+        r.set(read.a, element);
+        let operator = unsafe { &*following(following(ip)) };
+        let Some(value) =
+            super::operations::number_value_operator::<OP>(r.get(operator.b), r.get(operator.c))
+        else {
+            next!(cx, r, following(following(ip)), Carried::script(cx))
+        };
+        r.set(operator.a, value);
+        next!(cx, r, following(following(following(ip))), Carried::script(cx))
+    }
+}
+
+script_handler! {
     /// A postfix update of a Number or BigInt (`lane_bigint_increment`): `ToNumeric` into `a` and the
     /// `IncDec` of its result into `c` that follows it (`specialize_updates`). Other values
     /// take the general path at the conversion.
@@ -16745,6 +16773,7 @@ fn derive_lane_view<'live, H: Host>(
     specialize_register_operands::<H>(&decoded, kind, constants, &mut records);
     specialize_updates::<H>(&mut records);
     specialize_updated_index_reads::<H>(&mut records);
+    specialize_updated_index_operators::<H>(&mut records);
     specialize_negated_instanceof::<H>(&mut records);
     specialize_frame_locals::<H>(function, &mut records);
     specialize_outer_captures::<H>(&mut records);
@@ -17268,6 +17297,51 @@ fn specialize_updated_index_reads<H: Host>(records: &mut [LaneInstruction]) {
             lane_update_get_index::<H, true>
         } else {
             lane_update_get_index::<H, false>
+        };
+        records[pc].handler = handler as *const ();
+    }
+}
+
+/// Gives each fused update and read (`lane_update_get_index`) whose element the next record,
+/// an arithmetic operator on two registers, takes as an operand the fused update, read and
+/// operation (`lane_update_get_index_operator`). The read and operator records stay as they
+/// are, for a jump that enters them and for a step the fused record leaves to them.
+fn specialize_updated_index_operators<H: Host>(records: &mut [LaneInstruction]) {
+    use super::operations::{ADDITION, DIVISION, MULTIPLICATION, SUBTRACTION};
+    macro_rules! fused {
+        ($handler:expr, $decrement:expr, $($operator:ident),*) => {{
+            let handler = $handler;
+            $(if handler == lane_operator::<H, $operator> as Handler as *const ()
+                || handler == lane_operator_numbers::<H, $operator> as Handler as *const ()
+            {
+                Some(if $decrement {
+                    lane_update_get_index_operator::<H, true, $operator> as Handler
+                } else {
+                    lane_update_get_index_operator::<H, false, $operator> as Handler
+                })
+            } else)* {
+                None
+            }
+        }};
+    }
+    let increment = lane_update_get_index::<H, false> as Handler as *const ();
+    let decrement = lane_update_get_index::<H, true> as Handler as *const ();
+    for pc in 0..records.len().saturating_sub(2) {
+        let (update, read, operator) = (&records[pc], &records[pc + 1], &records[pc + 2]);
+        if (update.handler != increment && update.handler != decrement)
+            || (operator.b != read.a && operator.c != read.a)
+        {
+            continue;
+        }
+        let Some(handler) = fused!(
+            operator.handler,
+            update.handler == decrement,
+            ADDITION,
+            SUBTRACTION,
+            MULTIPLICATION,
+            DIVISION
+        ) else {
+            continue;
         };
         records[pc].handler = handler as *const ();
     }

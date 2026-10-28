@@ -17094,6 +17094,34 @@ fn lane_forwarded_calls_run_callees_of_other_programs_in_their_program() {
 }
 
 #[test]
+fn lane_fused_update_read_and_operator_falls_back_to_each_step() {
+    // `t + x[++k]` runs as one record (`lane_update_get_index_operator`); a hole, an
+    // inherited element, a non-array, a string, a BigInt and a sum past int32 each
+    // leave it to the read or operator record, with Node's results.
+    let source = r#"
+      function sum(x, k, n) { let t = 0.5; for (let i = 0; i < n; i++) t = t + x[++k]; return t; }
+      function diff(x, k, n) { let t = 100; for (let i = 0; i < n; i++) t = x[--k] - t; return t; }
+      function prod(x, k, n) { let t = 1; for (let i = 0; i < n; i++) { t = t * x[++k]; t = t / x[k--]; t = x[++k] / 2 * t; } return t; }
+      const seen = [];
+      const doubles = [0, 1.5, 2.25, -3.125, 4, 5.5, 6.75];
+      for (let round = 0; round < 3; round++) {
+        seen.push(sum(doubles, 0, 6), diff(doubles, 7, 6), prod(doubles, 0, 3));
+      }
+      seen.push(sum([0, 1, 'a', 2, , 3], 0, 5));
+      const inherited = [0, 1, , 3]; Object.prototype[2] = 40;
+      seen.push(sum(inherited, 0, 3)); delete Object.prototype[2];
+      seen.push(sum({ 1: 2, 2: 3.5 }, 0, 2), sum([0, 2147483647], 0, 1));
+      try { sum([0, 1n], 0, 1); } catch (error) { seen.push(error.constructor.name); }
+      seen.push(String(sum([0, -0], -1, 2)), 1 / diff([-0, 0], 2, 2), sum([0, NaN, 1], 0, 2));
+      print(seen.join(','));
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    vm.execute(&Engine::specialize(source, "lane-update-read-operator.js").unwrap()).unwrap();
+    assert_eq!(output.borrow().as_slice(), ["17.375,90.875,-1.318359375,17.375,90.875,-1.318359375,17.375,90.875,-1.318359375,1.5a2undefined3,44.5,6,2147483647.5,TypeError,0.5,0.01,NaN"]);
+}
+
+#[test]
 fn lane_regexp_exec_keeps_last_index_and_coercion_order() {
     // Exec calls made from frameless activations: a global pattern advances `lastIndex`,
     // an object `lastIndex` is still converted exactly once per call, and a frozen global
