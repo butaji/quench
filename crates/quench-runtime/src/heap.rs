@@ -1956,14 +1956,19 @@ impl Heap {
                 self.aged.resize(self.marks.len(), 0);
                 remembered_owners.extend(self.remembered.iter().map(|&index| Value::heap(index)));
             }
-            let written = self.record_families_mut().map(|(family, _)| family.take_remembered());
+            // The newborn records are named while the carried owners are still marked old, so
+            // only the barriers' log needs excluding from them.
+            let written = self.record_families_mut().map(|(family, _)| {
+                let written = family.take_remembered();
+                family.prepare_minor(&written, age);
+                written
+            });
             for owner in std::mem::take(&mut self.carried_owners) {
                 self.write_barrier(owner);
             }
             for ((family, handle), mut logged) in self.record_families_mut().into_iter().zip(written) {
                 let written = logged.len();
                 logged.extend(family.take_remembered());
-                family.prepare_minor(&logged, age);
                 let first = work.len();
                 work.extend(logged.into_iter().map(handle));
                 if carries_owners {
