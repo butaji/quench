@@ -4564,11 +4564,15 @@ script_handler! {
     /// (`Vm::field_site_polymorphic`): its inline megamorphic entries; any other read takes
     /// `lane_get_field_hashed`, which a site whose entries moved to the hash runs from then on.
     fn lane_get_field_polymorphic<THIS: bool>(cx, r, ip, i, view) {
-        // SAFETY: the context's program outlives the lane run.
-        let code = unsafe { &*(*cx).code };
-        let Some(value) = (unsafe { lane_known_field_base::<H, THIS>(cx, r, i.b) })
-            .and_then(|object| (unsafe { vm(cx) }).inline_polymorphic_field_hit(code, object, i.c))
-        else {
+        let Some(object) = (unsafe { lane_known_field_base::<H, THIS>(cx, r, i.b) }) else {
+            sibling!(lane_get_field_hashed::<H, THIS>, r, ip, Carried::script(cx))
+        };
+        // The record's hint first, the own entry its last hit named (`lane_hint_polymorphic_hit`).
+        if let Some(value) = (unsafe { vm(cx) }).record_field_entry_hit(i.field_hint(), object) {
+            r.set(i.a, value);
+            next!(cx, r, following(ip), Carried::script(cx))
+        }
+        let Some(value) = lane_hint_polymorphic_hit::<H>(cx, ip, i, object) else {
             if (unsafe { vm(cx) }).field_site_hashed(i.c) {
                 requicken::<H>(ip, lane_get_field_hashed::<H, THIS>);
             }
@@ -4577,6 +4581,24 @@ script_handler! {
         r.set(i.a, value);
         next!(cx, r, following(ip), Carried::script(cx))
     }
+}
+
+/// `lane_get_field_polymorphic` past its record's hint: the site's inline entries, an own one
+/// whose hit becomes the hint, as `lane_get_field_own_refresh` keeps it, so a run of reads of
+/// one shape tests the hint alone. Out of line, so the hint's test keeps its registers.
+#[inline(never)]
+fn lane_hint_polymorphic_hit<H: Host>(cx: *mut LaneContext<H>, ip: Ip, i: &LaneInstruction, object: Value) -> Option<Value> {
+    // SAFETY: the context's program outlives the lane run.
+    let code = unsafe { &*(*cx).code };
+    let (value, own) = (unsafe { vm(cx) }).inline_polymorphic_field_hit_entry(code, object, i.c)?;
+    // A held loop header's `call_link` names its site (`lane_header_site`) and keeps no hint.
+    let header = unsafe { (*ip).operand.field.shape } == super::NO_FIELD_RECEIVER && i.call_link.get() != NO_CALL_LINK;
+    if let Some(own) = own.filter(|_| !header) {
+        // SAFETY: as `requicken`; the hit proved the entry an own one of the receiver's shape.
+        unsafe { (*ip.cast_mut()).operand.field.shape = own.receiver };
+        i.call_link.set(own.slot);
+    }
+    Some(value)
 }
 
 script_handler! {
@@ -9724,6 +9746,7 @@ impl<H: Host> Vm<H> {
                             destination: result & crate::bytecode::REGISTER_MASK,
                             construct_this: Some(state.this),
                             settles: None,
+                            generator: None,
                             returns: result & crate::bytecode::RETURN_REGISTER != 0,
                             call_guard: crate::stack::GuestCallGuard::enter().ok(),
                             caller_program: None,
@@ -9814,6 +9837,7 @@ impl<H: Host> Vm<H> {
                     destination: result & crate::bytecode::REGISTER_MASK,
                     construct_this,
                     settles,
+                    generator: None,
                     returns: result & crate::bytecode::RETURN_REGISTER != 0,
                     call_guard,
                     caller_program,
@@ -10619,6 +10643,9 @@ script_handler! {
     #[inline(never)]
     fn lane_generator_step<>(cx, r, ip, i, view) {
         let (method, iterator) = (r.get(i.b), r.get(i.c));
+        if let Some(next) = lane_resume_generator_frame(cx, ip, i, method, iterator) {
+            return next;
+        }
         let value = lane_call_from_frame(cx, ip, |vm, code| vm.generator_iteration_step(code, method, iterator));
         lane_native_complete(cx, ip, i, value)
     }
@@ -14039,6 +14066,7 @@ fn lane_call_frame<H: Host>(ip: Ip) -> Ip {
         destination: i.a,
         construct_this: None,
         settles: None,
+        generator: None,
         returns: false,
         call_guard: Some(call_guard),
         caller_program: None,
@@ -14709,7 +14737,26 @@ enum MemoLeaf {
     Nested { base: u16, field: super::FieldCache, second: super::FieldCache },
 }
 
+/// The memo shapes `lane_script_call_memo` takes as its parameter: a leaf's step
+/// (`MemoLeaf::shape`), with `MEMO_FORWARD` set for a leaf a forwarding body reaches
+/// (`MemoRead::Forward`), so a site's handler makes its memo's steps with no dispatch on them.
+const MEMO_FIELD: u8 = 0;
+const MEMO_ELEMENT: u8 = 1;
+const MEMO_LENGTH: u8 = 2;
+const MEMO_NESTED: u8 = 3;
+const MEMO_FORWARD: u8 = 4;
+
 impl MemoLeaf {
+    /// Its step's memo shape.
+    fn shape(&self) -> u8 {
+        match self {
+            Self::Field { .. } => MEMO_FIELD,
+            Self::Element { .. } => MEMO_ELEMENT,
+            Self::Length { .. } => MEMO_LENGTH,
+            Self::Nested { .. } => MEMO_NESTED,
+        }
+    }
+
     /// The memo form of `read`, whose hits the active program's caches just answered; `None`
     /// for a polymorphic or inherited read.
     fn of<H: Host>(vm: &Vm<H>, code: &ResidualProgram, read: LeafRead) -> Option<Self> {
@@ -14735,24 +14782,28 @@ impl MemoLeaf {
         })
     }
 
-    /// `LeafRead::run` of the read this memo records.
+    /// `LeafRead::run` of the read this memo records, of the step `shape` names (a constant
+    /// where it inlines); `None` for a memo of another step.
     #[inline(always)]
-    fn run<H: Host>(&self, vm: &Vm<H>, arguments: ReadArguments, this: Value) -> Option<Value> {
+    fn run<H: Host>(&self, shape: u8, vm: &Vm<H>, arguments: ReadArguments, this: Value) -> Option<Value> {
         let base = |base: u16| lane_read_base(crate::bytecode::FieldBase(base), arguments, this);
         match *self {
-            Self::Field { base: field_base, field } => vm.record_field_entry_hit(field, base(field_base)?),
-            Self::Element { base: field_base, field, index } => {
+            Self::Field { base: field_base, field } if shape == MEMO_FIELD => {
+                vm.record_field_entry_hit(field, base(field_base)?)
+            }
+            Self::Element { base: field_base, field, index } if shape == MEMO_ELEMENT => {
                 let array = vm.record_field_entry_hit(field, base(field_base)?)?;
                 vm.direct_dense_element(array, arguments.get(index)?)
             }
-            Self::Length { base: field_base, field } => {
+            Self::Length { base: field_base, field } if shape == MEMO_LENGTH => {
                 let array = vm.record_field_entry_hit(field, base(field_base)?)?;
                 vm.array_length_field(array, vm.length_atom)
             }
-            Self::Nested { base: field_base, field, second } => {
+            Self::Nested { base: field_base, field, second } if shape == MEMO_NESTED => {
                 let object = vm.record_field_entry_hit(field, base(field_base)?)?;
                 vm.record_field_entry_hit(second, object)
             }
+            _ => None,
         }
     }
 }
@@ -14776,6 +14827,39 @@ enum MemoRead {
         method_this: ThisBinding,
         read: MemoLeaf,
     },
+}
+
+impl MemoRead {
+    /// Its memo shape (`MEMO_FIELD` .. `MEMO_FORWARD`).
+    fn shape(&self) -> u8 {
+        match self {
+            Self::Leaf(read) => read.shape(),
+            Self::Forward { read, .. } => MEMO_FORWARD | read.shape(),
+        }
+    }
+}
+
+/// The `lane_script_call_memo` instantiation of memo shape `shape` (`MemoRead::shape`).
+fn script_call_memo_handler<H: Host>(shape: u8) -> Handler {
+    const _: () = assert!(MEMO_NESTED < MEMO_FORWARD);
+    macro_rules! shapes {
+        ($($shape:expr),*) => {
+            match shape {
+                $(shape if shape == $shape => lane_script_call_memo::<H, { $shape }> as Handler,)*
+                _ => unreachable!("a memo shape is a leaf step, forwarded or not"),
+            }
+        };
+    }
+    shapes!(
+        MEMO_FIELD,
+        MEMO_ELEMENT,
+        MEMO_LENGTH,
+        MEMO_NESTED,
+        MEMO_FORWARD | MEMO_FIELD,
+        MEMO_FORWARD | MEMO_ELEMENT,
+        MEMO_FORWARD | MEMO_LENGTH,
+        MEMO_FORWARD | MEMO_NESTED
+    )
 }
 
 /// A call site's memo of its read (`MemoRead`), valid for `callee` in the generation and
@@ -14890,6 +14974,7 @@ fn lane_memoize_read<H: Host>(
             None => return,
         }
     };
+    let handler = script_call_memo_handler::<H>(read.shape());
     vm.lane_stack.read_memos[read_memo_index(site)] = ReadMemo {
         site,
         callee: target.callee,
@@ -14898,7 +14983,7 @@ fn lane_memoize_read<H: Host>(
         this_binding: target.this_binding,
         read,
     };
-    requicken::<H>(site, lane_script_call_memo::<H>);
+    requicken::<H>(site, handler);
 }
 
 /// The value the memo of the call record at `ip` answers its call with (`ReadMemo`); `None`
@@ -14908,7 +14993,7 @@ fn lane_memoize_read<H: Host>(
 /// # Safety
 /// `cx` is the running lane's context and `ip` its call record `i`.
 #[inline(always)]
-unsafe fn lane_memo_read<H: Host>(
+unsafe fn lane_memo_read<H: Host, const SHAPE: u8>(
     cx: *mut LaneContext<H>,
     r: Registers,
     ip: Ip,
@@ -14931,9 +15016,12 @@ unsafe fn lane_memo_read<H: Host>(
         base: ImmediateLayout::call_window_base(i.imm()),
         passed: ImmediateLayout::argument_count(i.imm()),
     };
+    let leaf = SHAPE & !MEMO_FORWARD;
     match &held.read {
-        MemoRead::Leaf(read) => read.run(vm, arguments, this),
-        MemoRead::Forward { base, field, method_field, params, method, method_this, read } => {
+        MemoRead::Leaf(read) if SHAPE & MEMO_FORWARD == 0 => read.run(leaf, vm, arguments, this),
+        MemoRead::Forward { base, field, method_field, params, method, method_this, read }
+            if SHAPE & MEMO_FORWARD != 0 =>
+        {
             let base = lane_read_base(crate::bytecode::FieldBase(*base), arguments, this)?;
             let receiver = vm.record_field_entry_hit(*field, base)?;
             if vm.record_field_entry_hit(*method_field, receiver)? != *method {
@@ -14941,22 +15029,24 @@ unsafe fn lane_memo_read<H: Host>(
             }
             let method_this = lane_receiver_this(vm, *method_this, receiver)?;
             // The call passes the parameters in order, so its argument `k` is parameter `k`.
-            read.run(vm, arguments.within(*params), method_this)
+            read.run(leaf, vm, arguments.within(*params), method_this)
         }
+        _ => None,
     }
 }
 
 script_handler! {
     /// `lane_script_call_full` at a site whose read call made a memo (`lane_memoize_read`): the
-    /// memo's hits answer the call as the read target's would. A call the memo does not
+    /// memo's hits, of its shape `SHAPE` (`MemoRead::shape`), answer the call as the read
+    /// target's would. A call the memo does not
     /// answer, or a returning call the frame does not admit (`lane_returning_call_admitted`),
     /// takes the full form, which the site then keeps.
-    fn lane_script_call_memo<>(cx, r, ip, i, view) {
+    fn lane_script_call_memo<SHAPE: u8>(cx, r, ip, i, view) {
         let returns = i.a & crate::bytecode::RETURN_REGISTER != 0;
         let value = if !unsafe { (*cx).script_calls } || (returns && !lane_returning_call_admitted(cx)) {
             None
         } else {
-            unsafe { lane_memo_read(cx, r, ip, i) }
+            unsafe { lane_memo_read::<H, SHAPE>(cx, r, ip, i) }
         };
         let Some(value) = value else {
             requicken::<H>(ip, lane_script_call_full::<H>);
@@ -15285,6 +15375,7 @@ fn lane_push_frame_call<H: Host>(
                 destination,
                 construct_this,
                 settles: None,
+                generator: None,
                 returns,
                 call_guard: Some(call_guard),
                 caller_program,
@@ -15319,6 +15410,94 @@ fn lane_push_frame_call<H: Host>(
             exit(ip)
         }
         _ => exit(ip),
+    }
+}
+
+script_handler! {
+    /// `yield` of the frame of a generator its caller resumed in place
+    /// (`PendingGeneralCall::generator`), made as the general loop makes it: the frame
+    /// suspends into the generator at the record after this one, and the caller continues
+    /// with the step's result (`Vm::finish_in_loop_generator_step`). Any other `yield`
+    /// takes the general path.
+    #[inline(never)]
+    fn lane_yield<>(cx, r, ip, i, view) {
+        let vm = unsafe { vm(cx) };
+        // SAFETY: the general loop's pending calls outlive the lane run.
+        let pending = unsafe { &mut *(*cx).pending };
+        let frame = unsafe { (*cx).frame };
+        let resumed_here = vm.lane_stack.activations.is_empty()
+            && frame + 1 == vm.frames.len()
+            && pending.last().is_some_and(|call| call.generator.is_some() && call.caller + 1 == frame);
+        if !resumed_here {
+            return exit(ip);
+        }
+        let value = r.get(i.b);
+        // SAFETY: the record lies in the running view.
+        let pc = unsafe { ip.offset_from((*cx).base) } as usize;
+        vm.frames[frame].pc = pc + 1;
+        vm.frames[frame].pc_is_resume = true;
+        let mut call = pending.pop().expect("a pending call resumed the generator");
+        let suspended = vm.frames.pop().expect("the generator's frame is the innermost");
+        let stop = super::generator::InLoopGeneratorStop::Yielded {
+            destination: i.a & crate::bytecode::REGISTER_MASK,
+            delegated_result: None,
+        };
+        let resume = call.generator.take().expect("a generator call");
+        let result = vm.finish_in_loop_generator_step(suspended, resume, value, stop);
+        drop(call.call_guard);
+        vm.active_registers = vm.frames[call.caller].registers.as_mut_ptr();
+        vm.write(call.caller, call.destination, result);
+        // The result may be a fresh allocation, which the caller's safepoints collect after.
+        note_allocation(vm);
+        lane_enter_script_frame(cx, call.caller)
+    }
+}
+
+/// `lane_generator_step` of a generator the general loop would resume in place
+/// (`Vm::try_in_loop_generator_step`): lane activations become frames, the generator's frame
+/// is pushed with the pending call its `yield` or return completes with the step's reused
+/// result, and the lane runs it. `None` leaves any other step to the native call.
+#[inline(never)]
+fn lane_resume_generator_frame<H: Host>(
+    cx: *mut LaneContext<H>,
+    ip: Ip,
+    i: &LaneInstruction,
+    method: Value,
+    generator: Value,
+) -> Option<Ip> {
+    let vm = unsafe { vm(cx) };
+    // A step that returns its result from the frame takes the native call.
+    if i.a & crate::bytecode::RETURN_REGISTER != 0 || !vm.generator_resumes_in_place(generator) {
+        return None;
+    }
+    vm.materialize_lane_activations(cx);
+    let frame = unsafe { (*cx).frame };
+    // SAFETY: the call record lies in the running view.
+    let call_pc = unsafe { ip.offset_from((*cx).base) } as usize;
+    let destination = i.a & crate::bytecode::REGISTER_MASK;
+    match vm.try_in_loop_generator_step(frame, call_pc + 1, method, generator, destination, true)? {
+        Ok(StepResult::PushFrame { destination, call_guard, generator: Some(resume), .. }) => {
+            // SAFETY: the general loop's pending calls outlive the lane run.
+            unsafe { &mut *(*cx).pending }.push(PendingGeneralCall {
+                caller: frame,
+                caller_cursor: None,
+                call_pc: call_pc as u32,
+                destination,
+                construct_this: None,
+                settles: None,
+                generator: Some(resume),
+                returns: false,
+                call_guard: Some(call_guard),
+                caller_program: None,
+            });
+            vm.lane_stack.refresh_activation_limit();
+            Some(lane_enter_script_frame(cx, frame + 1))
+        }
+        Ok(_) => unreachable!("a generator step pushes its frame"),
+        Err(error) => {
+            vm.lane_raised = Some(error);
+            Some(exit(ip))
+        }
     }
 }
 
@@ -15408,6 +15587,7 @@ fn lane_frame_construct<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, 
                 destination: i.a & crate::bytecode::REGISTER_MASK,
                 construct_this: Some(this),
                 settles: None,
+                generator: None,
                 returns,
                 call_guard: Some(call_guard),
                 caller_program,
@@ -15485,7 +15665,8 @@ fn lane_return_script_frame<H: Host>(
     let mut frame = unsafe { (*cx).frame };
     let mut exit_ip = ip;
     loop {
-        // An async callee's promise settles on the general path (`PendingGeneralCall::settles`).
+        // An async callee's promise settles on the general path (`PendingGeneralCall::settles`);
+        // a generator resumed in place finishes here as there (`PendingGeneralCall::generator`).
         let returns_here = pending.last().is_some_and(|call| {
             call.caller + 1 == frame && frame + 1 == vm.frames.len() && call.settles.is_none()
         });
@@ -15499,8 +15680,17 @@ fn lane_return_script_frame<H: Host>(
         }
         let mut call = pending.pop().expect("a pending call names the returning frame");
         let completed = vm.frames.pop().expect("the returning frame is the innermost");
-        vm.finish_frame_scopes(&completed);
-        vm.pool_frame(completed);
+        match call.generator.take() {
+            Some(resume) => {
+                let stop = super::generator::InLoopGeneratorStop::Returned;
+                value = vm.finish_in_loop_generator_step(completed, resume, value, stop);
+                note_allocation(vm);
+            }
+            None => {
+                vm.finish_frame_scopes(&completed);
+                vm.pool_frame(completed);
+            }
+        }
         retired = true;
         // A call into another program returns to the caller's, which the loop executes again.
         if let Some(saved) = call.caller_program.take() {
@@ -15544,7 +15734,10 @@ fn lane_return_frame<H: Host>(r: Registers, ip: Ip) -> Ip {
     // the general path owns that [[Construct]] step.
     if !unsafe { (*cx).inline_calls }
         || pending.last().is_none_or(|call| {
-            call.construct_this.is_some() || call.caller_program.is_some() || call.settles.is_some()
+            call.construct_this.is_some()
+                || call.caller_program.is_some()
+                || call.settles.is_some()
+                || call.generator.is_some()
         })
     {
         return exit(ip);
@@ -15706,6 +15899,7 @@ const fn other_handler<H: Host, const BACKWARD: bool, const ACC: u8>(op: Op) -> 
         Op::CallForwardingArguments => Some(lane_forward_call::<H>),
         Op::SuperConstArrayObject2 => Some(lane_const_array_object2::<H>),
         Op::Return => Some(lane_return::<H>),
+        Op::Yield => Some(lane_yield::<H>),
         _ => None,
     }
 }
