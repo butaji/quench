@@ -458,6 +458,11 @@ fn check_case(case: &Case, runs: u32) {
     );
     // Each case also runs with every full mark in parallel rounds (`force_parallel_mark_for_test`),
     // whose closure environment edges the collector follows between rounds.
+    if std::env::var_os("QUENCH_DIAG_DIS").is_some() {
+        let program = Engine::specialize(&source, case.name).unwrap();
+        let text = program.disassemble();
+        eprintln!("DIS {}", text.split("function 1 ").next().unwrap_or(""));
+    }
     for parallel in [false, true] {
     for (compilation, program) in compilations(&source, case.name) {
         let compilation = if parallel { format!("{compilation}, parallel mark") } else { compilation.to_owned() };
