@@ -3252,17 +3252,15 @@ impl Heap {
         {
             self.sparse_arrays = None;
         }
-        let Some(elements) = self.array_elements_mut(array) else {
-            return;
-        };
-        let dense_length = elements.len();
-        let elements = elements.make_mut();
-        elements.resize(length, Value::DELETED);
-        for (index, value) in sparse.into_iter().flat_map(|elements| elements.values) {
-            if index < length && (index >= dense_length || elements[index].is_deleted()) {
-                elements[index] = value;
+        self.grow_array_elements(array, |elements| {
+            let dense_length = elements.len();
+            elements.resize(length, Value::DELETED);
+            for (index, value) in sparse.into_iter().flat_map(|elements| elements.values) {
+                if index < length && (index >= dense_length || elements[index].is_deleted()) {
+                    elements[index] = value;
+                }
             }
-        }
+        });
     }
     pub(crate) fn property_get(&self, object: &Object, slot: usize) -> Option<Value> {
         let value = match object.properties().has_inline_property_storage() {

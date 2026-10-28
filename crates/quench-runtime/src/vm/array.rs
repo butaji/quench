@@ -655,14 +655,9 @@ impl<H: Host> Vm<H> {
         {
             return false;
         }
-        let Some(object) = self.heap.array_mut(array) else {
+        if self.heap.grow_array_elements(array, |elements| elements.extend_from_slice(values)).is_none() {
             unreachable!("matched an array above");
-        };
-        let elements = super::index::mutable_array_elements(object.elements_mut());
-        let capacity = elements.capacity();
-        elements.extend_from_slice(values);
-        let grown = elements.capacity() - capacity;
-        self.heap.charge_payload_growth(grown * size_of::<Value>());
+        }
         true
     }
 
@@ -696,14 +691,9 @@ impl<H: Host> Vm<H> {
         if !self.array_indices_store_plainly(this, length..final_length) {
             return None;
         }
-        let Some(object) = self.heap.array_mut(this) else {
+        if self.heap.grow_array_elements(this, |elements| elements.extend_from_slice(args)).is_none() {
             unreachable!("matched an array above");
-        };
-        let elements = super::index::mutable_array_elements(object.elements_mut());
-        let capacity = elements.capacity();
-        elements.extend_from_slice(args);
-        let grown = elements.capacity() - capacity;
-        self.heap.charge_payload_growth(grown * size_of::<Value>());
+        }
         Some(Value::number(final_length as f64))
     }
 
@@ -716,10 +706,9 @@ impl<H: Host> Vm<H> {
         {
             return false;
         }
-        let Some(object) = self.heap.array_mut(this) else {
+        if self.heap.grow_array_elements(this, |elements| elements.push(value)).is_none() {
             unreachable!("matched an array above");
-        };
-        super::index::mutable_array_elements(object.elements_mut()).push(value);
+        }
         true
     }
 
@@ -738,13 +727,11 @@ impl<H: Host> Vm<H> {
         let Some(object) = self.heap.array_store_mut(array, value) else {
             return false;
         };
-        let elements = super::index::mutable_array_elements(object.elements_mut());
-        if index == length {
-            elements.push(value);
-        } else {
-            elements[index] = value;
+        if index < length {
+            super::index::mutable_array_elements(object.elements_mut())[index] = value;
+            return true;
         }
-        true
+        self.heap.grow_array_elements(array, |elements| elements.push(value)).is_some()
     }
 
     /// ArrayAccumulation's CreateDataPropertyOrThrow of `values` at a dense literal's next
@@ -757,14 +744,9 @@ impl<H: Host> Vm<H> {
         if length.checked_add(values.len()).is_none_or(|end| end > MAX_ARRAY_LENGTH) {
             return false;
         }
-        let Some(object) = self.heap.array_mut(array) else {
+        if self.heap.grow_array_elements(array, |elements| elements.extend_from_slice(values)).is_none() {
             unreachable!("matched an array above");
-        };
-        let elements = super::index::mutable_array_elements(object.elements_mut());
-        let capacity = elements.capacity();
-        elements.extend_from_slice(values);
-        let grown = elements.capacity() - capacity;
-        self.heap.charge_payload_growth(grown * size_of::<Value>());
+        }
         true
     }
 
