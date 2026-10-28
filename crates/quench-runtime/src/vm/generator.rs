@@ -4,6 +4,16 @@ use super::activation::{
 use super::promise::{PromiseReaction, PromiseState};
 use super::*;
 
+/// How a generator's resumption stopped (`Vm::resume_generator_step`).
+pub(super) enum GeneratorStep {
+    /// At a `yield` of the value.
+    Yielded(Value),
+    /// At a `yield*` passing its delegate's own result object on.
+    Delegated(Value),
+    /// Its body completed with the value, or it had completed before.
+    Done(Value),
+}
+
 impl<H: Host> Vm<H> {
     pub(super) fn generator_prototype_method(
         &mut self,
@@ -1230,11 +1240,28 @@ impl<H: Host> Vm<H> {
 
     fn resume_generator(
         &mut self,
-        _p: &ResidualProgram,
+        p: &ResidualProgram,
         generator: Value,
         args: &[Value],
         initial_error: Option<JsError>,
     ) -> Result<Value, JsError> {
+        match self.resume_generator_step(p, generator, args, initial_error)? {
+            GeneratorStep::Yielded(value) => self.iterator_result(value, false),
+            GeneratorStep::Done(value) => self.iterator_result(value, true),
+            GeneratorStep::Delegated(result) => Ok(result),
+        }
+    }
+
+    /// Resumes `generator` as `next`, `return` or `throw` do, and says how it stopped, so a
+    /// caller that only reads the result's `value` and `done` (`Vm::generator_iteration_step`)
+    /// need not allocate one.
+    pub(super) fn resume_generator_step(
+        &mut self,
+        _p: &ResidualProgram,
+        generator: Value,
+        args: &[Value],
+        initial_error: Option<JsError>,
+    ) -> Result<GeneratorStep, JsError> {
         let (continuation, realm, done) = {
             let Some(record) = self.generator_record_mut(generator) else {
                 return Err(JsError("generator receiver is invalid".into()));
@@ -1256,7 +1283,7 @@ impl<H: Host> Vm<H> {
             if let Some(error) = initial_error {
                 return Err(error);
             }
-            return self.iterator_result(Value::UNDEFINED, true);
+            return Ok(GeneratorStep::Done(Value::UNDEFINED));
         }
         let continuation = continuation.ok_or_else(|| JsError("generator is suspended".into()))?;
         if matches!(continuation.completion, Completion::GeneratorStart)
@@ -1326,10 +1353,10 @@ impl<H: Host> Vm<H> {
                         Value::UNDEFINED,
                     ));
                 }
-                match delegated_result {
-                    Some(result) => Ok(result),
-                    None => self.iterator_result(value, false),
-                }
+                Ok(match delegated_result {
+                    Some(result) => GeneratorStep::Delegated(result),
+                    None => GeneratorStep::Yielded(value),
+                })
             }
             FrameOutcome::Complete(value) | FrameOutcome::ConstructComplete { value, .. } => {
                 self.pool_frame(frame);
@@ -1337,7 +1364,7 @@ impl<H: Host> Vm<H> {
                     record.running = false;
                     record.done = true;
                 }
-                self.iterator_result(value, true)
+                Ok(GeneratorStep::Done(value))
             }
             FrameOutcome::Await { .. } => {
                 self.pool_frame(frame);

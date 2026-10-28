@@ -4,8 +4,10 @@ use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 
 const FACTORY: &str = quench_js_check::checked_js!(
-    r#"(namesNative, listenersNative, rawNative, countNative, addNative, onceNative, removeNative, allNative, emitNative, emitListenersNative, captureNative, apply, shapeKey) => {
+    r#"(namesNative, listenersNative, rawNative, countNative, addNative, onceNative, removeNative, allNative, emitNative, emitListenersNative, captureNative, apply, call, shapeKey) => {
   'use strict';
+  // The most listener arguments `emit` passes to a lone listener without gathering them.
+  const DIRECT_ARGUMENTS = 2;
   return {
     eventNames: function eventNames() { return namesNative(this); },
     listeners: function listeners(type) { return listenersNative(this, type); },
@@ -54,20 +56,38 @@ const FACTORY: &str = quench_js_check::checked_js!(
     removeAllListeners: function removeAllListeners(type) { return allNative(this, type, arguments.length > 0); },
     // Any event but "error" with one function listener calls it here, as `emitListenersNative`
     // would, so the listener runs without a native boundary; a listener array, the "error"
-    // event and every other case take the native store's dispatch.
-    // The listener arguments come from `arguments`, which a body that only reads it keeps
-    // as the values passed, so the call runs without a frame where a rest parameter's would
-    // take one.
+    // event and every other case take the native store's dispatch. The listener arguments
+    // come from `arguments`, which a body that only reads it keeps as the values passed, so
+    // the call runs without a frame where a rest parameter's would take one. An event without
+    // a listener returns before they are gathered, and a lone listener of up to two takes
+    // them from `arguments` directly: a server emits several events per request, and each
+    // argument array was one more young allocation in flight.
     emit: function emit(type) {
       const count = arguments.length;
-      const args = count === 2 ? [arguments[1]] : count === 3 ? [arguments[1], arguments[2]] : [];
-      if (count > 3) for (let index = 1; index < count; index++) args[index - 1] = arguments[index];
+      let handler;
+      if (type !== "error") {
+        const events = this._events;
+        if (events === undefined) return false;
+        handler = events[type];
+        if (handler === undefined) return false;
+      }
+      const direct = typeof handler === "function" && count <= DIRECT_ARGUMENTS + 1;
+      let result;
+      if (direct) {
+        result = count === 1 ? call(handler, this)
+          : count === 2 ? call(handler, this, arguments[1])
+          : call(handler, this, arguments[1], arguments[2]);
+        if (result === undefined || result === null) return true;
+      }
+      const args = [];
+      for (let index = 1; index < count; index++) args[index - 1] = arguments[index];
+      if (direct) {
+        captureNative(this, result, type, args);
+        return true;
+      }
       if (type === "error") return emitNative(this, type, args);
-      const events = this._events;
-      if (events === undefined) return false;
-      const handler = events[type];
       if (typeof handler !== "function") return emitListenersNative(this, type, args, handler);
-      const result = apply(handler, this, args);
+      result = apply(handler, this, args);
       if (result !== undefined && result !== null) captureNative(this, result, type, args);
       return true;
     }
@@ -173,6 +193,10 @@ pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<()
     }
     let reflect = get(context, global, "Reflect")?;
     operations.push(get(context, reflect, "apply")?);
+    operations.push(context.evaluate_script_rooted(
+        "Function.prototype.call.bind(Function.prototype.call)",
+        "node:events/call.js",
+    )?);
     operations.push(get(context, data, "shapeKey")?);
     let factory = context.evaluate_script_rooted(FACTORY, "node:events/inspection.js")?;
     let undefined = context.undefined();

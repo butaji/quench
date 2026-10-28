@@ -1391,6 +1391,14 @@ impl FunctionHeader {
     }
 }
 
+/// What a record built from its program (`ResidualProgram::built_record`) is for: kept as the
+/// function's record, which its first call makes, or read once and dropped.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum RecordUse {
+    Kept,
+    Transient,
+}
+
 /// One entry of a program's function table: the header, always present, and the compiled
 /// record, written once. Reading the record through `Deref` requires that it was compiled.
 /// Clones of a program share its records (installing an entry clones it into the VM); a
@@ -3788,31 +3796,56 @@ impl ResidualProgram {
     #[cold]
     #[inline(never)]
     fn recompile_function(&self, index: usize) -> &Function {
-        self.functions[index].record.get_or_init(|| {
-            if let Some(unlowered) = self.functions[index].unlowered.borrow_mut().take() {
-                let function = self.lower_unlowered(unlowered);
-                function.decoded.prime_loop(&function.code, &function.wide);
-                return std::rc::Rc::new(function);
+        self.functions[index]
+            .record
+            .get_or_init(|| std::rc::Rc::new(self.built_record(index, RecordUse::Kept)))
+    }
+
+    /// `write` applied to `index`'s record: the record itself when it is compiled, else one
+    /// built for this call alone and dropped after it. Encoding a program reads every
+    /// record once; compiling its released ones all again for that held them all at once
+    /// (typescript.js: 21.7K functions, +38 MB at a cold compile's peak).
+    pub(crate) fn with_record<R>(&self, index: usize, write: impl FnOnce(&Function) -> R) -> R {
+        match self.functions[index].record() {
+            Some(function) => write(function),
+            None => write(&self.built_record(index, RecordUse::Transient)),
+        }
+    }
+
+    /// `index`'s record, from its unlowered form, its encoded entry or its source.
+    fn built_record(&self, index: usize, purpose: RecordUse) -> Function {
+        let unlowered = {
+            let mut unlowered = self.functions[index].unlowered.borrow_mut();
+            match purpose {
+                RecordUse::Kept => unlowered.take(),
+                RecordUse::Transient => unlowered.clone(),
             }
-            crate::compile::compile_phase_boundary(crate::compile::CompilePhase::FirstCall);
-            let deferred = self
-                .encoded_records
-                .as_deref()
-                .and_then(|records| binary::decode_deferred_function(records, index));
-            let function = match deferred {
-                Some(decoded) => decoded.unwrap_or_else(|error| {
-                    panic!("function {index} of {} does not decode: {error}", self.source_name)
-                }),
-                None => crate::compile::replay::recompile(self, index as u32)
-                    .unwrap_or_else(|error| {
-                        panic!("function {index} of {} does not compile again: {error}", self.source_name)
-                    })
-                    .function,
-            };
-            // As `ResidualProgram::prime_loop_decoding` primes an installed program's records.
+        };
+        if let Some(unlowered) = unlowered {
+            let function = self.lower_unlowered(unlowered);
             function.decoded.prime_loop(&function.code, &function.wide);
-            std::rc::Rc::new(function)
-        })
+            return function;
+        }
+        if purpose == RecordUse::Kept {
+            crate::compile::compile_phase_boundary(crate::compile::CompilePhase::FirstCall);
+        }
+        let deferred = self
+            .encoded_records
+            .as_deref()
+            .and_then(|records| binary::decode_deferred_function(records, index));
+        let function = match deferred {
+            Some(decoded) => decoded.unwrap_or_else(|error| {
+                panic!("function {index} of {} does not decode: {error}", self.source_name)
+            }),
+            None => crate::compile::replay::recompile(self, index as u32)
+                .unwrap_or_else(|error| {
+                    panic!("function {index} of {} does not compile again: {error}", self.source_name)
+                })
+                .function,
+        };
+        // As `ResidualProgram::prime_loop_decoding` primes an installed program's records.
+        function.decoded.prime_loop(&function.code, &function.wide);
+        function
     }
 
     /// An unlowered record lowered against the finished program's tables, as its load

@@ -1155,6 +1155,17 @@ impl<H: Host> Vm<H> {
         args: &[Value],
         callee: Value,
     ) -> Result<Value, JsError> {
+        self.as_native_activation(native, callee, |vm| vm.call_native(p, native, this, args))
+    }
+
+    /// Runs `body` as the native `callee` of kind `native` runs: in its realm, under its
+    /// native activation, which stack traces and `caller` read, and its stack guard.
+    pub(super) fn as_native_activation<R>(
+        &mut self,
+        native: Native,
+        callee: Value,
+        body: impl FnOnce(&mut Self) -> Result<R, JsError>,
+    ) -> Result<R, JsError> {
         // A realm's own natives run in that realm; a native shared by every realm runs in
         // its caller's, which is the realm whose objects it builds.
         let realm = match self.heap.function(callee) {
@@ -1185,7 +1196,7 @@ impl<H: Host> Vm<H> {
             });
         let result = (|| {
             let _stack = self.enter_stack()?;
-            self.call_native(p, native, this, args)
+            body(self)
         })();
         self.realm.promise.active_native.pop();
         self.switch_realm_global(previous_global);

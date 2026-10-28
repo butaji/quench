@@ -144,6 +144,44 @@ fn strict_terminal_calls_preserve_catch_and_finally_handlers() {
 }
 
 #[test]
+fn lane_generator_iteration_steps_keep_generator_semantics() {
+    // A for-of step of an intrinsic generator `next` resumes the generator in place with a
+    // reused result (`lane_generator_step`): delegation passes its inner result on, a throw
+    // and a break close as before, a patched `next`, a running generator and a done one take
+    // the general step, and nested and repeated loops see their own values.
+    let source = r#"
+      const out = [];
+      function* range(n) { for (let i = 0; i < n; i++) yield i; }
+      function* inner() { yield "a"; yield "b"; return "r"; }
+      function* deleg() { const r = yield* inner(); yield r; }
+      function* map(it, f) { for (const x of it) yield f(x); }
+      function* thrower() { yield 1; throw new Error("boom"); }
+      function* fin() { try { yield 1; yield 2; } finally { out.push("fin"); } }
+      let s = 0; for (const x of range(1000)) s += x; out.push(s);
+      const d = []; for (const x of deleg()) d.push(x); out.push(d.join(""));
+      s = 0; for (const x of map(map(range(100), (x) => x * 2), (x) => x + 1)) s += x; out.push(s);
+      try { for (const x of thrower()) out.push("t" + x); } catch (e) { out.push(e.message); }
+      for (const x of fin()) { out.push("f" + x); break; }
+      const g = range(3); g.next(); for (const x of g) out.push("rest" + x);
+      function* self() { const me = yield 1; try { for (const x of me) {} } catch (e) { out.push(e.constructor.name); } }
+      const it = self(); it.next(); it.next(it);
+      let patchedSteps = 0;
+      const gen = range(2); gen.next = function () { return { value: "patched", done: ++patchedSteps > 2 }; };
+      for (const x of gen) out.push(x);
+      const done = range(2); for (const x of done) {} out.push(JSON.stringify(done.next()));
+      print(out.join(" "));
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    let program = Engine::specialize(source, "lane-generator-steps.js").unwrap();
+    vm.execute(&program).unwrap();
+    assert_eq!(
+        output.borrow().as_slice(),
+        ["499500 abr 10000 t1 boom f1 fin rest1 rest2 TypeError patched patched {\"done\":true}"]
+    );
+}
+
+#[test]
 fn lane_calls_passing_extra_values_keep_them_only_for_legacy_reflection() {
     // A lane call passing more values than its callee's parameters keeps them for a sloppy
     // callee, whose `f.arguments` and caller's `arguments` read them, and passes a strict
