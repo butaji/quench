@@ -158,9 +158,17 @@ const MEMORY_FIRST_PROMOTION_AGE: PromotionAge = PromotionAge::First;
 /// next, were freed by minor collections (web's tput.sh, 500 connections, final VmHWM,
 /// gc-tuning build of v2-web 191db23f3b with v2-gc 9cfcb96743, x86_64 4 vCPU, 2026-10-28,
 /// 3 rounds, medians: fastify 39.6 -> 37.8 MB, hono 42.8 -> 39.1 MB; with
-/// `THROUGHPUT_MAXIMUM_YOUNG` at 2^20, 37.2 and 33.4 MB, Bun 50-52 and 37-40), but tracing
-/// every survivor twice cost V8-v7 EarleyBoyer 10.1% and Splay 1.5% of instructions
-/// (v2-cloud-c, fixed-work callgrind), whose survivors do not die old.
+/// `THROUGHPUT_MAXIMUM_YOUNG` at 2^20, 37.2 and 33.4 MB, Bun 50-52 and 37-40), but cost V8-v7
+/// EarleyBoyer 10.2% and Splay 1.5% of instructions (v2-cloud-c, fixed-work callgrind, all
+/// threads), three fifths of it rebuilding the remembered sets (`Heap::remember_young_edges`)
+/// and the rest the second trace. Aging only while it frees what it ages keeps both: fastify
+/// at 500 connections (bombardier, final VmHWM, gc-tuning build of df89d4f95a,
+/// x86_64 4 vCPU, 2026-10-28, 3 rounds) 34.4-34.9 MB against 37.5-40.1 never aging and
+/// 33.6-34.0 always; EarleyBoyer's long run 14.18G instructions against 14.12G never and
+/// 15.13G always, aging through its first phase, where 99% of aged survivors die at their
+/// second minor collection, and not its later ones, where under half do. A fixed count of
+/// full collections of aging instead let promotions pile up between them on fastify
+/// (40.9-43.5 MB).
 const THROUGHPUT_PROMOTION_AGE: PromotionAge = PromotionAge::First;
 /// The share of what minors promoted that a full collection must find dead to promote at the
 /// second survival: half, so most promotions were garbage held to the full collection.
