@@ -155,6 +155,7 @@ mod method_cache;
 mod plain_equality;
 mod module;
 mod number;
+mod object_template;
 mod object;
 mod shape_memo;
 mod symbol_write_proof;
@@ -2032,6 +2033,8 @@ pub(crate) struct Vm<H> {
     runtime_atoms: RuntimeAtoms,
     /// `Vm::constructed_shape` answers; cleared by every collection.
     constructed_shapes: [provenance::ConstructedShape; provenance::CONSTRUCTED_SHAPE_ENTRIES],
+    /// The host's object templates (`object_template`), indexed by their ids.
+    object_templates: Vec<object_template::ObjectTemplate>,
     method_caches: Vec<[MethodCache; 2]>,
     megamorphic_methods: Vec<MethodCacheSet>,
     method_cache_atoms: method_cache::MethodCacheAtoms,

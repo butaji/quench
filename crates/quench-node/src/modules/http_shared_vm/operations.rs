@@ -163,19 +163,74 @@ pub(super) const RESPONSE_HIGH_WATER_MARK: usize = 64 * 1024;
 /// A ServerResponse's `statusCode` until the application sets one (Node's `ServerResponse`).
 pub(super) const DEFAULT_STATUS: u16 = 200;
 
+/// The own data properties the EventEmitter construction reads that a program may write
+/// (`objectTemplateCapture`'s probes), as flat (holder, key) pairs: `init`'s reads of the
+/// EventEmitter prototype's `_events`, `_maxListeners` and capture flag, `EventEmitter.init`
+/// itself, and `Function.prototype.call`, which each `X.call(this)` of a constructor chain
+/// reads. Prototype layout (accessors, added keys) a template guards itself.
+fn emitter_template_probes(context: &mut Context<'_>, emitter: RootId) -> Result<Vec<RootId>, RootedError> {
+    let event_data = context
+        .host_mut()
+        .shared_state()
+        .borrow()
+        .event_targets_api
+        .ok_or_else(|| RootedError::host("event listener configuration missing"))?;
+    let capture_key = crate::modules::event_constructor_shared_vm::get(context, event_data, "captureKey")?;
+    let emitter_prototype = get(context, emitter, "prototype")?;
+    let global = context.global_root()?;
+    let function = get(context, global, "Function")?;
+    let function_prototype = get(context, function, "prototype")?;
+    let name = |context: &mut Context<'_>, text: &str| context.string_rooted(text);
+    Ok(vec![
+        emitter_prototype,
+        name(context, "_events"),
+        emitter_prototype,
+        name(context, "_maxListeners"),
+        emitter_prototype,
+        capture_key,
+        emitter,
+        name(context, "init"),
+        function_prototype,
+        name(context, "call"),
+    ])
+}
+
+/// The probes of `new IncomingMessage(undefined)` (the pinned library's `IncomingMessage`,
+/// `Readable`, `ReadableState` and `Stream`): the EventEmitter's
+/// (`emitter_template_probes`) and the `prototype` of each constructor `new` reads. The
+/// default high water mark is module state the factory compares.
+fn incoming_template_probes(
+    context: &mut Context<'_>,
+    emitter: RootId,
+    incoming: RootId,
+) -> Result<RootId, RootedError> {
+    let readable_state = crate::host::shared_vm::commonjs::node_library_export(
+        context,
+        "http.js",
+        "internal/streams/readable.js",
+        "ReadableState",
+    )?;
+    let mut probes = emitter_template_probes(context, emitter)?;
+    for constructor in [incoming, readable_state] {
+        let key = context.string_rooted("prototype");
+        probes.extend([constructor, key]);
+    }
+    context.array_rooted(&probes)
+}
+
 /// The guest function a parsed server request enters JavaScript through: it makes the
 /// IncomingMessage (`incoming::CREATE_FACTORY`'s leading arguments, from the head through the
 /// exchange id) and its ServerResponse, publishes the request start to the subscribers the host
 /// passes (Node's `onRequestStartChannel`, only when the channel has subscribers), then emits
 /// `request` on the server, as Node's `parserOnIncoming` does within one parser callback.
 const REQUEST_DISPATCH_FACTORY: &str = quench_js_check::checked_js!(
-    r#"(createIncoming, ServerResponse) => {
+    r#"(createIncoming, respond) => {
   'use strict';
   return function dispatchRequest(method, url, statusCode, statusMessage, httpVersion, httpVersionMajor, httpVersionMinor, rawHeaders, socket, complete, body, open, exchange, responseId, responseStatus, server, startSubscribers, startChannel) {
     // Node's parser marks the message complete once its body is parsed, after the
     // `request` listeners return (`parserOnMessageComplete`).
     const request = createIncoming(method, url, statusCode, statusMessage, httpVersion, httpVersionMajor, httpVersionMinor, rawHeaders, socket, false, body, open, exchange, true);
-    const response = new ServerResponse(responseId, responseStatus, request, server, socket);
+    const response = respond(responseId, responseStatus, request, server, socket);
     if (startSubscribers !== undefined) {
       const message = { request, response, socket, server };
       for (let index = 0; index < startSubscribers.length; index++) {
@@ -195,7 +250,7 @@ const REQUEST_DISPATCH_FACTORY: &str = quench_js_check::checked_js!(
 }"#
 );
 
-const RESPONSE_FACTORY: &str = r#"((Stream, setHeaderOperation, getHeaderOperation, getHeadersOperation, removeHeaderOperation, write, finish, writeHeadOperation, destroyOperation, initializeResponse, nextTick, codes) => {
+const RESPONSE_FACTORY: &str = r#"((Stream, setHeaderOperation, getHeaderOperation, getHeadersOperation, removeHeaderOperation, write, finish, writeHeadOperation, destroyOperation, initializeResponse, nextTick, codes, captureTemplate, copyTemplate, emitterProbes, captureLimit) => {
   const kExchange = Symbol("kResponseExchange");
   const kFinished = Symbol("kResponseFinished");
   // `end` callbacks waiting for the response to finish, as `_http_outgoing.js`'s
@@ -265,15 +320,50 @@ const RESPONSE_FACTORY: &str = r#"((Stream, setHeaderOperation, getHeaderOperati
     this.sendDate = true;
     this.finished = false;
     this._headerSent = false;
-    this.statusCode = statusCode;
+    this.statusCode = undefined;
     this.statusMessage = undefined;
-    this.req = request;
-    const exchange = { id, request, server, socket };
-    this[kExchange] = exchange;
+    this.req = undefined;
+    this[kExchange] = { id: undefined, request: undefined, server: undefined, socket: undefined };
     this[kFinished] = false;
-    const initializedId = initializeResponse(id, this);
-    if (typeof initializedId === "number") exchange.id = initializedId;
+    if (!capturing) bind(this, id, statusCode, request, server, socket);
   }
+  // The values a response takes from its request, into the slots its construction made,
+  // and the exchange's host initialization.
+  const bind = (response, id, statusCode, request, server, socket) => {
+    response.statusCode = statusCode;
+    response.req = request;
+    const exchange = response[kExchange];
+    exchange.id = id;
+    exchange.request = request;
+    exchange.server = server;
+    exchange.socket = socket;
+    const initializedId = initializeResponse(id, response);
+    if (typeof initializedId === "number") exchange.id = initializedId;
+  };
+  // A request's response: a copy of the template of the constructor's layout
+  // (`objectTemplateCapture`), built with `bind` left out, then bound. The constructor reads
+  // the EventEmitter probes and `ServerResponse.prototype`; any change constructs, and the
+  // template is captured again up to `captureLimit` times.
+  let capturing = false;
+  let template;
+  let captures = 0;
+  const respond = (id, statusCode, request, server, socket) => {
+    const copy = template === undefined ? undefined : copyTemplate(template);
+    if (copy !== undefined) {
+      bind(copy, id, statusCode, request, server, socket);
+      return copy;
+    }
+    if (captures < captureLimit) {
+      captures++;
+      capturing = true;
+      try {
+        template = captureTemplate(new ServerResponse(id), new ServerResponse(id), [...emitterProbes, ServerResponse, "prototype"]);
+      } finally {
+        capturing = false;
+      }
+    }
+    return new ServerResponse(id, statusCode, request, server, socket);
+  };
   ServerResponse.prototype = Object.create(Stream.prototype);
   Object.setPrototypeOf(ServerResponse, Stream);
   const define = (name, value) => Object.defineProperty(ServerResponse.prototype, name, {
@@ -402,7 +492,7 @@ const RESPONSE_FACTORY: &str = r#"((Stream, setHeaderOperation, getHeaderOperati
   getter("writableLength", function writableLength() { return 0; });
   getter("writableCorked", function writableCorked() { return 0; });
   getter("writableNeedDrain", function writableNeedDrain() { return false; });
-  return ServerResponse;
+  return [ServerResponse, respond];
 })"#;
 
 pub(crate) fn module(context: &mut Context<'_>) -> Result<RootId, RootedError> {
@@ -469,10 +559,17 @@ pub(crate) fn module(context: &mut Context<'_>) -> Result<RootId, RootedError> {
         "internal/errors.js",
         "codes",
     )?;
+    let emitter_key = context.string_rooted("__nodeEventEmitter");
+    let emitter = context.get_property_rooted(global, emitter_key)?;
+    let emitter_probes = emitter_template_probes(context, emitter)?;
+    let emitter_probes = context.array_rooted(&emitter_probes)?;
+    let capture = context.host_function(crate::host::shared_vm::operation("objectTemplateCapture"))?;
+    let copy = context.host_function(crate::host::shared_vm::operation("objectTemplateCopy"))?;
+    let capture_limit = context.number(f64::from(super::incoming::TEMPLATE_CAPTURE_LIMIT));
     let response_factory =
         context.evaluate_script_rooted(RESPONSE_FACTORY, "node:http/response-factory.js")?;
     let undefined = context.undefined();
-    let response_factory = context.call_rooted(
+    let response_api = context.call_rooted(
         response_factory,
         undefined,
         &[
@@ -488,14 +585,17 @@ pub(crate) fn module(context: &mut Context<'_>) -> Result<RootId, RootedError> {
             initialize_response,
             next_tick,
             codes,
+            capture,
+            copy,
+            emitter_probes,
+            capture_limit,
         ],
     )?;
+    let response_factory = get(context, response_api, "0")?;
+    let respond = get(context, response_api, "1")?;
     let key = context.string_rooted("prototype");
     let prototype = context.get_property_rooted(response_factory, key)?;
     set(context, prototype, "_send", send)?;
-    let global = context.global_root()?;
-    let emitter_key = context.string_rooted("__nodeEventEmitter");
-    let emitter = context.get_property_rooted(global, emitter_key)?;
     let incoming_constructor = crate::host::shared_vm::commonjs::node_library_export(
         context,
         "http.js",
@@ -517,6 +617,7 @@ pub(crate) fn module(context: &mut Context<'_>) -> Result<RootId, RootedError> {
         "_destroy",
         exchange_keys,
     )?;
+    let template_probes = incoming_template_probes(context, emitter, incoming_constructor)?;
     let incoming_factory = super::incoming::create_function(
         context,
         [
@@ -527,11 +628,12 @@ pub(crate) fn module(context: &mut Context<'_>) -> Result<RootId, RootedError> {
             server_exchange,
             client_exchange,
         ],
+        template_probes,
     )?;
     let request_dispatch =
         context.evaluate_script_rooted(REQUEST_DISPATCH_FACTORY, "node:http/request-dispatch.js")?;
     let request_dispatch =
-        context.call_rooted(request_dispatch, undefined, &[incoming_factory, response_factory])?;
+        context.call_rooted(request_dispatch, undefined, &[incoming_factory, respond])?;
     let request_dispatch = context.retain(request_dispatch)?;
     let incoming_factory = context.retain(incoming_factory)?;
 

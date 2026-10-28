@@ -1674,6 +1674,31 @@ impl<'a, H: Host> NativeContext<'a, H> {
         self.completion(result)
     }
 
+    /// Capture an object template (`Vm::capture_object_template`) of `template`'s graph,
+    /// against `witness`, built by a second construction of the same call, with `probes`,
+    /// (holder, key) pairs naming each own data property the construction reads. `None` when
+    /// the graph cannot be templated.
+    pub fn capture_object_template_rooted(
+        &mut self,
+        template: RootId,
+        witness: RootId,
+        probes: &[(RootId, RootId)],
+    ) -> Option<u32> {
+        let (template, witness) = (self.vm.root_value(template)?, self.vm.root_value(witness)?);
+        let probes = probes
+            .iter()
+            .map(|&(holder, key)| Some((self.vm.root_value(holder)?, self.vm.root_value(key)?)))
+            .collect::<Option<Vec<_>>>()?;
+        self.vm.capture_object_template(template, witness, &probes)
+    }
+
+    /// A copy of object template `id` (`Vm::instantiate_object_template`), or `None` when
+    /// its construction's reads no longer hold and the caller must construct.
+    pub fn instantiate_object_template_rooted(&mut self, id: u32) -> Option<RootId> {
+        let copy = self.vm.instantiate_object_template(id)?;
+        Some(self.scoped_value(copy))
+    }
+
     /// `object[name]` for a key given as Rust text; equivalent to `get_property_rooted` with
     /// a string key, without allocating the key.
     pub fn get_named_property_rooted(

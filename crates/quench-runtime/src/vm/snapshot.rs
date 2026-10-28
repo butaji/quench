@@ -384,6 +384,9 @@ impl<H: Host> Vm<H> {
             to_precision_atom,
             runtime_atoms,
             constructed_shapes: _,
+            // Templates name roots of the running heap; a restored heap starts without any,
+            // and its hosts capture them again.
+            object_templates: _,
             method_caches: _,
             megamorphic_methods: _,
             method_cache_atoms: _,

@@ -795,6 +795,8 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "tlsCollectAltName" (1) => crate::modules::tls_shared_vm::identity::collect_alt_name,
         method "tlsCheckServerIdentity" (2) => crate::modules::tls_shared_vm::identity::check_server_identity,
         method "httpIncomingBody" (1) => crate::modules::http_shared_vm::incoming::body,
+        method "objectTemplateCapture" (3) => crate::modules::http_shared_vm::incoming::capture_template,
+        method "objectTemplateCopy" (1) => crate::modules::http_shared_vm::incoming::copy_template,
         method "httpIncomingRead" (1) => crate::modules::http_shared_vm::incoming::read,
         method "httpIncomingDestroy" (2) => crate::modules::http_shared_vm::incoming::destroy,
         method "encodingUtf8" (0) => crate::modules::encoding_binding_shared_vm::encode,

@@ -983,6 +983,7 @@ impl<H: Host> Vm<H> {
             .collect::<Vec<_>>();
         self.heap.remap_live_object_shapes(&mapping, &lengths);
         self.startup_intrinsics.remap_shapes(&mapping);
+        self.remap_object_template_shapes(&mapping);
         self.shapes = shapes;
         self.shape_constructors.clear();
         self.transitions = transitions;
