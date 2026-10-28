@@ -109,10 +109,10 @@ pub(super) fn create_function(
     )
 }
 
-/// Captures a message template takes (`CREATE_FACTORY`) before every message is
-/// constructed: each follows a read of the construction that changed, so a program that
-/// keeps changing them pays three constructions a message only this often.
-const TEMPLATE_CAPTURE_LIMIT: u32 = 8;
+/// Captures a node:http template (`CREATE_FACTORY`, `RESPONSE_FACTORY`) takes before every
+/// message is constructed: each follows a read of the construction that changed, so a
+/// program that keeps changing them pays three constructions a message only this often.
+pub(super) const TEMPLATE_CAPTURE_LIMIT: u32 = 8;
 
 /// `objectTemplateCapture(template, witness, probes)`: the id of a template of `template`'s
 /// graph (`NativeContext::capture_object_template_rooted`), `probes` a flat array of
