@@ -1392,7 +1392,7 @@ impl<H: Host> Vm<H> {
             return None;
         }
         // SAFETY: as `cached_ordinary_holder_field_value`.
-        Some(unsafe { self.heap.property_get_flat(holder, cache.slot as usize) })
+        Some(unsafe { self.heap.holder_property_get_flat(holder, cache.slot as usize) })
     }
 
     /// The store `cached_field_store_hit` makes to an own data field of a direct object that
@@ -1728,7 +1728,7 @@ impl<H: Host> Vm<H> {
             let entry = set.get(shape, holder.exact_shape())?;
             debug_assert!(cached_holder_matches(holder, entry.holder));
             // SAFETY: as for the inline holder entries below.
-            let value = unsafe { self.heap.property_get_flat(holder, usize::from(entry.slot)) };
+            let value = unsafe { self.heap.holder_property_get_flat(holder, usize::from(entry.slot)) };
             self.profile.field_cache_hit(2, 1);
             return Some(value);
         }
@@ -1749,7 +1749,7 @@ impl<H: Host> Vm<H> {
             }
             // SAFETY: both immutable shapes and the property slot were recorded together
             // after confirming an immediate-prototype data property.
-            let value = unsafe { self.heap.property_get_flat(holder, usize::from(entry.slot)) };
+            let value = unsafe { self.heap.holder_property_get_flat(holder, usize::from(entry.slot)) };
             self.profile.field_cache_hit(2, 1);
             return Some(value);
         }
@@ -2130,7 +2130,7 @@ impl<H: Host> Vm<H> {
         // SAFETY: both immutable shapes and the property slot were recorded together after
         // confirming an immediate-prototype data property; the exact holder match rules out
         // a dictionary.
-        let value = unsafe { self.heap.property_get_flat(holder, cache.slot as usize) };
+        let value = unsafe { self.heap.holder_property_get_flat(holder, cache.slot as usize) };
         Some(FieldCacheHit {
             value,
             tier: 0,
