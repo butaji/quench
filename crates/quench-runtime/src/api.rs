@@ -9771,7 +9771,7 @@ print(Object.getPrototypeOf(new A(2).transferToFixedLength(3)) === P);
         let mut runtime = Runtime::new(host);
         runtime
             .compile_and_execute(ExecutionRequest::script(
-                "var registry = new FinalizationRegistry(function(held) { print(held); }); var target = {}; registry.register(target, 7); target = undefined; for (var i = 0; i < 300000; i = i + 1) { var temporary = {}; } print(\"done\");",
+                "var registry = new FinalizationRegistry(function(held) { print(held); }); var target = {}; registry.register(target, 7); target = undefined; for (var i = 0; i < 1200000; i = i + 1) { var temporary = {}; } print(\"done\");",
                 "finalization-drain.js",
             ))
             .unwrap();
