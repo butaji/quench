@@ -2868,7 +2868,7 @@ impl<'a> Compiler<'a> {
             .into_iter()
             .enumerate()
             .map(|(id, entry)| match entry {
-                replay::FunctionEntry::Compiled(function) => Some(function),
+                replay::FunctionEntry::Compiled(function) => Some(*function),
                 replay::FunctionEntry::Released(function) => {
                     released.insert(id, function);
                     None
