@@ -182,6 +182,87 @@ fn lane_generator_iteration_steps_keep_generator_semantics() {
 }
 
 #[test]
+fn lane_polymorphic_field_stores_keep_assignment_semantics() {
+    // A store site past one shape writes each recorded shape's slot in the lane; a receiver
+    // that gains the property, a frozen one and an accessor still take the general store.
+    let source = r#"
+      const out = [];
+      class P { constructor(k) { this["w" + k] = k; this.pos = 0; } step(v) { this.pos = v; } }
+      const ps = []; for (let k = 0; k < 6; k++) ps.push(new P(k));
+      for (let r = 0; r < 100; r++) for (const p of ps) p.step(r + p.pos);
+      out.push(ps.map((p) => p.pos).join(","));
+      function set(o, v) { o.x = v; }
+      const os = [{ x: 0, a: 1 }, { x: 0, b: 1 }, { x: 0, c: 1 }];
+      for (let r = 0; r < 50; r++) for (const o of os) set(o, r);
+      const fresh = {}; set(fresh, "added"); out.push(fresh.x, os.map((o) => o.x).join(","));
+      const frozen = Object.freeze({ x: 1, a: 1 }); set(frozen, 9); out.push(frozen.x);
+      const acc = { a: 1, set x(v) { out.push("setter " + v); } }; set(acc, 5);
+      print(out.join(" "));
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    let program = Engine::specialize(source, "lane-polymorphic-stores.js").unwrap();
+    vm.execute(&program).unwrap();
+    assert_eq!(output.borrow().as_slice(), ["4950,4950,4950,4950,4950,4950 added 49,49,49 1 setter 5"]);
+}
+
+#[test]
+fn lane_global_undefined_reads_keep_binding_semantics() {
+    // A static global read of `undefined` answers its value in the lane, while a direct
+    // eval's `var undefined` and a `with` object's property still shadow it, and neither an
+    // eval's own `let` nor a write to the global changes it.
+    let source = r#"
+      const out = [];
+      function f() { eval("var undefined = 1"); let s; for (let i = 0; i < 3; i++) s = undefined; return s; }
+      function g(o) { with (o) { let s; for (let i = 0; i < 3; i++) s = undefined; return s; } }
+      function h() { let s = 0; for (let i = 0; i < 1000; i++) s = typeof undefined + (undefined === void 0); return s; }
+      out.push(f(), g({ undefined: "w" }), g({}), h());
+      (0, eval)("let undefined = 3");
+      globalThis.undefined = 7; out.push(h());
+      print(out.join(" "));
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    let program = Engine::specialize(source, "lane-global-undefined.js").unwrap();
+    vm.execute(&program).unwrap();
+    assert_eq!(output.borrow().as_slice(), ["1 w  undefinedtrue undefinedtrue"]);
+}
+
+#[test]
+fn lane_field_reads_of_strings_and_hashed_sites_keep_lookup_semantics() {
+    // A string's `length` read in the lane answers its own length, whatever its chain holds,
+    // while other receivers at the same site read theirs; a site past its inline shapes
+    // answers own and prototype fields from its hashed entries and sees a prototype change.
+    let source = r#"
+      const out = [];
+      class T { constructor(s) { this.input = s; } len() { return this.input.length; } }
+      let n = 0; const t = new T("abcdef");
+      for (let i = 0; i < 1000; i++) n += t.len();
+      out.push(n);
+      t.input = [1, 2]; out.push(t.len());
+      t.input = { length: "own" }; out.push(t.len());
+      String.prototype.length = 99; out.push(new T("xy").len());
+      const shapes = [];
+      for (let k = 0; k < 12; k++) { const o = { ["f" + k]: k, type: "t" + k }; shapes.push(o); }
+      function Proto() {} Proto.prototype.type = "proto";
+      for (let k = 0; k < 3; k++) { const o = new Proto(); o["g" + k] = k; shapes.push(o); }
+      function readType(o) { return o.type; }
+      for (let r = 0; r < 50; r++) for (const o of shapes) readType(o);
+      out.push(shapes.map(readType).join(","));
+      Proto.prototype.type = "changed"; out.push(readType(shapes[13]));
+      print(out.join(" "));
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    let program = Engine::specialize(source, "lane-field-reads.js").unwrap();
+    vm.execute(&program).unwrap();
+    assert_eq!(
+        output.borrow().as_slice(),
+        ["6000 2 own 2 t0,t1,t2,t3,t4,t5,t6,t7,t8,t9,t10,t11,proto,proto,proto changed"]
+    );
+}
+
+#[test]
 fn lane_calls_passing_extra_values_keep_them_only_for_legacy_reflection() {
     // A lane call passing more values than its callee's parameters keeps them for a sloppy
     // callee, whose `f.arguments` and caller's `arguments` read them, and passes a strict
@@ -15058,6 +15139,189 @@ fn js_jit_general_dispatch_reads_live_dense_array_elements_and_falls_back_exactl
         .collect::<Vec<_>>();
     assert_eq!(get_index_pcs.len(), 1);
     assert!(native.general_dispatch_pc_is_native(get_index_pcs[0]));
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
+fn js_jit_general_dispatch_reads_own_fields_through_the_field_cache_and_falls_back_exactly() {
+    let source = r#"
+      // The read feeds a test, so it is a plain GetField rather than a returning one.
+      function readField(object) { const value = object.value; if (value === null) return null; return value; }
+      // Three own properties keep the values in the property arena.
+      const first = { value: 10, other: 1, more: 2 };
+      const second = { other: 3, more: 4, value: 20 };
+      for (let index = 0; index < 64; index++) {
+        const object = index % 2 === 0 ? first : second;
+        if (readField(object) !== (index % 2 === 0 ? 10 : 20)) throw Error('alternating shapes');
+      }
+      first.value = 11;
+      if (readField(first) !== 11) throw Error('live value');
+
+      const small = { value: 30 };
+      if (readField(small) !== 30) throw Error('inline storage fallback');
+
+      const inherited = Object.create({ value: 40 });
+      if (readField(inherited) !== 40) throw Error('prototype holder fallback');
+
+      let getterCalls = 0;
+      const accessor = { other: 1, more: 2, get value() { getterCalls++; return 50; } };
+      if (readField(accessor) !== 50 || getterCalls !== 1) throw Error('accessor fallback');
+
+      let proxyCalls = 0;
+      const proxy = new Proxy(first, { get(target, key, receiver) {
+        if (key === 'value') proxyCalls++;
+        return Reflect.get(target, key, receiver);
+      } });
+      if (readField(proxy) !== 11 || proxyCalls !== 1) throw Error('proxy fallback');
+
+      const dictionary = { value: 60, other: 1, more: 2, extra: 3 };
+      delete dictionary.extra;
+      delete dictionary.other;
+      if (readField(dictionary) !== 60) throw Error('dictionary fallback');
+
+      if (readField('text') !== undefined) throw Error('primitive fallback');
+      if (readField(first) !== 11) throw Error('cached shape after misses');
+    "#;
+    let program = Engine::compile(crate::ExecutionRequest::script(
+        source,
+        "js-jit-general-own-field.js",
+    ))
+    .unwrap();
+    let function = program
+        .functions
+        .iter()
+        .position(|function| {
+            function
+                .header()
+                .name
+                .or(function.header().inferred_name)
+                .is_some_and(|atom| &program.atoms[atom as usize] == "readField")
+        })
+        .unwrap() as u32;
+
+    let mut interpreter = Vm::new(TestHost::default());
+    interpreter.execute(&program).unwrap();
+
+    let mut compiled = Vm::new(TestHost::default());
+    compiled.programs.enable_js_general_dispatch();
+    compiled.set_execution_mode(crate::ExecutionMode::Compiled);
+    compiled.programs.compile_general_baseline_when_hot();
+    compiled.execute(&program).unwrap();
+
+    let Some(super::program_store::JsTierState::Compiled(native)) = compiled
+        .programs
+        .js_tier(super::program_store::ProgramId::MAIN, function)
+    else {
+        panic!("readField should use the general JavaScript compiler");
+    };
+    assert!(native.is_general_dispatch());
+    assert!(native.native_entries() > 0);
+    let body = program.function(function as usize);
+    let get_field_pcs = body
+        .code
+        .iter()
+        .enumerate()
+        .filter_map(|(pc, packed)| {
+            (super::dispatch_fast::decoded_instruction(body, *packed).op()
+                == crate::bytecode::Op::GetField)
+                .then_some(pc)
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(get_field_pcs.len(), 1);
+    assert!(native.general_dispatch_pc_is_native(get_field_pcs[0]));
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
+fn js_jit_general_dispatch_stores_own_fields_through_the_field_cache_and_falls_back_exactly() {
+    let source = r#"
+      function writeField(object, value) { object.value = value; }
+      // Three own properties keep the values in the property arena.
+      const first = { value: 0, other: 1, more: 2 };
+      const second = { other: 3, more: 4, value: 0 };
+      for (let index = 0; index < 64; index++) {
+        writeField(index % 2 === 0 ? first : second, index);
+      }
+      if (first.value !== 62 || second.value !== 63) throw Error('alternating shapes');
+
+      const target = { other: 5 };
+      writeField(first, target);
+      if (first.value !== target) throw Error('heap value fallback');
+
+      let setterValue;
+      const accessor = { other: 1, more: 2, set value(value) { setterValue = value; } };
+      writeField(accessor, 7);
+      if (setterValue !== 7) throw Error('setter fallback');
+
+      const frozen = Object.freeze({ value: 8, other: 1, more: 2 });
+      writeField(frozen, 9);
+      if (frozen.value !== 8) throw Error('frozen fallback');
+
+      const seen = [];
+      const proxy = new Proxy({ value: 0, other: 1, more: 2 }, { set(target, key, value) {
+        seen.push(key);
+        target[key] = value;
+        return true;
+      } });
+      writeField(proxy, 10);
+      if (seen.join() !== 'value') throw Error('proxy fallback');
+
+      // A method cache naming the property makes its stores take the VM path, which
+      // invalidates the cached method.
+      const methods = { other: 1, more: 2, value() { return 1; } };
+      for (let index = 0; index < 8; index++) if (methods.value() !== 1) throw Error('method');
+      writeField(methods, function () { return 2; });
+      if (methods.value() !== 2) throw Error('method cache invalidation');
+      writeField(first, 11);
+      if (first.value !== 11) throw Error('cached shape after misses');
+    "#;
+    let program = Engine::compile(crate::ExecutionRequest::script(
+        source,
+        "js-jit-general-own-field-store.js",
+    ))
+    .unwrap();
+    let function = program
+        .functions
+        .iter()
+        .position(|function| {
+            function
+                .header()
+                .name
+                .or(function.header().inferred_name)
+                .is_some_and(|atom| &program.atoms[atom as usize] == "writeField")
+        })
+        .unwrap() as u32;
+
+    let mut interpreter = Vm::new(TestHost::default());
+    interpreter.execute(&program).unwrap();
+
+    let mut compiled = Vm::new(TestHost::default());
+    compiled.programs.enable_js_general_dispatch();
+    compiled.set_execution_mode(crate::ExecutionMode::Compiled);
+    compiled.programs.compile_general_baseline_when_hot();
+    compiled.execute(&program).unwrap();
+
+    let Some(super::program_store::JsTierState::Compiled(native)) = compiled
+        .programs
+        .js_tier(super::program_store::ProgramId::MAIN, function)
+    else {
+        panic!("writeField should use the general JavaScript compiler");
+    };
+    assert!(native.is_general_dispatch());
+    assert!(native.native_entries() > 0);
+    let body = program.function(function as usize);
+    let set_field_pcs = body
+        .code
+        .iter()
+        .enumerate()
+        .filter_map(|(pc, packed)| {
+            (super::dispatch_fast::decoded_instruction(body, *packed).op()
+                == crate::bytecode::Op::SetField)
+                .then_some(pc)
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(set_field_pcs.len(), 1);
+    assert!(native.general_dispatch_pc_is_native(set_field_pcs[0]));
 }
 
 #[test]
