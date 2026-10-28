@@ -414,3 +414,17 @@ fn utf16_excess_scans_match_each_character() {
         }
     }
 }
+
+#[test]
+fn discarded_sequence_elements_and_branches_release_their_temporaries() {
+    // A comma chain's discarded elements, a conditional's test and branches and a logical
+    // operator's right operand reuse the registers they freed, so a minified body's long
+    // chain stays within what liveness and frame registers cover (`ROOT_MAP_REGISTERS`).
+    let chain = (0..80).map(|_| "g(e.a, e.b)").collect::<Vec<_>>().join(",");
+    let source = format!("function f(e) {{ {chain}; return e.x ? g(e.y, e.z) : g(e.w, e.v) && g(e.u, e.t) }}");
+    let program = Engine::specialize(&source, "sequence-registers.js").unwrap();
+    program.compile_released();
+    let registers = program.functions[1].registers;
+    assert!(registers < 32, "{registers} registers");
+    program.validate().unwrap();
+}

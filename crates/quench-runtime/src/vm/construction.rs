@@ -956,11 +956,18 @@ impl<H: Host> Vm<H> {
 
     /// The object `inline_construct_receiver` allocates, before it is allocated.
     pub(super) fn inline_construct_template(&mut self, callee: Value) -> Option<Object> {
+        self.inline_construct_template_by(callee, callee)
+    }
+
+    /// The receiver [[Construct]] of `constructor` makes with `new_target` before its body
+    /// runs (OrdinaryCreateFromConstructor): of `new_target`'s own data `prototype`, named by
+    /// `constructor` as the general path names it (`capture_constructed_name`).
+    pub(super) fn inline_construct_template_by(&mut self, new_target: Value, constructor: Value) -> Option<Object> {
         let prototype_atom = self.prototype_atom();
-        let prototype = self.own_function_prototype_data(callee, prototype_atom)?;
+        let prototype = self.own_function_prototype_data(new_target, prototype_atom)?;
         self.object_data(prototype)?;
         let mut object = Self::empty_object(prototype);
-        self.capture_constructed_name(&mut object, callee, true);
+        self.capture_constructed_name(&mut object, constructor, constructor == new_target);
         Some(object)
     }
 

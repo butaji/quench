@@ -115,6 +115,7 @@ impl<H: Host> Vm<H> {
             array_iteration_proof: None,
             for_in_own_keys: None,
             species_slot_proof: Default::default(),
+            promise_species_proof: Default::default(),
             index_free_chain_proof: Default::default(),
             enumerable_keys: Default::default(),
             shape_attribute_memo: Default::default(),

@@ -38,7 +38,17 @@ impl FunctionCompiler<'_, '_> {
     ) -> Register {
         let mut result = self.literal(Constant::Undefined);
         for (index, expression) in sequence.expressions.iter().enumerate() {
-            result = self.expression_with_debug_name(expression, if index + 1 == sequence.expressions.len() { debug_name } else { None });
+            if index + 1 == sequence.expressions.len() {
+                result = self.expression_with_debug_name(expression, debug_name);
+                continue;
+            }
+            // A discarded element's temporaries are dead once it has run, as a statement's
+            // are (`release_temporaries`): a minified body's long comma chains otherwise keep
+            // every element's registers, past what liveness and frame registers cover
+            // (`ROOT_MAP_REGISTERS`).
+            let temporaries = self.next_reg;
+            self.effect_expression(expression);
+            self.next_reg = temporaries;
         }
         result
     }

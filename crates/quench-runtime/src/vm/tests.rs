@@ -182,6 +182,50 @@ fn lane_generator_iteration_steps_keep_generator_semantics() {
 }
 
 #[test]
+fn lane_super_forwarding_constructions_keep_construct_semantics() {
+    // `new Derived(...)` of a class whose constructor only forwards to an initializer parent
+    // makes the parent's stores on a receiver of the derived prototype, named as the general
+    // path names it; a changed parent, a setter, a returned object and constant stores keep
+    // their semantics.
+    let source = r#"
+      const out = [];
+      class Node { constructor(k, p, e) { this.pos = p; this.end = e; this.kind = k; this.id = 0; this.parent = void 0; } width() { return this.end - this.pos; } }
+      class Tok extends Node { constructor(k, p, e) { super(k, p, e); } get text() { return "t" + this.kind; } }
+      class Any extends Node {}
+      function make(C, n) { let s = 0, last; for (let i = 0; i < n; i++) { last = new C(i, i, i * 2 + 1); s += last.width(); } return [s, last]; }
+      let [s, t] = make(Tok, 3000);
+      out.push(s, t.text, t instanceof Tok, t instanceof Node, Object.keys(t).join(""), t.constructor.name, t.parent === undefined);
+      let [s2, a] = make(Any, 3000);
+      out.push(s2, a.constructor.name, Object.getPrototypeOf(a) === Any.prototype);
+      class Other { constructor(k) { this.other = k; } }
+      Object.setPrototypeOf(Tok, Other);
+      out.push(Object.keys(make(Tok, 5)[1]).join(""));
+      class Sets extends Node { constructor(k, p, e) { super(k, p, e); } }
+      Object.defineProperty(Sets.prototype, "end", { set(v) { out.push("set" + v); }, configurable: true });
+      make(Sets, 2);
+      class Ret { constructor(k) { this.k = k; if (k === 7) return { swapped: k }; } }
+      class RetD extends Ret { constructor(k) { super(k); } }
+      for (let i = 0; i < 2000; i++) new RetD(i % 8 === 7 ? 7 : i);
+      out.push(JSON.stringify(new RetD(7)), new RetD(3) instanceof RetD);
+      class Extra extends Node { constructor(k, p) { super(k, p); } }
+      let x; for (let i = 0; i < 2000; i++) x = new Extra(1, 2, 99);
+      out.push(x.end);
+      class C0 { constructor(a) { this.a = a; this.b = 0; this.c = void 0; this.d = null; this.e = true; } }
+      let c; for (let i = 0; i < 3000; i++) c = new C0(i);
+      out.push(JSON.stringify(c), "c" in c);
+      print(out.join(" "));
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    let program = Engine::specialize(source, "lane-super-forwarding.js").unwrap();
+    vm.execute(&program).unwrap();
+    assert_eq!(
+        output.borrow().as_slice(),
+        ["4501500 t2999 true true posendkindidparent Tok true 4501500 Any true other set1 set3 {\"swapped\":7} true  {\"a\":2999,\"b\":0,\"d\":null,\"e\":true} true"]
+    );
+}
+
+#[test]
 fn lane_polymorphic_field_stores_keep_assignment_semantics() {
     // A store site past one shape writes each recorded shape's slot in the lane; a receiver
     // that gains the property, a frozen one and an accessor still take the general store.

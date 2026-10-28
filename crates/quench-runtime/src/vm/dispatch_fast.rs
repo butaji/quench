@@ -1308,11 +1308,18 @@ struct ConstructPlan {
     /// Fields whose store defaults a falsy argument (`InitializerStore::fallback`), one bit
     /// per field index, each taking `fallbacks` at its index then.
     defaulted: u8,
+    /// Fields whose store writes a constant (`InitializerValue::Constant`), one bit per field
+    /// index, each taking `fallbacks` at its index whatever is passed.
+    constant: u8,
     fallbacks: [Value; CONSTRUCT_PLAN_FIELDS],
     /// For a forwarding constructor's plan, where its body's reads resolved
     /// (`lane_forwarded_construction`), which the plan's own proof keeps. Its fields, if any, are
     /// those its forwarded initializer stores (`lane_record_forwarded_fields`).
     forwarded: Option<ForwardedResolution>,
+    /// For a class whose constructor only constructs its parent (`lane_super_construction`),
+    /// the parent whose stores the plan holds; `undefined` for any other plan. The plan holds
+    /// while the class's [[Prototype]] is still that parent, which `super(...)` constructs.
+    super_parent: Value,
 }
 
 /// Which constructions allocate from a `ConstructPlan`, and how they compute its fields.
@@ -1383,10 +1390,14 @@ impl ConstructPlan {
 
     /// This plan's field values in order, `undefined` past them: the argument each field's
     /// parameter names (`argument`), or its fallback for a defaulted field passed a falsy
-    /// value, as its store computes it.
+    /// value, or a constant field's constant, as its store computes it.
     fn values<H: Host>(&self, vm: &Vm<H>, argument: impl Fn(u16) -> Value) -> [Value; CONSTRUCT_PLAN_FIELDS] {
         let mut values = [Value::UNDEFINED; CONSTRUCT_PLAN_FIELDS];
         for (field, value) in values.iter_mut().enumerate().take(usize::from(self.fields)) {
+            if self.constant & (1 << field) != 0 {
+                *value = self.fallbacks[field];
+                continue;
+            }
             let fallback = (self.defaulted & (1 << field) != 0).then_some(self.fallbacks[field]);
             *value = initializer_value(vm, argument(self.parameters[field]), fallback);
         }
@@ -1416,11 +1427,21 @@ impl ConstructPlan {
     /// This plan extended by the field `store` adds, `None` once it names all it can.
     fn with_field(mut self, store: &crate::bytecode::InitializerStore) -> Option<Self> {
         let field = usize::from(self.fields);
-        *self.parameters.get_mut(field)? = store.parameter;
-        if let Some(fallback) = store.fallback {
-            self.kind = ConstructPlanKind::Defaulted;
-            self.defaulted |= 1 << field;
-            self.fallbacks[field] = Value::number(fallback);
+        let slot = self.parameters.get_mut(field)?;
+        match store.value {
+            crate::bytecode::InitializerValue::Parameter { parameter, fallback } => {
+                *slot = parameter;
+                if let Some(fallback) = fallback {
+                    self.kind = ConstructPlanKind::Defaulted;
+                    self.defaulted |= 1 << field;
+                    self.fallbacks[field] = Value::number(fallback);
+                }
+            }
+            crate::bytecode::InitializerValue::Constant(constant) => {
+                self.kind = ConstructPlanKind::Defaulted;
+                self.constant |= 1 << field;
+                self.fallbacks[field] = constant.value();
+            }
         }
         self.fields += 1;
         Some(self)
@@ -1438,8 +1459,10 @@ const EMPTY_CONSTRUCT_PLAN: ConstructPlan = ConstructPlan {
     fields: 0,
     parameters: [0; CONSTRUCT_PLAN_FIELDS],
     defaulted: 0,
+    constant: 0,
     fallbacks: [Value::UNDEFINED; CONSTRUCT_PLAN_FIELDS],
     forwarded: None,
+    super_parent: Value::UNDEFINED,
 };
 
 /// Activations a lane runs without VM frames, innermost last, over the
@@ -10898,6 +10921,12 @@ script_handler! {
                 if let Some(parent) = lane_super_forwarded_parent(vm, callee) {
                     return lane_construct_forwarded_parent(cx, r, ip, i, callee, parent);
                 }
+                if !returns && let Some(this) = lane_super_construction(cx, r, i, callee) {
+                    // Allocating the receiver can make a collection due.
+                    note_allocation(vm);
+                    r.set(i.a, this);
+                    next!(cx, r, following(ip), Carried::script(cx))
+                }
                 return lane_frame_construct(cx, r, ip, i);
             }
             Some(FunctionRecord { kind: FunctionKind::Native(native), .. })
@@ -11981,6 +12010,78 @@ fn lane_super_forwarded_parent<H: Host>(vm: &Vm<H>, callee: Value) -> Option<(Va
     }
 }
 
+/// `new callee(...)` of a class whose constructor only constructs its parent
+/// (`Function::super_forwarding`) when that parent is an initializer constructor of the running
+/// program (`Function::only_initializes_this_fields`): the parent's [[Construct]] with `callee`
+/// as `new.target`, whose receiver comes from `callee`'s `prototype`, named by the parent as the
+/// general path names it (`Vm::inline_construct_template_by`), and takes the parent's
+/// stores as cached adds that run no guest code (`lane_initialize_fields`), and which the
+/// derived body returns as it is. A plan recorded under `callee` (`ConstructPlan::super_parent`)
+/// makes later constructions at once. TypeScript's node classes (`class extends Node {
+/// constructor(k, p, e) { super(k, p, e) } }`) otherwise left the lane at every node. `None`
+/// leaves the construction to the general path: another program's or realm's class, a parent
+/// past what forwarding passes, or an add the caches do not answer, whose partial receiver no
+/// code has seen.
+#[inline(never)]
+fn lane_super_construction<H: Host>(
+    cx: *mut LaneContext<H>,
+    r: Registers,
+    i: &LaneInstruction,
+    callee: Value,
+) -> Option<Value> {
+    let vm = unsafe { vm(cx) };
+    if !unsafe { (*cx).script_calls && (*cx).script_constructs } || vm.construct_target.is_some() {
+        return None;
+    }
+    if let Some(this) = holding_construct_plan(vm, callee)
+        .filter(|plan| !plan.super_parent.is_undefined())
+        .and_then(|_| lane_planned_construction(vm, callee, r, i))
+    {
+        return Some(this);
+    }
+    // SAFETY: the context's program outlives the lane run.
+    let code = unsafe { &*(*cx).code };
+    let running = unsafe { (*cx).program };
+    let in_running_realm = |record: &FunctionRecord| record.realm == vm.realm.globals;
+    let Some(record @ FunctionRecord { kind: FunctionKind::User(program, function), .. }) = vm.heap.function(callee) else {
+        return None;
+    };
+    if *program != running || !in_running_realm(record) {
+        return None;
+    }
+    let forwarded = code.function_get(*function as usize)?.super_forwarding(&code.atoms, &code.constants)?;
+    let parent = vm.object_data(callee)?.proto();
+    let Some(record @ FunctionRecord { kind: FunctionKind::User(parent_program, parent_function), .. }) =
+        vm.heap.function(parent)
+    else {
+        return None;
+    };
+    let parent_function = *parent_function;
+    if *parent_program != running || !in_running_realm(record) {
+        return None;
+    }
+    let body = code.function_get(parent_function as usize)?;
+    // The parent's parameters read what the class passes: every value, or its own parameters,
+    // which cover the parent's.
+    let covered = match forwarded {
+        crate::bytecode::SuperForwarded::Passed => true,
+        crate::bytecode::SuperForwarded::Parameters(count) => body.params <= count,
+    };
+    if !covered || !Vm::<H>::inline_constructible(body) || !body.only_initializes_this_fields(&code.constants) {
+        return None;
+    }
+    let (this, added) = lane_initialize_fields(vm, code, callee, parent, parent_function, r, i)?;
+    if !added {
+        return None;
+    }
+    if let Some(index) = construct_plan_index(callee)
+        && vm.lane_stack.construct_plans[index].callee == callee
+    {
+        vm.lane_stack.construct_plans[index].super_parent = parent;
+    }
+    Some(this)
+}
+
 /// `new callee(...)` of a class whose constructor only constructs its native `parent`
 /// (`lane_super_forwarded_parent`): the parent's construction with what the constructor
 /// passes on (every value, or its parameters with missing ones `undefined`) and `callee`
@@ -12072,7 +12173,7 @@ script_handler! {
             match lane_planned_construction(vm, callee, r, i) {
                 Some(this) => Some((this, true)),
                 // SAFETY: the context's program outlives the lane run.
-                None => lane_initialize_fields(vm, unsafe { &*(*cx).code }, callee, target.function, r, i),
+                None => lane_initialize_fields(vm, unsafe { &*(*cx).code }, callee, callee, target.function, r, i),
             }
         } else {
             vm.inline_construct_receiver(callee).map(|this| (this, false))
@@ -13210,10 +13311,15 @@ fn lane_activate_environment<H: Host>(
     };
     let body = code.function(target.function as usize);
     let rest = body.rest;
-    // A body reading its `arguments` keeps every value passed past its parameters too.
-    if argc > target.params && !(rest || body.call_plan(code).reads_passed_arguments) || vm.with_scope_entered {
+    let plan = body.call_plan(code);
+    // A body reading its `arguments` keeps every value passed past its parameters too, as
+    // a frame does where legacy reflection (`f.arguments`) can read them; elsewhere nothing
+    // observes them, and the window keeps only those its parameters bind.
+    let extra = argc > target.params && !(rest || plan.reads_passed_arguments);
+    if extra && plan.legacy_reflection || vm.with_scope_entered {
         return Err(exit(ip));
     }
+    let (passed, argc) = if extra { (&passed[..usize::from(target.params)], target.params) } else { (passed, argc) };
     // A rest body keeps every value passed, the room sized for its parameters and the rest.
     let extra = usize::from(argc.saturating_sub(target.params));
     if vm.lane_stack.activations.len() >= vm.lane_stack.activation_limit.get()
@@ -13391,13 +13497,14 @@ fn lane_initialize_fields<H: Host>(
     vm: &mut Vm<H>,
     code: &ResidualProgram,
     callee: Value,
+    constructor: Value,
     function: u32,
     r: Registers,
     i: &LaneInstruction,
 ) -> Option<(Value, bool)> {
     let argument = lane_construct_argument(r, i);
     let plan_index = construct_plan_index(callee);
-    let template = vm.inline_construct_template(callee)?;
+    let template = vm.inline_construct_template_by(callee, constructor)?;
     let (prototype, source_shape) = (template.proto(), template.shape());
     let this = vm.heap.alloc_object(template);
     let mut planned = Some(ConstructPlan {
@@ -13443,7 +13550,12 @@ fn lane_add_initializer_fields<H: Host>(
         return false;
     };
     for store in stores {
-        let value = initializer_value(vm, argument(store.parameter), store.fallback.map(Value::number));
+        let value = match store.value {
+            crate::bytecode::InitializerValue::Parameter { parameter, fallback } => {
+                initializer_value(vm, argument(parameter), fallback.map(Value::number))
+            }
+            crate::bytecode::InitializerValue::Constant(constant) => constant.value(),
+        };
         if !vm.field_add_atom_eligible(store.atom) || !vm.primary_field_add_hit(code, this, store.atom, value, store.site) {
             return false;
         }
@@ -13525,7 +13637,9 @@ fn holding_construct_plan_index<H: Host>(vm: &Vm<H>, callee: Value) -> Option<us
     let plan = &vm.lane_stack.construct_plans[index];
     (plan.callee == callee
         && plan.epoch == crate::heap::prototype_layout_epoch()
-        && vm.function_prototype_in_layout(callee, plan.callee_layout) == Some(plan.prototype))
+        && vm.function_prototype_in_layout(callee, plan.callee_layout) == Some(plan.prototype)
+        && (plan.super_parent.is_undefined()
+            || vm.object_data(callee).is_some_and(|class| class.proto() == plan.super_parent)))
     .then_some(index)
 }
 
@@ -17596,8 +17710,7 @@ fn specialize_environment_window<H: Host>(
     decoded: &[WideInstruction],
     records: &mut [LaneInstruction],
 ) -> Option<EnvironmentWindow> {
-    if function.locals == 0
-        || u32::from(function.locals) > u64::BITS
+    if u32::from(function.locals) > u64::BITS
         || (function.arguments_slot.is_some() && !function.reads_passed_arguments_only())
         || !function.local_registers.is_empty()
         || function.selective_capture_slots.is_none()
