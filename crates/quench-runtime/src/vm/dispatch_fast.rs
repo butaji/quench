@@ -9507,27 +9507,32 @@ fn lane_frame_state<H: Host>(
     let vm = unsafe { vm(cx) };
     let function = vm.frames[frame].function;
     let program = unsafe { (*cx).program };
-    let diagnostics = vm.programs.reports_on_drop();
-    let Some(lane_view) = vm
-        .programs
-        .lane_view(program, function, |code, constants, kind, live, sites| {
-            derive_lane_view::<H>(
-                function,
-                code,
-                constants,
-                kind,
-                live,
-                sites,
-                vm.js_tier_runs(),
-                vm.programs.js_jit_general_dispatch_enabled(),
-                diagnostics,
-            )
-        })
-    else {
-        unreachable!("an inline Wasm frame runs a function of its program");
+    // The context's table holds the frame's program's views: a derived one is read there.
+    // SAFETY: the table lives as long as its program entry.
+    let derived = unsafe { &*(*cx).views }.get(function as usize).and_then(super::program_store::derived_lane_view);
+    let lane_view = match derived {
+        Some(view) => view,
+        None => {
+            let diagnostics = vm.programs.reports_on_drop();
+            let Some(lane_view) = vm.programs.lane_view(program, function, |code, constants, kind, live, sites| {
+                derive_lane_view::<H>(
+                    function,
+                    code,
+                    constants,
+                    kind,
+                    live,
+                    sites,
+                    vm.js_tier_runs(),
+                    vm.programs.js_jit_general_dispatch_enabled(),
+                    diagnostics,
+                )
+            }) else {
+                unreachable!("an inline Wasm frame runs a function of its program");
+            };
+            // SAFETY: views live as long as their program entry.
+            unsafe { &*lane_view }
+        }
     };
-    // SAFETY: views live as long as their program entry.
-    let lane_view = unsafe { &*lane_view };
     let base = lane_view.records();
     let r = Registers(vm.frames[frame].registers.as_mut_ptr());
     let view = frame_memory_view(cx, lane_view, r);
