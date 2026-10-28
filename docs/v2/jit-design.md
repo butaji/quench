@@ -861,6 +861,42 @@ hot subregion with measured payback. The diagnostic report is from one
 instrumented round and is not performance evidence; details are in
 `evidence/jit-jetstream3-2026-10-20/guard-census-attribution/`.
 
+## Web request-path coverage and entry cost — 2026-10-28
+
+Server request paths need native entry and calls before field or arithmetic lowering pays.
+Measured on hono's `/id/:id?name=` route (production build, Linux x86_64, 4 vCPU,
+TOD-176):
+
+- User CPU per request is 110–136 µs with or without `--jit`, and 123–129 µs with
+  `QUENCH_JS_JIT_GENERAL_DISPATCH=1`. Node with its JIT runs about 80 µs and Bun.serve
+  under 40 µs.
+- Callgrind attributes 42.7% of the request's 517K instructions to lane handlers and
+  the rest to runtime helpers (property, allocation, frames, GC, strings, host). A tier
+  that only removes dispatch can win at most part of the 42.7%.
+- `QUENCH_JS_JIT_STATS` over 20K requests with general dispatch on: 5 of 195 request-path
+  functions compile. Most wait in `GeneralPromotionPending`, because the baseline's
+  pricing (`JS_JIT_GENERAL_SAVED_SHARE`) is not repaid. Functions whose calls run as
+  frameless lane activations stay `lane-only`.
+- Entry cost dominates small functions:
+  - A monomorphic `(o) => o.x` called 3M times runs in 36–40 ms in the lane and 870–985 ms
+    through the general-dispatch tier, which enters every call through a VM frame. Adding a
+    shape-guarded own-field read (`NATIVE_OBJECT_LAYOUT`, the field cache entry read as
+    data) cut that by about 12% only.
+  - The numeric tier entered from `lane_tier_prologue` runs `a * 3 + b` slower than the
+    lane (194 vs 74 ms for 3M calls): about 315 instructions per call go to the prologue,
+    `direct_call`'s argument conversion and the native trampoline, against an 11-instruction
+    body.
+- The hottest functions call within their first few instructions: the `EventEmitter`
+  and `Stream` constructors (7–8 instructions, one `Call`), hono's `get req` (a
+  `Construct`), undici `Headers.set`/`has` (6–10 calls), `emit` (8 calls). Private fields
+  read through symbol-keyed `GetIndex`.
+
+So a web-path tier needs, in order:
+1. An entry from the lane prologue that runs on the activation's own registers and returns
+   the PC to continue at, costing tens of instructions, not hundreds.
+2. Calls that leave native code and resume it at the next PC.
+3. Then guarded field and index reads, which pay only once 1 and 2 hold.
+
 ## Cached `this` field returns
 
 The JIT-mode entry has a narrow direct-getter matcher for a return-marked
