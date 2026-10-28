@@ -564,23 +564,30 @@ const YOUNG_MINIMUM_ALLOCATION: usize = 1 << 12;
 /// interleaved runs, x86_64 4 vCPU, 2026-10-25; Score / max RSS): stanford-crypto-aes +10% /
 /// 34.8 -> 30.4 MB, bigint-noble-ed25519 +4% / 31.4 -> 28.7, UniPoker flat / 22.1 -> 19.9,
 /// hash-map flat / 27.3 -> 25.9, pbkdf2 and sha256 within noise, acorn-wtb +4% / +2.6 MB.
-/// Raised to 2^19 for Score, which this table serves (memory-first keeps RSS first): V8-v7
-/// fixed work, gc-tuning build, callgrind main thread, 2^19 young with the full interval at
-/// 2^21 against 3 << 14 and 2^18 (v2-cloud-c, x86_64 4 vCPU, 2026-10-28): EarleyBoyer x0.838,
-/// RegExp x0.883, Splay x0.889, Crypto x0.974, DeltaBlue x0.980, RayTrace x0.982, Richards
-/// x0.994, NavierStokes x0.993 of instructions; stock Score, 7 CPU-alternating pairs:
-/// EarleyBoyer x1.08, RayTrace x1.05, Splay x1.03.
-const THROUGHPUT_MINIMUM_YOUNG: usize = 1 << 19;
-/// The most allocations between young collections under throughput: its minimum, so every
-/// young generation is that size (`GenerationalPacing::young_budget`).
-const THROUGHPUT_MAXIMUM_YOUNG: usize = THROUGHPUT_MINIMUM_YOUNG;
+const THROUGHPUT_MINIMUM_YOUNG: usize = 3 << 14;
+/// The most allocations between young collections under throughput: 2^19, for Score, which
+/// this table serves (memory-first keeps RSS first). V8-v7 fixed work, gc-tuning build,
+/// callgrind main thread, 2^19 young with the full interval at 2^21 against 3 << 14 and 2^18
+/// (v2-cloud-c, x86_64 4 vCPU, 2026-10-28): EarleyBoyer x0.838, RegExp x0.883, Splay x0.889,
+/// Crypto x0.974, DeltaBlue x0.980, RayTrace x0.982, Richards x0.994, NavierStokes x0.993 of
+/// instructions; stock Score, 7 CPU-alternating pairs: EarleyBoyer x1.08, RayTrace x1.05,
+/// Splay x1.03. A ceiling, not a floor: as the floor too it made every young generation that
+/// size, and a server's young generations are mostly garbage held while hundreds of requests
+/// are in flight (TOD-167, gc-tuning build, 500 connections, ping/query/body/video, final
+/// VmHWM, 2 rounds): fastify 81.5 / 78.1 MB and hono 90.7 / 86.3 MB with 2^19 fixed and the
+/// full interval at 2^21; 80.4 / 78.3 and 89.0 / 89.8 with only the old-growth floor back at
+/// 2^18; 42.2 / 40.7 and 41.6 / 39.4 with this ceiling over `THROUGHPUT_MINIMUM_YOUNG` and
+/// `THROUGHPUT_MINIMUM_FULL_INTERVAL` at 2^18 (before the raise: 43.9 and 45.0 MB), request
+/// rates within the run spread.
+const THROUGHPUT_MAXIMUM_YOUNG: usize = 1 << 19;
 /// The fewest allocations, or old-generation growth, between full collections under
 /// throughput: the JetStream, Score and web lanes' common minimum (v2-cloud-jet, v2-cloud-c,
 /// v2-web). Against memory-first's 384 the Score lane's table, which shares it, ran the Earley
 /// half of EarleyBoyer in about 1190M instructions instead of 2318M, with 816 fewer
-/// collections of the whole live set (v2-cloud-c, x86_64 4 vCPU). Four young generations
-/// (`THROUGHPUT_MINIMUM_YOUNG`), so a young collection is not due as a full one too.
-const THROUGHPUT_MINIMUM_FULL_INTERVAL: usize = 1 << 21;
+/// collections of the whole live set (v2-cloud-c, x86_64 4 vCPU). At 2^21 a server's promoted
+/// request objects, which die soon after their first young collection, wait that long for a
+/// full one (`THROUGHPUT_MAXIMUM_YOUNG`'s rows).
+const THROUGHPUT_MINIMUM_FULL_INTERVAL: usize = 1 << 18;
 /// Smoothed young survival past which throughput collects fully (`Regime::FullOnly`): three
 /// quarters. npm module loading keeps about 52% of each young generation (QUENCH_GC_TRACE,
 /// typescript-eslint: 531/1024), and at half the heap went FullOnly and fully re-marked the
