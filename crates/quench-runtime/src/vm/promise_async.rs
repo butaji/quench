@@ -154,7 +154,7 @@ impl<H: Host> Vm<H> {
         let pushed = self.push_in_loop_call(p, f, pc, target, callee, this, unsafe { &*arguments }, destination);
         Some(match pushed {
             Some(Ok(StepResult::PushFrame { destination, call_guard, construct_this, .. })) => {
-                Ok(StepResult::PushFrame { destination, call_guard, construct_this, settles: Some(root) })
+                Ok(StepResult::PushFrame { destination, call_guard, construct_this, settles: Some(root), generator: None })
             }
             Some(Err(error)) => {
                 let promise = self.release_settled_call_root(root);

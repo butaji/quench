@@ -74,6 +74,13 @@ impl<H: Host> Vm<H> {
             return None;
         }
         let callee = self.read(f, i.register_b());
+        // A generator's `next()` resumes its suspended frame in place.
+        if i.op() == Op::Call && i.call_window().count == 0 {
+            let generator = self.read(f, i.register_c());
+            if self.steps_as_generator(generator, callee) {
+                return self.try_in_loop_generator_step(f, pc, callee, generator, i.result_register(), false);
+            }
+        }
         let entry = self.in_loop_call_entry(p, callee)?;
         let target = (entry.program, entry.function, entry.env);
         if entry.push == super::InLoopPush::Settles {
@@ -211,6 +218,7 @@ impl<H: Host> Vm<H> {
             call_guard,
             construct_this: None,
             settles: None,
+            generator: None,
         }))
     }
 
@@ -1575,6 +1583,7 @@ impl<H: Host> Vm<H> {
                     call_guard,
                     construct_this: None,
                     settles: None,
+                    generator: None,
                 });
             }
             Op::CallKnown => {
@@ -1714,6 +1723,7 @@ impl<H: Host> Vm<H> {
                             call_guard: pushed?,
                             construct_this: Some(this),
                             settles: None,
+                            generator: None,
                         });
                     }
                 }

@@ -652,3 +652,48 @@ function chain(n) { let p = Promise.resolve(0); for (let i = 0; i < n; i++) p = 
 "#;
     assert_eq!(output(source), ["50 ctor true false species ctor true false ctor true ctor ctor true 10"]);
 }
+
+#[test]
+fn generators_resumed_in_place_keep_iteration_semantics() {
+    // A generator's `next()` from a frame or a lane iteration step resumes its frame in place
+    // (`Vm::try_in_loop_generator_step`), its `yield` and return completing the call: for-of,
+    // explicit steps, nesting, delegation, throws, `finally` on an early exit, a re-entrant
+    // step, closures over its locals, `arguments`, `with` and a resumed value.
+    let source = r#"
+const out = [];
+function* range(n) { for (let i = 0; i < n; i++) yield i; }
+let s = 0; for (const v of range(1000)) s += v; out.push(s);
+const g = range(3); out.push(JSON.stringify([g.next(), g.next(), g.next(), g.next(), g.next()]));
+function* nested() { for (const a of range(3)) for (const b of range(2)) yield a * 10 + b; }
+out.push([...nested()].join());
+function* delegating() { yield 1; const r = yield* inner(); yield r; }
+function* inner() { yield 2; yield 3; return 4; }
+out.push([...delegating()].join());
+function* thrower() { yield 1; throw new Error("boom"); }
+try { for (const v of thrower()) out.push("t" + v); } catch (e) { out.push(e.message); }
+const t = thrower(); t.next(); try { t.next(); } catch (e) { out.push("caught " + e.message); } out.push(JSON.stringify(t.next()));
+function* withFinally() { try { yield 1; yield 2; } finally { out.push("finally"); } }
+for (const v of withFinally()) { out.push("f" + v); break; }
+function* selfCall() { yield 1; try { me.next(); } catch (e) { out.push(e.constructor.name); } yield 2; }
+const me = selfCall(); out.push([...me].join());
+function* counter() { let c = 0; const read = () => c; while (true) { c++; const got = yield read; if (got === "stop") return c; } }
+const cg = counter(); const r1 = cg.next().value; cg.next(); cg.next(); out.push(r1(), JSON.stringify(cg.next("stop")));
+function* args() { yield arguments.length; yield this === undefined || this === globalThis; }
+out.push([...args(1, 2, 3)].join());
+function* withScope() { const o = { x: 7 }; with (o) { yield x; x = 8; yield x; } }
+out.push([...withScope()].join());
+let deep = 0; function* rec(n) { if (n > 0) yield* rec(n - 1); yield n; } for (const v of rec(10)) deep += v; out.push(deep);
+const objGen = { *[Symbol.iterator]() { yield* [5, 6]; } }; out.push([...objGen].join());
+print(out.join(" "));
+"#;
+    assert_eq!(
+        output(source),
+        ["499500 [{\"value\":0,\"done\":false},{\"value\":1,\"done\":false},{\"value\":2,\"done\":false},{\"done\":true},{\"done\":true}] 0,1,10,11,20,21 1,2,3,4 t1 boom caught boom {\"done\":true} f1 finally TypeError 1,2 3 {\"value\":3,\"done\":true} 3,true 7,8 55 5,6"]
+    );
+    let resumed = r#"
+"use strict";
+function* g(){ const x = yield 1; yield x * 2; }
+const it = g(); const a = it.next(); const b = it.next(21); const c = it.next(); print(JSON.stringify([a, b, c]));
+"#;
+    assert_eq!(output(resumed), ["[{\"value\":1,\"done\":false},{\"value\":42,\"done\":false},{\"done\":true}]"]);
+}
