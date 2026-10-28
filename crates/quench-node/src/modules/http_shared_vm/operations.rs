@@ -289,6 +289,8 @@ const RESPONSE_FACTORY: &str = r#"((Stream, setHeaderOperation, getHeaderOperati
     if (callbacks === undefined) response[kEndCallbacks] = [callback];
     else callbacks.push(callback);
   };
+  // Hoisted, so a finished response's close tick makes no closure.
+  const emitClose = (response) => response.emit("close");
   const emitFinished = (response) => {
     response[kFinished] = true;
     const callbacks = response[kEndCallbacks];
@@ -297,7 +299,7 @@ const RESPONSE_FACTORY: &str = r#"((Stream, setHeaderOperation, getHeaderOperati
       for (let index = 0; index < callbacks.length; index++) callbacks[index](null);
     }
     response.emit("finish");
-    nextTick(() => response.emit("close"));
+    nextTick(emitClose, response);
   };
   function ServerResponse(id, statusCode, request, server, socket) {
     if (!(this instanceof ServerResponse)) {
