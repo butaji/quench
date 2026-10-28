@@ -18218,3 +18218,65 @@ print(JSON.stringify(out));
     vm.execute(&Engine::specialize(source, "constant-left.js").unwrap()).unwrap();
     assert_eq!(output.borrow().as_slice(), [r#"["0f1t0f1t0f1t0f1t0f1t0f0f1t1t1t","0f1t0f1t0f1t0f1t0f1t0f0f1t1t1t","0f0f1t1t1t0f1t0f0f0f0f0f0f0f1t","0f1t0f1t0f1t0f1t0f1t0f0f0f1t1t","1t0f1t0f0f1t0f1t1t0f0f0f0f0f0f","0f0f0f0f0f1t0f1t0f0f0f0f0f0f0f","1t0f1t0f0f1t0f1t1t0f0f0f0f0f0f","0f1t0f1t0f1t0f1t0f1t0f0f0f1t1t","0f0f1t1t1t0f0f1t0f0f0f0f0f0f1t","0f0f0f0f0f1t0f1t1t0f0f0f0f0f0f","0f1t0f1t0f1t0f1t0f1t0f0f0f1t1t","0f1t0f1t0f1t0f1t0f1t1t0f0f1t1t","0f0f0f0f0f1t0f1t0f0f1t0f0f0f0f","0f0f1t1t1t0f0f1t0f0f0f0f0f0f1t","0f1t0f1t0f1t0f1t0f1t0f0f0f1t1t","1t0f1t0f0f1t0f1t1t0f0f0f0f0f0f","1t0f1t0f0f1t0f1t1t0f0f0f0f0f0f","1t0f1t0f0f1t0f1t1t0f0f0f0f0f0f","0f1t0f1t0f1t0f1t0f1t0f0f0f1t1t","EEEEEEEE0f1t0f1tEEEE0fEE0fEEEE",true,false,true,3,67]"#]);
 }
+
+#[test]
+fn object_templates_copy_constructions_until_a_read_of_them_changes() {
+    let source = r#"
+      var kState = Symbol('state');
+      function State() { this.buffer = []; this.length = 0; this[kState] = 1.5; }
+      State.prototype.flag = 0;
+      function Message() { this.state = new State(); this.events = { __proto__: null }; this.url = ''; this.flag = State.prototype.flag; }
+      function make() { return new Message(); }
+      function probes() { return [State.prototype, 'flag']; }
+      function describe(m) {
+        return JSON.stringify([Reflect.ownKeys(m).map(String), Object.getPrototypeOf(m) === Message.prototype,
+          Reflect.ownKeys(m.state).map(String), Object.getPrototypeOf(m.state) === State.prototype, m.state[kState],
+          Object.getPrototypeOf(m.events), Array.isArray(m.state.buffer), m.flag]);
+      }
+      function same(a, b) { return describe(a) === describe(b); }
+      // Two copies equal to a construction, sharing none of the objects it makes anew.
+      function check(first, second, constructed) { return same(first, constructed) && same(second, constructed) && distinct(first, second); }
+      function distinct(a, b) { return a !== b && a.state !== b.state && a.state.buffer !== b.state.buffer && a.events !== b.events; }
+      function setFlag(value) { State.prototype.flag = value; }
+      function addKey() { Message.prototype.extra = 1; }
+      function churn() { for (var k = 0; k < 20000; k++) { var o = {}; o['junk' + k] = k; } }
+    "#;
+    let mut vm = Vm::new(TestHost::default());
+    let program = Engine::specialize(source, "object-templates.js").unwrap();
+    vm.execute(&program).unwrap();
+    let call = |vm: &mut Vm<TestHost>, name: &str, args: &[Value]| {
+        let atom = vm.intern_atom(name);
+        let function = vm.own_property(vm.realm.globals, atom).unwrap();
+        vm.call_value(&program, function, Value::UNDEFINED, args).unwrap()
+    };
+    let capture = |vm: &mut Vm<TestHost>| {
+        let (template, witness) = (call(vm, "make", &[]), call(vm, "make", &[]));
+        let probes = call(vm, "probes", &[]);
+        let pair = vm.heap.array_elements(probes).unwrap().as_slice().to_vec();
+        vm.capture_object_template(template, witness, &[(pair[0], pair[1])]).unwrap()
+    };
+    let id = capture(&mut vm);
+    // Values this test holds are unrooted: each check takes them in one call made once they
+    // exist, before anything else allocates.
+    let check = |vm: &mut Vm<TestHost>, id| {
+        let constructed = call(vm, "make", &[]);
+        let (first, second) = (vm.instantiate_object_template(id).unwrap(), vm.instantiate_object_template(id).unwrap());
+        assert_eq!(call(vm, "check", &[first, second, constructed]), Value::TRUE);
+    };
+    check(&mut vm, id);
+
+    // Shape compaction renumbers the guarded shapes; the template follows.
+    call(&mut vm, "churn", &[]);
+    let shapes = vm.shapes.len();
+    vm.collect_now(&program);
+    assert!(vm.shapes.len() < shapes, "the collection compacted the shape table");
+    check(&mut vm, id);
+
+    // A probed value and a guarded layout each retire the template.
+    call(&mut vm, "setFlag", &[Value::number(2.0)]);
+    assert!(vm.instantiate_object_template(id).is_none());
+    let id = capture(&mut vm);
+    assert!(vm.instantiate_object_template(id).is_some());
+    call(&mut vm, "addKey", &[]);
+    assert!(vm.instantiate_object_template(id).is_none());
+}

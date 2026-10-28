@@ -26,10 +26,29 @@ const DEFAULT_VERSION: (u32, u32) = (1, 1);
 /// socket without `on`, and the body pushed, then its end unless it is still open. One
 /// guest call makes the whole message, so its steps run in the lane.
 const CREATE_FACTORY: &str = quench_js_check::checked_js!(
-    r#"(IncomingMessage, EventEmitter, read, destroy, serverKey, clientKey, setPrototypeOf, bodyBuffer) => {
+    r#"(IncomingMessage, EventEmitter, read, destroy, serverKey, clientKey, setPrototypeOf, bodyBuffer, captureTemplate, copyTemplate, templateProbes, defaultHighWaterMark, captureLimit) => {
   'use strict';
+  // The template of `new IncomingMessage(undefined)` (`objectTemplateCapture`), and the
+  // default high water mark its ReadableState read, which no probe names: module state.
+  let template;
+  let highWaterMark;
+  let captures = 0;
+  const message = () => {
+    if (template !== undefined && highWaterMark === defaultHighWaterMark(false)) {
+      const copy = copyTemplate(template);
+      if (copy !== undefined) return copy;
+    }
+    // A read that changed, or a restored heap, takes a new template, up to `captureLimit`
+    // captures; past them every message is constructed.
+    if (captures < captureLimit) {
+      captures++;
+      highWaterMark = defaultHighWaterMark(false);
+      template = captureTemplate(new IncomingMessage(undefined), new IncomingMessage(undefined), templateProbes);
+    }
+    return new IncomingMessage(undefined);
+  };
   return function create(method, url, statusCode, statusMessage, httpVersion, httpVersionMajor, httpVersionMinor, rawHeaders, socket, complete, body, open, id, server) {
-    const stream = new IncomingMessage(undefined);
+    const stream = message();
     stream._addHeaderLines(rawHeaders, rawHeaders.length);
     if (method !== undefined) stream.method = method;
     if (url !== undefined) stream.url = url;
@@ -62,14 +81,66 @@ const CREATE_FACTORY: &str = quench_js_check::checked_js!(
 pub(super) fn create_function(
     c: &mut Context<'_>,
     configuration: [RootId; 6],
+    template_probes: RootId,
 ) -> Result<RootId, RootedError> {
     let factory = c.evaluate_script_rooted(CREATE_FACTORY, "node:http/incoming-message.js")?;
     let global = c.global_root()?;
     let reflect = get(c, global, "Reflect")?;
     let set_prototype_of = get(c, reflect, "setPrototypeOf")?;
     let body_buffer = c.host_function(crate::host::shared_vm::operation("httpIncomingBody"))?;
+    let capture = c.host_function(crate::host::shared_vm::operation("objectTemplateCapture"))?;
+    let copy = c.host_function(crate::host::shared_vm::operation("objectTemplateCopy"))?;
+    let default_high_water_mark = crate::host::shared_vm::commonjs::node_library_export(
+        c,
+        "http.js",
+        "internal/streams/state.js",
+        "getDefaultHighWaterMark",
+    )?;
+    let capture_limit = c.number(f64::from(TEMPLATE_CAPTURE_LIMIT));
     let undefined = c.undefined();
-    c.call_rooted(factory, undefined, &[configuration.as_slice(), &[set_prototype_of, body_buffer]].concat())
+    c.call_rooted(
+        factory,
+        undefined,
+        &[
+            configuration.as_slice(),
+            &[set_prototype_of, body_buffer, capture, copy, template_probes, default_high_water_mark, capture_limit],
+        ]
+        .concat(),
+    )
+}
+
+/// Captures a message template takes (`CREATE_FACTORY`) before every message is
+/// constructed: each follows a read of the construction that changed, so a program that
+/// keeps changing them pays three constructions a message only this often.
+const TEMPLATE_CAPTURE_LIMIT: u32 = 8;
+
+/// `objectTemplateCapture(template, witness, probes)`: the id of a template of `template`'s
+/// graph (`NativeContext::capture_object_template_rooted`), `probes` a flat array of
+/// (holder, key) pairs; `undefined` when the graph cannot be templated.
+pub(crate) fn capture_template(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+    let (Some(&template), Some(&witness), Some(&probes)) = (args.first(), args.get(1), args.get(2)) else {
+        return Ok(c.undefined());
+    };
+    let length = get(c, probes, "length")?;
+    let length = c.rooted_value(length).and_then(|value| value.as_number()).unwrap_or(0.0) as usize;
+    let mut pairs = Vec::with_capacity(length / 2);
+    for index in (0..length.saturating_sub(1)).step_by(2) {
+        let holder = get(c, probes, &index.to_string())?;
+        let key = get(c, probes, &(index + 1).to_string())?;
+        pairs.push((holder, key));
+    }
+    Ok(match c.capture_object_template_rooted(template, witness, &pairs) {
+        Some(id) => c.number(f64::from(id)),
+        None => c.undefined(),
+    })
+}
+
+/// `objectTemplateCopy(id)`: a copy of template `id`, or `undefined` when its construction
+/// would no longer build it (`NativeContext::instantiate_object_template_rooted`).
+pub(crate) fn copy_template(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+    let id = args.first().and_then(|&id| c.rooted_value(id)).and_then(|value| value.as_number());
+    let copy = id.and_then(|id| c.instantiate_object_template_rooted(id as u32));
+    Ok(copy.unwrap_or_else(|| c.undefined()))
 }
 
 /// The Buffer of a body's text, one byte per code unit as the exchange read it.

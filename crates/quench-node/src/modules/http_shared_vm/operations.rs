@@ -163,6 +163,56 @@ pub(super) const RESPONSE_HIGH_WATER_MARK: usize = 64 * 1024;
 /// A ServerResponse's `statusCode` until the application sets one (Node's `ServerResponse`).
 pub(super) const DEFAULT_STATUS: u16 = 200;
 
+/// The own data properties `new IncomingMessage(undefined)` reads that a program may write
+/// (`objectTemplateCapture`'s probes), as (holder, key) pairs, from the pinned library's
+/// `IncomingMessage`, `Readable`, `ReadableState` and `Stream` and the EventEmitter
+/// `init`: the EventEmitter prototype's `_events`, `_maxListeners` and capture flag,
+/// `EventEmitter.init`, `Function.prototype.call` that each `X.call(this)` reads, and the
+/// `prototype` of each constructor `new` reads. The layouts of the prototype chains (accessors,
+/// added keys) the template guards itself; the default high water mark is module state the
+/// factory compares.
+fn incoming_template_probes(
+    context: &mut Context<'_>,
+    emitter: RootId,
+    incoming: RootId,
+) -> Result<RootId, RootedError> {
+    let event_data = context
+        .host_mut()
+        .shared_state()
+        .borrow()
+        .event_targets_api
+        .ok_or_else(|| RootedError::host("event listener configuration missing"))?;
+    let capture_key = crate::modules::event_constructor_shared_vm::get(context, event_data, "captureKey")?;
+    let emitter_prototype = get(context, emitter, "prototype")?;
+    let global = context.global_root()?;
+    let function = get(context, global, "Function")?;
+    let function_prototype = get(context, function, "prototype")?;
+    let readable_state = crate::host::shared_vm::commonjs::node_library_export(
+        context,
+        "http.js",
+        "internal/streams/readable.js",
+        "ReadableState",
+    )?;
+    let name = |context: &mut Context<'_>, text: &str| context.string_rooted(text);
+    let probes = [
+        emitter_prototype,
+        name(context, "_events"),
+        emitter_prototype,
+        name(context, "_maxListeners"),
+        emitter_prototype,
+        capture_key,
+        emitter,
+        name(context, "init"),
+        function_prototype,
+        name(context, "call"),
+        incoming,
+        name(context, "prototype"),
+        readable_state,
+        name(context, "prototype"),
+    ];
+    context.array_rooted(&probes)
+}
+
 /// The guest function a parsed server request enters JavaScript through: it makes the
 /// IncomingMessage (`incoming::CREATE_FACTORY`'s leading arguments, from the head through the
 /// exchange id) and its ServerResponse, publishes the request start to the subscribers the host
@@ -517,6 +567,7 @@ pub(crate) fn module(context: &mut Context<'_>) -> Result<RootId, RootedError> {
         "_destroy",
         exchange_keys,
     )?;
+    let template_probes = incoming_template_probes(context, emitter, incoming_constructor)?;
     let incoming_factory = super::incoming::create_function(
         context,
         [
@@ -527,6 +578,7 @@ pub(crate) fn module(context: &mut Context<'_>) -> Result<RootId, RootedError> {
             server_exchange,
             client_exchange,
         ],
+        template_probes,
     )?;
     let request_dispatch =
         context.evaluate_script_rooted(REQUEST_DISPATCH_FACTORY, "node:http/request-dispatch.js")?;
