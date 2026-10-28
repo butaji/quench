@@ -4564,11 +4564,15 @@ script_handler! {
     /// (`Vm::field_site_polymorphic`): its inline megamorphic entries; any other read takes
     /// `lane_get_field_hashed`, which a site whose entries moved to the hash runs from then on.
     fn lane_get_field_polymorphic<THIS: bool>(cx, r, ip, i, view) {
-        // SAFETY: the context's program outlives the lane run.
-        let code = unsafe { &*(*cx).code };
-        let Some(value) = (unsafe { lane_known_field_base::<H, THIS>(cx, r, i.b) })
-            .and_then(|object| (unsafe { vm(cx) }).inline_polymorphic_field_hit(code, object, i.c))
-        else {
+        let Some(object) = (unsafe { lane_known_field_base::<H, THIS>(cx, r, i.b) }) else {
+            sibling!(lane_get_field_hashed::<H, THIS>, r, ip, Carried::script(cx))
+        };
+        // The record's hint first, the own entry its last hit named (`lane_hint_polymorphic_hit`).
+        if let Some(value) = (unsafe { vm(cx) }).record_field_entry_hit(i.field_hint(), object) {
+            r.set(i.a, value);
+            next!(cx, r, following(ip), Carried::script(cx))
+        }
+        let Some(value) = lane_hint_polymorphic_hit::<H>(cx, ip, i, object) else {
             if (unsafe { vm(cx) }).field_site_hashed(i.c) {
                 requicken::<H>(ip, lane_get_field_hashed::<H, THIS>);
             }
@@ -4577,6 +4581,24 @@ script_handler! {
         r.set(i.a, value);
         next!(cx, r, following(ip), Carried::script(cx))
     }
+}
+
+/// `lane_get_field_polymorphic` past its record's hint: the site's inline entries, an own one
+/// whose hit becomes the hint, as `lane_get_field_own_refresh` keeps it, so a run of reads of
+/// one shape tests the hint alone. Out of line, so the hint's test keeps its registers.
+#[inline(never)]
+fn lane_hint_polymorphic_hit<H: Host>(cx: *mut LaneContext<H>, ip: Ip, i: &LaneInstruction, object: Value) -> Option<Value> {
+    // SAFETY: the context's program outlives the lane run.
+    let code = unsafe { &*(*cx).code };
+    let (value, own) = (unsafe { vm(cx) }).inline_polymorphic_field_hit_entry(code, object, i.c)?;
+    // A held loop header's `call_link` names its site (`lane_header_site`) and keeps no hint.
+    let header = unsafe { (*ip).operand.field.shape } == super::NO_FIELD_RECEIVER && i.call_link.get() != NO_CALL_LINK;
+    if let Some(own) = own.filter(|_| !header) {
+        // SAFETY: as `requicken`; the hit proved the entry an own one of the receiver's shape.
+        unsafe { (*ip.cast_mut()).operand.field.shape = own.receiver };
+        i.call_link.set(own.slot);
+    }
+    Some(value)
 }
 
 script_handler! {

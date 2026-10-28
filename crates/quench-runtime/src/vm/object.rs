@@ -1711,7 +1711,7 @@ impl<H: Host> Vm<H> {
         object: Value,
         site: u16,
     ) -> Option<Value> {
-        self.polymorphic_field_entries_hit::<true>(p, object, site)
+        self.polymorphic_field_entries_hit::<true>(p, object, site).map(|(value, _)| value)
     }
 
     /// `polymorphic_field_hit` among the inline entries alone: `None` for a site whose
@@ -1725,17 +1725,31 @@ impl<H: Host> Vm<H> {
         object: Value,
         site: u16,
     ) -> Option<Value> {
+        self.polymorphic_field_entries_hit::<false>(p, object, site).map(|(value, _)| value)
+    }
+
+    /// `inline_polymorphic_field_hit` with the own entry it hit, where it hit one: the
+    /// receiver's exact shape and the field's slot, a record's own-field hint
+    /// (`LaneInstruction::field_hint`).
+    #[inline(always)]
+    pub(super) fn inline_polymorphic_field_hit_entry(
+        &mut self,
+        p: &ResidualProgram,
+        object: Value,
+        site: u16,
+    ) -> Option<(Value, Option<FieldCache>)> {
         self.polymorphic_field_entries_hit::<false>(p, object, site)
     }
 
-    /// `polymorphic_field_hit`, probing the hashed entries where `HASHED`.
+    /// `polymorphic_field_hit`, probing the hashed entries where `HASHED`, with the own
+    /// entry a hit names (`inline_polymorphic_field_hit_entry`).
     #[inline(always)]
     fn polymorphic_field_entries_hit<const HASHED: bool>(
         &mut self,
         p: &ResidualProgram,
         object: Value,
         site: u16,
-    ) -> Option<Value> {
+    ) -> Option<(Value, Option<FieldCache>)> {
         debug_assert!(self.lane_admits(p));
         // Any record receiver, an array's too: entries name only shape slots, which an
         // array's length and elements are not.
@@ -1764,7 +1778,7 @@ impl<H: Host> Vm<H> {
                 // SAFETY: as for `cached_field_hit`.
                 let value = unsafe { self.heap.property_get_flat(receiver, usize::from(entry.slot)) };
                 self.profile.field_cache_hit(2, 0);
-                return Some(value);
+                return Some((value, Some(FieldCache::own(shape, entry.slot))));
             }
             let holder = self.heap.record_prototype(receiver)?;
             let entry = set.get(shape, holder.exact_shape())?;
@@ -1772,7 +1786,7 @@ impl<H: Host> Vm<H> {
             // SAFETY: as for the inline holder entries below.
             let value = unsafe { self.heap.holder_property_get_flat(holder, usize::from(entry.slot)) };
             self.profile.field_cache_hit(2, 1);
-            return Some(value);
+            return Some((value, None));
         }
         for entry in set.recorded() {
             if entry.receiver != shape {
@@ -1782,7 +1796,7 @@ impl<H: Host> Vm<H> {
                 // SAFETY: as for `cached_field_hit`.
                 let value = unsafe { self.heap.property_get_flat(receiver, usize::from(entry.slot)) };
                 self.profile.field_cache_hit(2, 0);
-                return Some(value);
+                return Some((value, Some(FieldCache::own(shape, entry.slot))));
             }
             // A prototype outside the records takes the slow path.
             let holder = self.heap.record_prototype(receiver)?;
@@ -1793,7 +1807,7 @@ impl<H: Host> Vm<H> {
             // after confirming an immediate-prototype data property.
             let value = unsafe { self.heap.holder_property_get_flat(holder, usize::from(entry.slot)) };
             self.profile.field_cache_hit(2, 1);
-            return Some(value);
+            return Some((value, None));
         }
         None
     }
