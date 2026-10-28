@@ -11055,10 +11055,11 @@ fn js_jit_compiles_straight_line_plain_local_temporaries() {
 fn js_jit_enters_compiled_callees_from_frameless_lane_activations() {
     let program = Engine::compile(crate::ExecutionRequest::script(
         r#"
-          function add(left, right) { return left + right; }
+          function add(left, right) { let t = left + right; t = t * 1; t = t + 0; t = t * 1; t = t + 0; t = t * 1; t = t + 0; t = t * 1; t = t + 0; t = t * 1; t = t + 0; t = t * 1; t = t + 0; t = t * 1; t = t + 0; t = t * 1; t = t + 0; t = t * 1; t = t + 0; t = t * 1; t = t + 0; t = t * 1; t = t + 0; t = t * 1; t = t + 0; return t; }
+          function plus(left, right) { return left + right; }
           function drive(count) {
             let sum = 0;
-            for (let index = 0; index < count; index++) sum = add(sum, index);
+            for (let index = 0; index < count; index++) sum = plus(add(sum, index), 0);
             return sum;
           }
           for (let round = 0; round < 4; round++) {
@@ -11092,6 +11093,18 @@ fn js_jit_enters_compiled_callees_from_frameless_lane_activations() {
         "the lane's frameless calls should enter native code, got {}",
         compiled.native_entries()
     );
+    // A loop-free callee shorter than a native entry's overhead stays a frameless activation
+    // (`JS_TIER_LANE_ENTRY_RECORDS`).
+    let plus = program
+        .functions
+        .iter()
+        .position(|function| function.header().name.is_some_and(|atom| &program.atoms[atom as usize] == "plus"))
+        .unwrap() as u32;
+    let native = match vm.programs.js_tier(super::program_store::ProgramId::MAIN, plus) {
+        Some(super::program_store::JsTierState::Compiled(compiled)) => compiled.native_entries(),
+        _ => 0,
+    };
+    assert!(native < 500, "a short loop-free callee should run in the lane, got {native} native entries");
 }
 
 #[test]
