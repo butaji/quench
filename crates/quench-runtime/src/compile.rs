@@ -1165,6 +1165,9 @@ pub enum CompilePhase {
     /// A compiled program is complete and its encoding for the host's compile cache starts:
     /// the parser's and code generator's work is over, and the encoder's begins.
     Encoding,
+    /// A function's lane view derives from its bytecode (`dispatch_fast`) once its first runs
+    /// are over: the deriver's code, and then the lane handlers, are about to run.
+    LaneDerivation,
 }
 
 /// What a compilation does at each `CompilePhase`, set once by the embedding.
@@ -2868,7 +2871,7 @@ impl<'a> Compiler<'a> {
             .into_iter()
             .enumerate()
             .map(|(id, entry)| match entry {
-                replay::FunctionEntry::Compiled(function) => Some(function),
+                replay::FunctionEntry::Compiled(function) => Some(*function),
                 replay::FunctionEntry::Released(function) => {
                     released.insert(id, function);
                     None
