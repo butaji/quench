@@ -182,6 +182,87 @@ fn lane_generator_iteration_steps_keep_generator_semantics() {
 }
 
 #[test]
+fn lane_polymorphic_field_stores_keep_assignment_semantics() {
+    // A store site past one shape writes each recorded shape's slot in the lane; a receiver
+    // that gains the property, a frozen one and an accessor still take the general store.
+    let source = r#"
+      const out = [];
+      class P { constructor(k) { this["w" + k] = k; this.pos = 0; } step(v) { this.pos = v; } }
+      const ps = []; for (let k = 0; k < 6; k++) ps.push(new P(k));
+      for (let r = 0; r < 100; r++) for (const p of ps) p.step(r + p.pos);
+      out.push(ps.map((p) => p.pos).join(","));
+      function set(o, v) { o.x = v; }
+      const os = [{ x: 0, a: 1 }, { x: 0, b: 1 }, { x: 0, c: 1 }];
+      for (let r = 0; r < 50; r++) for (const o of os) set(o, r);
+      const fresh = {}; set(fresh, "added"); out.push(fresh.x, os.map((o) => o.x).join(","));
+      const frozen = Object.freeze({ x: 1, a: 1 }); set(frozen, 9); out.push(frozen.x);
+      const acc = { a: 1, set x(v) { out.push("setter " + v); } }; set(acc, 5);
+      print(out.join(" "));
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    let program = Engine::specialize(source, "lane-polymorphic-stores.js").unwrap();
+    vm.execute(&program).unwrap();
+    assert_eq!(output.borrow().as_slice(), ["4950,4950,4950,4950,4950,4950 added 49,49,49 1 setter 5"]);
+}
+
+#[test]
+fn lane_global_undefined_reads_keep_binding_semantics() {
+    // A static global read of `undefined` answers its value in the lane, while a direct
+    // eval's `var undefined` and a `with` object's property still shadow it, and neither an
+    // eval's own `let` nor a write to the global changes it.
+    let source = r#"
+      const out = [];
+      function f() { eval("var undefined = 1"); let s; for (let i = 0; i < 3; i++) s = undefined; return s; }
+      function g(o) { with (o) { let s; for (let i = 0; i < 3; i++) s = undefined; return s; } }
+      function h() { let s = 0; for (let i = 0; i < 1000; i++) s = typeof undefined + (undefined === void 0); return s; }
+      out.push(f(), g({ undefined: "w" }), g({}), h());
+      (0, eval)("let undefined = 3");
+      globalThis.undefined = 7; out.push(h());
+      print(out.join(" "));
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    let program = Engine::specialize(source, "lane-global-undefined.js").unwrap();
+    vm.execute(&program).unwrap();
+    assert_eq!(output.borrow().as_slice(), ["1 w  undefinedtrue undefinedtrue"]);
+}
+
+#[test]
+fn lane_field_reads_of_strings_and_hashed_sites_keep_lookup_semantics() {
+    // A string's `length` read in the lane answers its own length, whatever its chain holds,
+    // while other receivers at the same site read theirs; a site past its inline shapes
+    // answers own and prototype fields from its hashed entries and sees a prototype change.
+    let source = r#"
+      const out = [];
+      class T { constructor(s) { this.input = s; } len() { return this.input.length; } }
+      let n = 0; const t = new T("abcdef");
+      for (let i = 0; i < 1000; i++) n += t.len();
+      out.push(n);
+      t.input = [1, 2]; out.push(t.len());
+      t.input = { length: "own" }; out.push(t.len());
+      String.prototype.length = 99; out.push(new T("xy").len());
+      const shapes = [];
+      for (let k = 0; k < 12; k++) { const o = { ["f" + k]: k, type: "t" + k }; shapes.push(o); }
+      function Proto() {} Proto.prototype.type = "proto";
+      for (let k = 0; k < 3; k++) { const o = new Proto(); o["g" + k] = k; shapes.push(o); }
+      function readType(o) { return o.type; }
+      for (let r = 0; r < 50; r++) for (const o of shapes) readType(o);
+      out.push(shapes.map(readType).join(","));
+      Proto.prototype.type = "changed"; out.push(readType(shapes[13]));
+      print(out.join(" "));
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    let program = Engine::specialize(source, "lane-field-reads.js").unwrap();
+    vm.execute(&program).unwrap();
+    assert_eq!(
+        output.borrow().as_slice(),
+        ["6000 2 own 2 t0,t1,t2,t3,t4,t5,t6,t7,t8,t9,t10,t11,proto,proto,proto changed"]
+    );
+}
+
+#[test]
 fn lane_calls_passing_extra_values_keep_them_only_for_legacy_reflection() {
     // A lane call passing more values than its callee's parameters keeps them for a sloppy
     // callee, whose `f.arguments` and caller's `arguments` read them, and passes a strict
