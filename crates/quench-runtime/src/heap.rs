@@ -967,6 +967,25 @@ impl Heap {
         }
     }
 
+    #[cfg(test)]
+    pub(crate) fn debug_holders(&self, target: Value) -> Vec<String> {
+        let mut found = Vec::new();
+        if self.roots.values().any(|value| value == target) {
+            found.push("root table".to_owned());
+        }
+        for (index, slot) in self.slots.iter().enumerate() {
+            let Some(cell) = &slot.cell else { continue };
+            let mut edges = Vec::new();
+            let mut last_proto = Value::UNDEFINED;
+            Self::children(Value::heap(index as u32), cell, &self.properties, &mut edges, &mut |_, _, _, _, _| {}, GcTraceKind::VerifyFull, &mut last_proto);
+            if edges.contains(&target) {
+                found.push(format!("slot {index} {:?} marked={}", cell.profile_variant_name(), Self::marked(&self.marks, index)));
+            }
+        }
+        let slot = target.legacy_heap_index().map(|index| (index, self.get(target).map(|cell| cell.profile_variant_name())));
+        found.push(format!("target slot holds {slot:?}"));
+        found
+    }
     /// Every live legacy cell, without needing `&mut` (census and diagnostics).
     #[cfg(feature = "profile-gc-time")]
     pub(crate) fn for_each_live_cell(&self, mut visit: impl FnMut(&Cell)) {

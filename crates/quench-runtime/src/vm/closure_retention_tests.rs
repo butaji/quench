@@ -485,6 +485,20 @@ fn check_case(case: &Case, runs: u32) {
         vm.call_value(&program, release, Value::UNDEFINED, &[]).unwrap();
         collect(&mut vm, &program);
         for &(label, _) in case.probes {
+            if probe_alive(&mut vm, &program, label) {
+                let weak = vm.intern_atom("weak");
+                let weak = vm.own_property(vm.realm.globals, weak).unwrap();
+                let label_atom = vm.intern_atom(label);
+                let reference = vm.get_property(&program, weak, label_atom).unwrap();
+                let target = match vm.heap.get(reference) {
+                    Some(super::Cell::WeakRef { target, .. }) => vm.heap.weak_value(target.unwrap()).unwrap(),
+                    _ => unreachable!(),
+                };
+                eprintln!("DIAG holders {:?}", vm.heap.debug_holders(target));
+                eprintln!("DIAG kept_alive={} frames={} frame_hits={:?} target={target:?}",
+                    vm.kept_alive.len(), vm.frames.len(),
+                    vm.frames.iter().map(|f| (f.registers.iter().filter(|v| **v == target).count(), f.locals.iter().filter(|v| **v == target).count(), f.registers.len())).collect::<Vec<_>>());
+            }
             assert!(
                 !probe_alive(&mut vm, &program, label),
                 "{} ({compilation}, {runs} runs): {label} must be collected once the closure is dropped",
