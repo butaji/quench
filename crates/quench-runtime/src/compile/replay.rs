@@ -256,9 +256,13 @@ fn constant_hashes(constants: &[crate::bytecode::Constant]) -> Vec<(u64, u32)> {
 
 /// One function of a compilation at load: reserved while it compiles, then compiled, or
 /// finished and released when a replay can make its record again.
+/// An entry is boxed when it holds anything: a large program's compilation keeps an entry
+/// per function while most of them are released, and an inline record (408 bytes) left
+/// each released entry that large (typescript.js: 21.7K entries, 8.9 MB at its compile's
+/// peak).
 pub(super) enum FunctionEntry {
     Reserved,
-    Compiled(crate::bytecode::Function),
+    Compiled(Box<crate::bytecode::Function>),
     Released(Box<ReleasedFunction>),
 }
 
@@ -324,7 +328,7 @@ impl<'a> FunctionTable<'a> {
 
     pub(super) fn set(&mut self, id: u32, function: crate::bytecode::Function) {
         match self {
-            Self::Owned(entries) => entries[id as usize] = FunctionEntry::Compiled(function),
+            Self::Owned(entries) => entries[id as usize] = FunctionEntry::Compiled(Box::new(function)),
             Self::Replay { target, record, .. } => {
                 assert_eq!(id, *target, "a replay makes only its target's record");
                 *record = Some(function);
@@ -387,7 +391,7 @@ impl<'a> FunctionTable<'a> {
         };
         let entry = entries.get_mut(id as usize)?;
         match std::mem::replace(entry, FunctionEntry::Reserved) {
-            FunctionEntry::Compiled(function) => Some(function),
+            FunctionEntry::Compiled(function) => Some(*function),
             other => {
                 *entry = other;
                 None
@@ -420,7 +424,7 @@ impl<'a> FunctionTable<'a> {
     pub(super) fn into_entries(self) -> Vec<FunctionEntry> {
         match self {
             Self::Owned(entries) => entries,
-            Self::Replay { record, .. } => record.into_iter().map(FunctionEntry::Compiled).collect(),
+            Self::Replay { record, .. } => record.into_iter().map(|record| FunctionEntry::Compiled(Box::new(record))).collect(),
         }
     }
 
@@ -535,6 +539,10 @@ pub(crate) struct ProgramReplay {
     pub(super) source_type: oxc_span::SourceType,
     pub(super) root_strict: bool,
     pub(super) module_goal: bool,
+    /// The starts of the function bodies the load compiled from their source parsed again
+    /// (`lazy_bodies`), in order: a replay stands each in, so the code around it compiles
+    /// as the load compiled it.
+    pub(super) lazy_bodies: Box<[u32]>,
     pub(super) specialized: bool,
     pub(super) atoms: ProgramAtomIndex,
     /// Where the load left the tables once each function was compiled.
@@ -604,9 +612,7 @@ impl super::atoms::AtomPrefix for ReplayAtoms<'_> {
 /// code, which has no `super()` to keep).
 fn replay_wrapper(call: &ReplayCall, strict: bool) -> (&'static str, &'static str) {
     match call {
-        ReplayCall::Plain(context) if context.expression => ("(", ")"),
-        ReplayCall::Plain(context) if context.default_export => ("export default ", ""),
-        ReplayCall::Plain(_) => ("", ""),
+        ReplayCall::Plain(context) => plain_function_wrapper(context),
         ReplayCall::ObjectMethod(_) => ("(async function*(){({", "})})"),
         ReplayCall::ClassMethod(_) => ("(async function*(){(class{", "})})"),
         ReplayCall::Arrow(_) if strict => ("(class extends Object{constructor(){(", ")}})"),
@@ -614,9 +620,21 @@ fn replay_wrapper(call: &ReplayCall, strict: bool) -> (&'static str, &'static st
     }
 }
 
+/// The text around a function declaration's or expression's source that parses it again as
+/// one (`replay_wrapper`).
+pub(super) fn plain_function_wrapper(context: &PlainFunctionContext) -> (&'static str, &'static str) {
+    if context.expression {
+        ("(", ")")
+    } else if context.default_export {
+        ("export default ", "")
+    } else {
+        ("", "")
+    }
+}
+
 /// Moves every span of a tree parsed from wrapped text by `delta`, so the function's own
 /// spans are offsets into the program's text again.
-struct ShiftSpans(u32);
+pub(super) struct ShiftSpans(pub(super) u32);
 
 impl<'a> oxc_ast_visit::VisitMut<'a> for ShiftSpans {
     fn visit_span(&mut self, span: &mut oxc_span::Span) {
@@ -761,6 +779,14 @@ pub(crate) fn recompile(
     }
     let delta = start.wrapping_sub(prefix.len() as u32);
     oxc_ast_visit::VisitMut::visit_program(&mut ShiftSpans(delta), &mut parsed.program);
+    // The bodies in the function's source the load compiled from their source parsed again,
+    // its own included.
+    let lazy_bodies: rustc_hash::FxHashSet<u32> = {
+        let from = replay.lazy_bodies.partition_point(|body| *body < start);
+        let to = replay.lazy_bodies.partition_point(|body| *body < end);
+        replay.lazy_bodies[from..to].iter().copied().collect()
+    };
+    super::lazy_bodies::stand_in(&allocator, &mut parsed.program, &lazy_bodies);
     let views = &replay.views;
     let atoms = ReplayAtoms {
         table: &program.atoms,
@@ -824,6 +850,7 @@ pub(crate) fn recompile(
         record: None,
     };
     compiler.replay_target = Some((id, &replay.exits));
+    compiler.lazy_bodies = lazy_bodies;
     compiler.name_shared_sites = super::NameSharedSites::Replay(&replay.name_shared_sites);
     compiler.seek(function_replay.entry);
     let made = match &function_replay.call {
@@ -1005,5 +1032,15 @@ pub(crate) fn verify(program: &crate::bytecode::ResidualProgram) {
     ));
     if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
         let _ = file.write_all((lines.join("\n") + "\n").as_bytes());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    /// An entry costs a pointer plus its tag however large a record is: a released entry,
+    /// which most of a large program's are while it compiles, holds nothing else.
+    #[test]
+    fn function_entries_hold_records_out_of_line() {
+        assert_eq!(size_of::<super::FunctionEntry>(), 2 * size_of::<usize>());
     }
 }

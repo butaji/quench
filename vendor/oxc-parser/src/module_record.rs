@@ -35,6 +35,11 @@ impl<'a> ModuleRecordBuilder<'a> {
     }
 
     /// Returns true if the file contains module syntax (import/export declarations or import.meta).
+    /// How many entries a function body can add: dynamic imports and `import.meta`s.
+    pub fn function_body_entries(&self) -> usize {
+        self.module_record.dynamic_imports.len() + self.module_record.import_metas.len()
+    }
+
     pub fn has_module_syntax(&self) -> bool {
         self.module_record.has_module_syntax
     }

@@ -934,7 +934,12 @@ impl Native {
     /// on every value it compares (10,210 materializations in the color-convert npm scenario),
     /// and TypeScript's CommonJS re-export helper (`__createBinding`) reads each export's
     /// descriptor (208,883 in the typescript-eslint npm scenario), and Express decodes each
-    /// query value with `decodeURIComponent` (one per request).
+    /// query value with `decodeURIComponent` (one per request). A Wasm export converts its
+    /// arguments with coercions, reaches JavaScript only through its imports' calls and runs
+    /// its own code natively, or pushes a frame for it only after making the activations
+    /// frames (`Vm::call_wasm_exported_function`); its trap becomes an error object where the
+    /// general path raises it (JetStream richards-wasm calls an export 2.1 million times an
+    /// iteration from a frameless activation).
     pub(crate) fn runs_beside_activations(self) -> bool {
         matches!(
             self,
@@ -972,6 +977,7 @@ impl Native {
                 | Self::Array
                 | Self::PromiseResolve
                 | Self::PromiseWithResolvers
+                | Self::WasmExportedFunction
         )
     }
 
@@ -1910,6 +1916,18 @@ impl Object {
         let plain = self.meta & OBJECT_INLINE_STORAGE == 0 && self.payload >> u32::BITS == 0;
         debug_assert!(!plain || self.extras_pointer().is_none());
         plain.then_some(self.payload as usize)
+    }
+
+    /// The storage start of an object whose values live in the arena behind extras, as a
+    /// prototype's do (its `PrototypeLookupState` lives there): the start the extras hold
+    /// (`storage_position`). `None` for inline storage or no extras.
+    #[inline(always)]
+    pub(crate) fn extras_storage_start(&self) -> Option<usize> {
+        if self.meta & OBJECT_INLINE_STORAGE != 0 {
+            return None;
+        }
+        // SAFETY: an extras pointer names the extras this object owns.
+        self.extras_pointer().map(|extras| unsafe { (*extras).arena_start } as usize)
     }
 
     /// `plain_storage_start` of an object outside dictionary storage, whose start bits are

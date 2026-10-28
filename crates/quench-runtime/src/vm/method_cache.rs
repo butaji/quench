@@ -517,4 +517,9 @@ impl MethodCacheAtoms {
     pub(super) fn clear(&mut self) {
         self.words.fill(0);
     }
+
+    /// The bit words, for generated code that tests a name (`emit_js_own_field_set`).
+    pub(super) fn words(&self) -> &[u64] {
+        &self.words
+    }
 }

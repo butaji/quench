@@ -243,6 +243,8 @@ pub(crate) struct ValueLayout;
 impl ValueLayout {
     pub(crate) const TAG_MASK: u64 = TAG_MASK;
     pub(crate) const INT_TAG: u64 = TAG_INT;
+    /// The tag of every heap reference (`Value::heap_index`).
+    pub(crate) const HEAP_TAG: u64 = TAG_HEAP;
     /// Tag and family bits that distinguish a direct ordinary-array record.
     pub(crate) const DIRECT_ARRAY_TAG: u64 = TAG_HEAP | DIRECT_ARRAY_HANDLE_BIT;
     /// Tag and family bits that distinguish a direct ordinary-object record.

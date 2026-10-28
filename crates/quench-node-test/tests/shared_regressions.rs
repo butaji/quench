@@ -505,6 +505,45 @@ setTimeout(() => console.log(log.join(' ')), 0);
     assert_eq!(quench.stdout, node.stdout);
 }
 
+/// A Wasm export called from a lane's frameless activations runs beside them
+/// (`Native::runs_beside_activations`): its results, the stack its JavaScript import observes
+/// (the activations, then frames, in order), and its trap are a frame-stack call's. The
+/// trap's `RuntimeError` names the JavaScript callers it left, not the frame that caught it.
+#[test]
+fn wasm_export_calls_beside_frameless_activations_report_like_node() {
+    let source = r#"
+const section = (id, bytes) => [id, bytes.length, ...bytes];
+const name = (s) => [s.length, ...[...s].map((c) => c.charCodeAt(0))];
+const types = [2, 0x60, 0, 0, 0x60, 1, 0x7f, 1, 0x7f];
+const imports = [1, ...name('env'), ...name('cb'), 0, 0];
+const funcs = [1, 1];
+const exps = [1, ...name('run'), 0, 1];
+const run = [0x20, 0, 0x45, 0x04, 0x40, 0x00, 0x0b,
+  0x20, 0, 0x41, 1, 0x46, 0x04, 0x40, 0x10, 0, 0x0b,
+  0x20, 0, 0x41, 1, 0x6a, 0x0b];
+const code = [1, run.length + 1, 0, ...run];
+const bytes = new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0, ...section(1, types), ...section(2, imports),
+  ...section(3, funcs), ...section(7, exps), ...section(10, code)]);
+const callers = (stack) => stack.split('\n').map((line) => /at (\w+) /.exec(line)?.[1])
+  .filter((name) => ['cb', 'inner', 'middle', 'outer'].includes(name)).join(' < ');
+const wasm = new WebAssembly.Instance(new WebAssembly.Module(bytes), {
+  env: { cb() { console.log('import sees', callers(new Error('cb').stack)); } },
+}).exports;
+function inner(x) { return wasm.run(x); }
+function middle(x) { return inner(x) + 0; }
+function outer(n) { let sum = 0; for (let i = 2; i < n; i++) sum += middle(i); return sum; }
+console.log(outer(3000), outer(3000));
+function calls(x) { return middle(x); }
+calls(1);
+try { calls(0); } catch (e) { console.log(e.constructor.name, e.message, callers(e.stack)); }
+"#;
+    let node = observe_node_source(source);
+    assert!(node.status.success(), "Node oracle failed: {node:?}");
+    let quench = observe_source(source);
+    assert_eq!(quench.outcome(), RunResult::Pass, "{:?}", quench.worker);
+    assert_eq!(quench.stdout, node.stdout);
+}
+
 #[test]
 fn bigint_conversions_and_wasm_export_calls_report_like_node() {
     // ToBigInt and the BigInt constructor name the value they reject as V8 does, and a call

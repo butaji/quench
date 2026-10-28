@@ -56,7 +56,7 @@ JetStream 3 is the acceptance workload, not a code-generation oracle. Its stock 
 
 ## Implementation sequence
 
-1. Record the mode-specific JetStream control runs and compiler/runtime versions. Keep each fixture separate and start with the first server-side fixture in `docs/jetstream3.md`.
+1. Record the mode-specific JetStream control runs and compiler/runtime versions. Keep each fixture separate and start with the first server-side fixture in `https://linear.app/todoxapp/document/v2-jet-score-mem-status-and-measurement-contract-ae88abad6a7f`.
 2. Add a process-level JIT selector to `quench-node`, defaulting to interpreted. It must set `ExecutionMode` on the existing runtime rather than create a JIT-specific VM. Confirm the Wasm tier remains reachable through JavaScript `WebAssembly` calls in the same runtime.
 3. Add lazy JavaScript function entry counters and a budgeted compiled-code cache. Avoid per-op profiling metadata; retain only feedback needed to justify a compile decision. Make compile failure, unsupported bytecode, guard misses and budget exhaustion resume through the interpreter.
 4. Compile a narrow, semantically safe JavaScript subset first. Start with pure numeric functions and entry guards checked after normal activation. The tier must return through the existing dispatch-loop unwind path. Extend to loops/control flow only with PC/state maps that permit exact interpreter reconstruction. Keep effects behind semantic helpers until ordering, roots and exception behavior are covered by the semantic-preservation relation.
@@ -860,6 +860,42 @@ native coverage of the renderer's effectful call/field path or find a smaller
 hot subregion with measured payback. The diagnostic report is from one
 instrumented round and is not performance evidence; details are in
 `evidence/jit-jetstream3-2026-10-20/guard-census-attribution/`.
+
+## Web request-path coverage and entry cost — 2026-10-28
+
+Server request paths need native entry and calls before field or arithmetic lowering pays.
+Measured on hono's `/id/:id?name=` route (production build, Linux x86_64, 4 vCPU,
+TOD-176):
+
+- User CPU per request is 110–136 µs with or without `--jit`, and 123–129 µs with
+  `QUENCH_JS_JIT_GENERAL_DISPATCH=1`. Node with its JIT runs about 80 µs and Bun.serve
+  under 40 µs.
+- Callgrind attributes 42.7% of the request's 517K instructions to lane handlers and
+  the rest to runtime helpers (property, allocation, frames, GC, strings, host). A tier
+  that only removes dispatch can win at most part of the 42.7%.
+- `QUENCH_JS_JIT_STATS` over 20K requests with general dispatch on: 5 of 195 request-path
+  functions compile. Most wait in `GeneralPromotionPending`, because the baseline's
+  pricing (`JS_JIT_GENERAL_SAVED_SHARE`) is not repaid. Functions whose calls run as
+  frameless lane activations stay `lane-only`.
+- Entry cost dominates small functions:
+  - A monomorphic `(o) => o.x` called 3M times runs in 36–40 ms in the lane and 870–985 ms
+    through the general-dispatch tier, which enters every call through a VM frame. Adding a
+    shape-guarded own-field read (`NATIVE_OBJECT_LAYOUT`, the field cache entry read as
+    data) cut that by about 12% only.
+  - The numeric tier entered from `lane_tier_prologue` runs `a * 3 + b` slower than the
+    lane (194 vs 74 ms for 3M calls): about 315 instructions per call go to the prologue,
+    `direct_call`'s argument conversion and the native trampoline, against an 11-instruction
+    body.
+- The hottest functions call within their first few instructions: the `EventEmitter`
+  and `Stream` constructors (7–8 instructions, one `Call`), hono's `get req` (a
+  `Construct`), undici `Headers.set`/`has` (6–10 calls), `emit` (8 calls). Private fields
+  read through symbol-keyed `GetIndex`.
+
+So a web-path tier needs, in order:
+1. An entry from the lane prologue that runs on the activation's own registers and returns
+   the PC to continue at, costing tens of instructions, not hundreds.
+2. Calls that leave native code and resume it at the next PC.
+3. Then guarded field and index reads, which pay only once 1 and 2 hold.
 
 ## Cached `this` field returns
 

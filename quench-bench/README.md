@@ -3,7 +3,7 @@
 Fixtures and scoring are measurement-only; they never select VM behavior.
 
 - [V8-v7 commands](../docs/v8_v7.md)
-- [JetStream 3 commands](../docs/jetstream3.md)
+- [JetStream 3 commands](https://linear.app/todoxapp/document/v2-jet-score-mem-status-and-measurement-contract-ae88abad6a7f)
 - [Micros manual](micros/README.md)
 - [Backlog (Linear)](https://linear.app/todoxapp/project/quench-abb744c79c4e/overview)
 

@@ -1,4 +1,4 @@
-use oxc_allocator::{ArenaBox, ArenaVec};
+use oxc_allocator::{ArenaBox, ArenaVec, GetAllocator};
 use oxc_ast::ast::*;
 use oxc_span::{GetSpan, Span};
 
@@ -40,6 +40,61 @@ impl<'a, C: Config> ParserImpl<'a, C> {
 
         self.expect_closing(Kind::RCurly, opening_span);
         FunctionBody::boxed(self.end_span(start), directives, statements, self)
+    }
+
+    /// Whether the body of the function starting at `start` parses lazily
+    /// (`ParseOptions::lazy_function_bodies`).
+    fn lazy_body_candidate(&self, start: u32, func_kind: FunctionKind) -> bool {
+        self.options.lazy_function_bodies.is_some_and(|from| start >= from)
+            && !self.is_ts
+            && self.lazy_depth == 0
+            && matches!(func_kind, FunctionKind::Declaration | FunctionKind::Expression)
+            && !self.source_text[..start as usize].trim_end().ends_with('(')
+    }
+
+    /// A function body parsed, then released from the arena and kept as its directives,
+    /// unless its parse left state that outlives it (`LazyBodyCheckpoint`).
+    fn parse_lazy_function_body(&mut self) -> ArenaBox<'a, FunctionBody<'a>> {
+        let allocator = self.allocator();
+        // The arena allocates downward: everything the body allocates lies before this.
+        let marker = std::ptr::NonNull::from(allocator.alloc(0u8));
+        let checkpoint = LazyBodyCheckpoint::of(self);
+        self.lazy_depth += 1;
+        let body = self.parse_function_body();
+        self.lazy_depth -= 1;
+        let span = body.span;
+        let source = self.source_text.as_bytes().as_ptr_range();
+        let in_source = |text: &str| text.is_empty() || source.contains(&text.as_ptr());
+        let directives_in_source = body.directives.iter().all(|directive| {
+            in_source(directive.directive.as_str())
+                && in_source(directive.expression.value.as_str())
+                && directive.expression.raw.is_none_or(|raw| in_source(raw.as_str()))
+        });
+        let escaped_after = self.lexer.escaped_strings.keys().any(|start| *start >= span.end)
+            || self.lexer.escaped_templates.keys().any(|start| *start >= span.end);
+        if checkpoint != LazyBodyCheckpoint::of(self)
+            || self.fatal_error.is_some()
+            || escaped_after
+            || !directives_in_source
+        {
+            return body;
+        }
+        // SAFETY: each directive's strings lie in the source text, checked above, so a
+        // bitwise copy holds nothing in the arena region released below.
+        let directives: Vec<Directive<'a>> =
+            body.directives.iter().map(|directive| unsafe { std::ptr::read(directive) }).collect();
+        let inside = |start: &u32| (span.start..span.end).contains(start);
+        self.lexer.escaped_strings.retain(|start, _| !inside(start));
+        self.lexer.escaped_templates.retain(|start, _| !inside(start));
+        // SAFETY: the arena has the same chunk as at `marker` (its capacity is unchanged), the
+        // marker lies in it and the arena's alignment is one byte. Nothing allocated after the
+        // marker is referenced any more: the body is dropped, the parser state that can hold
+        // arena data is as it was at the checkpoint, and the escaped strings and templates
+        // inside the body are removed.
+        unsafe { allocator.set_cursor_ptr(marker) };
+        self.lazy_function_bodies.push(span.start);
+        let directives = ArenaVec::from_iter_in(directives, &self.ast);
+        FunctionBody::boxed(span, directives, ArenaVec::new_in(self), self)
     }
 
     pub(crate) fn parse_formal_parameters(
@@ -289,7 +344,11 @@ impl<'a, C: Config> ParserImpl<'a, C> {
         let (this_param, params) = self.parse_formal_parameters(func_kind, param_kind);
         let return_type = if self.is_ts { self.parse_ts_return_type_annotation() } else { None };
         let body = if self.at(Kind::LCurly) || func_kind == FunctionKind::Expression {
-            Some(self.parse_function_body())
+            Some(if self.lazy_body_candidate(start, func_kind) {
+                self.parse_lazy_function_body()
+            } else {
+                self.parse_function_body()
+            })
         } else {
             None
         };
@@ -564,6 +623,38 @@ impl<'a, C: Config> ParserImpl<'a, C> {
             }
 
             None
+        }
+    }
+}
+
+/// The parser state a function body's parse can extend with data that outlives the body.
+/// A lazily parsed body releases the arena it used only when this is unchanged.
+#[derive(PartialEq, Eq)]
+struct LazyBodyCheckpoint {
+    /// Arena chunks only grow: the same capacity means the same current chunk.
+    arena_capacity: usize,
+    errors: usize,
+    deferred_script_errors: usize,
+    lexer_errors: usize,
+    deferred_module_errors: usize,
+    tokens: usize,
+    module_record_entries: usize,
+    cover_initialized_names: usize,
+    potential_await_reparses: usize,
+}
+
+impl LazyBodyCheckpoint {
+    fn of<C: Config>(parser: &ParserImpl<'_, C>) -> Self {
+        Self {
+            arena_capacity: parser.allocator().capacity(),
+            errors: parser.errors.len(),
+            deferred_script_errors: parser.deferred_script_errors.len(),
+            lexer_errors: parser.lexer.errors.len(),
+            deferred_module_errors: parser.lexer.deferred_module_errors.len(),
+            tokens: parser.lexer.tokens_len(),
+            module_record_entries: parser.module_record_builder.function_body_entries(),
+            cover_initialized_names: parser.state.cover_initialized_name.len(),
+            potential_await_reparses: parser.state.potential_await_reparse.len(),
         }
     }
 }
