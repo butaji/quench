@@ -272,23 +272,22 @@ pub(super) fn arena(text: &str) -> Allocator {
     Allocator::with_capacity(text.len().saturating_mul(ARENA_BYTES_PER_SOURCE_BYTE))
 }
 
-/// A function's text parsed again alone: its tree and what the whole program's analysis
-/// would have found inside it, with every position an offset into the program's text.
+/// A function's text parsed again alone, with every position an offset into the program's
+/// text.
 pub(super) struct Reparsed<'a> {
     pub(super) program: Program<'a>,
     /// The starts of the function bodies inside it parsed lazily.
     pub(super) lazy_bodies: Vec<u32>,
-    /// Its private names, numbered from zero within it (`private_name_ids`).
-    pub(super) private_name_ids: rustc_hash::FxHashMap<(u32, u32), u32>,
-    pub(super) private_name_labels: rustc_hash::FxHashMap<(u32, u32), String>,
-    /// Its function expressions whose `prototype` no program text observes (`call_only`).
-    pub(super) prototype_unobservable: FxHashSet<u32>,
 }
 
 impl<'a> Reparsed<'a> {
     /// The function parsed again.
     pub(super) fn function(&self) -> Option<&Function<'a>> {
-        match self.program.body.first()? {
+        Self::function_of(&self.program)
+    }
+
+    fn function_of<'p>(program: &'p Program<'a>) -> Option<&'p Function<'a>> {
+        match program.body.first()? {
             Statement::FunctionDeclaration(function) => Some(function),
             Statement::ExpressionStatement(statement) => match statement.expression.without_parentheses() {
                 Expression::FunctionExpression(function) => Some(function),
@@ -299,55 +298,138 @@ impl<'a> Reparsed<'a> {
     }
 }
 
+/// Which bodies inside a function parsed again are released.
+pub(super) enum Nesting<'s> {
+    /// Those the parser releases (`ParseOptions::lazy_function_bodies`): a load's.
+    Parse,
+    /// Those of the given starts, in the program's text, the load released: a replay's,
+    /// which compiles as the load did whatever the parser's choices.
+    Recorded(&'s FxHashSet<u32>),
+}
+
 /// `text`, a function's source at `offset` wrapped for the context it is compiled in, parsed
-/// again with the bodies inside it parsed lazily, when it passes every early check a
-/// compilation applies; positions move by `delta` into the program's text.
+/// again with the bodies inside it released as `nesting` says; positions move by `delta`
+/// into the program's text.
 pub(super) fn reparse<'a>(
     allocator: &'a Allocator,
     text: &'a str,
     offset: u32,
     delta: u32,
     source_type: SourceType,
-    strict: bool,
+    nesting: Nesting<'_>,
 ) -> Option<Reparsed<'a>> {
-    let mut parsed = parse(allocator, text, source_type, Some(offset + 1));
-    if parsed.stack_exhausted
-        || !parsed.diagnostics.is_empty()
-        || super::stack::validate(&parsed.program).is_err()
-        || super::early::regexp_early_error(&parsed.program).is_some()
-        || super::annex_b_targets::invalid_target(&parsed.program).is_some()
-        || !super::early::program_early_errors(&parsed.program, strict).1.is_empty()
-    {
+    let lazy_from = matches!(nesting, Nesting::Parse).then_some(offset + 1);
+    let mut parsed = parse(allocator, text, source_type, lazy_from);
+    if let Nesting::Recorded(starts) = nesting {
+        // The function's own body compiles from this parse.
+        let own = Reparsed::function_of(&parsed.program).and_then(|function| function.body.as_ref()).map(|body| body.span.start);
+        let inside: FxHashSet<u32> = starts
+            .iter()
+            .map(|start| start.wrapping_sub(delta))
+            .filter(|start| *start > offset && (*start as usize) < text.len() && Some(*start) != own)
+            .collect();
+        stand_in(allocator, &mut parsed.program, &inside);
+    }
+    // The early checks passed before code generation (`body_facts`); the depth of the tree
+    // is checked again here, where the function compiles.
+    if parsed.stack_exhausted || !parsed.diagnostics.is_empty() || super::stack::validate(&parsed.program).is_err() {
         return None;
     }
-    let built = oxc_semantic::SemanticBuilder::new()
-        .with_check_syntax_error(true)
-        .build(&parsed.program);
-    if !built.diagnostics.is_empty() {
-        return None;
-    }
-    let shift = |(start, end): (u32, u32)| (start.wrapping_add(delta), end.wrapping_add(delta));
-    let private_name_ids = super::private_name_ids(&built.semantic)
-        .into_iter()
-        .map(|(span, id)| (shift(span), id))
-        .collect();
-    let private_name_labels = super::private_name_labels(&built.semantic)
-        .into_iter()
-        .map(|(span, label)| (shift(span), label))
-        .collect();
-    let prototype_unobservable = super::call_only::prototype_unobservable_functions(&built.semantic, &parsed.program)
-        .into_iter()
-        .map(|start| start.wrapping_add(delta))
-        .collect();
-    drop(built);
     oxc_ast_visit::VisitMut::visit_program(&mut super::replay::ShiftSpans(delta), &mut parsed.program);
     Some(Reparsed {
         lazy_bodies: parsed.lazy_function_bodies.iter().map(|start| start.wrapping_add(delta)).collect(),
         program: parsed.program,
-        private_name_ids,
-        private_name_labels,
-        prototype_unobservable,
     })
+}
+
+/// What the whole program's analysis would have found inside its lazily parsed bodies, with
+/// every position an offset into the program's text.
+#[derive(Default)]
+pub(super) struct BodyFacts {
+    /// Private names, numbered on from the program's (`private_name_ids`).
+    pub(super) private_name_ids: rustc_hash::FxHashMap<(u32, u32), u32>,
+    pub(super) private_name_labels: rustc_hash::FxHashMap<(u32, u32), String>,
+    /// Function expressions whose `prototype` no program text observes (`call_only`).
+    pub(super) prototype_unobservable: FxHashSet<u32>,
+    next_private_id: u32,
+}
+
+/// The facts of the bodies of `program` (the program `source` parsed lazily, its bodies
+/// starting at `starts`) and of the bodies inside them, each body parsed alone in turn,
+/// when every one passes the early checks a compilation applies. They are gathered before
+/// code generation: an analysis per function between the records code generation keeps
+/// left the heap their holes (JetStream +2-3% max RSS).
+pub(super) fn body_facts(
+    source: &str,
+    program: &Program<'_>,
+    starts: &[u32],
+    source_type: SourceType,
+    root_strict: bool,
+    first_private_id: u32,
+) -> Option<BodyFacts> {
+    let mut facts = BodyFacts { next_private_id: first_private_id, ..BodyFacts::default() };
+    for function in lazy_functions(program, starts, root_strict, 0) {
+        check_alone(source, function, source_type, &mut facts)?;
+    }
+    Some(facts)
+}
+
+/// The functions of `program` whose bodies start at one of `starts`, positions moved by
+/// `delta`.
+fn lazy_functions(program: &Program<'_>, starts: &[u32], strict: bool, delta: u32) -> Vec<LazyFunction> {
+    if starts.is_empty() {
+        return Vec::new();
+    }
+    let mut lazy = LazyFunctions { starts: starts.iter().copied().collect(), strict, found: Vec::new() };
+    oxc_ast_visit::Visit::visit_program(&mut lazy, program);
+    for function in &mut lazy.found {
+        function.start = function.start.wrapping_add(delta);
+        function.end = function.end.wrapping_add(delta);
+    }
+    lazy.found
+}
+
+/// Checks `function`'s source parsed alone, adding its facts, then the bodies inside it.
+fn check_alone(source: &str, function: LazyFunction, source_type: SourceType, facts: &mut BodyFacts) -> Option<()> {
+    let snippet = &source[function.start as usize..function.end as usize];
+    let (text, offset) = text_alone(snippet, plain_wrapper(function.expression), function.inherited_strict, source_type);
+    let delta = function.start.wrapping_sub(offset);
+    let strict = function.inherited_strict || source_type.is_module();
+    let inside = {
+        let allocator = arena(&text);
+        let parsed = parse(&allocator, &text, source_type, Some(offset + 1));
+        if parsed.stack_exhausted
+            || !parsed.diagnostics.is_empty()
+            || super::stack::validate(&parsed.program).is_err()
+            || super::early::regexp_early_error(&parsed.program).is_some()
+            || super::annex_b_targets::invalid_target(&parsed.program).is_some()
+            || !super::early::program_early_errors(&parsed.program, strict).1.is_empty()
+        {
+            return None;
+        }
+        let built = oxc_semantic::SemanticBuilder::new().with_check_syntax_error(true).build(&parsed.program);
+        if !built.diagnostics.is_empty() {
+            return None;
+        }
+        let shift = |(start, end): (u32, u32)| (start.wrapping_add(delta), end.wrapping_add(delta));
+        let first_id = facts.next_private_id;
+        for (span, id) in super::private_name_ids(&built.semantic) {
+            facts.private_name_ids.insert(shift(span), first_id + id);
+            facts.next_private_id = facts.next_private_id.max(first_id + id + 1);
+        }
+        facts.private_name_labels.extend(super::private_name_labels(&built.semantic).into_iter().map(|(span, label)| (shift(span), label)));
+        facts.prototype_unobservable.extend(
+            super::call_only::prototype_unobservable_functions(&built.semantic, &parsed.program)
+                .into_iter()
+                .map(|start| start.wrapping_add(delta)),
+        );
+        let program_strict = source_type.is_module() || has_use_strict(&parsed.program.directives);
+        lazy_functions(&parsed.program, &parsed.lazy_function_bodies, program_strict, delta)
+    };
+    for function in inside {
+        check_alone(source, function, source_type, facts)?;
+    }
+    Some(())
 }
 
 /// A function's source wrapped to parse alone in its context: `wrapper` gives it the
