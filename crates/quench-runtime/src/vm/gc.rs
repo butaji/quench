@@ -454,7 +454,7 @@ impl<H: Host> Vm<H> {
         // every source costs each root a step through every nesting level. The previous
         // collection's count sizes the vector, which otherwise regrows from empty each time.
         let mut roots = Vec::with_capacity(self.gc_root_count);
-        self.programs.extend_roots(&mut roots, full);
+        self.programs.extend_roots(&mut roots, full, self.heap.promotion_age());
         roots.extend(self.wasm_js.roots());
         roots.extend([
             self.realm.globals,

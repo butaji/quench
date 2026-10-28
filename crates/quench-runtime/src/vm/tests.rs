@@ -629,6 +629,30 @@ fn minor_collection_keeps_accessor_pairs_added_to_old_owners() {
     assert!(vm.heap.release_root(owner_root));
 }
 
+/// A program's changed roots are traced by as many minor collections as promote what they
+/// hold: under `PromotionAge::Second` the first leaves a new constant young and unmarked,
+/// and only the second promotes it.
+#[test]
+fn minor_collections_trace_changed_program_roots_until_promoted() {
+    use crate::heap::PromotionAge;
+
+    let program = Engine::specialize("", "aged-program-constant.js").unwrap();
+    for age in PromotionAge::ALL {
+        let mut vm = Vm::new(TestHost::default());
+        vm.heap.set_promotion_age_for_test(age);
+        let id = vm.programs.insert(program.clone()).unwrap();
+        vm.collect_slow(&program, true);
+        let constant = vm.heap.alloc_string("young constant".into());
+        let weak = vm.heap.weak_handle(constant).unwrap();
+        vm.programs.set_constants(id, vec![constant]);
+        for _ in 0..=PromotionAge::OLDEST.minors() {
+            vm.collect_slow(&program, false);
+            assert_eq!(vm.heap.weak_value(weak), Some(constant), "{age:?}");
+        }
+        assert!(vm.heap.is_old(constant), "{age:?}");
+    }
+}
+
 #[test]
 fn rootless_shapes_survive_collection_and_shape_compaction() {
     let program = Engine::specialize("", "shape-compaction.js").unwrap();
