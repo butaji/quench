@@ -17129,6 +17129,75 @@ fn lane_forwarded_calls_run_callees_of_other_programs_in_their_program() {
 }
 
 #[test]
+fn lane_fused_loop_records_fall_back_to_each_step() {
+    // A captured loop bound read with its branch, an update with its back edge, a store
+    // with the copy of its value and two chained operators each run as one record; a
+    // non-number bound, a BigInt counter, a hole, a frozen or typed array, an accessor
+    // element, a string or BigInt operand and an int32 overflow each leave a step to its
+    // own record, with Node's results.
+    let source = r#"
+      function make() {
+        let limit = 4;
+        const seen = [];
+        function count() { let n = 0; for (let i = 0; i < limit; i++) n += i; return n; }
+        function countBig() { let n = 0n; for (let i = 0n; i < 3n; i++) n += i; return n; }
+        function chain(a, b, c) { return (a + b) * c; }
+        function square(a, b) { const t = a - b; return t * t; }
+        function divide(a, b, c) { return a / b - c; }
+        function store(x, i, v) { let last; for (let k = 0; k < 2; k++) last = x[i] = v + k; return last; }
+        for (let round = 0; round < 3; round++) {
+          seen.push(count());
+          limit = round === 1 ? 'x' : 6;
+          seen.push(String(countBig()));
+          seen.push(chain(2, 3, 4), chain(2147483647, 1, 2), chain(0.5, 0.25, 4), chain('a', 1, 2), chain(1n, 2n, 3n));
+          seen.push(square(3, 5), square(0.5, 2), 1 / square(-0, 0), chain(-0, -0, 1), divide(7, 2, 1), divide(1, 0, 1), String(divide(0, 0, 1)));
+          const plain = [1, 2, 3];
+          const holey = [1, , 3];
+          const frozen = Object.freeze([1, 2, 3]);
+          const typed = new Float64Array(3);
+          seen.push(store(plain, 1, 10), plain.join('|'), store(holey, 1, 20), holey.join('|'), store(typed, 2, 0.5), typed.join('|'));
+          const accessor = Object.defineProperty([0], 0, { set(v) { this.got = v; }, get() { return 'g'; } });
+          seen.push(store(frozen, 0, 5), frozen.join('|'), store({}, 'k', 7), store(accessor, 0, 3), accessor.got, 1 / chain(-0, -0, 1));
+        }
+        return seen;
+      }
+      print(make().join(','));
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    vm.execute(&Engine::specialize(source, "lane-fused-loop-records.js").unwrap()).unwrap();
+    assert_eq!(output.borrow().as_slice(), ["6,3,20,4294967296,3,NaN,9,4,2.25,Infinity,0,2.5,Infinity,NaN,11,1|11|3,21,1|21|3,1.5,0|0|1.5,6,1|2|3,8,4,4,-Infinity,15,3,20,4294967296,3,NaN,9,4,2.25,Infinity,0,2.5,Infinity,NaN,11,1|11|3,21,1|21|3,1.5,0|0|1.5,6,1|2|3,8,4,4,-Infinity,0,3,20,4294967296,3,NaN,9,4,2.25,Infinity,0,2.5,Infinity,NaN,11,1|11|3,21,1|21|3,1.5,0|0|1.5,6,1|2|3,8,4,4,-Infinity"]);
+}
+
+#[test]
+fn lane_fused_update_read_and_operator_falls_back_to_each_step() {
+    // `t + x[++k]` runs as one record (`lane_update_get_index_operator`); a hole, an
+    // inherited element, a non-array, a string, a BigInt and a sum past int32 each
+    // leave it to the read or operator record, with Node's results.
+    let source = r#"
+      function sum(x, k, n) { let t = 0.5; for (let i = 0; i < n; i++) t = t + x[++k]; return t; }
+      function diff(x, k, n) { let t = 100; for (let i = 0; i < n; i++) t = x[--k] - t; return t; }
+      function prod(x, k, n) { let t = 1; for (let i = 0; i < n; i++) { t = t * x[++k]; t = t / x[k--]; t = x[++k] / 2 * t; } return t; }
+      const seen = [];
+      const doubles = [0, 1.5, 2.25, -3.125, 4, 5.5, 6.75];
+      for (let round = 0; round < 3; round++) {
+        seen.push(sum(doubles, 0, 6), diff(doubles, 7, 6), prod(doubles, 0, 3));
+      }
+      seen.push(sum([0, 1, 'a', 2, , 3], 0, 5));
+      const inherited = [0, 1, , 3]; Object.prototype[2] = 40;
+      seen.push(sum(inherited, 0, 3)); delete Object.prototype[2];
+      seen.push(sum({ 1: 2, 2: 3.5 }, 0, 2), sum([0, 2147483647], 0, 1));
+      try { sum([0, 1n], 0, 1); } catch (error) { seen.push(error.constructor.name); }
+      seen.push(String(sum([0, -0], -1, 2)), 1 / diff([-0, 0], 2, 2), sum([0, NaN, 1], 0, 2));
+      print(seen.join(','));
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    vm.execute(&Engine::specialize(source, "lane-update-read-operator.js").unwrap()).unwrap();
+    assert_eq!(output.borrow().as_slice(), ["17.375,90.875,-1.318359375,17.375,90.875,-1.318359375,17.375,90.875,-1.318359375,1.5a2undefined3,44.5,6,2147483647.5,TypeError,0.5,0.01,NaN"]);
+}
+
+#[test]
 fn lane_regexp_exec_keeps_last_index_and_coercion_order() {
     // Exec calls made from frameless activations: a global pattern advances `lastIndex`,
     // an object `lastIndex` is still converted exactly once per call, and a frozen global

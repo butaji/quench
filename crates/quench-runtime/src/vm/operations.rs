@@ -719,11 +719,14 @@ pub(super) fn number_value_operator<const OP: u32>(left: Value, right: Value) ->
         return Some(value);
     }
     let (left, right) = Value::number_pair(left, right)?;
-    Some(Value::number(numeric_number_result(
-        numeric_binary_operator(OP)?,
-        left,
-        right,
-    )))
+    number_operator::<OP>(left, right).map(Value::number)
+}
+
+/// Operator `OP` on two Number values, as `number_value_operator` computes it after reading
+/// its operands' doubles; `None` for an operator that is not numeric.
+#[inline(always)]
+pub(super) fn number_operator<const OP: u32>(left: f64, right: f64) -> Option<f64> {
+    Some(numeric_number_result(numeric_binary_operator(OP)?, left, right))
 }
 
 /// A bitwise operator `OP` of two Numbers, each taken to int32 from its own representation
