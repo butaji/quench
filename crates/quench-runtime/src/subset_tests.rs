@@ -697,3 +697,28 @@ const it = g(); const a = it.next(); const b = it.next(21); const c = it.next();
 "#;
     assert_eq!(output(resumed), ["[{\"value\":1,\"done\":false},{\"value\":42,\"done\":false},{\"done\":true}]"]);
 }
+
+#[test]
+fn typed_array_set_between_numeric_kinds_converts_each_element() {
+    // `set` from a typed array of another numeric kind converts on the bytes
+    // (`Vm::typed_array_convert_numbers`): every kind pair over boundary values, overlapping
+    // views of one buffer, which read the source before writing, and a source too large.
+    let source = r#"
+const kinds = [Int8Array, Uint8Array, Uint8ClampedArray, Int16Array, Uint16Array, Int32Array, Uint32Array, Float32Array, Float64Array, typeof Float16Array === "function" ? Float16Array : Float32Array];
+const values = [0, -0, 1, -1, 127, 128, 255, 256, -129, 65535, 65536, 2147483647, -2147483648, 4294967295, 1.5, -1.5, 2.5, 0.49999, NaN, Infinity, -Infinity, 1e10, 3.4e38, 65504.5];
+const out = [];
+for (const S of kinds) for (const T of kinds) {
+  const src = new S(values.length); for (let i = 0; i < values.length; i++) src[i] = values[i];
+  const dst = new T(values.length + 2); dst.set(src, 1);
+  out.push(Array.from(dst, (v) => Object.is(v, -0) ? "-0" : String(v)).join(","));
+}
+// Overlap: views of one buffer with different kinds.
+const buf = new ArrayBuffer(64); const u8 = new Uint8Array(buf); for (let i = 0; i < 64; i++) u8[i] = i * 7;
+const u16 = new Uint16Array(buf, 8, 8); u8.set(u16, 4); out.push(Array.from(u8).join(","));
+const f32 = new Float32Array(buf, 0, 8); const i8 = new Int8Array(buf, 2, 8); f32.set(i8); out.push(Array.from(f32).join(","));
+try { new Uint8Array(2).set(new Uint8Array(4)); } catch (e) { out.push(e.constructor.name); }
+let h = 0; for (const s of out) for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0;
+print(out.length + " " + h + " " + out[out.length - 3].slice(0, 60));
+"#;
+    assert_eq!(output(source), ["103 -1900204906 0,7,14,21,56,70,84,98,112,126,140,154,84,91,98,105,112,119,1"]);
+}

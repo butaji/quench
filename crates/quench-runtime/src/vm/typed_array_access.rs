@@ -264,29 +264,34 @@ impl<H: Host> Vm<H> {
             TypedArrayKind::BigUint64 => self.heap.alloc(Cell::bigint(
                 u64::from_ne_bytes(bytes[..8].try_into().unwrap()).into(),
             )),
-            _ => Value::number(match kind {
-                TypedArrayKind::Uint8 | TypedArrayKind::Uint8Clamped => bytes[0] as f64,
-                TypedArrayKind::Uint16 => u16::from_ne_bytes([bytes[0], bytes[1]]) as f64,
-                TypedArrayKind::Uint32 => {
-                    u32::from_ne_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as f64
-                }
-                TypedArrayKind::Int8 => bytes[0] as i8 as f64,
-                TypedArrayKind::Int16 => i16::from_ne_bytes([bytes[0], bytes[1]]) as f64,
-                TypedArrayKind::Int32 => {
-                    i32::from_ne_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as f64
-                }
-                TypedArrayKind::Float16 => {
-                    super::number::half_to_f64(u16::from_ne_bytes([bytes[0], bytes[1]]))
-                }
-                TypedArrayKind::Float32 => {
-                    f32::from_ne_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as f64
-                }
-                TypedArrayKind::Float64 => f64::from_ne_bytes([
-                    bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
-                ]),
-                TypedArrayKind::BigInt64 | TypedArrayKind::BigUint64 => unreachable!(),
-            }),
+            _ => Value::number(Self::typed_array_number_of(kind, bytes)),
         })
+    }
+
+    /// The Number a numeric typed array element of `kind` holds in its leading `bytes`.
+    fn typed_array_number_of(kind: TypedArrayKind, bytes: &[u8; size_of::<u64>()]) -> f64 {
+        match kind {
+            TypedArrayKind::Uint8 | TypedArrayKind::Uint8Clamped => bytes[0] as f64,
+            TypedArrayKind::Uint16 => u16::from_ne_bytes([bytes[0], bytes[1]]) as f64,
+            TypedArrayKind::Uint32 => {
+                u32::from_ne_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as f64
+            }
+            TypedArrayKind::Int8 => bytes[0] as i8 as f64,
+            TypedArrayKind::Int16 => i16::from_ne_bytes([bytes[0], bytes[1]]) as f64,
+            TypedArrayKind::Int32 => {
+                i32::from_ne_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as f64
+            }
+            TypedArrayKind::Float16 => {
+                super::number::half_to_f64(u16::from_ne_bytes([bytes[0], bytes[1]]))
+            }
+            TypedArrayKind::Float32 => {
+                f32::from_ne_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as f64
+            }
+            TypedArrayKind::Float64 => f64::from_ne_bytes([
+                bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
+            ]),
+            TypedArrayKind::BigInt64 | TypedArrayKind::BigUint64 => unreachable!("a BigInt element is no Number"),
+        }
     }
 
     pub(super) fn typed_array_length(&self, object: Value) -> Option<usize> {
@@ -678,6 +683,11 @@ impl<H: Host> Vm<H> {
             }
             return Ok(());
         }
+        if !source_kind.is_bigint()
+            && self.typed_array_convert_numbers(source_buffer, source_offset, source_kind, target_buffer, target_offset + target_start * target_kind.width(), target_kind, length)
+        {
+            return Ok(());
+        }
         let snapshot = if self.array_buffers_share_data_block(source_buffer,target_buffer) {
             let mut values = Vec::with_capacity(length);
             for index in 0..length {
@@ -700,6 +710,49 @@ impl<H: Host> Vm<H> {
             self.typed_array_write_element(target, target_start + index, value);
         }
         Ok(())
+    }
+
+    /// `typed_array_copy_elements` of `length` Number elements of another kind, made on the
+    /// bytes: each source element (`typed_array_number_of`) converted as its write converts a
+    /// Number (`typed_array_element_bytes`), a run reading the source's bytes before writing
+    /// any, as the spec's clone of a shared source does. `false`, writing nothing, where either
+    /// range lies past its buffer, which the element copy then decides.
+    #[allow(clippy::too_many_arguments)]
+    fn typed_array_convert_numbers(
+        &mut self,
+        source_buffer: Value,
+        source_offset: usize,
+        source_kind: TypedArrayKind,
+        target_buffer: Value,
+        target_offset: usize,
+        target_kind: TypedArrayKind,
+        length: usize,
+    ) -> bool {
+        let (source_width, target_width) = (source_kind.width(), target_kind.width());
+        let Some(Cell::ArrayBuffer { bytes, detached: false, .. }) = self.heap.get(source_buffer) else {
+            return false;
+        };
+        let source_end = length.checked_mul(source_width).and_then(|bytes| bytes.checked_add(source_offset));
+        let Some(source) = source_end.and_then(|end| bytes.read().get(source_offset..end).map(<[u8]>::to_vec)) else {
+            return false;
+        };
+        let Some(Cell::ArrayBuffer { bytes, detached: false, .. }) = self.heap.get_mut(target_buffer) else {
+            return false;
+        };
+        let target_end = length.checked_mul(target_width).and_then(|bytes| bytes.checked_add(target_offset));
+        let Some(target_end) = target_end.filter(|end| *end <= bytes.len()) else {
+            return false;
+        };
+        let mut target = bytes.make_mut();
+        let target = &mut target[target_offset..target_end];
+        for (from, to) in source.chunks_exact(source_width).zip(target.chunks_exact_mut(target_width)) {
+            let mut element = [0; size_of::<u64>()];
+            element[..source_width].copy_from_slice(from);
+            let number = Self::typed_array_number_of(source_kind, &element);
+            let encoded = Self::typed_array_element_bytes(target_kind, &TypedArrayElement::Number(number));
+            to.copy_from_slice(&encoded[..target_width]);
+        }
+        true
     }
 
     pub(super) fn typed_array_convert_value(
