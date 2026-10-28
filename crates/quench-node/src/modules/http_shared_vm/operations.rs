@@ -289,6 +289,8 @@ const RESPONSE_FACTORY: &str = r#"((Stream, setHeaderOperation, getHeaderOperati
     if (callbacks === undefined) response[kEndCallbacks] = [callback];
     else callbacks.push(callback);
   };
+  // Hoisted, so a finished response's close tick makes no closure.
+  const emitClose = (response) => response.emit("close");
   const emitFinished = (response) => {
     response[kFinished] = true;
     const callbacks = response[kEndCallbacks];
@@ -297,7 +299,7 @@ const RESPONSE_FACTORY: &str = r#"((Stream, setHeaderOperation, getHeaderOperati
       for (let index = 0; index < callbacks.length; index++) callbacks[index](null);
     }
     response.emit("finish");
-    nextTick(() => response.emit("close"));
+    nextTick(emitClose, response);
   };
   function ServerResponse(id, statusCode, request, server, socket) {
     if (!(this instanceof ServerResponse)) {
@@ -396,6 +398,17 @@ const RESPONSE_FACTORY: &str = r#"((Stream, setHeaderOperation, getHeaderOperati
     const hasReason = typeof reasonOrHeaders === "string";
     const reason = hasReason ? reasonOrHeaders : undefined;
     const source = hasReason ? headers : reasonOrHeaders;
+    const id = this[kExchange].id;
+    // A headers object the operation reads itself, when that runs no guest code; `false`
+    // leaves it to the loop below, before any effect.
+    let header = source !== null && typeof source === "object" && !Array.isArray(source)
+      ? writeHeadOperation(id, status, reason, source, false, this, true)
+      : false;
+    if (header !== false) {
+      if (typeof header === "string") this._header = header;
+      this._headerSent = true;
+      return this;
+    }
     const entries = [];
     let invalid = false;
     if (source !== undefined) {
@@ -420,7 +433,7 @@ const RESPONSE_FACTORY: &str = r#"((Stream, setHeaderOperation, getHeaderOperati
         invalid = true;
       }
     }
-    const header = writeHeadOperation(this[kExchange].id, status, reason, entries, invalid, this);
+    header = writeHeadOperation(id, status, reason, entries, invalid, this, false);
     if (typeof header === "string") this._header = header;
     this._headerSent = true;
     return this;
@@ -1661,6 +1674,21 @@ pub(crate) fn response_write_head(
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
     let id = argument_id(context, args.first().copied())?;
+    // `writeHead`'s headers object itself (`HEAD_SOURCE_ARGUMENT`) is read here only where the
+    // guest loop's reads (`Object.keys`, each value, `headerValue`'s `String`) observe
+    // nothing: data properties holding strings, numbers or `undefined`. Anything else
+    // answers `false` before any effect, and the guest builds the entries.
+    let source = args.get(HEAD_SOURCE_ARGUMENT).and_then(|&root| context.rooted_value(root)).and_then(Value::as_bool) == Some(true);
+    let plain = match source {
+        true => match {
+            let source = argument(context, args.get(3).copied());
+            plain_head_entries(context, source)
+        } {
+            Some(entries) => Some(entries),
+            None => return Ok(context.boolean(false)),
+        },
+        false => None,
+    };
     let lifecycle = context
         .host_mut()
         .shared_state()
@@ -1699,8 +1727,21 @@ pub(crate) fn response_write_head(
             "The argument 'headers' is invalid",
         );
     }
-    let entry_root = argument(context, args.get(3).copied());
-    let entries = write_head_entries(context, entry_root)?;
+    let entries = match plain {
+        Some(entries) => {
+            let mut result = Vec::with_capacity(entries.len());
+            for (name, value) in entries {
+                let name = valid_header_name(context, name)?;
+                let values = header_values(context, value, false, &name)?;
+                result.push((name, values));
+            }
+            result
+        }
+        None => {
+            let entry_root = argument(context, args.get(3).copied());
+            write_head_entries(context, entry_root)?
+        }
+    };
     let status_message =
         crate::modules::http_status_shared_vm::encode(context, response_root, status)?;
 
@@ -2067,6 +2108,11 @@ fn header_name(context: &mut Context<'_>, root: RootId) -> Result<String, Rooted
             crate::modules::http_protocol::HeaderIssue::InvalidName(display),
         );
     };
+    valid_header_name(context, name)
+}
+
+/// `name` as a header name, or the invalid-token error `writeHead` and `setHeader` throw.
+fn valid_header_name(context: &mut Context<'_>, name: String) -> Result<String, RootedError> {
     if name.is_empty()
         || !name
             .chars()
@@ -2114,6 +2160,24 @@ fn header_value(
         return throw_header_issue(context, issue);
     }
     Ok(value)
+}
+
+/// The `httpResponseWriteHead` argument that marks its entries argument as `writeHead`'s
+/// headers object rather than the guest's packed entries.
+const HEAD_SOURCE_ARGUMENT: usize = 6;
+
+/// A headers object's names and values where `writeHead`'s guest loop would observe
+/// nothing reading them: data properties (`plain_enumerable_entries_rooted`) whose values
+/// are strings, numbers or `undefined`, which `headerValue` passes to `String` or as is.
+fn plain_head_entries(context: &mut Context<'_>, source: RootId) -> Option<Vec<(String, RootId)>> {
+    let entries = context.plain_enumerable_entries_rooted(source)?;
+    entries
+        .iter()
+        .all(|(_, value)| {
+            use quench_runtime::ValueType;
+            matches!(context.value_type_rooted(*value), Some(ValueType::String | ValueType::Number | ValueType::Undefined))
+        })
+        .then_some(entries)
 }
 
 fn write_head_entries(

@@ -160,6 +160,7 @@ pub(crate) enum Native {
     ReflectSet,
     SuperSet,
     ObjectLiteralPrototype,
+    ObjectLiteralCreate,
     ReflectOwnKeys,
     ReflectGetPrototypeOf,
     ReflectSetPrototypeOf,
@@ -944,6 +945,7 @@ impl Native {
         matches!(
             self,
             Self::ObjectLiteralPrototype
+                | Self::ObjectLiteralCreate
                 | Self::ObjectKeys
                 | Self::ObjectAssign
                 | Self::ObjectDefineProperty

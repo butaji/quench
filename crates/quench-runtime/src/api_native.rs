@@ -1674,6 +1674,20 @@ impl<'a, H: Host> NativeContext<'a, H> {
         self.completion(result)
     }
 
+    /// `Object.keys(object)` with each key's text and value, where reading them runs no guest
+    /// code (`Vm::plain_enumerable_entries`); `None` when the caller must read them as guest
+    /// code would.
+    pub fn plain_enumerable_entries_rooted(&mut self, object: RootId) -> Option<Vec<(String, RootId)>> {
+        let object = self.vm.root_value(object)?;
+        let entries = self.vm.plain_enumerable_entries(object)?;
+        Some(
+            entries
+                .into_iter()
+                .map(|(key, value)| (key, self.scoped_value(value)))
+                .collect(),
+        )
+    }
+
     /// Capture an object template (`Vm::capture_object_template`) of `template`'s graph,
     /// against `witness`, built by a second construction of the same call, with `probes`,
     /// (holder, key) pairs naming each own data property the construction reads. `None` when
