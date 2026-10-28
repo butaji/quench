@@ -1441,6 +1441,139 @@ fn emit_js_dense_array_get(
     );
 }
 
+/// Lower an own data-field read through the site's field cache, as the lane's own-field hit
+/// reads it (`Vm::own_field_entry_hit`): a direct-object receiver whose exact shape is the
+/// entry's receiver, an entry naming no holder, and plain arena storage, whose slot the
+/// shape fixes. The entry, the record and the arena are read on every execution, so a cache
+/// refill, a receiver change or arena movement is seen. Every failed proof leaves the
+/// destination untouched and resumes `Vm::step` at this GetField PC, which may fill the cache.
+#[allow(clippy::too_many_arguments)]
+fn emit_js_own_field_get(
+    builder: &mut FunctionBuilder<'_>,
+    arguments: ir::Value,
+    payload: ir::Value,
+    base_offset: i32,
+    site: u16,
+    destination_offset: i32,
+    next: ir::Block,
+    context: ir::Value,
+    callout: ir::Value,
+    callout_signature: ir::SigRef,
+    result_pointer: ir::Value,
+    stopped_block: ir::Block,
+    continue_block: ir::Block,
+    pc: usize,
+) {
+    use crate::heap::NATIVE_OBJECT_LAYOUT as OBJECT;
+    use crate::value::ValueLayout;
+    use super::NATIVE_FIELD_CACHE_LAYOUT as CACHE;
+
+    let payload_word = |builder: &mut FunctionBuilder<'_>, offset: usize| {
+        let offset = i32::try_from(offset).expect("JS dispatch offset fits i32");
+        builder.ins().load(types::I64, MemFlagsData::trusted(), payload, offset)
+    };
+    let fallback = builder.create_block();
+    let base = builder.ins().load(types::I64, MemFlagsData::trusted(), arguments, base_offset);
+    let family = builder.ins().band_imm_u(base, ValueLayout::HEAP_FAMILY_MASK as i64);
+    let is_object = builder.ins().icmp_imm_u(IntCC::Equal, family, ValueLayout::DIRECT_OBJECT_TAG as i64);
+    emit_js_guard(builder, is_object, fallback);
+    let record_id = builder.ins().ireduce(types::I32, base);
+    let record_id = builder.ins().uextend(types::I64, record_id);
+    let in_reservation = builder.ins().icmp_imm_u(
+        IntCC::UnsignedLessThan,
+        record_id,
+        i64::try_from(OBJECT.record_capacity).expect("object record capacity fits i64"),
+    );
+    emit_js_guard(builder, in_reservation, fallback);
+
+    let entries = payload_word(builder, std::mem::offset_of!(JsStepDispatch, field_entries));
+    let records = payload_word(builder, std::mem::offset_of!(JsStepDispatch, object_record_base));
+    let values = payload_word(builder, std::mem::offset_of!(JsStepDispatch, property_values));
+    let values_len = payload_word(builder, std::mem::offset_of!(JsStepDispatch, property_len));
+    let present = builder.ins().icmp_imm_u(IntCC::NotEqual, entries, 0);
+    emit_js_guard(builder, present, fallback);
+    let present = builder.ins().icmp_imm_u(IntCC::NotEqual, records, 0);
+    emit_js_guard(builder, present, fallback);
+    let present = builder.ins().icmp_imm_u(IntCC::NotEqual, values, 0);
+    emit_js_guard(builder, present, fallback);
+
+    // The site's entry, its words complemented as stored.
+    let entry = builder.ins().iadd_imm_s(
+        entries,
+        i64::try_from(usize::from(site) * CACHE.entry_size).expect("field cache offset fits i64"),
+    );
+    let entry_word = |builder: &mut FunctionBuilder<'_>, offset: usize, complement: u32| {
+        let offset = i32::try_from(offset).expect("field cache word offset fits i32");
+        let stored = builder.ins().load(types::I32, MemFlagsData::trusted(), entry, offset);
+        builder.ins().bxor_imm_u(stored, i64::from(complement))
+    };
+    let holder = entry_word(builder, CACHE.holder_offset, CACHE.holder_complement);
+    let own = builder.ins().icmp_imm_u(IntCC::Equal, holder, i64::from(CACHE.own_holder));
+    emit_js_guard(builder, own, fallback);
+    let receiver_shape = entry_word(builder, CACHE.receiver_offset, CACHE.receiver_complement);
+
+    let record_offset = builder.ins().imul_imm_u(
+        record_id,
+        i64::try_from(OBJECT.record_size).expect("object record size fits i64"),
+    );
+    let object = builder.ins().iadd(records, record_offset);
+    // The exact shape carries the dictionary bit, so a dictionary never matches.
+    let shape = builder.ins().load(
+        types::I32,
+        MemFlagsData::trusted(),
+        object,
+        i32::try_from(OBJECT.auxiliary_offset).expect("auxiliary offset fits i32"),
+    );
+    let same_shape = builder.ins().icmp(IntCC::Equal, shape, receiver_shape);
+    emit_js_guard(builder, same_shape, fallback);
+    let meta = builder.ins().load(
+        types::I32,
+        MemFlagsData::trusted(),
+        object,
+        i32::try_from(OBJECT.meta_offset).expect("meta offset fits i32"),
+    );
+    let inline = builder.ins().band_imm_u(meta, i64::from(OBJECT.inline_storage_mask));
+    let arena_storage = builder.ins().icmp_imm_u(IntCC::Equal, inline, 0);
+    emit_js_guard(builder, arena_storage, fallback);
+    // Plain storage: the payload word is the arena start alone, its upper half zero, which
+    // an extras word never is (`Object::plain_storage_start`).
+    let storage = builder.ins().load(
+        types::I64,
+        MemFlagsData::trusted(),
+        object,
+        i32::try_from(OBJECT.payload_offset).expect("payload offset fits i32"),
+    );
+    let upper = builder.ins().ushr_imm_u(storage, i64::from(u32::BITS));
+    let plain = builder.ins().icmp_imm_u(IntCC::Equal, upper, 0);
+    emit_js_guard(builder, plain, fallback);
+
+    let slot = entry_word(builder, CACHE.slot_offset, CACHE.slot_complement);
+    let slot = builder.ins().band_imm_u(slot, i64::from(u16::MAX));
+    let slot = builder.ins().uextend(types::I64, slot);
+    let position = builder.ins().iadd(storage, slot);
+    let in_arena = builder.ins().icmp(IntCC::UnsignedLessThan, position, values_len);
+    emit_js_guard(builder, in_arena, fallback);
+    let value_offset = builder.ins().imul_imm_u(
+        position,
+        i64::try_from(OBJECT.property_value_size).expect("property value size fits i64"),
+    );
+    let value_address = builder.ins().iadd(values, value_offset);
+    let value = builder.ins().load(types::I64, MemFlagsData::trusted(), value_address, 0);
+    builder.ins().store(MemFlagsData::trusted(), value, arguments, destination_offset);
+    builder.ins().jump(next, &[]);
+    builder.switch_to_block(fallback);
+    emit_js_step_fallback(
+        builder,
+        context,
+        callout,
+        callout_signature,
+        result_pointer,
+        stopped_block,
+        continue_block,
+        pc,
+    );
+}
+
 /// Read the VM's atomic cancellation flag at a JS loop backedge. The caller
 /// sends a set flag to the exact-PC `Vm::step` callout, which reports the same
 /// interruption as the interpreter before consuming the branch.
@@ -1657,6 +1790,35 @@ pub(super) fn compile_js_general_dispatch(
                 payload,
                 base_offset,
                 key,
+                destination_offset,
+                next,
+                context,
+                callout,
+                callout_signature,
+                result_pointer,
+                stopped_block,
+                continue_block,
+                pc,
+            );
+            general_dispatch_native_pcs[pc] = 1;
+            continue;
+        }
+        if instruction.op() == Op::GetField
+            && instruction.result_flags() == 0
+            && !instruction.returns_from_frame()
+            && !instruction.writes_current_this()
+            && instruction.numeric_local_target().is_none()
+            && let Some(next) = next
+            && let Some(FieldLookup::Atom { base, cache_site, .. }) = instruction.field_lookup()
+            && let Some(base_offset) = base.register_index().and_then(register_offset)
+            && let Some(destination_offset) = register_offset(instruction.result_register())
+        {
+            emit_js_own_field_get(
+                &mut builder,
+                arguments,
+                payload,
+                base_offset,
+                cache_site,
                 destination_offset,
                 next,
                 context,
@@ -5444,11 +5606,31 @@ struct JsStepDispatch {
     /// Stable base of this VM's direct-array record reservation. The field is
     /// refreshed after VM callouts because the reservation may be lazy.
     array_record_base: usize,
+    /// The heap facts generated field reads use (`emit_js_own_field_get`): the object
+    /// record reservation, the property value arena and its length, and the field cache
+    /// entries of `program_id`'s sites; zero where absent. A callout may grow or compact any
+    /// of them, so each is read again after one (`refresh_heap_bases`).
+    object_record_base: usize,
+    property_values: usize,
+    property_len: usize,
+    field_entries: usize,
     #[cfg(test)]
     island_steps: u64,
     #[cfg(test)]
     global_name_cache_hits: u64,
     outcome: Option<JsNativeStep>,
+}
+
+impl JsStepDispatch {
+    /// Reads the heap bases generated code uses again, after anything that may have grown,
+    /// compacted or replaced them.
+    fn refresh_heap_bases<H: Host>(&mut self, vm: &Vm<H>) {
+        self.array_record_base = vm.heap.array_record_base().map_or(0, |base| base as usize);
+        self.object_record_base = vm.heap.object_record_base().map_or(0, |base| base as usize);
+        let (values, len) = vm.heap.native_property_values();
+        (self.property_values, self.property_len) = (values as usize, len);
+        self.field_entries = vm.program_field_entries(self.program_id).unwrap_or(0);
+    }
 }
 
 fn js_native_frame_storage_unchanged(frame: &Frame, dispatch: &JsStepDispatch) -> bool {
@@ -5796,10 +5978,7 @@ unsafe extern "C" fn js_step_callout<H: Host>(
                     }),
                 );
             }
-            dispatch.array_record_base = vm
-                .heap
-                .array_record_base()
-                .map_or(0, |base| base as usize);
+            dispatch.refresh_heap_bases(vm);
             match step {
                 Ok(super::StepResult::Continue) => {
                     if next >= body.code.len() {
@@ -11768,16 +11947,18 @@ impl<H: Host> Vm<H> {
             local_count: 0,
             native_pcs: std::ptr::null(),
             native_pc_count: 0,
-            array_record_base: self
-                .heap
-                .array_record_base()
-                .map_or(0, |base| base as usize),
+            array_record_base: 0,
+            object_record_base: 0,
+            property_values: 0,
+            property_len: 0,
+            field_entries: 0,
             #[cfg(test)]
             island_steps: 0,
             #[cfg(test)]
             global_name_cache_hits: 0,
             outcome: None,
         };
+        dispatch.refresh_heap_bases(self);
         // Native dispatch starts at the next unexecuted bytecode. Callouts
         // overwrite this with the exact failing PC before invoking VM semantics.
         self.frames[frame].pc = start_pc;
