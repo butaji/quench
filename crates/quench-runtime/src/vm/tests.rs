@@ -15361,6 +15361,86 @@ fn js_jit_general_dispatch_stores_own_fields_through_the_field_cache_and_falls_b
 
 #[test]
 #[cfg(not(quench_profiled))]
+fn js_jit_general_dispatch_returns_own_fields_and_falls_back_exactly() {
+    let source = r#"
+      function readX(object) { return object.x; }
+      const wide = () => ({ a: 1, b: 2, c: 3, d: 4, x: 5 });
+      const plain = wide();
+      for (let index = 0; index < 64; index++) {
+        if (readX(plain) !== 5) throw Error('hot own field');
+      }
+      plain.x = 50;
+      if (readX(plain) !== 50) throw Error('live value');
+      let getterCalls = 0;
+      const accessor = wide();
+      Object.defineProperty(accessor, 'x', { get() { getterCalls++; return 9; } });
+      if (readX(accessor) !== 9 || getterCalls !== 1) throw Error('accessor');
+      const proxy = new Proxy(wide(), { get(target, key) { return key === 'x' ? 7 : target[key]; } });
+      if (readX(proxy) !== 7) throw Error('proxy');
+      const dictionary = wide();
+      for (let index = 0; index < 64; index++) dictionary['k' + index] = index;
+      delete dictionary.a;
+      if (readX(dictionary) !== 5) throw Error('dictionary');
+      const deleted = wide();
+      delete deleted.x;
+      if (readX(deleted) !== undefined) throw Error('deleted');
+      if (readX({ x: 3 }) !== 3) throw Error('inline storage');
+      if (readX(Object.create(plain)) !== 50) throw Error('prototype holder');
+      let threw = false;
+      try { readX(null); } catch (error) { threw = error instanceof TypeError; }
+      if (!threw) throw Error('nullish receiver');
+    "#;
+    let program = Engine::compile(crate::ExecutionRequest::script(
+        source,
+        "js-jit-general-own-field-return.js",
+    ))
+    .unwrap();
+    let function = program
+        .functions
+        .iter()
+        .position(|function| {
+            function
+                .header()
+                .name
+                .or(function.header().inferred_name)
+                .is_some_and(|atom| &program.atoms[atom as usize] == "readX")
+        })
+        .unwrap() as u32;
+
+    let mut interpreter = Vm::new(TestHost::default());
+    interpreter.execute(&program).unwrap();
+
+    let mut compiled = Vm::new(TestHost::default());
+    compiled.programs.enable_js_general_dispatch();
+    compiled.set_execution_mode(crate::ExecutionMode::Compiled);
+    compiled.programs.compile_general_baseline_when_hot();
+    compiled.execute(&program).unwrap();
+
+    let Some(super::program_store::JsTierState::Compiled(native)) = compiled
+        .programs
+        .js_tier(super::program_store::ProgramId::MAIN, function)
+    else {
+        panic!("readX should use the general JavaScript compiler");
+    };
+    assert!(native.is_general_dispatch());
+    assert!(native.native_entries() > 0);
+    let body = program.function(function as usize);
+    let returning_reads = body
+        .code
+        .iter()
+        .enumerate()
+        .filter(|(_, packed)| {
+            let instruction = super::dispatch_fast::decoded_instruction(body, **packed);
+            instruction.op() == crate::bytecode::Op::GetField && instruction.returns_from_frame()
+        })
+        .map(|(pc, _)| pc)
+        .collect::<Vec<_>>();
+    assert_eq!(returning_reads.len(), 1, "readX returns its field read");
+    assert!(native.general_dispatch_pc_is_native(returning_reads[0]));
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
 fn js_jit_general_dispatch_batches_fallback_islands_before_native_ops() {
     let source = r#"
       const captured = { value: 2 };

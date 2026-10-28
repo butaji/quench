@@ -1600,6 +1600,36 @@ fn emit_js_own_field_get(
     exact.emit(builder, fallback);
 }
 
+/// Lower a returning own data-field read: the value `emit_js_own_field_slot` finds becomes
+/// the frame's result as the native `Return` makes it, a requested interrupt first taking
+/// the exact-PC callout; any failed proof resumes `Vm::step` at this GetField PC.
+fn emit_js_own_field_return(
+    builder: &mut RegionCore<'_>,
+    arguments: ir::Value,
+    payload: ir::Value,
+    base_offset: i32,
+    site: u16,
+    result_pointer: ir::Value,
+    exact: &JsExactFallback,
+) {
+    let fallback = builder.create_block();
+    let address = emit_js_own_field_slot(builder, arguments, payload, base_offset, site, fallback);
+    let value = builder.ins().load(types::I64, MemFlagsData::trusted(), address, 0);
+    let returns = builder.create_block();
+    let interrupted = builder.interrupt_requested();
+    builder.ins().brif(interrupted, fallback, &[], returns, &[]);
+    builder.switch_to_block(returns);
+    builder.seal_block(returns);
+    builder.ins().store(MemFlagsData::trusted(), value, result_pointer, 0);
+    let status = builder.ins().iconst(
+        types::I32,
+        i64::from(JS_GENERAL_RETURN_STATUS_BASE)
+            + i64::try_from(exact.pc).expect("bounded general-dispatch PC"),
+    );
+    builder.ins().return_(&[status]);
+    exact.emit(builder, fallback);
+}
+
 /// Lower an own data-field store as the lane's store hit makes it
 /// (`Vm::primary_own_field_store_hit`, `Vm::cached_field_store_hit`): in specialized
 /// execution, of a name no method cache names (whose store would invalidate it), to the slot
@@ -1904,6 +1934,30 @@ pub(super) fn compile_js_general_dispatch(
                 pc,
             };
             emit_js_own_field_get(&mut builder, arguments, payload, base_offset, cache_site, destination_offset, next, &exact);
+            general_dispatch_native_pcs[pc] = 1;
+            continue;
+        }
+        // A GetField that returns its value (`return object.field`), as a getter body is: the
+        // read, then the native `Return`'s completion.
+        if instruction.op() == Op::GetField
+            && (instruction.result_flags() == 0
+                || instruction.result_flags() == crate::bytecode::RETURN_REGISTER)
+            && instruction.returns_from_frame()
+            && !instruction.writes_current_this()
+            && instruction.numeric_local_target().is_none()
+            && let Some(FieldLookup::Atom { base, cache_site, .. }) = instruction.field_lookup()
+            && let Some(base_offset) = base.register_index().and_then(register_offset)
+        {
+            let exact = JsExactFallback {
+                context,
+                callout,
+                callout_signature,
+                result_pointer,
+                stopped_block,
+                continue_block,
+                pc,
+            };
+            emit_js_own_field_return(&mut builder, arguments, payload, base_offset, cache_site, result_pointer, &exact);
             general_dispatch_native_pcs[pc] = 1;
             continue;
         }
