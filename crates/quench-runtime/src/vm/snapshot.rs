@@ -331,6 +331,7 @@ impl<H: Host> Vm<H> {
             array_iteration_proof: _,
             for_in_own_keys: _,
             species_slot_proof: _,
+            promise_species_proof: _,
             index_free_chain_proof: _,
             function_name_shapes: _,
             typeof_names: _,
@@ -383,6 +384,9 @@ impl<H: Host> Vm<H> {
             to_precision_atom,
             runtime_atoms,
             constructed_shapes: _,
+            // Templates name roots of the running heap; a restored heap starts without any,
+            // and its hosts capture them again.
+            object_templates: _,
             method_caches: _,
             megamorphic_methods: _,
             method_cache_atoms: _,

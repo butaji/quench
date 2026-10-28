@@ -67,6 +67,10 @@ pub(super) struct PendingGeneralCall {
     /// its return resolves the promise, which is then the call's value, and an abrupt
     /// completion rejects it and resumes the caller after the call.
     pub(super) settles: Option<crate::heap::RootId>,
+    /// The generator whose suspended frame the call resumed in place
+    /// (`Vm::try_in_loop_generator_step`): the frame's `yield` suspends it again and its
+    /// return or throw finishes it, each completing the call with the step's result.
+    pub(super) generator: Option<super::generator::GeneratorResume>,
     /// The call falls into a return of its result: the caller completes with the callee's
     /// value instead of storing it. Sloppy callers keep their frame (it stays visible to
     /// legacy `caller` reflection), so this chains returns rather than replacing frames.
@@ -2247,6 +2251,20 @@ impl<H: Host> Vm<H> {
                 _ => self.step(p, frame, ins, &mut pc, allow_inline_calls),
             }
             };
+            // The frame of a generator its caller resumed in place yields to that caller, as
+            // its return completes the call (`finish_in_loop_generator_step`).
+            let mut yielded = None;
+            let step = match step {
+                Ok(StepResult::Yield { value, destination, delegated_result })
+                    if pending_calls.last().is_some_and(|call| call.generator.is_some() && call.caller + 1 == frame) =>
+                {
+                    self.frames[frame].pc = pc;
+                    self.frames[frame].pc_is_resume = true;
+                    yielded = Some(super::generator::InLoopGeneratorStop::Yielded { destination, delegated_result });
+                    Ok(StepResult::Return(value))
+                }
+                step => step,
+            };
             match step {
                 Ok(StepResult::Return(mut value)) => {
                     let completion = {
@@ -2268,7 +2286,6 @@ impl<H: Host> Vm<H> {
                     if let Some(mut pending) = pending_calls.pop() {
                         debug_assert_eq!(frame, pending.caller + 1);
                         let completed_frame = self.frames.pop().unwrap();
-                        self.finish_frame_scopes(&completed_frame);
                         // JavaScript in-loop pushes exclude the script root. Wasm calls
                         // share this return path and may enter defined function zero.
                         debug_assert!(
@@ -2281,7 +2298,16 @@ impl<H: Host> Vm<H> {
                                     )
                                     .is_some()
                         );
-                        self.pool_frame(completed_frame);
+                        match pending.generator.take() {
+                            Some(resume) => {
+                                let stop = yielded.take().unwrap_or(super::generator::InLoopGeneratorStop::Returned);
+                                value = self.finish_in_loop_generator_step(completed_frame, resume, value, stop);
+                            }
+                            None => {
+                                self.finish_frame_scopes(&completed_frame);
+                                self.pool_frame(completed_frame);
+                            }
+                        }
                         frame = pending.caller;
                         if let Some(saved) = pending.caller_program.take() {
                             executing_program = saved.id;
@@ -2338,6 +2364,7 @@ impl<H: Host> Vm<H> {
                     call_guard,
                     construct_this,
                     settles,
+                    generator,
                 }) => {
                     // A callee of another program became active when its frame was pushed;
                     // the loop executes that program until the callee returns.
@@ -2363,6 +2390,7 @@ impl<H: Host> Vm<H> {
                         destination,
                         construct_this,
                         settles,
+                        generator,
                         returns: ins.returns_from_frame(),
                         call_guard: Some(call_guard),
                         caller_program,
@@ -2490,6 +2518,10 @@ impl<H: Host> Vm<H> {
                         Err(error) => error,
                         Ok(_) => unreachable!(),
                     };
+                    // A generator resumed in place finishes with its frame's throw.
+                    if let Some(resume) = pending.generator.take() {
+                        self.abandon_in_loop_generator_step(resume);
+                    }
                     // An async callee's abrupt completion rejects its promise, which the
                     // call yields; the caller resumes after the call.
                     if let Some(root) = pending.settles {

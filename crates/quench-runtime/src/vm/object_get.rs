@@ -65,6 +65,12 @@ impl<H: Host> Vm<H> {
         })
     }
 
+    /// The slot of `@@species` on a constructor of `shape`, where `has_intrinsic_species_getter`
+    /// proved it under `epoch`.
+    pub(super) fn proved_species_slot(&self, shape: u32, epoch: u64) -> Option<usize> {
+        self.species_slot_proof.get().filter(|proof| proof.shape == shape && proof.epoch == epoch).map(|proof| proof.slot)
+    }
+
     /// `has_intrinsic_species_getter` past its proof: the getter of `constructor`'s own
     /// `@@species` accessor, recording its slot when the shape alone says the slot holds the
     /// getter (`ShapeAttributes::slot_getter` on a non-dictionary shape).

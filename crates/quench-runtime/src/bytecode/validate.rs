@@ -1119,8 +1119,9 @@ fn selective_capture_layout_is_eligible(
         && !function.is_class_constructor
         && !function.derived_constructor
         && !function.class_initializer
-        // The compiler splits a rest list that binds directly too (`selective_layout_is_safe`).
-        && function.parameters_own_their_slots(|atom| atoms.get(atom))
+        // The compiler splits a rest list that binds directly and a list binding its names
+        // apart too (`selective_layout_is_safe`).
+        && function.arguments_own_their_slots(|atom| atoms.get(atom))
         && local_atoms_are_static
         && mapped_arguments_are_captured
 }

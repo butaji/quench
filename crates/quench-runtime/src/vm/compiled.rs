@@ -10864,9 +10864,22 @@ const BUILT_FUNCTIONS_QUEUED_PER_WORKER: usize = 2;
 const WASM_COMPILE_INSTRUCTIONS_IN_FLIGHT: [Option<usize>; crate::MemoryPolicy::ALL.len()] =
     [None, Some(50_000)];
 
+/// A function's compiled body with its calls, and its compiled entry (`build_entry`).
+type CompiledBody = (Vec<u8>, Vec<Call>, Vec<u8>);
+
 /// The compile result of the function at an index, with its instruction count, which leaves
 /// the in-flight bound when the result arrives.
-type CompiledBuilt = (usize, usize, Option<(Vec<u8>, Vec<Call>)>);
+type CompiledBuilt = (usize, usize, Option<CompiledBody>);
+
+/// A built function's body and entry, compiled (`compile_built`, `compile_entry`).
+fn compile_body_and_entry(
+    isa: &dyn cranelift_codegen::isa::TargetIsa,
+    func: ir::Function,
+    entry: ir::Function,
+) -> Option<CompiledBody> {
+    let (code, calls) = compile_built(isa, func)?;
+    Some((code, calls, compile_entry(isa, entry)?))
+}
 
 /// Each of `count` functions' compiled body, by index, from the built functions `build`
 /// yields in any order: the building stays on this thread, which owns the VM, and the
@@ -10877,23 +10890,23 @@ fn compile_built_functions(
     isa: &dyn cranelift_codegen::isa::TargetIsa,
     count: usize,
     policy: crate::MemoryPolicy,
-    build: impl Iterator<Item = Option<(usize, ir::Function)>>,
-) -> Option<Vec<Option<(Vec<u8>, Vec<Call>)>>> {
+    build: impl Iterator<Item = Option<(usize, ir::Function, ir::Function)>>,
+) -> Option<Vec<Option<CompiledBody>>> {
     let workers = std::thread::available_parallelism()
         .map_or(1, std::num::NonZeroUsize::get)
         .min(count);
-    let mut bodies: Vec<Option<(Vec<u8>, Vec<Call>)>> = std::iter::repeat_with(|| None).take(count).collect();
+    let mut bodies: Vec<Option<CompiledBody>> = std::iter::repeat_with(|| None).take(count).collect();
     if workers <= 1 {
         for built in build {
-            let (index, func) = built?;
-            bodies[index] = Some(compile_built(isa, func)?);
+            let (index, func, entry) = built?;
+            bodies[index] = Some(compile_body_and_entry(isa, func, entry)?);
         }
         return Some(bodies);
     }
     let bound = WASM_COMPILE_INSTRUCTIONS_IN_FLIGHT[policy as usize];
     let failed = std::sync::atomic::AtomicBool::new(false);
     let (work, queue) =
-        std::sync::mpsc::sync_channel::<(usize, ir::Function)>(workers * BUILT_FUNCTIONS_QUEUED_PER_WORKER);
+        std::sync::mpsc::sync_channel::<(usize, ir::Function, ir::Function)>(workers * BUILT_FUNCTIONS_QUEUED_PER_WORKER);
     let queue = std::sync::Mutex::new(queue);
     let (done, results) = std::sync::mpsc::channel::<CompiledBuilt>();
     let mut place = |(index, _, body): CompiledBuilt| bodies[index] = body;
@@ -10903,12 +10916,12 @@ fn compile_built_functions(
             scope.spawn(move || {
                 loop {
                     let next = queue.lock().ok().and_then(|queue| queue.recv().ok());
-                    let Some((index, func)) = next else { break };
+                    let Some((index, func, entry)) = next else { break };
                     let instructions = func.dfg.num_insts();
                     let body = if failed.load(std::sync::atomic::Ordering::Relaxed) {
                         None
                     } else {
-                        compile_built(isa, func)
+                        compile_body_and_entry(isa, func, entry)
                     };
                     if body.is_none() {
                         failed.store(true, std::sync::atomic::Ordering::Relaxed);
@@ -10922,7 +10935,7 @@ fn compile_built_functions(
         // The instructions and the count of the functions sent and not yet compiled.
         let (mut in_flight, mut pending) = (0, 0);
         for built in build {
-            let Some((index, func)) = built else {
+            let Some((index, func, entry)) = built else {
                 built_all = false;
                 break;
             };
@@ -10933,7 +10946,7 @@ fn compile_built_functions(
                 pending -= 1;
                 place(result);
             }
-            if failed.load(std::sync::atomic::Ordering::Relaxed) || work.send((index, func)).is_err() {
+            if failed.load(std::sync::atomic::Ordering::Relaxed) || work.send((index, func, entry)).is_err() {
                 break;
             }
             in_flight += instructions;
@@ -11187,13 +11200,16 @@ impl<'a, H: Host> Analysis<'a, H> {
 
     /// The C entry of `index`: unpack arguments, call through the table and
     /// store the result.
-    fn compile_entry(
+    /// The native entry of function `index` with `plan`: the trampoline a VM call enters,
+    /// which loads the arguments and calls the body through the table. Built here and
+    /// compiled beside the body (`compile_built_functions`), as it reads nothing but these.
+    fn build_entry(
         &self,
         isa: &dyn cranelift_codegen::isa::TargetIsa,
         index: usize,
         plan: &Plan,
         memory: MemoryArguments,
-    ) -> Option<Vec<u8>> {
+    ) -> ir::Function {
         let call_conv = isa.default_call_conv();
         let signature = native_entry_signature(isa.pointer_type(), call_conv);
         let mut func = ir::Function::with_name_signature(
@@ -11262,18 +11278,18 @@ impl<'a, H: Host> Analysis<'a, H> {
         let status = builder.ins().ireduce(types::I32, results[0]);
         builder.ins().return_(&[status]);
         builder.finalize(isa.frontend_config());
-        let mut context = cranelift_codegen::Context::for_function(func);
-        let compiled = context
-            .compile(
-                isa,
-                &mut cranelift_codegen::control::ControlPlane::default(),
-            )
-            .ok()?;
-        if !compiled.buffer.relocs().is_empty() {
-            return None;
-        }
-        Some(compiled.code_buffer().to_vec())
+        func
     }
+}
+
+/// The compiled code of an entry `build_entry` built, which calls only through the table.
+fn compile_entry(isa: &dyn cranelift_codegen::isa::TargetIsa, func: ir::Function) -> Option<Vec<u8>> {
+    let mut context = cranelift_codegen::Context::for_function(func);
+    let compiled = context.compile(isa, &mut cranelift_codegen::control::ControlPlane::default()).ok()?;
+    if !compiled.buffer.relocs().is_empty() {
+        return None;
+    }
+    Some(compiled.code_buffer().to_vec())
 }
 
 /// The guard reservation of an unshared memory binding.
@@ -11807,10 +11823,16 @@ impl<H: Host> Vm<H> {
         if matches!(state, Some(super::program_store::JsTierState::Unsupported)) {
             return self.programs.js_jit_diagnostics_enabled();
         }
+        // A loop-free candidate shorter than a native entry's overhead
+        // (`JS_TIER_LANE_ENTRY_RECORDS`) runs cheaper as the frameless activation itself.
+        let pays_in_lane = |body: &crate::bytecode::Function| {
+            body.code.len() >= JS_TIER_LANE_ENTRY_RECORDS || body.loops()
+        };
+        let candidate = facts.candidate && program.function_get(function as usize).is_some_and(pays_in_lane);
         // Keep bounded candidates on a frame entry until the shared tier has
         // settled. Lane target caches otherwise preserve a frameless route
         // across the later promotion and no longer consult tiering.
-        facts.candidate || self.js_general_tier_takes(program, function, &facts)
+        candidate || self.js_general_tier_takes(program, function, &facts)
     }
 
     /// Whether the general baseline may take `function`: a general candidate the tier admits
@@ -13422,14 +13444,15 @@ impl<H: Host> Vm<H> {
                     memory_after.map(|memory| memory.1),
                 );
             }
-            Some((index, built?))
+            let entry = analysis.build_entry(&*isa, index, plans[index].as_ref()?, MemoryArguments::of(fixed_base, guarded));
+            Some((index, built?, entry))
         });
         let mut bodies = compile_built_functions(&*isa, count, self.memory_policy(), build)?;
         for index in 0..count {
             if plans[index].is_none() {
                 continue;
             }
-            let (body, function_calls) = bodies[index].take()?;
+            let (body, function_calls, entry) = bodies[index].take()?;
             let body_projected_len = projected_code_len(bytes.len(), body.len())?;
             if root.is_some() && body_projected_len > MAX_JIT_ROOT_CODE_BYTES {
                 if diagnostics_enabled {
@@ -13445,8 +13468,6 @@ impl<H: Host> Vm<H> {
             offsets[index] = Some(offset);
             spans.push((offset, body_len, index));
             calls.extend(function_calls.into_iter().map(|call| (offset, call)));
-            let memory = MemoryArguments::of(fixed_base, guarded);
-            let entry = analysis.compile_entry(&*isa, index, plans[index].as_ref()?, memory)?;
             let entry_projected_len = projected_code_len(bytes.len(), entry.len())?;
             if root.is_some() && entry_projected_len > MAX_JIT_ROOT_CODE_BYTES {
                 if diagnostics_enabled {
@@ -14473,6 +14494,14 @@ const VOID_RESULT_CONSTANT: usize = 1;
 
 /// `compiled`'s body run directly on `arguments`, its parameters, when each is a Number
 /// its guards admit: the call a known callee makes without a frame (`js_jit_compiled_call`).
+/// The lane records a loop-free body runs below which a frameless activation is cheaper than
+/// the JavaScript tier's native entry of it. A direct native entry (`lane_tier_prologue`,
+/// `direct_call`, the shared entry) costs about 380 machine instructions past the
+/// activation, and a lane record about 20 (callgrind, typescript-lib under `--jit`,
+/// 2026-10-28: 9.7M native entries of 3- to 12-instruction predicates such as
+/// `isLineBreak`), so a body shorter than this cannot recoup its entries.
+const JS_TIER_LANE_ENTRY_RECORDS: usize = 20;
+
 fn direct_call(
     compiled: &CompiledJsFunction,
     arguments: &[Value],

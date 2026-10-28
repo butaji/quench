@@ -182,6 +182,50 @@ fn lane_generator_iteration_steps_keep_generator_semantics() {
 }
 
 #[test]
+fn lane_super_forwarding_constructions_keep_construct_semantics() {
+    // `new Derived(...)` of a class whose constructor only forwards to an initializer parent
+    // makes the parent's stores on a receiver of the derived prototype, named as the general
+    // path names it; a changed parent, a setter, a returned object and constant stores keep
+    // their semantics.
+    let source = r#"
+      const out = [];
+      class Node { constructor(k, p, e) { this.pos = p; this.end = e; this.kind = k; this.id = 0; this.parent = void 0; } width() { return this.end - this.pos; } }
+      class Tok extends Node { constructor(k, p, e) { super(k, p, e); } get text() { return "t" + this.kind; } }
+      class Any extends Node {}
+      function make(C, n) { let s = 0, last; for (let i = 0; i < n; i++) { last = new C(i, i, i * 2 + 1); s += last.width(); } return [s, last]; }
+      let [s, t] = make(Tok, 3000);
+      out.push(s, t.text, t instanceof Tok, t instanceof Node, Object.keys(t).join(""), t.constructor.name, t.parent === undefined);
+      let [s2, a] = make(Any, 3000);
+      out.push(s2, a.constructor.name, Object.getPrototypeOf(a) === Any.prototype);
+      class Other { constructor(k) { this.other = k; } }
+      Object.setPrototypeOf(Tok, Other);
+      out.push(Object.keys(make(Tok, 5)[1]).join(""));
+      class Sets extends Node { constructor(k, p, e) { super(k, p, e); } }
+      Object.defineProperty(Sets.prototype, "end", { set(v) { out.push("set" + v); }, configurable: true });
+      make(Sets, 2);
+      class Ret { constructor(k) { this.k = k; if (k === 7) return { swapped: k }; } }
+      class RetD extends Ret { constructor(k) { super(k); } }
+      for (let i = 0; i < 2000; i++) new RetD(i % 8 === 7 ? 7 : i);
+      out.push(JSON.stringify(new RetD(7)), new RetD(3) instanceof RetD);
+      class Extra extends Node { constructor(k, p) { super(k, p); } }
+      let x; for (let i = 0; i < 2000; i++) x = new Extra(1, 2, 99);
+      out.push(x.end);
+      class C0 { constructor(a) { this.a = a; this.b = 0; this.c = void 0; this.d = null; this.e = true; } }
+      let c; for (let i = 0; i < 3000; i++) c = new C0(i);
+      out.push(JSON.stringify(c), "c" in c);
+      print(out.join(" "));
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    let program = Engine::specialize(source, "lane-super-forwarding.js").unwrap();
+    vm.execute(&program).unwrap();
+    assert_eq!(
+        output.borrow().as_slice(),
+        ["4501500 t2999 true true posendkindidparent Tok true 4501500 Any true other set1 set3 {\"swapped\":7} true  {\"a\":2999,\"b\":0,\"d\":null,\"e\":true} true"]
+    );
+}
+
+#[test]
 fn lane_polymorphic_field_stores_keep_assignment_semantics() {
     // A store site past one shape writes each recorded shape's slot in the lane; a receiver
     // that gains the property, a frozen one and an accessor still take the general store.
@@ -11064,10 +11108,11 @@ fn js_jit_compiles_straight_line_plain_local_temporaries() {
 fn js_jit_enters_compiled_callees_from_frameless_lane_activations() {
     let program = Engine::compile(crate::ExecutionRequest::script(
         r#"
-          function add(left, right) { return left + right; }
+          function add(left, right) { let t = left + right; t = t * 1; t = t + 0; t = t * 1; t = t + 0; t = t * 1; t = t + 0; t = t * 1; t = t + 0; t = t * 1; t = t + 0; t = t * 1; t = t + 0; t = t * 1; t = t + 0; t = t * 1; t = t + 0; t = t * 1; t = t + 0; t = t * 1; t = t + 0; t = t * 1; t = t + 0; t = t * 1; t = t + 0; return t; }
+          function plus(left, right) { return left + right; }
           function drive(count) {
             let sum = 0;
-            for (let index = 0; index < count; index++) sum = add(sum, index);
+            for (let index = 0; index < count; index++) sum = plus(add(sum, index), 0);
             return sum;
           }
           for (let round = 0; round < 4; round++) {
@@ -11101,6 +11146,18 @@ fn js_jit_enters_compiled_callees_from_frameless_lane_activations() {
         "the lane's frameless calls should enter native code, got {}",
         compiled.native_entries()
     );
+    // A loop-free callee shorter than a native entry's overhead stays a frameless activation
+    // (`JS_TIER_LANE_ENTRY_RECORDS`).
+    let plus = program
+        .functions
+        .iter()
+        .position(|function| function.header().name.is_some_and(|atom| &program.atoms[atom as usize] == "plus"))
+        .unwrap() as u32;
+    let native = match vm.programs.js_tier(super::program_store::ProgramId::MAIN, plus) {
+        Some(super::program_store::JsTierState::Compiled(compiled)) => compiled.native_entries(),
+        _ => 0,
+    };
+    assert!(native < 500, "a short loop-free callee should run in the lane, got {native} native entries");
 }
 
 #[test]
@@ -18270,4 +18327,66 @@ print(JSON.stringify(out));
     let mut vm = Vm::new(TestHost::writing_to(output.clone()));
     vm.execute(&Engine::specialize(source, "constant-left.js").unwrap()).unwrap();
     assert_eq!(output.borrow().as_slice(), [r#"["0f1t0f1t0f1t0f1t0f1t0f0f1t1t1t","0f1t0f1t0f1t0f1t0f1t0f0f1t1t1t","0f0f1t1t1t0f1t0f0f0f0f0f0f0f1t","0f1t0f1t0f1t0f1t0f1t0f0f0f1t1t","1t0f1t0f0f1t0f1t1t0f0f0f0f0f0f","0f0f0f0f0f1t0f1t0f0f0f0f0f0f0f","1t0f1t0f0f1t0f1t1t0f0f0f0f0f0f","0f1t0f1t0f1t0f1t0f1t0f0f0f1t1t","0f0f1t1t1t0f0f1t0f0f0f0f0f0f1t","0f0f0f0f0f1t0f1t1t0f0f0f0f0f0f","0f1t0f1t0f1t0f1t0f1t0f0f0f1t1t","0f1t0f1t0f1t0f1t0f1t1t0f0f1t1t","0f0f0f0f0f1t0f1t0f0f1t0f0f0f0f","0f0f1t1t1t0f0f1t0f0f0f0f0f0f1t","0f1t0f1t0f1t0f1t0f1t0f0f0f1t1t","1t0f1t0f0f1t0f1t1t0f0f0f0f0f0f","1t0f1t0f0f1t0f1t1t0f0f0f0f0f0f","1t0f1t0f0f1t0f1t1t0f0f0f0f0f0f","0f1t0f1t0f1t0f1t0f1t0f0f0f1t1t","EEEEEEEE0f1t0f1tEEEE0fEE0fEEEE",true,false,true,3,67]"#]);
+}
+
+#[test]
+fn object_templates_copy_constructions_until_a_read_of_them_changes() {
+    let source = r#"
+      var kState = Symbol('state');
+      function State() { this.buffer = []; this.length = 0; this[kState] = 1.5; }
+      State.prototype.flag = 0;
+      function Message() { this.state = new State(); this.events = { __proto__: null }; this.url = ''; this.flag = State.prototype.flag; }
+      function make() { return new Message(); }
+      function probes() { return [State.prototype, 'flag']; }
+      function describe(m) {
+        return JSON.stringify([Reflect.ownKeys(m).map(String), Object.getPrototypeOf(m) === Message.prototype,
+          Reflect.ownKeys(m.state).map(String), Object.getPrototypeOf(m.state) === State.prototype, m.state[kState],
+          Object.getPrototypeOf(m.events), Array.isArray(m.state.buffer), m.flag]);
+      }
+      function same(a, b) { return describe(a) === describe(b); }
+      // Two copies equal to a construction, sharing none of the objects it makes anew.
+      function check(first, second, constructed) { return same(first, constructed) && same(second, constructed) && distinct(first, second); }
+      function distinct(a, b) { return a !== b && a.state !== b.state && a.state.buffer !== b.state.buffer && a.events !== b.events; }
+      function setFlag(value) { State.prototype.flag = value; }
+      function addKey() { Message.prototype.extra = 1; }
+      function churn() { for (var k = 0; k < 20000; k++) { var o = {}; o['junk' + k] = k; } }
+    "#;
+    let mut vm = Vm::new(TestHost::default());
+    let program = Engine::specialize(source, "object-templates.js").unwrap();
+    vm.execute(&program).unwrap();
+    let call = |vm: &mut Vm<TestHost>, name: &str, args: &[Value]| {
+        let atom = vm.intern_atom(name);
+        let function = vm.own_property(vm.realm.globals, atom).unwrap();
+        vm.call_value(&program, function, Value::UNDEFINED, args).unwrap()
+    };
+    let capture = |vm: &mut Vm<TestHost>| {
+        let (template, witness) = (call(vm, "make", &[]), call(vm, "make", &[]));
+        let probes = call(vm, "probes", &[]);
+        let pair = vm.heap.array_elements(probes).unwrap().as_slice().to_vec();
+        vm.capture_object_template(template, witness, &[(pair[0], pair[1])]).unwrap()
+    };
+    let id = capture(&mut vm);
+    // Values this test holds are unrooted: each check takes them in one call made once they
+    // exist, before anything else allocates.
+    let check = |vm: &mut Vm<TestHost>, id| {
+        let constructed = call(vm, "make", &[]);
+        let (first, second) = (vm.instantiate_object_template(id).unwrap(), vm.instantiate_object_template(id).unwrap());
+        assert_eq!(call(vm, "check", &[first, second, constructed]), Value::TRUE);
+    };
+    check(&mut vm, id);
+
+    // Shape compaction renumbers the guarded shapes; the template follows.
+    call(&mut vm, "churn", &[]);
+    let shapes = vm.shapes.len();
+    vm.collect_now(&program);
+    assert!(vm.shapes.len() < shapes, "the collection compacted the shape table");
+    check(&mut vm, id);
+
+    // A probed value and a guarded layout each retire the template.
+    call(&mut vm, "setFlag", &[Value::number(2.0)]);
+    assert!(vm.instantiate_object_template(id).is_none());
+    let id = capture(&mut vm);
+    assert!(vm.instantiate_object_template(id).is_some());
+    call(&mut vm, "addKey", &[]);
+    assert!(vm.instantiate_object_template(id).is_none());
 }

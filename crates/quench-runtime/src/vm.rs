@@ -155,6 +155,7 @@ mod method_cache;
 mod plain_equality;
 mod module;
 mod number;
+mod object_template;
 mod object;
 mod shape_memo;
 mod symbol_write_proof;
@@ -883,18 +884,40 @@ impl FieldAddCacheSet {
         }
         self.rest().iter().find(matches)
     }
+    /// `find`, preferring the entry whose chain proof holds for a receiver whose prototype
+    /// `link` names: receivers of one shape under different prototypes (subclasses whose
+    /// constructors share their parent's stores) each keep an entry of their chain.
     #[inline(always)]
-    fn find_mut(&mut self, source_shape: u32, atom: Atom) -> Option<&mut FieldAddCache> {
-        let len = usize::from(self.len);
-        let matches = |cache: &FieldAddCache| cache.source_shape == source_shape && cache.atom == atom;
-        if len > 0 && matches(&self.first) {
-            return Some(&mut self.first);
+    fn find_for(&self, source_shape: u32, atom: Atom, link: ProtoLink) -> Option<&FieldAddCache> {
+        let first = self.find(source_shape, atom)?;
+        if first.proof_holds(link) {
+            return Some(first);
         }
-        let rest = self.rest.as_deref_mut()?;
-        rest[..len.saturating_sub(1)].iter_mut().find(|cache| matches(cache))
+        let proved = |cache: &&FieldAddCache| {
+            cache.source_shape == source_shape && cache.atom == atom && cache.proof_holds(link)
+        };
+        Some(self.rest().iter().find(proved).unwrap_or(first))
     }
-    /// Replaces the entry for the same source shape and atom, else appends, evicting the oldest
-    /// entry when the set is full.
+    /// The indexes of the entries for receivers of `source_shape` adding `atom`, one per
+    /// prototype chain the site recorded.
+    fn matching(&self, source_shape: u32, atom: Atom) -> impl Iterator<Item = usize> + '_ {
+        self.entries()
+            .enumerate()
+            .filter(move |(_, cache)| cache.source_shape == source_shape && cache.atom == atom)
+            .map(|(index, _)| index)
+    }
+    fn entry(&self, index: usize) -> &FieldAddCache {
+        if index == 0 { &self.first } else { &self.rest()[index - 1] }
+    }
+    fn entry_mut(&mut self, index: usize) -> &mut FieldAddCache {
+        if index == 0 {
+            &mut self.first
+        } else {
+            &mut self.rest.as_deref_mut().expect("a later entry lives in the box")[index - 1]
+        }
+    }
+    /// Replaces the entry for the same source shape, atom and prototype chain shapes, else
+    /// appends, evicting the oldest entry when the set is full.
     fn insert(&mut self, cache: FieldAddCache) {
         let mut entries = [FieldAddCache::EMPTY; FIELD_ADD_CACHE_WAYS];
         let len = usize::from(self.len);
@@ -903,7 +926,11 @@ impl FieldAddCacheSet {
         }
         let kept = match entries[..len]
             .iter()
-            .position(|entry| entry.source_shape == cache.source_shape && entry.atom == cache.atom)
+            .position(|entry| {
+                entry.source_shape == cache.source_shape
+                    && entry.atom == cache.atom
+                    && entry.prototype_shapes() == cache.prototype_shapes()
+            })
         {
             Some(index) => {
                 entries.copy_within(index + 1..len, index);
@@ -1616,6 +1643,9 @@ pub(super) enum StepResult {
         /// For an async callee pushed in place: its rooted promise
         /// (`PendingGeneralCall::settles`).
         settles: Option<crate::heap::RootId>,
+        /// For a generator resumed in place: its rooted generator
+        /// (`PendingGeneralCall::generator`).
+        generator: Option<generator::GeneratorResume>,
     },
     Return(Value),
     Await {
@@ -1884,6 +1914,8 @@ pub(crate) struct Vm<H> {
     array_iteration_proof: Option<iterators::ArrayIterationProof>,
     for_in_own_keys: Option<object_static::ForInOwnKeys>,
     species_slot_proof: std::cell::Cell<Option<object_get::SpeciesSlotProof>>,
+    /// The last proof that a promise's species constructor is `%Promise%` (`promise_species_proved`).
+    promise_species_proof: std::cell::Cell<Option<promise::PromiseSpeciesProof>>,
     index_free_chain_proof: std::cell::Cell<Option<object::IndexFreeChainProof>>,
     enumerable_keys: enumerable_key_memo::EnumerableKeyMemo,
     shape_attribute_memo: shape_memo::ShapeAttributeMemo,
@@ -2001,6 +2033,8 @@ pub(crate) struct Vm<H> {
     runtime_atoms: RuntimeAtoms,
     /// `Vm::constructed_shape` answers; cleared by every collection.
     constructed_shapes: [provenance::ConstructedShape; provenance::CONSTRUCTED_SHAPE_ENTRIES],
+    /// The host's object templates (`object_template`), indexed by their ids.
+    object_templates: Vec<object_template::ObjectTemplate>,
     method_caches: Vec<[MethodCache; 2]>,
     megamorphic_methods: Vec<MethodCacheSet>,
     method_cache_atoms: method_cache::MethodCacheAtoms,
@@ -2874,6 +2908,7 @@ impl<H: Host> Vm<H> {
         self.array_iteration_proof = None;
         self.for_in_own_keys = None;
         self.species_slot_proof.set(None);
+        self.promise_species_proof.set(None);
         self.index_free_chain_proof.set(None);
         self.enumerable_keys.clear();
         self.shape_attribute_memo.clear();
