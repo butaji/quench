@@ -1,5 +1,5 @@
 use super::{ArrayObject, AwaitState, FunctionRecord, IteratorRecord, Object, PromiseCell};
-use super::pacing::PromotionAge;
+use super::pacing::{AgedFates, PromotionAge};
 use crate::vm::wtf16::JsString;
 use crate::value::Value;
 use std::alloc::Layout;
@@ -42,6 +42,8 @@ pub(super) trait RecordFamily {
     fn take_promoted(&mut self) -> Vec<RecordId>;
     /// Every aged record becomes old: a full collection promotes every survivor.
     fn forget_ages(&mut self);
+    /// What minor sweeps found of the aged records since the last call, emptied.
+    fn take_aged_fates(&mut self) -> AgedFates;
     fn live_count(&self) -> usize;
     /// Visits every live record's id.
     fn for_each_live_id(&self, visit: &mut dyn FnMut(RecordId));
@@ -72,6 +74,9 @@ impl<T, const CAPACITY: usize> RecordFamily for RecordSpace<T, CAPACITY> {
     }
     fn forget_ages(&mut self) {
         RecordSpace::forget_ages(self);
+    }
+    fn take_aged_fates(&mut self) -> AgedFates {
+        std::mem::take(&mut self.aged_fates)
     }
     fn live_count(&self) -> usize {
         RecordSpace::live_count(self)
@@ -146,6 +151,8 @@ pub(super) struct RecordSpace<T, const CAPACITY: usize = RECORD_SPACE_CAPACITY> 
     /// The aged records the last minor sweep promoted, whose edges into what stays young the
     /// collector remembers (`Heap::remember_young_edges`).
     promoted: Vec<RecordId>,
+    /// What minor sweeps found of the aged records since the collector last took it.
+    aged_fates: AgedFates,
 }
 
 impl<T, const CAPACITY: usize> Default for RecordSpace<T, CAPACITY> {
@@ -166,6 +173,7 @@ impl<T, const CAPACITY: usize> Default for RecordSpace<T, CAPACITY> {
             aged_words: Vec::new(),
             minor_words: Vec::new(),
             promoted: Vec::new(),
+            aged_fates: AgedFates::default(),
         }
     }
 }
@@ -845,6 +853,10 @@ impl<T, const CAPACITY: usize> RecordSpace<T, CAPACITY> {
         debug_assert_eq!(newborn & aged, 0);
         let dead = (newborn | aged) & !marked;
         let mut promoted = aged & marked;
+        self.aged_fates.add(AgedFates {
+            died: (aged & !marked).count_ones() as usize,
+            promoted: promoted.count_ones() as usize,
+        });
         let stays = newborn & marked;
         block.aged[word_index] = stays;
         block.marked[word_index] = marked & !stays;

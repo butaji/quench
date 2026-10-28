@@ -90,8 +90,17 @@ pub(super) struct GenerationalPacing {
     /// collection, and this bounds that garbage.
     pub(super) minimum_external_budget: usize,
     /// The minor collections a young cell or record survives before it is old
-    /// (`PromotionAge`).
+    /// (`PromotionAge`), unless promotions are dying old (`promoted_garbage_aging`).
     pub(super) promotion_age: PromotionAge,
+    /// The share of the weight minor collections promoted since the last full collection that
+    /// a full collection must find dead for minors to promote at `PromotionAge::OLDEST`
+    /// instead (`PacingState::promotion_age`): objects that outlive one young collection and
+    /// die soon after, as a server's in-flight requests do. Zero disables it.
+    pub(super) promoted_garbage_aging: Ratio,
+    /// Full collections that keep the oldest promotion age once a full collection turned it
+    /// on. With it, little that minors promote dies old any more, so the share is measured
+    /// again only after these, at `promotion_age`, as `probe_interval` probes survival.
+    pub(super) aging_interval: u32,
 }
 
 /// How many minor collections a young cell or record survives before it is promoted (old,
@@ -138,10 +147,27 @@ impl PromotionAge {
     }
 }
 
-/// Promotion on the first survived minor collection under both policies: the generational
-/// rule the policy tables were measured with. `PromotionAge::Second` is for the lanes to
-/// measure (`QUENCH_GC_PROMOTION_AGE` in `gc-tuning` builds) before a table adopts it.
-const DEFAULT_PROMOTION_AGE: PromotionAge = PromotionAge::First;
+/// Memory-first promotes on the first survived minor collection: the second was neutral on its
+/// peaks (V8-v7 and five JetStream rows within +-3% max RSS, gc-tuning build, x86_64 4 vCPU,
+/// 2026-10-28), so it would only add the second trace of every survivor.
+const MEMORY_FIRST_PROMOTION_AGE: PromotionAge = PromotionAge::First;
+/// Throughput promotes on the first survived minor collection, and on the second while full
+/// collections find promotions dying old (`THROUGHPUT_PROMOTED_GARBAGE_AGING`). Always the
+/// second, a server's request objects, which outlive one young collection and die before the
+/// next, were freed by minor collections (web's tput.sh, 500 connections, final VmHWM,
+/// gc-tuning build of v2-web 191db23f3b with v2-gc 9cfcb96743, x86_64 4 vCPU, 2026-10-28,
+/// 3 rounds, medians: fastify 39.6 -> 37.8 MB, hono 42.8 -> 39.1 MB; with
+/// `THROUGHPUT_MAXIMUM_YOUNG` at 2^20, 37.2 and 33.4 MB, Bun 50-52 and 37-40), but tracing
+/// every survivor twice cost V8-v7 EarleyBoyer 10.1% and Splay 1.5% of instructions
+/// (v2-cloud-c, fixed-work callgrind), whose survivors do not die old.
+const THROUGHPUT_PROMOTION_AGE: PromotionAge = PromotionAge::First;
+/// The share of what minors promoted that a full collection must find dead to promote at the
+/// second survival: half, so most promotions were garbage held to the full collection.
+const THROUGHPUT_PROMOTED_GARBAGE_AGING: Ratio = Ratio::new(1, 2);
+/// Full collections that keep the second promotion age before it is measured again.
+const THROUGHPUT_AGING_INTERVAL: u32 = 4;
+/// Memory-first measures no aging: `MEMORY_FIRST_PROMOTION_AGE` always.
+const NO_AGING: Ratio = Ratio::new(0, 1);
 
 /// Fixed-point scale of the survival estimate.
 pub(super) const SURVIVAL_SCALE: u32 = 1 << 10;
@@ -172,9 +198,26 @@ pub(super) struct PacingState {
     /// `steady_live_growth`: the live set has stopped growing, so what minor collections keep
     /// dies before a full one (`surviving_young_budget`).
     steady: bool,
+    /// Weight minor collections promoted since the last full collection, which it compares
+    /// with the old garbage it reclaims (`GenerationalPacing::promoted_garbage_aging`).
+    promoted_since_full: usize,
+    /// Full collections left that keep the oldest promotion age.
+    aging_for: u32,
+    /// Smoothed share, in `SURVIVAL_SCALE` parts, of aged survivors their second minor
+    /// collection freed, while aging is on (`AGED_DEATH_TO_KEEP_AGING`).
+    aged_death: u32,
+    /// Full collections left before promotions dying old may turn aging on again, after aging
+    /// was turned off for freeing too few of the survivors it aged.
+    aging_off_for: u32,
 }
 
 impl PacingState {
+    /// The minor collections a survivor needs to become old now: the table's, or the oldest
+    /// while promotions were found dying old (`GenerationalPacing::promoted_garbage_aging`).
+    pub(super) fn promotion_age(&self, pacing: &GenerationalPacing) -> PromotionAge {
+        if self.aging_for > 0 { PromotionAge::OLDEST } else { pacing.promotion_age }
+    }
+
     pub(super) fn regime(&self, pacing: &GenerationalPacing) -> Regime {
         if self.survival > pacing.survival_limit {
             Regime::FullOnly
@@ -183,6 +226,26 @@ impl PacingState {
         }
     }
 }
+
+/// What a minor collection that kept survivors young found of the aged ones
+/// (`PromotionAge::Second`): freed at their second minor collection, or promoted.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct AgedFates {
+    pub(crate) died: usize,
+    pub(crate) promoted: usize,
+}
+
+impl AgedFates {
+    pub(crate) fn add(&mut self, other: AgedFates) {
+        self.died += other.died;
+        self.promoted += other.promoted;
+    }
+}
+
+/// The smoothed share, in `SURVIVAL_SCALE` parts, of aged survivors their second minor
+/// collection frees, under which aging is turned off: tracing a survivor twice costs about
+/// what promoting one that dies old does, so aging pays while at least half die young.
+const AGED_DEATH_TO_KEEP_AGING: u32 = SURVIVAL_SCALE / 2;
 
 /// What a finished collection measured.
 #[derive(Clone, Copy, Debug)]
@@ -199,6 +262,8 @@ pub(super) struct CollectionOutcome {
     pub(super) live_weight_after_full: usize,
     /// Weight allocated between the previous collection and this one.
     pub(super) allocated: usize,
+    /// What this collection found of the survivors the previous one aged.
+    pub(super) aged: AgedFates,
     /// Allocation weight since the last full collection.
     pub(super) since_full: usize,
 }
@@ -222,6 +287,19 @@ impl GenerationalPacing {
             let survivors = (outcome.allocated as u64 * u64::from(state.survival) / u64::from(SURVIVAL_SCALE)) as usize;
             let expected = outcome.previous_live_weight.saturating_add(survivors);
             let reclaimed = expected.saturating_sub(outcome.live_weight);
+            if state.aging_for > 0 {
+                state.aging_for -= 1;
+            } else if state.aging_off_for > 0 {
+                state.aging_off_for -= 1;
+            } else if self.promoted_garbage_aging.numerator > 0
+                && state.promoted_since_full > 0
+                && reclaimed >= self.promoted_garbage_aging.of(state.promoted_since_full)
+            {
+                state.aging_for = self.aging_interval;
+                // Aging must show it frees what it ages from its first measurement on.
+                state.aged_death = SURVIVAL_SCALE;
+            }
+            state.promoted_since_full = 0;
             state.steady = state.live_after_last_full != 0
                 && outcome.live
                     <= state.live_after_last_full.saturating_add(self.steady_live_growth.of(state.live_after_last_full));
@@ -236,6 +314,18 @@ impl GenerationalPacing {
         }
         if !outcome.full && outcome.allocated > 0 {
             let promoted = outcome.live_weight.saturating_sub(outcome.previous_live_weight);
+            state.promoted_since_full = state.promoted_since_full.saturating_add(promoted);
+            let aged = outcome.aged.died + outcome.aged.promoted;
+            if state.aging_for > 0 && aged > 0 {
+                let death = (outcome.aged.died as u64 * u64::from(SURVIVAL_SCALE) / aged as u64) as u32;
+                state.aged_death = (state.aged_death + death) / 2;
+                // The survivors aging keeps young mostly outlive their second minor collection:
+                // each is traced twice and promoted anyway.
+                if state.aged_death < AGED_DEATH_TO_KEEP_AGING {
+                    state.aging_for = 0;
+                    state.aging_off_for = self.aging_interval;
+                }
+            }
             let survival = (promoted.min(outcome.allocated) as u64 * u64::from(SURVIVAL_SCALE)
                 / outcome.allocated as u64) as u32;
             state.survival = (state.survival + survival) / 2;
@@ -343,6 +433,8 @@ impl GenerationalPacing {
                 usize::from(self.promotion_age.minors()),
             ))
             .unwrap_or(self.promotion_age),
+            promoted_garbage_aging: ratio("QUENCH_GC_PROMOTED_GARBAGE_AGING", self.promoted_garbage_aging),
+            aging_interval: read("QUENCH_GC_AGING_INTERVAL", self.aging_interval as usize) as u32,
         }
     }
 }
@@ -455,7 +547,9 @@ pub(super) const THROUGHPUT_PACING: GenerationalPacing = GenerationalPacing {
     probe_interval: 4,
     weight_growth: Ratio::new(0, 1),
     minimum_external_budget: THROUGHPUT_MINIMUM_EXTERNAL_BUDGET,
-    promotion_age: DEFAULT_PROMOTION_AGE,
+    promotion_age: THROUGHPUT_PROMOTION_AGE,
+    promoted_garbage_aging: THROUGHPUT_PROMOTED_GARBAGE_AGING,
+    aging_interval: THROUGHPUT_AGING_INTERVAL,
 };
 
 /// Memory-first pacing on the owner's direction of 2026-10-17 (TOD-123), selected by
@@ -497,7 +591,9 @@ pub(super) const MEMORY_FIRST_PACING: GenerationalPacing = GenerationalPacing {
     probe_interval: 4,
     weight_growth: Ratio::new(0, 1),
     minimum_external_budget: MEMORY_FIRST_MINIMUM_EXTERNAL_BUDGET,
-    promotion_age: DEFAULT_PROMOTION_AGE,
+    promotion_age: MEMORY_FIRST_PROMOTION_AGE,
+    promoted_garbage_aging: NO_AGING,
+    aging_interval: 0,
 };
 
 /// The external budget's floor (`GenerationalPacing::minimum_external_budget`) under
@@ -578,8 +674,10 @@ const THROUGHPUT_MINIMUM_YOUNG: usize = 3 << 14;
 /// full interval at 2^21; 80.4 / 78.3 and 89.0 / 89.8 with only the old-growth floor back at
 /// 2^18; 42.2 / 40.7 and 41.6 / 39.4 with this ceiling over `THROUGHPUT_MINIMUM_YOUNG` and
 /// `THROUGHPUT_MINIMUM_FULL_INTERVAL` at 2^18 (before the raise: 43.9 and 45.0 MB), request
-/// rates within the run spread.
-const THROUGHPUT_MAXIMUM_YOUNG: usize = 1 << 19;
+/// rates within the run spread. Raised to 2^20 with `THROUGHPUT_PROMOTION_AGE`: fastify
+/// 37.6 / 37.8 -> 37.1 / 37.2 MB, hono 36.2 / 34.2 -> 33.4 / 33.4 MB (2 rounds); a live set
+/// past 2^23 reaches it, which no V8-v7 row does (EarleyBoyer and Splay unchanged).
+const THROUGHPUT_MAXIMUM_YOUNG: usize = 1 << 20;
 /// The fewest allocations, or old-generation growth, between full collections under
 /// throughput: the JetStream, Score and web lanes' common minimum (v2-cloud-jet, v2-cloud-c,
 /// v2-web). Against memory-first's 384 the Score lane's table, which shares it, ran the Earley
@@ -719,7 +817,61 @@ mod tests {
             live_weight_after_full: previous_live,
             allocated,
             since_full: allocated,
+            aged: AgedFates::default(),
         }
+    }
+
+    /// A full collection after minors promoted `promoted` weight onto `live`, which keeps
+    /// `kept` of it.
+    fn full_after_promoting(live: usize, promoted: usize, kept: usize) -> CollectionOutcome {
+        CollectionOutcome { full: true, since_full: 0, ..minor(live + kept, live + promoted, 0) }
+    }
+
+    #[test]
+    fn promotions_dying_old_turn_aging_on_until_aged_survivors_outlive_their_second_minor() {
+        let pacing = MemoryPolicy::Throughput.table();
+        let mut state = PacingState::default();
+        let live = 1 << 20;
+        let promoted = 1 << 16;
+        assert_eq!(state.promotion_age(&pacing), pacing.promotion_age);
+        // Minors promote; the full collection finds every promotion dead.
+        pacing.plan(&mut state, minor(live + promoted, live, promoted));
+        pacing.plan(&mut state, full_after_promoting(live, promoted, 0));
+        assert_eq!(state.promotion_age(&pacing), PromotionAge::OLDEST);
+        // Aged survivors that their second minor frees keep aging on.
+        let freed = AgedFates { died: 9, promoted: 1 };
+        pacing.plan(&mut state, CollectionOutcome { aged: freed, ..minor(live, live, promoted) });
+        assert_eq!(state.promotion_age(&pacing), PromotionAge::OLDEST);
+        // Aged survivors that outlive it turn aging off, for the aging interval of fulls.
+        let outliving = AgedFates { died: 1, promoted: 9 };
+        for _ in 0..2 {
+            pacing.plan(&mut state, CollectionOutcome { aged: outliving, ..minor(live, live, promoted) });
+        }
+        assert_eq!(state.promotion_age(&pacing), pacing.promotion_age);
+        for _ in 0..pacing.aging_interval {
+            pacing.plan(&mut state, minor(live + promoted, live, promoted));
+            pacing.plan(&mut state, full_after_promoting(live, promoted, 0));
+            assert_eq!(state.promotion_age(&pacing), pacing.promotion_age);
+        }
+        pacing.plan(&mut state, minor(live + promoted, live, promoted));
+        pacing.plan(&mut state, full_after_promoting(live, promoted, 0));
+        assert_eq!(state.promotion_age(&pacing), PromotionAge::OLDEST);
+    }
+
+    #[test]
+    fn promotions_that_live_on_keep_the_first_age_and_memory_first_never_ages() {
+        let live = 1 << 20;
+        let promoted = 1 << 16;
+        let pacing = MemoryPolicy::Throughput.table();
+        let mut state = PacingState::default();
+        pacing.plan(&mut state, minor(live + promoted, live, promoted));
+        pacing.plan(&mut state, full_after_promoting(live, promoted, promoted));
+        assert_eq!(state.promotion_age(&pacing), pacing.promotion_age);
+        let pacing = MemoryPolicy::MemoryFirst.table();
+        let mut state = PacingState::default();
+        pacing.plan(&mut state, minor(live + promoted, live, promoted));
+        pacing.plan(&mut state, full_after_promoting(live, promoted, 0));
+        assert_eq!(state.promotion_age(&pacing), pacing.promotion_age);
     }
 
     #[test]

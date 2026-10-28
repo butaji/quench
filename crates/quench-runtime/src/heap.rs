@@ -548,6 +548,8 @@ pub(crate) struct Heap {
     /// Selects the pacing table (`MemoryPolicy::pacing`); reset keeps it.
     memory_policy: MemoryPolicy,
     pacing_state: pacing::PacingState,
+    /// What the running collection's sweeps found of the aged survivors, for its pacing plan.
+    aged_fates: pacing::AgedFates,
     /// Host contexts of promises the sweep freed, for the host to release.
     abandoned_contexts: AbandonedHostContexts,
     /// Live weight after the previous collection.
@@ -828,7 +830,7 @@ impl Heap {
         if let Some(age) = self.promotion_age_for_test {
             return age;
         }
-        self.pacing().promotion_age
+        self.pacing_state.promotion_age(&self.pacing())
     }
     #[cfg(test)]
     pub(crate) fn set_promotion_age_for_test(&mut self, age: PromotionAge) {
@@ -2293,6 +2295,10 @@ impl Heap {
             self.live_at_environment_trim = Some(live);
         }
         let since_full = self.allocated_since_full();
+        let mut aged = std::mem::take(&mut self.aged_fates);
+        for (family, _) in self.record_families_mut() {
+            aged.add(family.take_aged_fates());
+        }
         let next = self.pacing().plan(
             &mut self.pacing_state,
             pacing::CollectionOutcome {
@@ -2304,6 +2310,7 @@ impl Heap {
                 live_weight_after_full: self.live_weight_after_full,
                 allocated,
                 since_full,
+                aged,
             },
         );
         #[cfg(all(feature = "gc-tuning", feature = "profile-gc-time"))]
@@ -2507,6 +2514,7 @@ impl Heap {
                 // An aged cell is freed or promoted whatever `age` is now.
                 let mut promoted = 0;
                 let mut stays_young = 0;
+                let mut aged_fates = pacing::AgedFates::default();
                 let (slots, marks, aged) = (&mut self.slots, &self.marks, &mut self.aged);
                 self.young.retain(|&index| {
                     swept_slots += 1;
@@ -2516,10 +2524,12 @@ impl Heap {
                     };
                     let (word, bit) = slot_bit(index_usize);
                     let was_aged = aged.get(word).is_some_and(|ages| ages & bit != 0);
+                    let marked = Self::marked(marks, index_usize);
                     if was_aged {
                         aged[word] &= !bit;
+                        if marked { aged_fates.promoted += 1 } else { aged_fates.died += 1 }
                     }
-                    if !Self::marked(marks, index_usize) {
+                    if !marked {
                         if let Some(cell) = slot.cell.take() {
                             // Its mark bit is already clear: the test above found it so.
                             reclaim(properties, index_usize, cell);
@@ -2545,6 +2555,7 @@ impl Heap {
                 self.remembered.clear();
                 self.old_live = self.old_live.saturating_add(promoted);
                 live = self.old_live + stays_young;
+                self.aged_fates.add(aged_fates);
             }
         }
         SweepOutput {
