@@ -4433,13 +4433,32 @@ script_handler! {
 
 script_handler! {
     /// `GetField` of a register or `this` at a site past one shape
-    /// (`Vm::field_site_polymorphic`): its megamorphic entries; any other read takes
-    /// `lane_get_field`.
+    /// (`Vm::field_site_polymorphic`): its inline megamorphic entries; any other read takes
+    /// `lane_get_field_hashed`.
     fn lane_get_field_polymorphic<THIS: bool>(cx, r, ip, i, view) {
         // SAFETY: the context's program outlives the lane run.
         let code = unsafe { &*(*cx).code };
         let Some(value) = (unsafe { lane_known_field_base::<H, THIS>(cx, r, i.b) })
             .and_then(|object| (unsafe { vm(cx) }).inline_polymorphic_field_hit(code, object, i.c))
+        else {
+            sibling!(lane_get_field_hashed::<H, THIS>, r, ip, Carried::script(cx))
+        };
+        r.set(i.a, value);
+        next!(cx, r, following(ip), Carried::script(cx))
+    }
+}
+
+script_handler! {
+    /// `lane_get_field_polymorphic` past its inline entries: the site's hashed entries, own or
+    /// of the immediate prototype (`Vm::polymorphic_field_hit`), as an AST walk reads `type`
+    /// of a node of any of dozens of shapes. Out of line, so the inline probe keeps no hash
+    /// temporaries across its dispatch; any other read takes `lane_get_field`.
+    #[inline(never)]
+    fn lane_get_field_hashed<THIS: bool>(cx, r, ip, i, view) {
+        // SAFETY: the context's program outlives the lane run.
+        let code = unsafe { &*(*cx).code };
+        let Some(value) = (unsafe { lane_known_field_base::<H, THIS>(cx, r, i.b) })
+            .and_then(|object| (unsafe { vm(cx) }).polymorphic_field_hit(code, object, i.c))
         else {
             sibling!(lane_get_field::<H>, r, ip, Carried::script(cx))
         };
@@ -5105,6 +5124,14 @@ fn lane_cached_field<H: Host>(
 ) -> Option<Value> {
     let probe = {
         let vm = unsafe { vm(cx) };
+        // A string's own `length`, which its chain never shadows, as a tokenizer's
+        // `this.input.length` reads: no cache records a primitive's, and the probes below
+        // all decline it (`Vm::cached_string_field_hit`).
+        if atom == vm.length_atom
+            && let Some(text) = vm.heap.string(object)
+        {
+            return Some(Value::number(text.len() as f64));
+        }
         // A typed array's geometry, which no field cache records (`AtomClass::VIRTUAL_FIELD`).
         if vm.atom_class(atom).contains(super::object::AtomClass::VIRTUAL_FIELD)
             && let Some(value) = vm.typed_array_geometry_read(object, atom)
@@ -11260,6 +11287,16 @@ fn lane_native_value<H: Host>(
         Native::GeneratorNext | Native::GeneratorReturn | Native::GeneratorThrow => {
             return lane_call_native(cx, ip, native, callee, receiver, args);
         }
+        // Neither a string method nor a pure native: the promise shortcut, else the native.
+        Native::PromiseThen | Native::PromiseCatch | Native::PromiseResolve => {
+            // SAFETY: the context's program outlives the lane run.
+            let code = unsafe { &*(*cx).code };
+            if let Some(value) = lane_promise_native(vm, code, native, callee, receiver, args) {
+                note_allocation(vm);
+                return Some(value);
+            }
+            return lane_call_native(cx, ip, native, callee, receiver, args);
+        }
         _ => {}
     }
     lane_string_or_native_call(cx, ip, native, callee, receiver, args)
@@ -11369,8 +11406,8 @@ fn lane_regexp_call<H: Host>(
     }
 }
 
-/// A lane native call that `lane_native_call` does not make inline: a pure string method in
-/// place, else the native through `lane_call_native`. Inline into its two callers: a native
+/// A lane native call that `lane_native_call` does not make inline: a pure string method or
+/// a pure native in place, else the native through `lane_call_native`. Inline into its two callers: a native
 /// call otherwise pays this layer's own frame.
 #[inline(always)]
 fn lane_string_or_native_call<H: Host>(
@@ -11388,10 +11425,6 @@ fn lane_string_or_native_call<H: Host>(
         return Some(value);
     }
     if let Some(value) = lane_pure_native(vm, code, native, callee, receiver, args) {
-        return Some(value);
-    }
-    if let Some(value) = lane_promise_native(vm, code, native, callee, receiver, args) {
-        note_allocation(vm);
         return Some(value);
     }
     lane_call_native(cx, ip, native, callee, receiver, args)

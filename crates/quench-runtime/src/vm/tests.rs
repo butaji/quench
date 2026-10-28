@@ -182,6 +182,40 @@ fn lane_generator_iteration_steps_keep_generator_semantics() {
 }
 
 #[test]
+fn lane_field_reads_of_strings_and_hashed_sites_keep_lookup_semantics() {
+    // A string's `length` read in the lane answers its own length, whatever its chain holds,
+    // while other receivers at the same site read theirs; a site past its inline shapes
+    // answers own and prototype fields from its hashed entries and sees a prototype change.
+    let source = r#"
+      const out = [];
+      class T { constructor(s) { this.input = s; } len() { return this.input.length; } }
+      let n = 0; const t = new T("abcdef");
+      for (let i = 0; i < 1000; i++) n += t.len();
+      out.push(n);
+      t.input = [1, 2]; out.push(t.len());
+      t.input = { length: "own" }; out.push(t.len());
+      String.prototype.length = 99; out.push(new T("xy").len());
+      const shapes = [];
+      for (let k = 0; k < 12; k++) { const o = { ["f" + k]: k, type: "t" + k }; shapes.push(o); }
+      function Proto() {} Proto.prototype.type = "proto";
+      for (let k = 0; k < 3; k++) { const o = new Proto(); o["g" + k] = k; shapes.push(o); }
+      function readType(o) { return o.type; }
+      for (let r = 0; r < 50; r++) for (const o of shapes) readType(o);
+      out.push(shapes.map(readType).join(","));
+      Proto.prototype.type = "changed"; out.push(readType(shapes[13]));
+      print(out.join(" "));
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    let program = Engine::specialize(source, "lane-field-reads.js").unwrap();
+    vm.execute(&program).unwrap();
+    assert_eq!(
+        output.borrow().as_slice(),
+        ["6000 2 own 2 t0,t1,t2,t3,t4,t5,t6,t7,t8,t9,t10,t11,proto,proto,proto changed"]
+    );
+}
+
+#[test]
 fn lane_calls_passing_extra_values_keep_them_only_for_legacy_reflection() {
     // A lane call passing more values than its callee's parameters keeps them for a sloppy
     // callee, whose `f.arguments` and caller's `arguments` read them, and passes a strict
