@@ -3418,6 +3418,39 @@ impl<H: Host> Vm<H> {
         )
     }
 
+    /// Whether a for-of step calling `method` of `iterator` (`lane_iteration_step`) is this
+    /// realm's `Generator.prototype.next` of a generator that is not running, which the step
+    /// resumes in place (`generator_iteration_step`).
+    pub(super) fn steps_as_generator(&self, iterator: Value, method: Value) -> bool {
+        self.is_current_realm_native(method, Native::GeneratorNext)
+            && matches!(
+                self.heap.iterator(iterator),
+                Some(IteratorRecord { kind: IteratorKind::Generator, ext, .. })
+                    if ext.generator.as_ref().is_some_and(|record| !record.running)
+            )
+    }
+
+    /// The step `steps_as_generator` admits: `next()` of `generator` called as the general
+    /// path calls the native `method` (`call_native_guarded`, `call_native`), with a result
+    /// only the step's `done` and `value` reads observe (`reused_iterator_result`), or the
+    /// delegate's own result a `yield*` passes on.
+    pub(super) fn generator_iteration_step(
+        &mut self,
+        p: &ResidualProgram,
+        method: Value,
+        generator: Value,
+    ) -> Result<Value, JsError> {
+        self.as_native_activation(Native::GeneratorNext, method, |vm| {
+            vm.check_execution_interrupt()?;
+            let step = vm.with_call_roots([generator], |vm| vm.resume_generator_step(p, generator, &[], None))?;
+            Ok(match step {
+                super::generator::GeneratorStep::Yielded(value) => vm.reused_iterator_result(value, false),
+                super::generator::GeneratorStep::Done(value) => vm.reused_iterator_result(value, true),
+                super::generator::GeneratorStep::Delegated(result) => result,
+            })
+        })
+    }
+
     fn array_iterator_item(
         &mut self,
         p: &ResidualProgram,
@@ -3527,9 +3560,11 @@ impl<H: Host> Vm<H> {
             self.reused_iterator_result = result;
             return result;
         }
-        self.heap.property_set(result, ITERATOR_RESULT_VALUE_SLOT, value);
-        self.heap
-            .property_set(result, ITERATOR_RESULT_DONE_SLOT, if done { Value::TRUE } else { Value::FALSE });
+        let done = if done { Value::TRUE } else { Value::FALSE };
+        let mut slots = [Value::UNDEFINED; crate::value_vec::INLINE_PROPERTY_COUNT];
+        slots[ITERATOR_RESULT_VALUE_SLOT] = value;
+        slots[ITERATOR_RESULT_DONE_SLOT] = done;
+        self.heap.set_leading_properties(result, slots);
         result
     }
 
