@@ -127,9 +127,9 @@ pub(crate) fn source_binding_name(name: &str) -> &str {
 /// Whether a local named `name` must live in its function's environment whatever its
 /// captures: other hidden bindings (lexical `this`, `new.target`, home objects, private
 /// names, ...) are reached by name, not only through capture slots. A renamed block binding
-/// is reached only through its slot.
+/// and a hidden argument slot (`HIDDEN_PARAMETER_PREFIX`) are reached only through their slots.
 pub(crate) fn local_name_requires_environment(name: &str) -> bool {
-    name.starts_with('\0') && !name.starts_with(BLOCK_BINDING_MARKER)
+    name.starts_with('\0') && !name.starts_with(BLOCK_BINDING_MARKER) && !name.starts_with(HIDDEN_PARAMETER_PREFIX)
 }
 /// The prefix of a class's home-object binding, which private brand checks and `super`
 /// resolve by name through the enclosing environments.
@@ -1501,6 +1501,9 @@ const FORWARDED_REST_RECORDS: usize = 8;
 /// parent's four and a spare `undefined` load, then the construction, its check, the
 /// receiver binding, an `undefined` load and the return.
 const FORWARDED_PARAMETERS_FRAME: usize = 10;
+/// The records a forwarding constructor may add to its shape: the rewrite's copy of the
+/// active function into the parent call's window, a `Move` right before the call.
+const FORWARDED_WINDOW_COPY: usize = 1;
 
 /// Call-setup facts derived once per function from its static layout, so an activation reads
 /// one cached word instead of re-testing each flag.
@@ -2314,6 +2317,11 @@ impl Function {
                 })
     }
 
+    /// Whether some jump of the body targets its own or an earlier instruction: a loop.
+    pub(crate) fn loops(&self) -> bool {
+        has_backward_branch(&self.code, &self.wide)
+    }
+
     /// Whether an activation can suspend: an `await`, or a `yield` of a generator.
     pub(crate) fn suspends(&self) -> bool {
         self.instructions()
@@ -2395,11 +2403,11 @@ impl Function {
                 });
             let environment_activation = in_loop
                 && self.parent.is_some()
-                && !self.is_arrow
                 && !self.is_class_constructor
-                // A rest list binding directly fills its slot with the gathered array
+                // Each argument fills its own slot, a hidden one where the list binds its names
+                // apart; a rest list binding directly fills its slot with the gathered array
                 // (`lane_activate_environment`).
-                && self.parameters_own_their_slots(|atom| atoms.get(atom))
+                && self.arguments_own_their_slots(|atom| atoms.get(atom))
                 && self.self_binding_slot.is_none()
                 && !self.inherited_with_scope
                 && self.local_registers.is_empty()
@@ -2506,9 +2514,11 @@ impl Function {
             .as_deref()
     }
 
-    /// The stores of a body whose whole effect is storing parameters into fields of `this`,
-    /// then returning `undefined`, in order; `None` for any other body. A store's value is
-    /// a parameter as passed (`SetThisField` of the parameter's register), or a Number
+    /// The stores of a body whose whole effect is storing parameters and primitive constants
+    /// into fields of `this`, then returning `undefined`, in order; `None` for any other body.
+    /// A constant store is the `SetThisField` of a temporary a primitive constant's
+    /// `LoadConst` wrote, which writes nothing else. A parameter store's value is a parameter as passed (`SetThisField` of
+    /// the parameter's register), or a Number
     /// constant in its place where the parameter is falsy: `this.f = (p ? p : k)` (a
     /// `JumpFalse` of the parameter over its `Move` into a temporary, else the constant's
     /// `LoadConst` into it, then the temporary's `SetThisField`) or `if (!p) p = k` before
@@ -2528,6 +2538,8 @@ impl Function {
         let parameter = |register: Register| (register < self.params).then_some(register);
         let mut fallbacks: SmallVec<[Option<f64>; 4]> = smallvec::smallvec![None; usize::from(self.params)];
         let mut stores = Vec::new();
+        // The temporaries primitive constants were loaded into, latest last.
+        let mut temporaries: SmallVec<[(Register, InitializerConstant); 4]> = SmallVec::new();
         let mut pc = 0;
         let store = |instruction: &WideInstruction| {
             matches!(instruction.op(), Op::SetThisField | Op::SetThisFieldStrict).then_some(())
@@ -2544,7 +2556,7 @@ impl Function {
                     && load.result_register() == p
                     && let Some(k) = number(load)
                     && fallbacks[usize::from(p)].is_none()
-                    && !stores.iter().any(|stored: &InitializerStore| stored.parameter == p) =>
+                    && !stores.iter().any(|stored: &InitializerStore| stored.parameter() == Some(p)) =>
                 {
                     fallbacks[usize::from(p)] = Some(k);
                     pc += 2;
@@ -2565,11 +2577,35 @@ impl Function {
                     && set.register_a() == copy.result_register()
                     && fallbacks[usize::from(p)].is_none() =>
                 {
-                    stores.push(InitializerStore { atom: set.imm(), site: set.c(), parameter: p, fallback: Some(k) });
+                    stores.push(InitializerStore {
+                        atom: set.imm(),
+                        site: set.c(),
+                        value: InitializerValue::Parameter { parameter: p, fallback: Some(k) },
+                    });
                     pc += 5;
                 }
                 set if store(set).is_some() && let Some(p) = parameter(set.register_a()) => {
-                    stores.push(InitializerStore { atom: set.imm(), site: set.c(), parameter: p, fallback: fallbacks[usize::from(p)] });
+                    stores.push(InitializerStore {
+                        atom: set.imm(),
+                        site: set.c(),
+                        value: InitializerValue::Parameter { parameter: p, fallback: fallbacks[usize::from(p)] },
+                    });
+                    pc += 1;
+                }
+                // `this.f = k` of a temporary a primitive constant was loaded into.
+                set if store(set).is_some()
+                    && let Some(&(_, constant)) = temporaries.iter().rev().find(|(register, _)| *register == set.register_a()) =>
+                {
+                    stores.push(InitializerStore { atom: set.imm(), site: set.c(), value: InitializerValue::Constant(constant) });
+                    pc += 1;
+                }
+                // A primitive constant loaded into a temporary, which writes nothing else.
+                load if load.op() == Op::LoadConst
+                    && load.result_flags() == 0
+                    && load.result_register() >= self.params
+                    && let Some(constant) = constants.get(load.constant_index()).and_then(InitializerConstant::of) =>
+                {
+                    temporaries.push((load.result_register(), constant));
                     pc += 1;
                 }
                 _ => break,
@@ -2583,7 +2619,10 @@ impl Function {
                 (undefined_load(completion) && completion.returns_from_frame())
                     || (completion.op() == Op::Return
                         && completion.register_a() >= self.params
-                        && self.initial_register == InitialRegister::Undefined)
+                        && match temporaries.iter().rev().find(|(register, _)| *register == completion.register_a()) {
+                            Some((_, constant)) => *constant == InitializerConstant::Undefined,
+                            None => self.initial_register == InitialRegister::Undefined,
+                        })
             }
             [load, completion] => {
                 undefined_load(load)
@@ -2595,7 +2634,7 @@ impl Function {
         };
         // A defaulted parameter none of the stores reads is a store the model leaves out.
         let all_read = fallbacks.iter().enumerate().all(|(p, fallback)| {
-            fallback.is_none() || stores.iter().any(|stored: &InitializerStore| usize::from(stored.parameter) == p)
+            fallback.is_none() || stores.iter().any(|stored: &InitializerStore| stored.parameter().map(usize::from) == Some(p))
         });
         (completes && all_read && !stores.is_empty()).then(|| stores.into_boxed_slice())
     }
@@ -2644,16 +2683,46 @@ impl Function {
         // Each shape has a fixed number of records, so the record count rejects any other
         // body before a record decodes: the implicit constructor reads its first eight (its
         // tail is unreachable), the parameter form is exactly `FORWARDED_PARAMETERS_FRAME`
-        // around its parameter loads.
+        // around its parameter loads. The rewrite may also leave the active function's copy
+        // into the parent call's window as a `Move` right before the call
+        // (`FORWARDED_WINDOW_COPY`).
         let shaped_records = if self.rest {
             FORWARDED_REST_RECORDS
         } else {
             FORWARDED_PARAMETERS_FRAME + usize::from(self.params)
         };
-        if self.code.len() < shaped_records || (!self.rest && self.code.len() != shaped_records) {
+        let fits = |count: usize| {
+            if self.rest {
+                count >= shaped_records
+            } else {
+                count == shaped_records || count == shaped_records + FORWARDED_WINDOW_COPY
+            }
+        };
+        if !fits(self.code.len()) {
             return None;
         }
-        let records = self.instructions().take(shaped_records).collect::<SmallVec<[WideInstruction; 16]>>();
+        let mut records = self
+            .instructions()
+            .take(shaped_records + FORWARDED_WINDOW_COPY)
+            .collect::<SmallVec<[WideInstruction; 16]>>();
+        // The copy, dropped here: the call's window is that copy.
+        let copied = records.iter().position(|record| record.op() == Op::Call).and_then(|call| {
+            let moved = *records.get(call.checked_sub(1)?)?;
+            (moved.op() == Op::Move && moved.result_flags() == 0).then(|| {
+                records.remove(call - 1);
+                (moved.register_b(), moved.result_register())
+            })
+        });
+        // A parameter form's every record is read: one longer only by the dropped copy.
+        let read = self.code.len() - usize::from(copied.is_some());
+        if records.len() < shaped_records || (!self.rest && read != shaped_records) {
+            return None;
+        }
+        records.truncate(shaped_records);
+        let window_of = |active: &WideInstruction| match copied {
+            None => Some(active.result_register()),
+            Some((source, window)) => (source == active.result_register()).then_some(window),
+        };
         // The parent: the active function's [[GetPrototypeOf]], called with no receiver.
         let parent_of = |active: &WideInstruction, base: &WideInstruction, receiver: &WideInstruction, call: &WideInstruction| {
             active.op() == Op::LoadCapture
@@ -2665,7 +2734,7 @@ impl Function {
                 && call.b() == base.result_register()
                 && call.c() == receiver.result_register()
                 && ImmediateLayout::argument_count(call.imm()) == 1
-                && ImmediateLayout::call_window_base(call.imm()) == active.result_register()
+                && Some(ImmediateLayout::call_window_base(call.imm())) == window_of(active)
         };
         if self.rest {
             // The implicit constructor spreads its rest list, then returns the receiver; the
@@ -4117,12 +4186,59 @@ mod tests;
 mod validate;
 
 /// A store of an initializing body (`Function::initializer_stores`): the field `atom`, at
-/// cache site `site`, takes parameter `parameter` as passed, or the Number `fallback` where
-/// the parameter is falsy.
+/// cache site `site`, takes `value`.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct InitializerStore {
     pub(crate) atom: u32,
     pub(crate) site: u16,
-    pub(crate) parameter: u16,
-    pub(crate) fallback: Option<f64>,
+    pub(crate) value: InitializerValue,
+}
+
+/// What an initializer store gives its field.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum InitializerValue {
+    /// Parameter `parameter` as passed, or the Number `fallback` where it is falsy.
+    Parameter { parameter: u16, fallback: Option<f64> },
+    /// A primitive constant, whatever is passed: `this.id = 0`, `this.parent = void 0`.
+    Constant(InitializerConstant),
+}
+
+impl InitializerStore {
+    /// The parameter the store reads, if any.
+    pub(crate) fn parameter(&self) -> Option<u16> {
+        match self.value {
+            InitializerValue::Parameter { parameter, .. } => Some(parameter),
+            InitializerValue::Constant(_) => None,
+        }
+    }
+}
+
+/// The constants an initializer store writes: those whose value needs no heap cell.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum InitializerConstant {
+    Number(f64),
+    Boolean(bool),
+    Null,
+    Undefined,
+}
+
+impl InitializerConstant {
+    fn of(constant: &Constant) -> Option<Self> {
+        Some(match constant {
+            Constant::Number(number) => Self::Number(*number),
+            Constant::Boolean(boolean) => Self::Boolean(*boolean),
+            Constant::Null => Self::Null,
+            Constant::Undefined => Self::Undefined,
+            _ => return None,
+        })
+    }
+
+    pub(crate) fn value(self) -> crate::value::Value {
+        match self {
+            Self::Number(number) => crate::value::Value::number(number),
+            Self::Boolean(boolean) => crate::value::Value::boolean(boolean),
+            Self::Null => crate::value::Value::NULL,
+            Self::Undefined => crate::value::Value::UNDEFINED,
+        }
+    }
 }

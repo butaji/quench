@@ -1,10 +1,11 @@
 //! When to collect, and whether a collection is minor or full.
 //!
-//! Survivors of every collection stay marked (old). A minor collection traces roots and
-//! the old owners the write barriers logged, and sweeps only unmarked (young) cells and
-//! records, so its cost follows survivors and garbage rather than the old heap. A full
-//! collection clears the marks and traces everything. Allocation is charged in weight:
-//! one per cell or record plus one per `PAYLOAD_BYTES_PER_ALLOCATION` of payload
+//! Survivors of a full collection, and of as many minor ones as the promotion age counts
+//! (`PromotionAge`), stay marked (old). A minor collection traces roots and the old owners
+//! the write barriers logged or that point at what stays young, and sweeps only unmarked
+//! (young) cells and records, so its cost follows survivors and garbage rather than the old
+//! heap. A full collection clears the marks and traces everything. Allocation is charged in
+//! weight: one per cell or record plus one per `PAYLOAD_BYTES_PER_ALLOCATION` of payload
 //! (`Cell::payload_bytes`), recounted from the survivors by every full sweep. Survival
 //! compares live weight with allocated weight, so payload growth of old arrays is not
 //! mistaken for young cells surviving. Budgets stay
@@ -88,7 +89,59 @@ pub(super) struct GenerationalPacing {
     /// so streaming code that drops one buffer per chunk retains every chunk until a
     /// collection, and this bounds that garbage.
     pub(super) minimum_external_budget: usize,
+    /// The minor collections a young cell or record survives before it is old
+    /// (`PromotionAge`).
+    pub(super) promotion_age: PromotionAge,
 }
+
+/// How many minor collections a young cell or record survives before it is promoted (old,
+/// traced and swept again only by a full collection). Promoting on the first survival frees
+/// nothing that dies soon after it, as a server's request objects or a parser's short-lived
+/// lists do, until a full collection; the second survival lets one more minor collection
+/// find them dead. A young survivor's age is one aged bit beside its mark bit (`Heap::aged`,
+/// the record blocks' `aged` words), so the oldest age is `PromotionAge::OLDEST`.
+///
+/// Under `Second` the survival pacing measures (`GenerationalPacing::plan`) is net: live
+/// weight after a minor collection counts this collection's first survivors, less the aged
+/// survivors of the previous one that died since. Under `First`, nothing survives young, and
+/// it is first survival exactly, as before ages existed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum PromotionAge {
+    /// Every minor survivor is promoted: no cell or record is young after a collection.
+    First = 1,
+    /// A first-time survivor stays young (aged); an aged survivor is promoted.
+    Second = 2,
+}
+
+impl PromotionAge {
+    /// Every age, youngest first.
+    pub(crate) const ALL: [Self; 2] = [Self::First, Self::Second];
+    /// The most minor collections any policy lets an object survive young.
+    pub(crate) const OLDEST: Self = Self::ALL[Self::ALL.len() - 1];
+
+    /// The minor collections a survivor needs to become old.
+    pub(crate) const fn minors(self) -> u8 {
+        self as u8
+    }
+
+    /// Whether a first-time minor survivor stays young, aged.
+    pub(crate) const fn ages(self) -> bool {
+        matches!(self, Self::Second)
+    }
+
+    /// The age of `minors` survivals, if one bit can count it.
+    #[cfg(feature = "gc-tuning")]
+    fn from_minors(minors: usize) -> Option<Self> {
+        Self::ALL
+            .into_iter()
+            .find(|age| usize::from(age.minors()) == minors)
+    }
+}
+
+/// Promotion on the first survived minor collection under both policies: the generational
+/// rule the policy tables were measured with. `PromotionAge::Second` is for the lanes to
+/// measure (`QUENCH_GC_PROMOTION_AGE` in `gc-tuning` builds) before a table adopts it.
+const DEFAULT_PROMOTION_AGE: PromotionAge = PromotionAge::First;
 
 /// Fixed-point scale of the survival estimate.
 pub(super) const SURVIVAL_SCALE: u32 = 1 << 10;
@@ -285,6 +338,11 @@ impl GenerationalPacing {
             probe_interval: read("QUENCH_GC_PROBE_INTERVAL", self.probe_interval as usize) as u32,
             weight_growth: ratio("QUENCH_GC_WEIGHT_GROWTH", self.weight_growth),
             minimum_external_budget: read("QUENCH_GC_MIN_EXTERNAL", self.minimum_external_budget),
+            promotion_age: PromotionAge::from_minors(read(
+                "QUENCH_GC_PROMOTION_AGE",
+                usize::from(self.promotion_age.minors()),
+            ))
+            .unwrap_or(self.promotion_age),
         }
     }
 }
@@ -397,6 +455,7 @@ pub(super) const THROUGHPUT_PACING: GenerationalPacing = GenerationalPacing {
     probe_interval: 4,
     weight_growth: Ratio::new(0, 1),
     minimum_external_budget: THROUGHPUT_MINIMUM_EXTERNAL_BUDGET,
+    promotion_age: DEFAULT_PROMOTION_AGE,
 };
 
 /// Memory-first pacing on the owner's direction of 2026-10-17 (TOD-123), selected by
@@ -438,6 +497,7 @@ pub(super) const MEMORY_FIRST_PACING: GenerationalPacing = GenerationalPacing {
     probe_interval: 4,
     weight_growth: Ratio::new(0, 1),
     minimum_external_budget: MEMORY_FIRST_MINIMUM_EXTERNAL_BUDGET,
+    promotion_age: DEFAULT_PROMOTION_AGE,
 };
 
 /// The external budget's floor (`GenerationalPacing::minimum_external_budget`) under

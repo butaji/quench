@@ -1158,7 +1158,6 @@ impl Engine {
         };
         let mut compiler = Compiler::new(name, &normalized, mode, atom_prefix, private_name_ids);
         compiler.prototype_unobservable = prototype_unobservable;
-        compiler.lazy_bodies = parsed.lazy_function_bodies.iter().copied().collect();
         #[cfg(feature = "verify-replay")]
         {
             compiler.free_names = free_names;
@@ -1669,7 +1668,8 @@ struct Compiler<'a> {
     /// The source starts of the function expressions whose `prototype` no program text
     /// observes (`call_only`); empty where the source was not analyzed.
     prototype_unobservable: FxHashSet<u32>,
-    /// The starts of the function bodies parsed lazily and not compiled yet (`lazy_bodies`).
+    /// In a replay, the starts of the function bodies the load released
+    /// (`ProgramReplay::lazy_bodies`), which the replay releases too (`Nesting::Recorded`).
     lazy_bodies: FxHashSet<u32>,
     /// The starts of the function bodies compiled from their source parsed again, which a
     /// replay stands in the same way (`ProgramReplay::lazy_bodies`).
@@ -2403,8 +2403,11 @@ impl<'a> Compiler<'a> {
         function: &oxc_ast::ast::Function<'_>,
         mut context: replay::PlainFunctionContext,
     ) -> u32 {
+        // A released body holds its stand-in wherever the function is compiled, and a node
+        // may be compiled more than once (the right operand of `??`); the function parsed
+        // again holds its own statements.
         if let Some(body) = &function.body
-            && self.lazy_bodies.remove(&body.span.start)
+            && lazy_bodies::is_stand_in(body)
         {
             self.lazy_compiled.push(body.span.start);
             return self.compile_lazy_function(function, context);
@@ -2516,7 +2519,6 @@ impl<'a> Compiler<'a> {
             self.reject(function.span, "SyntaxError: a lazily parsed function body does not compile alone");
             return self.compile_plain_function(function, context);
         };
-        self.lazy_bodies.extend(reparsed.lazy_bodies.iter().copied());
         let again = reparsed.function().expect("checked above");
         self.compile_plain_function(again, context)
     }
@@ -3226,6 +3228,7 @@ impl<'a> Compiler<'a> {
                     lazy_bodies: {
                         let mut starts = std::mem::take(&mut self.lazy_compiled);
                         starts.sort_unstable();
+                        starts.dedup();
                         starts.into_boxed_slice()
                     },
                     specialized: self.mode == SpecializationMode::Enabled,

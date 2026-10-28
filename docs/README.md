@@ -260,6 +260,14 @@ module's name and the exact text compiled, and is written to a temporary file re
 place. An entry that is missing, unreadable or does not decode costs only the compilation it
 would have saved.
 
+A compilation parses function bodies lazily: the parser releases the tree of each outermost
+plain function body, a pass before code generation checks and analyzes each such body parsed
+alone, and code generation parses each function again where it compiles it, so the whole
+program's tree never exists at once (cold `import typescript`: 101 -> 68 MB max RSS). A
+program that does not compile that way compiles eagerly and reports the eager diagnostics.
+`QUENCH_EAGER_FUNCTION_BODIES` (any value) compiles eagerly, for measuring the two. CommonJS
+goal detection checks syntax the same way (`Engine::syntax_valid`).
+
 A decoded program parses nothing, so it reaches none of a compilation's phase boundaries
 (`set_compile_phase_boundary`), where the host releases its read-only pages. The runtime calls
 `Host::cached_program_decoded` after each decode instead. Once bootstrap has finished,

@@ -182,6 +182,50 @@ fn lane_generator_iteration_steps_keep_generator_semantics() {
 }
 
 #[test]
+fn lane_super_forwarding_constructions_keep_construct_semantics() {
+    // `new Derived(...)` of a class whose constructor only forwards to an initializer parent
+    // makes the parent's stores on a receiver of the derived prototype, named as the general
+    // path names it; a changed parent, a setter, a returned object and constant stores keep
+    // their semantics.
+    let source = r#"
+      const out = [];
+      class Node { constructor(k, p, e) { this.pos = p; this.end = e; this.kind = k; this.id = 0; this.parent = void 0; } width() { return this.end - this.pos; } }
+      class Tok extends Node { constructor(k, p, e) { super(k, p, e); } get text() { return "t" + this.kind; } }
+      class Any extends Node {}
+      function make(C, n) { let s = 0, last; for (let i = 0; i < n; i++) { last = new C(i, i, i * 2 + 1); s += last.width(); } return [s, last]; }
+      let [s, t] = make(Tok, 3000);
+      out.push(s, t.text, t instanceof Tok, t instanceof Node, Object.keys(t).join(""), t.constructor.name, t.parent === undefined);
+      let [s2, a] = make(Any, 3000);
+      out.push(s2, a.constructor.name, Object.getPrototypeOf(a) === Any.prototype);
+      class Other { constructor(k) { this.other = k; } }
+      Object.setPrototypeOf(Tok, Other);
+      out.push(Object.keys(make(Tok, 5)[1]).join(""));
+      class Sets extends Node { constructor(k, p, e) { super(k, p, e); } }
+      Object.defineProperty(Sets.prototype, "end", { set(v) { out.push("set" + v); }, configurable: true });
+      make(Sets, 2);
+      class Ret { constructor(k) { this.k = k; if (k === 7) return { swapped: k }; } }
+      class RetD extends Ret { constructor(k) { super(k); } }
+      for (let i = 0; i < 2000; i++) new RetD(i % 8 === 7 ? 7 : i);
+      out.push(JSON.stringify(new RetD(7)), new RetD(3) instanceof RetD);
+      class Extra extends Node { constructor(k, p) { super(k, p); } }
+      let x; for (let i = 0; i < 2000; i++) x = new Extra(1, 2, 99);
+      out.push(x.end);
+      class C0 { constructor(a) { this.a = a; this.b = 0; this.c = void 0; this.d = null; this.e = true; } }
+      let c; for (let i = 0; i < 3000; i++) c = new C0(i);
+      out.push(JSON.stringify(c), "c" in c);
+      print(out.join(" "));
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    let program = Engine::specialize(source, "lane-super-forwarding.js").unwrap();
+    vm.execute(&program).unwrap();
+    assert_eq!(
+        output.borrow().as_slice(),
+        ["4501500 t2999 true true posendkindidparent Tok true 4501500 Any true other set1 set3 {\"swapped\":7} true  {\"a\":2999,\"b\":0,\"d\":null,\"e\":true} true"]
+    );
+}
+
+#[test]
 fn lane_polymorphic_field_stores_keep_assignment_semantics() {
     // A store site past one shape writes each recorded shape's slot in the lane; a receiver
     // that gains the property, a frozen one and an accessor still take the general store.
@@ -627,6 +671,30 @@ fn minor_collection_keeps_accessor_pairs_added_to_old_owners() {
     vm.collect_slow(&program, false);
     assert_eq!(weak.map(|handle| vm.heap.weak_value(handle)), [Some(getter), Some(setter)]);
     assert!(vm.heap.release_root(owner_root));
+}
+
+/// A program's changed roots are traced by as many minor collections as promote what they
+/// hold: under `PromotionAge::Second` the first leaves a new constant young and unmarked,
+/// and only the second promotes it.
+#[test]
+fn minor_collections_trace_changed_program_roots_until_promoted() {
+    use crate::heap::PromotionAge;
+
+    let program = Engine::specialize("", "aged-program-constant.js").unwrap();
+    for age in PromotionAge::ALL {
+        let mut vm = Vm::new(TestHost::default());
+        vm.heap.set_promotion_age_for_test(age);
+        let id = vm.programs.insert(program.clone()).unwrap();
+        vm.collect_slow(&program, true);
+        let constant = vm.heap.alloc_string("young constant".into());
+        let weak = vm.heap.weak_handle(constant).unwrap();
+        vm.programs.set_constants(id, vec![constant]);
+        for _ in 0..=PromotionAge::OLDEST.minors() {
+            vm.collect_slow(&program, false);
+            assert_eq!(vm.heap.weak_value(weak), Some(constant), "{age:?}");
+        }
+        assert!(vm.heap.is_old(constant), "{age:?}");
+    }
 }
 
 #[test]
@@ -11011,10 +11079,11 @@ fn js_jit_compiles_straight_line_plain_local_temporaries() {
 fn js_jit_enters_compiled_callees_from_frameless_lane_activations() {
     let program = Engine::compile(crate::ExecutionRequest::script(
         r#"
-          function add(left, right) { return left + right; }
+          function add(left, right) { let t = left + right; t = t * 1; t = t + 0; t = t * 1; t = t + 0; t = t * 1; t = t + 0; t = t * 1; t = t + 0; t = t * 1; t = t + 0; t = t * 1; t = t + 0; t = t * 1; t = t + 0; t = t * 1; t = t + 0; t = t * 1; t = t + 0; t = t * 1; t = t + 0; t = t * 1; t = t + 0; t = t * 1; t = t + 0; return t; }
+          function plus(left, right) { return left + right; }
           function drive(count) {
             let sum = 0;
-            for (let index = 0; index < count; index++) sum = add(sum, index);
+            for (let index = 0; index < count; index++) sum = plus(add(sum, index), 0);
             return sum;
           }
           for (let round = 0; round < 4; round++) {
@@ -11048,6 +11117,18 @@ fn js_jit_enters_compiled_callees_from_frameless_lane_activations() {
         "the lane's frameless calls should enter native code, got {}",
         compiled.native_entries()
     );
+    // A loop-free callee shorter than a native entry's overhead stays a frameless activation
+    // (`JS_TIER_LANE_ENTRY_RECORDS`).
+    let plus = program
+        .functions
+        .iter()
+        .position(|function| function.header().name.is_some_and(|atom| &program.atoms[atom as usize] == "plus"))
+        .unwrap() as u32;
+    let native = match vm.programs.js_tier(super::program_store::ProgramId::MAIN, plus) {
+        Some(super::program_store::JsTierState::Compiled(compiled)) => compiled.native_entries(),
+        _ => 0,
+    };
+    assert!(native < 500, "a short loop-free callee should run in the lane, got {native} native entries");
 }
 
 #[test]

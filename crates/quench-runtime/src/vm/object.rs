@@ -901,6 +901,7 @@ impl<H: Host> Vm<H> {
         self.array_iteration_proof = None;
         self.for_in_own_keys = None;
         self.species_slot_proof.set(None);
+        self.promise_species_proof.set(None);
         self.index_free_chain_proof.set(None);
         self.enumerable_keys.clear();
         self.field_add_sets.clear();
@@ -1510,7 +1511,9 @@ impl<H: Host> Vm<H> {
         let receiver = self.heap.object_record_by_id(record_id);
         // The exact shape matches an entry's source, which is never a dictionary's, only
         // outside dictionary storage (`Object::exact_shape`).
-        let Some((_, cache)) = self.field_add_entry(self.field_cache_index(site), receiver.exact_shape(), atom) else {
+        let Some((_, cache)) =
+            self.field_add_entry_for(self.field_cache_index(site), receiver.exact_shape(), atom, receiver.proto_link())
+        else {
             return false;
         };
         let (target_shape, slot) = (cache.target_shape, usize::from(cache.slot));
@@ -3653,7 +3656,7 @@ impl<H: Host> Vm<H> {
     ) -> bool {
         // The caller proved `object` an extensible ordinary object of `shape` whose prototype
         // `link` names.
-        let Some((set, cache)) = self.field_add_entry(site, shape, atom) else {
+        let Some((set, cache)) = self.field_add_entry_for(site, shape, atom, link) else {
             return false;
         };
         let (target_shape, slot) = (cache.target_shape, cache.slot);
@@ -3676,6 +3679,19 @@ impl<H: Host> Vm<H> {
         }
         let set = set as usize;
         Some((set, unsafe { self.field_add_sets.get_unchecked(set) }.find(shape, atom)?))
+    }
+
+    /// `field_add_entry` for a receiver whose prototype `link` names: the entry whose chain
+    /// proof holds for it where the site keeps one (`FieldAddCacheSet::find_for`).
+    #[inline(always)]
+    fn field_add_entry_for(&self, site: usize, shape: u32, atom: Atom, link: ProtoLink) -> Option<(usize, &FieldAddCache)> {
+        // SAFETY: as `field_add_entry`'s.
+        let set = unsafe { self.field_add_indices.get_unchecked(site) };
+        if set == NO_FIELD_ADD_SET {
+            return None;
+        }
+        let set = set as usize;
+        Some((set, unsafe { self.field_add_sets.get_unchecked(set) }.find_for(shape, atom, link)?))
     }
 
     /// Adds `atom` to `object` of `shape` at `slot` by a cached transition to `target_shape`.
@@ -3783,19 +3799,21 @@ impl<H: Host> Vm<H> {
     #[cold]
     #[inline(never)]
     fn prove_field_add_chain(&mut self, set: usize, shape: u32, atom: Atom, link: ProtoLink) -> bool {
-        let Some(cache) = self.field_add_sets[set].find(shape, atom).copied() else {
-            return false;
-        };
-        let Some(proved) = self.prove_add_chain(&cache, link) else {
-            return false;
-        };
-        if let Some(epoch) = proved
-            && let Some(cache) = self.field_add_sets[set].find_mut(shape, atom)
-        {
-            cache.proved_epoch = epoch;
-            cache.proved_prototype = link;
+        // Each entry records one prototype chain; the receiver's must be one of them.
+        let entries = self.field_add_sets[set].matching(shape, atom).collect::<smallvec::SmallVec<[usize; FIELD_ADD_CACHE_WAYS]>>();
+        for index in entries {
+            let cache = *self.field_add_sets[set].entry(index);
+            let Some(proved) = self.prove_add_chain(&cache, link) else {
+                continue;
+            };
+            if let Some(epoch) = proved {
+                let cache = self.field_add_sets[set].entry_mut(index);
+                cache.proved_epoch = epoch;
+                cache.proved_prototype = link;
+            }
+            return true;
         }
-        true
+        false
     }
 
     /// Whether the chain from the prototype `link` names still has the shapes `cache`

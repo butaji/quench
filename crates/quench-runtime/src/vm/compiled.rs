@@ -11807,10 +11807,16 @@ impl<H: Host> Vm<H> {
         if matches!(state, Some(super::program_store::JsTierState::Unsupported)) {
             return self.programs.js_jit_diagnostics_enabled();
         }
+        // A loop-free candidate shorter than a native entry's overhead
+        // (`JS_TIER_LANE_ENTRY_RECORDS`) runs cheaper as the frameless activation itself.
+        let pays_in_lane = |body: &crate::bytecode::Function| {
+            body.code.len() >= JS_TIER_LANE_ENTRY_RECORDS || body.loops()
+        };
+        let candidate = facts.candidate && program.function_get(function as usize).is_some_and(pays_in_lane);
         // Keep bounded candidates on a frame entry until the shared tier has
         // settled. Lane target caches otherwise preserve a frameless route
         // across the later promotion and no longer consult tiering.
-        facts.candidate || self.js_general_tier_takes(program, function, &facts)
+        candidate || self.js_general_tier_takes(program, function, &facts)
     }
 
     /// Whether the general baseline may take `function`: a general candidate the tier admits
@@ -14473,6 +14479,14 @@ const VOID_RESULT_CONSTANT: usize = 1;
 
 /// `compiled`'s body run directly on `arguments`, its parameters, when each is a Number
 /// its guards admit: the call a known callee makes without a frame (`js_jit_compiled_call`).
+/// The lane records a loop-free body runs below which a frameless activation is cheaper than
+/// the JavaScript tier's native entry of it. A direct native entry (`lane_tier_prologue`,
+/// `direct_call`, the shared entry) costs about 380 machine instructions past the
+/// activation, and a lane record about 20 (callgrind, typescript-lib under `--jit`,
+/// 2026-10-28: 9.7M native entries of 3- to 12-instruction predicates such as
+/// `isLineBreak`), so a body shorter than this cannot recoup its entries.
+const JS_TIER_LANE_ENTRY_RECORDS: usize = 20;
+
 fn direct_call(
     compiled: &CompiledJsFunction,
     arguments: &[Value],
