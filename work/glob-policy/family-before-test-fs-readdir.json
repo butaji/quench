@@ -1,0 +1,348 @@
+{
+  "schema_version": 2,
+  "inventory_hash": "d0c87534792835dc",
+  "timeout_secs": 30,
+  "jobs": 4,
+  "node_version": "v26.12.0",
+  "runtime_commit": "9dec2d57951a865ead5fb94615967461cb7d9ac8",
+  "tests_node_commit": "unknown",
+  "platform": "linux-x86_64",
+  "results": [
+    {
+      "fixture": "/workspace/work/node-stable-release/node-v26.12.0/test/parallel/test-fs-readdir-buffer.js",
+      "status": "skip",
+      "observation": {
+        "Ok": {
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "guestexit",
+            "code": 0
+          },
+          "stdout": [
+            49,
+            46,
+            46,
+            48,
+            32,
+            35,
+            32,
+            83,
+            107,
+            105,
+            112,
+            112,
+            101,
+            100,
+            58,
+            32,
+            116,
+            104,
+            105,
+            115,
+            32,
+            116,
+            101,
+            115,
+            116,
+            115,
+            32,
+            119,
+            111,
+            114,
+            107,
+            115,
+            32,
+            111,
+            110,
+            108,
+            121,
+            32,
+            111,
+            110,
+            32,
+            77,
+            97,
+            99,
+            79,
+            83,
+            10
+          ],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/workspace/work/node-stable-release/node-v26.12.0/test/parallel/test-fs-readdir-pipe.js",
+      "status": "skip",
+      "observation": {
+        "Ok": {
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "guestexit",
+            "code": 0
+          },
+          "stdout": [
+            49,
+            46,
+            46,
+            48,
+            32,
+            35,
+            32,
+            83,
+            107,
+            105,
+            112,
+            112,
+            101,
+            100,
+            58,
+            32,
+            84,
+            104,
+            105,
+            115,
+            32,
+            116,
+            101,
+            115,
+            116,
+            32,
+            105,
+            115,
+            32,
+            115,
+            112,
+            101,
+            99,
+            105,
+            102,
+            105,
+            99,
+            32,
+            116,
+            111,
+            32,
+            87,
+            105,
+            110,
+            100,
+            111,
+            119,
+            115,
+            32,
+            116,
+            111,
+            32,
+            116,
+            101,
+            115,
+            116,
+            32,
+            101,
+            110,
+            117,
+            109,
+            101,
+            114,
+            97,
+            116,
+            101,
+            32,
+            112,
+            105,
+            112,
+            101,
+            115,
+            10
+          ],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/workspace/work/node-stable-release/node-v26.12.0/test/parallel/test-fs-readdir-promise-recursive-with-buffer.js",
+      "status": "pass",
+      "observation": {
+        "Ok": {
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "pass"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/workspace/work/node-stable-release/node-v26.12.0/test/parallel/test-fs-readdir-recursive-permission.js",
+      "status": "fail",
+      "observation": {
+        "Ok": {
+          "exit_code": 1,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "fail",
+            "reason": "/workspace/work/node-stable-release/node-v26.12.0/lib/internal/errors/error_source.js:27\n  const pos = getErrorSourcePositions(error);\n              ^\n\nTypeError: value is not callable\n    at getErrorSourceLocation (node:internal/errors/error_source:27:15)\n    at getErrorSourceExpression (node:internal/errors/error_source:161:15)\n    at getErrMessage (node:internal/assert/utils:91:16)\n    at innerOk (node:internal/assert/utils:164:22)\n    at assert (node:assert:186:3)\n    at /workspace/work/node-stable-release/node-v26.12.0/test/parallel/test-fs-readdir-recursive-permission.js:27:1\n\nNode.js v26.12.0"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/workspace/work/node-stable-release/node-v26.12.0/test/parallel/test-fs-readdir-recursive-tree.js",
+      "status": "fail",
+      "observation": {
+        "Ok": {
+          "exit_code": 1,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "fail",
+            "reason": "/workspace/work/node-stable-release/node-v26.12.0/lib/internal/assert/utils.js:146\n  throw error;\n  ^\n\nAssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:\n+ actual - expected\n\n  [\n    'a',\n    'd',\n    'top',\n    'empty',\n    '.hidden',\n-   'a/b',\n-   'a/1',\n-   'd/4',\n-   'd/link-to-file',\n-   'd/dangling',\n-   'd/link-to-a',\n-   '.hidden/5',\n-   'a/b/c',\n-   'a/b/2',\n-   'd/link-to-a/b',\n-   'd/link-to-a/1',\n-   'a/b/c/3',\n-   'd/link-to-a/b/c',\n-   'd/link-to-a/b/2',\n-   'd/link-to-a/b/c/3'\n  ]\n\n    at /workspace/work/node-stable-release/node-v26.12.0/test/parallel/test-fs-readdir-recursive-tree.js:95:8\n\nNode.js v26.12.0"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/workspace/work/node-stable-release/node-v26.12.0/test/parallel/test-fs-readdir-recursive-with-buffer.js",
+      "status": "pass",
+      "observation": {
+        "Ok": {
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "pass"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/workspace/work/node-stable-release/node-v26.12.0/test/parallel/test-fs-readdir-recursive.js",
+      "status": "pass",
+      "observation": {
+        "Ok": {
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "pass"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/workspace/work/node-stable-release/node-v26.12.0/test/parallel/test-fs-readdir-stack-overflow.js",
+      "status": "pass",
+      "observation": {
+        "Ok": {
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "pass"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/workspace/work/node-stable-release/node-v26.12.0/test/parallel/test-fs-readdir-sync-recursive-with-buffer.js",
+      "status": "pass",
+      "observation": {
+        "Ok": {
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "pass"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/workspace/work/node-stable-release/node-v26.12.0/test/parallel/test-fs-readdir-types-symlinks.js",
+      "status": "pass",
+      "observation": {
+        "Ok": {
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "pass"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/workspace/work/node-stable-release/node-v26.12.0/test/parallel/test-fs-readdir-types.js",
+      "status": "fail",
+      "observation": {
+        "Ok": {
+          "exit_code": 1,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "fail",
+            "reason": "/workspace/work/node-stable-release/node-v26.12.0/test/parallel/test-fs-readdir-types.js:38\n  for (const [i, dirent] of dirents.entries()) {\n  ^\n\nTypeError: value is not callable\n    at getErrorSourceLocation (node:internal/errors/error_source:27:15)\n    at getErrorSourceExpression (node:internal/errors/error_source:161:15)\n    at getErrMessage (node:internal/assert/utils:91:16)\n    at innerOk (node:internal/assert/utils:164:22)\n    at assert (node:assert:186:3)\n    at assertDirents (/workspace/work/node-stable-release/node-v26.12.0/test/parallel/test-fs-readdir-types.js:39:5)\n    at /workspace/work/node-stable-release/node-v26.12.0/test/parallel/test-fs-readdir-types.js:52:1\n\nNode.js v26.12.0"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/workspace/work/node-stable-release/node-v26.12.0/test/parallel/test-fs-readdir-ucs2.js",
+      "status": "fail",
+      "observation": {
+        "Ok": {
+          "exit_code": 1,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "fail",
+            "reason": "/workspace/work/node-stable-release/node-v26.12.0/lib/internal/assert/utils.js:146\n  throw error;\n  ^\n\nAssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:\n+ actual - expected\n\n+ Buffer(8) [Uint8Array] [\n- Buffer(4) [Uint8Array] [\n    61,\n+   0,\n+   253,\n+   255,\n-   216,\n    4,\n+   0,\n+   253,\n+   255\n-   220\n  ]\n\n    at /workspace/work/node-stable-release/node-v26.12.0/test/parallel/test-fs-readdir-ucs2.js:29:10\n    at /workspace/work/node-stable-release/node-v26.12.0/test/common/index.js:477:17\n    at /workspace/work/node-stable-release/node-v26.12.0/test/common/index.js:512:15\n    at node:fs/shared-async-readdir.js:27:13\n\nNode.js v26.12.0"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/workspace/work/node-stable-release/node-v26.12.0/test/parallel/test-fs-readdir.js",
+      "status": "pass",
+      "observation": {
+        "Ok": {
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "pass"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    }
+  ]
+}

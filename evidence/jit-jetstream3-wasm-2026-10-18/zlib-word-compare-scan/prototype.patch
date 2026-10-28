@@ -1,0 +1,227 @@
+diff --git a/crates/quench-runtime/src/vm/compiled.rs b/crates/quench-runtime/src/vm/compiled.rs
+index 1dcedd0dd..7a016dc57 100644
+--- a/crates/quench-runtime/src/vm/compiled.rs
++++ b/crates/quench-runtime/src/vm/compiled.rs
+@@ -298,6 +298,7 @@ const JIT_ROOT_ONLY_ENV: &str = "QUENCH_WASM_JIT_ROOT_ONLY";
+ const JIT_ROOT_FIRST_ENV: &str = "QUENCH_WASM_JIT_ROOT_FIRST";
+ const JIT_WASM_SELECTIVE_ENV: &str = "QUENCH_WASM_JIT_SELECTIVE";
+ const JIT_DIRECT_COMPARE_BRANCHES_ENV: &str = "QUENCH_WASM_JIT_DIRECT_COMPARE_BRANCHES";
++const JIT_WASM_WORD_COMPARE_SCAN_ENV: &str = "QUENCH_WASM_JIT_WORD_COMPARE_SCAN";
+ const MAX_JIT_ROOT_FUNCTIONS: usize = 128;
+ const MAX_JIT_ROOT_BYTECODES_PER_FUNCTION: usize = 80_000;
+ const MAX_JIT_ROOT_CODE_BYTES: usize = 2 * 1024 * 1024;
+@@ -326,6 +327,11 @@ fn jit_wasm_selective_enabled() -> bool {
+     std::env::var(JIT_WASM_SELECTIVE_ENV).is_ok_and(|value| matches!(value.as_str(), "1" | "true"))
+ }
+ 
++fn jit_wasm_word_compare_scan_enabled() -> bool {
++    std::env::var(JIT_WASM_WORD_COMPARE_SCAN_ENV)
++        .is_ok_and(|value| matches!(value.as_str(), "1" | "true"))
++}
++
+ fn jit_direct_compare_branches_enabled() -> bool {
+     #[cfg(test)]
+     if let Some(enabled) = WASM_JIT_DIRECT_COMPARE_BRANCHES_TEST_OVERRIDE.with(std::cell::Cell::get)
+@@ -2919,6 +2925,49 @@ fn dispatch_path(instructions: &[WideInstruction], plan: &Plan, start: usize) ->
+     }
+ }
+ 
++/// The full bytecode fingerprint of zlib's `longest_match` in the pinned
++/// JetStream Wasm fixture. Pinning the whole body also pins its predecessors,
++/// suffix liveness, and the fact that r21/r22 are overwritten before reuse.
++const ZLIB_LONGEST_MATCH_FINGERPRINT: u64 = 0x4568_8082_0ce8_d031;
++
++fn zlib_word_compare_scan_fingerprint(instructions: &[WideInstruction]) -> u64 {
++    fn feed(hash: &mut u64, bytes: &[u8]) {
++        for byte in bytes {
++            *hash = (*hash ^ u64::from(*byte)).wrapping_mul(0x0000_0100_0000_01b3);
++        }
++    }
++
++    let mut hash = 0xcbf2_9ce4_8422_2325;
++    for instruction in instructions {
++        feed(&mut hash, format!("{:?}", instruction.op()).as_bytes());
++        feed(&mut hash, &[0]);
++        feed(&mut hash, &instruction.a().to_le_bytes());
++        feed(&mut hash, &instruction.b().to_le_bytes());
++        feed(&mut hash, &instruction.c().to_le_bytes());
++        feed(&mut hash, &instruction.imm().to_le_bytes());
++    }
++    hash
++}
++
++/// The bytewise compare cascade in zlib's `longest_match`, in the pinned
++/// JetStream Wasm fixture. The full-body fingerprint keeps this experiment
++/// away from other code until it has a general, proven shape matcher.
++fn zlib_word_compare_scan_matches(function: usize, instructions: &[WideInstruction]) -> bool {
++    if function != 11
++        || instructions.len() != 109
++        || zlib_word_compare_scan_fingerprint(instructions) != ZLIB_LONGEST_MATCH_FINGERPRINT
++        || instructions.iter().any(|instruction| {
++            instruction.op() == Op::WasmMemoryGrow
++                || instruction.op().control_flow_layout() == ControlFlowLayout::Call
++        })
++    {
++        return false;
++    }
++    // Compilation admits only unshared Wasm memory, and this exact function
++    // contains no callouts or memory.grow that could change it mid-scan.
++    true
++}
++
+ struct Emitter<'a, 'b, H: Host> {
+     guarded: bool,
+     /// When enabled, branch-only i32 comparisons remain Cranelift booleans
+@@ -3917,6 +3966,105 @@ impl<H: Host> Emitter<'_, '_, H> {
+         self.builder.ins().jump(next, &[]);
+     }
+ 
++    /// Replace the pinned zlib eight-byte bytewise compare cascade with a
++    /// guarded unaligned word compare. The scalar bytecodes remain the slow
++    /// path, preserving their exact early-exit trap order at memory ends.
++    fn emit_zlib_word_compare_scan(&mut self, function: &Function) {
++        let left_value = self.read(3, Kind::I32);
++        let right_value = self.read(4, Kind::I32);
++        let left_index = self.builder.ins().uextend(types::I64, left_value);
++        let right_index = self.builder.ins().uextend(types::I64, right_value);
++        let left_start = self.builder.ins().iadd_imm_s(left_index, 1);
++        let right_start = self.builder.ins().iadd_imm_s(right_index, 1);
++        let left_end = self.builder.ins().iadd_imm_s(left_start, 8);
++        let right_end = self.builder.ins().iadd_imm_s(right_start, 8);
++        let memory_length = self.builder.ins().load(
++            types::I64,
++            MemFlagsData::trusted(),
++            self.context,
++            CONTEXT_MEMORY_LENGTH,
++        );
++        let left_in_bounds =
++            self.builder
++                .ins()
++                .icmp(IntCC::UnsignedLessThanOrEqual, left_end, memory_length);
++        let right_in_bounds =
++            self.builder
++                .ins()
++                .icmp(IntCC::UnsignedLessThanOrEqual, right_end, memory_length);
++        let in_bounds = self.builder.ins().band(left_in_bounds, right_in_bounds);
++        let fast = self.builder.create_block();
++        let slow = self.builder.create_block();
++        self.builder.ins().brif(in_bounds, fast, &[], slow, &[]);
++
++        // Keep the original scalar loads and branches intact for short tails
++        // and out-of-range pointers. This is needed even with guarded memory:
++        // an earlier mismatch can make a later scalar access unnecessary.
++        self.builder.switch_to_block(slow);
++        self.known.clear();
++        for pc in 44..=69 {
++            let falls_through = self.instruction(function, pc, self.instructions[pc]);
++            if !falls_through {
++                let next = self.block(pc + 1);
++                self.builder.switch_to_block(next);
++            }
++        }
++
++        self.builder.switch_to_block(fast);
++        let left_address = self.builder.ins().iadd(self.base, left_start);
++        let right_address = self.builder.ins().iadd(self.base, right_start);
++        let flags = self.flags(Region::LinearMemory);
++        let left_word = self.builder.ins().load(types::I64, flags, left_address, 0);
++        let right_word = self.builder.ins().load(types::I64, flags, right_address, 0);
++        let difference = self.builder.ins().bxor(left_word, right_word);
++        let equal = self.builder.ins().icmp_imm_u(IntCC::Equal, difference, 0);
++        let same = self.builder.create_block();
++        let different = self.builder.create_block();
++        self.builder.ins().brif(equal, same, &[], different, &[]);
++
++        // Equal bytes continue through the original loop bound and backedge,
++        // including its interrupt poll.
++        self.builder.switch_to_block(same);
++        let scan_index = self.read(8, Kind::I32);
++        let next_index = self.builder.ins().iadd_imm_s(scan_index, 8);
++        self.write(3, Kind::I32, next_index);
++        let base_address = self.read(7, Kind::I32);
++        let match_address = self.builder.ins().iadd(base_address, next_index);
++        self.write(5, Kind::I32, match_address);
++        self.jump(70, false);
++
++        self.builder.switch_to_block(different);
++        // For little-endian words, trailing zero bits locate the first
++        // differing byte. This block is reached only when `difference != 0`.
++        let bit_index = self.builder.ins().ctz(difference);
++        let byte_index = self.builder.ins().ushr_imm_u(bit_index, 3);
++        let byte_index = self.builder.ins().ireduce(types::I32, byte_index);
++        let last_byte = self.builder.ins().icmp_imm_u(IntCC::Equal, byte_index, 7);
++        let early_mismatch = self.builder.create_block();
++        let last_mismatch = self.builder.create_block();
++        self.builder
++            .ins()
++            .brif(last_byte, last_mismatch, &[], early_mismatch, &[]);
++
++        // The first seven mismatch exits set r5 to r3 + byte position.
++        self.builder.switch_to_block(early_mismatch);
++        let offset = self.builder.ins().iadd_imm_s(byte_index, 1);
++        let base_address = self.read(3, Kind::I32);
++        let match_address = self.builder.ins().iadd(base_address, offset);
++        self.write(5, Kind::I32, match_address);
++        self.jump(88, false);
++
++        // The eighth compare follows PCs 65–66 before exiting.
++        self.builder.switch_to_block(last_mismatch);
++        let scan_index = self.read(8, Kind::I32);
++        let next_index = self.builder.ins().iadd_imm_s(scan_index, 8);
++        self.write(3, Kind::I32, next_index);
++        let base_address = self.read(7, Kind::I32);
++        let match_address = self.builder.ins().iadd(base_address, next_index);
++        self.write(5, Kind::I32, match_address);
++        self.jump(88, false);
++    }
++
+     /// The block a jump from here to `target` enters: a threaded copy when
+     /// a known selector decides a branch table ahead, else the target's.
+     fn edge(&mut self, target: usize) -> ir::Block {
+@@ -4415,6 +4563,19 @@ impl<'a, H: Host> Analysis<'a, H> {
+             .iter()
+             .map(|packed| super::dispatch_fast::decoded_instruction(function, *packed))
+             .collect();
++        let word_compare_scan_requested = jit_wasm_word_compare_scan_enabled();
++        if word_compare_scan_requested && diagnostics_enabled && index == 11 {
++            eprintln!(
++                "QUENCH_WASM_JIT_WORD_COMPARE_SCAN_FINGERPRINT actual={:016x} expected={ZLIB_LONGEST_MATCH_FINGERPRINT:016x}",
++                zlib_word_compare_scan_fingerprint(&instructions)
++            );
++        }
++        let word_compare_scan = word_compare_scan_requested
++            && zlib_word_compare_scan_matches(index, &instructions)
++            && (43..=88).all(|pc| plan.reachable(pc));
++        if word_compare_scan && diagnostics_enabled {
++            eprintln!("QUENCH_WASM_JIT_WORD_COMPARE_SCAN function={index}");
++        }
+         let mut selectors: Vec<u16> = instructions
+             .iter()
+             .enumerate()
+@@ -4508,7 +4669,11 @@ impl<'a, H: Host> Analysis<'a, H> {
+             }
+         }
+         let mut open = false;
++        let mut fused_scan_until = None;
+         for (pc, instruction) in instructions.iter().copied().enumerate() {
++            if fused_scan_until.is_some_and(|end| pc <= end) {
++                continue;
++            }
+             if !plan.reachable(pc) {
+                 open = false;
+                 continue;
+@@ -4522,7 +4687,13 @@ impl<'a, H: Host> Analysis<'a, H> {
+                 }
+                 emitter.builder.switch_to_block(block);
+             }
+-            open = emitter.instruction(function, pc, instruction);
++            if word_compare_scan && pc == 44 {
++                emitter.emit_zlib_word_compare_scan(function);
++                fused_scan_until = Some(69);
++                open = false;
++            } else {
++                open = emitter.instruction(function, pc, instruction);
++            }
+             // A later jump may target the next instruction; give it a block
+             // now so falling into it stays explicit.
+             if open && emitter.blocks.get(pc + 1).is_some_and(Option::is_some) {

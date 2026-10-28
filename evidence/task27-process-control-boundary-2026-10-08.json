@@ -1,0 +1,216 @@
+{
+  "schema": 1,
+  "task": "27",
+  "kind": "shared_process_control_owner",
+  "recorded_on": "2026-10-08",
+  "source": {
+    "revision": "b62e94ce92dfb3e028a5df036e351d4396d9d537",
+    "worktree_dirty": true,
+    "platform": "darwin arm64",
+    "node": "v26.10.0",
+    "node_executable": "/opt/homebrew/bin/node",
+    "tests_node_revision": "55e4ca33f3a6dfe364bd9558b726576a6d1a2fba",
+    "rustc": "rustc 1.99.0 (b940084d7 2026-09-28) (Homebrew)",
+    "binaries_sha256": {
+      "target/iteration/quench-node": "b17104a403311dcd8941121ebf89d538725010899b8da24c6fdbbf9b1839dd4b",
+      "target/iteration/run-parallel": "573535a3783dffcf77a64504fd9c53535ea69af36ae5bb0eae994aaaf9c30182"
+    },
+    "files_sha256": {
+      "crates/quench-node/src/dispatch_handlers.rs": "0e0fc2f7b84520e295fa1ce1e8112be370beb3e494187ad50f953d707e93a4a7",
+      "crates/quench-node/src/host.rs": "62acaa498d97a7c4be780aa9bd9dac4f248681e2c20dd35fe07840eeb43a57a7",
+      "crates/quench-node/src/modules/cluster.rs": "9c4dc16e501b798e4d054ea8b8b0ed0e3df7562b59381a00f9ba4f1131b32a68",
+      "crates/quench-node/src/modules/perf_hooks.rs": "367f896b716fecad5b0e28bdb102a5d644682a0e435e56bd346beffa5c322fd5",
+      "crates/quench-node/src/modules/process.rs": "267c5cb5cfc33cdf1bb8d1edc1f29591ab6269dc5970b7706b67b0d6cf26f532",
+      "crates/quench-node/src/modules/process/shared_vm.rs": "42926b54d691f93aecde779f03f9e2008bc1fa0ab99786e239c45e283984038a",
+      "crates/quench-node/src/modules/pump.rs": "70123167b01d94dfacad514d69d32694f644f1fae7f7e0c50bfa27d2b2978ab1",
+      "crates/quench-node/src/modules/test.rs": "e33f6bcd8116875381011f3f4d3f7077f9107dd356630ccc62fd9ebed25aed44",
+      "crates/quench-node/src/shared_run.rs": "cba1a0c096ff53946853a672fa675694e3c8b3ff454844382896098361e01031",
+      "tasks/27.md": "a1f918a49406c04b6bedd9d6aef3af41bb0c721a261e86392afe49f194030207"
+    },
+    "inputs_sha256": {
+      "crates/quench-node-test/node-tests/parallel.txt": "0209917422a2f0f3fa241d941ec4bc88c9917d5322b69014ab1a662a52e9dfca",
+      "tests/node/test/parallel/test-process-uptime.js": "d625dd216c8d8b38240629601c08fff69edd6f3abf89ec8fa692ed3ff309fb30",
+      "tests/node/test/parallel/test-process-umask.js": "a8b4014d51d48c1988b324f3f8f3841a2d1b4f2d6586a7bfe4e9caa1ead276ce",
+      "tests/node/test/parallel/test-process-umask-mask.js": "04bb0593ae85d2355e77056567b515bb6df028f5d7f9d11cd1bf453fe1339c53",
+      "tests/node-compat/stage-2784/process-umask-state.js": "572449239f725f4b0311d43fa1e41f173375599d5433a46241509893851fa11c",
+      "tests/frameworks/driver.cjs": "e8dd245f9bbfcdcd3a430ff7ed663c3310fdf32fae23cfc5c24d24cbeda96bfb",
+      "tests/frameworks/package.json": "5f82b6f9cf2dd1e2ad385afebeda3627ac952366004c76350e4f87b0bac170d5",
+      "tests/frameworks/package-lock.json": "fb752f9a87781cc8132c88ced58a8c17ebaacc1789d244b8b7c4a6c9888d5759",
+      "tests/frameworks/scenarios/express.cjs": "85eebbbc5c9cfaa01f2f16b6c7e181a4c4bc2e308bd1bb179f49c5d9700f8158",
+      "tests/frameworks/scenarios/koa.cjs": "962e4c326df72b30eed4306494e2218475456c7c816220a6e46a898b040185f9",
+      "tests/frameworks/scenarios/fastify.cjs": "1ff4fc87e2a4c792761c286bc0f255d0ab9be27e810dbf98938a1ac717d1ba6a"
+    }
+  },
+  "change": {
+    "authority": "NodeHost constructs one ProcessControl Rc<Cell> owner for process start time, exit status, and umask, then shares it with SharedNodeState and legacy ProcessState.",
+    "shared_path": "Shared process uptime, exitCode, umask, finish status, unhandled-rejection status, perf_hooks.now, and the shared runner read/write ProcessControl through SharedNodeState.",
+    "legacy_path": "Legacy process APIs, pump/test exit handling, NodeHost exit status, and simulated cluster child save/clear/capture/restore/take operations use the same ProcessControl cells.",
+    "transitions": "Initial umask remains 0o022; updates return the previous mask and retain 0o777 masking. Invalid octal strings now receive ERR_INVALID_ARG_VALUE while invalid argument types retain ERR_INVALID_ARG_TYPE. Immediate exit_requested and lifecycle handlers remain adapter execution state.",
+    "inventory_membership_changed": false
+  },
+  "verification": {
+    "build": {
+      "command": "cargo build --profile iteration -p quench-node --bin quench-node -p quench-node-test --bin run-parallel",
+      "exit_code": 0,
+      "stdout_artifact": "target/iteration/task27-process-control-boundary-2026-10-08/build.stdout",
+      "stderr_artifact": "target/iteration/task27-process-control-boundary-2026-10-08/build.stderr"
+    },
+    "upstream_node_parallel": [
+      {
+        "fixture": "tests/node/test/parallel/test-process-uptime.js",
+        "result": "passed"
+      },
+      {
+        "fixture": "tests/node/test/parallel/test-process-umask.js",
+        "result": "passed"
+      },
+      {
+        "fixture": "tests/node/test/parallel/test-process-umask-mask.js",
+        "result": "passed"
+      },
+      {
+        "fixture": "tests/node-compat/stage-2784/process-umask-state.js",
+        "result": "passed"
+      },
+      {
+        "fixture": "tests/node/test/parallel/test-perf-hooks-usertiming.js",
+        "result": "failed outside the selected profile; AssertionError: an expression evaluated to falsy"
+      },
+      {
+        "fixture": "tests/node/test/parallel/test-perf-hooks-timerify-basic.js",
+        "result": "failed outside the selected profile; ReferenceError: performance is not defined"
+      },
+      {
+        "fixture": "tests/node/test/parallel/test-process-exit.js",
+        "result": "failed outside the selected profile; TypeError: value is not callable"
+      },
+      {
+        "fixture": "tests/node/test/parallel/test-process-exit-code-validation.js",
+        "result": "failed outside the selected profile; an invalid process.exitCode assignment produced an error that did not match Node's expected regular expression"
+      },
+      {
+        "fixture": "tests/node/test/parallel/test-process-exit-from-before-exit.js",
+        "result": "failed outside the selected profile; TypeError: value is not callable"
+      },
+      {
+        "fixture": "tests/node/test/parallel/test-cluster-worker-exit.js",
+        "result": "failed outside the selected profile; shared require cannot find module cluster"
+      }
+    ],
+    "framework_core": {
+      "command": "target/iteration/run-parallel --profile framework-core --timeout-secs 60",
+      "exit_code": 0,
+      "result": "pass=43 skip=0 fail=0 timeout=0 crash=0 unclassified=0 total=43",
+      "stdout_artifact": "target/iteration/task27-process-control-boundary-2026-10-08/focused/framework-core.stdout",
+      "stderr_artifact": "target/iteration/task27-process-control-boundary-2026-10-08/focused/framework-core.stderr"
+    },
+    "framework_comparisons": {
+      "artifact": "target/iteration/task27-process-control-boundary-2026-10-08/comparisons.json",
+      "result": "Express, Koa, and Fastify each exited 0 under local Node v26.10.0 and Quench; paired stdout and stderr bytes are identical."
+    },
+    "local_node_oracle": {
+      "artifact": "target/iteration/task27-process-control-boundary-2026-10-08/comparisons.json",
+      "result": "umask transition and error codes, exitCode 37, clearing exitCode, and uncaught-error final status match local Node. Direct process.exit(37) remains unsupported in the shared host and exits with TypeError."
+    },
+    "unit_tests": "not run",
+    "test262_and_wasm": "not rerun for this Node-host-only state owner slice; task 86 remains the final-build gate."
+  },
+  "artifacts_sha256": {
+    "target/iteration/task27-process-control-boundary-2026-10-08/apps/express-node.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "target/iteration/task27-process-control-boundary-2026-10-08/apps/express-node.stdout": "6a8388b87cdb9dc7618e136828b626c2213b937ea1645882ef0c33bedf95b54d",
+    "target/iteration/task27-process-control-boundary-2026-10-08/apps/express-quench.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "target/iteration/task27-process-control-boundary-2026-10-08/apps/express-quench.stdout": "6a8388b87cdb9dc7618e136828b626c2213b937ea1645882ef0c33bedf95b54d",
+    "target/iteration/task27-process-control-boundary-2026-10-08/apps/fastify-node.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "target/iteration/task27-process-control-boundary-2026-10-08/apps/fastify-node.stdout": "6a8388b87cdb9dc7618e136828b626c2213b937ea1645882ef0c33bedf95b54d",
+    "target/iteration/task27-process-control-boundary-2026-10-08/apps/fastify-quench.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "target/iteration/task27-process-control-boundary-2026-10-08/apps/fastify-quench.stdout": "6a8388b87cdb9dc7618e136828b626c2213b937ea1645882ef0c33bedf95b54d",
+    "target/iteration/task27-process-control-boundary-2026-10-08/apps/koa-node.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "target/iteration/task27-process-control-boundary-2026-10-08/apps/koa-node.stdout": "6a8388b87cdb9dc7618e136828b626c2213b937ea1645882ef0c33bedf95b54d",
+    "target/iteration/task27-process-control-boundary-2026-10-08/apps/koa-quench.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "target/iteration/task27-process-control-boundary-2026-10-08/apps/koa-quench.stdout": "6a8388b87cdb9dc7618e136828b626c2213b937ea1645882ef0c33bedf95b54d",
+    "target/iteration/task27-process-control-boundary-2026-10-08/build.stderr": "2fc70e9e44356b58305eb572145c289c4b8d8188872758cb0c113752141472c9",
+    "target/iteration/task27-process-control-boundary-2026-10-08/build.stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "target/iteration/task27-process-control-boundary-2026-10-08/comparisons.json": "ba2c2163fc73aafded8897922ef30cc034b8882503d6d96e442951bbc4eaaea6",
+    "target/iteration/task27-process-control-boundary-2026-10-08/focused/cluster-exit.diagnostic.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "target/iteration/task27-process-control-boundary-2026-10-08/focused/cluster-exit.diagnostic.stdout": "b6944d19362effb27d356cfe1ec28f2c68d5ec729494cb5fc769eacc01e7a7f0",
+    "target/iteration/task27-process-control-boundary-2026-10-08/focused/cluster-exit.results.json": "97a741786e552378edebaf6f9254fdf6e5853062a76d8c529f7ce9b015a9d0a9",
+    "target/iteration/task27-process-control-boundary-2026-10-08/focused/cluster-worker-exit.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "target/iteration/task27-process-control-boundary-2026-10-08/focused/cluster-worker-exit.stdout": "ec5263e0918a0c08f4c4bb943788aa096a6f7fc3c87f71af13f00716b1a6f2df",
+    "target/iteration/task27-process-control-boundary-2026-10-08/focused/exit-before.diagnostic.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "target/iteration/task27-process-control-boundary-2026-10-08/focused/exit-before.diagnostic.stdout": "22d2c9abbe861e548f2f879983321d1f7b1bf90acfc7cc90d75b8767c88b3ecd",
+    "target/iteration/task27-process-control-boundary-2026-10-08/focused/exit-before.results.json": "6ffacfa47b6cf4af43466f548d574f208957a7fd42a65ceda86b7634b4b503df",
+    "target/iteration/task27-process-control-boundary-2026-10-08/focused/exit-code-validation.diagnostic.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "target/iteration/task27-process-control-boundary-2026-10-08/focused/exit-code-validation.diagnostic.stdout": "b0ed981101dd9ae33dfbff30c29f29f1ab696802938350ce024b97af4ac21fce",
+    "target/iteration/task27-process-control-boundary-2026-10-08/focused/exit-code-validation.results.json": "f49faf6e329de47e4061932c810a20ed671d155c262781ae5033dc21ac3d23d4",
+    "target/iteration/task27-process-control-boundary-2026-10-08/focused/exit-code-validation.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "target/iteration/task27-process-control-boundary-2026-10-08/focused/exit-code-validation.stdout": "18bbe27a5e5be72f358fcffebeece5955bb16152ef63f31726b201e8c4f5b4e5",
+    "target/iteration/task27-process-control-boundary-2026-10-08/focused/exit-from-before-exit.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "target/iteration/task27-process-control-boundary-2026-10-08/focused/exit-from-before-exit.stdout": "a9ce874e3b664b6b0ba554c532ece0ed860b46ba06b35a66c090147ffadeaa7c",
+    "target/iteration/task27-process-control-boundary-2026-10-08/focused/framework-core.after.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "target/iteration/task27-process-control-boundary-2026-10-08/focused/framework-core.after.stdout": "2f2d921dcfce7bd620f630e927555625fcd4e20465e3fc2110af3973bf050cc9",
+    "target/iteration/task27-process-control-boundary-2026-10-08/focused/framework-core.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "target/iteration/task27-process-control-boundary-2026-10-08/focused/framework-core.stdout": "2f2d921dcfce7bd620f630e927555625fcd4e20465e3fc2110af3973bf050cc9",
+    "target/iteration/task27-process-control-boundary-2026-10-08/focused/node-exit-code-validation.diagnostic.stderr": "4cd5b62252ab09805060bbfd6fe8684d7c7206194ca24dc757a1006f7f82dae7",
+    "target/iteration/task27-process-control-boundary-2026-10-08/focused/node-exit-code-validation.diagnostic.stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "target/iteration/task27-process-control-boundary-2026-10-08/focused/perf-hooks-timerify-basic.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "target/iteration/task27-process-control-boundary-2026-10-08/focused/perf-hooks-timerify-basic.stdout": "060036af4e9a52cfd066111695a313acbf3bebe6cd3fc6474d5f925027c6e13c",
+    "target/iteration/task27-process-control-boundary-2026-10-08/focused/perf-hooks-usertiming.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "target/iteration/task27-process-control-boundary-2026-10-08/focused/perf-hooks-usertiming.stdout": "d5d4d95ef4d63c63507fa492b835261fea0118b3d07659561688ae38176d7c5b",
+    "target/iteration/task27-process-control-boundary-2026-10-08/focused/perf-timerify.diagnostic.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "target/iteration/task27-process-control-boundary-2026-10-08/focused/perf-timerify.diagnostic.stdout": "e7b38972c2443990566ad3a5e35a9a46c05724055024d4d1665ac74cacc32f3a",
+    "target/iteration/task27-process-control-boundary-2026-10-08/focused/perf-timerify.results.json": "1b7c293c4d21c2700a5f544c21eb9cef91884f3bd3af16abea0eb60b687c0dbe",
+    "target/iteration/task27-process-control-boundary-2026-10-08/focused/perf-user.diagnostic.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "target/iteration/task27-process-control-boundary-2026-10-08/focused/perf-user.diagnostic.stdout": "3e4fdb3f5dac31b89b2679d704fad67b5b0ed5a2a09344c3dd28c291292f8ea6",
+    "target/iteration/task27-process-control-boundary-2026-10-08/focused/perf-user.results.json": "a2ba00a75ebee480018890d7ec5494b95dc8b1babbac8ccb3b7faca722ccb530",
+    "target/iteration/task27-process-control-boundary-2026-10-08/focused/process-exit-fixture.diagnostic.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "target/iteration/task27-process-control-boundary-2026-10-08/focused/process-exit-fixture.diagnostic.stdout": "62c70a92adc3c2d58c523e4957778e03386940c65623fb03f6d38b1fe08e8a67",
+    "target/iteration/task27-process-control-boundary-2026-10-08/focused/process-exit.results.json": "861fe9cbe3e1ef4f07a36adfb654478b7b652d93778f165825c971c812e44e9a",
+    "target/iteration/task27-process-control-boundary-2026-10-08/focused/process-exit.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "target/iteration/task27-process-control-boundary-2026-10-08/focused/process-exit.stdout": "032d1ff74a275e95271162624586abe01f7ba16e5a50ba4044922c1401a7d56b",
+    "target/iteration/task27-process-control-boundary-2026-10-08/focused/stage2784.after.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "target/iteration/task27-process-control-boundary-2026-10-08/focused/stage2784.after.stdout": "c6bfc2259ac3946b69573603ea1da58ba1208e268435e55f262f4211ec3071ff",
+    "target/iteration/task27-process-control-boundary-2026-10-08/focused/umask-mask.after.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "target/iteration/task27-process-control-boundary-2026-10-08/focused/umask-mask.after.stdout": "de9926a30a62874f28672f053f162df4a1a88141186c3026571f5a035d278356",
+    "target/iteration/task27-process-control-boundary-2026-10-08/focused/umask-mask.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "target/iteration/task27-process-control-boundary-2026-10-08/focused/umask-mask.stdout": "de9926a30a62874f28672f053f162df4a1a88141186c3026571f5a035d278356",
+    "target/iteration/task27-process-control-boundary-2026-10-08/focused/umask.after.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "target/iteration/task27-process-control-boundary-2026-10-08/focused/umask.after.stdout": "e92ce611567478f418ad03813b334a19cd618943f148dabc95464819a81775cc",
+    "target/iteration/task27-process-control-boundary-2026-10-08/focused/umask.diagnostic.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "target/iteration/task27-process-control-boundary-2026-10-08/focused/umask.diagnostic.stdout": "fb27aa1e385b38a7faf217b4ceb5a5b05ab56b6d27a952257a7fd67dc09af8da",
+    "target/iteration/task27-process-control-boundary-2026-10-08/focused/umask.results.json": "fc00d95b4c83d95a5dbc3fe35c4d8e63203232b58d58b4331b698bc71834f755",
+    "target/iteration/task27-process-control-boundary-2026-10-08/focused/umask.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "target/iteration/task27-process-control-boundary-2026-10-08/focused/umask.stdout": "7aacf64376924e4648a1c3375c46d89c00550207f4466ebbefa3f9f1d99b4186",
+    "target/iteration/task27-process-control-boundary-2026-10-08/focused/uptime.after.stderr": "f604e72764686c92d2dc4babf34988c4afe89b718540c9bb678a23c52af5f34f",
+    "target/iteration/task27-process-control-boundary-2026-10-08/focused/uptime.after.stdout": "79de8fa4d5b85a7fbff70d436d783cba149b108e3629eaac4d9e228af861978e",
+    "target/iteration/task27-process-control-boundary-2026-10-08/focused/uptime.stderr": "33fd73272c8027331ad43eb6f6b5eaaec37e7c82aae729800948da6159697316",
+    "target/iteration/task27-process-control-boundary-2026-10-08/focused/uptime.stdout": "79de8fa4d5b85a7fbff70d436d783cba149b108e3629eaac4d9e228af861978e",
+    "target/iteration/task27-process-control-boundary-2026-10-08/oracle/exit-code-37-node.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "target/iteration/task27-process-control-boundary-2026-10-08/oracle/exit-code-37-node.stdout": "b58a3da5fde2680191877ec88a1aa7d06927cc3b30cdf0d0db8c39b488891576",
+    "target/iteration/task27-process-control-boundary-2026-10-08/oracle/exit-code-37-quench.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "target/iteration/task27-process-control-boundary-2026-10-08/oracle/exit-code-37-quench.stdout": "b58a3da5fde2680191877ec88a1aa7d06927cc3b30cdf0d0db8c39b488891576",
+    "target/iteration/task27-process-control-boundary-2026-10-08/oracle/exit-code-clear-node.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "target/iteration/task27-process-control-boundary-2026-10-08/oracle/exit-code-clear-node.stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "target/iteration/task27-process-control-boundary-2026-10-08/oracle/exit-code-clear-quench.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "target/iteration/task27-process-control-boundary-2026-10-08/oracle/exit-code-clear-quench.stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "target/iteration/task27-process-control-boundary-2026-10-08/oracle/process-exit-37-node.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "target/iteration/task27-process-control-boundary-2026-10-08/oracle/process-exit-37-node.stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "target/iteration/task27-process-control-boundary-2026-10-08/oracle/process-exit-37-quench.stderr": "dbc60f67fef305c4a2f7f70e4a7bdf4d733fe2f8b4da3b2d10fa8a82e3d6ee79",
+    "target/iteration/task27-process-control-boundary-2026-10-08/oracle/process-exit-37-quench.stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "target/iteration/task27-process-control-boundary-2026-10-08/oracle/umask-invalid-octal-node.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "target/iteration/task27-process-control-boundary-2026-10-08/oracle/umask-invalid-octal-node.stdout": "ffd8597202a32bd034aa791bf1cdf85b7acd371cc81a888ba7c244cd09a9dfb4",
+    "target/iteration/task27-process-control-boundary-2026-10-08/oracle/umask-invalid-octal-quench.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "target/iteration/task27-process-control-boundary-2026-10-08/oracle/umask-invalid-octal-quench.stdout": "ffd8597202a32bd034aa791bf1cdf85b7acd371cc81a888ba7c244cd09a9dfb4",
+    "target/iteration/task27-process-control-boundary-2026-10-08/oracle/umask-invalid-type-node.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "target/iteration/task27-process-control-boundary-2026-10-08/oracle/umask-invalid-type-node.stdout": "e38bc270b9654a6f9f983c0d15f2a6f57b69539cebc4073df1ccf05e456b5f3a",
+    "target/iteration/task27-process-control-boundary-2026-10-08/oracle/umask-invalid-type-quench.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "target/iteration/task27-process-control-boundary-2026-10-08/oracle/umask-invalid-type-quench.stdout": "e38bc270b9654a6f9f983c0d15f2a6f57b69539cebc4073df1ccf05e456b5f3a",
+    "target/iteration/task27-process-control-boundary-2026-10-08/oracle/umask-transition-node.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "target/iteration/task27-process-control-boundary-2026-10-08/oracle/umask-transition-node.stdout": "399727090e98dd405a668e00c0e7570935eacbc9bec653ea2a460cc706c842e2",
+    "target/iteration/task27-process-control-boundary-2026-10-08/oracle/umask-transition-quench.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "target/iteration/task27-process-control-boundary-2026-10-08/oracle/umask-transition-quench.stdout": "399727090e98dd405a668e00c0e7570935eacbc9bec653ea2a460cc706c842e2",
+    "target/iteration/task27-process-control-boundary-2026-10-08/oracle/uncaught-overrides-exit-code-node.stderr": "18c03110d9f163ca4ca51dbc1ff6f928357502a057c1f7a13d8c18c4909dac70",
+    "target/iteration/task27-process-control-boundary-2026-10-08/oracle/uncaught-overrides-exit-code-node.stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "target/iteration/task27-process-control-boundary-2026-10-08/oracle/uncaught-overrides-exit-code-quench.stderr": "30c80acc9caa0cf501a0930d0fbbc5dcd6e09e373fce43e5f07379d62270f881",
+    "target/iteration/task27-process-control-boundary-2026-10-08/oracle/uncaught-overrides-exit-code-quench.stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  }
+}

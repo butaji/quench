@@ -1,0 +1,1 @@
+[["mixed",[["value",1],["value",2],["value",1]],[["value",true],["value",2]]],["escaped",1],["negative",[["throw","SyntaxError"],["throw","SyntaxError"],["throw","SyntaxError"],["throw","SyntaxError"],["throw","SyntaxError"]]],["target",true],["wrapper",["value",9]],["shadow",[4,["throw","TypeError"]]],["outer",[6,5]]]

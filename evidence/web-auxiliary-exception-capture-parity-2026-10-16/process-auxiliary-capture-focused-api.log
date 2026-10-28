@@ -1,0 +1,7 @@
+
+running 2 tests
+test process_auxiliary_capture_preserves_length_coercion_fractional_keys_and_replacement ... ok
+test process_auxiliary_capture_runs_in_reverse_order_with_exact_true_handling ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 396 filtered out; finished in 0.33s
+

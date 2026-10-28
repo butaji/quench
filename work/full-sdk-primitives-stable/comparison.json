@@ -1,0 +1,15 @@
+{
+  "gained": [
+    "test-assert-first-line.js",
+    "test-assert.js",
+    "test-os-checked-function.js",
+    "test-stream2-read-sync-stack.js"
+  ],
+  "lost": [],
+  "skip_changes": {
+    "test-repl-highlight.js": {
+      "before": "fail",
+      "after": "skip"
+    }
+  }
+}

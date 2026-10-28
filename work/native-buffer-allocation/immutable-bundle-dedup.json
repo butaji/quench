@@ -1,0 +1,962 @@
+[
+  {
+    "path": "work/perf-query-recovered-bin/openssl-cli",
+    "identical_to": "work/sweep-node-native-timers-restart-bin/openssl-cli",
+    "sha256": "f4aa15f2822f670af7b5c1043d7aa6ebbbc64229fd2fae382edfc6a4524749c1",
+    "bytes": 1103304
+  },
+  {
+    "path": "work/timer-primitive-bin/openssl-cli",
+    "identical_to": "work/timer-audit-rss-merge-bin/openssl-cli",
+    "sha256": "f4aa15f2822f670af7b5c1043d7aa6ebbbc64229fd2fae382edfc6a4524749c1",
+    "bytes": 1103304
+  },
+  {
+    "path": "work/timers-owner-final-bin/quench-node",
+    "identical_to": "work/sweep-node-native-timers-restart-bin/quench-node",
+    "sha256": "bfcc557627a11036e2cd4be3e2631dc7aeb0a938d74076cacbc70684e1f45717",
+    "bytes": 29518384
+  },
+  {
+    "path": "work/timers-owner-final-bin/run-parallel",
+    "identical_to": "work/sweep-node-native-timers-restart-bin/run-parallel",
+    "sha256": "38be07b3fcc1988e839f51f1399475d3c193e0d30a62f7162654b3390393504c",
+    "bytes": 32202000
+  },
+  {
+    "path": "work/timers-owner-final-bin/openssl-cli",
+    "identical_to": "work/sweep-node-native-timers-restart-bin/openssl-cli",
+    "sha256": "f4aa15f2822f670af7b5c1043d7aa6ebbbc64229fd2fae382edfc6a4524749c1",
+    "bytes": 1103304
+  },
+  {
+    "path": "work/perf-query-retry2-bin/openssl-cli",
+    "identical_to": "work/sweep-node-native-timers-restart-bin/openssl-cli",
+    "sha256": "f4aa15f2822f670af7b5c1043d7aa6ebbbc64229fd2fae382edfc6a4524749c1",
+    "bytes": 1103304
+  },
+  {
+    "path": "work/sweep-node-lifecycle-bin/quench-node",
+    "identical_to": "work/sweep-node-lifecycle-restart-bin/quench-node",
+    "sha256": "f2265aced7a6948fb8ad9a6def2de9df9bf914ddf28398353655929b2a84e1d4",
+    "bytes": 23353632
+  },
+  {
+    "path": "work/sweep-node-lifecycle-bin/run-parallel",
+    "identical_to": "work/sweep-node-lifecycle-restart-bin/run-parallel",
+    "sha256": "0a5975db6eaad8a4ae2fb8c9c448c4232281b2198ae570f6bff6263e401f0164",
+    "bytes": 25420720
+  },
+  {
+    "path": "work/sweep-buffer-backing-audit-bin/openssl-cli",
+    "identical_to": "work/sweep-node-native-timers-restart-bin/openssl-cli",
+    "sha256": "f4aa15f2822f670af7b5c1043d7aa6ebbbc64229fd2fae382edfc6a4524749c1",
+    "bytes": 1103304
+  },
+  {
+    "path": "work/timers-owner-bin/openssl-cli",
+    "identical_to": "work/sweep-node-native-timers-restart-bin/openssl-cli",
+    "sha256": "f4aa15f2822f670af7b5c1043d7aa6ebbbc64229fd2fae382edfc6a4524749c1",
+    "bytes": 1103304
+  },
+  {
+    "path": "work/sweep-timer-lifecycle-audit-bin/quench-node",
+    "identical_to": "work/timer-audit-rss-merge-bin/quench-node",
+    "sha256": "a996e378a9b5b9d22e3c5f7442620ed8da5257b32b1ec8fd45ff821ba3a724c6",
+    "bytes": 29658416
+  },
+  {
+    "path": "work/sweep-timer-lifecycle-audit-bin/run-parallel",
+    "identical_to": "work/timer-audit-rss-merge-bin/run-parallel",
+    "sha256": "264d1e05da24a37bfb990bc3b271835a0761bfe0606563723fa189fdb5ed2af4",
+    "bytes": 32348816
+  },
+  {
+    "path": "work/sweep-timer-lifecycle-audit-bin/openssl-cli",
+    "identical_to": "work/sweep-node-native-timers-restart-bin/openssl-cli",
+    "sha256": "f4aa15f2822f670af7b5c1043d7aa6ebbbc64229fd2fae382edfc6a4524749c1",
+    "bytes": 1103304
+  },
+  {
+    "path": "work/async-iterator-protocol-bin/openssl-cli",
+    "identical_to": "work/sweep-node-native-timers-restart-bin/openssl-cli",
+    "sha256": "f4aa15f2822f670af7b5c1043d7aa6ebbbc64229fd2fae382edfc6a4524749c1",
+    "bytes": 1103304
+  },
+  {
+    "path": "work/duplex-pair-bin/openssl-cli",
+    "identical_to": "work/sweep-node-native-timers-restart-bin/openssl-cli",
+    "sha256": "f4aa15f2822f670af7b5c1043d7aa6ebbbc64229fd2fae382edfc6a4524749c1",
+    "bytes": 1103304
+  },
+  {
+    "path": "work/timer-print-script-bin/openssl-cli",
+    "identical_to": "work/timer-audit-rss-merge-bin/openssl-cli",
+    "sha256": "f4aa15f2822f670af7b5c1043d7aa6ebbbc64229fd2fae382edfc6a4524749c1",
+    "bytes": 1103304
+  },
+  {
+    "path": "work/buffer-swap-bin/openssl-cli",
+    "identical_to": "work/timer-audit-rss-merge-bin/openssl-cli",
+    "sha256": "f4aa15f2822f670af7b5c1043d7aa6ebbbc64229fd2fae382edfc6a4524749c1",
+    "bytes": 1103304
+  },
+  {
+    "path": "work/net-admission-merged-bin/openssl-cli",
+    "identical_to": "work/sweep-node-native-timers-restart-bin/openssl-cli",
+    "sha256": "f4aa15f2822f670af7b5c1043d7aa6ebbbc64229fd2fae382edfc6a4524749c1",
+    "bytes": 1103304
+  },
+  {
+    "path": "work/net-resource-merged2-bin/quench-node",
+    "identical_to": "work/sweep-node-lifecycle-restart-bin/quench-node",
+    "sha256": "f2265aced7a6948fb8ad9a6def2de9df9bf914ddf28398353655929b2a84e1d4",
+    "bytes": 23353632
+  },
+  {
+    "path": "work/net-resource-merged2-bin/run-parallel",
+    "identical_to": "work/sweep-node-lifecycle-restart-bin/run-parallel",
+    "sha256": "0a5975db6eaad8a4ae2fb8c9c448c4232281b2198ae570f6bff6263e401f0164",
+    "bytes": 25420720
+  },
+  {
+    "path": "work/buffer-fill-bin/openssl-cli",
+    "identical_to": "work/timer-audit-rss-merge-bin/openssl-cli",
+    "sha256": "f4aa15f2822f670af7b5c1043d7aa6ebbbc64229fd2fae382edfc6a4524749c1",
+    "bytes": 1103304
+  },
+  {
+    "path": "work/net-read-retry-bin/openssl-cli",
+    "identical_to": "work/sweep-node-native-timers-restart-bin/openssl-cli",
+    "sha256": "f4aa15f2822f670af7b5c1043d7aa6ebbbc64229fd2fae382edfc6a4524749c1",
+    "bytes": 1103304
+  },
+  {
+    "path": "work/buffer-string-bin/openssl-cli",
+    "identical_to": "work/sweep-node-native-timers-restart-bin/openssl-cli",
+    "sha256": "f4aa15f2822f670af7b5c1043d7aa6ebbbc64229fd2fae382edfc6a4524749c1",
+    "bytes": 1103304
+  },
+  {
+    "path": "work/buffer-constructor-corrected-bin/openssl-cli",
+    "identical_to": "work/timer-audit-rss-merge-bin/openssl-cli",
+    "sha256": "f4aa15f2822f670af7b5c1043d7aa6ebbbc64229fd2fae382edfc6a4524749c1",
+    "bytes": 1103304
+  },
+  {
+    "path": "work/sweep-buffer-constructor-audit-bin/quench-node",
+    "identical_to": "work/buffer-constructor-corrected-bin/quench-node",
+    "sha256": "5aff49e6465efa75a829e2ae0fa716b9c76985804536acf2982c59e39e15f20f",
+    "bytes": 29777136
+  },
+  {
+    "path": "work/sweep-buffer-constructor-audit-bin/run-parallel",
+    "identical_to": "work/buffer-constructor-corrected-bin/run-parallel",
+    "sha256": "72059d50052c56635c8d7802b75b0bcf8c29d2ae22e46b2747ca3dd225455812",
+    "bytes": 32471632
+  },
+  {
+    "path": "work/sweep-buffer-constructor-audit-bin/openssl-cli",
+    "identical_to": "work/sweep-node-native-timers-restart-bin/openssl-cli",
+    "sha256": "f4aa15f2822f670af7b5c1043d7aa6ebbbc64229fd2fae382edfc6a4524749c1",
+    "bytes": 1103304
+  },
+  {
+    "path": "work/buffer-from-merged-bin/openssl-cli",
+    "identical_to": "work/sweep-node-native-timers-restart-bin/openssl-cli",
+    "sha256": "f4aa15f2822f670af7b5c1043d7aa6ebbbc64229fd2fae382edfc6a4524749c1",
+    "bytes": 1103304
+  },
+  {
+    "path": "work/sweep-stat-watch-bin/quench-node",
+    "identical_to": "work/stat-watch-bin/quench-node",
+    "sha256": "31c2423c79a6dff597ddb665d3ee24aeea945bcb8606fc3e3eb109f36295f075",
+    "bytes": 22447664
+  },
+  {
+    "path": "work/sweep-stat-watch-bin/run-parallel",
+    "identical_to": "work/stat-watch-bin/run-parallel",
+    "sha256": "6d69f9b7e81cd1d1d89db5e3a584f853291e40b1bde32aaeaff118c04dace92c",
+    "bytes": 24486464
+  },
+  {
+    "path": "work/net-admission-merged2-bin/openssl-cli",
+    "identical_to": "work/sweep-node-native-timers-restart-bin/openssl-cli",
+    "sha256": "f4aa15f2822f670af7b5c1043d7aa6ebbbc64229fd2fae382edfc6a4524749c1",
+    "bytes": 1103304
+  },
+  {
+    "path": "work/sweep-http-response-audit-bin/openssl-cli",
+    "identical_to": "work/sweep-node-native-timers-restart-bin/openssl-cli",
+    "sha256": "f4aa15f2822f670af7b5c1043d7aa6ebbbc64229fd2fae382edfc6a4524749c1",
+    "bytes": 1103304
+  },
+  {
+    "path": "work/cli-eval-bin/openssl-cli",
+    "identical_to": "work/sweep-node-native-timers-restart-bin/openssl-cli",
+    "sha256": "f4aa15f2822f670af7b5c1043d7aa6ebbbc64229fd2fae382edfc6a4524749c1",
+    "bytes": 1103304
+  },
+  {
+    "path": "work/sweep-stream-once-pipe-audit-bin/openssl-cli",
+    "identical_to": "work/sweep-node-native-timers-restart-bin/openssl-cli",
+    "sha256": "f4aa15f2822f670af7b5c1043d7aa6ebbbc64229fd2fae382edfc6a4524749c1",
+    "bytes": 1103304
+  },
+  {
+    "path": "work/perf-query-bin/openssl-cli",
+    "identical_to": "work/sweep-node-native-timers-restart-bin/openssl-cli",
+    "sha256": "f4aa15f2822f670af7b5c1043d7aa6ebbbc64229fd2fae382edfc6a4524749c1",
+    "bytes": 1103304
+  },
+  {
+    "path": "work/buffer-constructor-bin/openssl-cli",
+    "identical_to": "work/timer-audit-rss-merge-bin/openssl-cli",
+    "sha256": "f4aa15f2822f670af7b5c1043d7aa6ebbbc64229fd2fae382edfc6a4524749c1",
+    "bytes": 1103304
+  },
+  {
+    "path": "work/file-handle-read-bin/openssl-cli",
+    "identical_to": "work/sweep-node-native-timers-restart-bin/openssl-cli",
+    "sha256": "f4aa15f2822f670af7b5c1043d7aa6ebbbc64229fd2fae382edfc6a4524749c1",
+    "bytes": 1103304
+  },
+  {
+    "path": "work/fs-exact-stat-bin/openssl-cli",
+    "identical_to": "work/sweep-node-native-timers-restart-bin/openssl-cli",
+    "sha256": "f4aa15f2822f670af7b5c1043d7aa6ebbbc64229fd2fae382edfc6a4524749c1",
+    "bytes": 1103304
+  },
+  {
+    "path": "work/native-inspection-bin/openssl-cli",
+    "identical_to": "work/sweep-node-native-timers-restart-bin/openssl-cli",
+    "sha256": "f4aa15f2822f670af7b5c1043d7aa6ebbbc64229fd2fae382edfc6a4524749c1",
+    "bytes": 1103304
+  },
+  {
+    "path": "work/sweep-tls-streams-bin/quench-node",
+    "identical_to": "work/tls-transport-bin/quench-node",
+    "sha256": "830c18b5688919739c78b183cae5290e46dec70d4237be148b7f80742865defd",
+    "bytes": 23229408
+  },
+  {
+    "path": "work/sweep-tls-streams-bin/run-parallel",
+    "identical_to": "work/tls-transport-bin/run-parallel",
+    "sha256": "a9ce94f59eea9b4aea5958f801b49ffa2e52238bb528cfe767c3da9a1ad22c8e",
+    "bytes": 25293568
+  },
+  {
+    "path": "work/sweep-canonical-stream-audit-bin/openssl-cli",
+    "identical_to": "work/sweep-node-native-timers-restart-bin/openssl-cli",
+    "sha256": "f4aa15f2822f670af7b5c1043d7aa6ebbbc64229fd2fae382edfc6a4524749c1",
+    "bytes": 1103304
+  },
+  {
+    "path": "work/timer-clock-bin/quench-node",
+    "identical_to": "work/timer-audit-rss-merge-bin/quench-node",
+    "sha256": "a996e378a9b5b9d22e3c5f7442620ed8da5257b32b1ec8fd45ff821ba3a724c6",
+    "bytes": 29658416
+  },
+  {
+    "path": "work/timer-clock-bin/run-parallel",
+    "identical_to": "work/timer-audit-rss-merge-bin/run-parallel",
+    "sha256": "264d1e05da24a37bfb990bc3b271835a0761bfe0606563723fa189fdb5ed2af4",
+    "bytes": 32348816
+  },
+  {
+    "path": "work/timer-clock-bin/openssl-cli",
+    "identical_to": "work/timer-audit-rss-merge-bin/openssl-cli",
+    "sha256": "f4aa15f2822f670af7b5c1043d7aa6ebbbc64229fd2fae382edfc6a4524749c1",
+    "bytes": 1103304
+  },
+  {
+    "path": "work/buffer-search-corrected-bin/openssl-cli",
+    "identical_to": "work/timer-audit-rss-merge-bin/openssl-cli",
+    "sha256": "f4aa15f2822f670af7b5c1043d7aa6ebbbc64229fd2fae382edfc6a4524749c1",
+    "bytes": 1103304
+  },
+  {
+    "path": "work/recursive-watch-bin/quench-node",
+    "identical_to": "work/sweep-recursive-watch-bin/quench-node",
+    "sha256": "34b6a4c367497055a315979471b927c133b77ddb6eda1127c3aee357da0a53c0",
+    "bytes": 22510032
+  },
+  {
+    "path": "work/recursive-watch-bin/run-parallel",
+    "identical_to": "work/sweep-recursive-watch-bin/run-parallel",
+    "sha256": "c3a4279a1c3a7640a457b1b6563fa05798c995b7299802d7528003970395e61a",
+    "bytes": 24551488
+  },
+  {
+    "path": "work/timer-lifecycle-bin/openssl-cli",
+    "identical_to": "work/sweep-node-native-timers-restart-bin/openssl-cli",
+    "sha256": "f4aa15f2822f670af7b5c1043d7aa6ebbbc64229fd2fae382edfc6a4524749c1",
+    "bytes": 1103304
+  },
+  {
+    "path": "work/abort-listener-errors-bin/openssl-cli",
+    "identical_to": "work/sweep-node-native-timers-restart-bin/openssl-cli",
+    "sha256": "f4aa15f2822f670af7b5c1043d7aa6ebbbc64229fd2fae382edfc6a4524749c1",
+    "bytes": 1103304
+  },
+  {
+    "path": "work/sweep-buffer-swap-audit-bin/quench-node",
+    "identical_to": "work/buffer-swap-bin/quench-node",
+    "sha256": "e26fa0c3d73960c3d745d02669a68c18be5a16c688447e89651ed52509dd398d",
+    "bytes": 29759344
+  },
+  {
+    "path": "work/sweep-buffer-swap-audit-bin/run-parallel",
+    "identical_to": "work/buffer-swap-bin/run-parallel",
+    "sha256": "0de32c1810d3985d4a538203428da967bd418dbf44c29ea0545c4b18fec899eb",
+    "bytes": 32453840
+  },
+  {
+    "path": "work/sweep-buffer-swap-audit-bin/openssl-cli",
+    "identical_to": "work/sweep-node-native-timers-restart-bin/openssl-cli",
+    "sha256": "f4aa15f2822f670af7b5c1043d7aa6ebbbc64229fd2fae382edfc6a4524749c1",
+    "bytes": 1103304
+  },
+  {
+    "path": "work/timer-duration-bin/openssl-cli",
+    "identical_to": "work/timer-audit-rss-merge-bin/openssl-cli",
+    "sha256": "f4aa15f2822f670af7b5c1043d7aa6ebbbc64229fd2fae382edfc6a4524749c1",
+    "bytes": 1103304
+  },
+  {
+    "path": "work/sweep-duplex-stream-audit-bin/quench-node",
+    "identical_to": "work/duplex-pair-bin/quench-node",
+    "sha256": "517231381ed9a8f9f01849c70b8aa7a1a50194833a9d7fd1b2840b890eb13328",
+    "bytes": 35230408
+  },
+  {
+    "path": "work/sweep-duplex-stream-audit-bin/run-parallel",
+    "identical_to": "work/duplex-pair-bin/run-parallel",
+    "sha256": "55c4e4185876ec69cdce092ed707e128b3015d24d182fe7f6a5bebc809511c35",
+    "bytes": 38171912
+  },
+  {
+    "path": "work/sweep-duplex-stream-audit-bin/openssl-cli",
+    "identical_to": "work/sweep-node-native-timers-restart-bin/openssl-cli",
+    "sha256": "f4aa15f2822f670af7b5c1043d7aa6ebbbc64229fd2fae382edfc6a4524749c1",
+    "bytes": 1103304
+  },
+  {
+    "path": "work/cli-signal-policy-bin/openssl-cli",
+    "identical_to": "work/sweep-node-native-timers-restart-bin/openssl-cli",
+    "sha256": "f4aa15f2822f670af7b5c1043d7aa6ebbbc64229fd2fae382edfc6a4524749c1",
+    "bytes": 1103304
+  },
+  {
+    "path": "work/sweep-http-headers-audit-bin/openssl-cli",
+    "identical_to": "work/sweep-node-native-timers-restart-bin/openssl-cli",
+    "sha256": "f4aa15f2822f670af7b5c1043d7aa6ebbbc64229fd2fae382edfc6a4524749c1",
+    "bytes": 1103304
+  },
+  {
+    "path": "work/timer-promise-options-bin/openssl-cli",
+    "identical_to": "work/sweep-node-native-timers-restart-bin/openssl-cli",
+    "sha256": "f4aa15f2822f670af7b5c1043d7aa6ebbbc64229fd2fae382edfc6a4524749c1",
+    "bytes": 1103304
+  },
+  {
+    "path": "work/assert-vfs-key-bin/openssl-cli",
+    "identical_to": "work/sweep-node-native-timers-restart-bin/openssl-cli",
+    "sha256": "f4aa15f2822f670af7b5c1043d7aa6ebbbc64229fd2fae382edfc6a4524749c1",
+    "bytes": 1103304
+  },
+  {
+    "path": "work/timer-promisify-bin/openssl-cli",
+    "identical_to": "work/sweep-node-native-timers-restart-bin/openssl-cli",
+    "sha256": "f4aa15f2822f670af7b5c1043d7aa6ebbbc64229fd2fae382edfc6a4524749c1",
+    "bytes": 1103304
+  },
+  {
+    "path": "work/fs-watch-bin/quench-node",
+    "identical_to": "work/sweep-watch-bin/quench-node",
+    "sha256": "ef3ae8007cc413f98bdf1d1cc773853c63ebdda9029d61a8d76eef4dd8a08593",
+    "bytes": 22385632
+  },
+  {
+    "path": "work/fs-watch-bin/run-parallel",
+    "identical_to": "work/sweep-watch-bin/run-parallel",
+    "sha256": "7e220075202b658606849f721aa417e5385d1bf4982525fb341ae3369cc0a5b0",
+    "bytes": 24423648
+  },
+  {
+    "path": "work/node-error-stack-brand-bin/openssl-cli",
+    "identical_to": "work/sweep-node-native-timers-restart-bin/openssl-cli",
+    "sha256": "f4aa15f2822f670af7b5c1043d7aa6ebbbc64229fd2fae382edfc6a4524749c1",
+    "bytes": 1103304
+  },
+  {
+    "path": "work/net-address-bin/openssl-cli",
+    "identical_to": "work/sweep-node-native-timers-restart-bin/openssl-cli",
+    "sha256": "f4aa15f2822f670af7b5c1043d7aa6ebbbc64229fd2fae382edfc6a4524749c1",
+    "bytes": 1103304
+  },
+  {
+    "path": "work/library-policy-bin/openssl-cli",
+    "identical_to": "work/sweep-node-native-timers-restart-bin/openssl-cli",
+    "sha256": "f4aa15f2822f670af7b5c1043d7aa6ebbbc64229fd2fae382edfc6a4524749c1",
+    "bytes": 1103304
+  },
+  {
+    "path": "work/sweep-assert-vfs-key-audit-bin/quench-node",
+    "identical_to": "work/assert-vfs-key-bin/quench-node",
+    "sha256": "26722b5851dbdb2fc7737eb14d8a104a9eb06272cc94344c0666ec1fd4077355",
+    "bytes": 42050312
+  },
+  {
+    "path": "work/sweep-assert-vfs-key-audit-bin/run-parallel",
+    "identical_to": "work/assert-vfs-key-bin/run-parallel",
+    "sha256": "127a1a44354b92516b725536ebaefc5c793b2d4866c68715d3f6f0be528fe1aa",
+    "bytes": 45018824
+  },
+  {
+    "path": "work/sweep-assert-vfs-key-audit-bin/openssl-cli",
+    "identical_to": "work/sweep-node-native-timers-restart-bin/openssl-cli",
+    "sha256": "f4aa15f2822f670af7b5c1043d7aa6ebbbc64229fd2fae382edfc6a4524749c1",
+    "bytes": 1103304
+  },
+  {
+    "path": "work/sweep-buffer-from-audit-bin/quench-node",
+    "identical_to": "work/buffer-from-merged-bin/quench-node",
+    "sha256": "c1f16d62f395ecb538c7c58fbecbf0090064c36f16659bfbafe0dfe013a05c77",
+    "bytes": 32002576
+  },
+  {
+    "path": "work/sweep-buffer-from-audit-bin/run-parallel",
+    "identical_to": "work/buffer-from-merged-bin/run-parallel",
+    "sha256": "7c898beadc471ba1c4a0f1e7724aa7e5d822805bbd55a41d5205243e309e9977",
+    "bytes": 34836080
+  },
+  {
+    "path": "work/sweep-buffer-from-audit-bin/openssl-cli",
+    "identical_to": "work/sweep-node-native-timers-restart-bin/openssl-cli",
+    "sha256": "f4aa15f2822f670af7b5c1043d7aa6ebbbc64229fd2fae382edfc6a4524749c1",
+    "bytes": 1103304
+  },
+  {
+    "path": "work/perf-query-retry3-bin/openssl-cli",
+    "identical_to": "work/sweep-node-native-timers-restart-bin/openssl-cli",
+    "sha256": "f4aa15f2822f670af7b5c1043d7aa6ebbbc64229fd2fae382edfc6a4524749c1",
+    "bytes": 1103304
+  },
+  {
+    "path": "work/buffer-compare-bin/openssl-cli",
+    "identical_to": "work/sweep-node-native-timers-restart-bin/openssl-cli",
+    "sha256": "f4aa15f2822f670af7b5c1043d7aa6ebbbc64229fd2fae382edfc6a4524749c1",
+    "bytes": 1103304
+  },
+  {
+    "path": "work/stream-once-pipe-bin/quench-node",
+    "identical_to": "work/sweep-stream-once-pipe-audit-bin/quench-node",
+    "sha256": "f96ecb618f3c07dec63c71f215e3d244f8a0c301fbac27ea30af5e27afd606cf",
+    "bytes": 29759344
+  },
+  {
+    "path": "work/stream-once-pipe-bin/run-parallel",
+    "identical_to": "work/sweep-stream-once-pipe-audit-bin/run-parallel",
+    "sha256": "fcf4492951e12648b5a23b6dae9548f14f3fc673a153a63f5fb3f5e4b113a4ef",
+    "bytes": 32453840
+  },
+  {
+    "path": "work/stream-once-pipe-bin/openssl-cli",
+    "identical_to": "work/timer-audit-rss-merge-bin/openssl-cli",
+    "sha256": "f4aa15f2822f670af7b5c1043d7aa6ebbbc64229fd2fae382edfc6a4524749c1",
+    "bytes": 1103304
+  },
+  {
+    "path": "work/http-headers-merged-bin/quench-node",
+    "identical_to": "work/sweep-http-headers-audit-bin/quench-node",
+    "sha256": "f4ea614172b0aca7eb161b85f959a98b955769ec594788bc08822d5b5f1c1b79",
+    "bytes": 31949808
+  },
+  {
+    "path": "work/http-headers-merged-bin/run-parallel",
+    "identical_to": "work/sweep-http-headers-audit-bin/run-parallel",
+    "sha256": "22a50bd057705dce628aea911301277443a00e528431558015fc1e9a13030f59",
+    "bytes": 34779216
+  },
+  {
+    "path": "work/http-headers-merged-bin/openssl-cli",
+    "identical_to": "work/sweep-node-native-timers-restart-bin/openssl-cli",
+    "sha256": "f4aa15f2822f670af7b5c1043d7aa6ebbbc64229fd2fae382edfc6a4524749c1",
+    "bytes": 1103304
+  },
+  {
+    "path": "work/perf-query-merged-bin/openssl-cli",
+    "identical_to": "work/sweep-node-native-timers-restart-bin/openssl-cli",
+    "sha256": "f4aa15f2822f670af7b5c1043d7aa6ebbbc64229fd2fae382edfc6a4524749c1",
+    "bytes": 1103304
+  },
+  {
+    "path": "work/buffer-byte-view-bin/quench-node",
+    "identical_to": "work/sweep-buffer-bin/quench-node",
+    "sha256": "5f28a42fcd0f47ae395eb91e5c69b0712ef2b52f252b76ea53ea21d09f596f30",
+    "bytes": 22315280
+  },
+  {
+    "path": "work/buffer-byte-view-bin/run-parallel",
+    "identical_to": "work/sweep-buffer-bin/run-parallel",
+    "sha256": "bc8828897ffafae68a52e3cfd4814ee31828f3ce00759a24f7253d95f122d226",
+    "bytes": 24351088
+  },
+  {
+    "path": "work/node-error-stack-bin/openssl-cli",
+    "identical_to": "work/sweep-node-native-timers-restart-bin/openssl-cli",
+    "sha256": "f4aa15f2822f670af7b5c1043d7aa6ebbbc64229fd2fae382edfc6a4524749c1",
+    "bytes": 1103304
+  },
+  {
+    "path": "work/http-util-bin/openssl-cli",
+    "identical_to": "work/sweep-node-native-timers-restart-bin/openssl-cli",
+    "sha256": "f4aa15f2822f670af7b5c1043d7aa6ebbbc64229fd2fae382edfc6a4524749c1",
+    "bytes": 1103304
+  },
+  {
+    "path": "work/buffer-backing-bin/quench-node",
+    "identical_to": "work/sweep-buffer-backing-audit-bin/quench-node",
+    "sha256": "c8e5d5a63c480f04c45d032ce5dd2dd362cd1483a285e9568adb9edb228676fd",
+    "bytes": 29665264
+  },
+  {
+    "path": "work/buffer-backing-bin/run-parallel",
+    "identical_to": "work/sweep-buffer-backing-audit-bin/run-parallel",
+    "sha256": "9075b52e85a825915f6780de524cc9c4c929d36eadc5f5db29d351132e108460",
+    "bytes": 32355600
+  },
+  {
+    "path": "work/buffer-backing-bin/openssl-cli",
+    "identical_to": "work/timer-audit-rss-merge-bin/openssl-cli",
+    "sha256": "f4aa15f2822f670af7b5c1043d7aa6ebbbc64229fd2fae382edfc6a4524749c1",
+    "bytes": 1103304
+  },
+  {
+    "path": "work/socket-close-bin/quench-node",
+    "identical_to": "work/sweep-close-bin/quench-node",
+    "sha256": "057a361ef9be65846f1f77ffad02500170608cb734db0f607a9e8068dfcc3b56",
+    "bytes": 22305232
+  },
+  {
+    "path": "work/socket-close-bin/run-parallel",
+    "identical_to": "work/sweep-close-bin/run-parallel",
+    "sha256": "62eecc5469ee2c5ac58d3745db17b3d3915b6615cdcd4042b73e79875abe49bf",
+    "bytes": 24340528
+  },
+  {
+    "path": "work/generator-cleanup-bin/openssl-cli",
+    "identical_to": "work/sweep-node-native-timers-restart-bin/openssl-cli",
+    "sha256": "f4aa15f2822f670af7b5c1043d7aa6ebbbc64229fd2fae382edfc6a4524749c1",
+    "bytes": 1103304
+  },
+  {
+    "path": "work/sweep-library-policy-audit-bin/openssl-cli",
+    "identical_to": "work/sweep-node-native-timers-restart-bin/openssl-cli",
+    "sha256": "f4aa15f2822f670af7b5c1043d7aa6ebbbc64229fd2fae382edfc6a4524749c1",
+    "bytes": 1103304
+  },
+  {
+    "path": "work/dense-shift-bin/quench-node",
+    "identical_to": "work/sweep-dense-shift-bin/quench-node",
+    "sha256": "da7a275e1c8d9a2795891fc9dc5bb2d523f148016b7fa10a552c75ebd32a0f9e",
+    "bytes": 22566192
+  },
+  {
+    "path": "work/dense-shift-bin/run-parallel",
+    "identical_to": "work/sweep-dense-shift-bin/run-parallel",
+    "sha256": "a2d71a0533da30c960df83e69567544df769bc5b260794185e8501dca2037170",
+    "bytes": 24608192
+  },
+  {
+    "path": "work/buffer-write-bin/openssl-cli",
+    "identical_to": "work/timer-audit-rss-merge-bin/openssl-cli",
+    "sha256": "f4aa15f2822f670af7b5c1043d7aa6ebbbc64229fd2fae382edfc6a4524749c1",
+    "bytes": 1103304
+  },
+  {
+    "path": "work/net-read-merged-bin/openssl-cli",
+    "identical_to": "work/sweep-node-native-timers-restart-bin/openssl-cli",
+    "sha256": "f4aa15f2822f670af7b5c1043d7aa6ebbbc64229fd2fae382edfc6a4524749c1",
+    "bytes": 1103304
+  },
+  {
+    "path": "work/buffer-from-pool-size-bin/openssl-cli",
+    "identical_to": "work/sweep-node-native-timers-restart-bin/openssl-cli",
+    "sha256": "f4aa15f2822f670af7b5c1043d7aa6ebbbc64229fd2fae382edfc6a4524749c1",
+    "bytes": 1103304
+  },
+  {
+    "path": "work/tls-roots-bin/openssl-cli",
+    "identical_to": "work/sweep-node-native-timers-restart-bin/openssl-cli",
+    "sha256": "f4aa15f2822f670af7b5c1043d7aa6ebbbc64229fd2fae382edfc6a4524749c1",
+    "bytes": 1103304
+  },
+  {
+    "path": "work/sweep-direct-tls-bin/quench-node",
+    "identical_to": "work/tls-direct-merged2-bin/quench-node",
+    "sha256": "3502bed1d9bbaf20ad9e995ab98da663a7d1c0dd8035a058d79f3dcb3f28c5ff",
+    "bytes": 23323808
+  },
+  {
+    "path": "work/sweep-direct-tls-bin/run-parallel",
+    "identical_to": "work/tls-direct-merged2-bin/run-parallel",
+    "sha256": "6d2aa76d829706c886897bcfd033e7dee2d53b853455df4e7e9ad6151b63f743",
+    "bytes": 25389664
+  },
+  {
+    "path": "work/timer-refresh-bin/openssl-cli",
+    "identical_to": "work/timer-audit-rss-merge-bin/openssl-cli",
+    "sha256": "f4aa15f2822f670af7b5c1043d7aa6ebbbc64229fd2fae382edfc6a4524749c1",
+    "bytes": 1103304
+  },
+  {
+    "path": "work/sweep-file-handle-read-audit-bin/quench-node",
+    "identical_to": "work/file-handle-read-bin/quench-node",
+    "sha256": "a0d88a70fdd934035cfafb934b431b3e623d013067176cbec8eb0fa79945cd70",
+    "bytes": 42269440
+  },
+  {
+    "path": "work/sweep-file-handle-read-audit-bin/run-parallel",
+    "identical_to": "work/file-handle-read-bin/run-parallel",
+    "sha256": "5c632861dccec548e9426a928cc4a4c87284989d1a79cd38a48eff39b0d86caa",
+    "bytes": 45258720
+  },
+  {
+    "path": "work/sweep-file-handle-read-audit-bin/openssl-cli",
+    "identical_to": "work/sweep-node-native-timers-restart-bin/openssl-cli",
+    "sha256": "f4aa15f2822f670af7b5c1043d7aa6ebbbc64229fd2fae382edfc6a4524749c1",
+    "bytes": 1103304
+  },
+  {
+    "path": "work/net-read-active-bin/openssl-cli",
+    "identical_to": "work/sweep-node-native-timers-restart-bin/openssl-cli",
+    "sha256": "f4aa15f2822f670af7b5c1043d7aa6ebbbc64229fd2fae382edfc6a4524749c1",
+    "bytes": 1103304
+  },
+  {
+    "path": "work/timer-internal-unref-bin/openssl-cli",
+    "identical_to": "work/timer-audit-rss-merge-bin/openssl-cli",
+    "sha256": "f4aa15f2822f670af7b5c1043d7aa6ebbbc64229fd2fae382edfc6a4524749c1",
+    "bytes": 1103304
+  },
+  {
+    "path": "work/buffer-search-npm-merge-bin/openssl-cli",
+    "identical_to": "work/timer-audit-rss-merge-bin/openssl-cli",
+    "sha256": "f4aa15f2822f670af7b5c1043d7aa6ebbbc64229fd2fae382edfc6a4524749c1",
+    "bytes": 1103304
+  },
+  {
+    "path": "work/native-brotli-bin/openssl-cli",
+    "identical_to": "work/sweep-node-native-timers-restart-bin/openssl-cli",
+    "sha256": "f4aa15f2822f670af7b5c1043d7aa6ebbbc64229fd2fae382edfc6a4524749c1",
+    "bytes": 1103304
+  },
+  {
+    "path": "work/canonical-stream-bin/quench-node",
+    "identical_to": "work/sweep-canonical-stream-audit-bin/quench-node",
+    "sha256": "0ad71ea41d7267928a4263cff56bdefb8b83cb65f5fc88ea8314d3d948d6e653",
+    "bytes": 42045608
+  },
+  {
+    "path": "work/canonical-stream-bin/run-parallel",
+    "identical_to": "work/sweep-canonical-stream-audit-bin/run-parallel",
+    "sha256": "4d34c3d25428f9ae2b7a5bbe0a0eff6beb5e85586d0f359aaeb7f29873750eb4",
+    "bytes": 45014056
+  },
+  {
+    "path": "work/canonical-stream-bin/openssl-cli",
+    "identical_to": "work/sweep-node-native-timers-restart-bin/openssl-cli",
+    "sha256": "f4aa15f2822f670af7b5c1043d7aa6ebbbc64229fd2fae382edfc6a4524749c1",
+    "bytes": 1103304
+  },
+  {
+    "path": "work/vfs-descriptor-guard-bin/openssl-cli",
+    "identical_to": "work/sweep-node-native-timers-restart-bin/openssl-cli",
+    "sha256": "f4aa15f2822f670af7b5c1043d7aa6ebbbc64229fd2fae382edfc6a4524749c1",
+    "bytes": 1103304
+  },
+  {
+    "path": "work/sweep-promise-watch-bin/quench-node",
+    "identical_to": "work/promise-watch-bin/quench-node",
+    "sha256": "d102402031c36549a2bebaddd1646a7172981f80af36b908282ba1760d335cef",
+    "bytes": 22555312
+  },
+  {
+    "path": "work/sweep-promise-watch-bin/run-parallel",
+    "identical_to": "work/promise-watch-bin/run-parallel",
+    "sha256": "f0ffa5a7df402d33007730031b00d99c45991af34b7af77352a178e123a42dfa",
+    "bytes": 24597424
+  },
+  {
+    "path": "work/net-read-repaired-bin/openssl-cli",
+    "identical_to": "work/sweep-node-native-timers-restart-bin/openssl-cli",
+    "sha256": "f4aa15f2822f670af7b5c1043d7aa6ebbbc64229fd2fae382edfc6a4524749c1",
+    "bytes": 1103304
+  },
+  {
+    "path": "work/sweep-module-url-bin/quench-node",
+    "identical_to": "work/module-url-bin/quench-node",
+    "sha256": "f652bec5cdad09de8dc89186316f6738b3445f994d062d3f018b7c03ad05703d",
+    "bytes": 22563984
+  },
+  {
+    "path": "work/sweep-module-url-bin/run-parallel",
+    "identical_to": "work/module-url-bin/run-parallel",
+    "sha256": "fa55e73352b5a85364bf1917e242a36240e5579c7694c24e1049300e65e549bd",
+    "bytes": 24605984
+  },
+  {
+    "path": "work/sweep-tcp-bin/quench-node",
+    "identical_to": "work/tcp-error-bin/quench-node",
+    "sha256": "2417fe45705485c2b4cc5a241a16c4884da4dfb9962dfc4115a2078ff568302f",
+    "bytes": 22296192
+  },
+  {
+    "path": "work/sweep-tcp-bin/run-parallel",
+    "identical_to": "work/tcp-error-bin/run-parallel",
+    "sha256": "812aed7189f096cd51978de4300e7b23b12acdea652e2ba4bac9a9949806c405",
+    "bytes": 24331088
+  },
+  {
+    "path": "work/net-admission-packaged-bin/quench-node",
+    "identical_to": "work/net-admission-bin/quench-node",
+    "sha256": "65af600cfac4ef07afaf48eefd0dd1bbbe5c8bb6db5d52be5355eb568616396b",
+    "bytes": 29363040
+  },
+  {
+    "path": "work/net-admission-packaged-bin/run-parallel",
+    "identical_to": "work/net-admission-bin/run-parallel",
+    "sha256": "57d162079c516c00e04b11e8d79d8484ab82decc70ecf204e864677dd12643b5",
+    "bytes": 32054848
+  },
+  {
+    "path": "work/net-admission-packaged-bin/openssl-cli",
+    "identical_to": "work/sweep-node-native-timers-restart-bin/openssl-cli",
+    "sha256": "f4aa15f2822f670af7b5c1043d7aa6ebbbc64229fd2fae382edfc6a4524749c1",
+    "bytes": 1103304
+  },
+  {
+    "path": "work/sweep-node-admission-bin/quench-node",
+    "identical_to": "work/net-admission-merged2-bin/quench-node",
+    "sha256": "a1a921b7b18e82952e2dd67cf2d21ab63600a35b76396487e2648a610a5009e1",
+    "bytes": 29509024
+  },
+  {
+    "path": "work/sweep-node-admission-bin/run-parallel",
+    "identical_to": "work/net-admission-merged2-bin/run-parallel",
+    "sha256": "13c4a2142836bf1cdf3765b3fd3cf87bea40ca566c63ccb78ab764f04788f4d3",
+    "bytes": 32192704
+  },
+  {
+    "path": "work/sweep-node-admission-bin/openssl-cli",
+    "identical_to": "work/sweep-node-native-timers-restart-bin/openssl-cli",
+    "sha256": "f4aa15f2822f670af7b5c1043d7aa6ebbbc64229fd2fae382edfc6a4524749c1",
+    "bytes": 1103304
+  },
+  {
+    "path": "work/http-response-bin/quench-node",
+    "identical_to": "work/sweep-http-response-audit-bin/quench-node",
+    "sha256": "da6b227f02b766670a112fd965fd905782f36c15ec463c789e99c4d205f2d7a9",
+    "bytes": 31892656
+  },
+  {
+    "path": "work/http-response-bin/run-parallel",
+    "identical_to": "work/sweep-http-response-audit-bin/run-parallel",
+    "sha256": "df3e725c4e64bcccf53c99ca1603a28c94f921967089c6c76d6e4403bfbd1e8d",
+    "bytes": 34722096
+  },
+  {
+    "path": "work/http-response-bin/openssl-cli",
+    "identical_to": "work/sweep-node-native-timers-restart-bin/openssl-cli",
+    "sha256": "f4aa15f2822f670af7b5c1043d7aa6ebbbc64229fd2fae382edfc6a4524749c1",
+    "bytes": 1103304
+  },
+  {
+    "path": "work/native-timers-merged-bin/openssl-cli",
+    "identical_to": "work/sweep-node-native-timers-restart-bin/openssl-cli",
+    "sha256": "f4aa15f2822f670af7b5c1043d7aa6ebbbc64229fd2fae382edfc6a4524749c1",
+    "bytes": 1103304
+  },
+  {
+    "path": "work/buffer-from-bin/openssl-cli",
+    "identical_to": "work/sweep-node-native-timers-restart-bin/openssl-cli",
+    "sha256": "f4aa15f2822f670af7b5c1043d7aa6ebbbc64229fd2fae382edfc6a4524749c1",
+    "bytes": 1103304
+  },
+  {
+    "path": "work/buffer-search-bin/openssl-cli",
+    "identical_to": "work/timer-audit-rss-merge-bin/openssl-cli",
+    "sha256": "f4aa15f2822f670af7b5c1043d7aa6ebbbc64229fd2fae382edfc6a4524749c1",
+    "bytes": 1103304
+  },
+  {
+    "path": "work/native-zlib-iter-bin/openssl-cli",
+    "identical_to": "work/sweep-node-native-timers-restart-bin/openssl-cli",
+    "sha256": "f4aa15f2822f670af7b5c1043d7aa6ebbbc64229fd2fae382edfc6a4524749c1",
+    "bytes": 1103304
+  },
+  {
+    "path": "work/net-read-demand-bin/openssl-cli",
+    "identical_to": "work/sweep-node-native-timers-restart-bin/openssl-cli",
+    "sha256": "f4aa15f2822f670af7b5c1043d7aa6ebbbc64229fd2fae382edfc6a4524749c1",
+    "bytes": 1103304
+  },
+  {
+    "path": "work/buffer-constructor-shared-merge-bin/openssl-cli",
+    "identical_to": "work/timer-audit-rss-merge-bin/openssl-cli",
+    "sha256": "f4aa15f2822f670af7b5c1043d7aa6ebbbc64229fd2fae382edfc6a4524749c1",
+    "bytes": 1103304
+  },
+  {
+    "path": "work/native-zstd-bin/openssl-cli",
+    "identical_to": "work/sweep-node-native-timers-restart-bin/openssl-cli",
+    "sha256": "f4aa15f2822f670af7b5c1043d7aa6ebbbc64229fd2fae382edfc6a4524749c1",
+    "bytes": 1103304
+  },
+  {
+    "path": "work/shared-bc9-qualified-bin/openssl-cli",
+    "identical_to": "work/sweep-node-native-timers-restart-bin/openssl-cli",
+    "sha256": "f4aa15f2822f670af7b5c1043d7aa6ebbbc64229fd2fae382edfc6a4524749c1",
+    "bytes": 1103304
+  },
+  {
+    "path": "work/sweep-tls-roots-audit-bin/quench-node",
+    "identical_to": "work/tls-roots-bin/quench-node",
+    "sha256": "12212c5ee8b430c33eb03b23fb76e2435013497271df7e3f47dd92486131bd05",
+    "bytes": 42249416
+  },
+  {
+    "path": "work/sweep-tls-roots-audit-bin/run-parallel",
+    "identical_to": "work/tls-roots-bin/run-parallel",
+    "sha256": "a5cb500616eb944617bd0ab96ed3e8e6e3feb6a1092d05d154d12087ec354577",
+    "bytes": 45215432
+  },
+  {
+    "path": "work/sweep-tls-roots-audit-bin/openssl-cli",
+    "identical_to": "work/sweep-node-native-timers-restart-bin/openssl-cli",
+    "sha256": "f4aa15f2822f670af7b5c1043d7aa6ebbbc64229fd2fae382edfc6a4524749c1",
+    "bytes": 1103304
+  },
+  {
+    "path": "work/sweep-validation-bin/quench-node",
+    "identical_to": "work/net-validation-bin/quench-node",
+    "sha256": "2d738ebcd8c182369a8c6fa00302a8548f2e5b26351b432fd73d44fc5500abc4",
+    "bytes": 22269024
+  },
+  {
+    "path": "work/sweep-validation-bin/run-parallel",
+    "identical_to": "work/net-validation-bin/run-parallel",
+    "sha256": "64df41f9a3197790e5888554754e0036fa6ac45e05939090d498bfbac6613530",
+    "bytes": 24303584
+  },
+  {
+    "path": "work/buffer-bigint-bin/openssl-cli",
+    "identical_to": "work/timer-audit-rss-merge-bin/openssl-cli",
+    "sha256": "f4aa15f2822f670af7b5c1043d7aa6ebbbc64229fd2fae382edfc6a4524749c1",
+    "bytes": 1103304
+  },
+  {
+    "path": "work/cli-options-stream-bin/openssl-cli",
+    "identical_to": "work/sweep-node-native-timers-restart-bin/openssl-cli",
+    "sha256": "f4aa15f2822f670af7b5c1043d7aa6ebbbc64229fd2fae382edfc6a4524749c1",
+    "bytes": 1103304
+  },
+  {
+    "path": "work/library-policy-merged-bin/quench-node",
+    "identical_to": "work/sweep-library-policy-audit-bin/quench-node",
+    "sha256": "77d9853750b5eaf4d0db7ed128d510386fda80c65adc29b1b9eeb5271500d856",
+    "bytes": 42320392
+  },
+  {
+    "path": "work/library-policy-merged-bin/run-parallel",
+    "identical_to": "work/sweep-library-policy-audit-bin/run-parallel",
+    "sha256": "34342e1304224f7b862253f43ac0e04d1616cef2ef14eac31e7a5bbd81a4a8e9",
+    "bytes": 45288936
+  },
+  {
+    "path": "work/library-policy-merged-bin/openssl-cli",
+    "identical_to": "work/sweep-node-native-timers-restart-bin/openssl-cli",
+    "sha256": "f4aa15f2822f670af7b5c1043d7aa6ebbbc64229fd2fae382edfc6a4524749c1",
+    "bytes": 1103304
+  },
+  {
+    "path": "work/http-headers-bin/openssl-cli",
+    "identical_to": "work/sweep-node-native-timers-restart-bin/openssl-cli",
+    "sha256": "f4aa15f2822f670af7b5c1043d7aa6ebbbc64229fd2fae382edfc6a4524749c1",
+    "bytes": 1103304
+  },
+  {
+    "path": "work/sweep-buffer-fill-audit-bin/quench-node",
+    "identical_to": "work/buffer-fill-bin/quench-node",
+    "sha256": "d5084b367c77972aed112986d9ba813bfe1daa93dae2d4333c0147f2dfc16e0f",
+    "bytes": 31881936
+  },
+  {
+    "path": "work/sweep-buffer-fill-audit-bin/run-parallel",
+    "identical_to": "work/buffer-fill-bin/run-parallel",
+    "sha256": "8d86abd8e22674d0668f2d2d398630afb04f0e4dd381d87d2bc1d0302eb8c296",
+    "bytes": 34711376
+  },
+  {
+    "path": "work/sweep-buffer-fill-audit-bin/openssl-cli",
+    "identical_to": "work/sweep-node-native-timers-restart-bin/openssl-cli",
+    "sha256": "f4aa15f2822f670af7b5c1043d7aa6ebbbc64229fd2fae382edfc6a4524749c1",
+    "bytes": 1103304
+  },
+  {
+    "path": "work/abort-provider-bin/openssl-cli",
+    "identical_to": "work/sweep-node-native-timers-restart-bin/openssl-cli",
+    "sha256": "f4aa15f2822f670af7b5c1043d7aa6ebbbc64229fd2fae382edfc6a4524749c1",
+    "bytes": 1103304
+  },
+  {
+    "path": "work/sweep-tls-context-bin/quench-node",
+    "identical_to": "work/tls-synced-bin/quench-node",
+    "sha256": "a6ae1816dc5487b2df8a778fcd1414c10d4b9b947d988aae204f575d6c1b1139",
+    "bytes": 23001248
+  },
+  {
+    "path": "work/sweep-tls-context-bin/run-parallel",
+    "identical_to": "work/tls-synced-bin/run-parallel",
+    "sha256": "40fe69ef51e74b3ab186b5860709a19698cc77a9cc7762c1301c763040714e4d",
+    "bytes": 25049424
+  },
+  {
+    "path": "work/sweep-node-native-timers-bin/quench-node",
+    "identical_to": "work/sweep-node-native-timers-restart-bin/quench-node",
+    "sha256": "bfcc557627a11036e2cd4be3e2631dc7aeb0a938d74076cacbc70684e1f45717",
+    "bytes": 29518384
+  },
+  {
+    "path": "work/sweep-node-native-timers-bin/run-parallel",
+    "identical_to": "work/sweep-node-native-timers-restart-bin/run-parallel",
+    "sha256": "38be07b3fcc1988e839f51f1399475d3c193e0d30a62f7162654b3390393504c",
+    "bytes": 32202000
+  },
+  {
+    "path": "work/sweep-node-native-timers-bin/openssl-cli",
+    "identical_to": "work/sweep-node-native-timers-restart-bin/openssl-cli",
+    "sha256": "f4aa15f2822f670af7b5c1043d7aa6ebbbc64229fd2fae382edfc6a4524749c1",
+    "bytes": 1103304
+  },
+  {
+    "path": "work/sweep-vfs-descriptor-guard-audit-bin/quench-node",
+    "identical_to": "work/vfs-descriptor-guard-bin/quench-node",
+    "sha256": "f2fdf74c22db7364f11e01700bd92efa0ee360a0823fa12397892d62deb508a7",
+    "bytes": 42094632
+  },
+  {
+    "path": "work/sweep-vfs-descriptor-guard-audit-bin/run-parallel",
+    "identical_to": "work/vfs-descriptor-guard-bin/run-parallel",
+    "sha256": "11fa8c0421b1dfdc6e9febff0db7f694a5358b43b977405ac655678497ba9756",
+    "bytes": 45063048
+  },
+  {
+    "path": "work/sweep-vfs-descriptor-guard-audit-bin/openssl-cli",
+    "identical_to": "work/sweep-node-native-timers-restart-bin/openssl-cli",
+    "sha256": "f4aa15f2822f670af7b5c1043d7aa6ebbbc64229fd2fae382edfc6a4524749c1",
+    "bytes": 1103304
+  }
+]

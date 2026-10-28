@@ -1,0 +1,478 @@
+[
+  {
+    "node": [
+      "ascii",
+      false,
+      false,
+      "windows-1252",
+      "A"
+    ],
+    "quench": [
+      "ascii",
+      false,
+      false,
+      "TypeError",
+      null,
+      "value is not callable"
+    ]
+  },
+  {
+    "node": [
+      "ascii",
+      false,
+      false,
+      "windows-1252",
+      "\u00ef\u00bb\u00bfA"
+    ],
+    "quench": [
+      "ascii",
+      false,
+      false,
+      "TypeError",
+      null,
+      "value is not callable"
+    ]
+  },
+  {
+    "node": [
+      "ascii",
+      false,
+      false,
+      "windows-1252",
+      "\u00ff\u00feA\u0000"
+    ],
+    "quench": [
+      "ascii",
+      false,
+      false,
+      "TypeError",
+      null,
+      "value is not callable"
+    ]
+  },
+  {
+    "node": [
+      "ascii",
+      false,
+      false,
+      "windows-1252",
+      "\u00fe\u00ff\u0000A"
+    ],
+    "quench": [
+      "ascii",
+      false,
+      false,
+      "TypeError",
+      null,
+      "value is not callable"
+    ]
+  },
+  {
+    "node": [
+      "ascii",
+      false,
+      false,
+      "windows-1252",
+      "\u0000\u00d8"
+    ],
+    "quench": [
+      "ascii",
+      false,
+      false,
+      "TypeError",
+      null,
+      "value is not callable"
+    ]
+  },
+  {
+    "node": [
+      "ascii",
+      false,
+      false,
+      "windows-1252",
+      "\u0000\u00d8A"
+    ],
+    "quench": [
+      "ascii",
+      false,
+      false,
+      "TypeError",
+      null,
+      "value is not callable"
+    ]
+  },
+  {
+    "node": [
+      "ascii",
+      false,
+      false,
+      "windows-1252",
+      "\u00c3("
+    ],
+    "quench": [
+      "ascii",
+      false,
+      false,
+      "TypeError",
+      null,
+      "value is not callable"
+    ]
+  },
+  {
+    "node": [
+      "ascii",
+      false,
+      true,
+      "windows-1252",
+      "A"
+    ],
+    "quench": [
+      "ascii",
+      false,
+      true,
+      "TypeError",
+      null,
+      "value is not callable"
+    ]
+  },
+  {
+    "node": [
+      "ascii",
+      false,
+      true,
+      "windows-1252",
+      "\u00ef\u00bb\u00bfA"
+    ],
+    "quench": [
+      "ascii",
+      false,
+      true,
+      "TypeError",
+      null,
+      "value is not callable"
+    ]
+  },
+  {
+    "node": [
+      "ascii",
+      false,
+      true,
+      "windows-1252",
+      "\u00ff\u00feA\u0000"
+    ],
+    "quench": [
+      "ascii",
+      false,
+      true,
+      "TypeError",
+      null,
+      "value is not callable"
+    ]
+  },
+  {
+    "node": [
+      "ascii",
+      false,
+      true,
+      "windows-1252",
+      "\u00fe\u00ff\u0000A"
+    ],
+    "quench": [
+      "ascii",
+      false,
+      true,
+      "TypeError",
+      null,
+      "value is not callable"
+    ]
+  },
+  {
+    "node": [
+      "ascii",
+      false,
+      true,
+      "windows-1252",
+      "\u0000\u00d8"
+    ],
+    "quench": [
+      "ascii",
+      false,
+      true,
+      "TypeError",
+      null,
+      "value is not callable"
+    ]
+  },
+  {
+    "node": [
+      "ascii",
+      false,
+      true,
+      "windows-1252",
+      "\u0000\u00d8A"
+    ],
+    "quench": [
+      "ascii",
+      false,
+      true,
+      "TypeError",
+      null,
+      "value is not callable"
+    ]
+  },
+  {
+    "node": [
+      "ascii",
+      false,
+      true,
+      "windows-1252",
+      "\u00c3("
+    ],
+    "quench": [
+      "ascii",
+      false,
+      true,
+      "TypeError",
+      null,
+      "value is not callable"
+    ]
+  },
+  {
+    "node": [
+      "ascii",
+      true,
+      false,
+      "windows-1252",
+      "A"
+    ],
+    "quench": [
+      "ascii",
+      true,
+      false,
+      "TypeError",
+      null,
+      "value is not callable"
+    ]
+  },
+  {
+    "node": [
+      "ascii",
+      true,
+      false,
+      "windows-1252",
+      "\u00ef\u00bb\u00bfA"
+    ],
+    "quench": [
+      "ascii",
+      true,
+      false,
+      "TypeError",
+      null,
+      "value is not callable"
+    ]
+  },
+  {
+    "node": [
+      "ascii",
+      true,
+      false,
+      "windows-1252",
+      "\u00ff\u00feA\u0000"
+    ],
+    "quench": [
+      "ascii",
+      true,
+      false,
+      "TypeError",
+      null,
+      "value is not callable"
+    ]
+  },
+  {
+    "node": [
+      "ascii",
+      true,
+      false,
+      "windows-1252",
+      "\u00fe\u00ff\u0000A"
+    ],
+    "quench": [
+      "ascii",
+      true,
+      false,
+      "TypeError",
+      null,
+      "value is not callable"
+    ]
+  },
+  {
+    "node": [
+      "ascii",
+      true,
+      false,
+      "windows-1252",
+      "\u0000\u00d8"
+    ],
+    "quench": [
+      "ascii",
+      true,
+      false,
+      "TypeError",
+      null,
+      "value is not callable"
+    ]
+  },
+  {
+    "node": [
+      "ascii",
+      true,
+      false,
+      "windows-1252",
+      "\u0000\u00d8A"
+    ],
+    "quench": [
+      "ascii",
+      true,
+      false,
+      "TypeError",
+      null,
+      "value is not callable"
+    ]
+  },
+  {
+    "node": [
+      "ascii",
+      true,
+      false,
+      "windows-1252",
+      "\u00c3("
+    ],
+    "quench": [
+      "ascii",
+      true,
+      false,
+      "TypeError",
+      null,
+      "value is not callable"
+    ]
+  },
+  {
+    "node": [
+      "ascii",
+      true,
+      true,
+      "windows-1252",
+      "A"
+    ],
+    "quench": [
+      "ascii",
+      true,
+      true,
+      "TypeError",
+      null,
+      "value is not callable"
+    ]
+  },
+  {
+    "node": [
+      "ascii",
+      true,
+      true,
+      "windows-1252",
+      "\u00ef\u00bb\u00bfA"
+    ],
+    "quench": [
+      "ascii",
+      true,
+      true,
+      "TypeError",
+      null,
+      "value is not callable"
+    ]
+  },
+  {
+    "node": [
+      "ascii",
+      true,
+      true,
+      "windows-1252",
+      "\u00ff\u00feA\u0000"
+    ],
+    "quench": [
+      "ascii",
+      true,
+      true,
+      "TypeError",
+      null,
+      "value is not callable"
+    ]
+  },
+  {
+    "node": [
+      "ascii",
+      true,
+      true,
+      "windows-1252",
+      "\u00fe\u00ff\u0000A"
+    ],
+    "quench": [
+      "ascii",
+      true,
+      true,
+      "TypeError",
+      null,
+      "value is not callable"
+    ]
+  },
+  {
+    "node": [
+      "ascii",
+      true,
+      true,
+      "windows-1252",
+      "\u0000\u00d8"
+    ],
+    "quench": [
+      "ascii",
+      true,
+      true,
+      "TypeError",
+      null,
+      "value is not callable"
+    ]
+  },
+  {
+    "node": [
+      "ascii",
+      true,
+      true,
+      "windows-1252",
+      "\u0000\u00d8A"
+    ],
+    "quench": [
+      "ascii",
+      true,
+      true,
+      "TypeError",
+      null,
+      "value is not callable"
+    ]
+  },
+  {
+    "node": [
+      "ascii",
+      true,
+      true,
+      "windows-1252",
+      "\u00c3("
+    ],
+    "quench": [
+      "ascii",
+      true,
+      true,
+      "TypeError",
+      null,
+      "value is not callable"
+    ]
+  }
+]

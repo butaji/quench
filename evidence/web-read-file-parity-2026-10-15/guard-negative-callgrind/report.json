@@ -1,0 +1,93 @@
+{
+  "all_valid": false,
+  "binaries": [
+    {
+      "path": "/usr/bin/true",
+      "sha256": "b381cc8c55ec524b9fa92897f0882e855357468b4a763519cec47e05994d61ff"
+    },
+    {
+      "path": "/usr/bin/true",
+      "sha256": "b381cc8c55ec524b9fa92897f0882e855357468b4a763519cec47e05994d61ff"
+    }
+  ],
+  "cases_per_binary": 2,
+  "comparisons": [],
+  "cpu_limits": "400000 100000\n",
+  "expected_cases": 4,
+  "host": "Linux 7ba71d3070cc 6.18.44 #1 SMP Sat Sep 26 20:02:31 UTC 2026 x86_64 GNU/Linux",
+  "identities_unchanged": true,
+  "instruction_limit_met": null,
+  "instruction_limit_percent": 1.0,
+  "kind": "validated paired Callgrind instruction counts, not throughput or RSS",
+  "results": [
+    {
+      "binary_index": 0,
+      "completion_marker": false,
+      "exit_code": 0,
+      "fixture": "probe",
+      "input": "/workspace/quench/work/guard-negative-inputs/probe-0.js",
+      "input_sha256": "97e97c267bb445d4167d18087147e45ed3951fef31e08ce977e81b4955598bd3",
+      "instruction_log": "/workspace/quench/work/guard-negative-callgrind/0-probe-0.callgrind.log",
+      "instructions": 287149,
+      "runs": 0,
+      "stderr": "/workspace/quench/work/guard-negative-callgrind/0-probe-0.stderr",
+      "stderr_empty": true,
+      "stdout": "/workspace/quench/work/guard-negative-callgrind/0-probe-0.stdout",
+      "timed_out": false,
+      "valid": false
+    },
+    {
+      "binary_index": 0,
+      "completion_marker": false,
+      "exit_code": 0,
+      "fixture": "probe",
+      "input": "/workspace/quench/work/guard-negative-inputs/probe-1.js",
+      "input_sha256": "72aa717cae8582bf5da3b9d0e8fc8384d2c87d5dfe3a0861ee773bcf06bcef8e",
+      "instruction_log": "/workspace/quench/work/guard-negative-callgrind/0-probe-1.callgrind.log",
+      "instructions": 287149,
+      "runs": 1,
+      "stderr": "/workspace/quench/work/guard-negative-callgrind/0-probe-1.stderr",
+      "stderr_empty": true,
+      "stdout": "/workspace/quench/work/guard-negative-callgrind/0-probe-1.stdout",
+      "timed_out": false,
+      "valid": false
+    },
+    {
+      "binary_index": 1,
+      "completion_marker": false,
+      "exit_code": 0,
+      "fixture": "probe",
+      "input": "/workspace/quench/work/guard-negative-inputs/probe-0.js",
+      "input_sha256": "97e97c267bb445d4167d18087147e45ed3951fef31e08ce977e81b4955598bd3",
+      "instruction_log": "/workspace/quench/work/guard-negative-callgrind/1-probe-0.callgrind.log",
+      "instructions": 287149,
+      "runs": 0,
+      "stderr": "/workspace/quench/work/guard-negative-callgrind/1-probe-0.stderr",
+      "stderr_empty": true,
+      "stdout": "/workspace/quench/work/guard-negative-callgrind/1-probe-0.stdout",
+      "timed_out": false,
+      "valid": false
+    },
+    {
+      "binary_index": 1,
+      "completion_marker": false,
+      "exit_code": 0,
+      "fixture": "probe",
+      "input": "/workspace/quench/work/guard-negative-inputs/probe-1.js",
+      "input_sha256": "72aa717cae8582bf5da3b9d0e8fc8384d2c87d5dfe3a0861ee773bcf06bcef8e",
+      "instruction_log": "/workspace/quench/work/guard-negative-callgrind/1-probe-1.callgrind.log",
+      "instructions": 287149,
+      "runs": 1,
+      "stderr": "/workspace/quench/work/guard-negative-callgrind/1-probe-1.stderr",
+      "stderr_empty": true,
+      "stdout": "/workspace/quench/work/guard-negative-callgrind/1-probe-1.stdout",
+      "timed_out": false,
+      "valid": false
+    }
+  ],
+  "verifier": {
+    "path": "/workspace/quench/work/verify-fixed-work-frozen",
+    "repository_revision": "a49952862f85244af79550c9377f870b491dcdbb",
+    "sha256": "9864d2ae19cd20062e5e0e751a46ee9ed02d1526247203b9807aa12607bf0fa2"
+  }
+}

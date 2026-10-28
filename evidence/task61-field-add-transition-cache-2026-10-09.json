@@ -1,0 +1,108 @@
+{
+  "schema": 1,
+  "task": "61",
+  "experiment": "Cache ordinary-object property-add transitions",
+  "decision": "retain; two-field constructor loops improve 34.8% in an 11-pair M4 instruction-retirement comparison; empty construction is unchanged, so constructor allocation/prototype lookup remains a separate target",
+  "source": {
+    "base_revision": "ddfa0c04fa871eaa8a18ac14bdfa2e181f2c41f3",
+    "field_add_diff_sha256": "16392f465e9419d8516581a8096b610d0a6c36bf294819bac5d7eeb923702fce",
+    "files": [
+      "crates/quench-runtime/src/vm.rs",
+      "crates/quench-runtime/src/vm/object.rs",
+      "crates/quench-runtime/src/vm/vm_init.rs"
+    ],
+    "baseline_binary_sha256": "6a6176e2f6240571d78e2c4a61ec2a183faf88c03bc216ce097d7e0273b6d3aa",
+    "candidate_binary_sha256": "2f46dd365de6cbbf950f040a22fb1efd28666d1f393a96e3817e588037ec3d09",
+    "candidate_build_command": "CARGO_INCREMENTAL=0 cargo build -p quench-node --profile production",
+    "candidate_also_contains": "An independent RegExp replacement change was present in the candidate binary; the measured constructor loops do not execute RegExp code."
+  },
+  "host": {
+    "platform": "macOS 26.5; Apple M4 (Mac16,10), arm64",
+    "rustc": "rustc 1.99.0 (b940084d7 2026-09-28) (Homebrew)",
+    "measurement_backend": "/usr/bin/time -lp"
+  },
+  "measurement": {
+    "kind": "11-pair M4 production CJS instruction-retirement A/B with per-build empty-loop control",
+    "script": "(function(){function P(a,b){this.x=a;this.y=b;}var last;for(var t=0;t<100;t++)for(var i=0;i<10000;i++)last=new P(i,null);if(last.x!==9999||last.y!==null)throw new Error('constructor result');})();",
+    "matched_control": "(function(){function P(a,b){this.x=a;this.y=b;}var last=0;for(var t=0;t<100;t++)for(var i=0;i<10000;i++)last=i;if(last!==9999)throw new Error('control result');})();",
+    "normalization": "Subtract each binary's matched empty-loop instruction count. Pair order alternated by round. The report uses medians and paired bootstrap 95% intervals.",
+    "two_field_new": {
+      "iterations": 1000000,
+      "baseline_median_corrected_instructions": 18849140074,
+      "candidate_median_corrected_instructions": 12288762186,
+      "paired_median_change_percent": -34.80497,
+      "paired_bootstrap_95_percent_interval": [-34.8079, -34.80316],
+      "candidate_lower_pairs": 11,
+      "pairs": 11,
+      "baseline_median_max_rss_bytes": 20561920,
+      "candidate_median_max_rss_bytes": 20512768
+    },
+    "empty_constructor_control": {
+      "iterations": 1000000,
+      "baseline_median_corrected_instructions": 9225424536,
+      "candidate_median_corrected_instructions": 9224283148,
+      "paired_median_change_percent": -0.00594,
+      "paired_bootstrap_95_percent_interval": [-0.02837, 0.00354],
+      "candidate_lower_pairs": 7,
+      "pairs": 11,
+      "baseline_median_max_rss_bytes": 20217856,
+      "candidate_median_max_rss_bytes": 20217856
+    },
+    "artifacts": {
+      "reproduction_script": {
+        "path": "target/iteration/task61-field-add-cache-20261009/run-ab.zsh",
+        "sha256": "f8c6d761204a855f617295aa450107c52edb8092e7cb740cb4833d7dbb8db30f"
+      },
+      "raw_csv": {
+        "path": "target/iteration/task61-field-add-cache-20261009/raw.csv",
+        "sha256": "2d2a36203d651d729cb5f7526b121eb109cf7d010c1e12eba06a071ec1ab92fc"
+      }
+    },
+    "scope_limit": "Microbenchmark evidence isolates property-add costs; there is not yet a post-change V8-v7 fixture confirmation or Task 61 qualification. The empty-constructor control shows this cache does not explain or improve the remaining allocation/prototype-lookup overhead."
+  },
+  "implementation": "At an eligible SetField site, learn source shape to target shape and slot after the generic first add. The add hit checks the receiver source shape, extensibility, and the recorded ordinary-prototype shape chain before pushing the value and installing the target shape. Proxy, namespace, arguments, dictionary, deep-chain, inherited accessor/read-only, and non-extensible cases retain the generic path. SetThisFieldStrict and SetThisField share set_field_cached, so constructor field stores use the same cache. Cache storage is included in the existing field-cache memory report.",
+  "verification": {
+    "source_review": [
+      "SetThisFieldStrict and SetThisField dispatch through set_field_cached (vm/dispatch.rs:736).",
+      "The cache is trained only after the existing semantic path succeeds; inherited setters and non-writable properties are excluded.",
+      "Shape changes on the prototype chain invalidate the chain guard; descriptor mutation, prototype replacement, and shape compaction clear or invalidate the cache.",
+      "Class field definitions use a separate define-own-property path."
+    ],
+    "test262": {
+      "Object.defineProperty_stage_60": {"passed": 3411, "failed": 0},
+      "Proxy_stage_62": {"passed": 311, "failed": 0},
+      "class_related_stage_10_filter": {"passed": 4114, "failed": 0},
+      "function_code_stage_11": {"passed": 217, "failed": 0},
+      "Function_stage_48": {
+        "passed": 508,
+        "failed": 1,
+        "failure": "built-ins/Function/call-bind-this-realm-value.js",
+        "attribution": "The source-built Test262 runner failed with the same string-constructor identity mismatch at unmodified base revision ddfa0c04fa871eaa8a18ac14bdfa2e181f2c41f3; Node passed the exact test body. This is pre-existing relative to the FieldAddCache diff and is not counted as a passing gate. Historical Oct 8 evidence had this case passing, so it remains a separate regression to bisect."
+      }
+    },
+    "node_oracle": {
+      "matched": true,
+      "cases": [
+        "constructor own-field additions",
+        "setter installed on an inherited property after the add site warmed",
+        "inherited property changed to non-writable after warmup",
+        "non-extensible sloppy and strict receivers",
+        "Proxy receiver set trap",
+        "prototype replacement after warmup",
+        "Proxy in the prototype chain on warm and cold add sites"
+      ],
+      "script": {
+        "path": "target/iteration/field-add-cache-audit/field-add-semantics.cjs",
+        "sha256": "ac2a07c85afe66cea21eea6d4f54cedaa61c17b4d3915f1ecec437ba605ec70e"
+      }
+    },
+    "reports": [
+      {"path": "target/iteration/field-add-cache-audit/stage60-object.json", "sha256": "d6e12e9db04c81fbf8b67b2d77dbd98fc0200566c68c3ad9aa37161d29fecc1f"},
+      {"path": "target/iteration/field-add-cache-audit/stage62-proxy.json", "sha256": "c86689af80fceabab401858df8b9b9e3d378977fe1428e58bcb29aec7982735c"},
+      {"path": "target/iteration/field-add-cache-audit/stage10-class-filter.json", "sha256": "f53cb4de50c72764af9994b7ad7a181fd4bd7e0a03b12a8334b59ee34f313798"},
+      {"path": "target/iteration/field-add-cache-audit/stage11-function-code.json", "sha256": "36d704470016ff535a53b343fabc69399c4275eabd1263f4dcc5de37edb2e1e3"},
+      {"path": "target/iteration/field-add-cache-audit/stage48-function.json", "sha256": "e291641cabf6fc48cfc40acf967cea6007988cd742e3f337bae59412b5056b6b"},
+      {"path": "target/iteration/field-add-cache-audit/node-test262-create-realm.cjs", "sha256": "9888f76e258e5ed9bd211bececc947b590dcc2dbbf8f094d71cf005ece1f387b"}
+    ]
+  }
+}

@@ -1,0 +1,8 @@
+{"stage":"before","elapsed":0}
+{"stage":"spawn","elapsed":280}
+{"stage":"stdout listener","elapsed":280}
+{"stage":"stderr listener","elapsed":280}
+{"stage":"references","elapsed":280}
+{"stage":"console","elapsed":281}
+{"stage":"scheduled","elapsed":282}
+{"stage":"close","elapsed":319}

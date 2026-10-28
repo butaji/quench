@@ -1,0 +1,385 @@
+{
+  "schema": 1,
+  "report_kind": "jit_wasm_reference_body_cache_ab_diagnostic",
+  "created_unix_ns": 1792366266176247613,
+  "input_report_path": "evidence/jit-jetstream3-wasm-2026-10-18/reference-body-cache/screen-3-round.json",
+  "input_report_sha256": "2547551ced24dd7065a9994593d6290b5346df4268b2c8640185aea6d16d3d45",
+  "suite": "jet-stream3",
+  "jit_mode": "jit",
+  "quench_bench_binary": {
+    "path": "/workspace/quench/target/production/quench-bench",
+    "size_bytes": 1625776,
+    "modified_unix_ns": 1792366093416807794,
+    "sha256": "aeae0bbaa17e06a836b6543e51cc90a4ac5d257dea81264b8a2c24cb5325c64d"
+  },
+  "source_revision": "6e10e0a83d52dd630868df090c7f27ebd6d164e5",
+  "source_dirty": true,
+  "corpus_revision": "06785cf861ac44855f168cbbe829278c2802e6de",
+  "timeout_ms": 600000,
+  "host": {
+    "uname": "Linux f3da3ef8e0e6 6.18.55 #1 SMP Wed Oct 14 19:45:18 UTC 2026 x86_64 GNU/Linux",
+    "rustc": "rustc 1.99.1 (58cf8f9c3 2026-10-13)\nbinary: rustc\ncommit-hash: 58cf8f9c35b355199727627d07ae34a4e2846d67\ncommit-date: 2026-10-13\nhost: x86_64-unknown-linux-gnu\nrelease: 1.99.1\nLLVM version: 23.1.1",
+    "model": null,
+    "memory_bytes": 18882674688,
+    "memory_limit_bytes": 17179869184,
+    "cpu_quota": "400000 100000",
+    "process_metrics_backend": "Linux wait4 rusage"
+  },
+  "engine_provenance": [
+    {
+      "name": "quench_reference_body_cache_off",
+      "executable": "/workspace/quench/target/production/quench-node",
+      "executable_sha256": "a5b72884beff5d8699470cd6677d8d224d7234f1fb1abf330dde9ee007a32105",
+      "version": "Quench shared-VM JIT build; package 0.1.0",
+      "argv": [
+        "--jit"
+      ],
+      "environment": {
+        "HOME": "/home/agent",
+        "LANG": "C.UTF-8",
+        "LC_ALL": "C.UTF-8",
+        "PATH": "/home/agent/.cargo/bin:/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/override:/opt/codex/runtimes/codex-primary-runtime/dependencies/python/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin:/opt/codex/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/fallback",
+        "QUENCH_WASM_JIT_REFERENCE_BODY_CACHE": "0"
+      },
+      "inherits_environment": false,
+      "jit_mode": "enabled-by-cli-flag",
+      "jit_proof_command": [
+        "/workspace/quench/target/production/quench-node",
+        "--jit"
+      ],
+      "jit_proof": "the measured Quench process is launched with --jit; diagnostic reference-body-cache A/B arm with QUENCH_WASM_JIT_REFERENCE_BODY_CACHE=0"
+    },
+    {
+      "name": "quench_reference_body_cache_on",
+      "executable": "/workspace/quench/target/production/quench-node",
+      "executable_sha256": "a5b72884beff5d8699470cd6677d8d224d7234f1fb1abf330dde9ee007a32105",
+      "version": "Quench shared-VM JIT build; package 0.1.0",
+      "argv": [
+        "--jit"
+      ],
+      "environment": {
+        "HOME": "/home/agent",
+        "LANG": "C.UTF-8",
+        "LC_ALL": "C.UTF-8",
+        "PATH": "/home/agent/.cargo/bin:/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/override:/opt/codex/runtimes/codex-primary-runtime/dependencies/python/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin:/opt/codex/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/fallback",
+        "QUENCH_WASM_JIT_REFERENCE_BODY_CACHE": "1"
+      },
+      "inherits_environment": false,
+      "jit_mode": "enabled-by-cli-flag",
+      "jit_proof_command": [
+        "/workspace/quench/target/production/quench-node",
+        "--jit"
+      ],
+      "jit_proof": "the measured Quench process is launched with --jit; diagnostic reference-body-cache A/B arm with QUENCH_WASM_JIT_REFERENCE_BODY_CACHE=1"
+    },
+    {
+      "name": "bun",
+      "executable": "/workspace/.local/bench-runtimes/bun-v1.4.3/bun-linux-x64/bun",
+      "executable_sha256": "7ce7d6b654eddeec20afddf2396317fba6dc19ab52788a27e894e1806bf8f24b",
+      "version": "1.4.3",
+      "argv": [],
+      "environment": {
+        "BUN_JSC_useJIT": "1",
+        "HOME": "/home/agent",
+        "LANG": "C.UTF-8",
+        "LC_ALL": "C.UTF-8",
+        "PATH": "/home/agent/.cargo/bin:/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/override:/opt/codex/runtimes/codex-primary-runtime/dependencies/python/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin:/opt/codex/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/fallback"
+      },
+      "inherits_environment": false,
+      "jit_mode": "enabled-and-probed",
+      "jit_proof_command": [
+        "BUN_JSC_useJIT=1",
+        "BUN_JSC_dumpOptions=1",
+        "/workspace/.local/bench-runtimes/bun-v1.4.3/bun-linux-x64/bun",
+        "-e",
+        "console.log(Bun.version)"
+      ],
+      "jit_proof": "command succeeded and reported \"useJIT=true\": 1.4.3\n\nModified JSC options:\n   dumpOptions=1 (default: 0)\n   useJIT=true (default: true)"
+    },
+    {
+      "name": "node",
+      "executable": "/workspace/.local/bench-runtimes/node-v26.12.0-linux-x64/bin/node",
+      "executable_sha256": "caa24debe02770c92a70677e2a62ca98890150e7ac1c17bcfe31bcc98cc89943",
+      "version": "v26.12.0",
+      "argv": [],
+      "environment": {
+        "HOME": "/home/agent",
+        "LANG": "C.UTF-8",
+        "LC_ALL": "C.UTF-8",
+        "PATH": "/home/agent/.cargo/bin:/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/override:/opt/codex/runtimes/codex-primary-runtime/dependencies/python/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin:/opt/codex/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/fallback"
+      },
+      "inherits_environment": false,
+      "jit_mode": "enabled-and-probed",
+      "jit_proof_command": [
+        "/workspace/.local/bench-runtimes/node-v26.12.0-linux-x64/bin/node",
+        "--trace-opt",
+        "--no-concurrent-recompilation",
+        "-e",
+        "function hot(x) { return x + 1; } for (let i = 0; i < 100000; i++) hot(i);"
+      ],
+      "jit_proof": "command succeeded and reported \"completed compiling\": [marking 0x3362df0b7a31 <JSFunction hot (sfi = 0x3362df0b4211)> for optimization to MAGLEV, ConcurrencyMode::kConcurrent, reason: hot and stable]\n[compiling method 0x3362df0b7a31 <JSFunction hot (sfi = 0x3362df0b4211)> (target MAGLEV), mode: ConcurrencyMode::kSynchronous]\n[completed compiling 0x3362df0b7a31 <JSFunction hot (sfi = 0x3362df0b4211)> (target MAGLEV) - took 0.000, 0.087, 0.002 ms]\n[marking 0x3362df0b79c1 <JSFunction (sfi = 0x3362df0b4169)> for optimization to MAGLEV, ConcurrencyMode::kConcurrent, reason: hot and stable]\n[marking 0x3362df0b7a31 <JSFunction hot (sfi = 0x3362df0b4211)> for optimization to TURBOFAN_JS, ConcurrencyMode::kConcurrent, reason: hot and stable]\n[compiling method 0x3362df0b7a31 <JSFunction hot (sfi = 0x3362df0b4211)> (target TURBOFAN_JS), mode: ConcurrencyMode::kSynchronous]\n[completed compiling 0x3362df0b7a31 <JSFunction hot (sfi = 0x3362df0b4211)> (target TURBOFAN_JS) - took 0.002, 0.399, 0.007 ms]\n[compiling method 0x3362df0b79c1 <JSFunction (sfi = 0x3362df0b4169)> (target MAGLEV) OSR, mode: ConcurrencyMode::kSynchronous]\n[completed compiling 0x3362df0b79c1 <JSFunction (sfi = 0x3362df0b4169)> (target MAGLEV) OSR - took 0.000, 0.114, 0.002 ms]"
+    }
+  ],
+  "rounds_per_fixture": 3,
+  "analysis_runtime": "quench-bench Rust analyzer; rustc 1.99.1 (58cf8f9c3 2026-10-13)\nbinary: rustc\ncommit-hash: 58cf8f9c35b355199727627d07ae34a4e2846d67\ncommit-date: 2026-10-13\nhost: x86_64-unknown-linux-gnu\nrelease: 1.99.1\nLLVM version: 23.1.1",
+  "suite_inputs": [
+    {
+      "path": "quench-bench/jetstream/cli.js",
+      "size_bytes": 5600,
+      "modified_unix_ns": 1792229119091972874,
+      "sha256": "22ee4b987b07940dd7397ed7f88345c71acc415e2549b64bf45ba43f7572e5f0"
+    },
+    {
+      "path": "quench-bench/jetstream/JetStreamDriver.js",
+      "size_bytes": 110633,
+      "modified_unix_ns": 1792229118593919588,
+      "sha256": "f105bddfd402514b2325fe9ea6e1df5ce776a4ad4570a8006c7c8559159440fc"
+    },
+    {
+      "path": "quench-bench/jetstream/utils/params.js",
+      "size_bytes": 8047,
+      "modified_unix_ns": 1792229119770704165,
+      "sha256": "0e9d28c0fd2de5583c64678ffc61307b10d983bcb419fe2e3bb383c8b7ded647"
+    },
+    {
+      "path": "quench-bench/jetstream/utils/shell-config.js",
+      "size_bytes": 2352,
+      "modified_unix_ns": 1792229119770904880,
+      "sha256": "9a83000be5e6526a3c26a414fc3a23043e57ef8e4cd67aaff459066a2c347bca"
+    }
+  ],
+  "bootstrap": {
+    "name": "paired percentile bootstrap of median log-ratios, reported as ratios",
+    "interval_level": 0.95,
+    "replicates": 100000,
+    "base_seed": "0x51a7beefcafe2c31",
+    "resampling": "resample matching round indices jointly for candidate and reference",
+    "statistic": "exp(median(log(candidate / reference)))",
+    "interval": "exponentiated linear-interpolated log-ratio percentiles"
+  },
+  "fixtures": {
+    "tsf-wasm": {
+      "input_sha256": "5273d2e73158bfd19855f25a4f5ccb256de5bc8fec11c07b1456cd19e0d167eb",
+      "paired_rounds": 3,
+      "raw_rounds": [
+        {
+          "round": 0,
+          "execution_order": [
+            "quench_reference_body_cache_off",
+            "quench_reference_body_cache_on",
+            "bun",
+            "node"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 933183583,
+              "score": 216.19,
+              "peak_rss_bytes": 130510848
+            },
+            "node": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 959554867,
+              "score": 190.51,
+              "peak_rss_bytes": 144240640
+            },
+            "quench_reference_body_cache_off": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 16467712131,
+              "score": 11.18,
+              "peak_rss_bytes": 236687360
+            },
+            "quench_reference_body_cache_on": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 17248115263,
+              "score": 10.29,
+              "peak_rss_bytes": 236740608
+            }
+          }
+        },
+        {
+          "round": 1,
+          "execution_order": [
+            "quench_reference_body_cache_on",
+            "bun",
+            "node",
+            "quench_reference_body_cache_off"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 851498150,
+              "score": 230.86,
+              "peak_rss_bytes": 130859008
+            },
+            "node": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 958943913,
+              "score": 207.49,
+              "peak_rss_bytes": 144625664
+            },
+            "quench_reference_body_cache_off": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 16566298457,
+              "score": 10.83,
+              "peak_rss_bytes": 236683264
+            },
+            "quench_reference_body_cache_on": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 17210454624,
+              "score": 10.4,
+              "peak_rss_bytes": 236642304
+            }
+          }
+        },
+        {
+          "round": 2,
+          "execution_order": [
+            "bun",
+            "node",
+            "quench_reference_body_cache_off",
+            "quench_reference_body_cache_on"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 965816689,
+              "score": 208.9,
+              "peak_rss_bytes": 137232384
+            },
+            "node": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 933389109,
+              "score": 215.89,
+              "peak_rss_bytes": 144642048
+            },
+            "quench_reference_body_cache_off": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 16562135921,
+              "score": 10.95,
+              "peak_rss_bytes": 236670976
+            },
+            "quench_reference_body_cache_on": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 16348231085,
+              "score": 11.09,
+              "peak_rss_bytes": 236670976
+            }
+          }
+        }
+      ],
+      "engine_medians": {
+        "bun": {
+          "score": 216.19,
+          "max_rss_bytes": 130859008.0
+        },
+        "node": {
+          "score": 207.49,
+          "max_rss_bytes": 144625664.0
+        },
+        "quench_reference_body_cache_off": {
+          "score": 10.95,
+          "max_rss_bytes": 236683264.0
+        },
+        "quench_reference_body_cache_on": {
+          "score": 10.4,
+          "max_rss_bytes": 236670976.0
+        }
+      },
+      "comparisons": {
+        "quench_reference_body_cache_on_vs_bun": {
+          "candidate_engine": "quench_reference_body_cache_on",
+          "reference_engine": "bun",
+          "score": {
+            "candidate_median": 10.4,
+            "reference_median": 216.19,
+            "median_ratio": 0.04759702113881308,
+            "paired_ratio_interval_95": [
+              0.04504894741401716,
+              0.053087601723312575
+            ],
+            "interval_excludes_tie": true,
+            "seed": "0x4358ebad6747b56c"
+          },
+          "max_rss": {
+            "candidate_median": 236670976.0,
+            "reference_median": 130859008.0,
+            "median_ratio": 1.8083761111806687,
+            "paired_ratio_interval_95": [
+              1.724600047755492,
+              1.813953488372093
+            ],
+            "interval_excludes_tie": true,
+            "seed": "0xf699ac97c63ff36b"
+          }
+        },
+        "quench_reference_body_cache_on_vs_node": {
+          "candidate_engine": "quench_reference_body_cache_on",
+          "reference_engine": "node",
+          "score": {
+            "candidate_median": 10.4,
+            "reference_median": 207.49,
+            "median_ratio": 0.05136875260549355,
+            "paired_ratio_interval_95": [
+              0.050122897489035624,
+              0.05401291270799433
+            ],
+            "interval_excludes_tie": true,
+            "seed": "0x80f8a51b9140e19b"
+          },
+          "max_rss": {
+            "candidate_median": 236670976.0,
+            "reference_median": 144625664.0,
+            "median_ratio": 1.6362529380114972,
+            "paired_ratio_interval_95": [
+              1.6362400521113598,
+              1.6412892233423257
+            ],
+            "interval_excludes_tie": true,
+            "seed": "0xc84d246f1ba0cc94"
+          }
+        },
+        "quench_reference_body_cache_on_vs_quench_reference_body_cache_off": {
+          "candidate_engine": "quench_reference_body_cache_on",
+          "reference_engine": "quench_reference_body_cache_off",
+          "score": {
+            "candidate_median": 10.4,
+            "reference_median": 10.95,
+            "median_ratio": 0.9602954755309326,
+            "paired_ratio_interval_95": [
+              0.9203935599284436,
+              1.012785388127854
+            ],
+            "interval_excludes_tie": false,
+            "seed": "0xa06db67075df5ea7"
+          },
+          "max_rss": {
+            "candidate_median": 236670976.0,
+            "reference_median": 236683264.0,
+            "median_ratio": 1.0,
+            "paired_ratio_interval_95": [
+              0.9998269417139692,
+              1.0002249718785152
+            ],
+            "interval_excludes_tie": false,
+            "seed": "0x32d49780395e2bc0"
+          }
+        }
+      },
+      "qualified": false
+    }
+  },
+  "qualified": false
+}

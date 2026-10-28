@@ -1,0 +1,172 @@
+{
+  "schema": 1,
+  "task": "61",
+  "experiment": "three-pair control screen for two-slot ValueArena minimum",
+  "source_revision": "2e6a645fe7b0b4702b38c7510b8793d17ff69437",
+  "corpus_revision": "64e1860c736c1b899708f4cd646721bc71e53d8b",
+  "rounds_per_fixture": 3,
+  "qualification_ready": false,
+  "fixtures": {
+    "earley-boyer.js": {
+      "materialized_sha256": "aa379c1d54f5d13de32ebf2b50729d0cbc64bb23de5e524256c7b2270213cc0b",
+      "valid": true,
+      "output_equal": true,
+      "records": [
+        {
+          "fixture": "earley-boyer.js",
+          "pair": 1,
+          "execution_order": [
+            "baseline",
+            "candidate"
+          ],
+          "valid": true,
+          "output_equal": true,
+          "baseline_score": 212.0,
+          "candidate_score": 196.0,
+          "baseline_rss_bytes": 51269632,
+          "candidate_rss_bytes": 47976448,
+          "results": {
+            "baseline": {
+              "command": [
+                "/workspace/quench/work/task61-property-arena-min-linux-2026-10-09/quench-baseline",
+                "/workspace/quench/work/task61-property-arena-min-linux-2026-10-09/materialized-earley-boyer.js"
+              ],
+              "exit_code": 0,
+              "timed_out": false,
+              "score": 212.0,
+              "maximum_rss_bytes": 51269632,
+              "wall_ns": 38740677758,
+              "result_lines": [
+                "__quenchBenchResult: EarleyBoyer: 212"
+              ],
+              "semantic_output": [],
+              "stdout": "__quenchBenchResult: EarleyBoyer: 212\n----\nScore: 212\n",
+              "stderr": ""
+            },
+            "candidate": {
+              "command": [
+                "/workspace/quench/work/task61-property-arena-min-linux-2026-10-09/quench-candidate",
+                "/workspace/quench/work/task61-property-arena-min-linux-2026-10-09/materialized-earley-boyer.js"
+              ],
+              "exit_code": 0,
+              "timed_out": false,
+              "score": 196.0,
+              "maximum_rss_bytes": 47976448,
+              "wall_ns": 41884447138,
+              "result_lines": [
+                "__quenchBenchResult: EarleyBoyer: 196"
+              ],
+              "semantic_output": [],
+              "stdout": "__quenchBenchResult: EarleyBoyer: 196\n----\nScore: 196\n",
+              "stderr": ""
+            }
+          }
+        },
+        {
+          "fixture": "earley-boyer.js",
+          "pair": 2,
+          "execution_order": [
+            "candidate",
+            "baseline"
+          ],
+          "valid": true,
+          "output_equal": true,
+          "baseline_score": 205.0,
+          "candidate_score": 212.0,
+          "baseline_rss_bytes": 50540544,
+          "candidate_rss_bytes": 48631808,
+          "results": {
+            "candidate": {
+              "command": [
+                "/workspace/quench/work/task61-property-arena-min-linux-2026-10-09/quench-candidate",
+                "/workspace/quench/work/task61-property-arena-min-linux-2026-10-09/materialized-earley-boyer.js"
+              ],
+              "exit_code": 0,
+              "timed_out": false,
+              "score": 212.0,
+              "maximum_rss_bytes": 48631808,
+              "wall_ns": 37846105907,
+              "result_lines": [
+                "__quenchBenchResult: EarleyBoyer: 212"
+              ],
+              "semantic_output": [],
+              "stdout": "__quenchBenchResult: EarleyBoyer: 212\n----\nScore: 212\n",
+              "stderr": ""
+            },
+            "baseline": {
+              "command": [
+                "/workspace/quench/work/task61-property-arena-min-linux-2026-10-09/quench-baseline",
+                "/workspace/quench/work/task61-property-arena-min-linux-2026-10-09/materialized-earley-boyer.js"
+              ],
+              "exit_code": 0,
+              "timed_out": false,
+              "score": 205.0,
+              "maximum_rss_bytes": 50540544,
+              "wall_ns": 38895359730,
+              "result_lines": [
+                "__quenchBenchResult: EarleyBoyer: 205"
+              ],
+              "semantic_output": [],
+              "stdout": "__quenchBenchResult: EarleyBoyer: 205\n----\nScore: 205\n",
+              "stderr": ""
+            }
+          }
+        },
+        {
+          "fixture": "earley-boyer.js",
+          "pair": 3,
+          "execution_order": [
+            "baseline",
+            "candidate"
+          ],
+          "valid": true,
+          "output_equal": true,
+          "baseline_score": 210.0,
+          "candidate_score": 203.0,
+          "baseline_rss_bytes": 50679808,
+          "candidate_rss_bytes": 48377856,
+          "results": {
+            "baseline": {
+              "command": [
+                "/workspace/quench/work/task61-property-arena-min-linux-2026-10-09/quench-baseline",
+                "/workspace/quench/work/task61-property-arena-min-linux-2026-10-09/materialized-earley-boyer.js"
+              ],
+              "exit_code": 0,
+              "timed_out": false,
+              "score": 210.0,
+              "maximum_rss_bytes": 50679808,
+              "wall_ns": 39139642412,
+              "result_lines": [
+                "__quenchBenchResult: EarleyBoyer: 210"
+              ],
+              "semantic_output": [],
+              "stdout": "__quenchBenchResult: EarleyBoyer: 210\n----\nScore: 210\n",
+              "stderr": ""
+            },
+            "candidate": {
+              "command": [
+                "/workspace/quench/work/task61-property-arena-min-linux-2026-10-09/quench-candidate",
+                "/workspace/quench/work/task61-property-arena-min-linux-2026-10-09/materialized-earley-boyer.js"
+              ],
+              "exit_code": 0,
+              "timed_out": false,
+              "score": 203.0,
+              "maximum_rss_bytes": 48377856,
+              "wall_ns": 39474662890,
+              "result_lines": [
+                "__quenchBenchResult: EarleyBoyer: 203"
+              ],
+              "semantic_output": [],
+              "stdout": "__quenchBenchResult: EarleyBoyer: 203\n----\nScore: 203\n",
+              "stderr": ""
+            }
+          }
+        }
+      ]
+    }
+  },
+  "binary_sha256": {
+    "baseline": "d6165b53df0198b58e5c3887fed1afad351bde17e237a6f711d495987cb79158",
+    "candidate": "fb8ea2c1e4c6f49814be08647fce18545a4bb518adb58d63a0b1b947a73b9920"
+  }
+}

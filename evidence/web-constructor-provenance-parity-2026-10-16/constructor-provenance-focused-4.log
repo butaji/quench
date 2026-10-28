@@ -1,0 +1,13 @@
+   Compiling quench-runtime v0.1.0 (/workspace/quench/crates/quench-runtime)
+   Compiling quench-wasm v0.1.0 (/workspace/quench/crates/quench-wasm)
+   Compiling quench-node v0.1.0 (/workspace/quench/crates/quench-node)
+   Compiling quench-node-test v0.1.0 (/workspace/quench/crates/quench-node-test)
+    Finished `iteration` profile [optimized] target(s) in 1m 53s
+     Running tests/child_entry.rs (work/host-build/iteration/deps/child_entry-a67896ab5b9c716a)
+
+running 2 tests
+test native_constructor_names_preserve_creation_provenance_and_prototype_roles ... ok
+test native_constructor_names_use_safe_mutable_debug_names_and_original_prototype_names ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 324 filtered out; finished in 0.61s
+

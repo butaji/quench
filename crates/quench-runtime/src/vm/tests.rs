@@ -14342,6 +14342,97 @@ fn shared_osr_compiles_loose_nullish_equality_without_coercion() {
 
 #[test]
 #[cfg(not(quench_profiled))]
+fn shared_osr_reloads_changing_field_receivers_and_enters_native() {
+    let program = Engine::compile(crate::ExecutionRequest::script(
+        r#"
+          function sumList(node) {
+            let total = 0;
+            while (node !== null) {
+              total += node.value;
+              node = node.next;
+            }
+            return total;
+          }
+          let head = null;
+          for (let value = 32; value > 0; value--) head = { value, next: head };
+          let repeated = 0;
+          for (let call = 0; call < 300; call++) repeated += sumList(head);
+          print(repeated);
+
+          let getterCount = 0;
+          const getterNode = { next: null };
+          Object.defineProperty(getterNode, 'value', {
+            get() { getterCount++; return 7; }, enumerable: true
+          });
+          print(sumList({ value: 1, next: getterNode }));
+          print(getterCount);
+
+          let proxyGets = 0;
+          const proxyNode = new Proxy({ value: 9, next: null }, {
+            get(target, key, receiver) {
+              if (key === 'value' || key === 'next') proxyGets++;
+              return Reflect.get(target, key, receiver);
+            }
+          });
+          print(sumList({ value: 1, next: proxyNode }));
+          print(proxyGets);
+
+          const thrown = Error('field getter');
+          let throwCount = 0;
+          const throwingNode = { next: null };
+          Object.defineProperty(throwingNode, 'value', {
+            get() { throwCount++; throw thrown; }, enumerable: true
+          });
+          let sameError = false;
+          try { sumList({ value: 1, next: throwingNode }); }
+          catch (error) { sameError = error === thrown; }
+          print(throwCount);
+          print(sameError);
+        "#,
+        "osr-changing-field-receiver.js",
+    ))
+    .unwrap();
+    let function_id = program
+        .functions
+        .iter()
+        .position(|function| {
+            function
+                .header()
+                .name
+                .is_some_and(|name| &program.atoms[name as usize] == "sumList")
+        })
+        .expect("changing receiver loop function");
+
+    let interpreted_output = Rc::new(RefCell::new(Vec::new()));
+    let mut interpreter = Vm::new(TestHost::writing_to(interpreted_output.clone()));
+    interpreter.execute(&program).unwrap();
+    assert_eq!(interpreted_output.borrow().as_slice(), ["158400", "8", "1", "10", "2", "1", "true"]);
+
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    vm.set_execution_mode(crate::ExecutionMode::Compiled);
+    vm.programs.enable_js_jit_diagnostics();
+    vm.execute(&program).unwrap();
+    assert_eq!(output.borrow().as_slice(), interpreted_output.borrow().as_slice());
+
+    let views = vm
+        .programs
+        .lane_views(super::program_store::ProgramId::MAIN)
+        .expect("main program lane views");
+    let view = views
+        .get(function_id)
+        .and_then(super::program_store::derived_lane_view)
+        .expect("hot changing receiver lane view");
+    let diagnostics = view.osr_diagnostics();
+    assert_eq!(diagnostics.currently_compiled_sites, 1, "OSR diagnostics: {diagnostics:?}");
+    assert!(
+        diagnostics.native_region_runs > 0,
+        "changing receiver loop never entered native code: {diagnostics:?}"
+    );
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
 fn shared_osr_float_unary_uses_shared_number_denotation() {
     let program = Engine::compile(crate::ExecutionRequest::script(
         r#"

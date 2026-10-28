@@ -1,0 +1,26 @@
+[
+  {
+    "probe": "inspect-getter-error-stack-probe",
+    "runtime": "node",
+    "exit_code": 0,
+    "timed_out": false
+  },
+  {
+    "probe": "inspect-getter-error-stack-probe",
+    "runtime": "quench",
+    "exit_code": 0,
+    "timed_out": false
+  },
+  {
+    "probe": "inspect-constructor-provenance-probe",
+    "runtime": "node",
+    "exit_code": 0,
+    "timed_out": false
+  },
+  {
+    "probe": "inspect-constructor-provenance-probe",
+    "runtime": "quench",
+    "exit_code": 0,
+    "timed_out": false
+  }
+]

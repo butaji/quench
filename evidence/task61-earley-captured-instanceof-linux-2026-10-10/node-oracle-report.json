@@ -1,0 +1,24 @@
+{
+  "node_version": "v24.19.0",
+  "node_sha256": "bc17c508ffeed0ec622934f9b7fa72f8e78da65350e63c3eceb56fa688aa5e12",
+  "oracle_sha256": "dd7e9d39edbeb29f20bbea8243a851255c2171c23f985140859b1ee0a59461cb",
+  "baseline_sha256": "e46537823eb25a37cf5646af793e6873ceaeff1069fb878a96813cae3a86ab32",
+  "candidate_sha256": "bfbb777dd6a901c2265e93c020739f892c91a25f4664d1c9ff4a42c22105245d",
+  "node": {
+    "exit_code": 0,
+    "stdout": "[[\"ordinary_true\",\"return\",true],[\"ordinary_false\",\"return\",false],[\"primitive_left\",\"return\",false],[\"capture_before_mutation\",\"return\",true],[\"capture_after_mutation\",\"return\",true],[\"custom_true\",\"return\",true],[\"custom_false\",\"return\",false],[\"custom_throw\",\"throw\",\"RangeError\",\"oracle boom\"],[\"proxy_true\",\"return\",true],[\"proxy_log\",[\"hasInstance\",\"prototype\"]],[\"bound_true\",\"return\",true],[\"bound_false\",\"return\",false],[\"capture_tdz\",\"throw\",\"ReferenceError\",\"Cannot access 'Late' before initialization\"],[\"capture_after_tdz\",\"return\",true],[\"events\",[[\"custom\",true],[\"custom\",false],[\"throwing\"]]]]\n",
+    "stderr": ""
+  },
+  "baseline": {
+    "exit_code": 0,
+    "stdout": "[[\"ordinary_true\",\"return\",true],[\"ordinary_false\",\"return\",false],[\"primitive_left\",\"return\",false],[\"capture_before_mutation\",\"return\",true],[\"capture_after_mutation\",\"return\",true],[\"custom_true\",\"return\",true],[\"custom_false\",\"return\",false],[\"custom_throw\",\"throw\",\"RangeError\",\"oracle boom\"],[\"proxy_true\",\"return\",true],[\"proxy_log\",[\"hasInstance\",\"prototype\"]],[\"bound_true\",\"return\",true],[\"bound_false\",\"return\",false],[\"capture_tdz\",\"throw\",\"ReferenceError\",\"Cannot access 'Late' before initialization\"],[\"capture_after_tdz\",\"return\",true],[\"events\",[[\"custom\",true],[\"custom\",false],[\"throwing\"]]]]\n",
+    "stderr": ""
+  },
+  "candidate": {
+    "exit_code": 0,
+    "stdout": "[[\"ordinary_true\",\"return\",true],[\"ordinary_false\",\"return\",false],[\"primitive_left\",\"return\",false],[\"capture_before_mutation\",\"return\",true],[\"capture_after_mutation\",\"return\",true],[\"custom_true\",\"return\",true],[\"custom_false\",\"return\",false],[\"custom_throw\",\"throw\",\"RangeError\",\"oracle boom\"],[\"proxy_true\",\"return\",true],[\"proxy_log\",[\"hasInstance\",\"prototype\"]],[\"bound_true\",\"return\",true],[\"bound_false\",\"return\",false],[\"capture_tdz\",\"throw\",\"ReferenceError\",\"Cannot access 'Late' before initialization\"],[\"capture_after_tdz\",\"return\",true],[\"events\",[[\"custom\",true],[\"custom\",false],[\"throwing\"]]]]\n",
+    "stderr": ""
+  },
+  "same_outcomes_and_traces_as_node": true,
+  "candidate_matches_baseline": true
+}

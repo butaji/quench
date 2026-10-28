@@ -1,0 +1,9 @@
+   Compiling quench-runtime v0.1.0 (/workspace/quench/crates/quench-runtime)
+    Finished `test` profile [unoptimized] target(s) in 2m 40s
+     Running unittests src/lib.rs (target/debug/deps/quench_runtime-faba0c2c63dca90b)
+
+running 1 test
+test api::embedding::tests::heap_memory_census_tracks_rooted_records_and_collection_without_guest_hooks ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 672 filtered out; finished in 0.04s
+

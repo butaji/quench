@@ -1,0 +1,71 @@
+[
+  {
+    "engine": "node",
+    "framework": "express",
+    "command": [
+      "/workspace/quench/work/node-v26.12.0-linux-x64/bin/node",
+      "--jitless",
+      "driver.cjs",
+      "scenarios/express.cjs"
+    ],
+    "exit_code": 0,
+    "valid": true
+  },
+  {
+    "engine": "node",
+    "framework": "koa",
+    "command": [
+      "/workspace/quench/work/node-v26.12.0-linux-x64/bin/node",
+      "--jitless",
+      "driver.cjs",
+      "scenarios/koa.cjs"
+    ],
+    "exit_code": 0,
+    "valid": true
+  },
+  {
+    "engine": "node",
+    "framework": "fastify",
+    "command": [
+      "/workspace/quench/work/node-v26.12.0-linux-x64/bin/node",
+      "--jitless",
+      "driver.cjs",
+      "scenarios/fastify.cjs"
+    ],
+    "exit_code": 0,
+    "valid": true
+  },
+  {
+    "engine": "quench",
+    "framework": "express",
+    "command": [
+      "/workspace/quench/target/iteration/quench-node",
+      "driver.cjs",
+      "scenarios/express.cjs"
+    ],
+    "exit_code": 0,
+    "valid": true
+  },
+  {
+    "engine": "quench",
+    "framework": "koa",
+    "command": [
+      "/workspace/quench/target/iteration/quench-node",
+      "driver.cjs",
+      "scenarios/koa.cjs"
+    ],
+    "exit_code": 0,
+    "valid": true
+  },
+  {
+    "engine": "quench",
+    "framework": "fastify",
+    "command": [
+      "/workspace/quench/target/iteration/quench-node",
+      "driver.cjs",
+      "scenarios/fastify.cjs"
+    ],
+    "exit_code": 0,
+    "valid": true
+  }
+]

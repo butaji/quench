@@ -1,0 +1,87 @@
+{
+  "scope": "Node runner discovery and suite acceptance, not frozen implemented inventory qualification",
+  "unit_checks": {
+    "library": 4,
+    "parallel_manifest": 2,
+    "failed": 0,
+    "ignored": 0,
+    "log": "target/iteration/task19-node-discovery-tests.log"
+  },
+  "controls": [
+    {
+      "id": "completed-pass",
+      "command": [
+        "target/debug/run-compat",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task19-node-discovery-controls/pass"
+      ],
+      "expected_exit": 0,
+      "exit": 0,
+      "stdout": "completed\n\nPASS  /Users/admin/Code/GitHub/quench-v2/target/iteration/task19-node-discovery-controls/pass/case.js\n\ncompat: 1 passed, 0 failed, 0 skipped, 1 total\n",
+      "stderr": ""
+    },
+    {
+      "id": "completed-fail",
+      "command": [
+        "target/debug/run-compat",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task19-node-discovery-controls/fail"
+      ],
+      "expected_exit": 1,
+      "exit": 1,
+      "stdout": "FAIL  /Users/admin/Code/GitHub/quench-v2/target/iteration/task19-node-discovery-controls/fail/case.js: runtime: Thrown(Object(ObjectData { identity: 4110, layout_id: Cell { value: 0 }, replacement: RefCell { value: None }, replacement_state: Cell { value: false }, properties: ObjectProperties { names: [PropertyName(\"\\0error_slot\"), PropertyName(\"\\0prototype\"), PropertyName(\"\\0quench:descriptor:\\0message\"), PropertyName(\"message\")], values: [SlotWord(Boolean(true)), SlotWord(Builtin(ErrorPrototype)), SlotWord(Object(ObjectData { identity: 4109, layout_id: Cell { value: 0 }, replacement: RefCell { value: None }, replacement_state: Cell { value: false }, properties: ObjectProperties { names: [PropertyName(\"value\"), PropertyName(\"writable\"), PropertyName(\"enumerable\"), PropertyName(\"configurable\")], values: [SlotWord(String(\"deliberate verifier failure\")), SlotWord(Boolean(true)), SlotWord(Boolean(false)), SlotWord(Boolean(true))], layout_hash: Cell { value: 9551034816440365322 }, lookup: None }, private_slots: RefCell { value: [] }, original_prototype: RefCell { value: None }, created: [], created_derived: true, descriptor_metadata_state: Cell { value: 0 }, deleted_marker_state: Cell { value: 0 }, script_global_view: Cell { value: false }, realm_global: Cell { value: false }, regexp_internal_slot: Cell { value: false }, prototype_state: Cell { value: 1 }, extensible_state: Cell { value: 0 } })), SlotWord(String(\"deliberate verifier failure\"))], layout_hash: Cell { value: 8651386377529019560 }, lookup: None }, private_slots: RefCell { value: [] }, original_prototype: RefCell { value: None }, created: [], created_derived: true, descriptor_metadata_state: Cell { value: 0 }, deleted_marker_state: Cell { value: 0 }, script_global_view: Cell { value: false }, realm_global: Cell { value: false }, regexp_internal_slot: Cell { value: false }, prototype_state: Cell { value: 2 }, extensible_state: Cell { value: 0 } }))\n\ncompat: 0 passed, 1 failed, 0 skipped, 1 total\nfailures:\n  - /Users/admin/Code/GitHub/quench-v2/target/iteration/task19-node-discovery-controls/fail/case.js\n",
+      "stderr": ""
+    },
+    {
+      "id": "cycle",
+      "command": [
+        "target/debug/run-compat",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task19-node-discovery-controls/cycle"
+      ],
+      "expected_exit": 2,
+      "exit": 2,
+      "stdout": "",
+      "stderr": "error: fixture discovery: cyclic fixture directory: /Users/admin/Code/GitHub/quench-v2/target/iteration/task19-node-discovery-controls/cycle/back\n"
+    },
+    {
+      "id": "missing",
+      "command": [
+        "target/debug/run-compat",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task19-node-discovery-controls/missing"
+      ],
+      "expected_exit": 2,
+      "exit": 2,
+      "stdout": "",
+      "stderr": "error: /Users/admin/Code/GitHub/quench-v2/target/iteration/task19-node-discovery-controls/missing is not a directory\n"
+    },
+    {
+      "id": "empty-parallel",
+      "command": [
+        "target/debug/run-parallel",
+        "--all",
+        "--filter",
+        "__task19_no_such_case__",
+        "--results",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task19-node-discovery-controls/empty-results.json"
+      ],
+      "expected_exit": 1,
+      "exit": 1,
+      "stdout": "all: pass=0 skip=0 fail=0 timeout=0 crash=0 unclassified=0 total=0 inventory_hash=cbf29ce484222325\n",
+      "stderr": ""
+    }
+  ],
+  "sha256": {
+    "crates/quench-node-test/src/stages.rs": "8ef6c0491c2c5c65d7a391a1f0b731f8223bd7f52b2ac60baa78c441f5c7a91a",
+    "crates/quench-node-test/src/bin/run-compat.rs": "9f306e9ad305fe8c410395dfb1d51beedbe2073cc3bb63d00790714e3aac0a26",
+    "crates/quench-node-test/src/bin/run-parallel.rs": "c5b685b0ae8486caaa19cb84ca81c22301f0e8c167dc5d0bc434ae9b088cd951",
+    "target/debug/run-compat": "8f6e64dd3b46956f23b9fcd789ace7753f1ad081aa282131d77c175b6d286788",
+    "target/debug/run-parallel": "e63467313b1c91f27e32c9427161a6d2eb51166c1e5c3084767486e5df7c0665"
+  },
+  "source_head": "7e60169df033dd247f34199e084e3e8080a92a29",
+  "rustc": "rustc 1.99.0 (b940084d7 2026-09-28) (Homebrew)",
+  "host": "Darwin arm64",
+  "raw_results": "target/iteration/task19-node-discovery-controls/empty-results.json",
+  "limitations": [
+    "Production Node runner still uses legacy VM",
+    "Frozen implemented Node inventory and Stage A qualification remain open",
+    "No full conformance suite run"
+  ]
+}

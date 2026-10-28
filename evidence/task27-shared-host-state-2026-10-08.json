@@ -1,0 +1,160 @@
+{
+  "schema": 1,
+  "task": "27",
+  "kind": "shared_node_host_state_boundary",
+  "recorded_on": "2026-10-08",
+  "source": {
+    "revision": "1a00155f1d6946bced98f77b0fa2a0feea3f2e7f",
+    "worktree_dirty": true,
+    "platform": "Darwin arm64",
+    "node": "v26.10.0",
+    "rustc": "rustc 1.99.0 (b940084d7 2026-09-28) (Homebrew)",
+    "files_sha256": {
+      "crates/quench-node/src/host.rs": "4d3471dd15dda53af83cb7c11503981700b3631d12491f79a01e009194bd5148",
+      "crates/quench-node/src/host/shared_vm.rs": "d0ea9299ab160eb2965f7f3fc0358364ccf9ddfc1a3525a0a1341efae74f75ef",
+      "crates/quench-node/src/host/shared_vm/commonjs.rs": "e776644c70eb8941f2c95262f0454e67e9a8880a04b786f6342fcd48c07e00f3",
+      "crates/quench-node/src/modules/http.rs": "f3a73048bc697e6893a526c1616b73751722bdda74d266ed31a50016f7d94fd7",
+      "crates/quench-node/src/modules/http/shared_vm.rs": "763c2f3b50e4ee5c347bef4bf72494767a7d3c21f0ef2cca4ac925f523a68fff",
+      "crates/quench-node/src/modules/http/shared_vm/client.rs": "24b360e2bd7aa3b5cd95a9cbf0d8b1ddaf45f3a30a2ce12742e90f0b7fc12446",
+      "crates/quench-node/src/modules/http/shared_vm/operations.rs": "5ecab5615306ef2a602006b0c520655189d18117de5bd647e9f16f761d5f82c4",
+      "crates/quench-node/src/modules/http/shared_vm/poll.rs": "b120d13015c250bbaab3978afc5653d112d7d96c0befab5e0a8e432a71707310",
+      "crates/quench-node/src/modules/http/shared_vm/protocol.rs": "26a5ac17d141d4fddf53205d201add89f4b80a3e5993b4adcda5ecce4f741a50",
+      "crates/quench-node/src/modules/http/shared_vm/state.rs": "7179711529b4f42285d5a4a7cc18c423c43807ea176cdf199e12758c92d478d3",
+      "crates/quench-node/src/modules/net/mod.rs": "8dbad00db05088dd73bc77a79d59416f809f77237fcd051fdc79378fffd07c4f",
+      "crates/quench-node/src/modules/net/shared_vm.rs": "42d4cdbc98ac2793cf369e1113c3ecbe595a8e903ffb7ca156a5838ab87ebc6e",
+      "crates/quench-node/src/modules/process/shared_vm.rs": "d5e699c6389ca258db4f4e3c8179c298113ac029d5c453399714d6dd428dc6bc",
+      "crates/quench-node/src/modules/diagnostics_channel.rs": "9125cae84c5405ddb4c83a581d7d5db23df678debdd7a867ae81c63ab70eaf10",
+      "crates/quench-node/src/modules/diagnostics_channel/shared_vm.rs": "1d3e3500144d4fc9853bcd094b6433d3d862c1addff51e7373892a27e61694e8",
+      "crates/quench-node/src/modules/fetch_shared_vm.rs": "c8c219985c2f47bc7e00aead141d0dd9a9ab923aff899cc620c12f10f4a5a34b",
+      "crates/quench-node/src/modules/path/shared_vm.rs": "8d7e84fa46a4d3b4f22ba269008e073b973b0d7a9d2fddacc3968ceb576a5234",
+      "crates/quench-node/src/modules/process/shared_vm_tests.rs": "6a3045d52de99f1ccfd979641a14d9f5127b8a7bd8c7672ef18aebe5d64420f1",
+      "crates/quench-node/src/modules/timers/shared_vm.rs": "6f2fa5d88706cfc4f0e51bf1dc614cfba0c703f298c4ad11296b742eb2459eb2",
+      "crates/quench-node/src/modules/url/shared_vm.rs": "50b421d6fe9bcb9924c8df77bc4ae973bcac0925f5ed187fa96138e5584bd718"
+    }
+  },
+  "change": {
+    "shared_state_owner": "NodeHost::SharedNodeState",
+    "moved_from_legacy_host_state": [
+      "shared CommonJS module-cache roots",
+      "process/assert/path roots and the shared URL constructor",
+      "Fetch request, completion, channel, and retained-promise state",
+      "timer-handle prototypes and private reference-state key",
+      "diagnostics-channel subscriber and module roots",
+      "shared HTTP request/response, server/client, protocol, and retained-root state",
+      "shared TCP listeners, sockets, in-flight connects, and connection buffers"
+    ],
+    "legacy_boundary": "HostState retains legacy Value consumers, async-hook context stores, event-loop and shared Node timeout configuration; quench-node still links both runtime crates."
+  },
+  "verification": {
+    "commands": [
+      {
+        "command": "rustfmt --check --edition 2021 crates/quench-node/src/modules/http/shared_vm.rs crates/quench-node/src/modules/http/shared_vm/poll.rs crates/quench-node/src/modules/http/shared_vm/client.rs crates/quench-node/src/modules/http/shared_vm/operations.rs crates/quench-node/src/modules/net/shared_vm.rs crates/quench-node/src/modules/process/shared_vm.rs crates/quench-node/src/modules/http.rs crates/quench-node/src/modules/net/mod.rs crates/quench-node/src/host.rs",
+        "exit_code": 0
+      },
+      {
+        "command": "cargo check --profile iteration -p quench-node --bin quench-node",
+        "exit_code": 0,
+        "result": "compiled; only pre-existing deprecated Atomic::fetch_update warnings in quench-runtime"
+      },
+      {
+        "command": "cargo run --profile iteration -p quench-node-test --bin run-parallel -- --profile framework-core --timeout-secs 60",
+        "exit_code": 0,
+        "result": {
+          "pass": 43,
+          "skip": 0,
+          "fail": 0,
+          "timeout": 0,
+          "crash": 0,
+          "unclassified": 0,
+          "total": 43
+        }
+      },
+      {
+        "command": "Python subprocess raw-process comparison from tests/frameworks: node driver.cjs scenarios/<framework>.cjs vs target/iteration/quench-node driver.cjs scenarios/<framework>.cjs",
+        "exit_code": 0,
+        "result": {
+          "express": {
+            "result": "MATCH",
+            "exit_status": [
+              0,
+              0
+            ],
+            "stdout_sha256": [
+              "6a8388b87cdb9dc7618e136828b626c2213b937ea1645882ef0c33bedf95b54d",
+              "6a8388b87cdb9dc7618e136828b626c2213b937ea1645882ef0c33bedf95b54d"
+            ],
+            "stderr_sha256": [
+              "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+            ]
+          },
+          "koa": {
+            "result": "MATCH",
+            "exit_status": [
+              0,
+              0
+            ],
+            "stdout_sha256": [
+              "6a8388b87cdb9dc7618e136828b626c2213b937ea1645882ef0c33bedf95b54d",
+              "6a8388b87cdb9dc7618e136828b626c2213b937ea1645882ef0c33bedf95b54d"
+            ],
+            "stderr_sha256": [
+              "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+            ]
+          },
+          "fastify": {
+            "result": "MATCH",
+            "exit_status": [
+              0,
+              0
+            ],
+            "stdout_sha256": [
+              "6a8388b87cdb9dc7618e136828b626c2213b937ea1645882ef0c33bedf95b54d",
+              "6a8388b87cdb9dc7618e136828b626c2213b937ea1645882ef0c33bedf95b54d"
+            ],
+            "stderr_sha256": [
+              "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+            ]
+          }
+        },
+        "stdout": "statuses 200,200,200,200,404\n",
+        "stderr_bytes": 0
+      }
+    ],
+    "outside_framework_profile_probes": [
+      {
+        "command": "cargo run --profile iteration -p quench-node-test --bin run-parallel -- --all --filter test-http-server.js --results /tmp/quench-http-one.json",
+        "fixture": "tests/node/test/parallel/test-http-server.js",
+        "exit_code": 1,
+        "worker_reason": "TypeError: value is not callable",
+        "missing_shared_api": "node:net.createConnection"
+      },
+      {
+        "command": "cargo run --profile iteration -p quench-node-test --bin run-parallel -- --all --filter test-net-server-close.js --results /tmp/quench-net-one.json",
+        "fixture": "tests/node/test/parallel/test-net-server-close.js",
+        "exit_code": 1,
+        "worker_reason": "TypeError: value is not callable",
+        "missing_shared_api": "node:net.createServer"
+      }
+    ],
+    "inputs_sha256": {
+      "crates/quench-node-test/node-tests/parallel.txt": "0209917422a2f0f3fa241d941ec4bc88c9917d5322b69014ab1a662a52e9dfca",
+      "tests/frameworks/driver.cjs": "e8dd245f9bbfcdcd3a430ff7ed663c3310fdf32fae23cfc5c24d24cbeda96bfb",
+      "tests/frameworks/package-lock.json": "fb752f9a87781cc8132c88ced58a8c17ebaacc1789d244b8b7c4a6c9888d5759",
+      "tests/frameworks/scenarios/express.cjs": "85eebbbc5c9cfaa01f2f16b6c7e181a4c4bc2e308bd1bb179f49c5d9700f8158",
+      "tests/frameworks/scenarios/koa.cjs": "962e4c326df72b30eed4306494e2218475456c7c816220a6e46a898b040185f9",
+      "tests/frameworks/scenarios/fastify.cjs": "1ff4fc87e2a4c792761c286bc0f255d0ab9be27e810dbf98938a1ac717d1ba6a",
+      "tests/frameworks/scenarios/asset.txt": "d74d6fb7af1951d71bc36de5b5f9f50c09c6adb8ab00b82e2041415715b213ce",
+      "tests/node/test/parallel/test-http-server.js": "9adbaf9262b3e38d0362ff7dc635dabdb6dc39b58b4bbff674982d9e315d25fa",
+      "tests/node/test/parallel/test-net-server-close.js": "8ffb3414ae9e3dc534f257a5443d3b4717912f828ac6a1f5fe1ec344bf477d36"
+    },
+    "binaries_sha256": {
+      "target/iteration/run-parallel": "5cb64d77b60240bd77db01fd737b311b692343723bb4f4891e242c755741af7e",
+      "target/iteration/quench-node": "7b6d948ea2bce5f6aae520ba8b9d3cfdb3c49c6bd0fd9378451439b330fdc9cb"
+    }
+  },
+  "gate_status": "Partial host-state extraction only; framework profile and package scenarios pass on this build. General shared node:net APIs remain outside the selected framework profile. Stage A remains open pending legacy host/runtime removal and task 86 final-build gate.",
+  "result": "Shared HTTP and TCP ownership compiles; all 43 framework-core fixtures and the pinned Express, Koa, and Fastify process comparisons pass. The two broader net probes remain unsupported because the shared node:net module lacks createConnection/createServer."
+}

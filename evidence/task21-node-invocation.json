@@ -1,0 +1,93 @@
+{
+  "schema": 1,
+  "tasks": [
+    "19",
+    "21",
+    "22",
+    "43",
+    "48",
+    "86"
+  ],
+  "source_head": "7e60169df033dd247f34199e084e3e8080a92a29",
+  "source_state": "dirty worktree; existing production Node host still uses legacy runtime",
+  "source_sha256": {
+    "crates/quench-node/src/run.rs": "89a07e9f9b197da2931cb0475005b16fcfb3c1288d616c9a9d6094e3f6efd651",
+    "crates/quench-node/src/main.rs": "d38623220dc4751b3dff11d71b0354d585402a3fdf05b1c9e827b78fdeb519cf",
+    "crates/quench-node/src/host.rs": "f2a5ae0685cf01d55690693f53d30a7d5b57c31916f2587f628dd38b4ef5c1ed",
+    "crates/quench-node/src/modules/process.rs": "1b744112846eff8607e25b33b8c17a03eed57a2a36dcae1d45ce71afb4df66b5",
+    "crates/quench-node/src/modules/child_process.rs": "e7b5ad32a8a53b42fa9180004beff8820f6f4a9e34307205076c3664d9602d4e",
+    "crates/quench-node/src/modules/worker_threads.rs": "3cd53362cda924d5b115deffb53651751967e602b4b15f4a38dc3cab3d54a729",
+    "crates/quench-node/src/dispatch_handlers.rs": "b1668cbb5c28ca142bd422dea7511a59a287a4902aa81498e6c60ab567e5699e",
+    "crates/quench-node-test/src/reader.rs": "17603112e52bce9a6a13d6a4078cb1552a7b6046f2c20376c40a7965ada85dff"
+  },
+  "host": "Darwin arm64",
+  "cpu": "Apple M4",
+  "rustc": "rustc 1.99.0 (b940084d7 2026-09-28) (Homebrew)",
+  "build_profile": "dev, correctness only",
+  "build_command": "cargo build -p quench-node -p quench-node-test --bin quench-node --bin run-compat --bin run-parallel",
+  "build_log": "target/iteration/task21-node-invocation-transport-build.log",
+  "representation": "Production configuration follows explicit invocation exec_argv. Fixture // Flags: metadata is interpreted only at the fixture-runner boundary. Process title projects the last --title= argument. File and eval use one externalized-string capability selection. process::EXEC_ARGV_ENV and inherited_exec_argv own the existing child/worker transport; production code no longer enables features from guest-source comments or words.",
+  "binary_sha256": {
+    "target/iteration/task21-node-invocation-before": "c41fe86aa20185fefd420d0bb772b103f5ac11fef6187749d73443d215dcf20f",
+    "target/iteration/task21-node-invocation-after": "c77bada7ad10b4c71bb8ed755b413e8b15ea3a1852aa521f66b6a16baafbc3bd"
+  },
+  "reports": {
+    "target/iteration/task21-node-invocation-controls/after.json": "4267348a0ec3fbc0eb9f54328aecec7b5a083c3928fe3abb5f57afbebee0e26e",
+    "target/iteration/task21-node-invocation-controls/before.json": "d84181ca91cf35baa31552042bf53917650297a2a987e61343232c97c51a1101"
+  },
+  "input_sha256": {
+    "target/iteration/task21-node-invocation-controls/extension.cjs": "ca9e94fd1aa557deada3a00c636dddcaa7214ff7632cc6d7b38a0d5d9f5081f1",
+    "target/iteration/task21-node-invocation-controls/vfs.cjs": "7327d2914658aefd378bcfaff187e3859a3e460f85e7dce21e1057f73fa2d3ea",
+    "target/iteration/task21-node-invocation-controls/guest.js": "74be522cb78da270fe6a3b0628fe2ea7116a744f2947a1a63213129d0ccb21af",
+    "target/iteration/task21-node-invocation-controls/metadata/fixture.js": "f8aa61412bf811c9054674d35bc7ecf9c4385b2970056f658da5114097310cbe"
+  },
+  "oracle": {
+    "binary": "/opt/homebrew/Cellar/node/26.10.0_1/bin/node",
+    "binary_sha256": "4ca2a42d6d55a834b04d0892c5bc646a6869fcebec57f91c849dac0aa1031610",
+    "version": "v26.10.0",
+    "controls": 7,
+    "full_exit_stdout_stderr_matches": 7,
+    "environment": {
+      "NODE_NO_WARNINGS": "1",
+      "QUENCH_EXEC_ARGV": "unset except explicit internal transport control"
+    },
+    "scope": [
+      "Guest Flags comments do not set process.title or process.execArgv",
+      "Actual CLI --title= sets title and execArgv for file and eval",
+      "Externalized-string surface exists only with the actual CLI capability for file and eval",
+      "Guest --experimental-vfs comment does not expose node:vfs; explicit CLI capability does",
+      "Fixture runner parses multiple metadata lines and preserves last-title precedence",
+      "Existing child exec-argument environment relay remains intact"
+    ],
+    "before_counterexamples": 2
+  },
+  "upstream": {
+    "tests/node/src/node_options.cc": "304a369d7bf38b5aa13ec91f5c81eefc2bdbf65ded89abb5df173b8c654cbcbc",
+    "tests/node/deps/v8/src/flags/flag-definitions.h": "c244a6020f94d3b9fda516320c1d9f72947145df16e735f0c10ab72006997a8e"
+  },
+  "upstream_rules": [
+    "node_options.cc owns --title and --experimental-vfs invocation options",
+    "V8 flag-definitions.h declares expose_externalize_string disabled by default"
+  ],
+  "internal_checks": {
+    "command": "cargo test -p quench-node-test --lib --bin run-parallel",
+    "log": "target/iteration/task21-node-invocation-tests.log",
+    "log_sha256": "ada2dd42ff96710e3180007538e51a7f9a0ac1d501c19b1dc258d2b16abb1298",
+    "passed": 6,
+    "failed": 0,
+    "ignored": 0,
+    "obligation": "Existing metadata/native-probe capability parsing and inventory/discovery guards; extended the negative parser control rather than adding language/API conformance units."
+  },
+  "metadata_controls": {
+    "fixture_runner_passed": 1,
+    "node_assertion_control_passed": 1,
+    "child_transport_control_passed": 1
+  },
+  "affected_scope": "Node production/fixture invocation configuration and existing subprocess transport only. Shared VM, compiler and Wasm execution are unchanged; no Test262 or Wasm run is required for this Node configuration change.",
+  "limits": [
+    "This does not migrate the Node host to the shared VM or freeze implemented-case membership.",
+    "The bare quench-node-next host still lacks production Node APIs/scheduling.",
+    "Oracle controls suppress experimental warnings on both hosts; default warning rendering remains unqualified.",
+    "No full suite or benchmark was run; Stage A remains open."
+  ]
+}

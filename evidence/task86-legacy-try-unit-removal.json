@@ -1,0 +1,35 @@
+{
+  "schema": 1,
+  "task": "86",
+  "kind": "duplicate-suite-unit-removal",
+  "recorded_at": "2026-10-07",
+  "source": {
+    "base_revision": "719535280",
+    "dirty": true,
+    "changed_file": "crates/quench-wasm/src/legacy_try.rs",
+    "changed_file_sha256": "8dd9e16d935e76c3476ac74b491684ab4d7f2268ee2bc79b1481af4368943e49"
+  },
+  "removed_unit_test": "legacy_try::tests::unfolds_folded_try_catch",
+  "rationale": "The pinned WAST suite exercises the same folded try/catch normalization through the production parser and asserts the resulting behavior.",
+  "suite_case": {
+    "path": "crates/quench-wasm-test/testsuite/legacy/try_catch.wast",
+    "sha256": "c461a059bb5ed2e324982562769cd7456da285110d22bf33e6c3dc426093bba5",
+    "directives": 43
+  },
+  "run": {
+    "command": "WASM_FILE_TIMEOUT_MS=60000 cargo run --profile iteration -p quench-wasm-test --bin run -- --report target/iteration/task86-legacy-try-unit-removal.json crates/quench-wasm-test/testsuite/legacy/try_catch.wast",
+    "binary": "target/iteration/run",
+    "binary_sha256": "d0c5e8174609a3ad7682d057b378bb4ed3ea137b889251a86bbca09a7dd7d1dc",
+    "exit_status": 0,
+    "passed": 43,
+    "failed": 0,
+    "report_sha256": "4fb3fd7f4160fd96e02bfa07f298e46a9ec8d6cc4bf8becee8580b6f5d848b88"
+  },
+  "comparison": {
+    "baseline_projection": "target/iteration/task86-legacy-try-before-projection.json",
+    "baseline_report_sha256": "7cd257e99f84fbf08a1f331fb417242838964f038f9f17041e607c46b5e3d5df",
+    "method": "Exact equality of all 43 (directive path, outcome) pairs",
+    "identical": true
+  },
+  "qualification_limit": "Focused duplicate-unit cleanup only; this does not qualify Task 24 or close Stage A."
+}

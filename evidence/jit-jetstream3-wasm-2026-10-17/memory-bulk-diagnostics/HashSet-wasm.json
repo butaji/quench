@@ -1,0 +1,436 @@
+{
+  "schema": 7,
+  "suite": "jet-stream3",
+  "jit_mode": "jit",
+  "jit_diagnostics": true,
+  "created_unix_ns": 1792281397738227532,
+  "rounds_requested": 1,
+  "timeout_ms": 600000,
+  "source_revision": "e64538e072a89c6b0fe7b85904565ff332fd5acf",
+  "source_dirty": true,
+  "corpus": {
+    "pinned_revision": "06785cf861ac44855f168cbbe829278c2802e6de",
+    "checkout_revision": "06785cf861ac44855f168cbbe829278c2802e6de",
+    "checkout_clean": true,
+    "fixture_set_matches": false
+  },
+  "host": {
+    "uname": "Linux f3da3ef8e0e6 6.18.55 #1 SMP Wed Oct 14 19:45:18 UTC 2026 x86_64 GNU/Linux",
+    "rustc": "",
+    "model": null,
+    "memory_bytes": 18882674688,
+    "memory_limit_bytes": 17179869184,
+    "cpu_quota": "400000 100000",
+    "logical_cpus": 4,
+    "process_metrics_backend": "Linux wait4 rusage"
+  },
+  "engines": [
+    {
+      "name": "quench",
+      "executable": "/workspace/quench/target/production/quench-node",
+      "executable_sha256": "93a47cacb8de768c6615b77862b9c261cc1443b9fcb283bf89180d4c1f4df4fe",
+      "version": "Quench shared-VM JIT build; package 0.1.0",
+      "argv": [
+        "--jit"
+      ],
+      "environment": {
+        "HOME": "/home/agent",
+        "LANG": "C.UTF-8",
+        "LC_ALL": "C.UTF-8",
+        "PATH": "/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/override:/opt/codex/runtimes/codex-primary-runtime/dependencies/python/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin:/opt/codex/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/fallback",
+        "QUENCH_WASM_JIT_STATS": "1"
+      },
+      "inherits_environment": false,
+      "jit_mode": "enabled-by-cli-flag",
+      "jit_proof_command": [
+        "/workspace/quench/target/production/quench-node",
+        "--jit"
+      ],
+      "jit_proof": "the measured Quench process is launched with --jit and QUENCH_WASM_JIT_STATS=1; diagnostic-only, not for qualification",
+      "webassembly": true
+    },
+    {
+      "name": "bun",
+      "executable": "/workspace/.local/bench-runtimes/bun-linux-x64/bun",
+      "executable_sha256": "a83d263767d839e4d2649ca8e35d07159c7afc99afdc96d731ced29e056dda0c",
+      "version": "1.4.2",
+      "argv": [],
+      "environment": {
+        "BUN_JSC_useJIT": "1",
+        "HOME": "/home/agent",
+        "LANG": "C.UTF-8",
+        "LC_ALL": "C.UTF-8",
+        "PATH": "/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/override:/opt/codex/runtimes/codex-primary-runtime/dependencies/python/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin:/opt/codex/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/fallback"
+      },
+      "inherits_environment": false,
+      "jit_mode": "enabled-and-probed",
+      "jit_proof_command": [
+        "BUN_JSC_useJIT=1",
+        "BUN_JSC_dumpOptions=1",
+        "/workspace/.local/bench-runtimes/bun-linux-x64/bun",
+        "-e",
+        "console.log(Bun.version)"
+      ],
+      "jit_proof": "command succeeded and reported \"useJIT=true\": 1.4.2\n\nModified JSC options:\n   dumpOptions=1 (default: 0)\n   useJIT=true (default: true)",
+      "webassembly": true
+    },
+    {
+      "name": "node",
+      "executable": "/workspace/.local/bench-runtimes/node-v26.10.0-linux-x64/bin/node",
+      "executable_sha256": "ab9c8eecf9f82d6693cdc3accced17034065c8d96213b0aa76a7e803d20ae1da",
+      "version": "v26.10.0",
+      "argv": [],
+      "environment": {
+        "HOME": "/home/agent",
+        "LANG": "C.UTF-8",
+        "LC_ALL": "C.UTF-8",
+        "PATH": "/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/override:/opt/codex/runtimes/codex-primary-runtime/dependencies/python/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin:/opt/codex/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/fallback"
+      },
+      "inherits_environment": false,
+      "jit_mode": "enabled-and-probed",
+      "jit_proof_command": [
+        "/workspace/.local/bench-runtimes/node-v26.10.0-linux-x64/bin/node",
+        "--trace-opt",
+        "--no-concurrent-recompilation",
+        "-e",
+        "function hot(x) { return x + 1; } for (let i = 0; i < 100000; i++) hot(i);"
+      ],
+      "jit_proof": "command succeeded and reported \"completed compiling\": [marking 0x1b6325af4d91 <JSFunction hot (sfi = 0x1b6325af1571)> for optimization to MAGLEV, ConcurrencyMode::kConcurrent, reason: hot and stable]\n[compiling method 0x1b6325af4d91 <JSFunction hot (sfi = 0x1b6325af1571)> (target MAGLEV), mode: ConcurrencyMode::kSynchronous]\n[completed compiling 0x1b6325af4d91 <JSFunction hot (sfi = 0x1b6325af1571)> (target MAGLEV) - took 0.001, 0.143, 0.001 ms]\n[marking 0x1b6325af4d21 <JSFunction (sfi = 0x1b6325af14c9)> for optimization to MAGLEV, ConcurrencyMode::kConcurrent, reason: hot and stable]\n[marking 0x1b6325af4d91 <JSFunction hot (sfi = 0x1b6325af1571)> for optimization to TURBOFAN_JS, ConcurrencyMode::kConcurrent, reason: hot and stable]\n[compiling method 0x1b6325af4d91 <JSFunction hot (sfi = 0x1b6325af1571)> (target TURBOFAN_JS), mode: ConcurrencyMode::kSynchronous]\n[completed compiling 0x1b6325af4d91 <JSFunction hot (sfi = 0x1b6325af1571)> (target TURBOFAN_JS) - took 0.003, 0.338, 0.008 ms]\n[compiling method 0x1b6325af4d21 <JSFunction (sfi = 0x1b6325af14c9)> (target MAGLEV) OSR, mode: ConcurrencyMode::kSynchronous]\n[completed compiling 0x1b6325af4d21 <JSFunction (sfi = 0x1b6325af14c9)> (target MAGLEV) OSR - took 0.000, 0.110, 0.002 ms]",
+      "webassembly": true
+    }
+  ],
+  "suite_inputs": [
+    {
+      "path": "quench-bench/jetstream/cli.js",
+      "size_bytes": 5600,
+      "modified_unix_ns": 1792229119091972874,
+      "sha256": "22ee4b987b07940dd7397ed7f88345c71acc415e2549b64bf45ba43f7572e5f0"
+    },
+    {
+      "path": "quench-bench/jetstream/JetStreamDriver.js",
+      "size_bytes": 110633,
+      "modified_unix_ns": 1792229118593919588,
+      "sha256": "f105bddfd402514b2325fe9ea6e1df5ce776a4ad4570a8006c7c8559159440fc"
+    },
+    {
+      "path": "quench-bench/jetstream/utils/params.js",
+      "size_bytes": 8047,
+      "modified_unix_ns": 1792229119770704165,
+      "sha256": "0e9d28c0fd2de5583c64678ffc61307b10d983bcb419fe2e3bb383c8b7ded647"
+    },
+    {
+      "path": "quench-bench/jetstream/utils/shell-config.js",
+      "size_bytes": 2352,
+      "modified_unix_ns": 1792229119770904880,
+      "sha256": "9a83000be5e6526a3c26a414fc3a23043e57ef8e4cd67aaff459066a2c347bca"
+    }
+  ],
+  "fixtures": {
+    "quench-bench/jetstream/HashSet-wasm": {
+      "source": {
+        "path": "quench-bench/jetstream/HashSet-wasm",
+        "size_bytes": null,
+        "modified_unix_ns": null,
+        "sha256": null
+      },
+      "valid": true,
+      "output_equal": true,
+      "summaries": {
+        "bun": {
+          "median_score": 210.84,
+          "median_max_rss_bytes": 59088896,
+          "valid_samples": 1
+        },
+        "node": {
+          "median_score": 246.39,
+          "median_max_rss_bytes": 132943872,
+          "valid_samples": 1
+        },
+        "quench": {
+          "median_score": 33.59,
+          "median_max_rss_bytes": 92368896,
+          "valid_samples": 1
+        }
+      },
+      "unsupported_engines": {},
+      "rounds": [
+        {
+          "round": 0,
+          "execution_order": [
+            "quench",
+            "bun",
+            "node"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 923837823,
+              "peak_rss_bytes": 59088896,
+              "score": 210.84,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 6475,
+              "page_reclaims": 6475,
+              "involuntary_context_switches": 33,
+              "host_before": {
+                "captured_unix_ns": 1792281404136813133,
+                "load_average": {
+                  "one_minute": 0.94,
+                  "five_minutes": 1.78,
+                  "fifteen_minutes": 1.55
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 163155,
+                    "cpu_percent": 1.3,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 200,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.0,
+                    "command": "containerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792281405064375408,
+                "load_average": {
+                  "one_minute": 0.94,
+                  "five_minutes": 1.78,
+                  "fifteen_minutes": 1.55
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 163155,
+                    "cpu_percent": 1.2,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 200,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.0,
+                    "command": "containerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "Starting JetStream3\nRunning HashSet-wasm:\nHashSet-wasm First-Score                       132.40 pts\nHashSet-wasm Worst-Score                       248.33 pts\nHashSet-wasm Average-Score                     285.05 pts\nHashSet-wasm Score                             210.84 pts\nHashSet-wasm First-Time                         37.76 ms \nHashSet-wasm Worst-Time                         20.13 ms \nHashSet-wasm Average-Time                       17.54 ms \nHashSet-wasm Total-Time                         75.44 ms \nHashSet-wasm Wall-Time                         904.82 ms \n\nOverall:\nOverall First-Score                            132.40 pts\nOverall Worst-Score                            248.33 pts\nOverall Average-Score                          285.05 pts\nOverall First-Time                              37.76 ms \nOverall Worst-Time                              20.13 ms \nOverall Average-Time                            17.54 ms \n\nOverall Score                                  210.84 pts\nOverall Wall-Time                              906.22 ms \n\n",
+              "stderr": ""
+            },
+            "node": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 843517546,
+              "peak_rss_bytes": 132943872,
+              "score": 246.39,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 18458,
+              "page_reclaims": 18458,
+              "involuntary_context_switches": 5,
+              "host_before": {
+                "captured_unix_ns": 1792281405067395357,
+                "load_average": {
+                  "one_minute": 0.94,
+                  "five_minutes": 1.78,
+                  "fifteen_minutes": 1.55
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 163155,
+                    "cpu_percent": 1.2,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 200,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.0,
+                    "command": "containerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792281405914127160,
+                "load_average": {
+                  "one_minute": 0.94,
+                  "five_minutes": 1.78,
+                  "fifteen_minutes": 1.55
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 163155,
+                    "cpu_percent": 1.2,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 200,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.0,
+                    "command": "containerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "Starting JetStream3\nRunning HashSet-wasm:\nHashSet-wasm First-Score                       176.56 pts\nHashSet-wasm Worst-Score                       266.99 pts\nHashSet-wasm Average-Score                     317.31 pts\nHashSet-wasm Score                             246.39 pts\nHashSet-wasm First-Time                         28.32 ms \nHashSet-wasm Worst-Time                         18.73 ms \nHashSet-wasm Average-Time                       15.76 ms \nHashSet-wasm Total-Time                         62.80 ms \nHashSet-wasm Wall-Time                         807.92 ms \n\nOverall:\nOverall First-Score                            176.56 pts\nOverall Worst-Score                            266.99 pts\nOverall Average-Score                          317.31 pts\nOverall First-Time                              28.32 ms \nOverall Worst-Time                              18.73 ms \nOverall Average-Time                            15.76 ms \n\nOverall Score                                  246.39 pts\nOverall Wall-Time                              809.88 ms \n\n",
+              "stderr": ""
+            },
+            "quench": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 6311346275,
+              "peak_rss_bytes": 92368896,
+              "score": 33.59,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 28587,
+              "page_reclaims": 28587,
+              "involuntary_context_switches": 29,
+              "host_before": {
+                "captured_unix_ns": 1792281397818035752,
+                "load_average": {
+                  "one_minute": 0.93,
+                  "five_minutes": 1.81,
+                  "fifteen_minutes": 1.56
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 200,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.0,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.0,
+                    "command": "codex"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792281404133529294,
+                "load_average": {
+                  "one_minute": 0.94,
+                  "five_minutes": 1.78,
+                  "fifteen_minutes": 1.55
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 163155,
+                    "cpu_percent": 1.3,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 200,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.0,
+                    "command": "containerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "Starting JetStream3\nRunning HashSet-wasm:\nHashSet-wasm First-Score                        22.86 pts\nHashSet-wasm Worst-Score                        38.96 pts\nHashSet-wasm Average-Score                      42.54 pts\nHashSet-wasm Score                              33.59 pts\nHashSet-wasm First-Time                        218.70 ms \nHashSet-wasm Worst-Time                        128.34 ms \nHashSet-wasm Average-Time                      117.53 ms \nHashSet-wasm Total-Time                        464.57 ms \nHashSet-wasm Wall-Time                        6005.85 ms \n\nOverall:\nOverall First-Score                             22.86 pts\nOverall Worst-Score                             38.96 pts\nOverall Average-Score                           42.54 pts\nOverall First-Time                             218.70 ms \nOverall Worst-Time                             128.34 ms \nOverall Average-Time                           117.53 ms \n\nOverall Score                                   33.59 pts\nOverall Wall-Time                             6009.15 ms \n\n",
+              "stderr": "QUENCH_WASM_JIT_REJECTION 3 unsupported-instruction:WasmUnreachable@66107\nQUENCH_WASM_JIT_REJECTION 6 unsupported-instruction:WasmUnreachable@3\nQUENCH_WASM_JIT_REJECTION 17 unsupported-instruction:WasmIndirectTarget@57\nQUENCH_WASM_JIT_REJECTION 18 unsupported-instruction:WasmIndirectTarget@542\nQUENCH_WASM_JIT_REJECTION 19 unsupported-instruction:WasmIndirectTarget@20\nQUENCH_WASM_JIT_REJECTION 21 unsupported-instruction:WasmUnreachable@134\nQUENCH_WASM_JIT_REJECTION 31 unsupported-instruction:WasmIndirectTarget@10\nQUENCH_WASM_JIT_REJECTION 8 uncompiled-callee:17@10\nQUENCH_WASM_JIT_REJECTION 23 uncompiled-callee:19@18\nQUENCH_WASM_JIT_REJECTION 24 uncompiled-callee:19@42\nQUENCH_WASM_JIT_STATS {\"program\":181,\"compile_attempts\":1,\"compiled_functions\":25,\"total_functions\":35,\"code_bytes\":31986,\"mapped_bytes\":32768,\"compile_ns\":53664428,\"native_entry_requests\":[[0,1],[1,9490000],[2,39530000],[7,100],[14,1],[15,50],[20,100],[22,100],[25,50],[27,2220000],[28,3815000]],\"interpreter_fallback_entries\":[[3,50],[17,50],[18,100],[19,350],[21,50],[23,200],[31,2220000]],\"compiled_to_vm_callouts\":100}\n"
+            }
+          }
+        }
+      ]
+    }
+  },
+  "complete": true,
+  "qualification_ready": false
+}

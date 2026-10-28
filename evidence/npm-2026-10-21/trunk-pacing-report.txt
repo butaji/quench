@@ -1,0 +1,47 @@
+verdicts {"behavior-pass":286,"declarations-pass":13,"oracle-failed":1}
+passing 299  fastest wall 143  fastest cpu 192  lowest rss 289
+wall median (ms) quench 63.1 node 107.6 bun 63.9
+cpu median (ms) quench 62.4 node 127.8 bun 69.1
+rss median (MiB) quench 14.4 node 63.3 bun 35.9
+slowest relative to the faster of Node and Bun (wall ms):
+  date-fns                                 q     488 n   1355 b     74  x6.6
+  color-convert                            q     396 n    146 b     80  x5.0
+  jiti                                     q     310 n    243 b     80  x3.9
+  undici                                   q     191 n    166 b     54  x3.6
+  schema-utils                             q     546 n    236 b    171  x3.2
+  @babel/helper-module-transforms          q     707 n    284 b    224  x3.2
+  semver                                   q     354 n    123 b    112  x3.2
+  whatwg-url                               q     325 n    166 b    111  x2.9
+  @babel/helper-compilation-targets        q     328 n    147 b    115  x2.9
+  @babel/plugin-syntax-typescript          q     554 n    246 b    205  x2.7
+  baseline-browser-mapping                 q     189 n    106 b     70  x2.7
+  @babel/core                              q     635 n    241 b    249  x2.6
+  @asamuzakjp/css-color                    q     173 n    145 b     66  x2.6
+  zod                                      q     200 n    180 b     77  x2.6
+  @testing-library/dom                     q    1552 n    866 b    625  x2.5
+  lucide-react                             q     285 n    206 b    116  x2.4
+  tr46                                     q     139 n    106 b     59  x2.4
+  ajv-formats                              q     297 n    188 b    133  x2.2
+  @babel/traverse                          q     309 n    161 b    145  x2.1
+  vitest                                   q    1309 n    699 b    620  x2.1
+  vite                                     q     501 n    271 b    247  x2.0
+  @babel/types                             q     150 n    115 b     75  x2.0
+  tough-cookie                             q     126 n    120 b     64  x2.0
+  node-fetch                               q      90 n    125 b     46  x2.0
+  execa                                    q     226 n    196 b    116  x1.9
+  ajv                                      q     239 n    168 b    123  x1.9
+  browserslist                             q     172 n    150 b     90  x1.9
+  tinyexec                                 q     124 n    159 b     67  x1.9
+  playwright                               q     681 n    451 b    379  x1.8
+  prettier                                 q     235 n    205 b    131  x1.8
+not lowest rss: 10
+  jiti                                     q 38.6 n 90.0 b 37.1
+  @types/json-schema                       q 45.1 n 63.0 b 44.7
+  @types/react-dom                         q 53.8 n 63.0 b 52.8
+  @typescript-eslint/type-utils            q 132.0 n 191.0 b 123.2
+  @eslint/core                             q 45.6 n 62.7 b 45.3
+  @types/chai                              q 45.7 n 62.9 b 45.4
+  @types/babel__traverse                   q 55.6 n 62.7 b 54.9
+  @types/yargs                             q 46.1 n 63.0 b 45.9
+  @types/ms                                q 44.8 n 62.8 b 44.7
+  @types/ws                                q 72.5 n 72.1 b 72.6

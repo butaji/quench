@@ -1,0 +1,366 @@
+diff --git a/crates/quench-node-test/tests/child_entry.rs b/crates/quench-node-test/tests/child_entry.rs
+index d5ed57f47..678f0736a 100644
+--- a/crates/quench-node-test/tests/child_entry.rs
++++ b/crates/quench-node-test/tests/child_entry.rs
+@@ -9443,3 +9443,13 @@ fn node_compatibility_version_follows_bundled_library_target() {
+ fn boxed_primitive_brands_use_internal_values_and_reject_forged_properties_and_proxies() {
+     compare_node_source_with_args(include_str!("../node-tests/test-boxed-primitive-slots.js"), &[]);
+ }
++
++#[test]
++fn callsite_columns_follow_member_parenthesized_and_constructor_call_syntax() {
++    compare_node_source_with_args(include_str!("../node-tests/test-callsite-call-columns.js"), &[]);
++}
++
++#[test]
++fn util_call_sites_capture_actual_metadata_without_error_hooks_and_use_node_validation() {
++    compare_node_source_with_args(include_str!("../node-tests/test-util-real-call-sites.js"), &[]);
++}
+diff --git a/crates/quench-node/src/host/shared_vm.rs b/crates/quench-node/src/host/shared_vm.rs
+index e5799240f..6b4b05fd0 100644
+--- a/crates/quench-node/src/host/shared_vm.rs
++++ b/crates/quench-node/src/host/shared_vm.rs
+@@ -24,6 +24,7 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
+         method "utilParseArgsPositional" (1) => crate::modules::util_parse_args_shared_vm::positional_map,
+         method "utilTypeCheck" (0) => crate::modules::util_shared_vm::type_check,
+         method "utilProxyDetails" (0) => crate::modules::util_shared_vm::proxy_details,
++        method "utilGetCallSites" (0) => crate::modules::util_shared_vm::get_call_sites,
+         method "utilConstructorName" (0) => crate::modules::util_shared_vm::constructor_name,
+         method "utilPreviewEntries" (0) => crate::modules::util_shared_vm::preview_entries,
+         method "availableMemory" (0) => crate::modules::process_memory_shared_vm::available,
+diff --git a/crates/quench-node/src/host/shared_vm/commonjs.rs b/crates/quench-node/src/host/shared_vm/commonjs.rs
+index 3324522c9..343a9a07b 100644
+--- a/crates/quench-node/src/host/shared_vm/commonjs.rs
++++ b/crates/quench-node/src/host/shared_vm/commonjs.rs
+@@ -2326,6 +2326,7 @@ const getLinkedBinding = () => ({});
+       getProxyDetails: __nativeInternalBinding("util").getProxyDetails,
+       previewEntries: __nativeInternalBinding("util").previewEntries,
+       getConstructorName: __nativeInternalBinding("util").getConstructorName,
++      getCallSites: __nativeInternalBinding("util").getCallSites,
+       getExternalValue: __nativeInternalBinding("util").getExternalValue,
+       constructSharedArrayBuffer: (length) => new SharedArrayBuffer(length),
+       guessHandleType: () => "UNKNOWN",
+diff --git a/crates/quench-node/src/modules/util_shared_vm.rs b/crates/quench-node/src/modules/util_shared_vm.rs
+index e9e589d6a..999c33d65 100644
+--- a/crates/quench-node/src/modules/util_shared_vm.rs
++++ b/crates/quench-node/src/modules/util_shared_vm.rs
+@@ -49,29 +49,13 @@ const TYPE_PREDICATES: &[(&str, BuiltinBrand)] = &[
+     ("isFloat64Array", BuiltinBrand::Float64Array),
+ ];
+ 
++// Node src/node_util.cc validates the native stack-frame request against this limit.
++const NODE_CALL_SITE_FRAME_LIMIT: usize = 200;
++
+ pub(crate) const MAX_SAFE_INTEGER: f64 = ((1_u64 << f64::MANTISSA_DIGITS) - 1) as f64;
+ 
+ const UTIL: &str = quench_js_check::checked_js!(
+-    r#"((inspect, format, formatWithOptions, warnedCodes) => {
+-  const getCallSites = (frameCount = 10, options) => {
+-    if (frameCount !== null && typeof frameCount === "object") {
+-      options = frameCount;
+-      frameCount = 10;
+-    }
+-    if (options !== undefined && (options === null || typeof options !== "object")) {
+-      throw new TypeError("The options argument must be an object");
+-    }
+-    if (!Number.isInteger(frameCount) || frameCount < 1 || frameCount > 200) {
+-      throw new RangeError("The frame count must be an integer between 1 and 200");
+-    }
+-    const scriptName = globalThis.process?.argv?.[1] || "";
+-    return Array.from({ length: frameCount }, () => ({
+-      scriptName,
+-      scriptId: scriptName,
+-      lineNumber: 0,
+-      columnNumber: 0,
+-    }));
+-  };
++    r#"((inspect, format, formatWithOptions, warnedCodes, getCallSites) => {
+   const inherits = (ctor, superCtor) => {
+     const invalidType = (kind, name, expected, received) => {
+       const error = new TypeError(
+@@ -260,13 +244,16 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
+     let inspect = crate::host::shared_vm::commonjs::node_library_export(context, "util.js", "internal/util/inspect.js", "inspect")?;
+     let format = crate::host::shared_vm::commonjs::node_library_export(context, "util.js", "internal/util/inspect.js", "format")?;
+     let format_with_options = crate::host::shared_vm::commonjs::node_library_export(context, "util.js", "internal/util/inspect.js", "formatWithOptions")?;
++    let get_call_sites = crate::host::shared_vm::commonjs::node_library_export(
++        context, "util.js", "util.js", "getCallSites",
++    )?;
+     let factory = context.evaluate_script_rooted(UTIL, "node:util/shared.js")?;
+     let undefined = context.undefined();
+     let global = context.global_root()?;
+     let set_key = context.string_rooted("Set");
+     let set = context.get_property_rooted(global, set_key)?;
+     let warned_codes = context.construct_rooted(set, set, &[])?;
+-    let module = context.call_rooted(factory, undefined, &[inspect, format, format_with_options, warned_codes])?;
++    let module = context.call_rooted(factory, undefined, &[inspect, format, format_with_options, warned_codes, get_call_sites])?;
+     super::util_style_shared_vm::install(context, module, inspect)?;
+     super::util_extend_shared_vm::install(context, module, warned_codes)?;
+     let compare = context.host_function(crate::host::shared_vm::operation("isDeepStrictEqual"))?;
+@@ -800,6 +787,7 @@ fn build_key_binding(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
+     let binding = context.object_rooted()?;
+     for (name, operation) in [
+         ("getConstructorName", "utilConstructorName"),
++        ("getCallSites", "utilGetCallSites"),
+         ("getOwnNonIndexProperties", "utilOwnNonIndexProperties"),
+         ("getPromiseDetails", "utilPromiseDetails"),
+         ("getProxyDetails", "utilProxyDetails"),
+@@ -954,3 +942,32 @@ pub(crate) fn external_value(context: &mut NativeContext<'_, NodeHost>, _: RootI
+         None => { let error = context.type_error_rooted("Value is not an external")?; Err(context.throw(error)) }
+     }
+ }
++
++/// The configured util.js validates the public API and owns source-map policy.
++pub(crate) fn get_call_sites(
++    context: &mut NativeContext<'_, NodeHost>, _: RootId, args: &[RootId],
++) -> Result<RootId, RootedError> {
++    let count = args.first().and_then(|root| context.rooted_value(*root)).and_then(quench_runtime::Value::as_number);
++    // Match the native binding's validated frame-count domain without guest coercion.
++    let Some(count) = count.filter(|n| n.is_finite() && n.fract() == 0.0 && (1.0..=NODE_CALL_SITE_FRAME_LIMIT as f64).contains(n)) else {
++        let error = context.range_error_rooted("Invalid stack frame count")?;
++        return Err(context.throw(error));
++    };
++    // Node's native operation drops the util.js caller frame, even when borrowed directly.
++    let frames = context.source_stack_frames(count as usize + 1);
++    let mut sites = Vec::with_capacity(frames.len().saturating_sub(1));
++    for frame in frames.into_iter().skip(1) {
++        let site = context.null_object_rooted()?;
++        let function = context.string_units_rooted(&frame.function_name);
++        let id = context.string_rooted(&frame.script_id.to_string());
++        let script = context.string_rooted(&frame.script_name);
++        let line = context.number(f64::from(frame.line_number));
++        let column = context.number(f64::from(frame.column_number));
++        for (name, value) in [("functionName", function), ("scriptId", id), ("scriptName", script), ("lineNumber", line), ("columnNumber", column), ("column", column)] {
++            let key = context.string_rooted(name);
++            context.define_data_property_rooted(site, key, value, true, true, true)?;
++        }
++        sites.push(site);
++    }
++    context.array_rooted(&sites)
++}
+diff --git a/crates/quench-runtime/src/api.rs b/crates/quench-runtime/src/api.rs
+index 354958af2..1db4b1960 100644
+--- a/crates/quench-runtime/src/api.rs
++++ b/crates/quench-runtime/src/api.rs
+@@ -8,7 +8,7 @@ pub use embedding::RootedError;
+ mod native;
+ pub use native::{
+     BuiltinBrand, BuiltinData, CollectionPreview, PromiseSnapshot, HostFunction, HostFunctionId, HostWeakRoot, NativeArithmetic,
+-    NativeContext, RootedIterator, SynchronousModule,
++    NativeContext, RootedIterator, SourceStackFrame, SynchronousModule,
+ };
+ 
+ /// The syntax context used when compiling source. Script and Module use
+diff --git a/crates/quench-runtime/src/api_native.rs b/crates/quench-runtime/src/api_native.rs
+index 1a75bea9b..3cfa19456 100644
+--- a/crates/quench-runtime/src/api_native.rs
++++ b/crates/quench-runtime/src/api_native.rs
+@@ -22,6 +22,17 @@ pub enum NativeArithmetic {
+     BitwiseAnd,
+ }
+ 
++/// A copied projection of a genuine JavaScript activation. Native helper frames are excluded.
++pub struct SourceStackFrame {
++    /// UTF-16 code units preserve function names, including lone surrogates.
++    pub function_name: Vec<u16>,
++    /// Positive, non-reused compiled-source identity; zero is reserved for no script.
++    pub script_id: u64,
++    pub script_name: String,
++    pub line_number: u32,
++    pub column_number: u32,
++}
++
+ /// Private weak host reference, pruned by the core collector before slot reuse.
+ /// Its persistent root must be released when the host resource is discarded.
+ #[derive(Clone, Copy, Debug)]
+@@ -349,6 +360,11 @@ impl<'a, H: Host> NativeContext<'a, H> {
+         result.map_err(|error| self.error(error))
+     }
+ 
++    /// Capture actual JavaScript source frames independently of Error hooks and stack limits.
++    pub fn source_stack_frames(&mut self, limit: usize) -> Vec<SourceStackFrame> {
++        self.vm.embedding_source_stack_frames(limit)
++    }
++
+     /// Compiler-owned source names of live JavaScript callers, nearest first.
+     /// This reads frame metadata without evaluating guest stack accessors.
+     pub fn call_stack_source_names(&self) -> Vec<String> {
+diff --git a/crates/quench-runtime/src/compile/ast/expression.rs b/crates/quench-runtime/src/compile/ast/expression.rs
+index 75b9866c4..78d1fbf30 100644
+--- a/crates/quench-runtime/src/compile/ast/expression.rs
++++ b/crates/quench-runtime/src/compile/ast/expression.rs
+@@ -9,7 +9,15 @@ impl FunctionCompiler<'_, '_> {
+     }
+ 
+     pub(crate) fn expression_with_debug_name(&mut self, expression: &Expression<'_>, debug_name: Option<Atom>) -> Register {
+-        let position = self.owner.source_position(expression.span().start);
++        let start = match expression {
++            Expression::CallExpression(call) => match &call.callee {
++                Expression::StaticMemberExpression(member) => member.property.span.start,
++                Expression::ComputedMemberExpression(_) | Expression::ParenthesizedExpression(_) => call.callee.span().end,
++                _ => expression.span().start,
++            },
++            _ => expression.span().start,
++        };
++        let position = self.owner.source_position(start);
+         let previous = self
+             .current_source_position
+             .replace((position.line, position.column));
+diff --git a/crates/quench-runtime/src/lib.rs b/crates/quench-runtime/src/lib.rs
+index f1e885b02..240567934 100644
+--- a/crates/quench-runtime/src/lib.rs
++++ b/crates/quench-runtime/src/lib.rs
+@@ -42,7 +42,7 @@ mod api;
+ pub use api::{
+     BuiltinBrand, BuiltinData, CollectionPreview, PromiseSnapshot, ExecutionRequest, HostFunction, HostFunctionId, HostWeakRoot,
+     NativeArithmetic, NativeContext, PromiseRejectionEvent, RootedError, RootedIterator, Runtime,
+-    RuntimeError, SourceKind, SynchronousModule,
++    RuntimeError, SourceKind, SourceStackFrame, SynchronousModule,
+ };
+ 
+ #[cfg(test)]
+diff --git a/crates/quench-runtime/src/vm/embedding.rs b/crates/quench-runtime/src/vm/embedding.rs
+index aa27000c0..9a51113cb 100644
+--- a/crates/quench-runtime/src/vm/embedding.rs
++++ b/crates/quench-runtime/src/vm/embedding.rs
+@@ -309,6 +309,24 @@ impl<H: Host> Vm<H> {
+         Ok(self.strict_equal(self.embedding_value(left)?, self.embedding_value(right)?))
+     }
+ 
++    pub(crate) fn embedding_source_stack_frames(&mut self, limit: usize) -> Vec<crate::SourceStackFrame> {
++        let records: Vec<_> = self.frames.iter().rev().filter_map(|frame| {
++            self.source_call_site_record(frame, false).map(|(record, module)| (frame.program, record, module))
++        }).take(limit).collect();
++        records.into_iter().map(|(program, mut record, module)| {
++            Self::map_call_site_source(&mut self.host, &mut record, module);
++            let name = self.call_site_name(&record).map_or_else(Vec::new, |name| name.units().to_vec());
++            let CallSiteLocation::Source { file_name, line, column } = record.location else { unreachable!("source projection"); };
++            crate::SourceStackFrame {
++                function_name: name,
++                script_id: u64::from(program.raw()) + 1,
++                script_name: file_name,
++                line_number: line,
++                column_number: column,
++            }
++        }).collect()
++    }
++
+     pub(crate) fn embedding_call_stack_source_names(&self) -> Vec<String> {
+         self.frames.iter().rev().filter_map(|frame| {
+             self.programs.source_name(frame.program).map(str::to_owned)
+diff --git a/crates/quench-runtime/src/vm/error.rs b/crates/quench-runtime/src/vm/error.rs
+index 76e666d29..4a7c0d8f3 100644
+--- a/crates/quench-runtime/src/vm/error.rs
++++ b/crates/quench-runtime/src/vm/error.rs
+@@ -538,6 +538,38 @@ impl<H: Host> Vm<H> {
+         Ok(self.constructor_name(receiver))
+     }
+ 
++    /// A source projection of a genuine activation, without evaluating guest hooks.
++    pub(super) fn source_call_site_record(&self, frame: &Frame, hide_identity: bool) -> Option<(CallSiteRecord, bool)> {
++        if frame.context == CallContext::Internal && frame.function != ROOT_FUNCTION_ID {
++            return None;
++        }
++        let residual = self.programs.get(frame.program)?;
++        let function = residual.functions.get(frame.function as usize)?;
++        let pc = u32::try_from(frame.pc.saturating_sub(1)).unwrap_or(u32::MAX);
++        let position = residual.source_position(frame.function, pc)?;
++        let name = frame.context.callable().map_or_else(
++            || function.name.map_or(CallSiteName::Anonymous, |name| CallSiteName::Static(self.atom_value(name))),
++            CallSiteName::Callable,
++        );
++        Some((CallSiteRecord {
++            location: CallSiteLocation::Source {
++                file_name: residual.source_name.clone(),
++                line: position.line,
++                column: position.column,
++            },
++            name,
++            hide_identity,
++            is_constructor: frame.context.is_constructor(),
++            this_value: if frame.this == Value::DELETED { Value::UNDEFINED } else { frame.this },
++        }, residual.kind == crate::bytecode::ProgramKind::Module))
++    }
++
++    pub(super) fn map_call_site_source(host: &mut H, record: &mut CallSiteRecord, module: bool) {
++        if let CallSiteLocation::Source { file_name, .. } = &mut record.location {
++            *file_name = host.stack_source_name(file_name, module);
++        }
++    }
++
+     pub(super) fn error_capture_stack_trace(
+         &mut self,
+         program: &ResidualProgram,
+@@ -593,33 +625,10 @@ impl<H: Host> Vm<H> {
+                 constructor_found = frame.context.callable() == Some(constructor_opt);
+                 continue;
+             }
+-            // A PC without compiler-owned source metadata has no truthful JS location.
+-            let pc = u32::try_from(frame.pc.saturating_sub(1)).unwrap_or(u32::MAX);
+-            let Some(position) = residual.source_position(frame.function, pc) else {
+-                continue;
+-            };
+-            let name = frame.context.callable().map_or_else(
+-                || function.name.map_or(CallSiteName::Anonymous, |name| CallSiteName::Static(self.atom_value(name))),
+-                CallSiteName::Callable,
+-            );
+-            records.push(CallSiteRecord {
+-                location: CallSiteLocation::Source {
+-                    file_name: self.host.stack_source_name(
+-                        &residual.source_name,
+-                        residual.kind == crate::bytecode::ProgramKind::Module,
+-                    ),
+-                    line: position.line,
+-                    column: position.column,
+-                },
+-                name,
+-                hide_identity,
+-                is_constructor: frame.context.is_constructor(),
+-                this_value: if frame.this == Value::DELETED {
+-                    Value::UNDEFINED
+-                } else {
+-                    frame.this
+-                },
+-            });
++            if let Some((mut record, module)) = self.source_call_site_record(frame, hide_identity) {
++                Self::map_call_site_source(&mut self.host, &mut record, module);
++                records.push(record);
++            }
+         }
+ 
+         if constructor_found {
+@@ -711,7 +720,7 @@ impl<H: Host> Vm<H> {
+         }
+     }
+ 
+-    fn call_site_name(&self, record: &CallSiteRecord) -> Option<JsString> {
++    pub(super) fn call_site_name(&self, record: &CallSiteRecord) -> Option<JsString> {
+         let name = match &record.name {
+             CallSiteName::Callable(function) => self.debug_function_name(*function)?,
+             CallSiteName::Static(name) => name.clone(),
+diff --git a/docs/node-host-contracts.md b/docs/node-host-contracts.md
+index 68f4855b6..0787eec21 100644
+--- a/docs/node-host-contracts.md
++++ b/docs/node-host-contracts.md
+@@ -57,6 +57,22 @@ later attempt. Native coded errors share the library's private Node error symbol
+ UDP buffer-size errors construct the original `ERR_SOCKET_BUFFER_SIZE` class,
+ which owns its context getters and custom inspection behavior.
+ 
++## Detailed source stack capture
++
++The public `util.getCallSites` function comes from the unmodified configured
++Node `util.js`; its native binding captures actual VM source activations,
++independently of `Error.prepareStackTrace` and `Error.stackTraceLimit`. Results
++are null-prototype records with copied UTF-16 function names, compiled-source
++identities, mapped filenames, positions and the column alias. Native helper
++frames are excluded. Error CallSites and detailed capture share the source-frame
++projection; host filename mapping stays an explicit mutable host boundary.
++
++Call positions cover static member names and computed/parenthesized invocation
++parentheses as well as existing identifier and constructor positions. Complete
++optional-chain, eval/sourceURL, source-map and Node host-stack conformance remains
++open. Source IDs denote actual compiled units; missing host frames are not
++fabricated.
++
+ ## Boxed primitive identity
+ 
+ Primitive wrappers carry their actual value in an object-internal payload.

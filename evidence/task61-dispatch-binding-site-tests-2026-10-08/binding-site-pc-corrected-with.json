@@ -1,0 +1,933 @@
+{
+  "schema": 1,
+  "engine": "quench",
+  "provenance": {
+    "source_revision": "fe7ef311f69f64c0b03de4e11461fbe4a24ce410",
+    "source_dirty": true,
+    "binary": "/Users/admin/Code/GitHub/quench-v2/target/iteration/run-stages",
+    "host": "macos-aarch64",
+    "timeout_ms": 30000,
+    "jobs": 8
+  },
+  "total": 181,
+  "passed": 180,
+  "failed": 1,
+  "stages": {
+    "26": {
+      "passed": 180,
+      "total": 181,
+      "failed": 1
+    }
+  },
+  "families": {
+    "quench runtime: ReferenceError: Cannot access '…' before initialization": 1
+  },
+  "outcomes": [
+    {
+      "path": "language/statements/with/12.10-0-1.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/12.10-0-10.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/12.10-0-11.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/12.10-0-12.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/12.10-0-3.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/12.10-0-7.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/12.10-0-8.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/12.10-0-9.js",
+      "stage": "26",
+      "outcome": "failed",
+      "reason": "quench runtime: ReferenceError: Cannot access 'x' before initialization"
+    },
+    {
+      "path": "language/statements/with/12.10-2-1.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/12.10-2-2.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/12.10-2-3.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/12.10-2-4.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/12.10-2-5.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/12.10-7-1.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/12.10.1-10-s.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/12.10.1-11gs.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/12.10.1-12-s.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/12.10.1-13-s.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/12.10.1-4-s.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/12.10.1-5-s.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/12.10.1-8-s.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/S12.10_A1.10_T1.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/S12.10_A1.10_T2.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/S12.10_A1.10_T3.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/S12.10_A1.10_T4.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/S12.10_A1.10_T5.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/S12.10_A1.11_T1.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/S12.10_A1.11_T2.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/S12.10_A1.11_T3.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/S12.10_A1.11_T4.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/S12.10_A1.11_T5.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/S12.10_A1.12_T1.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/S12.10_A1.12_T2.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/S12.10_A1.12_T3.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/S12.10_A1.12_T4.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/S12.10_A1.12_T5.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/S12.10_A1.1_T1.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/S12.10_A1.1_T2.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/S12.10_A1.1_T3.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/S12.10_A1.2_T1.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/S12.10_A1.2_T2.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/S12.10_A1.2_T3.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/S12.10_A1.2_T4.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/S12.10_A1.2_T5.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/S12.10_A1.3_T1.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/S12.10_A1.3_T2.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/S12.10_A1.3_T3.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/S12.10_A1.3_T4.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/S12.10_A1.3_T5.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/S12.10_A1.4_T1.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/S12.10_A1.4_T2.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/S12.10_A1.4_T3.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/S12.10_A1.4_T4.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/S12.10_A1.4_T5.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/S12.10_A1.5_T1.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/S12.10_A1.5_T2.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/S12.10_A1.5_T3.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/S12.10_A1.5_T4.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/S12.10_A1.5_T5.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/S12.10_A1.6_T1.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/S12.10_A1.6_T2.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/S12.10_A1.6_T3.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/S12.10_A1.7_T1.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/S12.10_A1.7_T2.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/S12.10_A1.7_T3.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/S12.10_A1.7_T4.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/S12.10_A1.7_T5.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/S12.10_A1.8_T1.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/S12.10_A1.8_T2.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/S12.10_A1.8_T3.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/S12.10_A1.8_T4.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/S12.10_A1.8_T5.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/S12.10_A1.9_T1.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/S12.10_A1.9_T2.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/S12.10_A1.9_T3.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/S12.10_A3.10_T1.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/S12.10_A3.10_T2.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/S12.10_A3.10_T3.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/S12.10_A3.10_T4.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/S12.10_A3.10_T5.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/S12.10_A3.11_T1.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/S12.10_A3.11_T2.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/S12.10_A3.11_T3.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/S12.10_A3.11_T4.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/S12.10_A3.11_T5.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/S12.10_A3.12_T1.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/S12.10_A3.12_T2.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/S12.10_A3.12_T3.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/S12.10_A3.12_T4.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/S12.10_A3.12_T5.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/S12.10_A3.1_T1.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/S12.10_A3.1_T2.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/S12.10_A3.1_T3.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/S12.10_A3.2_T1.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/S12.10_A3.2_T2.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/S12.10_A3.2_T3.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/S12.10_A3.2_T4.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/S12.10_A3.2_T5.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/S12.10_A3.3_T1.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/S12.10_A3.3_T2.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/S12.10_A3.3_T3.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/S12.10_A3.3_T4.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/S12.10_A3.4_T1.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/S12.10_A3.4_T2.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/S12.10_A3.4_T3.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/S12.10_A3.4_T4.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/S12.10_A3.4_T5.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/S12.10_A3.5_T1.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/S12.10_A3.5_T2.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/S12.10_A3.5_T3.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/S12.10_A3.5_T4.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/S12.10_A3.5_T5.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/S12.10_A3.6_T1.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/S12.10_A3.6_T2.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/S12.10_A3.6_T3.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/S12.10_A3.7_T1.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/S12.10_A3.7_T2.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/S12.10_A3.7_T3.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/S12.10_A3.7_T4.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/S12.10_A3.7_T5.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/S12.10_A3.8_T1.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/S12.10_A3.8_T2.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/S12.10_A3.8_T3.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/S12.10_A3.8_T4.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/S12.10_A3.8_T5.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/S12.10_A3.9_T1.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/S12.10_A3.9_T2.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/S12.10_A3.9_T3.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/S12.10_A4_T1.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/S12.10_A4_T2.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/S12.10_A4_T3.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/S12.10_A4_T4.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/S12.10_A4_T5.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/S12.10_A4_T6.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/S12.10_A5_T1.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/S12.10_A5_T2.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/S12.10_A5_T3.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/S12.10_A5_T4.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/S12.10_A5_T5.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/S12.10_A5_T6.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/binding-blocked-by-unscopables.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/binding-not-blocked-by-unscopables-falsey-prop.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/binding-not-blocked-by-unscopables-non-obj.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/cptn-abrupt-empty.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/cptn-nrml.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/decl-async-fun.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/decl-async-gen.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/decl-cls.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/decl-const.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/decl-fun.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/decl-gen.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/decl-let.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/get-binding-value-call-with-proxy-env.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/get-binding-value-idref-with-proxy-env.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/get-mutable-binding-binding-deleted-in-get-unscopables-strict-mode.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/get-mutable-binding-binding-deleted-in-get-unscopables.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/has-binding-call-with-proxy-env.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/has-binding-idref-with-proxy-env.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/has-property-err.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/labelled-fn-stmt.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/let-array-with-newline.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/let-block-with-newline.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/let-identifier-with-newline.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/scope-var-close.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/scope-var-open.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/set-mutable-binding-binding-deleted-in-get-unscopables-strict-mode.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/set-mutable-binding-binding-deleted-in-get-unscopables.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/set-mutable-binding-binding-deleted-with-typed-array-in-proto-chain-strict-mode.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/set-mutable-binding-binding-deleted-with-typed-array-in-proto-chain.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/set-mutable-binding-idref-compound-assign-with-proxy-env.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/set-mutable-binding-idref-with-proxy-env.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/strict-fn-decl-nested-1.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/strict-fn-decl-nested-2.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/strict-fn-decl.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/strict-fn-expr.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/strict-fn-method.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/strict-script.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/unscopables-get-err.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/unscopables-inc-dec.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/unscopables-not-referenced-for-undef.js",
+      "stage": "26",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/statements/with/unscopables-prop-get-err.js",
+      "stage": "26",
+      "outcome": "pass"
+    }
+  ]
+}

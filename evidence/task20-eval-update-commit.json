@@ -1,0 +1,149 @@
+{
+  "schema": 1,
+  "kind": "shared_eval_update_semantics",
+  "timestamp_utc": "2026-10-05T04:28:53.536718+00:00",
+  "base_commit": "878f59a253858e67be171373173a1173e75847d9",
+  "staged_sources": {
+    "crates/quench-runtime-next/src/vm/eval.rs": "44bea1ead9aba86ae63406ad747dcccaec76aa3afad477a1c0675b63c7fb7147"
+  },
+  "suite_pin": "6eec1ac9ee144dafd8f344d73a21f36bfc9f6755",
+  "affected_test262": {
+    "profile": "release",
+    "jobs": 2,
+    "timeout_ms": 10000,
+    "distinct_cases": 938,
+    "before_passed": 928,
+    "after_passed": 929,
+    "regressions": [],
+    "gained": ["staging/sm/statements/property-reference-self-assignment.js"],
+    "remaining": [
+      "staging/sm/lexical-environment/block-scoped-functions-annex-b-arguments.js",
+      "staging/sm/lexical-environment/block-scoped-functions-annex-b-eval.js",
+      "staging/sm/lexical-environment/block-scoped-functions-annex-b-label.js",
+      "staging/sm/lexical-environment/block-scoped-functions-annex-b-with.js",
+      "staging/sm/lexical-environment/block-scoped-functions-deprecated-redecl.js",
+      "staging/sm/lexical-environment/unscopables-basics.js",
+      "staging/sm/lexical-environment/unscopables-global.js",
+      "staging/sm/lexical-environment/unscopables-mutation-frozen.js",
+      "staging/sm/lexical-environment/var-in-catch-body-annex-b-eval.js"
+    ],
+    "scopes": [
+      {
+        "scope": "eval-language",
+        "total": 347,
+        "before_passed": 347,
+        "after_passed": 347,
+        "compare_exit": 0
+      },
+      {
+        "scope": "eval-builtin",
+        "total": 10,
+        "before_passed": 10,
+        "after_passed": 10,
+        "compare_exit": 0
+      },
+      {
+        "scope": "increments",
+        "total": 74,
+        "before_passed": 74,
+        "after_passed": 74,
+        "compare_exit": 0
+      },
+      {
+        "scope": "compound-assignment",
+        "total": 456,
+        "before_passed": 456,
+        "after_passed": 456,
+        "compare_exit": 0
+      },
+      {
+        "scope": "staged-eval",
+        "total": 34,
+        "before_passed": 25,
+        "after_passed": 25,
+        "compare_exit": 0
+      },
+      {
+        "scope": "staged-statements",
+        "total": 17,
+        "before_passed": 16,
+        "after_passed": 17,
+        "compare_exit": 0
+      }
+    ]
+  },
+  "node_controls": {
+    "version": "v26.10.0",
+    "matched": 24,
+    "differences": 4,
+    "difference": "Computed-key conversion occurs twice on local Node, once on Quench and the unchanged pinned property-reference fixture."
+  },
+  "pinned_reference_controls": [
+    {
+      "case": "computed-prefix",
+      "generic": false,
+      "expected": "[2,2,1]\n",
+      "passed": true
+    },
+    {
+      "case": "computed-prefix",
+      "generic": true,
+      "expected": "[2,2,1]\n",
+      "passed": true
+    },
+    {
+      "case": "computed-compound",
+      "generic": false,
+      "expected": "[3,3,1]\n",
+      "passed": true
+    },
+    {
+      "case": "computed-compound",
+      "generic": true,
+      "expected": "[3,3,1]\n",
+      "passed": true
+    }
+  ],
+  "reference_authority": "https://tc39.es/ecma262/multipage/ecmascript-data-types-and-values.html#sec-getvalue",
+  "pinned_fixture": {
+    "path": "tests/test262/test/staging/sm/statements/property-reference-self-assignment.js",
+    "sha256": "c5adccf7a63b8bcc8041106e57b7bcd47d763637b456e8706e33bda8cf45f79c"
+  },
+  "binaries": {
+    "before": {
+      "path": "/Users/admin/Code/GitHub/quench-v2/target/iteration/task20-eval-update-commit/before",
+      "sha256": "617d9b39c768366364cd8004de6003695381ca027e49b80fb250cc0b86519b38"
+    },
+    "after": {
+      "path": "/Users/admin/Code/GitHub/quench-v2/target/iteration/task20-eval-update-commit/after",
+      "sha256": "f477aca7fbef2b754716bd2c4ccba09ca7a047601bd0c9146602a5f32e51e606"
+    },
+    "quench-next": {
+      "path": "/Users/admin/Code/GitHub/quench-v2/target/iteration/task20-eval-update-commit/quench-next",
+      "sha256": "e40390051fdb19a7706aea4bf9bc3165386eb051aeeec845f7f6d1447820ae56"
+    }
+  },
+  "raw_artifacts": {
+    "target/iteration/task20-eval-update-commit/after-compound-assignment.json": "c6ee638d49e455c4ff50411161e4ea92e7f7363e0d91bf7711af212e0114d862",
+    "target/iteration/task20-eval-update-commit/after-eval-builtin.json": "54cd469a2778f53c0d76a84bdf0e94c7cafa3cbd59196d39fbfae92ffa2a065c",
+    "target/iteration/task20-eval-update-commit/after-eval-language.json": "abb40a73f4adc16b8ae41bfeb88514907c8bde2550b866343c7ad60e4b3a2be1",
+    "target/iteration/task20-eval-update-commit/after-increments.json": "e1089a5d140a9ae9b732411346f2372436d6d27999b837bde4df8819e1ae3b9b",
+    "target/iteration/task20-eval-update-commit/after-staged-eval.json": "76d77f938269dad181012a3a567e54edfb315723bcb1c51332ff3a81bd627465",
+    "target/iteration/task20-eval-update-commit/after-staged-statements.json": "f6e546f6a80b4287f57087b1668443a90768eb51444ca185ea4e9efe10a30a31",
+    "target/iteration/task20-eval-update-commit/after-summary.json": "79e9f090910d32f1090b15be4391c7607c02884f901a242e03d978b5868b36a7",
+    "target/iteration/task20-eval-update-commit/before-compound-assignment.json": "a2acc8229de74b7555f75002edf22190ff9d4d066ccc983e9bedd1986c5269f8",
+    "target/iteration/task20-eval-update-commit/before-eval-builtin.json": "e1351317c0cc5b63a8fc1818728b9407000d873f4e863753e4b82243c2847d72",
+    "target/iteration/task20-eval-update-commit/before-eval-language.json": "d70ff8ea504e321796de711349429365981bbe3dc896a364eeef3a2424ec2a15",
+    "target/iteration/task20-eval-update-commit/before-increments.json": "846637f6fc4b28e293f9d5cc7b01efe5b736526a11291387c322134f408aa92f",
+    "target/iteration/task20-eval-update-commit/before-staged-eval.json": "9efd57384b0ca7af5679084462c452ea68a35f907820c19ce877f32dcae2e2d9",
+    "target/iteration/task20-eval-update-commit/before-staged-statements.json": "c7618e610639496c2d8e2d652c07999626d0f28ef313d85cffb0f2756221499c",
+    "target/iteration/task20-eval-update-commit/before-summary.json": "6f6e768e23063b2837b9a01b4573a5de34fa0b9bb1884079b4071d013b606aa4",
+    "target/iteration/task20-eval-update-commit/controls.json": "ac9bab5831682e40a7362bd02b84d8e2568a69d3bd5cfdae2757dc0e62f0839f"
+  },
+  "limits": [
+    "Full Test262 and Stage A remain open.",
+    "No suite, harness, expectation or pin changed.",
+    "No duplicate unit tests added; existing suite cases and guest controls qualify shared behavior.",
+    "This removes only two eval shortcuts; remaining guest-source heuristics and context migration remain open."
+  ]
+}

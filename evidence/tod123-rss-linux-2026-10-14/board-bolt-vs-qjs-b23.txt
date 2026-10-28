@@ -1,0 +1,17 @@
+# fixture engine maxrss KiB x3 (evicted), qjs = QuickJS 2026-06-04, qn-b23b = v2-cloud-c2 d6d37e615 + retrained orders, static BOLT
+crypto qjs 3672 3424 3528
+crypto qn-b23b 4128 4180 4052
+deltablue qjs 3896 3804 3736
+deltablue qn-b23b 3624 3624 3624
+earley-boyer qjs 16048 16580 16708
+earley-boyer qn-b23b 9912 10040 10028
+navier-stokes qjs 5032 5052 5028
+navier-stokes qn-b23b 4548 4548 4548
+raytrace qjs 3508 3444 3520
+raytrace qn-b23b 3464 3464 3464
+regexp qjs 6748 6816 6644
+regexp qn-b23b 13212 13228 13212
+richards qjs 3428 3328 3340
+richards qn-b23b 3240 3240 3240
+splay qjs 147052 146956 146948
+splay qn-b23b 48008 47844 47940

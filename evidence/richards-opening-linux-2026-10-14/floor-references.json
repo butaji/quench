@@ -1,0 +1,297 @@
+{
+  "samples": {
+    "B0": [
+      {
+        "rss_bytes": 958464,
+        "wall_seconds": 0.0,
+        "status": 0,
+        "rusage_path": "work/richards/B0-0.rusage"
+      },
+      {
+        "rss_bytes": 966656,
+        "wall_seconds": 0.0,
+        "status": 0,
+        "rusage_path": "work/richards/B0-1.rusage"
+      },
+      {
+        "rss_bytes": 950272,
+        "wall_seconds": 0.0,
+        "status": 0,
+        "rusage_path": "work/richards/B0-2.rusage"
+      },
+      {
+        "rss_bytes": 966656,
+        "wall_seconds": 0.0,
+        "status": 0,
+        "rusage_path": "work/richards/B0-3.rusage"
+      },
+      {
+        "rss_bytes": 966656,
+        "wall_seconds": 0.0,
+        "status": 0,
+        "rusage_path": "work/richards/B0-4.rusage"
+      },
+      {
+        "rss_bytes": 966656,
+        "wall_seconds": 0.0,
+        "status": 0,
+        "rusage_path": "work/richards/B0-5.rusage"
+      },
+      {
+        "rss_bytes": 966656,
+        "wall_seconds": 0.0,
+        "status": 0,
+        "rusage_path": "work/richards/B0-6.rusage"
+      },
+      {
+        "rss_bytes": 950272,
+        "wall_seconds": 0.0,
+        "status": 0,
+        "rusage_path": "work/richards/B0-7.rusage"
+      },
+      {
+        "rss_bytes": 966656,
+        "wall_seconds": 0.0,
+        "status": 0,
+        "rusage_path": "work/richards/B0-8.rusage"
+      },
+      {
+        "rss_bytes": 950272,
+        "wall_seconds": 0.0,
+        "status": 0,
+        "rusage_path": "work/richards/B0-9.rusage"
+      },
+      {
+        "rss_bytes": 966656,
+        "wall_seconds": 0.0,
+        "status": 0,
+        "rusage_path": "work/richards/B0-10.rusage"
+      }
+    ],
+    "Q0": [
+      {
+        "rss_bytes": 1814528,
+        "wall_seconds": 0.0,
+        "status": 0,
+        "rusage_path": "work/richards/Q0-0.rusage"
+      },
+      {
+        "rss_bytes": 1744896,
+        "wall_seconds": 0.0,
+        "status": 0,
+        "rusage_path": "work/richards/Q0-1.rusage"
+      },
+      {
+        "rss_bytes": 1679360,
+        "wall_seconds": 0.0,
+        "status": 0,
+        "rusage_path": "work/richards/Q0-2.rusage"
+      },
+      {
+        "rss_bytes": 1744896,
+        "wall_seconds": 0.0,
+        "status": 0,
+        "rusage_path": "work/richards/Q0-3.rusage"
+      },
+      {
+        "rss_bytes": 1806336,
+        "wall_seconds": 0.0,
+        "status": 0,
+        "rusage_path": "work/richards/Q0-4.rusage"
+      },
+      {
+        "rss_bytes": 1662976,
+        "wall_seconds": 0.0,
+        "status": 0,
+        "rusage_path": "work/richards/Q0-5.rusage"
+      },
+      {
+        "rss_bytes": 1806336,
+        "wall_seconds": 0.0,
+        "status": 0,
+        "rusage_path": "work/richards/Q0-6.rusage"
+      },
+      {
+        "rss_bytes": 1859584,
+        "wall_seconds": 0.0,
+        "status": 0,
+        "rusage_path": "work/richards/Q0-7.rusage"
+      },
+      {
+        "rss_bytes": 1798144,
+        "wall_seconds": 0.0,
+        "status": 0,
+        "rusage_path": "work/richards/Q0-8.rusage"
+      },
+      {
+        "rss_bytes": 1650688,
+        "wall_seconds": 0.0,
+        "status": 0,
+        "rusage_path": "work/richards/Q0-9.rusage"
+      },
+      {
+        "rss_bytes": 1744896,
+        "wall_seconds": 0.0,
+        "status": 0,
+        "rusage_path": "work/richards/Q0-10.rusage"
+      }
+    ],
+    "F": [
+      {
+        "rss_bytes": 42921984,
+        "wall_seconds": 0.27,
+        "status": 0,
+        "rusage_path": "work/richards/F-0.rusage"
+      },
+      {
+        "rss_bytes": 42921984,
+        "wall_seconds": 0.21,
+        "status": 0,
+        "rusage_path": "work/richards/F-1.rusage"
+      },
+      {
+        "rss_bytes": 42921984,
+        "wall_seconds": 0.26,
+        "status": 0,
+        "rusage_path": "work/richards/F-2.rusage"
+      },
+      {
+        "rss_bytes": 42921984,
+        "wall_seconds": 0.26,
+        "status": 0,
+        "rusage_path": "work/richards/F-3.rusage"
+      },
+      {
+        "rss_bytes": 42921984,
+        "wall_seconds": 0.2,
+        "status": 0,
+        "rusage_path": "work/richards/F-4.rusage"
+      },
+      {
+        "rss_bytes": 42921984,
+        "wall_seconds": 0.26,
+        "status": 0,
+        "rusage_path": "work/richards/F-5.rusage"
+      },
+      {
+        "rss_bytes": 42921984,
+        "wall_seconds": 0.21,
+        "status": 0,
+        "rusage_path": "work/richards/F-6.rusage"
+      },
+      {
+        "rss_bytes": 42921984,
+        "wall_seconds": 0.2,
+        "status": 0,
+        "rusage_path": "work/richards/F-7.rusage"
+      },
+      {
+        "rss_bytes": 42921984,
+        "wall_seconds": 0.21,
+        "status": 0,
+        "rusage_path": "work/richards/F-8.rusage"
+      },
+      {
+        "rss_bytes": 42921984,
+        "wall_seconds": 0.21,
+        "status": 0,
+        "rusage_path": "work/richards/F-9.rusage"
+      },
+      {
+        "rss_bytes": 42921984,
+        "wall_seconds": 0.2,
+        "status": 0,
+        "rusage_path": "work/richards/F-10.rusage"
+      }
+    ],
+    "K1_empty": [
+      {
+        "rss_bytes": 9744384,
+        "wall_seconds": 0.02,
+        "status": 0,
+        "rusage_path": "work/richards/K1_empty-0.rusage"
+      },
+      {
+        "rss_bytes": 9482240,
+        "wall_seconds": 0.0,
+        "status": 0,
+        "rusage_path": "work/richards/K1_empty-1.rusage"
+      },
+      {
+        "rss_bytes": 9482240,
+        "wall_seconds": 0.0,
+        "status": 0,
+        "rusage_path": "work/richards/K1_empty-2.rusage"
+      },
+      {
+        "rss_bytes": 9482240,
+        "wall_seconds": 0.0,
+        "status": 0,
+        "rusage_path": "work/richards/K1_empty-3.rusage"
+      },
+      {
+        "rss_bytes": 9351168,
+        "wall_seconds": 0.0,
+        "status": 0,
+        "rusage_path": "work/richards/K1_empty-4.rusage"
+      },
+      {
+        "rss_bytes": 9613312,
+        "wall_seconds": 0.0,
+        "status": 0,
+        "rusage_path": "work/richards/K1_empty-5.rusage"
+      },
+      {
+        "rss_bytes": 9482240,
+        "wall_seconds": 0.0,
+        "status": 0,
+        "rusage_path": "work/richards/K1_empty-6.rusage"
+      },
+      {
+        "rss_bytes": 9351168,
+        "wall_seconds": 0.0,
+        "status": 0,
+        "rusage_path": "work/richards/K1_empty-7.rusage"
+      },
+      {
+        "rss_bytes": 9351168,
+        "wall_seconds": 0.0,
+        "status": 0,
+        "rusage_path": "work/richards/K1_empty-8.rusage"
+      },
+      {
+        "rss_bytes": 9613312,
+        "wall_seconds": 0.0,
+        "status": 0,
+        "rusage_path": "work/richards/K1_empty-9.rusage"
+      },
+      {
+        "rss_bytes": 9482240,
+        "wall_seconds": 0.01,
+        "status": 0,
+        "rusage_path": "work/richards/K1_empty-10.rusage"
+      }
+    ]
+  },
+  "summaries": {
+    "B0": {
+      "median_rss_bytes": 966656
+    },
+    "Q0": {
+      "median_rss_bytes": 1744896
+    },
+    "F": {
+      "median_rss_bytes": 42921984
+    },
+    "K1_empty": {
+      "median_rss_bytes": 9482240
+    }
+  },
+  "binaries": {
+    "work/floor/b0": "db1afde05eedba63331b21f2a77b6e9b8f85378621345fcb34894b7f47219e7a",
+    "work/engines/quickjs-2026-06-04/qjs": "44f4021cc931a9f63f3c4a583bfd3c7e47d39d29bbbcdce07613fe142161cfd0",
+    "work/pinned/richards-control/quench-node": "196bc8c43cab926c8d0f220a00c0361aa64a28d1a6064fc6bdc312677900e4f9",
+    "target/production/quench": "f3b01738d8e484bbe2e0f41a58fa9d7db609ec36fe3fdc5b3245207e4888f261"
+  },
+  "note": "RSS diagnostic only. Wall not qualified; concurrent compiler possible. K1 bare CLI uses script goal, counterfactual only. K2-K4 unmeasured; no lower bound claimed."
+}

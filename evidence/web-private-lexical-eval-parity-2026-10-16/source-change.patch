@@ -1,0 +1,510 @@
+diff --git a/crates/quench-node-test/node-tests/test-private-eval-environments.js b/crates/quench-node-test/node-tests/test-private-eval-environments.js
+new file mode 100644
+index 000000000..d699c5a18
+--- /dev/null
++++ b/crates/quench-node-test/node-tests/test-private-eval-environments.js
+@@ -0,0 +1,30 @@
++function outcome(fn){try{return ['value',fn()]}catch(error){return ['throw',error.name]}}
++const out=[];
++class Mixed {
++ #instance=1; static #static=2;
++ read(){const object=this;return [outcome(()=>eval('this.#instance')),outcome(()=>eval('Mixed.#static')),outcome(function(){return eval('object.#instance')})]}
++ static read(object){return [outcome(()=>eval('#instance in object')),outcome(()=>eval('Mixed.#static'))]}
++ closure(){const object=this;return function(){return eval('object.#instance')}}
++ negative(){return function(){return ['super.x','super()','return 1','#missing in {}','}); } extra() { 7 } __eval() { (function() { 9'].map(source=>outcome(()=>eval(source)))}}
++ wrapper(){return outcome(()=>eval('} extra() { 7 } __eval() { 9'))}
++ target(){return function(){return eval('new.target === undefined')}}
++}
++const object=new Mixed();out.push(['mixed',object.read(),Mixed.read(object)]);
++out.push(['escaped',object.closure()()]);out.push(['negative',object.negative()()]);out.push(['target',object.target()()]);out.push(['wrapper',object.wrapper()]);
++class Outer {
++ #value=3;
++ create(){const outer=this;return class Inner {
++  #value=4;
++  read(){const inner=this;return function(){return [eval('inner.#value'),outcome(()=>eval('outer.#value'))]}}
++ }}
++}
++const Inner=new Outer().create();out.push(['shadow',new Inner().read()()]);
++class OtherOuter {
++ #outer=5;
++ create(){const outer=this;return class {
++  #inner=6;
++  read(){const inner=this;return function(){return [eval('inner.#inner'),eval('outer.#outer')]}}
++ }}
++}
++const OtherInner=new OtherOuter().create();out.push(['outer',new OtherInner().read()()]);
++console.log(JSON.stringify(out));
+diff --git a/crates/quench-node-test/tests/child_entry.rs b/crates/quench-node-test/tests/child_entry.rs
+index 8a50537a6..4ebdfe11f 100644
+--- a/crates/quench-node-test/tests/child_entry.rs
++++ b/crates/quench-node-test/tests/child_entry.rs
+@@ -9612,3 +9612,8 @@ fn function_constructor_sources_preserve_whitespace_parameter_positions_and_synt
+ fn private_fields_keep_class_creation_identity_and_atomic_internal_initialization() {
+     compare_node_source_with_args(include_str!("../node-tests/test-private-field-identity.js"), &[]);
+ }
++
++#[test]
++fn private_eval_environments_cross_static_instance_and_ordinary_function_boundaries() {
++    compare_node_source_with_args(include_str!("../node-tests/test-private-eval-environments.js"), &[]);
++}
+diff --git a/crates/quench-runtime/src/bytecode.rs b/crates/quench-runtime/src/bytecode.rs
+index cab6bbf18..d88ec2e9d 100644
+--- a/crates/quench-runtime/src/bytecode.rs
++++ b/crates/quench-runtime/src/bytecode.rs
+@@ -1667,16 +1667,18 @@ pub(crate) enum LexicalBindingKind {
+     Mutable = 0,
+     Immutable = 1,
+     FunctionName = 2,
++    PrivateName = 3,
+ }
+ 
+ impl LexicalBindingKind {
+-    pub(crate) const ALL: [Self; 3] = [Self::Mutable, Self::Immutable, Self::FunctionName];
++    pub(crate) const ALL: [Self; 4] = [Self::Mutable, Self::Immutable, Self::FunctionName, Self::PrivateName];
+ 
+     pub(crate) fn capture_prefix(self) -> &'static str {
+         match self {
+             Self::Mutable => "\0quench:lexical-capture:",
+             Self::Immutable => "\0quench:immutable-capture:",
+             Self::FunctionName => "\0quench:function-name-capture:",
++            Self::PrivateName => "\0quench:private-name-capture:",
+         }
+     }
+ 
+@@ -1688,6 +1690,12 @@ impl LexicalBindingKind {
+     }
+ }
+ 
++pub(crate) fn private_identity_label(identity: &str) -> Option<String> {
++    let identity = identity.strip_prefix("\0quench:private:")?;
++    let (_, label) = identity.rsplit_once(':')?;
++    (!label.is_empty()).then(|| label.to_owned())
++}
++
+ #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+ #[repr(u8)]
+ pub(crate) enum DispatchClass {
+@@ -2136,7 +2144,7 @@ impl ResidualProgram {
+         Some(position)
+     }
+ 
+-    pub const FORMAT_VERSION: u8 = 92;
++    pub const FORMAT_VERSION: u8 = 93;
+     pub const RUNTIME_ABI_FINGERPRINT: u64 = {
+         const ABI_SIGNATURE: u64 = 0x5251_4a00_0000_0000;
+         const FORMAT_VERSION_SHIFT: u32 = 16;
+diff --git a/crates/quench-runtime/src/compile.rs b/crates/quench-runtime/src/compile.rs
+index 033adc0cf..19ffebecf 100644
+--- a/crates/quench-runtime/src/compile.rs
++++ b/crates/quench-runtime/src/compile.rs
+@@ -42,6 +42,7 @@ pub(crate) use atoms::{AtomPrefix, NoAtomPrefix};
+ /// The synthetic method supplies parsing context only; execution uses its body.
+ fn eval_method_body<'a, 'b>(
+     program: &'b mut Program<'a>,
++    ordinary_function: bool,
+ ) -> Option<&'b mut oxc_ast::ast::FunctionBody<'a>> {
+     let [Statement::ExpressionStatement(statement)] = program.body.as_mut_slice() else {
+         return None;
+@@ -65,6 +66,14 @@ fn eval_method_body<'a, 'b>(
+         }
+         _ => return None,
+     };
++    let body = function.body.as_deref_mut()?;
++    if !ordinary_function { return Some(body); }
++    let [Statement::ExpressionStatement(statement)] = body.statements.as_mut_slice() else {
++        return None;
++    };
++    let Expression::FunctionExpression(function) = statement.expression.without_parentheses_mut() else {
++        return None;
++    };
+     function.body.as_deref_mut()
+ }
+ 
+@@ -185,7 +194,7 @@ pub(crate) struct EvalContext {
+ enum ParsedProgramShape {
+     Any,
+     DynamicFunction { parameter_list_end: usize },
+-    Eval(EvalContext),
++    Eval(EvalContext, Option<Span>),
+ }
+ 
+ pub(crate) struct EvalRegExpLiteral {
+@@ -266,7 +275,7 @@ impl Engine {
+         if stack::validate_parsed(&parsed).is_err() || !parsed.diagnostics.is_empty() {
+             return false; // The normal eval compiler owns syntax and exhaustion errors.
+         }
+-        eval_method_body(&mut parsed.program)
++        eval_method_body(&mut parsed.program, false)
+             .is_some_and(|body| early::field_eval_references_arguments(&body.statements))
+     }
+ 
+@@ -553,7 +562,10 @@ impl Engine {
+         annex_b_forbidden_names: &[String],
+     ) -> Result<ResidualProgram, Vec<Diagnostic>> {
+         let method_source;
+-        let (source, source_type) = if context.home_atom.is_some() {
++        let raw_source_len = source.len();
++        let ordinary_private_context = context.home_atom.is_none()
++            && context.in_function && !private_names.is_empty();
++        let (source, source_type) = if context.home_atom.is_some() || ordinary_private_context {
+             method_source = if private_names.is_empty() && !context.super_calls {
+                 let directive = if inherited_strict {
+                     "'use strict';\n"
+@@ -562,6 +574,11 @@ impl Engine {
+                 };
+                 format!("{directive}({{__eval() {{\n{source}\n}}}})")
+             } else {
++                let ordinary_source;
++                let source = if ordinary_private_context {
++                    ordinary_source = format!("(function() {{\n{source}\n}});");
++                    ordinary_source.as_str()
++                } else { source };
+                 eval_context_source(source, private_names, context.super_calls)
+             };
+             (method_source.as_str(), SourceType::script())
+@@ -575,6 +592,13 @@ impl Engine {
+                 },
+             )
+         };
++        let body_span = if context.home_atom.is_some() || ordinary_private_context {
++            let suffix = if ordinary_private_context { "\n});\n}\n})" }
++                else if private_names.is_empty() && !context.super_calls { "\n}})" }
++                else { "\n}\n})" };
++            let body_start = source.len() - suffix.len() - raw_source_len - "{\n".len();
++            Some(Span::new(body_start as u32, (body_start + "{\n".len() + raw_source_len + "\n}".len()) as u32))
++        } else { None };
+         Self::specialize_with_mode_and_private_names(
+             source,
+             name,
+@@ -586,7 +610,7 @@ impl Engine {
+             inherited_strict,
+             private_names,
+             annex_b_forbidden_names,
+-            ParsedProgramShape::Eval(context),
++            ParsedProgramShape::Eval(context, body_span),
+         )
+     }
+ 
+@@ -775,10 +799,15 @@ impl Engine {
+                 span,
+             }]);
+         }
++        let ordinary_private_context = matches!(expected_shape, ParsedProgramShape::Eval(context, _)
++            if context.home_atom.is_none() && context.in_function && !private_name_overrides.is_empty());
++        let wrapped_eval = matches!(expected_shape, ParsedProgramShape::Eval(context, _)
++            if context.home_atom.is_some()) || ordinary_private_context;
+         let dynamic_function_shape = match expected_shape {
+             ParsedProgramShape::Any => true,
+-            ParsedProgramShape::Eval(context) => {
+-                context.home_atom.is_none() || eval_method_body(&mut parsed.program).is_some()
++            ParsedProgramShape::Eval(_, expected_span) => {
++                !wrapped_eval || eval_method_body(&mut parsed.program, ordinary_private_context)
++                    .is_some_and(|body| Some(body.span) == expected_span)
+             }
+             ParsedProgramShape::DynamicFunction { parameter_list_end } => {
+                 match parsed.program.body.as_mut_slice() {
+@@ -826,7 +855,7 @@ impl Engine {
+         }
+         let private_name_ids = private_name_ids(&semantic.semantic);
+         let private_name_labels = private_name_labels(&semantic.semantic);
+-        let inherited_private_ids = if matches!(expected_shape, ParsedProgramShape::Eval(context) if context.home_atom.is_some())
++        let inherited_private_ids = if wrapped_eval
+         {
+             let mut ids = FxHashSet::default();
+             if let [Statement::ExpressionStatement(statement)] = parsed.program.body.as_slice()
+@@ -865,10 +894,10 @@ impl Engine {
+         // Validate in method grammar, then remove the context wrapper. Original
+         // spans still address `normalized`, retaining exact nested function source.
+         drop(semantic);
+-        let eval_context = if let ParsedProgramShape::Eval(context) = expected_shape {
+-            if context.home_atom.is_some() {
+-                let body =
+-                    eval_method_body(&mut parsed.program).expect("validated eval method shape");
++        let eval_context = if let ParsedProgramShape::Eval(context, _) = expected_shape {
++            if wrapped_eval {
++                let body = eval_method_body(&mut parsed.program, ordinary_private_context)
++                    .expect("validated eval context shape");
+                 let statements = std::mem::replace(
+                     &mut body.statements,
+                     oxc_allocator::Vec::new_in(&&allocator),
+diff --git a/crates/quench-runtime/src/compile/ast.rs b/crates/quench-runtime/src/compile/ast.rs
+index 474f893f9..3d736130a 100644
+--- a/crates/quench-runtime/src/compile/ast.rs
++++ b/crates/quench-runtime/src/compile/ast.rs
+@@ -815,6 +815,12 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
+         self.push_lexical_bindings_with_immutability(bindings, FxHashSet::default());
+     }
+ 
++    pub(super) fn push_private_bindings(&mut self, bindings: FxHashMap<Atom, Atom>) {
++        self.push_lexical_bindings(bindings);
++        let scope = self.lexical_scopes.last_mut().expect("private lexical scope");
++        for kind in scope.kinds.values_mut() { *kind = LexicalBindingKind::PrivateName; }
++    }
++
+     pub(super) fn push_body_lexical_bindings(&mut self, bindings: &[(Atom, LexicalBindingKind)]) {
+         self.push_immutable_lexical_bindings(
+             bindings.iter().map(|(atom, _)| (*atom, *atom)).collect(),
+@@ -1118,7 +1124,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
+                             (self.is_compiler_binding(*atom)
+                                 && !LexicalBindingKind::ALL
+                                     .into_iter()
+-                                    .any(|kind| name.starts_with(kind.capture_prefix()))
++                                    .any(|kind| kind != LexicalBindingKind::PrivateName && name.starts_with(kind.capture_prefix()))
+                                 && !name.starts_with("\0quench:catch-capture:"))
+                             .then_some((*atom, *slot))
+                         })
+@@ -1162,6 +1168,16 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
+                         .copied()
+                         .unwrap_or(LexicalBindingKind::Mutable);
+                     let name = self.owner.atoms[*source as usize].to_owned();
++                    if kind == LexicalBindingKind::PrivateName {
++                        let label = crate::bytecode::private_identity_label(&name);
++                        let stale = scope.keys().copied().filter(|atom| {
++                            let text: &str = self.owner.atoms[*atom as usize].as_ref();
++                            let identity = text.strip_prefix(LexicalBindingKind::PrivateName.capture_prefix()).unwrap_or(text);
++                            label.is_some() && crate::bytecode::private_identity_label(identity) == label
++                        }).collect::<Vec<_>>();
++                        for atom in stale { scope.remove(&atom); }
++                        scope.insert(*source, slot);
++                    }
+                     for kind in LexicalBindingKind::ALL {
+                         let marker = format!("{}{name}", kind.capture_prefix());
+                         if let Some(marker) = self.owner.atoms.find(&marker).as_ref() {
+diff --git a/crates/quench-runtime/src/compile/ast/call.rs b/crates/quench-runtime/src/compile/ast/call.rs
+index 3dd124739..7efc6b9d8 100644
+--- a/crates/quench-runtime/src/compile/ast/call.rs
++++ b/crates/quench-runtime/src/compile/ast/call.rs
+@@ -320,8 +320,13 @@ impl FunctionCompiler<'_, '_> {
+     pub(super) fn record_lexical_binding_site(&mut self, pc: usize) {
+         let mut visible = rustc_hash::FxHashSet::default();
+         let mut bindings = Vec::new();
++        let mut private_labels = FxHashSet::default();
+         for scope in self.lexical_scopes.iter().rev() {
+             for atom in scope.bindings.keys() {
++                if scope.kinds.get(atom) == Some(&LexicalBindingKind::PrivateName)
++                    && let Some(label) = crate::bytecode::private_identity_label(&self.owner.atoms[*atom as usize])
++                    && !private_labels.insert(label)
++                { continue; }
+                 if scope.kinds.get(atom) != Some(&LexicalBindingKind::FunctionName)
+                     && visible.insert(*atom)
+                     && let Some(binding) = self.lexical_binding_projection(scope, *atom)
+diff --git a/crates/quench-runtime/src/compile/class.rs b/crates/quench-runtime/src/compile/class.rs
+index 8020319d3..9b714ea0b 100644
+--- a/crates/quench-runtime/src/compile/class.rs
++++ b/crates/quench-runtime/src/compile/class.rs
+@@ -149,6 +149,25 @@ impl FunctionCompiler<'_, '_> {
+             });
+         let class_home_atom =
+             self.hidden_local(&format!("\0quench:home:class:{}", class.span.start));
++        let mut private_bindings = FxHashMap::default();
++        for element in &class.body.body {
++            let (key, is_static) = match element {
++                ClassElement::PropertyDefinition(field) => (&field.key, field.r#static),
++                ClassElement::MethodDefinition(method) => (&method.key, method.r#static),
++                ClassElement::AccessorProperty(accessor) => (&accessor.key, accessor.r#static),
++                _ => continue,
++            };
++            if let PropertyKey::PrivateIdentifier(identifier) = key {
++                let atom = self.owner.private_name_atom(identifier.span);
++                if !self.owner.private_name_is_overridden(atom) {
++                    private_bindings.insert(atom, if is_static { class_home_atom } else { constructor_home_atom });
++                }
++            }
++        }
++        let has_private_bindings = !private_bindings.is_empty();
++        if has_private_bindings {
++            self.push_private_bindings(private_bindings);
++        }
+         for field in &fields {
+             if class_field_value(*field).is_some() {
+                 self.hidden_local(&class_field_initializer_name(
+@@ -618,6 +637,7 @@ impl FunctionCompiler<'_, '_> {
+                 _ => {}
+             }
+         }
++        if has_private_bindings { self.pop_lexical_scope(); }
+         if super_atom.is_some() {
+             self.pop_lexical_scope();
+         }
+diff --git a/crates/quench-runtime/src/vm/environment.rs b/crates/quench-runtime/src/vm/environment.rs
+index 5c027f91c..bdac9bfdc 100644
+--- a/crates/quench-runtime/src/vm/environment.rs
++++ b/crates/quench-runtime/src/vm/environment.rs
+@@ -406,7 +406,7 @@ impl<H: Host> Vm<H> {
+     ) -> Result<bool, JsError> {
+         match kind {
+             crate::bytecode::LexicalBindingKind::Mutable => Ok(true),
+-            crate::bytecode::LexicalBindingKind::Immutable => {
++            crate::bytecode::LexicalBindingKind::Immutable | crate::bytecode::LexicalBindingKind::PrivateName => {
+                 Err(self.type_error(p, "assignment to immutable binding".into()))
+             }
+             crate::bytecode::LexicalBindingKind::FunctionName if strict => {
+diff --git a/crates/quench-runtime/src/vm/eval.rs b/crates/quench-runtime/src/vm/eval.rs
+index 6a475e00e..8f499c1e5 100644
+--- a/crates/quench-runtime/src/vm/eval.rs
++++ b/crates/quench-runtime/src/vm/eval.rs
+@@ -1,3 +1,4 @@
++use crate::bytecode::private_identity_label;
+ use super::object_descriptors::PropertyDescriptorRecord;
+ use super::*;
+ 
+@@ -172,7 +173,7 @@ impl<H: Host> Vm<H> {
+             self.validate_strict_eval(p, source)?;
+         }
+         let context = self.direct_eval_context(p).unwrap_or_default();
+-        let private_names = if context.home_atom.is_some() {
++        let private_names = if self.direct_eval {
+             self.direct_eval_private_names(p)
+                 .map_or_else(Vec::new, |(_, names)| names)
+         } else {
+@@ -675,25 +676,45 @@ impl<H: Host> Vm<H> {
+         Ok(())
+     }
+ 
+-    fn direct_eval_private_names(
+-        &mut self,
+-        p: &ResidualProgram,
+-    ) -> Option<(Value, Vec<(String, String)>)> {
++    fn direct_eval_private_names(&mut self, p: &ResidualProgram) -> Option<(Value, Vec<(String, String)>)> {
++        let frame = self.frames.len().checked_sub(1)?;
++        let mut atoms = Vec::new();
++        let metadata = p.functions.get(self.frames[frame].function as usize)?;
++        if let Some(pc) = self.frames[frame].binding_site_pc
++            && let Ok(index) = metadata.binding_sites.binary_search_by_key(&pc, |site| site.resume_pc)
++        {
++            atoms.extend(metadata.binding_sites[index].bindings.iter().filter(|binding| binding.kind == crate::bytecode::LexicalBindingKind::PrivateName).map(|binding| binding.atom));
++        }
++        atoms.extend(metadata.name_bindings.resolved().into_iter().filter(|binding| binding.kind == crate::bytecode::LexicalBindingKind::PrivateName).map(|binding| binding.atom));
++        let mut environment = self.captured_parent_environment(frame);
++        while let Some(Cell::Environment { parent, function, scope, .. }) = self.heap.get(environment) {
++            if let Some(owner) = scope.program.and_then(|program| self.programs.get(ProgramId::from_raw(program)))
++                && let Some(metadata) = owner.functions.get(*function as usize)
++            {
++                atoms.extend(metadata.name_bindings.resolved().into_iter().filter(|binding| binding.kind == crate::bytecode::LexicalBindingKind::PrivateName).map(|binding| binding.atom));
++            }
++            environment = *parent;
++        }
++        atoms.sort_unstable();atoms.dedup();
++        let mut bindings = atoms.into_iter().filter_map(|atom| self.name_binding(frame, atom)).filter(|binding| binding.kind == crate::bytecode::LexicalBindingKind::PrivateName).collect::<Vec<_>>();
++        bindings.sort_by_key(|binding| match binding.location { crate::bytecode::EvalBindingLocation::Local(_) => 0, crate::bytecode::EvalBindingLocation::Capture { depth, .. } => u32::from(depth)+1 });
++        let mut names = Vec::new();
++        let mut first_home = None;
++        for binding in bindings {
++            let identity = self.atom_name(binding.atom).to_owned();
++            let Some(label) = private_identity_label(&identity) else { continue; };
++            if names.iter().any(|(name, _)| name == &label) { continue; }
++            if let Ok(home) = self.load_name_binding(p, frame, binding) {
++                first_home.get_or_insert(home);
++                names.push((label, identity));
++            }
++        }
++        if !names.is_empty() { return Some((first_home?, names)); }
+         let home = self.eval_home_binding(p)?;
+-        let names = self
+-            .object_data(home)
+-            .into_iter()
+-            .flat_map(|object| object.private_names())
+-            .filter_map(|brand| {
+-                let identity = self.atom_name(brand.name).to_owned();
+-                private_identity_label(&identity).map(|label| (label, identity))
+-            })
+-            .fold(Vec::new(), |mut names, binding| {
+-                if !names.iter().any(|(label, _)| label == &binding.0) {
+-                    names.push(binding);
+-                }
+-                names
+-            });
++        let names = self.object_data(home).into_iter().flat_map(|object| object.private_names()).filter_map(|brand| {
++            let identity = self.atom_name(brand.name).to_owned();
++            private_identity_label(&identity).map(|label| (label, identity))
++        }).fold(Vec::new(), |mut names, binding| { if !names.iter().any(|(label, _)| label == &binding.0) { names.push(binding); } names });
+         (!names.is_empty()).then_some((home, names))
+     }
+ 
+@@ -791,9 +812,3 @@ impl<H: Host> Vm<H> {
+         result
+     }
+ }
+-
+-pub(super) fn private_identity_label(identity: &str) -> Option<String> {
+-    let identity = identity.strip_prefix("\0quench:private:")?;
+-    let (_, label) = identity.rsplit_once(':')?;
+-    (!label.is_empty()).then(|| label.to_owned())
+-}
+diff --git a/crates/quench-runtime/src/vm/object_get.rs b/crates/quench-runtime/src/vm/object_get.rs
+index c054dee4a..e46d23e14 100644
+--- a/crates/quench-runtime/src/vm/object_get.rs
++++ b/crates/quench-runtime/src/vm/object_get.rs
+@@ -678,7 +678,7 @@ impl<H: Host> Vm<H> {
+             return Err(self.type_error(p, "Cannot add private field to a non-object".into()));
+         };
+         if object.initialize_private_field(PrivateBrand { home, name: atom }, value) { return Ok(()); }
+-        let name = super::eval::private_identity_label(self.atom_name(atom)).unwrap_or_else(|| self.atom_name(atom).to_owned());
++        let name = crate::bytecode::private_identity_label(self.atom_name(atom)).unwrap_or_else(|| self.atom_name(atom).to_owned());
+         Err(self.type_error(p, format!("Cannot initialize #{name} twice on the same object")))
+     }
+ 
+@@ -723,6 +723,11 @@ impl<H: Host> Vm<H> {
+     /// so a found home is memoized while that environment lives.
+     fn private_name_home(&mut self, p: &ResidualProgram, atom: Atom) -> Option<Value> {
+         let frame_index = self.frames.len().checked_sub(1)?;
++        if let Some(binding) = self.name_binding(frame_index, atom)
++            && binding.kind == crate::bytecode::LexicalBindingKind::PrivateName
++        {
++            return self.load_name_binding(p, frame_index, binding).ok();
++        }
+         let start = self.captured_parent_environment(frame_index);
+         let key = PrivateHomeKey {
+             environment: start,
+diff --git a/crates/quench-runtime/src/vm/tests.rs b/crates/quench-runtime/src/vm/tests.rs
+index 83ce85fba..e52ac6d7f 100644
+--- a/crates/quench-runtime/src/vm/tests.rs
++++ b/crates/quench-runtime/src/vm/tests.rs
+@@ -10258,3 +10258,30 @@ new A(instance,first);new B(instance,second);
+         }
+     }
+ }
++
++#[test]
++fn private_lexical_bindings_survive_ordinary_closures_and_binary_round_trips() {
++    let source = r#"
++class Mixed {
++ #instance=1;static #static=2;
++ read(){const object=this;return function(){return [eval('object.#instance'),eval('Mixed.#static')]}}
++ static read(object){return eval('#instance in object')}
++}
++const object=new Mixed(), read=object.read();
++if(read().join(',')!=='1,2'||!Mixed.read(object))throw Error('mixed private environment');
++class Outer {#outer=3; create(){const outer=this;return class {#inner=4;read(){const inner=this;return function(){return [eval('outer.#outer'),eval('inner.#inner')]}}}}}
++const Inner=new Outer().create();
++if(new Inner().read()().join(',')!=='3,4')throw Error('outer private environment');
++class Negative {#x;read(){return function(){for(const source of ['super.x','super()','return 1','#missing in {}']){let name;try{eval(source)}catch(error){name=error.name}if(name!=='SyntaxError')throw Error('accepted '+source)}}}}
++new Negative().read()();
++"#;
++    for compile in [Engine::specialize, Engine::specialize_unspecialized] {
++        let program = compile(source, "private-lexical-bindings.js").unwrap();
++        Vm::new(SilentHost).execute(&program).unwrap();
++        let path = std::env::temp_dir().join(format!("quench-private-lexical-{}-{}", std::process::id(), program.specialized));
++        program.write_binary(&path).unwrap();
++        let decoded = crate::ResidualProgram::read_binary(&path).unwrap();
++        Vm::new(SilentHost).execute(&decoded).unwrap();
++        std::fs::remove_file(path).unwrap();
++    }
++}
+diff --git a/docs/node-host-contracts.md b/docs/node-host-contracts.md
+index f85281d76..6247b0a0b 100644
+--- a/docs/node-host-contracts.md
++++ b/docs/node-host-contracts.md
+@@ -847,5 +847,10 @@ The atomic private-data definition operation is serialized in bytecode format
+ 92. Round-trip execution and generic/specialized collection tests cover the
+ representation. Eval-capable methods retain their synthetic class-home capture
+ in dynamic-name metadata, even when private syntax appears only inside eval's
+-string. Complete private-environment contexts and the ordinary NUL string-key
+-namespace remain separate conformance work.
++string. Bytecode format 93 adds lexical private-name bindings that retain each
++name's actual declaring home independently of the method's super home. Static
++and instance names, escaped ordinary closures, and outer/shadowed class names
++use that binding metadata. Ordinary-function eval uses OXC's ordinary-function
++grammar inside a private-name parsing context, and the extracted body must match
++the generated source boundaries. Complete private-environment contexts and the
++ordinary NUL string-key namespace remain separate conformance work.

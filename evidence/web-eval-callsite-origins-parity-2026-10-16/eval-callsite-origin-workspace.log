@@ -1,0 +1,45 @@
+    Checking quench-runtime v0.1.0 (/workspace/quench/crates/quench-runtime)
+error[E0308]: mismatched types
+   --> crates/quench-runtime/src/vm/error.rs:576:9
+    |
+552 |     pub(super) fn capture_eval_origin(&mut self) -> JsString {
+    |                                                     -------- expected `wtf16::JsString` because of return type
+...
+576 |         text.finish()
+    |         ^^^^^^^^^^^^^ expected `JsString`, found `Result<JsString, StringBuildError>`
+    |
+    = note: expected struct `JsString`
+                 found enum `std::result::Result<JsString, StringBuildError>`
+help: consider using `Result::expect` to unwrap the `std::result::Result<wtf16::JsString, StringBuildError>` value, panicking if the value is a `Result::Err`
+    |
+576 |         text.finish().expect("REASON")
+    |                      +++++++++++++++++
+
+error[E0308]: `match` arms have incompatible types
+   --> crates/quench-runtime/src/vm/error.rs:758:41
+    |
+748 |           let location = match &record.location {
+    |  ________________________-
+749 | |             CallSiteLocation::Source { file_name, line, column } => {
+750 | |                 let mut text = super::wtf16::JsStringBuilder::default();
+751 | |                 if let Some(origin) = &record.eval_origin {
+...   |
+756 | |                 text.finish()
+    | |                 ------------- this is found to be of type `std::result::Result<wtf16::JsString, StringBuildError>`
+757 | |             }
+758 | |             CallSiteLocation::Native => JsString::from_str("native"),
+    | |                                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected `Result<JsString, StringBuildError>`, found `JsString`
+759 | |         };
+    | |_________- `match` arms have incompatible types
+    |
+    = note: expected enum `std::result::Result<JsString, StringBuildError>`
+             found struct `JsString`
+help: try wrapping the expression in `Ok`
+    |
+758 |             CallSiteLocation::Native => Ok(JsString::from_str("native")),
+    |                                         +++                            +
+
+For more information about this error, try `rustc --explain E0308`.
+error: could not compile `quench-runtime` (lib) due to 2 previous errors
+warning: build failed, waiting for other jobs to finish...
+error: could not compile `quench-runtime` (lib test) due to 2 previous errors

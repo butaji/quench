@@ -1,0 +1,327 @@
+{
+  "baseline_source": "81b571194",
+  "baseline_sha256": "1c8128016a1483ff697ce28273ddf51df116798eac73c59b274d8e9d8f5b3f82",
+  "merged_sha256": "a2d9601c504e0ee2e791e726bd540efd7895323f9a67c57b9b564da35e767bd6",
+  "node_version": "26.10.0",
+  "harness_files": [
+    "sta.js",
+    "assert.js"
+  ],
+  "cases": [
+    {
+      "path": "language/expressions/compound-assignment/S11.13.2_A7.10_T4.js",
+      "composed_sha256": "882195c23de3113dc8c6c23f6c7cecb3ff537f153b6a30b4d35d0fcdce8c7fb7",
+      "runs": {
+        "baseline": {
+          "status": 1,
+          "stdout": "",
+          "stderr": "/workspace/quench/work/known-expression-failure-0.js:89\n  throw new Test262Error(message);\n  ^\n\nTest262Error: Expected true but got false\n\nNode.js v22.0.0\n"
+        },
+        "merged": {
+          "status": 1,
+          "stdout": "",
+          "stderr": "/workspace/quench/work/known-expression-failure-0.js:89\n  throw new Test262Error(message);\n  ^\n\nTest262Error: Expected true but got false\n\nNode.js v22.0.0\n"
+        },
+        "node": {
+          "status": 1,
+          "stdout": "",
+          "stderr": "\nnode:internal/modules/run_main:111\n    triggerUncaughtException(\n    ^\nTest262Error { message: 'Expected true but got false' }\n\nNode.js v26.10.0\n"
+        }
+      }
+    },
+    {
+      "path": "language/expressions/compound-assignment/S11.13.2_A7.11_T4.js",
+      "composed_sha256": "e7b7aaa897c038b168e588eb5de6b7d074aa67f35ec831598155d6649a179c7b",
+      "runs": {
+        "baseline": {
+          "status": 1,
+          "stdout": "",
+          "stderr": "/workspace/quench/work/known-expression-failure-1.js:89\n  throw new Test262Error(message);\n  ^\n\nTest262Error: Expected true but got false\n\nNode.js v22.0.0\n"
+        },
+        "merged": {
+          "status": 1,
+          "stdout": "",
+          "stderr": "/workspace/quench/work/known-expression-failure-1.js:89\n  throw new Test262Error(message);\n  ^\n\nTest262Error: Expected true but got false\n\nNode.js v22.0.0\n"
+        },
+        "node": {
+          "status": 1,
+          "stdout": "",
+          "stderr": "\nnode:internal/modules/run_main:111\n    triggerUncaughtException(\n    ^\nTest262Error { message: 'Expected true but got false' }\n\nNode.js v26.10.0\n"
+        }
+      }
+    },
+    {
+      "path": "language/expressions/compound-assignment/S11.13.2_A7.1_T4.js",
+      "composed_sha256": "1c4db186313f4a39c3e91714b3c19319c63a4721ae1d001ae49f067356f92f2c",
+      "runs": {
+        "baseline": {
+          "status": 1,
+          "stdout": "",
+          "stderr": "/workspace/quench/work/known-expression-failure-2.js:89\n  throw new Test262Error(message);\n  ^\n\nTest262Error: Expected true but got false\n\nNode.js v22.0.0\n"
+        },
+        "merged": {
+          "status": 1,
+          "stdout": "",
+          "stderr": "/workspace/quench/work/known-expression-failure-2.js:89\n  throw new Test262Error(message);\n  ^\n\nTest262Error: Expected true but got false\n\nNode.js v22.0.0\n"
+        },
+        "node": {
+          "status": 1,
+          "stdout": "",
+          "stderr": "\nnode:internal/modules/run_main:111\n    triggerUncaughtException(\n    ^\nTest262Error { message: 'Expected true but got false' }\n\nNode.js v26.10.0\n"
+        }
+      }
+    },
+    {
+      "path": "language/expressions/compound-assignment/S11.13.2_A7.2_T4.js",
+      "composed_sha256": "f327c5c605c1d818ceb9eb64db4ca68ed7a1188ee440851a8d52428914c27be1",
+      "runs": {
+        "baseline": {
+          "status": 1,
+          "stdout": "",
+          "stderr": "/workspace/quench/work/known-expression-failure-3.js:89\n  throw new Test262Error(message);\n  ^\n\nTest262Error: Expected true but got false\n\nNode.js v22.0.0\n"
+        },
+        "merged": {
+          "status": 1,
+          "stdout": "",
+          "stderr": "/workspace/quench/work/known-expression-failure-3.js:89\n  throw new Test262Error(message);\n  ^\n\nTest262Error: Expected true but got false\n\nNode.js v22.0.0\n"
+        },
+        "node": {
+          "status": 1,
+          "stdout": "",
+          "stderr": "\nnode:internal/modules/run_main:111\n    triggerUncaughtException(\n    ^\nTest262Error { message: 'Expected true but got false' }\n\nNode.js v26.10.0\n"
+        }
+      }
+    },
+    {
+      "path": "language/expressions/compound-assignment/S11.13.2_A7.3_T4.js",
+      "composed_sha256": "0898ef0f1533742d9d3ec1e80d6857764bdd9f56404b738d5a0892f2a4b4912c",
+      "runs": {
+        "baseline": {
+          "status": 1,
+          "stdout": "",
+          "stderr": "/workspace/quench/work/known-expression-failure-4.js:89\n  throw new Test262Error(message);\n  ^\n\nTest262Error: Expected true but got false\n\nNode.js v22.0.0\n"
+        },
+        "merged": {
+          "status": 1,
+          "stdout": "",
+          "stderr": "/workspace/quench/work/known-expression-failure-4.js:89\n  throw new Test262Error(message);\n  ^\n\nTest262Error: Expected true but got false\n\nNode.js v22.0.0\n"
+        },
+        "node": {
+          "status": 1,
+          "stdout": "",
+          "stderr": "\nnode:internal/modules/run_main:111\n    triggerUncaughtException(\n    ^\nTest262Error { message: 'Expected true but got false' }\n\nNode.js v26.10.0\n"
+        }
+      }
+    },
+    {
+      "path": "language/expressions/compound-assignment/S11.13.2_A7.4_T4.js",
+      "composed_sha256": "4c0d436256ca79207aa8cead7dcca3137565f6a0d6ae06efc005047f0e31a456",
+      "runs": {
+        "baseline": {
+          "status": 1,
+          "stdout": "",
+          "stderr": "/workspace/quench/work/known-expression-failure-5.js:89\n  throw new Test262Error(message);\n  ^\n\nTest262Error: Expected true but got false\n\nNode.js v22.0.0\n"
+        },
+        "merged": {
+          "status": 1,
+          "stdout": "",
+          "stderr": "/workspace/quench/work/known-expression-failure-5.js:89\n  throw new Test262Error(message);\n  ^\n\nTest262Error: Expected true but got false\n\nNode.js v22.0.0\n"
+        },
+        "node": {
+          "status": 1,
+          "stdout": "",
+          "stderr": "\nnode:internal/modules/run_main:111\n    triggerUncaughtException(\n    ^\nTest262Error { message: 'Expected true but got false' }\n\nNode.js v26.10.0\n"
+        }
+      }
+    },
+    {
+      "path": "language/expressions/compound-assignment/S11.13.2_A7.5_T4.js",
+      "composed_sha256": "cf55551abd58fa16c5c0f94ef47d66607725440974f0943459401fe222fda27d",
+      "runs": {
+        "baseline": {
+          "status": 1,
+          "stdout": "",
+          "stderr": "/workspace/quench/work/known-expression-failure-6.js:89\n  throw new Test262Error(message);\n  ^\n\nTest262Error: Expected true but got false\n\nNode.js v22.0.0\n"
+        },
+        "merged": {
+          "status": 1,
+          "stdout": "",
+          "stderr": "/workspace/quench/work/known-expression-failure-6.js:89\n  throw new Test262Error(message);\n  ^\n\nTest262Error: Expected true but got false\n\nNode.js v22.0.0\n"
+        },
+        "node": {
+          "status": 1,
+          "stdout": "",
+          "stderr": "\nnode:internal/modules/run_main:111\n    triggerUncaughtException(\n    ^\nTest262Error { message: 'Expected true but got false' }\n\nNode.js v26.10.0\n"
+        }
+      }
+    },
+    {
+      "path": "language/expressions/compound-assignment/S11.13.2_A7.6_T4.js",
+      "composed_sha256": "e6e80b3e3ff4285a343189d867ee3ac2b3485ba6a51a98fda2dd51ee671172e8",
+      "runs": {
+        "baseline": {
+          "status": 1,
+          "stdout": "",
+          "stderr": "/workspace/quench/work/known-expression-failure-7.js:89\n  throw new Test262Error(message);\n  ^\n\nTest262Error: Expected true but got false\n\nNode.js v22.0.0\n"
+        },
+        "merged": {
+          "status": 1,
+          "stdout": "",
+          "stderr": "/workspace/quench/work/known-expression-failure-7.js:89\n  throw new Test262Error(message);\n  ^\n\nTest262Error: Expected true but got false\n\nNode.js v22.0.0\n"
+        },
+        "node": {
+          "status": 1,
+          "stdout": "",
+          "stderr": "\nnode:internal/modules/run_main:111\n    triggerUncaughtException(\n    ^\nTest262Error { message: 'Expected true but got false' }\n\nNode.js v26.10.0\n"
+        }
+      }
+    },
+    {
+      "path": "language/expressions/compound-assignment/S11.13.2_A7.7_T4.js",
+      "composed_sha256": "0de5692814303eb306386ac45713c672c241b474098fdf4f9b813d3911c9e2c2",
+      "runs": {
+        "baseline": {
+          "status": 1,
+          "stdout": "",
+          "stderr": "/workspace/quench/work/known-expression-failure-8.js:89\n  throw new Test262Error(message);\n  ^\n\nTest262Error: Expected true but got false\n\nNode.js v22.0.0\n"
+        },
+        "merged": {
+          "status": 1,
+          "stdout": "",
+          "stderr": "/workspace/quench/work/known-expression-failure-8.js:89\n  throw new Test262Error(message);\n  ^\n\nTest262Error: Expected true but got false\n\nNode.js v22.0.0\n"
+        },
+        "node": {
+          "status": 1,
+          "stdout": "",
+          "stderr": "\nnode:internal/modules/run_main:111\n    triggerUncaughtException(\n    ^\nTest262Error { message: 'Expected true but got false' }\n\nNode.js v26.10.0\n"
+        }
+      }
+    },
+    {
+      "path": "language/expressions/compound-assignment/S11.13.2_A7.8_T4.js",
+      "composed_sha256": "526a0faf27a93c1a3c78aeb02763c2ca1d95a48bac4c2b87073355fb8847fd9b",
+      "runs": {
+        "baseline": {
+          "status": 1,
+          "stdout": "",
+          "stderr": "/workspace/quench/work/known-expression-failure-9.js:89\n  throw new Test262Error(message);\n  ^\n\nTest262Error: Expected true but got false\n\nNode.js v22.0.0\n"
+        },
+        "merged": {
+          "status": 1,
+          "stdout": "",
+          "stderr": "/workspace/quench/work/known-expression-failure-9.js:89\n  throw new Test262Error(message);\n  ^\n\nTest262Error: Expected true but got false\n\nNode.js v22.0.0\n"
+        },
+        "node": {
+          "status": 1,
+          "stdout": "",
+          "stderr": "\nnode:internal/modules/run_main:111\n    triggerUncaughtException(\n    ^\nTest262Error { message: 'Expected true but got false' }\n\nNode.js v26.10.0\n"
+        }
+      }
+    },
+    {
+      "path": "language/expressions/compound-assignment/S11.13.2_A7.9_T4.js",
+      "composed_sha256": "91ae0398fdd94bfeee71b564f8f4faafd8c5ffdd00b752a1f60e198797bc1f7c",
+      "runs": {
+        "baseline": {
+          "status": 1,
+          "stdout": "",
+          "stderr": "/workspace/quench/work/known-expression-failure-10.js:89\n  throw new Test262Error(message);\n  ^\n\nTest262Error: Expected true but got false\n\nNode.js v22.0.0\n"
+        },
+        "merged": {
+          "status": 1,
+          "stdout": "",
+          "stderr": "/workspace/quench/work/known-expression-failure-10.js:89\n  throw new Test262Error(message);\n  ^\n\nTest262Error: Expected true but got false\n\nNode.js v22.0.0\n"
+        },
+        "node": {
+          "status": 1,
+          "stdout": "",
+          "stderr": "\nnode:internal/modules/run_main:111\n    triggerUncaughtException(\n    ^\nTest262Error { message: 'Expected true but got false' }\n\nNode.js v26.10.0\n"
+        }
+      }
+    },
+    {
+      "path": "language/expressions/postfix-decrement/S11.3.2_A6_T3.js",
+      "composed_sha256": "c845649f23c8706cc3ca3f62388ea95195771e5b3ff1e7c2bbe558b4a37145d2",
+      "runs": {
+        "baseline": {
+          "status": 1,
+          "stdout": "",
+          "stderr": "/workspace/quench/work/known-expression-failure-11.js:89\n  throw new Test262Error(message);\n  ^\n\nTest262Error: Expected true but got false\n\nNode.js v22.0.0\n"
+        },
+        "merged": {
+          "status": 1,
+          "stdout": "",
+          "stderr": "/workspace/quench/work/known-expression-failure-11.js:89\n  throw new Test262Error(message);\n  ^\n\nTest262Error: Expected true but got false\n\nNode.js v22.0.0\n"
+        },
+        "node": {
+          "status": 1,
+          "stdout": "",
+          "stderr": "\nnode:internal/modules/run_main:111\n    triggerUncaughtException(\n    ^\nTest262Error { message: 'Expected true but got false' }\n\nNode.js v26.10.0\n"
+        }
+      }
+    },
+    {
+      "path": "language/expressions/postfix-increment/S11.3.1_A6_T3.js",
+      "composed_sha256": "2c056a31fb8e74012808c5450fe5175557cbdedd0328356e551777c14d764965",
+      "runs": {
+        "baseline": {
+          "status": 1,
+          "stdout": "",
+          "stderr": "/workspace/quench/work/known-expression-failure-12.js:89\n  throw new Test262Error(message);\n  ^\n\nTest262Error: Expected true but got false\n\nNode.js v22.0.0\n"
+        },
+        "merged": {
+          "status": 1,
+          "stdout": "",
+          "stderr": "/workspace/quench/work/known-expression-failure-12.js:89\n  throw new Test262Error(message);\n  ^\n\nTest262Error: Expected true but got false\n\nNode.js v22.0.0\n"
+        },
+        "node": {
+          "status": 1,
+          "stdout": "",
+          "stderr": "\nnode:internal/modules/run_main:111\n    triggerUncaughtException(\n    ^\nTest262Error { message: 'Expected true but got false' }\n\nNode.js v26.10.0\n"
+        }
+      }
+    },
+    {
+      "path": "language/expressions/prefix-decrement/S11.4.5_A6_T3.js",
+      "composed_sha256": "947126864cd1d288d8d1e8b3af6c58631a7403686cc6673713652859a0d8a144",
+      "runs": {
+        "baseline": {
+          "status": 1,
+          "stdout": "",
+          "stderr": "/workspace/quench/work/known-expression-failure-13.js:89\n  throw new Test262Error(message);\n  ^\n\nTest262Error: Expected true but got false\n\nNode.js v22.0.0\n"
+        },
+        "merged": {
+          "status": 1,
+          "stdout": "",
+          "stderr": "/workspace/quench/work/known-expression-failure-13.js:89\n  throw new Test262Error(message);\n  ^\n\nTest262Error: Expected true but got false\n\nNode.js v22.0.0\n"
+        },
+        "node": {
+          "status": 1,
+          "stdout": "",
+          "stderr": "\nnode:internal/modules/run_main:111\n    triggerUncaughtException(\n    ^\nTest262Error { message: 'Expected true but got false' }\n\nNode.js v26.10.0\n"
+        }
+      }
+    },
+    {
+      "path": "language/expressions/prefix-increment/S11.4.4_A6_T3.js",
+      "composed_sha256": "5143b73e050b2f48992c76d83a6c2aff2246937145493761f8cc60cc3cf9dee6",
+      "runs": {
+        "baseline": {
+          "status": 1,
+          "stdout": "",
+          "stderr": "/workspace/quench/work/known-expression-failure-14.js:89\n  throw new Test262Error(message);\n  ^\n\nTest262Error: Expected true but got false\n\nNode.js v22.0.0\n"
+        },
+        "merged": {
+          "status": 1,
+          "stdout": "",
+          "stderr": "/workspace/quench/work/known-expression-failure-14.js:89\n  throw new Test262Error(message);\n  ^\n\nTest262Error: Expected true but got false\n\nNode.js v22.0.0\n"
+        },
+        "node": {
+          "status": 1,
+          "stdout": "",
+          "stderr": "\nnode:internal/modules/run_main:111\n    triggerUncaughtException(\n    ^\nTest262Error { message: 'Expected true but got false' }\n\nNode.js v26.10.0\n"
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,686 @@
+{
+  "schema": 1,
+  "task": "61",
+  "experiment": "V2 function-source cache, Linux all-eight Quench-only one-round regression screen",
+  "source": {
+    "baseline_revision": "bb954aaf3e9bc499067bfebd7f3e05c6a75de6bf",
+    "candidate_base_revision": "bb954aaf3e9bc499067bfebd7f3e05c6a75de6bf",
+    "candidate_dirty": true,
+    "candidate_patch_sha256": "ca70848c0127872f06078d71e0fd0cefa265213cefe24faa82e0ac3f6fb56a66"
+  },
+  "host": {
+    "uname": {
+      "system": "Linux",
+      "node": "1c7595109800",
+      "release": "6.18.44",
+      "version": "#1 SMP Sat Sep 26 20:02:31 UTC 2026",
+      "machine": "x86_64",
+      "processor": ""
+    },
+    "rustc": "rustc 1.99.0 (b940084d7 2026-09-28)\nbinary: rustc\ncommit-hash: b940084d7eb6a299eb4bfeb8e34901bc051e7ac4\ncommit-date: 2026-09-28\nhost: x86_64-unknown-linux-gnu\nrelease: 1.99.0\nLLVM version: 23.1.1",
+    "cpu_quota": "400000 100000",
+    "memory_limit_bytes": 17179869184,
+    "rss_backend": "Linux wait4 ru_maxrss, KiB normalized to bytes"
+  },
+  "corpus_revision": "64e1860c736c1b899708f4cd646721bc71e53d8b",
+  "runner_sha256": "1a5ee3d982d6573ea9d1551aba47aa358c9fbce1a9eb273be15d89e98fae1b07",
+  "rounds_per_fixture": 1,
+  "bootstrap_resamples": 100000,
+  "binary_sha256": {
+    "baseline": "c3611c6562103af2ae285f9bb87b3813e9838fa207006815c06b0dbd107f1651",
+    "candidate": "d6165b53df0198b58e5c3887fed1afad351bde17e237a6f711d495987cb79158"
+  },
+  "commands": {
+    "baseline": [
+      "work/task61-function-source-cache-linux-2026-10-09/quench-node-baseline",
+      "<materialized-fixture>"
+    ],
+    "candidate": [
+      "work/task61-function-source-cache-linux-2026-10-09/quench-node-candidate",
+      "<materialized-fixture>"
+    ]
+  },
+  "measurement_environment": {
+    "HOME": "/home/agent",
+    "LANG": "C.UTF-8",
+    "LC_ALL": "C.UTF-8",
+    "PATH": "/workspace/quench/work/stageb-tools/cargo-home/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin:/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/override:/opt/codex/runtimes/codex-primary-runtime/dependencies/python/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin:/opt/codex/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/fallback"
+  },
+  "fixtures": {
+    "crypto.js": {
+      "source_sha256": "5321d2ada9b61e01d5f281609513467cbaa7c0effb12c577ed08088d812453af",
+      "materialized_sha256": "0ab6a65bef1350ac52050dd7642921c6466e20c96aa61df17c84cd18b1f5ee75",
+      "materialized_path": "work/task61-function-source-cache-linux-2026-10-09/materialized/crypto-materialized.js",
+      "valid": true,
+      "output_equal": true,
+      "rounds": [
+        {
+          "pair": 1,
+          "execution_order": [
+            "baseline",
+            "candidate"
+          ],
+          "valid": true,
+          "output_equal": true,
+          "results": {
+            "baseline": {
+              "command": [
+                "work/task61-function-source-cache-linux-2026-10-09/quench-node-baseline",
+                "/workspace/quench/work/task61-function-source-cache-linux-2026-10-09/materialized/crypto-materialized.js"
+              ],
+              "exit_code": 0,
+              "timed_out": false,
+              "score": 158.0,
+              "maximum_rss_bytes": 22286336,
+              "wall_ns": 27347424185,
+              "result_lines": [
+                "__quenchBenchResult: Crypto: 158"
+              ],
+              "semantic_output": [],
+              "stdout": "__quenchBenchResult: Crypto: 158\n----\nScore: 158\n",
+              "stderr": ""
+            },
+            "candidate": {
+              "command": [
+                "work/task61-function-source-cache-linux-2026-10-09/quench-node-candidate",
+                "/workspace/quench/work/task61-function-source-cache-linux-2026-10-09/materialized/crypto-materialized.js"
+              ],
+              "exit_code": 0,
+              "timed_out": false,
+              "score": 157.0,
+              "maximum_rss_bytes": 22863872,
+              "wall_ns": 27152976432,
+              "result_lines": [
+                "__quenchBenchResult: Crypto: 157"
+              ],
+              "semantic_output": [],
+              "stdout": "__quenchBenchResult: Crypto: 157\n----\nScore: 157\n",
+              "stderr": ""
+            }
+          }
+        }
+      ],
+      "summary": {
+        "baseline_median_score": 158.0,
+        "candidate_median_score": 157.0,
+        "score_delta": -1.0,
+        "score_delta_percent": -0.6329113924050667,
+        "score_delta_95_percentile_interval": {
+          "lower_95": -1.0,
+          "upper_95": -1.0,
+          "resamples": 100000,
+          "method": "paired percentile bootstrap of difference in medians",
+          "seed": 20261009
+        },
+        "baseline_median_maximum_rss_bytes": 22286336,
+        "candidate_median_maximum_rss_bytes": 22863872,
+        "maximum_rss_delta_bytes": 577536,
+        "maximum_rss_delta_95_percentile_interval": {
+          "lower_95": 577536.0,
+          "upper_95": 577536.0,
+          "resamples": 100000,
+          "method": "paired percentile bootstrap of difference in medians",
+          "seed": 20261009
+        },
+        "candidate_lower_score_pairs": 1,
+        "candidate_lower_rss_pairs": 0
+      }
+    },
+    "deltablue.js": {
+      "source_sha256": "74b5a95f4877701073c6efef08e4ae306562747067e292925b69cbd629a511b9",
+      "materialized_sha256": "60bde6bd8a2faa0fc8d2f7309bb9f62234919616186a768ab59ba486955ca97c",
+      "materialized_path": "work/task61-function-source-cache-linux-2026-10-09/materialized/deltablue-materialized.js",
+      "valid": true,
+      "output_equal": true,
+      "rounds": [
+        {
+          "pair": 1,
+          "execution_order": [
+            "baseline",
+            "candidate"
+          ],
+          "valid": true,
+          "output_equal": true,
+          "results": {
+            "baseline": {
+              "command": [
+                "work/task61-function-source-cache-linux-2026-10-09/quench-node-baseline",
+                "/workspace/quench/work/task61-function-source-cache-linux-2026-10-09/materialized/deltablue-materialized.js"
+              ],
+              "exit_code": 0,
+              "timed_out": false,
+              "score": 91.4,
+              "maximum_rss_bytes": 21069824,
+              "wall_ns": 4104058779,
+              "result_lines": [
+                "__quenchBenchResult: DeltaBlue: 91.4"
+              ],
+              "semantic_output": [],
+              "stdout": "__quenchBenchResult: DeltaBlue: 91.4\n----\nScore: 91.4\n",
+              "stderr": ""
+            },
+            "candidate": {
+              "command": [
+                "work/task61-function-source-cache-linux-2026-10-09/quench-node-candidate",
+                "/workspace/quench/work/task61-function-source-cache-linux-2026-10-09/materialized/deltablue-materialized.js"
+              ],
+              "exit_code": 0,
+              "timed_out": false,
+              "score": 90.2,
+              "maximum_rss_bytes": 20996096,
+              "wall_ns": 4171098930,
+              "result_lines": [
+                "__quenchBenchResult: DeltaBlue: 90.2"
+              ],
+              "semantic_output": [],
+              "stdout": "__quenchBenchResult: DeltaBlue: 90.2\n----\nScore: 90.2\n",
+              "stderr": ""
+            }
+          }
+        }
+      ],
+      "summary": {
+        "baseline_median_score": 91.4,
+        "candidate_median_score": 90.2,
+        "score_delta": -1.2000000000000028,
+        "score_delta_percent": -1.3129102844638973,
+        "score_delta_95_percentile_interval": {
+          "lower_95": -1.2000000000000028,
+          "upper_95": -1.2000000000000028,
+          "resamples": 100000,
+          "method": "paired percentile bootstrap of difference in medians",
+          "seed": 20261009
+        },
+        "baseline_median_maximum_rss_bytes": 21069824,
+        "candidate_median_maximum_rss_bytes": 20996096,
+        "maximum_rss_delta_bytes": -73728,
+        "maximum_rss_delta_95_percentile_interval": {
+          "lower_95": -73728.0,
+          "upper_95": -73728.0,
+          "resamples": 100000,
+          "method": "paired percentile bootstrap of difference in medians",
+          "seed": 20261009
+        },
+        "candidate_lower_score_pairs": 1,
+        "candidate_lower_rss_pairs": 1
+      }
+    },
+    "earley-boyer.js": {
+      "source_sha256": "dbf3aeb6b3d056e8ea35b5f19aa8c8a4fb1053e41d07f096c22483b2c1c6ee01",
+      "materialized_sha256": "aa379c1d54f5d13de32ebf2b50729d0cbc64bb23de5e524256c7b2270213cc0b",
+      "materialized_path": "work/task61-function-source-cache-linux-2026-10-09/materialized/earley-boyer-materialized.js",
+      "valid": true,
+      "output_equal": true,
+      "rounds": [
+        {
+          "pair": 1,
+          "execution_order": [
+            "baseline",
+            "candidate"
+          ],
+          "valid": true,
+          "output_equal": true,
+          "results": {
+            "baseline": {
+              "command": [
+                "work/task61-function-source-cache-linux-2026-10-09/quench-node-baseline",
+                "/workspace/quench/work/task61-function-source-cache-linux-2026-10-09/materialized/earley-boyer-materialized.js"
+              ],
+              "exit_code": 0,
+              "timed_out": false,
+              "score": 178.0,
+              "maximum_rss_bytes": 53116928,
+              "wall_ns": 41952086431,
+              "result_lines": [
+                "__quenchBenchResult: EarleyBoyer: 178"
+              ],
+              "semantic_output": [],
+              "stdout": "__quenchBenchResult: EarleyBoyer: 178\n----\nScore: 178\n",
+              "stderr": ""
+            },
+            "candidate": {
+              "command": [
+                "work/task61-function-source-cache-linux-2026-10-09/quench-node-candidate",
+                "/workspace/quench/work/task61-function-source-cache-linux-2026-10-09/materialized/earley-boyer-materialized.js"
+              ],
+              "exit_code": 0,
+              "timed_out": false,
+              "score": 213.0,
+              "maximum_rss_bytes": 50987008,
+              "wall_ns": 39109138757,
+              "result_lines": [
+                "__quenchBenchResult: EarleyBoyer: 213"
+              ],
+              "semantic_output": [],
+              "stdout": "__quenchBenchResult: EarleyBoyer: 213\n----\nScore: 213\n",
+              "stderr": ""
+            }
+          }
+        }
+      ],
+      "summary": {
+        "baseline_median_score": 178.0,
+        "candidate_median_score": 213.0,
+        "score_delta": 35.0,
+        "score_delta_percent": 19.662921348314597,
+        "score_delta_95_percentile_interval": {
+          "lower_95": 35.0,
+          "upper_95": 35.0,
+          "resamples": 100000,
+          "method": "paired percentile bootstrap of difference in medians",
+          "seed": 20261009
+        },
+        "baseline_median_maximum_rss_bytes": 53116928,
+        "candidate_median_maximum_rss_bytes": 50987008,
+        "maximum_rss_delta_bytes": -2129920,
+        "maximum_rss_delta_95_percentile_interval": {
+          "lower_95": -2129920.0,
+          "upper_95": -2129920.0,
+          "resamples": 100000,
+          "method": "paired percentile bootstrap of difference in medians",
+          "seed": 20261009
+        },
+        "candidate_lower_score_pairs": 0,
+        "candidate_lower_rss_pairs": 1
+      }
+    },
+    "navier-stokes.js": {
+      "source_sha256": "ce241465ffeee77b5c4f7119f522aa971fe1fe92c3aed76f7514ea43e07fec84",
+      "materialized_sha256": "290b7ad4204d4e9a6bb6ef6ff261e7c3a13f507de81381bca171e83256986dbe",
+      "materialized_path": "work/task61-function-source-cache-linux-2026-10-09/materialized/navier-stokes-materialized.js",
+      "valid": true,
+      "output_equal": true,
+      "rounds": [
+        {
+          "pair": 1,
+          "execution_order": [
+            "baseline",
+            "candidate"
+          ],
+          "valid": true,
+          "output_equal": true,
+          "results": {
+            "baseline": {
+              "command": [
+                "work/task61-function-source-cache-linux-2026-10-09/quench-node-baseline",
+                "/workspace/quench/work/task61-function-source-cache-linux-2026-10-09/materialized/navier-stokes-materialized.js"
+              ],
+              "exit_code": 0,
+              "timed_out": false,
+              "score": 215.0,
+              "maximum_rss_bytes": 20860928,
+              "wall_ns": 23859672870,
+              "result_lines": [
+                "__quenchBenchResult: NavierStokes: 215"
+              ],
+              "semantic_output": [],
+              "stdout": "__quenchBenchResult: NavierStokes: 215\n----\nScore: 215\n",
+              "stderr": ""
+            },
+            "candidate": {
+              "command": [
+                "work/task61-function-source-cache-linux-2026-10-09/quench-node-candidate",
+                "/workspace/quench/work/task61-function-source-cache-linux-2026-10-09/materialized/navier-stokes-materialized.js"
+              ],
+              "exit_code": 0,
+              "timed_out": false,
+              "score": 213.0,
+              "maximum_rss_bytes": 20508672,
+              "wall_ns": 24030786528,
+              "result_lines": [
+                "__quenchBenchResult: NavierStokes: 213"
+              ],
+              "semantic_output": [],
+              "stdout": "__quenchBenchResult: NavierStokes: 213\n----\nScore: 213\n",
+              "stderr": ""
+            }
+          }
+        }
+      ],
+      "summary": {
+        "baseline_median_score": 215.0,
+        "candidate_median_score": 213.0,
+        "score_delta": -2.0,
+        "score_delta_percent": -0.9302325581395321,
+        "score_delta_95_percentile_interval": {
+          "lower_95": -2.0,
+          "upper_95": -2.0,
+          "resamples": 100000,
+          "method": "paired percentile bootstrap of difference in medians",
+          "seed": 20261009
+        },
+        "baseline_median_maximum_rss_bytes": 20860928,
+        "candidate_median_maximum_rss_bytes": 20508672,
+        "maximum_rss_delta_bytes": -352256,
+        "maximum_rss_delta_95_percentile_interval": {
+          "lower_95": -352256.0,
+          "upper_95": -352256.0,
+          "resamples": 100000,
+          "method": "paired percentile bootstrap of difference in medians",
+          "seed": 20261009
+        },
+        "candidate_lower_score_pairs": 1,
+        "candidate_lower_rss_pairs": 1
+      }
+    },
+    "raytrace.js": {
+      "source_sha256": "d52183ca324cdb88d9ee3e78326433fe2ca28d6436f0a6c3ec013ab67cb798eb",
+      "materialized_sha256": "ccd66592e52747004326c0ce469d24e82212c25decfdd534be5fa74dc6edf18b",
+      "materialized_path": "work/task61-function-source-cache-linux-2026-10-09/materialized/raytrace-materialized.js",
+      "valid": true,
+      "output_equal": true,
+      "rounds": [
+        {
+          "pair": 1,
+          "execution_order": [
+            "baseline",
+            "candidate"
+          ],
+          "valid": true,
+          "output_equal": true,
+          "results": {
+            "baseline": {
+              "command": [
+                "work/task61-function-source-cache-linux-2026-10-09/quench-node-baseline",
+                "/workspace/quench/work/task61-function-source-cache-linux-2026-10-09/materialized/raytrace-materialized.js"
+              ],
+              "exit_code": 0,
+              "timed_out": false,
+              "score": 151.0,
+              "maximum_rss_bytes": 21626880,
+              "wall_ns": 17149978104,
+              "result_lines": [
+                "__quenchBenchResult: RayTrace: 151"
+              ],
+              "semantic_output": [],
+              "stdout": "__quenchBenchResult: RayTrace: 151\n----\nScore: 151\n",
+              "stderr": ""
+            },
+            "candidate": {
+              "command": [
+                "work/task61-function-source-cache-linux-2026-10-09/quench-node-candidate",
+                "/workspace/quench/work/task61-function-source-cache-linux-2026-10-09/materialized/raytrace-materialized.js"
+              ],
+              "exit_code": 0,
+              "timed_out": false,
+              "score": 146.0,
+              "maximum_rss_bytes": 20619264,
+              "wall_ns": 17639752340,
+              "result_lines": [
+                "__quenchBenchResult: RayTrace: 146"
+              ],
+              "semantic_output": [],
+              "stdout": "__quenchBenchResult: RayTrace: 146\n----\nScore: 146\n",
+              "stderr": ""
+            }
+          }
+        }
+      ],
+      "summary": {
+        "baseline_median_score": 151.0,
+        "candidate_median_score": 146.0,
+        "score_delta": -5.0,
+        "score_delta_percent": -3.31125827814569,
+        "score_delta_95_percentile_interval": {
+          "lower_95": -5.0,
+          "upper_95": -5.0,
+          "resamples": 100000,
+          "method": "paired percentile bootstrap of difference in medians",
+          "seed": 20261009
+        },
+        "baseline_median_maximum_rss_bytes": 21626880,
+        "candidate_median_maximum_rss_bytes": 20619264,
+        "maximum_rss_delta_bytes": -1007616,
+        "maximum_rss_delta_95_percentile_interval": {
+          "lower_95": -1007616.0,
+          "upper_95": -1007616.0,
+          "resamples": 100000,
+          "method": "paired percentile bootstrap of difference in medians",
+          "seed": 20261009
+        },
+        "candidate_lower_score_pairs": 1,
+        "candidate_lower_rss_pairs": 1
+      }
+    },
+    "regexp.js": {
+      "source_sha256": "5268b0d15931fda4e331de35fc58e5beded9a250b60764e1cc7cfc898ab53602",
+      "materialized_sha256": "2ec05d15bfdece58aea94cd92b47dcd60ea605787c81f6e50db0c2830f3cbb16",
+      "materialized_path": "work/task61-function-source-cache-linux-2026-10-09/materialized/regexp-materialized.js",
+      "valid": true,
+      "output_equal": true,
+      "rounds": [
+        {
+          "pair": 1,
+          "execution_order": [
+            "baseline",
+            "candidate"
+          ],
+          "valid": true,
+          "output_equal": true,
+          "results": {
+            "baseline": {
+              "command": [
+                "work/task61-function-source-cache-linux-2026-10-09/quench-node-baseline",
+                "/workspace/quench/work/task61-function-source-cache-linux-2026-10-09/materialized/regexp-materialized.js"
+              ],
+              "exit_code": 0,
+              "timed_out": false,
+              "score": 53.6,
+              "maximum_rss_bytes": 32137216,
+              "wall_ns": 58427907825,
+              "result_lines": [
+                "__quenchBenchResult: RegExp: 53.6"
+              ],
+              "semantic_output": [],
+              "stdout": "__quenchBenchResult: RegExp: 53.6\n----\nScore: 53.6\n",
+              "stderr": ""
+            },
+            "candidate": {
+              "command": [
+                "work/task61-function-source-cache-linux-2026-10-09/quench-node-candidate",
+                "/workspace/quench/work/task61-function-source-cache-linux-2026-10-09/materialized/regexp-materialized.js"
+              ],
+              "exit_code": 0,
+              "timed_out": false,
+              "score": 54.4,
+              "maximum_rss_bytes": 31858688,
+              "wall_ns": 57298409903,
+              "result_lines": [
+                "__quenchBenchResult: RegExp: 54.4"
+              ],
+              "semantic_output": [],
+              "stdout": "__quenchBenchResult: RegExp: 54.4\n----\nScore: 54.4\n",
+              "stderr": ""
+            }
+          }
+        }
+      ],
+      "summary": {
+        "baseline_median_score": 53.6,
+        "candidate_median_score": 54.4,
+        "score_delta": 0.7999999999999972,
+        "score_delta_percent": 1.4925373134328401,
+        "score_delta_95_percentile_interval": {
+          "lower_95": 0.7999999999999972,
+          "upper_95": 0.7999999999999972,
+          "resamples": 100000,
+          "method": "paired percentile bootstrap of difference in medians",
+          "seed": 20261009
+        },
+        "baseline_median_maximum_rss_bytes": 32137216,
+        "candidate_median_maximum_rss_bytes": 31858688,
+        "maximum_rss_delta_bytes": -278528,
+        "maximum_rss_delta_95_percentile_interval": {
+          "lower_95": -278528.0,
+          "upper_95": -278528.0,
+          "resamples": 100000,
+          "method": "paired percentile bootstrap of difference in medians",
+          "seed": 20261009
+        },
+        "candidate_lower_score_pairs": 0,
+        "candidate_lower_rss_pairs": 1
+      }
+    },
+    "richards.js": {
+      "source_sha256": "d86eac4108343a54ba6e10621a77b46f82f554c3b0a46e8fb4032d5cf65a2a11",
+      "materialized_sha256": "b501f150708fa94cc6973a0fe6e07004635150c6c7794bab660abbf1beed5ed0",
+      "materialized_path": "work/task61-function-source-cache-linux-2026-10-09/materialized/richards-materialized.js",
+      "valid": true,
+      "output_equal": true,
+      "rounds": [
+        {
+          "pair": 1,
+          "execution_order": [
+            "baseline",
+            "candidate"
+          ],
+          "valid": true,
+          "output_equal": true,
+          "results": {
+            "baseline": {
+              "command": [
+                "work/task61-function-source-cache-linux-2026-10-09/quench-node-baseline",
+                "/workspace/quench/work/task61-function-source-cache-linux-2026-10-09/materialized/richards-materialized.js"
+              ],
+              "exit_code": 0,
+              "timed_out": false,
+              "score": 139.0,
+              "maximum_rss_bytes": 18882560,
+              "wall_ns": 2059593096,
+              "result_lines": [
+                "__quenchBenchResult: Richards: 139"
+              ],
+              "semantic_output": [],
+              "stdout": "__quenchBenchResult: Richards: 139\n----\nScore: 139\n",
+              "stderr": ""
+            },
+            "candidate": {
+              "command": [
+                "work/task61-function-source-cache-linux-2026-10-09/quench-node-candidate",
+                "/workspace/quench/work/task61-function-source-cache-linux-2026-10-09/materialized/richards-materialized.js"
+              ],
+              "exit_code": 0,
+              "timed_out": false,
+              "score": 136.0,
+              "maximum_rss_bytes": 18870272,
+              "wall_ns": 2078919555,
+              "result_lines": [
+                "__quenchBenchResult: Richards: 136"
+              ],
+              "semantic_output": [],
+              "stdout": "__quenchBenchResult: Richards: 136\n----\nScore: 136\n",
+              "stderr": ""
+            }
+          }
+        }
+      ],
+      "summary": {
+        "baseline_median_score": 139.0,
+        "candidate_median_score": 136.0,
+        "score_delta": -3.0,
+        "score_delta_percent": -2.1582733812949617,
+        "score_delta_95_percentile_interval": {
+          "lower_95": -3.0,
+          "upper_95": -3.0,
+          "resamples": 100000,
+          "method": "paired percentile bootstrap of difference in medians",
+          "seed": 20261009
+        },
+        "baseline_median_maximum_rss_bytes": 18882560,
+        "candidate_median_maximum_rss_bytes": 18870272,
+        "maximum_rss_delta_bytes": -12288,
+        "maximum_rss_delta_95_percentile_interval": {
+          "lower_95": -12288.0,
+          "upper_95": -12288.0,
+          "resamples": 100000,
+          "method": "paired percentile bootstrap of difference in medians",
+          "seed": 20261009
+        },
+        "candidate_lower_score_pairs": 1,
+        "candidate_lower_rss_pairs": 1
+      }
+    },
+    "splay.js": {
+      "source_sha256": "1f875cec579d03af40d256ceaeb6823f3ef16c883652650ca51d183472a8185d",
+      "materialized_sha256": "31c30963144a07d45bcbfe9988bec95df39f8447485806e4decc7fa457c86215",
+      "materialized_path": "work/task61-function-source-cache-linux-2026-10-09/materialized/splay-materialized.js",
+      "valid": true,
+      "output_equal": true,
+      "rounds": [
+        {
+          "pair": 1,
+          "execution_order": [
+            "baseline",
+            "candidate"
+          ],
+          "valid": true,
+          "output_equal": true,
+          "results": {
+            "baseline": {
+              "command": [
+                "work/task61-function-source-cache-linux-2026-10-09/quench-node-baseline",
+                "/workspace/quench/work/task61-function-source-cache-linux-2026-10-09/materialized/splay-materialized.js"
+              ],
+              "exit_code": 0,
+              "timed_out": false,
+              "score": 794.0,
+              "maximum_rss_bytes": 200560640,
+              "wall_ns": 2990350455,
+              "result_lines": [
+                "__quenchBenchResult: Splay: 794"
+              ],
+              "semantic_output": [],
+              "stdout": "__quenchBenchResult: Splay: 794\n----\nScore: 794\n",
+              "stderr": ""
+            },
+            "candidate": {
+              "command": [
+                "work/task61-function-source-cache-linux-2026-10-09/quench-node-candidate",
+                "/workspace/quench/work/task61-function-source-cache-linux-2026-10-09/materialized/splay-materialized.js"
+              ],
+              "exit_code": 0,
+              "timed_out": false,
+              "score": 835.0,
+              "maximum_rss_bytes": 200462336,
+              "wall_ns": 2901241506,
+              "result_lines": [
+                "__quenchBenchResult: Splay: 835"
+              ],
+              "semantic_output": [],
+              "stdout": "__quenchBenchResult: Splay: 835\n----\nScore: 835\n",
+              "stderr": ""
+            }
+          }
+        }
+      ],
+      "summary": {
+        "baseline_median_score": 794.0,
+        "candidate_median_score": 835.0,
+        "score_delta": 41.0,
+        "score_delta_percent": 5.163727959697728,
+        "score_delta_95_percentile_interval": {
+          "lower_95": 41.0,
+          "upper_95": 41.0,
+          "resamples": 100000,
+          "method": "paired percentile bootstrap of difference in medians",
+          "seed": 20261009
+        },
+        "baseline_median_maximum_rss_bytes": 200560640,
+        "candidate_median_maximum_rss_bytes": 200462336,
+        "maximum_rss_delta_bytes": -98304,
+        "maximum_rss_delta_95_percentile_interval": {
+          "lower_95": -98304.0,
+          "upper_95": -98304.0,
+          "resamples": 100000,
+          "method": "paired percentile bootstrap of difference in medians",
+          "seed": 20261009
+        },
+        "candidate_lower_score_pairs": 0,
+        "candidate_lower_rss_pairs": 1
+      }
+    }
+  },
+  "valid": true,
+  "qualification_ready": false,
+  "decision_rule": "Report paired Score and maximum-RSS intervals per affected fixture; output must match. This Quench-only screen does not establish Task 61 engine leadership."
+}

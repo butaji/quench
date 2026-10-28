@@ -1,0 +1,12 @@
+{
+  "status": "failed",
+  "index": 0,
+  "command": [
+    "bash",
+    "/workspace/quench/work/glob-policy/qualify-lazy-policy.sh"
+  ],
+  "exit": 101,
+  "supervisor_pid": 3181607,
+  "session_id": 3181606,
+  "utc": "2026-10-16T08:56:31.105123+00:00"
+}

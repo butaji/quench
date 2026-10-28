@@ -1,0 +1,11 @@
+{
+  "cwd": "/workspace/quench",
+  "commands": [
+    [
+      "bash",
+      "/workspace/quench/work/native-buffer-integration/extras.sh"
+    ]
+  ],
+  "state": "/workspace/quench/work/task-supervisor/buffer-integration-extras-state.json",
+  "log": "/workspace/quench/work/task-supervisor/buffer-integration-extras.log"
+}

@@ -1,0 +1,27 @@
+{
+  "schema_version": 2,
+  "inventory_hash": "3c87d513e6ce2ce4",
+  "timeout_secs": 10,
+  "jobs": 4,
+  "node_version": "v24.19.0",
+  "runtime_commit": "84f32d1a6cb4172742201af246a9b837cc0a96ba",
+  "tests_node_commit": "55e4ca33f3a6dfe364bd9558b726576a6d1a2fba",
+  "platform": "linux-x86_64",
+  "scope": "Complete Node parallel inventory; skips are not passes and the goal is unmet.",
+  "counts": {
+    "timeout": 136,
+    "fail": 2801,
+    "pass": 1107,
+    "skip": 678,
+    "crash": 5
+  },
+  "total": 4727,
+  "binary_sha256": [
+    "7628888843e17f16c278f0565c2a625e9fc5899ba57419d8ff42b5a697e0006f  work/sweep-bin/quench-node",
+    "7acf0e23170a8d30ddb3bf0238adeb99026f62a8f2e16f07ceeefa9b33b04bd0  work/sweep-bin/run-parallel"
+  ],
+  "host_limits": {
+    "cpu_quota": 4,
+    "memory_bytes": 17179869184
+  }
+}

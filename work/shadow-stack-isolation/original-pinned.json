@@ -1,0 +1,28 @@
+{
+  "schema_version": 2,
+  "inventory_hash": "8ef390189a8e50e6",
+  "timeout_secs": 30,
+  "jobs": 1,
+  "node_version": "v24.19.0",
+  "runtime_commit": "14ec6856263b7331d4c7348d87c829e76acdef09",
+  "tests_node_commit": "55e4ca33f3a6dfe364bd9558b726576a6d1a2fba",
+  "platform": "linux-x86_64",
+  "results": [
+    {
+      "fixture": "/workspace/work/node-fixtures/test/parallel/test-shadow-realm-prepare-stack-trace.js",
+      "status": "pass",
+      "observation": {
+        "Ok": {
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "pass"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    }
+  ]
+}

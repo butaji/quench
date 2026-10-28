@@ -1,0 +1,7 @@
+Auto-merging crates/quench-runtime/src/vm.rs
+Auto-merging crates/quench-runtime/src/vm/gc.rs
+Auto-merging crates/quench-runtime/src/vm/program_store.rs
+Auto-merging crates/quench-runtime/src/vm/tests.rs
+CONFLICT (content): Merge conflict in crates/quench-runtime/src/vm/tests.rs
+Auto-merging docs/node-host-contracts.md
+Automatic merge failed; fix conflicts and then commit the result.

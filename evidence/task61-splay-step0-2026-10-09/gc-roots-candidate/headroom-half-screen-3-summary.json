@@ -1,0 +1,124 @@
+{
+  "schema": 1,
+  "experiment": "Splay large-heap GC headroom 1/2, post-M1 shape-root metadata",
+  "decision": "reject as a standalone retained setting; keep the measurement as an input to the later compact-slot plus headroom experiment",
+  "source": {
+    "base_revision": "0f980819a5982fd27f09a83fee87d03ba77368ff",
+    "base_candidate_change": "M1 may_have_gc_roots optimization from dfa08983a, applied as an isolated patch",
+    "candidate_policy": "LARGE_HEAP_GC_HEADROOM numerator=1 denominator=2",
+    "build_command": "CARGO_TARGET_DIR=target/candidate-b CARGO_INCREMENTAL=0 cargo build --profile production -p quench-node",
+    "effective_rustc_flags_observed": "opt-level=3, panic=abort, linker-plugin-lto, codegen-units=1, strip=symbols; Cargo host configuration selected thin LTO",
+    "baseline_binary_sha256": "d28c6a722fd77b3a52a2a5c31ec455fcf0207609e393ca7f82f96ffd5255b962",
+    "candidate_binary_sha256": "acdf4a05027dc1f7c7cdce35930b9554868688c8c6abd75ebfc0ee9e1b31ce30",
+    "runner_sha256": "e7b13e2f90bc5f81c105b9d6eee2578e5f759308757767ec49d686da96f8cd08",
+    "runner_command": "target/candidate-a/production/quench-bench quench-bench/js-engine-benchmark/v8-v7/splay.js --quench <M1-pinned> --quench-peer <headroom-half-pinned> --fixed-work --runs 3 --timeout-ms 300000"
+  },
+  "gate": {
+    "schema": 2,
+    "rounds": 3,
+    "iterations_per_benchmark": 300,
+    "complete": true,
+    "output_equal": true,
+    "raw_report": "tasks/evidence/task61-splay-step0-2026-10-09/gc-roots-candidate/headroom-half-screen-3.json",
+    "metrics": {
+      "baseline": {
+        "pairs": [
+          {
+            "marginal_cycles_per_run": 9522535.013333334,
+            "marginal_instructions_per_run": 53900298.02666666,
+            "marginal_wall_ns_per_run": 2442159.58,
+            "work_peak_rss_bytes": 217956352,
+            "setup_only_peak_rss_bytes": 115343360
+          },
+          {
+            "marginal_cycles_per_run": 9569566.23,
+            "marginal_instructions_per_run": 53870191.73,
+            "marginal_wall_ns_per_run": 2428080.56,
+            "work_peak_rss_bytes": 218218496,
+            "setup_only_peak_rss_bytes": 115523584
+          },
+          {
+            "marginal_cycles_per_run": 9609089.803333333,
+            "marginal_instructions_per_run": 53843762.79333334,
+            "marginal_wall_ns_per_run": 2433989.4433333334,
+            "work_peak_rss_bytes": 217808896,
+            "setup_only_peak_rss_bytes": 115687424
+          }
+        ],
+        "median": {
+          "marginal_cycles_per_run": 9569566.23,
+          "marginal_instructions_per_run": 53870191.73,
+          "marginal_wall_ns_per_run": 2433989.4433333334,
+          "work_peak_rss_bytes": 217956352,
+          "setup_only_peak_rss_bytes": 115523584
+        }
+      },
+      "candidate": {
+        "pairs": [
+          {
+            "marginal_cycles_per_run": 10509410.95,
+            "marginal_instructions_per_run": 58095747.14333333,
+            "marginal_wall_ns_per_run": 4231453.47,
+            "work_peak_rss_bytes": 171098112,
+            "setup_only_peak_rss_bytes": 115392512
+          },
+          {
+            "marginal_cycles_per_run": 10727608.983333332,
+            "marginal_instructions_per_run": 58060633.95,
+            "marginal_wall_ns_per_run": 2734592.78,
+            "work_peak_rss_bytes": 171343872,
+            "setup_only_peak_rss_bytes": 115097600
+          },
+          {
+            "marginal_cycles_per_run": 10782532.18,
+            "marginal_instructions_per_run": 58062588.04333334,
+            "marginal_wall_ns_per_run": 2745653.7533333334,
+            "work_peak_rss_bytes": 170868736,
+            "setup_only_peak_rss_bytes": 115245056
+          }
+        ],
+        "median": {
+          "marginal_cycles_per_run": 10727608.983333332,
+          "marginal_instructions_per_run": 58062588.04333334,
+          "marginal_wall_ns_per_run": 2745653.7533333334,
+          "work_peak_rss_bytes": 171098112,
+          "setup_only_peak_rss_bytes": 115245056
+        }
+      }
+    }
+  },
+  "paired_median_effect": {
+    "marginal_cycles_percent": 12.101308727065806,
+    "marginal_instructions_percent": 7.782404663317011,
+    "marginal_wall_percent": 12.804669751286092,
+    "work_peak_rss_delta_bytes": -46858240,
+    "work_peak_rss_percent": -21.49891002029617,
+    "setup_only_peak_rss_delta_bytes": -278528
+  },
+  "distance_to_splay_win": {
+    "fixed_work_speed_reference": "Node --jitless",
+    "node_marginal_cycles_per_run": 4590844.29,
+    "retained_m1_speed_distance_x": 2.046513600370155,
+    "headroom_half_speed_distance_x": 2.33673989045996,
+    "bun_no_jit_work_rss_target_bytes": 57950208,
+    "retained_m1_rss_distance_x": 3.7608142493638677,
+    "headroom_half_rss_distance_x": 2.9525021204410518,
+    "headroom_half_setup_only_rss_bytes": 115245056,
+    "bun_setup_only_rss_bytes": 49856512,
+    "candidate_setup_only_vs_bun_x": 2.3115346697338155
+  },
+  "caveats": [
+    "Three-round screen only; no all-eight guard or conformance suite was run because this is not retained.",
+    "RSS target remains missed substantially; Splay setup-only process peaks above Bun no-JIT work RSS.",
+    "The profile-memory slot reservation is not resident-byte accounting; use process RSS gates for final budget decisions."
+  ],
+  "host": {
+    "uname": "Darwin mini.local 25.5.0 Darwin Kernel Version 25.5.0: Mon Apr 27 20:41:26 PDT 2026; root:xnu-12377.121.6~2/RELEASE_ARM64_T8132 arm64",
+    "rustc": "rustc 1.99.0 (b940084d7 2026-09-28) (Homebrew)\nbinary: rustc\ncommit-hash: b940084d7eb6a299eb4bfeb8e34901bc051e7ac4\ncommit-date: 2026-09-28\nhost: aarch64-apple-darwin\nrelease: 1.99.0\nLLVM version: 23.1.2",
+    "model": "Mac16,10",
+    "memory_bytes": 17179869184,
+    "memory_limit_bytes": null,
+    "cpu_quota": null,
+    "process_metrics_backend": "macOS /usr/bin/time -l"
+  }
+}

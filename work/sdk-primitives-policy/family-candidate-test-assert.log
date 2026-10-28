@@ -1,0 +1,15 @@
+Pass /workspace/work/node-stable-release/node-v26.12.0/test/parallel/test-assert-class-destructuring.js
+Fail /workspace/work/node-stable-release/node-v26.12.0/test/parallel/test-assert-async.js
+Fail /workspace/work/node-stable-release/node-v26.12.0/test/parallel/test-assert-checktag.js
+Pass /workspace/work/node-stable-release/node-v26.12.0/test/parallel/test-assert-class.js
+Pass /workspace/work/node-stable-release/node-v26.12.0/test/parallel/test-assert-deep-with-error.js
+Pass /workspace/work/node-stable-release/node-v26.12.0/test/parallel/test-assert-esm-cjs-message-verify.js
+Pass /workspace/work/node-stable-release/node-v26.12.0/test/parallel/test-assert-fail.js
+Pass /workspace/work/node-stable-release/node-v26.12.0/test/parallel/test-assert-first-line.js
+Pass /workspace/work/node-stable-release/node-v26.12.0/test/parallel/test-assert-if-error.js
+Fail /workspace/work/node-stable-release/node-v26.12.0/test/parallel/test-assert-deep.js
+Pass /workspace/work/node-stable-release/node-v26.12.0/test/parallel/test-assert-myers-diff.js
+Fail /workspace/work/node-stable-release/node-v26.12.0/test/parallel/test-assert-partial-deep-equal.js
+Pass /workspace/work/node-stable-release/node-v26.12.0/test/parallel/test-assert.js
+Pass /workspace/work/node-stable-release/node-v26.12.0/test/parallel/test-assert-typedarray-deepequal.js
+all: pass=10 skip=0 fail=4 timeout=0 crash=0 unclassified=0 total=14 inventory_hash=f938c688fba61da2

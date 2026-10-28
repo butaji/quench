@@ -1,0 +1,20 @@
+# Canonical encoding, persistent ICU and protected startup intrinsics
+
+Qualified source: `383fcec1750a9eca4673853b2137d3b746c246d3`, including integration `e4a4019c0089e9ce00febbc17ac5f8fca4e51ce3`.
+Frozen CLI SHA-256: `6488fa2069243903ac2ba1e3b6f7ca6d025cc9111c9d9aafb964bd44236b88f7`.
+Oracle: official Node v26.12.0, SHA-256 `caa24debe02770c92a70677e2a62ca98890150e7ac1c17bcfe31bcc98cc89943`.
+Fresh baseline: source `cac5edc64`, CLI `3c83e9e92ce727b70f931eddf6f124861f80dda08c824ef968a3b7036e1c6c53`, published through `08a7dfb81`. Both all-300 reports use the same pinned expanded harness; neither report is reused.
+
+The Node host now loads the pinned canonical encoding policy over a Rust-owned persistent ICU converter. Flush/error/BOM state follows the Node native converter lifecycle. Native util key/type/symbol bindings initialize independently of public util, avoiding reentrant internal/errors initialization. The integration owner's shared FastBuffer authority and crypto/external predicates are retained. A shared core startup-snapshot fix supports frozen guest replacements and deleted properties on non-extensible intrinsic holders, restoring guest descriptor state even after GC or an exception. Portable builds retain the existing no-ICU adapter.
+
+Validation on this source: workspace/all-target and no-ICU checks; **639 fast and 639 optimized core tests**, **319 selected Node API tests against the explicit Node26 oracle**, **four lifecycle tests**, **three coverage units**. Actual frozen CLI matches all **232** streaming boundaries, **156 recovery sequences / 1,092 decode calls**, **896** mixed decoder cases, **19,968** single-byte values, **1,310,720** two-byte cases, **896** URL WPT cases and **36,065** exact math cases. It also matches **8,256** native transcode cases and **131,088** width cases through the actual binding. The 33-case descriptor/validation probe retains **three generic private-member error differences**; it is not reported as a complete pass.
+
+The committed ICU build recipe was exercised from the pinned Node source, producing ICU78.3 common/converter data. System ICU76 had 54 width differences; the matching data removes them. Build source, compiler, data/library hashes, recipe and license are retained under icu-build and qualified-inputs.
+
+Fresh candidate and baseline scenarios are both **273 behavior passes / 13 declaration passes / 13 Quench failures / one platform oracle failure**. No scenario gains or regressions at this cut. Surface is **221 matching projections / 70 differences / nine oracle failures**. Coverage remains **1,664 / 70,236 finite checked projections**, qualified=false. No full package/function parity claim is made.
+
+All eight matched instruction measurements and all **32 exact completions** pass. Largest increase: richards **+0.00003288%**; no >1% finding. This compares Quench builds and is not package performance against Node. The first guard launcher omitted Valgrind from PATH and produced no counts; that failed attempt is retained. Only the corrected run, with explicit PATH/VALGRIND_LIB and individual stdout/stderr/exit receipts, qualifies the guard. The resume provenance identifies its exact executed runner; a redundant dead drafting branch was subsequently removed from the reusable runner without changing commands or measurements.
+
+followup retains failed bootstrap/prototype attempts and open findings, explicitly separate from the qualified production source. Private-name messages and ordinary-string/private-field namespace isolation remain open. Compression probes find 73/165 public one-shot byte differences and 90/600 current-backend streaming differences; a standalone Rust binding to pinned Node zlib matches 750 streaming and 165 one-shot cases, but is **not integrated**. Those prototype results do not qualify current production compression or Minizlib.
+
+Raw files are preserved byte-for-byte, gzip-compressed when large. followup/manifest.json hashes original raw bytes. Build/runner scripts and qualified-input snapshots bind provenance. Total Node parity and the later Node --jitless package performance/win phase remain open.

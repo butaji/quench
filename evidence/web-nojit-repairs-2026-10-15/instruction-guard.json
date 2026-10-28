@@ -1,0 +1,108 @@
+{
+  "metric": "Callgrind Ir, startup-subtracted instructions per run",
+  "profile": "iteration",
+  "candidate_source_commit": "310810075ce24e7cde57bce0836a45954a6e804d",
+  "baseline_sha256": "caf38f7b9b37fb3aea09d442a921dfb32ba1b17a02340613eabf812b41fdcc24",
+  "candidate_sha256": "25bfdc8663fe11646ab07aa466b7766a02f5a5564107ab7e4b035b36f732cfb3",
+  "regression_limit_percent": 1,
+  "regressions": [
+    "regexp"
+  ],
+  "all_eight_within_limit": false,
+  "baseline_count_reuse": "Identical frozen baseline executable and identical generated input scripts on the same host. All 16 candidate counts refreshed after final sync; no throughput/timing inference.",
+  "runner": "evidence/tod123-rss-linux-2026-10-14/callgrind-guard.sh (candidate-only refresh derives same plan and calculation)",
+  "valgrind_version": "3.24.0",
+  "results": [
+    {
+      "fixture": "crypto",
+      "runs": 1,
+      "baseline_startup": 184276644,
+      "candidate_startup": 1120022861,
+      "baseline_per_run": 1842115161.0,
+      "candidate_per_run": 1826036200.0,
+      "change_percent": -0.8728531929171827
+    },
+    {
+      "fixture": "deltablue",
+      "runs": 10,
+      "baseline_startup": 111715326,
+      "candidate_startup": 1043314388,
+      "baseline_per_run": 278362216.4,
+      "candidate_per_run": 271441794.8,
+      "change_percent": -2.4861210294630935
+    },
+    {
+      "fixture": "earley-boyer",
+      "runs": 1,
+      "baseline_startup": 371345125,
+      "candidate_startup": 1306124676,
+      "baseline_per_run": 3427382829.0,
+      "candidate_per_run": 3418480926.0,
+      "change_percent": -0.25972887897665314
+    },
+    {
+      "fixture": "navier-stokes",
+      "runs": 1,
+      "baseline_startup": 684036650,
+      "candidate_startup": 1676621694,
+      "baseline_per_run": 1511153071.0,
+      "candidate_per_run": 1517545369.0,
+      "change_percent": 0.42300797468319473
+    },
+    {
+      "fixture": "raytrace",
+      "runs": 3,
+      "baseline_startup": 124709488,
+      "candidate_startup": 1057925921,
+      "baseline_per_run": 1013905291.3333334,
+      "candidate_per_run": 1013089879.3333334,
+      "change_percent": -0.08042289619848958
+    },
+    {
+      "fixture": "regexp",
+      "runs": 1,
+      "baseline_startup": 3597482917,
+      "candidate_startup": 4563856545,
+      "baseline_per_run": 1941485495.0,
+      "candidate_per_run": 1985096033.0,
+      "change_percent": 2.246245882975294
+    },
+    {
+      "fixture": "richards",
+      "runs": 25,
+      "baseline_startup": 98242675,
+      "candidate_startup": 1027888145,
+      "baseline_per_run": 133401213.28,
+      "candidate_per_run": 126361677.64,
+      "change_percent": -5.276965229112645
+    },
+    {
+      "fixture": "splay",
+      "runs": 75,
+      "baseline_startup": 2509970912,
+      "candidate_startup": 3440697675,
+      "baseline_per_run": 26973903.613333333,
+      "candidate_per_run": 27162220.493333332,
+      "change_percent": 0.6981447057107188
+    }
+  ],
+  "optimization_allowed": false,
+  "script_sha256": {
+    "crypto-0.js": "8033c2f351dd0dc3d22a8984f07125779e6800db0d18d1cdc1297d4b7a99dabf",
+    "crypto-1.js": "503985d8dc7f0f1482ac830d850506ef12fb88edb027bfdb803b10db6d793350",
+    "deltablue-0.js": "6b574c154e9813db6295f427e875d64b2bc11dbba939eed45e44144a088a4abe",
+    "deltablue-10.js": "94ad9cd0ade255de35ab14fe84715c825fd547022e0024a16b7ed5f47a0c0fe0",
+    "earley-boyer-0.js": "435ce2e0e38336f05a797de549764c407abc3a3a98d5dbf549ef8c97d51482fe",
+    "earley-boyer-1.js": "16d7b1ceb8ca393730a46b42e046b6c81f928654eeaec8a957cefd35a0aaf168",
+    "navier-stokes-0.js": "aa93f9aaafdf39eb9a6fba21cb0df9c7f189d2e95998a86a8ea5527bc9970e8c",
+    "navier-stokes-1.js": "00d27e3d49bc2015349fcc5243076ac2ab65bc1c875abaa941df80d23b4b59d7",
+    "raytrace-0.js": "24e0ddf9a979e5ce113ba59fac8e4b7f0201404cc7c7c286e40ed00ebdf76b96",
+    "raytrace-3.js": "bc1870485d2425041043c51075ba8042c3526d60e01e83c09efaec09109dd1e1",
+    "regexp-0.js": "257087a723bb3a06aad3a0db9b13615adf871a20fcdfec85c2dc3572271df020",
+    "regexp-1.js": "3fa6412c8dcea1947ad04829000722ed2818d2b7fd2fb80818cd53f98396d76c",
+    "richards-0.js": "2a7c2080c45f4dac2e47676d042dc07dc40979f03e7560ef28129d87fc580951",
+    "richards-25.js": "e6a7011a625787f350fb4d5111f6b8c99edd44316d5a1b2929a0109dd14cf912",
+    "splay-0.js": "3e919dd1f4f72b4cd62e319318258704cb781ddab850cc09fbf1713f16ff2d70",
+    "splay-75.js": "254221707fe6780ca2810cce23690d1d34aa34e4671f427b523664415c125fc2"
+  }
+}

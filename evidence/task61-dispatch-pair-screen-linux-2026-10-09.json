@@ -1,0 +1,705 @@
+{
+  "schema": 1,
+  "kind": "task61-v8-v7-physical-dispatch-opcode-census",
+  "date": "2026-10-09",
+  "source_revision": "858c899b9264038268d99d2687557fad2bcac626",
+  "instrumentation": {
+    "files": [
+      "crates/quench-runtime/src/profile.rs",
+      "crates/quench-runtime/src/vm/dispatch_numeric.rs",
+      "crates/quench-runtime/src/vm.rs"
+    ],
+    "worktree_patch_sha256": "48fed3c4dc4d0052f8523bb4eed60de6f3a403ca02b31697928b3fca53d29c09",
+    "file_sha256": {
+      "crates/quench-runtime/src/profile.rs": "5c3502dfc4f198e741bc8d34b596b5c60bcd0e9578bf2702c5ebf260d9808e91",
+      "crates/quench-runtime/src/vm/dispatch_numeric.rs": "cc6c3a88936110b768f5970061c52054fd4d189cedd30dd69c7537225be0bfa6",
+      "crates/quench-runtime/src/vm.rs": "09ef318e659d9543546fbe7aad81c676a91fa18193d59966f32ce8c9d4433343"
+    }
+  },
+  "profile_binary": {
+    "path": "target/iteration/quench-node",
+    "sha256": "b0474fdd27827970a4b672d514ed9e2502d8057856cbdb457ea32338d7251727",
+    "features": [
+      "profile-aggregate"
+    ],
+    "build_command": "cargo build --profile iteration -p quench-node --bin quench-node --features quench-runtime/profile-aggregate",
+    "counter_mode": "QUENCH_OPCODE_CENSUS=1; physical dispatch counts exclude virtual fused-op accounting",
+    "run_command_template": "QUENCH_OPCODE_CENSUS=1 target/iteration/quench-node <exact materialized fixture>"
+  },
+  "host": {
+    "os": "Linux-6.18.44-x86_64-with-glibc2.41",
+    "architecture": "x86_64",
+    "cpu": "AMD EPYC 9V74 80-Core Processor",
+    "logical_cpus": 5
+  },
+  "method": "One instrumented run per fixture. Materialization exactly matches quench-bench: base.js + LF + fixture + LF + the Rust runner constant. Physical dispatch events and separately recorded physical dispatch-site events must agree. Numeric local-update fusion records logical opcode events through fused_opcode, so skipped IncDec/StoreLocal steps are excluded from the physical census. Census counts are diagnostic and are not performance measurements.",
+  "fixtures": {
+    "crypto": {
+      "input_sha256": "0ab6a65bef1350ac52050dd7642921c6466e20c96aa61df17c84cd18b1f5ee75",
+      "input_size_bytes": 57978,
+      "status": 0,
+      "elapsed_seconds": 83.657,
+      "stdout_sha256": "18d24a56bba09041aaecfd3e250be66181a393f8f0443a58b2b6e87250ca1da0",
+      "score_lines": [
+        "47.2"
+      ],
+      "kind": "quench-dispatch-opcode-census",
+      "total": 1440203305,
+      "dispatch_sites": 1440203305,
+      "counts": {
+        "Nop": 0,
+        "CloneEnv": 127,
+        "Wide": 0,
+        "LoadConst": 5383101,
+        "LoadLocal": 152572521,
+        "StoreLocal": 115303591,
+        "StoreVarBinding": 0,
+        "LoadEnvLocal": 2164,
+        "StoreEnvLocal": 1261,
+        "LoadCapture": 2797031,
+        "StoreCapture": 1131,
+        "LoadName": 53541,
+        "LoadNameCall": 161,
+        "LoadNameTypeof": 11,
+        "ResolveName": 0,
+        "LoadResolvedName": 0,
+        "DeleteName": 0,
+        "StoreName": 155,
+        "StoreResolvedName": 0,
+        "LoadThis": 230861,
+        "LoadImportMeta": 0,
+        "MakeClosure": 435,
+        "MakeArray": 18,
+        "MakeConstArray": 13,
+        "MakeObject": 81,
+        "MakeObject2": 12,
+        "SuperConstArrayObject2": 0,
+        "GetIterator": 37,
+        "GetAsyncIterator": 0,
+        "IteratorClose": 23,
+        "SpreadToArray": 1,
+        "RequireObjectCoercible": 1555858,
+        "RequireIteratorResult": 145,
+        "SuperCallCheck": 0,
+        "IteratorCleanupPush": 108,
+        "IteratorCleanupPop": 108,
+        "SetFunctionName": 122,
+        "SetFunctionNameKey": 4,
+        "InitializeTdz": 178,
+        "Await": 0,
+        "Yield": 0,
+        "YieldStar": 0,
+        "GetField": 18471390,
+        "GetIndex": 81104766,
+        "ToPropertyKey": 4,
+        "ToNumeric": 80949295,
+        "CopyDataProperties": 13,
+        "MarkPrivateName": 0,
+        "SetField": 3,
+        "DefineComputedField": 0,
+        "SetThisField": 0,
+        "SetIndex": 28913269,
+        "DefineArrayElement": 33,
+        "Binary": 445008065,
+        "IncDec": 80949295,
+        "Unary": 1421,
+        "Delete": 0,
+        "CheckPrivate": 0,
+        "PrivateIn": 0,
+        "Move": 14044273,
+        "Call": 2847103,
+        "CallDirectEvalArray": 0,
+        "CallKnown": 0,
+        "CallMethod": 0,
+        "CallThisMethod": 0,
+        "Construct": 6082,
+        "Jump": 29038223,
+        "JumpFalse": 409837,
+        "JumpBinaryFalse": 33805140,
+        "Return": 2659401,
+        "Throw": 0,
+        "NumericAdd": 896,
+        "NumericMultiply": 848,
+        "InitializeThis": 0,
+        "CacheTemplateObject": 0,
+        "LoadCachedTemplateObject": 0,
+        "DefineField": 209,
+        "ValidateClassHeritage": 5,
+        "SetFieldStrict": 250741,
+        "SetThisFieldStrict": 106530,
+        "WasmI32Binary": 0,
+        "WasmI32Unary": 0,
+        "WasmI64Binary": 0,
+        "WasmI64Unary": 0,
+        "WasmScalarConvert": 0,
+        "WasmF32Binary": 0,
+        "WasmF32Unary": 0,
+        "WasmF64Binary": 0,
+        "WasmF64Unary": 0,
+        "WasmTableInit": 0,
+        "WasmIndirectTarget": 0,
+        "WasmGlobalGet": 0,
+        "WasmGlobalSet": 0,
+        "WasmRefFunc": 0,
+        "WasmRefIsNull": 0,
+        "WasmTableSize": 0,
+        "WasmTableGet": 0,
+        "WasmTableSet": 0,
+        "WasmTableGrow": 0,
+        "WasmTableFill": 0,
+        "WasmTableCopy": 0,
+        "WasmMemoryInit": 0,
+        "WasmMemoryCopy": 0,
+        "WasmMemoryFill": 0,
+        "WasmMemoryAddress": 0,
+        "WasmMemoryLoad": 0,
+        "WasmMemoryStore": 0,
+        "WasmMemorySize": 0,
+        "WasmMemoryGrow": 0,
+        "WasmUnreachable": 0,
+        "WasmSimd": 0,
+        "WasmSimdShuffle": 0,
+        "DefinePropertyRecord": 128,
+        "WasmRefAsNonNull": 0,
+        "WasmI31": 0,
+        "WasmRefTest": 0,
+        "WasmRefCast": 0,
+        "WasmRefEq": 0,
+        "WasmStructNew": 0,
+        "WasmStructNewDefault": 0,
+        "WasmStructGet": 0,
+        "WasmStructGetS": 0,
+        "WasmStructGetU": 0,
+        "WasmStructSet": 0,
+        "WasmArrayNew": 0,
+        "WasmArrayNewDefault": 0,
+        "WasmArrayNewFixed": 0,
+        "WasmArrayLen": 0,
+        "WasmArrayGet": 0,
+        "WasmArrayGetS": 0,
+        "WasmArrayGetU": 0,
+        "WasmArraySet": 0,
+        "WasmExternalConversion": 0,
+        "WasmArrayFill": 0,
+        "WasmArrayCopy": 0,
+        "WasmArrayNewData": 0,
+        "WasmArrayNewElem": 0,
+        "WasmArrayInitData": 0,
+        "WasmArrayInitElem": 0,
+        "WasmExceptionNew": 0,
+        "WasmExceptionMatch": 0,
+        "WasmExceptionPayload": 0,
+        "WasmThrowRef": 0,
+        "WasmStructNewDesc": 0,
+        "WasmStructNewDefaultDesc": 0,
+        "WasmRefGetDesc": 0,
+        "WasmDescriptorTest": 0,
+        "WasmDescriptorCast": 0,
+        "WasmAtomicAccess": 0,
+        "WasmAtomicFence": 0,
+        "LoadLocalPlain": 307705269,
+        "StoreLocalPlain": 36028267
+      },
+      "top_profile_pairs": [
+        [
+          "Binary",
+          "LoadLocalPlain",
+          204034816
+        ],
+        [
+          "LoadLocalPlain",
+          "Binary",
+          175660140
+        ],
+        [
+          "Binary",
+          "Binary",
+          152837264
+        ],
+        [
+          "LoadLocalPlain",
+          "LoadLocal",
+          100235893
+        ],
+        [
+          "ToNumeric",
+          "IncDec",
+          80949295
+        ],
+        [
+          "GetIndex",
+          "Binary",
+          76971923
+        ],
+        [
+          "LoadLocal",
+          "ToNumeric",
+          76697621
+        ],
+        [
+          "IncDec",
+          "StoreLocal",
+          76697621
+        ],
+        [
+          "StoreLocal",
+          "LoadLocalPlain",
+          49660529
+        ],
+        [
+          "LoadLocal",
+          "GetIndex",
+          49658784
+        ],
+        [
+          "JumpBinaryFalse",
+          "LoadLocalPlain",
+          29067480
+        ],
+        [
+          "StoreLocal",
+          "JumpBinaryFalse",
+          27033719
+        ],
+        [
+          "Binary",
+          "SetIndex",
+          26411245
+        ],
+        [
+          "SetIndex",
+          "Jump",
+          26386024
+        ],
+        [
+          "Binary",
+          "StoreLocalPlain",
+          25881187
+        ],
+        [
+          "StoreLocalPlain",
+          "Binary",
+          24844320
+        ],
+        [
+          "StoreLocal",
+          "GetIndex",
+          24829392
+        ],
+        [
+          "Binary",
+          "StoreLocal",
+          24829392
+        ],
+        [
+          "LoadLocal",
+          "StoreLocal",
+          13775378
+        ],
+        [
+          "LoadLocalPlain",
+          "LoadLocalPlain",
+          11636806
+        ],
+        [
+          "StoreLocal",
+          "LoadLocal",
+          11282923
+        ],
+        [
+          "Move",
+          "Move",
+          11273753
+        ],
+        [
+          "LoadLocalPlain",
+          "GetField",
+          7316208
+        ],
+        [
+          "GetField",
+          "Binary",
+          6611315
+        ],
+        [
+          "LoadLocal",
+          "Binary",
+          5701001
+        ],
+        [
+          "Binary",
+          "LoadLocal",
+          5034888
+        ],
+        [
+          "GetField",
+          "StoreLocalPlain",
+          4839433
+        ],
+        [
+          "LoadLocalPlain",
+          "GetIndex",
+          4767153
+        ],
+        [
+          "StoreLocalPlain",
+          "LoadLocal",
+          4705943
+        ],
+        [
+          "IncDec",
+          "StoreLocalPlain",
+          4067887
+        ],
+        [
+          "LoadLocalPlain",
+          "ToNumeric",
+          4067887
+        ],
+        [
+          "LoadLocal",
+          "GetField",
+          3071739
+        ]
+      ]
+    },
+    "navier-stokes": {
+      "input_sha256": "290b7ad4204d4e9a6bb6ef6ff261e7c3a13f507de81381bca171e83256986dbe",
+      "input_size_bytes": 22625,
+      "status": 0,
+      "elapsed_seconds": 120.221,
+      "stdout_sha256": "aaef7f9b08843cd52532a010e2c58318dcfbbb2029a0acbdda62a487b364407e",
+      "score_lines": [
+        "40.9"
+      ],
+      "kind": "quench-dispatch-opcode-census",
+      "total": 1222415664,
+      "dispatch_sites": 1222415664,
+      "counts": {
+        "Nop": 0,
+        "CloneEnv": 127,
+        "Wide": 0,
+        "LoadConst": 1905554,
+        "LoadLocal": 166008345,
+        "StoreLocal": 13282,
+        "StoreVarBinding": 0,
+        "LoadEnvLocal": 940,
+        "StoreEnvLocal": 814,
+        "LoadCapture": 36141319,
+        "StoreCapture": 110,
+        "LoadName": 381,
+        "LoadNameCall": 15,
+        "LoadNameTypeof": 8,
+        "ResolveName": 0,
+        "LoadResolvedName": 0,
+        "DeleteName": 0,
+        "StoreName": 155,
+        "StoreResolvedName": 0,
+        "LoadThis": 8,
+        "LoadImportMeta": 0,
+        "MakeClosure": 783,
+        "MakeArray": 18,
+        "MakeConstArray": 12,
+        "MakeObject": 81,
+        "MakeObject2": 11,
+        "SuperConstArrayObject2": 0,
+        "GetIterator": 37,
+        "GetAsyncIterator": 0,
+        "IteratorClose": 23,
+        "SpreadToArray": 1,
+        "RequireObjectCoercible": 3835797,
+        "RequireIteratorResult": 145,
+        "SuperCallCheck": 0,
+        "IteratorCleanupPush": 108,
+        "IteratorCleanupPop": 108,
+        "SetFunctionName": 123,
+        "SetFunctionNameKey": 4,
+        "InitializeTdz": 178,
+        "Await": 0,
+        "Yield": 0,
+        "YieldStar": 0,
+        "GetField": 2929,
+        "GetIndex": 113083147,
+        "ToPropertyKey": 4,
+        "ToNumeric": 107984714,
+        "CopyDataProperties": 13,
+        "MarkPrivateName": 0,
+        "SetField": 3,
+        "DefineComputedField": 0,
+        "SetThisField": 0,
+        "SetIndex": 33660048,
+        "DefineArrayElement": 32,
+        "Binary": 191835195,
+        "IncDec": 107984714,
+        "Unary": 35184,
+        "Delete": 0,
+        "CheckPrivate": 0,
+        "PrivateIn": 0,
+        "Move": 14124,
+        "Call": 4923,
+        "CallDirectEvalArray": 0,
+        "CallKnown": 0,
+        "CallMethod": 0,
+        "CallThisMethod": 0,
+        "Construct": 158,
+        "Jump": 29413587,
+        "JumpFalse": 649,
+        "JumpBinaryFalse": 36110919,
+        "Return": 4600,
+        "Throw": 0,
+        "NumericAdd": 0,
+        "NumericMultiply": 0,
+        "InitializeThis": 0,
+        "CacheTemplateObject": 0,
+        "LoadCachedTemplateObject": 0,
+        "DefineField": 209,
+        "ValidateClassHeritage": 5,
+        "SetFieldStrict": 78,
+        "SetThisFieldStrict": 487,
+        "WasmI32Binary": 0,
+        "WasmI32Unary": 0,
+        "WasmI64Binary": 0,
+        "WasmI64Unary": 0,
+        "WasmScalarConvert": 0,
+        "WasmF32Binary": 0,
+        "WasmF32Unary": 0,
+        "WasmF64Binary": 0,
+        "WasmF64Unary": 0,
+        "WasmTableInit": 0,
+        "WasmIndirectTarget": 0,
+        "WasmGlobalGet": 0,
+        "WasmGlobalSet": 0,
+        "WasmRefFunc": 0,
+        "WasmRefIsNull": 0,
+        "WasmTableSize": 0,
+        "WasmTableGet": 0,
+        "WasmTableSet": 0,
+        "WasmTableGrow": 0,
+        "WasmTableFill": 0,
+        "WasmTableCopy": 0,
+        "WasmMemoryInit": 0,
+        "WasmMemoryCopy": 0,
+        "WasmMemoryFill": 0,
+        "WasmMemoryAddress": 0,
+        "WasmMemoryLoad": 0,
+        "WasmMemoryStore": 0,
+        "WasmMemorySize": 0,
+        "WasmMemoryGrow": 0,
+        "WasmUnreachable": 0,
+        "WasmSimd": 0,
+        "WasmSimdShuffle": 0,
+        "DefinePropertyRecord": 128,
+        "WasmRefAsNonNull": 0,
+        "WasmI31": 0,
+        "WasmRefTest": 0,
+        "WasmRefCast": 0,
+        "WasmRefEq": 0,
+        "WasmStructNew": 0,
+        "WasmStructNewDefault": 0,
+        "WasmStructGet": 0,
+        "WasmStructGetS": 0,
+        "WasmStructGetU": 0,
+        "WasmStructSet": 0,
+        "WasmArrayNew": 0,
+        "WasmArrayNewDefault": 0,
+        "WasmArrayNewFixed": 0,
+        "WasmArrayLen": 0,
+        "WasmArrayGet": 0,
+        "WasmArrayGetS": 0,
+        "WasmArrayGetU": 0,
+        "WasmArraySet": 0,
+        "WasmExternalConversion": 0,
+        "WasmArrayFill": 0,
+        "WasmArrayCopy": 0,
+        "WasmArrayNewData": 0,
+        "WasmArrayNewElem": 0,
+        "WasmArrayInitData": 0,
+        "WasmArrayInitElem": 0,
+        "WasmExceptionNew": 0,
+        "WasmExceptionMatch": 0,
+        "WasmExceptionPayload": 0,
+        "WasmThrowRef": 0,
+        "WasmStructNewDesc": 0,
+        "WasmStructNewDefaultDesc": 0,
+        "WasmRefGetDesc": 0,
+        "WasmDescriptorTest": 0,
+        "WasmDescriptorCast": 0,
+        "WasmAtomicAccess": 0,
+        "WasmAtomicFence": 0,
+        "LoadLocalPlain": 261112185,
+        "StoreLocalPlain": 133259142
+      },
+      "top_profile_pairs": [
+        [
+          "LoadLocal",
+          "LoadLocalPlain",
+          163860446
+        ],
+        [
+          "ToNumeric",
+          "IncDec",
+          107984714
+        ],
+        [
+          "IncDec",
+          "StoreLocalPlain",
+          107984679
+        ],
+        [
+          "LoadLocalPlain",
+          "ToNumeric",
+          107976231
+        ],
+        [
+          "Binary",
+          "Binary",
+          87678935
+        ],
+        [
+          "GetIndex",
+          "Binary",
+          81699684
+        ],
+        [
+          "StoreLocalPlain",
+          "GetIndex",
+          75153408
+        ],
+        [
+          "LoadLocalPlain",
+          "LoadLocal",
+          59197220
+        ],
+        [
+          "Binary",
+          "LoadLocal",
+          47869126
+        ],
+        [
+          "LoadLocalPlain",
+          "LoadCapture",
+          34818054
+        ],
+        [
+          "LoadCapture",
+          "JumpBinaryFalse",
+          29621902
+        ],
+        [
+          "StoreLocalPlain",
+          "Jump",
+          29412848
+        ],
+        [
+          "Binary",
+          "SetIndex",
+          28173156
+        ],
+        [
+          "JumpBinaryFalse",
+          "LoadLocal",
+          27541391
+        ],
+        [
+          "LoadLocalPlain",
+          "GetIndex",
+          26712974
+        ],
+        [
+          "GetIndex",
+          "LoadLocal",
+          26551140
+        ],
+        [
+          "StoreLocalPlain",
+          "LoadLocalPlain",
+          24181342
+        ],
+        [
+          "SetIndex",
+          "StoreLocalPlain",
+          21626880
+        ],
+        [
+          "Binary",
+          "LoadLocalPlain",
+          16846627
+        ],
+        [
+          "LoadLocalPlain",
+          "Binary",
+          13366148
+        ],
+        [
+          "LoadLocalPlain",
+          "LoadLocalPlain",
+          8112000
+        ],
+        [
+          "SetIndex",
+          "LoadLocalPlain",
+          7574300
+        ],
+        [
+          "Binary",
+          "GetIndex",
+          7375566
+        ],
+        [
+          "LoadLocalPlain",
+          "JumpBinaryFalse",
+          6485438
+        ],
+        [
+          "LoadCapture",
+          "Binary",
+          5837757
+        ],
+        [
+          "RequireObjectCoercible",
+          "GetIndex",
+          3835797
+        ],
+        [
+          "Binary",
+          "StoreLocalPlain",
+          3252482
+        ],
+        [
+          "StoreLocalPlain",
+          "Binary",
+          3244034
+        ],
+        [
+          "SetIndex",
+          "LoadLocal",
+          3148002
+        ],
+        [
+          "LoadLocalPlain",
+          "RequireObjectCoercible",
+          2754444
+        ],
+        [
+          "GetIndex",
+          "SetIndex",
+          2466816
+        ],
+        [
+          "GetIndex",
+          "LoadLocalPlain",
+          2162688
+        ]
+      ]
+    }
+  },
+  "online_research": {
+    "source": "https://v8.dev/blog/ignition-interpreter",
+    "finding": "V8 describes bytecode peephole passes that replace common patterns, remove redundant operations, and reduce register transfers. This motivates looking for frequent local/opcode sequences; it does not validate a Quench speedup.",
+    "accessed_utc": "2026-10-09T03:17:56.361633+00:00"
+  },
+  "selected_fixtures": [
+    "crypto.js",
+    "navier-stokes.js"
+  ]
+}

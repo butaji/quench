@@ -1,0 +1,35 @@
+    Checking quench-runtime v0.1.0 (/workspace/quench/crates/quench-runtime)
+error: unreachable pattern
+  --> crates/quench-runtime/src/vm/object.rs:92:142
+   |
+92 | ...gured | ShapeTransition::FunctionLengthReconfigured | ShapeTransition::FunctionLengthReconfigured
+   |            -------------------------------------------   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ no value can reach this
+   |            |
+   |            matches all the relevant values
+   |
+note: the lint level is defined here
+  --> crates/quench-runtime/src/lib.rs:1:9
+   |
+ 1 | #![deny(warnings)]
+   |         ^^^^^^^^
+   = note: `#[deny(unreachable_patterns)]` implied by `#[deny(warnings)]`
+
+error: unreachable pattern
+   --> crates/quench-runtime/src/vm/object.rs:199:146
+    |
+199 | ...ured | ShapeTransition::FunctionLengthReconfigured | ShapeTransition::FunctionLengthReconfigured
+    |           -------------------------------------------   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ no value can reach this
+    |           |
+    |           matches all the relevant values
+
+error: unreachable pattern
+   --> crates/quench-runtime/src/vm/object.rs:271:146
+    |
+271 | ...ured | ShapeTransition::FunctionLengthReconfigured | ShapeTransition::FunctionLengthReconfigured
+    |           -------------------------------------------   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ no value can reach this
+    |           |
+    |           matches all the relevant values
+
+error: could not compile `quench-runtime` (lib) due to 3 previous errors
+warning: build failed, waiting for other jobs to finish...
+error: could not compile `quench-runtime` (lib test) due to 3 previous errors

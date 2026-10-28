@@ -1,0 +1,276 @@
+{
+  "schema": 1,
+  "tasks": [
+    "07",
+    "11",
+    "17",
+    "20"
+  ],
+  "baseline_source_head": "1f1b0b7f15ed98267389780e5cff93d276d6514b",
+  "baseline_production_head": "09bde325f97c17d7adada5b8154a380384afa172",
+  "suite_pin": "6eec1ac9ee144dafd8f344d73a21f36bfc9f6755",
+  "qualification": "Isolated production slice; matched release binaries, affected stages and compare-runs --reports. No full suite.",
+  "ownership": {
+    "active": "The current VM with_stack segment owns active with objects. Frame.with_objects is empty.",
+    "suspended": "The stack segment transfers through Frame into the shared Continuation; Continuation.roots traces it.",
+    "resumed": "The segment moves back to the current VM stack with a fresh caller boundary.",
+    "completed_or_error": "Truncate the active segment; recycling releases the detached scope buffer.",
+    "captured": "Captured lexical environment snapshots retain their existing authority; they are not mutated to store activation suspension state."
+  },
+  "source_sha256": {
+    "crates/quench-runtime-next/src/api.rs": "73778a5ea43f45a4d7fecd5442adceb73da4d8c26d5877044c60bd87c864514e",
+    "crates/quench-runtime-next/src/vm.rs": "c6a2a591c1ed726c878c1ce95dee2bc0feba6d22f9909042d25d92e59f8ffe27",
+    "crates/quench-runtime-next/src/vm/activation.rs": "bc9cecc59b2388a1d84a745c2354201200c2a6611ade6705bb77ad1c093294fe",
+    "crates/quench-runtime-next/src/vm/dispatch_frame.rs": "68f7327c28d8ea38ff5ae549644b77b2b33a72251fd2ae380563147a1378b361",
+    "crates/quench-runtime-next/src/vm/dispatch_numeric.rs": "21601972faa2b47709175185b8ab1bb33a74753a28f2bd525bea40c076ecbb7a",
+    "crates/quench-runtime-next/src/vm/generator.rs": "66e7c31691422284b8e7f5bd0c89b7118d1a3f833972c3c8ac05f1a19e8c4946",
+    "crates/quench-runtime-next/src/vm/profile_edges.rs": "190bdd6226e4417b5ecc1ff9ea1ded410d6ff5a9b82b7ea008abbc9be388270a",
+    "crates/quench-runtime-next/src/vm/promise_async.rs": "bd61b250309c739df1cf1de11cc08ee34d20bb8f09404eb0ec4e0264caa79a4a",
+    "crates/quench-runtime-next/src/vm/tests.rs": "92c8cc83c7edaade92a888dd0ac323667adc67985d835442008e4751ce3082d0"
+  },
+  "binary_sha256": {
+    "before-quench-next": "0ffe0c67fdaa2f7f9f7a403faf78826bad6d233403594d93e70f7031bf80ae75",
+    "after-quench-next": "c6f07f36ee61c3acf67196e91120c4a24e314239649296852df8aa946db188cd",
+    "before-run-stages-next": "10e3f1ae9419903288bb29047c5c30152e348248f9a822528aa4331af996679f",
+    "after-run-stages-next": "d29ad0df33764caf3368b710219bc526167ecc8d30c900cb004169e4b3bb4b34"
+  },
+  "paired_affected": {
+    "distinct_cases": 3961,
+    "passed_before": 3959,
+    "passed_after": 3959,
+    "gained": [],
+    "regressions": [],
+    "remaining": [
+      "built-ins/Promise/allSettledKeyed/result-property-descriptors.js",
+      "staging/sm/lexical-environment/block-scoped-functions-annex-b-arguments.js"
+    ],
+    "scopes": [
+      {
+        "scope": "assignment",
+        "before_report": "target/iteration/task20-suspended-with/before-assignment.json",
+        "after_report": "target/iteration/task20-suspended-with/after-assignment.json",
+        "passed_before": 485,
+        "passed_after": 485,
+        "failed_after": 0,
+        "compare_exit": 0
+      },
+      {
+        "scope": "async-builtins",
+        "before_report": "target/iteration/task20-suspended-with/before-async-builtins.json",
+        "after_report": "target/iteration/task20-suspended-with/after-async-builtins.json",
+        "passed_before": 89,
+        "passed_after": 89,
+        "failed_after": 0,
+        "compare_exit": 0
+      },
+      {
+        "scope": "async-function-expression",
+        "before_report": "target/iteration/task20-suspended-with/before-async-function-expression.json",
+        "after_report": "target/iteration/task20-suspended-with/after-async-function-expression.json",
+        "passed_before": 93,
+        "passed_after": 93,
+        "failed_after": 0,
+        "compare_exit": 0
+      },
+      {
+        "scope": "async-functions",
+        "before_report": "target/iteration/task20-suspended-with/before-async-functions.json",
+        "after_report": "target/iteration/task20-suspended-with/after-async-functions.json",
+        "passed_before": 74,
+        "passed_after": 74,
+        "failed_after": 0,
+        "compare_exit": 0
+      },
+      {
+        "scope": "async-generator-expression",
+        "before_report": "target/iteration/task20-suspended-with/before-async-generator-expression.json",
+        "after_report": "target/iteration/task20-suspended-with/after-async-generator-expression.json",
+        "passed_before": 623,
+        "passed_after": 623,
+        "failed_after": 0,
+        "compare_exit": 0
+      },
+      {
+        "scope": "async-generator-statement",
+        "before_report": "target/iteration/task20-suspended-with/before-async-generator-statement.json",
+        "after_report": "target/iteration/task20-suspended-with/after-async-generator-statement.json",
+        "passed_before": 301,
+        "passed_after": 301,
+        "failed_after": 0,
+        "compare_exit": 0
+      },
+      {
+        "scope": "await",
+        "before_report": "target/iteration/task20-suspended-with/before-await.json",
+        "after_report": "target/iteration/task20-suspended-with/after-await.json",
+        "passed_before": 22,
+        "passed_after": 22,
+        "failed_after": 0,
+        "compare_exit": 0
+      },
+      {
+        "scope": "eval",
+        "before_report": "target/iteration/task20-suspended-with/before-eval.json",
+        "after_report": "target/iteration/task20-suspended-with/after-eval.json",
+        "passed_before": 347,
+        "passed_after": 347,
+        "failed_after": 0,
+        "compare_exit": 0
+      },
+      {
+        "scope": "function",
+        "before_report": "target/iteration/task20-suspended-with/before-function.json",
+        "after_report": "target/iteration/task20-suspended-with/after-function.json",
+        "passed_before": 217,
+        "passed_after": 217,
+        "failed_after": 0,
+        "compare_exit": 0
+      },
+      {
+        "scope": "generator-builtins",
+        "before_report": "target/iteration/task20-suspended-with/before-generator-builtins.json",
+        "after_report": "target/iteration/task20-suspended-with/after-generator-builtins.json",
+        "passed_before": 84,
+        "passed_after": 84,
+        "failed_after": 0,
+        "compare_exit": 0
+      },
+      {
+        "scope": "generator-expression",
+        "before_report": "target/iteration/task20-suspended-with/before-generator-expression.json",
+        "after_report": "target/iteration/task20-suspended-with/after-generator-expression.json",
+        "passed_before": 290,
+        "passed_after": 290,
+        "failed_after": 0,
+        "compare_exit": 0
+      },
+      {
+        "scope": "generators",
+        "before_report": "target/iteration/task20-suspended-with/before-generators.json",
+        "after_report": "target/iteration/task20-suspended-with/after-generators.json",
+        "passed_before": 266,
+        "passed_after": 266,
+        "failed_after": 0,
+        "compare_exit": 0
+      },
+      {
+        "scope": "global",
+        "before_report": "target/iteration/task20-suspended-with/before-global.json",
+        "after_report": "target/iteration/task20-suspended-with/after-global.json",
+        "passed_before": 56,
+        "passed_after": 56,
+        "failed_after": 0,
+        "compare_exit": 0
+      },
+      {
+        "scope": "promise",
+        "before_report": "target/iteration/task20-suspended-with/before-promise.json",
+        "after_report": "target/iteration/task20-suspended-with/after-promise.json",
+        "passed_before": 728,
+        "passed_after": 728,
+        "failed_after": 1,
+        "compare_exit": 0
+      },
+      {
+        "scope": "staged-generators",
+        "before_report": "target/iteration/task20-suspended-with/before-staged-generators.json",
+        "after_report": "target/iteration/task20-suspended-with/after-staged-generators.json",
+        "passed_before": 36,
+        "passed_after": 36,
+        "failed_after": 0,
+        "compare_exit": 0
+      },
+      {
+        "scope": "staged-lexical",
+        "before_report": "target/iteration/task20-suspended-with/before-staged-lexical.json",
+        "after_report": "target/iteration/task20-suspended-with/after-staged-lexical.json",
+        "passed_before": 33,
+        "passed_after": 33,
+        "failed_after": 1,
+        "compare_exit": 0
+      },
+      {
+        "scope": "staged-with",
+        "before_report": "target/iteration/task20-suspended-with/before-staged-with.json",
+        "after_report": "target/iteration/task20-suspended-with/after-staged-with.json",
+        "passed_before": 40,
+        "passed_after": 40,
+        "failed_after": 0,
+        "compare_exit": 0
+      },
+      {
+        "scope": "with",
+        "before_report": "target/iteration/task20-suspended-with/before-with.json",
+        "after_report": "target/iteration/task20-suspended-with/after-with.json",
+        "passed_before": 181,
+        "passed_after": 181,
+        "failed_after": 0,
+        "compare_exit": 0
+      }
+    ]
+  },
+  "node_version": "v26.10.0",
+  "suspension_controls": {
+    "summary": {
+      "sources": 34,
+      "observations_per_build": 68,
+      "before_matches": 32,
+      "after_matches": 68,
+      "losses": 0
+    },
+    "report": "target/iteration/task20-suspended-with/controls.json"
+  },
+  "ordinary_lookup_controls": {
+    "summary": {
+      "sources": 17,
+      "observations_per_build": 34,
+      "before_matches": 34,
+      "after_matches": 34,
+      "losses": 0
+    },
+    "report": "target/iteration/task20-suspended-with/node-controls.json"
+  },
+  "collecting_unscopables_controls": {
+    "sources": 7,
+    "before_matches": 7,
+    "after_matches": 7,
+    "losses": 0
+  },
+  "suspended_gc_controls": {
+    "summary": {
+      "sources": 5,
+      "before_matches": 0,
+      "after_matches": 5,
+      "losses": 0
+    },
+    "report": "target/iteration/task20-suspended-with/suspension-gc-controls.json"
+  },
+  "internal_and_regression_checks": {
+    "final-unit": {
+      "log": "target/iteration/task20-suspended-with/final-unit.log",
+      "result": "test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 432 filtered out; finished in 0.24s"
+    },
+    "activation-unit": {
+      "log": "target/iteration/task20-suspended-with/activation-unit.log",
+      "result": "test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 433 filtered out; finished in 0.01s"
+    },
+    "pool-unit": {
+      "log": "target/iteration/task20-suspended-with/pool-unit.log",
+      "result": "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 434 filtered out; finished in 0.00s"
+    }
+  },
+  "profile_feature_check": {
+    "features": [
+      "profile-trace",
+      "profile-memory"
+    ],
+    "log": "target/iteration/task20-suspended-with/profile-check.log",
+    "exit": 0
+  },
+  "new_unit": "One uncovered GC/closure/yield/await interaction, checked in both execution modes. Existing internal checks extended for root inventory, retained/released scope objects and pooled buffer release.",
+  "limits": [
+    "No full Test262 run, Stage A closure, single-VM cutover or Stage B measurement.",
+    "The recorded Annex B arguments and keyed-Promise descriptor fixture conflicts remain; other Stage A gaps remain owned by their tasks.",
+    "Suite pins, discovery, harness, guest fixtures, expectations, exclusions and deadlines unchanged."
+  ]
+}

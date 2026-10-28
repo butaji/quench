@@ -1,0 +1,250 @@
+{
+  "tasks": [
+    "86",
+    "19",
+    "23",
+    "48"
+  ],
+  "source_head": "7e60169df033dd247f34199e084e3e8080a92a29",
+  "source_state": "dirty worktree",
+  "source_hashes": {
+    "crates/quench-wasm-test/src/lib.rs": "bf38bf3f2a28ba4fb50f059910503e2b10a4fea88273c90c520cd7db6a9c8edc",
+    "crates/quench-wasm/src/shared.rs": "0155a0bbd4531bef94639179c411feaf038aeed7c81c729f01fcef001d843e3a",
+    "crates/quench-wasm/src/shared/float_tests.rs": "033f09b1c7a50420f20f1dd25887a04f1d20ed73d279bcb798b6d090f1756520",
+    "crates/quench-wasm/src/shared/scalar_tests.rs": "bac5f342f611241baf861c9d18ad4a4871764bb28687afbeec734adc6f9fb68f",
+    "crates/quench-wasm/src/wast_script.rs": "aa3ffebb84d64feeab6006301cb33b1ef9ccbb603b6f5e104cfd442444543b5b"
+  },
+  "suite_head": "67c8b9dc32c47d61c05a1681df349d01c85fa8ff",
+  "suite_clean": true,
+  "host": "macOS-26.5-arm64-arm-64bit",
+  "rustc": "rustc 1.99.0 (b940084d7 2026-09-28) (Homebrew)",
+  "obligation": "Remove ordinary unit probes owned by pinned Wasm conformance while retaining internal/embedding obligations and all pinned cases/expectations.",
+  "representation": "Only cfg(test) probes/helpers change. Ordinary arithmetic wrap, local initialization/tee, scalar constants, exported function selection, floating-call rounding, branch/select payload behavior, incompatible imports, global/extended-constant execution and void br_if belong to pinned fixtures. Proposal-discovery retains exact nested path assertions and drops its independent wide-arithmetic execution replay. No semantic implementation, fixture, expectation, skip or suite membership changes.",
+  "removed_units": [
+    {
+      "file": "crates/quench-wasm/src/shared.rs",
+      "name": "shared_i32_arithmetic_wraps_at_wasm_boundaries",
+      "body_sha256": "370d73317c9c2cd627c18070d703da68d1ba792f6d4ca9928fe531c22391abe2",
+      "coverage_owner": [
+        "crates/quench-wasm-test/testsuite/i32.wast"
+      ]
+    },
+    {
+      "file": "crates/quench-wasm/src/shared.rs",
+      "name": "shared_locals_are_zeroed_and_tee_preserves_stack_value",
+      "body_sha256": "e3740377e7ea83065c15944bea54a5eadc77788f82bc614583abca5d18051209",
+      "coverage_owner": [
+        "crates/quench-wasm-test/testsuite/local_get.wast",
+        "crates/quench-wasm-test/testsuite/local_tee.wast",
+        "crates/quench-wasm-test/testsuite/local_set.wast"
+      ]
+    },
+    {
+      "file": "crates/quench-wasm/src/shared.rs",
+      "name": "shared_lowering_resolves_the_exported_function_index",
+      "body_sha256": "c076944278f9edb904fba67394272c5e5aa6d3d66bfbb498bb7d3d4ca6cde690",
+      "coverage_owner": [
+        "crates/quench-wasm-test/testsuite/func.wast",
+        "crates/quench-wasm-test/testsuite/exports.wast",
+        "crates/quench-wasm-test/testsuite/call.wast"
+      ]
+    },
+    {
+      "file": "crates/quench-wasm/src/shared/float_tests.rs",
+      "name": "f32_call_results_round_at_each_operation",
+      "body_sha256": "d18ac3a01c2f19093bc21566add3d066bbc985f6b6cabb148e1e4c17535690d7",
+      "coverage_owner": [
+        "crates/quench-wasm-test/testsuite/f32.wast",
+        "crates/quench-wasm-test/testsuite/float_exprs.wast",
+        "crates/quench-wasm-test/testsuite/call.wast"
+      ]
+    },
+    {
+      "file": "crates/quench-wasm/src/shared/scalar_tests.rs",
+      "name": "scalar_constants_preserve_integer_boundaries_and_float_payloads",
+      "body_sha256": "0988edac30e592ae36125ae430d4fb86d7863c60a8a4455b2c7609a952f83181",
+      "coverage_owner": [
+        "crates/quench-wasm-test/testsuite/const.wast",
+        "crates/quench-wasm-test/testsuite/f32.wast",
+        "crates/quench-wasm-test/testsuite/f64.wast",
+        "crates/quench-wasm-test/testsuite/i64.wast"
+      ]
+    },
+    {
+      "file": "crates/quench-wasm/src/shared/scalar_tests.rs",
+      "name": "every_scalar_local_uses_its_typed_zero",
+      "body_sha256": "aff40671734128a060b0c9e488533bad884ae21857cc83d9342ec3cac16ea5da",
+      "coverage_owner": [
+        "crates/quench-wasm-test/testsuite/local_get.wast"
+      ]
+    },
+    {
+      "file": "crates/quench-wasm/src/shared/scalar_tests.rs",
+      "name": "typed_branches_and_select_preserve_nan_payloads",
+      "body_sha256": "d61ad249a100f448b107d898b470c1c1c966943ac8d052de05d7863f52811520",
+      "coverage_owner": [
+        "crates/quench-wasm-test/testsuite/br_if.wast",
+        "crates/quench-wasm-test/testsuite/select.wast",
+        "crates/quench-wasm-test/testsuite/br.wast"
+      ]
+    },
+    {
+      "file": "crates/quench-wasm/src/wast_script.rs",
+      "name": "unlinkable_incompatible_func_type",
+      "body_sha256": "222a5eadabbb62bbf849a8a71989d7c2301ef31d2958ffcad7f0f37b7839776f",
+      "coverage_owner": [
+        "crates/quench-wasm-test/testsuite/linking.wast",
+        "crates/quench-wasm-test/testsuite/imports.wast"
+      ]
+    },
+    {
+      "file": "crates/quench-wasm/src/wast_script.rs",
+      "name": "global_get_and_extended_const_execute",
+      "body_sha256": "6c8c3145642cce1f4b733354786c211a748cbbd0ee1d1cbd2df568beb837e6fc",
+      "coverage_owner": [
+        "crates/quench-wasm-test/testsuite/global.wast",
+        "crates/quench-wasm-test/testsuite/const.wast"
+      ]
+    },
+    {
+      "file": "crates/quench-wasm/src/wast_script.rs",
+      "name": "br_if_in_void_block",
+      "body_sha256": "0fdeed0705445a94b1d6451255b9eec5746904dc8f4af9df093bda903647fe17",
+      "coverage_owner": [
+        "crates/quench-wasm-test/testsuite/br_if.wast"
+      ]
+    }
+  ],
+  "removed_suite_replay": {
+    "file": "crates/quench-wasm-test/src/lib.rs",
+    "test": "proposals_are_walked_not_omitted",
+    "coverage_owner": "crates/quench-wasm-test/testsuite/proposals/wide-arithmetic/wide-arithmetic.wast",
+    "retained_obligation": "Proposal discovery includes the exact nested fixture; suite execution/outcomes remain with the conformance runner."
+  },
+  "suite_owners": {
+    "crates/quench-wasm-test/testsuite/br.wast": "ac34486d8787d469dc7940f8e77c6b4b5999cf9d6c8918138d13b3e58460cae9",
+    "crates/quench-wasm-test/testsuite/br_if.wast": "b75341e227315fc7765944e3ac09bcb1a15ca918a72c7dd478b2068147792658",
+    "crates/quench-wasm-test/testsuite/call.wast": "faa694f3141b25cb1cf25104298a535ddea8058396825f532b69d0912074d905",
+    "crates/quench-wasm-test/testsuite/const.wast": "b1a378d5b7ddb4d4acb5ae2959ac938dfe0d9e3c2864df457bc098d3f2e00f37",
+    "crates/quench-wasm-test/testsuite/exports.wast": "ba054413af525e2acc7a11b3934a78d37e3c879c97bc055bffca5e38ccd5af0b",
+    "crates/quench-wasm-test/testsuite/f32.wast": "91c9e9edf5500659040c6b7657fbaa942ad6c0526d80d2ea558e406257a8674f",
+    "crates/quench-wasm-test/testsuite/f64.wast": "b8b85a753f13ae27d20ca8cb97ab58b30606854deb4fb829caac93785a90b0f7",
+    "crates/quench-wasm-test/testsuite/float_exprs.wast": "f1659759fc66b9d7d46738adaefd9d9ff6d6a433d3192c762aa32f052fe6d071",
+    "crates/quench-wasm-test/testsuite/func.wast": "fb48ac22e13b3f5bd34063e194756af2f558b99d0f6f230e871c0b6d56849497",
+    "crates/quench-wasm-test/testsuite/global.wast": "0899df8c814d953d56a22b04d518fda6c7e6aab5a0d0472367a830e31821ee40",
+    "crates/quench-wasm-test/testsuite/i32.wast": "f3b7e8fd641893ea0989a8ab801fce0654d276d27b5cad9cf482291a422cffe8",
+    "crates/quench-wasm-test/testsuite/i64.wast": "7d0e27a617565e0685aef56cee01b2b4890084068e3989168c41d14c56b1945e",
+    "crates/quench-wasm-test/testsuite/imports.wast": "e10cb0afdfa72f275b88862e66f0bbc6aa1b5447ad7a16db401274cad4ac3ee0",
+    "crates/quench-wasm-test/testsuite/linking.wast": "88bcdcad7b029df279ce5985ed1c4489dea57c32fd173fff94516fdbd78caea8",
+    "crates/quench-wasm-test/testsuite/local_get.wast": "7829b58483bc8a158e97335c63a82db0fb9123555bcde27f779914254fe12c3e",
+    "crates/quench-wasm-test/testsuite/local_set.wast": "93df4f2089fce0a8f453635d4fcc750d676edb24af3826ba221a347a8da2df45",
+    "crates/quench-wasm-test/testsuite/local_tee.wast": "36cea2d29048fcd9567358a74cce59169a64be6d282bc8aaac99a4b3a5e03dcf",
+    "crates/quench-wasm-test/testsuite/proposals/wide-arithmetic/wide-arithmetic.wast": "9a3353e12e1fb78e8a7e30b7c5b356bfc897c093b83cbfc6a544660b88adcdc1",
+    "crates/quench-wasm-test/testsuite/select.wast": "2acdd7bb97af6f6f4b15538ee91ebc0a2cc4390d81010b2601e44c4f0f4ef836"
+  },
+  "retained_internal_obligations": {
+    "encoding": "Wide call windows, deep operands and patched jump encoding; serialized scalar/vector/residual and tag-collision checks remain in owning runtime units.",
+    "ownership": "Allocating I64 calls, exact scalar payloads across explicit collection, typed host boundaries, shared OXC/Wasm runtime and trap/exhaustion recovery remain.",
+    "runner": "Directive taxonomy, decode-vs-execution classification, Unicode file parsing, failed replacement without fallback, nonempty directive scoring and proposal discovery remain. Tests that assert runner records are internal classifier tests, not independent guest-language qualification.",
+    "frontend_units": [
+      "shared::float_tests::nan_predicates_require_float_types_and_quiet_payloads",
+      "legacy_try::tests::unfolds_folded_try_catch",
+      "shared::tests::shared_boundary_rejects_wrong_typed_entry_and_missing_export",
+      "shared::scalar_tests::host_boundary_rejects_type_mismatches_and_i32_convenience_misuse",
+      "shared::integer_tests::i64_integer_traps_cross_frames_and_recover",
+      "shared::call_tests::ordinary_recursive_call_exhausts_instead_of_becoming_a_tail_call",
+      "shared::call_tests::traps_cross_call_frames_and_runtime_recovers",
+      "shared::call_tests::wide_call_windows_preserve_all_arguments",
+      "tests::compile_rejects_invalid",
+      "tests::compile_validates_without_instantiating",
+      "tests::engine_run_wast_scores_directives",
+      "wast_script::tests::assert_invalid_passes",
+      "shared::control_tests::return_and_trap_keep_unreachable_stacks_polymorphic",
+      "shared::tests::shared_lowering_uses_wide_encoding_for_deep_stacks",
+      "wast_script::tests::assert_malformed_binary_passes",
+      "wast_script::tests::assert_malformed_quote_passes",
+      "wast_script::tests::assert_malformed_text_passes",
+      "wast_script::tests::confusing_unicode_is_lexed_not_a_file_parse_failure",
+      "wast_script::tests::inspect_binary_accepts_empty_module",
+      "wast_script::tests::inspect_binary_classifies_empty_as_parse_error",
+      "wast_script::tests::invoke_and_assert_return_run_i32",
+      "wast_script::tests::valid_module_accepted_without_running",
+      "shared::tests::shared_void_result_and_argument_count_are_explicit",
+      "shared_wast::tests::failed_module_replacement_is_not_a_fallback_to_previous_instance",
+      "shared::tests::shared_wasm_and_javascript_use_the_same_runtime",
+      "shared::scalar_tests::scalar_arguments_locals_and_calls_keep_exact_bits",
+      "shared::tests::shared_integer_traps_are_typed_and_runtime_recovers",
+      "shared::integer_tests::allocating_i64_call_loop_preserves_live_locals_and_operands",
+      "shared::control_tests::large_if_patches_jumps_through_shared_wide_encoding"
+    ]
+  },
+  "qualification": {
+    "files": 19,
+    "total": 9146,
+    "passed": 8997,
+    "failed": 149,
+    "gains": 0,
+    "regressions": 0,
+    "same_outcomes": true,
+    "exact_directive_ids": true,
+    "identical_input_hashes": true,
+    "complete_workers": true,
+    "note": "Existing failures remain recorded, including unsupported proposal/reference execution. Removing a unit does not turn its suite cases into passes."
+  },
+  "checks": {
+    "frontend_internal": 29,
+    "runner_internal": 3,
+    "all_target_check": "passed",
+    "no_failed_or_ignored_units": true
+  },
+  "scope": "Nineteen pinned coverage-owner files only, including wide-arithmetic from the removed discovery replay. No full Test262/Wasm/implemented Node inventories or benchmarks run.",
+  "reports": {
+    "before": {
+      "path": "target/iteration/task86-wasm-unit-coverage-before.json",
+      "sha256": "ee1a54f3020888b8eba9965023faa15bc2be2a1cfa207a23346236a6a1035e6e",
+      "binary_sha256": "eb7b38f7a01d1c212930fa3aa0508b4cdf1562c21421492a18b2e968e1d11d2e",
+      "command_source": "provenance.command in report"
+    },
+    "after": {
+      "path": "target/iteration/task86-wasm-unit-coverage-after.json",
+      "sha256": "b783b861dceb695c46de137abbdd92cf99d3ca8c338b2df196781cfcd523af89",
+      "binary_sha256": "eb7b38f7a01d1c212930fa3aa0508b4cdf1562c21421492a18b2e968e1d11d2e",
+      "command_source": "provenance.command in report"
+    }
+  },
+  "logs": {
+    "frontend": {
+      "path": "target/iteration/task86-wasm-unit-coverage-frontend.log",
+      "sha256": "1593bc0558447e8e7f681fef70a22af5442b901033ff873bedd0740b3beb31a9"
+    },
+    "runner": {
+      "path": "target/iteration/task86-wasm-unit-coverage-runner.log",
+      "sha256": "52086d9c431d562ada895a6a18db20cc274850e8d98660caacf0cdad690ee35b"
+    },
+    "build": {
+      "path": "target/iteration/task86-wasm-unit-coverage-build.log",
+      "sha256": "8afdf15dc9462dd07c3daa8898c8d8b75ec03d76816877fea542891f7503387f"
+    },
+    "check": {
+      "path": "target/iteration/task86-wasm-unit-coverage-check.log",
+      "sha256": "1bba7b2cb26e4793a1299983fa7cb8e8284f0f5ab4582299c6381437759ca151"
+    },
+    "compare": {
+      "path": "target/iteration/task86-wasm-unit-coverage-compare.log",
+      "sha256": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+    },
+    "before": {
+      "path": "target/iteration/task86-wasm-unit-coverage-before.log",
+      "sha256": "ca1b0569d734391450d358c52d212f86741bc818b76b0bb69f88502e3ae3f1dd"
+    },
+    "after": {
+      "path": "target/iteration/task86-wasm-unit-coverage-after.log",
+      "sha256": "ef70794c11372872a2a5b9ded735099dd6dcbbf758e60965d5d74904776cecc3"
+    }
+  },
+  "audit_source": {
+    "path": "target/iteration/task86-wasm-unit-coverage-removals.json",
+    "sha256": "08a547df43684bc172d363e804dc420b1a1593657465a96589d513347e04c11d"
+  },
+  "remaining": "Workspace-wide duplicate-unit audit remains open. All three full suite gates, implemented Node inventory/migration, single-VM production cutover and legacy/clutter removal remain open. Stage A is not verified; Stage B has not started."
+}

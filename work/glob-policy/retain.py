@@ -1,0 +1,22 @@
+import hashlib,json,subprocess
+from pathlib import Path
+base=Path('work/glob-policy');bundle=Path('work/glob-policy-bin')
+for name in ['glob-policy-quiet','glob-policy-extras']:
+ state=json.loads(Path('work/task-supervisor/'+name+'-state.json').read_text());assert state['status']=='complete'and state['exit']==0,state
+for name,count in [('core.log',655),('all-api.log',370),('shared.log',7),('focused.log',1),('startup-control.log',1)]:assert f'{count} passed; 0 failed' in (base/name).read_text(),name
+assert 'pass=43 skip=0 fail=0 timeout=0 crash=0 unclassified=0 total=43' in (base/'framework.log').read_text()
+assert not subprocess.check_output(['git','diff','--','crates'],text=True)
+source=subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip();assert source==(bundle/'source-commit.txt').read_text().strip()
+for path in [base/'core655-source-sha256.json',bundle/'source-sha256.json']:
+ m=json.loads(path.read_text());assert all(hashlib.sha256(Path(n).read_bytes()).hexdigest()==h for n,h in m.items())
+for n in ['shadow.diff','buffer-oracle.diff','buffer-concat-oracle.diff','buffer-latin1-oracle.diff','buffer-poison-oracle.diff']:assert not(base/n).read_bytes(),n
+fixed=json.loads((base/'fixed-work.json').read_text());assert fixed['complete']and len(fixed['fixtures'])==8 and all(r['valid']and r['output_equal']for r in fixed['fixtures'].values())
+family=json.loads((base/'family-receipt.json').read_text());assert family['total']==18 and family['gained']==['test-fs-glob-throw.mjs']and not family['lost']and not family['skip_changes']
+def raw(p):
+ b=p.read_bytes();return {'path':str(p),'bytes':len(b),'sha256':hashlib.sha256(b).hexdigest()}
+paths=[p for p in sorted(base.iterdir())if p.is_file()and p.name!='retain.py']
+paths += [bundle/n for n in ['source-commit.txt','source-sha256.json','sha256.txt']]
+paths += [Path('work/task-supervisor/'+label+suffix)for label in ['glob-policy','glob-policy-fixed','glob-policy-lazy','glob-policy-quiet','glob-policy-extras']for suffix in ['-state.json','.log','-config.json']]
+paths=[p for p in paths if p.exists()]
+output={'source_commit':source,'scope':'Original Node glob policy and real filesystem directory types, combined with incoming eval-origin metadata','oracle':'Node v26.12.0 latest stable','checks':{'core':655,'api':370,'framework':43,'shared':7,'workspace_all_targets':True,'focused_glob':1,'original_300ms_child_deadline_control':1,'empty_differentials':5},'upstream_family':{k:family[k]for k in ['before','candidate','total','gained','lost','skip_changes']},'fixed_work':{'valid':8,'clean':sum(bool(r['clean_rounds'])for r in fixed['fixtures'].values()),'speed_claim':False},'design':['Unchanged configured Node fs.js glob/globSync and internal/fs/promises.glob execute over genuine host filesystem primitives.','One bundled-dependency table drives physical resolution and immutable embedding; original bundles use CommonJS regardless of vendor package scope.','Original Node Dirent owns shape, methods and parentPath; native file_type supplies real file/directory/symlink/device/FIFO/socket data. Internal metadata has a null prototype and directory names use native lexical ordering.','Native fs is cached before original utilities initialize; a private directory-policy owner captures the actual constructor without a circular second fs instance.','Original glob exports install when fs is required. Programs without fs avoid policy initialization; traversal keeps the original lazy import.'],'limitations':['All-parallel goal remains open: newest completed frozen c4f stable1789/5015 and pinned1817/4727 exclude this newer source. Selected gains are not added to full scores.','Six existing failures remain in the18-case selected family. Full glob suite currently reaches node:test suite-skip behavior; permission and other filesystem gaps remain.','First focused run exposed bundled-source format detection before embedded fallback and was fixed. First complete369/370 exposed eager initialization increasing child startup cost; initialization moved to fs. Same final source then369/370 during a concurrent full audit, but unchanged isolated300ms control passes and a complete quiet370/370 qualifies final source. All actual failing attempts retained; no deadline changed.','No speed claim: fixed-work8valid0clean.'],'raw':[raw(p)for p in paths]}
+Path('evidence/task20-node-original-glob-core655-api370-2026-10-16.json').write_text(json.dumps(output,indent=2)+'\n');print(source,output['checks'],output['upstream_family'])

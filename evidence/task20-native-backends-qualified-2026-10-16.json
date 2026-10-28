@@ -1,0 +1,268 @@
+{
+  "scope": "Native backend qualification; unchanged full parallel inventories pending",
+  "source_commit": "e5babf0a73c369c81826d19d180786b746cdf3ee",
+  "frozen_bundle": {
+    "source_commit": "e5babf0a73c369c81826d19d180786b746cdf3ee",
+    "source_files": 803,
+    "binary_sha256": {
+      "quench-node": "0fc948b8a80595c7d646d9efc30d2df60ed286c68584464e9e6f43f53b334fc1",
+      "run-parallel": "ad744e0273fb6020f0691b46c1d16da19cee3317ca6beb2d1f58dc4b073c8c46",
+      "openssl-cli": "f4aa15f2822f670af7b5c1043d7aa6ebbbc64229fd2fae382edfc6a4524749c1"
+    },
+    "qualification": "Core674/subset17 and API467/framework43/shared7/workspace passed; actual target-specific OpenSSL3.5.9 native archive selected",
+    "qualification_environment": {
+      "captured_utc": "2026-10-16T21:31:18.005836+00:00",
+      "memory_events": "low 0\nhigh 0\nmax 1022045\noom 2\noom_kill 1\noom_group_kill 0\n",
+      "retained_failed_runs": [
+        "initial-api452-failures",
+        "api467-initial-exists-fallback-failure",
+        "api467-second-child-failures"
+      ],
+      "mocktracker_original_repetitions": "mocktracker-repeat.json",
+      "note": "One isolated Core codegen was OOM-killed. Completed Core674/subset17 gate passed. API failures retained; no upstream fixture timeout or assertion adjustments. New internal MockTracker fixture changed to avoid SIGPIPE reproduced in 6/15 Node oracle runs."
+    },
+    "openssl_cli_provenance": "Unchanged native OpenSSL tool from previously qualified source1208 bundle; independent of Node host/Core changes",
+    "frozen_utc": "2026-10-16T21:40:22.374002+00:00"
+  },
+  "gates": {
+    "Core": {
+      "pass": 674,
+      "fail": 0,
+      "source_commit": "857db915615aa3d837686dd1e6f51472fa2de0d6"
+    },
+    "Core_subset": {
+      "pass": 17,
+      "fail": 0
+    },
+    "Node_API": {
+      "pass": 467,
+      "fail": 0,
+      "seconds": 251.25
+    },
+    "framework": {
+      "pass": 43,
+      "fail": 0
+    },
+    "shared_regressions": {
+      "pass": 7,
+      "fail": 0
+    },
+    "provider_isolation": {
+      "pass": 1,
+      "fail": 0
+    },
+    "workspace_all_targets": "PASS"
+  },
+  "oracle_latest_stable": {
+    "checked_utc": "2026-10-16T21:31:41.019376+00:00",
+    "latest_stable": {
+      "version": "v26.12.0",
+      "date": "2026-10-14",
+      "files": [
+        "aix-ppc64",
+        "headers",
+        "linux-arm64",
+        "linux-ppc64le",
+        "linux-s390x",
+        "linux-x64",
+        "linux-x64-musl",
+        "osx-arm64-tar",
+        "osx-x64-pkg",
+        "osx-x64-tar",
+        "src",
+        "win-arm64-7z",
+        "win-arm64-zip",
+        "win-x64-7z",
+        "win-x64-exe",
+        "win-x64-msi",
+        "win-x64-zip"
+      ],
+      "npm": "11.20.0",
+      "v8": "14.6.202.34",
+      "uv": "1.52.1",
+      "zlib": "1.3.2.1-motley",
+      "openssl": "3.5.9",
+      "modules": "147",
+      "lts": false,
+      "security": false
+    },
+    "latest_release": {
+      "version": "v26.12.0",
+      "date": "2026-10-14",
+      "files": [
+        "aix-ppc64",
+        "headers",
+        "linux-arm64",
+        "linux-ppc64le",
+        "linux-s390x",
+        "linux-x64",
+        "linux-x64-musl",
+        "osx-arm64-tar",
+        "osx-x64-pkg",
+        "osx-x64-tar",
+        "src",
+        "win-arm64-7z",
+        "win-arm64-zip",
+        "win-x64-7z",
+        "win-x64-exe",
+        "win-x64-msi",
+        "win-x64-zip"
+      ],
+      "npm": "11.20.0",
+      "v8": "14.6.202.34",
+      "uv": "1.52.1",
+      "zlib": "1.3.2.1-motley",
+      "openssl": "3.5.9",
+      "modules": "147",
+      "lts": false,
+      "security": false
+    }
+  },
+  "published_full_counts_unchanged": {
+    "stable": {
+      "pass": 1871,
+      "total": 5015,
+      "skip": 638,
+      "fail": 2398,
+      "timeout": 108
+    },
+    "pinned": {
+      "pass": 1891,
+      "total": 4727,
+      "skip": 678,
+      "fail": 2065,
+      "timeout": 93
+    }
+  },
+  "full_audit": {
+    "label": "native-backends",
+    "stable": "pending",
+    "pinned": "pending",
+    "jobs": 4,
+    "timeout_seconds": 30
+  },
+  "selected_actual_runtime_proofs": {
+    "public_Hash_Hmac": {
+      "matching_records": 137,
+      "original_hash_tests_passed": 7
+    },
+    "network_existing_API_cases": {
+      "pass": 52
+    },
+    "VFS_unchanged_selected_originals": {
+      "pass": 70,
+      "fail": 52,
+      "skip": 1,
+      "lost_passes": 0
+    },
+    "new_child_private_pool_probes": {
+      "pass": 10
+    }
+  },
+  "limits": [
+    "Selected proofs are not full inventory counts.",
+    "No performance improvement claim.",
+    "Next c-ares/UDP/HKDF/weak-abort/Worker/SAB drafts are excluded from this frozen source.",
+    "Failed qualification attempts and OOM are retained in frozen_bundle.qualification_environment."
+  ],
+  "additional_checks": {
+    "exact_differentials": 9,
+    "framework_scenarios": 3,
+    "fixed_work": {
+      "raw_sha256": "ad2d0e95132cff7877bfa4c1d7d93b7d96c70527818f6f083861f86ce4e3b089",
+      "complete": true,
+      "qualification_ready": false,
+      "performance_claim": false,
+      "fixtures": {
+        "quench-bench/js-engine-benchmark/v8-v7/crypto.js": {
+          "valid": true,
+          "output_equal": true,
+          "clean_rounds": 0,
+          "plan": {
+            "fixture": "crypto.js",
+            "suite": "Crypto",
+            "benchmark_count": 2,
+            "iterations_per_benchmark": 4
+          }
+        },
+        "quench-bench/js-engine-benchmark/v8-v7/deltablue.js": {
+          "valid": true,
+          "output_equal": true,
+          "clean_rounds": 0,
+          "plan": {
+            "fixture": "deltablue.js",
+            "suite": "DeltaBlue",
+            "benchmark_count": 1,
+            "iterations_per_benchmark": 40
+          }
+        },
+        "quench-bench/js-engine-benchmark/v8-v7/earley-boyer.js": {
+          "valid": true,
+          "output_equal": true,
+          "clean_rounds": 0,
+          "plan": {
+            "fixture": "earley-boyer.js",
+            "suite": "EarleyBoyer",
+            "benchmark_count": 2,
+            "iterations_per_benchmark": 3
+          }
+        },
+        "quench-bench/js-engine-benchmark/v8-v7/navier-stokes.js": {
+          "valid": true,
+          "output_equal": true,
+          "clean_rounds": 0,
+          "plan": {
+            "fixture": "navier-stokes.js",
+            "suite": "NavierStokes",
+            "benchmark_count": 1,
+            "iterations_per_benchmark": 5
+          }
+        },
+        "quench-bench/js-engine-benchmark/v8-v7/raytrace.js": {
+          "valid": true,
+          "output_equal": true,
+          "clean_rounds": 0,
+          "plan": {
+            "fixture": "raytrace.js",
+            "suite": "RayTrace",
+            "benchmark_count": 1,
+            "iterations_per_benchmark": 10
+          }
+        },
+        "quench-bench/js-engine-benchmark/v8-v7/regexp.js": {
+          "valid": true,
+          "output_equal": true,
+          "clean_rounds": 0,
+          "plan": {
+            "fixture": "regexp.js",
+            "suite": "RegExp",
+            "benchmark_count": 1,
+            "iterations_per_benchmark": 1
+          }
+        },
+        "quench-bench/js-engine-benchmark/v8-v7/richards.js": {
+          "valid": true,
+          "output_equal": true,
+          "clean_rounds": 0,
+          "plan": {
+            "fixture": "richards.js",
+            "suite": "Richards",
+            "benchmark_count": 1,
+            "iterations_per_benchmark": 100
+          }
+        },
+        "quench-bench/js-engine-benchmark/v8-v7/splay.js": {
+          "valid": true,
+          "output_equal": true,
+          "clean_rounds": 0,
+          "plan": {
+            "fixture": "splay.js",
+            "suite": "Splay",
+            "benchmark_count": 1,
+            "iterations_per_benchmark": 300
+          }
+        }
+      }
+    }
+  }
+}

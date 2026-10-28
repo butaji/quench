@@ -1,0 +1,94 @@
+{
+  "scope": "Native filesystem size/abort completion, WeakRef job lifetime, and TCP write completion safety checks",
+  "source_parent": "49a3c310a4e514b733b2aef6711b4cde1a9f458d",
+  "branch": "v2-cloud-node",
+  "oracle": "v27.0.0-nightly20260819c79868f102",
+  "fixture_commit": "55e4ca33f3a6dfe364bd9558b726576a6d1a2fba",
+  "host": {
+    "platform": "Linux-x86_64",
+    "cpu_max": "400000 100000",
+    "memory_max_bytes": 17179869184
+  },
+  "node_oracle_integration": {
+    "passed": 26,
+    "failed": 0,
+    "log": "work/node-retained-checks.log"
+  },
+  "runtime_checks": [
+    {
+      "scope": "Heap weak-reference clearing and slot reuse",
+      "passed": 2,
+      "log": "work/weak-ref-runtime-tests.log"
+    },
+    {
+      "scope": "Construction/dereference kept targets through GC, then release at host checkpoint; specialized and unspecialized execution",
+      "passed": 1,
+      "log": "work/weak-ref-checkpoint-tests.log"
+    },
+    {
+      "scope": "Definition-batch temporary-root cleanup after host checkpoint in both execution modes",
+      "passed": 1,
+      "log": "work/definition-root-tests.log"
+    }
+  ],
+  "unchanged_focused_fixtures": [
+    {
+      "fixture": "test-fs-readfile.js",
+      "status": "pass",
+      "return_code": 0
+    },
+    {
+      "fixture": "test-weakref.js",
+      "status": "pass",
+      "return_code": 0
+    },
+    {
+      "fixture": "test-net-write-fully-async-buffer.js",
+      "status": "pass",
+      "return_code": 0
+    },
+    {
+      "fixture": "test-net-connect-buffer.js",
+      "status": "pass",
+      "return_code": 0
+    },
+    {
+      "fixture": "test-net-connect-buffer2.js",
+      "status": "pass",
+      "return_code": 0
+    },
+    {
+      "fixture": "test-net-socket-byteswritten.js",
+      "status": "pass",
+      "return_code": 0
+    },
+    {
+      "fixture": "test-net-sync-cork.js",
+      "status": "pass",
+      "return_code": 0
+    },
+    {
+      "fixture": "test-net-write-cb-on-destroy-before-connect.js",
+      "status": "pass",
+      "return_code": 0
+    }
+  ],
+  "focused_jobs": 1,
+  "focused_timeout_secs": 30,
+  "memory_events_after_focused": "low 0\nhigh 0\nmax 4406740\noom 174\noom_kill 44\noom_group_kill 0\n",
+  "retained_changes": [
+    "readFile enforces the Node 2 GiB boundary before allocating oversized files; abort validation shares the native AbortSignal validator with child execution; callback exceptions escape once.",
+    "WeakRef construction and successful dereference retain targets under stable heap roots until the Node host finishes a turn and its next ticks/microtasks; exposed gc performs collection and is installed before entry loading.",
+    "TCP transport records write-byte boundaries and delivers rooted completion callbacks after flush; destruction/cancellation and final cleanup release pending callbacks.",
+    "Removed the connect-listener queue that returned true indefinitely; native byte admission and captured writable replay avoid double accounting."
+  ],
+  "qualifications": [
+    "The full 4k parallel goal remains incomplete; these focused checks are not a full-inventory result.",
+    "The native GC entry point is synchronous full collection. V8 asynchronous/minor GC options and debugger semantics are not qualified.",
+    "Filesystem async scheduling still uses the existing microtask bridge; comprehensive fd/directory/options snapshot behavior is not qualified.",
+    "TCP remains an asynchronous transport. Node may drain an individual OS write synchronously and return true where this transport returns false; the oracle checks verify eventual pressure, callback asynchrony, and byte preservation rather than identical kernel-progress-dependent thresholds.",
+    "The diagnostic 163-case network run used intermediate behavior and is not a final measurement. Its four former-pass regressions were isolated and recovered before retention."
+  ],
+  "performance_claim": false,
+  "next": "Freeze this revision and run the complete unchanged parallel inventory with four workers and the runner default 30-second timeout; continue fixing remaining failures."
+}

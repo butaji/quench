@@ -1,0 +1,298 @@
+{
+  "tasks": [
+    "19",
+    "20",
+    "23",
+    "37",
+    "48"
+  ],
+  "source_head": "7e60169df033dd247f34199e084e3e8080a92a29",
+  "source_dirty": true,
+  "source_hashes": {
+    "crates/quench-runtime-next/src/wasm.rs": "e432ae493dcb05806d9d7ae660de610153b4318de194a6f4cb77647966dad9ab",
+    "crates/quench-runtime-next/src/wasm/control.rs": "8c7771fa121a1291f213eb85c51f7d27c90a26ce774b637c300453a77478ff6e",
+    "crates/quench-runtime-next/src/wasm/table.rs": "d932459d15492c09a01bdb7f9a4f54e027c51fd63e42ff28f2a0975739d558a7",
+    "crates/quench-runtime-next/src/vm/dispatch.rs": "292d81b38f70b39a750d5febe1337a00f451df42372928ad72ec5157ae98c998",
+    "crates/quench-runtime-next/src/vm/dispatch_frame.rs": "ff60ffd6b2264cb64f88f47081377c082e3e81157af4b38a7a7ba7cd91386119",
+    "crates/quench-runtime-next/src/vm/wasm.rs": "1904d9d16fa89ea24bafcaa1b055d19d9965e5977f7656151119ad5311055869",
+    "crates/quench-runtime-next/src/vm/wasm_host.rs": "459042acbdf8c3de8a0d9e5130a57277ac72efa263816d8f220e8e5578a9a2cc",
+    "crates/quench-runtime-next/src/bytecode.rs": "6b96e4f90410e9c30591cfe87e4e0b76f4a06389911855a0a1808b3ae2d37689",
+    "crates/quench-runtime-next/src/vm/gc.rs": "35f4c7041c3c734ef57de335f09385adc6c0c6fad38220f5aabee9c695534a17"
+  },
+  "suite_head": "67c8b9dc32c47d61c05a1681df349d01c85fa8ff",
+  "suite_clean": true,
+  "host": "Darwin arm64",
+  "rustc": "rustc 1.99.0 (b940084d7 2026-09-28) (Homebrew)",
+  "profile": "debug (Wasm); release (JavaScript callers)",
+  "residual_format": 55,
+  "obligation": "Proper return_call, return_call_indirect and return_call_ref on the existing shared activation stack, including cross-program ownership and native root disposal.",
+  "representation": "Terminal Wasm calls use the existing RETURN_REGISTER flag and call ABI. Lowering marks their path dead and forwards the callee result bundle directly. Same-program known/user calls recycle the active frame. Foreign user calls select the original callable program/environment/realm before replacement; Frame.program owns the resulting activation. The existing general dispatch loop changes its borrowed execution view only when frame ownership changes. Entry program/realm are restored on return or error. Native/host tails discard guest context, locals/register references, environment and dynamic roots before the rooted host invocation; the host call returns directly from the frame. Tail backedges collect only after the replacement frame publishes callee roots. Ordinary Wasm calls remain non-tail, including calls followed by Return. No opcode, extra executor, wrapper or format change.",
+  "sources": [
+    "https://webassembly.github.io/spec/core/exec/instructions.html#exec-return-call",
+    "https://webassembly.github.io/spec/core/exec/instructions.html#exec-return-call-ref",
+    "https://webassembly.github.io/spec/core/exec/instructions.html#exec-return-call-indirect"
+  ],
+  "scope": "Previous225 affected pinned files union all six files containing return_call:227 files; previous3448 controls plus62 tail directives in31 files. Eight JavaScript affected scopes cover shared frame/call users. No full Test262/Wasm/Node suite.",
+  "reports": {
+    "before": {
+      "path": "target/iteration/task37-wasm-tail-before.json",
+      "sha256": "6a19ff1d39aa7aa358ede7cda32ce4c39397905cdd5a8cd82fc95b1589a48085",
+      "binary_sha256": "49de573cb80b362e0b00ace59dac7c8f84fa00e80ac7286132aa8f67126c0357"
+    },
+    "after": {
+      "path": "target/iteration/task37-wasm-tail-after.json",
+      "sha256": "d5054b2ee4caf4518062abd49b915a2d34ac0ed8211509fec46eccbc53e508c8",
+      "binary_sha256": "f8f2e63a96cd47843bfb2bb9affa274fa0ac39022c421a9f0360cacd6fd6a4cc"
+    },
+    "controls_before": {
+      "path": "target/iteration/task37-wasm-tail-controls-before.json",
+      "sha256": "ad131c2c0badf5d87af2abe5fcf09c55d2f244300a327909ff6114e0c550cb48",
+      "binary_sha256": "49de573cb80b362e0b00ace59dac7c8f84fa00e80ac7286132aa8f67126c0357"
+    },
+    "controls": {
+      "path": "target/iteration/task37-wasm-tail-controls.json",
+      "sha256": "169759db46b5995c396338b0bbbde5295ac82c755c67d834dfe1085c83642b5f",
+      "binary_sha256": "f8f2e63a96cd47843bfb2bb9affa274fa0ac39022c421a9f0360cacd6fd6a4cc"
+    }
+  },
+  "results": {
+    "after": {
+      "files": 227,
+      "total": 62659,
+      "passed": 60983,
+      "failed": 1676,
+      "before_passed": 60978,
+      "gains": 5,
+      "gains_by_file": {
+        "crates/quench-wasm-test/testsuite/return_call_indirect.wast": 2,
+        "crates/quench-wasm-test/testsuite/return_call_ref.wast": 3
+      },
+      "regressions": 0,
+      "exact_matching_inventory": true,
+      "log": "target/iteration/task37-wasm-tail-after-compare.log",
+      "sha256": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+    },
+    "controls": {
+      "files": 31,
+      "total": 3510,
+      "passed": 3510,
+      "failed": 0,
+      "before_passed": 3450,
+      "gains": 60,
+      "gains_by_file": {
+        "target/iteration/task37-wasm-tail-controls.wast": 60
+      },
+      "regressions": 0,
+      "exact_matching_inventory": true,
+      "log": "target/iteration/task37-wasm-tail-controls-compare.log",
+      "sha256": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+    }
+  },
+  "runner": {
+    "path": "target/iteration/task37-wasm-tail-runner",
+    "sha256": "f8f2e63a96cd47843bfb2bb9affa274fa0ac39022c421a9f0360cacd6fd6a4cc"
+  },
+  "javascript": {
+    "distinct_cases": 2212,
+    "passed": 2212,
+    "gains": 0,
+    "regressions": 0,
+    "scopes": {
+      "args": {
+        "from": 1,
+        "to": 1,
+        "selection": null,
+        "total": 263,
+        "passed": 263,
+        "regressions": 0,
+        "reports": {
+          "target/iteration/task37-wasm-tail-js-before-args.json": "c24e7e5241ed7fb2fb588f76a6a2c8af499403aaea8bc664aaba86b336751d97",
+          "target/iteration/task37-wasm-tail-js-after-args.json": "a275495fa4ecd09eb7424b99e3a3c7d98749d92e125f1dfc4174006639be3926"
+        },
+        "compare": {
+          "path": "target/iteration/task37-wasm-tail-js-args-compare.log",
+          "sha256": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+        }
+      },
+      "function-code": {
+        "from": 11,
+        "to": 11,
+        "selection": null,
+        "total": 217,
+        "passed": 217,
+        "regressions": 0,
+        "reports": {
+          "target/iteration/task37-wasm-tail-js-before-function-code.json": "c639e564befa826b43753eb1942cfebb5aba9991d65ccd1c246e92d42283f739",
+          "target/iteration/task37-wasm-tail-js-after-function-code.json": "5807e38e6c4a6352662738a9de63f587d22edccb14240587f23ce4abf4badb9a"
+        },
+        "compare": {
+          "path": "target/iteration/task37-wasm-tail-js-function-code-compare.log",
+          "sha256": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+        }
+      },
+      "eval": {
+        "from": 8,
+        "to": 8,
+        "selection": null,
+        "total": 347,
+        "passed": 347,
+        "regressions": 0,
+        "reports": {
+          "target/iteration/task37-wasm-tail-js-before-eval.json": "e3490dac283307a9ae1646bb4586f9bb88d45f05bccc7e4d9db255eeab1c5ac5",
+          "target/iteration/task37-wasm-tail-js-after-eval.json": "c6ad11eabaab486b8b3bc997b5806e8ca7c0e88f2b59383267e54c444ac57afd"
+        },
+        "compare": {
+          "path": "target/iteration/task37-wasm-tail-js-eval-compare.log",
+          "sha256": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+        }
+      },
+      "async": {
+        "from": 36,
+        "to": 38,
+        "selection": null,
+        "total": 89,
+        "passed": 89,
+        "regressions": 0,
+        "reports": {
+          "target/iteration/task37-wasm-tail-js-before-async.json": "fec4cb079404a528f9bbc37b05f430b79a48c42495edb7f197de9fca7b4ee8cd",
+          "target/iteration/task37-wasm-tail-js-after-async.json": "412defc688eb690aa2786b6e737fa0d96fd32cc96dce9dd07e3a128317e39497"
+        },
+        "compare": {
+          "path": "target/iteration/task37-wasm-tail-js-async-compare.log",
+          "sha256": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+        }
+      },
+      "function": {
+        "from": 48,
+        "to": 48,
+        "selection": null,
+        "total": 509,
+        "passed": 509,
+        "regressions": 0,
+        "reports": {
+          "target/iteration/task37-wasm-tail-js-before-function.json": "4f0dce3ffe1c537a6f21d5ecb48c438bc5afb27a3e7e3869cb24c4ab696ab0d7",
+          "target/iteration/task37-wasm-tail-js-after-function.json": "adb8d2187fd34d2ac8d99af73e24fba83059c2661453f4c84c1198d1f27a21c1"
+        },
+        "compare": {
+          "path": "target/iteration/task37-wasm-tail-js-function-compare.log",
+          "sha256": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+        }
+      },
+      "generator": {
+        "from": 50,
+        "to": 50,
+        "selection": null,
+        "total": 61,
+        "passed": 61,
+        "regressions": 0,
+        "reports": {
+          "target/iteration/task37-wasm-tail-js-before-generator.json": "c0b1620a59143778fff241b5ed1e857a292492e10fc77d5017147cb1b8f04b8f",
+          "target/iteration/task37-wasm-tail-js-after-generator.json": "37bda85bb632ef37b81d2ac97f6e054606dd9eb84b35e53187b48560f7fbe839"
+        },
+        "compare": {
+          "path": "target/iteration/task37-wasm-tail-js-generator-compare.log",
+          "sha256": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+        }
+      },
+      "import": {
+        "from": 16,
+        "to": 16,
+        "selection": null,
+        "total": 127,
+        "passed": 127,
+        "regressions": 0,
+        "reports": {
+          "target/iteration/task37-wasm-tail-js-before-import.json": "1ffd8ecf9dd629683e306f377b7d6a3dfa1bf74cdfdbadcbbb60e116a156843f",
+          "target/iteration/task37-wasm-tail-js-after-import.json": "147e6bbd70a0113605040c461c6bf6c035f20b0c9a7635eb6e1e01cb93aef7ec"
+        },
+        "compare": {
+          "path": "target/iteration/task37-wasm-tail-js-import-compare.log",
+          "sha256": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+        }
+      },
+      "module-code": {
+        "from": 20,
+        "to": 20,
+        "selection": null,
+        "total": 599,
+        "passed": 599,
+        "regressions": 0,
+        "reports": {
+          "target/iteration/task37-wasm-tail-js-before-module-code.json": "ab77a34ae725bef4f487deff1de4c095a51086c601ae862d204876bb3cde05ba",
+          "target/iteration/task37-wasm-tail-js-after-module-code.json": "bb117e400c645e952440371a2c142048ac8cc61a718ecf230d22aaed99169b10"
+        },
+        "compare": {
+          "path": "target/iteration/task37-wasm-tail-js-module-code-compare.log",
+          "sha256": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+        }
+      }
+    },
+    "provenance": {
+      "path": "target/iteration/task37-wasm-tail-js-provenance.json",
+      "sha256": "a70f176129ec30d57b9caaf9a6a766ad440ae89b8c947f8f29c16c13355a95ff"
+    },
+    "runner": {
+      "path": "target/iteration/task37-wasm-tail-run-stages-next",
+      "sha256": "709f9fe402d91f826334601a0a98dfe6f3d413e3d3fbf01b7caffd1ece2fbd2b"
+    }
+  },
+  "checks": {
+    "runtime_internals": 481,
+    "integrations": 6,
+    "frontend_internals": 31,
+    "profile_feature_all_target_check": "passed",
+    "unit_policy": "Existing serialized imported function/capture/root-transfer/GC regression now tail-calls its original foreign owner; existing host lease/protocol regression derives ordinary and tail bodies from the same signature/arguments and checks both through null/stale/kind/arity/error failures and release. No ordinary conformance unit added."
+  },
+  "oracle": {
+    "path": "target/iteration/task37-wasm-tail-oracle.json",
+    "sha256": "172aa6f6b86a66dcfabd76d740dd0d4203a16f63ea716723511756aae60cfd1d",
+    "source": "target/iteration/task37-wasm-tail-oracle.cjs",
+    "source_sha256": "e603ae6a42900db6cd137d5867c93af54dc7c3bb6f7d41920fcc157c79be250a",
+    "cases": "target/iteration/task37-wasm-tail-oracle-cases.json",
+    "cases_sha256": "6e0bcd6f240ca272974cfe56f00386b2b142f0823fa8a7204a0468c697135793",
+    "result": {
+      "node": "v26.10.0",
+      "flags": [
+        "--no-sparkplug",
+        "--no-maglev",
+        "--no-turbofan",
+        "--wasm-jitless"
+      ],
+      "checks": 70,
+      "passed": true,
+      "deep_iterations": 100000,
+      "host_prints": [
+        [
+          17,
+          32
+        ]
+      ],
+      "scope": "Exact tail control inputs and result components; ordinary exhaustion checked by shared suite only."
+    },
+    "scope": "70 matching observations on the exact focused tail inputs/results, including100000 direct/ref/foreign/mutual calls,100000 boxed-I64 accumulator steps, multi-result boundary bits, void/native calls, trap kinds and one exact host print [17,32]. Shared Wast additionally verifies ordinary recursion still exhausts its stack; that is not claimed as a matched Node exhaustion case. Earlier six callable-type Node discrepancies remain recorded."
+  },
+  "fixtures": {
+    "target/iteration/task37-wasm-tail-controls.wast": "e3be6447f0018c2196faaa52214701d119611953e77157c7df654e591c2c23fa",
+    "target/iteration/task37-wasm-tail-t.wat": "a493bc5ff5e8f751e378c5a33243b5b985604f429779496d464eb13bd80bfd33",
+    "target/iteration/task37-wasm-tail-t.wasm": "0d57b8213cebe4a09502ec7dc04d612d1e5f95231ba38406f9b75468428b5609",
+    "target/iteration/task37-wasm-tail-a.wat": "ec64109454381705407d138521121a7c31c09fc8b4f9feb11614fdc73c552aa0",
+    "target/iteration/task37-wasm-tail-a.wasm": "a3e44fe08bb553efa6e0523c72dcef2854717476712855952fc34c9781dc92c9",
+    "target/iteration/task37-wasm-tail-b.wat": "27e18d3aebc5dad089a04d688223a3bdfa727974d540e0bab3dcaa9056bc3abb",
+    "target/iteration/task37-wasm-tail-b.wasm": "a5c831d2ac11e7937df0f7c2289c89737fad225e103465d1ea9befc672b890e1",
+    "target/iteration/task37-wasm-tail-c.wat": "034e4ce312c83b2b7e389eae13bab2fe11ddbb15e2842274f740eee4aab81bfd",
+    "target/iteration/task37-wasm-tail-c.wasm": "f60fc570176a20d3cbfe891cb03df2269525c3002d273ab2cdbbc01d3e875332"
+  },
+  "logs": {
+    "target/iteration/task37-wasm-tail-build.log": "6c7daddec19378496d4aaaa0c44b1296dc906d100bf69c39e59bddbded945d09",
+    "target/iteration/task37-wasm-tail-runtime.log": "a0fdf76bd7449b01dcb6fea9a178a09131321bd6ab03a65d20067bd018d40ddc",
+    "target/iteration/task37-wasm-tail-integration.log": "ddfdb0cba19febb164951f0b970b9ea50b7d3afa88c2c1f878769aaf9c633904",
+    "target/iteration/task37-wasm-tail-frontend.log": "5230e8892121405a61e36b2ca9ed5c435a4cceb0c0375eb067244bae1f6f30bf",
+    "target/iteration/task37-wasm-tail-check.log": "1b3319576497c1749e9d5618e97f9ea15e560f8343996d3f1a9f76d854b67816",
+    "target/iteration/task37-wasm-tail-before.log": "94d78fdeba954adb5d7895d1e5ddd9a6bdb5d7c8cfbd2d9c950f941c9fd4fc78",
+    "target/iteration/task37-wasm-tail-after.log": "5b6916448638373906871b0b192f632d1d06098fd10088cb6bcbb76bebe208cd",
+    "target/iteration/task37-wasm-tail-controls.log": "44c39b695e48d62b5a3d0407dcaee2b97de7da0ddc2f529947b51241f9047b7a",
+    "target/iteration/task37-wasm-tail-controls-before.log": "41e3472f2dae4c01cc78dfae12bb6cbcca8d1ee811702d29258f854f7a49397a",
+    "target/iteration/task37-wasm-tail-js-build.log": "d3f667f38d91316b420e2242db7ff5d64935a7250c4d903e2eb30e167644d3ac"
+  },
+  "limitations": "Affected pinned scope60983/62659 still has1676 failures, not a global census. First broad tail modules remain blocked by concrete/GC callable/local value types; the five gained pinned cases are two return_call_indirect and three return_call_ref. Concrete/GC signature/local/resource types, casts/branches, GC objects, shared resources/exceptions and embedding bridge remain open. No performance claim; final single-VM cutover/cleanup/full three-suite qualification remains open."
+}

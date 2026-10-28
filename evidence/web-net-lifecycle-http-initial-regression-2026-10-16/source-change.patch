@@ -1,0 +1,763 @@
+diff --git a/crates/quench-node-test/node-tests/test-net-dns-iterator-errors.js b/crates/quench-node-test/node-tests/test-net-dns-iterator-errors.js
+new file mode 100644
+index 000000000..2203764bf
+--- /dev/null
++++ b/crates/quench-node-test/node-tests/test-net-dns-iterator-errors.js
+@@ -0,0 +1,8 @@
++const net=require('net'),dns=require('dns'),out=[],original=dns.lookup;
++async function check(name,kind){await new Promise(resolve=>{
++ const events=[],server=net.createServer();
++ dns.lookup=(host,options,callback)=>process.nextTick(()=>callback(null,{[Symbol.iterator](){return {next(){events.push('next');return {done:false,value:{get address(){events.push('address');if(kind==='getter'){const error=new RangeError('address getter');error.token=Symbol('getter-root');throw error}return '127.0.0.1'}}}},return(){events.push('return');if(typeof gc==='function')gc();throw new SyntaxError('iterator return')}}}}));
++ process.setUncaughtExceptionCaptureCallback(error=>{process.setUncaughtExceptionCaptureCallback(null);out.push([name,error.name,error.message,error.token&&error.token.description,events,server.listening]);server.close(closeError=>{out.push([name,'close',closeError&&closeError.code]);resolve()})});
++ server.listen({port:0,host:'test.invalid'});events.push('returned');
++})}
++(async()=>{try{await check('getter','getter');await check('return','return');console.log(JSON.stringify(out))}finally{dns.lookup=original;process.setUncaughtExceptionCaptureCallback(null)}})();
+diff --git a/crates/quench-node-test/node-tests/test-net-listen-lifecycle.js b/crates/quench-node-test/node-tests/test-net-listen-lifecycle.js
+new file mode 100644
+index 000000000..04c041862
+--- /dev/null
++++ b/crates/quench-node-test/node-tests/test-net-listen-lifecycle.js
+@@ -0,0 +1,21 @@
++const net=require('net'),dns=require('dns'),out=[];
++function snapshot(server){const address=server.address();return [server.listening,address===null?null:'bound',server._listeningId]}
++async function listening(name,invoke){await new Promise(resolve=>{const server=net.createServer();out.push([name,'new',snapshot(server)]);const callback=()=>{out.push([name,'listening',snapshot(server)]);server.close(error=>{out.push([name,'closed',error&&error.code,snapshot(server)]);resolve()})};out.push([name,'same',invoke(server,callback)===server]);out.push([name,'returned',snapshot(server)])})}
++async function closing(name,listen){await new Promise(resolve=>{const server=net.createServer();if(listen)server.listen({port:0,host:'127.0.0.1'},()=>out.push([name,'unexpected-listening']));server.close(error=>{out.push([name,error&&error.code,snapshot(server)]);resolve()})})}
++(async()=>{
++ await listening('wildcard',(server,callback)=>server.listen(0,callback));
++ await listening('host',(server,callback)=>server.listen(0,'127.0.0.1',callback));
++ await listening('positional',(server,callback)=>server.listen(0,'127.0.0.1',7,callback));
++ await listening('port-backlog',(server,callback)=>server.listen(0,7,callback));
++ await closing('new-close',false);await closing('cancel',true);
++ await new Promise(resolve=>{const server=net.createServer();server.listen({port:0,host:'127.0.0.1'},()=>server.close(first=>{out.push(['twice','first',first&&first.code,snapshot(server)]);server.close(second=>{out.push(['twice','second',second&&second.code,snapshot(server)]);resolve()})}))});
++ const observed=net.createServer();observed.once=function(event,callback){const descriptor=Object.getOwnPropertyDescriptor(callback,'prototype');out.push(['close-wrapper',event,callback.name,callback.length,Reflect.ownKeys(callback),descriptor.writable,descriptor.enumerable,descriptor.configurable]);out.push(['close-wrapper-result',callback()===undefined]);return this};observed.close(error=>{out.push(['close-wrapper-error',error.name,error.code,error.message,String(error),Object.getPrototypeOf(error)===Error.prototype]);return {ignored:true}});
++ const original=dns.lookup;
++ try {
++  dns.lookup=function(host,options,callback){out.push(['lookup',host,options.all,callback.name,callback.length,Reflect.ownKeys(callback)]);process.nextTick(()=>{if(typeof gc==='function')gc();callback(null,{[Symbol.iterator](){let index=0;return {next(){return index++===0?{value:{address:'fe80::1',family:6},done:false}:{value:{address:'127.0.0.1',family:4},done:false}},return(){out.push(['iterator-close']);return {}}}}})})};
++  await listening('custom-dns',(server,callback)=>server.listen({port:0,host:'test.invalid'},callback));
++ } finally {dns.lookup=original}
++ for(const name of ['listen','close','address']){const fn=net.Server.prototype[name];const descriptor=Object.getOwnPropertyDescriptor(fn,'prototype');out.push(['method',name,fn.name,fn.length,Reflect.ownKeys(fn),descriptor.writable,descriptor.enumerable,descriptor.configurable,fn.prototype.constructor===fn])}
++ const descriptor=Object.getOwnPropertyDescriptor(net.Server.prototype,'listening');out.push(['getter',descriptor.get.name,descriptor.get.length,descriptor.enumerable,descriptor.configurable,Reflect.ownKeys(descriptor.get),new descriptor.get() instanceof descriptor.get]);
++ console.log(JSON.stringify(out));
++})();
+diff --git a/crates/quench-node-test/node-tests/test-process-capture-callback-reset.js b/crates/quench-node-test/node-tests/test-process-capture-callback-reset.js
+new file mode 100644
+index 000000000..8763f4c09
+--- /dev/null
++++ b/crates/quench-node-test/node-tests/test-process-capture-callback-reset.js
+@@ -0,0 +1,2 @@
++const out=[];function attempt(name,fn){try{fn();out.push([name,'value',process.hasUncaughtExceptionCaptureCallback()])}catch(error){out.push([name,'throw',error.name,error.code,error.message])}}
++attempt('set',()=>process.setUncaughtExceptionCaptureCallback(()=>{}));for(const [name,value] of [['number',1],['string','x'],['boolean',true],['bigint',1n],['symbol',Symbol('x')],['object',{}],['array',[]],['undefined',undefined]])attempt(name,()=>process.setUncaughtExceptionCaptureCallback(value));attempt('duplicate',()=>process.setUncaughtExceptionCaptureCallback(()=>{}));attempt('clear',()=>process.setUncaughtExceptionCaptureCallback(null));attempt('clear-again',()=>process.setUncaughtExceptionCaptureCallback(null));attempt('reset',()=>process.setUncaughtExceptionCaptureCallback(()=>{}));attempt('final-clear',()=>process.setUncaughtExceptionCaptureCallback(null));console.log(JSON.stringify(out));
+diff --git a/crates/quench-node-test/tests/child_entry.rs b/crates/quench-node-test/tests/child_entry.rs
+index 60c8cd7cd..c21d70850 100644
+--- a/crates/quench-node-test/tests/child_entry.rs
++++ b/crates/quench-node-test/tests/child_entry.rs
+@@ -9637,3 +9637,18 @@ fn tcp_default_listen_backlog_matches_node_when_syscall_tracing_is_available() {
+ fn tcp_option_listen_backlog_matches_node_truthiness_and_int32_when_tracing_is_available() {
+     compare_node_source_with_args(include_str!("../node-tests/test-tcp-option-listen-backlog.js"), &[]);
+ }
++
++#[test]
++fn net_listen_lifecycle_retains_dns_generations_callbacks_and_public_method_shapes() {
++    compare_node_source_with_args(include_str!("../node-tests/test-net-listen-lifecycle.js"), &["--expose-gc"]);
++}
++
++#[test]
++fn net_dns_iterator_errors_close_once_preserve_original_abrupt_values_and_survive_gc() {
++    compare_node_source_with_args(include_str!("../node-tests/test-net-dns-iterator-errors.js"), &["--expose-gc"]);
++}
++
++#[test]
++fn process_capture_callback_reset_prioritizes_null_and_original_type_validation() {
++    compare_node_source_with_args(include_str!("../node-tests/test-process-capture-callback-reset.js"), &[]);
++}
+diff --git a/crates/quench-node/src/host/shared_vm.rs b/crates/quench-node/src/host/shared_vm.rs
+index 26f3d92a6..93741afcd 100644
+--- a/crates/quench-node/src/host/shared_vm.rs
++++ b/crates/quench-node/src/host/shared_vm.rs
+@@ -321,9 +321,13 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
+         method "netSocketCloseCompleted" (2) => crate::modules::net_shared_vm::close_completed,
+         method "netSocketDestroy" (3) => crate::modules::net_shared_vm::destroy_operation,
+         method "netSocketSetEncoding" (2) => crate::modules::net_shared_vm::set_encoding_operation,
+-        method "netServerListen" (4) => crate::modules::net_shared_vm::server_listen_operation,
+-        method "netServerClose" (1) => crate::modules::net_shared_vm::server_close_operation,
+-        method "netServerAddress" (1) => crate::modules::net_shared_vm::server_address_operation,
++        method "netServerListening" (0) => crate::modules::net_server_listen::listening,
++        method "netServerLookupCompleted" (2) => crate::modules::net_server_listen::lookup_completed,
++        method "netServerClosePending" (1) => crate::modules::net_server_listen::close_pending,
++        method "netServerCloseCallback" (0) => crate::modules::net_server_listen::close_callback,
++        method "netServerListen" (0) => crate::modules::net_server_listen::listen,
++        method "netServerClose" (1) => crate::modules::net_server_listen::close,
++        method "netServerAddress" (0) => crate::modules::net_shared_vm::server_address_operation,
+         method "httpCreateServer" (1) => crate::modules::http_shared_vm::create_server,
+         method "httpServerListen" (2) => crate::modules::http_shared_vm::server_listen,
+         method "httpServerAddress" (0) => crate::modules::http_shared_vm::server_address,
+diff --git a/crates/quench-node/src/modules/mod.rs b/crates/quench-node/src/modules/mod.rs
+index 5d8b6196f..20f44e681 100644
+--- a/crates/quench-node/src/modules/mod.rs
++++ b/crates/quench-node/src/modules/mod.rs
+@@ -78,6 +78,7 @@ pub(crate) mod net_lookup_shared_vm;
+ pub(crate) mod net_options_shared_vm;
+ pub(crate) mod net_reference_shared_vm;
+ pub(crate) mod net_shared_vm;
++pub(crate) mod net_server_listen;
+ pub(crate) mod node_errors_shared_vm;
+ pub(crate) mod os_facts;
+ pub(crate) mod memory_facts;
+diff --git a/crates/quench-node/src/modules/net_server_listen.rs b/crates/quench-node/src/modules/net_server_listen.rs
+new file mode 100644
+index 000000000..c3561920b
+--- /dev/null
++++ b/crates/quench-node/src/modules/net_server_listen.rs
+@@ -0,0 +1,219 @@
++//! net.Server listen generations and DNS callbacks share the public Node lifecycle.
++use super::event_constructor_shared_vm::get;
++use super::net_shared_vm;
++use crate::host::NodeHost;
++use quench_runtime::{NativeContext, RootId, RootedError};
++use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, ToSocketAddrs};
++
++type Context<'a> = NativeContext<'a, NodeHost>;
++
++fn once(context: &mut Context<'_>, server: RootId, event: &str, callback: RootId) -> Result<(), RootedError> {
++    let method = get(context, server, "once")?;
++    let event = context.string_rooted(event);
++    context.call_rooted(method, server, &[event, callback])?;
++    Ok(())
++}
++fn emit(context: &mut Context<'_>, server: RootId, event: &str, args: &[RootId]) -> Result<RootId, RootedError> {
++    let method = get(context, server, "emit")?;
++    let event = context.string_rooted(event);
++    let mut values = vec![event];
++    values.extend_from_slice(args);
++    context.call_rooted(method, server, &values)
++}
++fn advance(context: &mut Context<'_>, server: RootId) -> Result<RootId, RootedError> {
++    let previous = get(context, server, "_listeningId")?;
++    let generation = context.numeric_update_rooted(previous, false)?;
++    context.assign_named_property_rooted(server, "_listeningId", generation)?;
++    Ok(generation)
++}
++fn original_number(context: &mut Context<'_>, value: RootId) -> Result<RootId, RootedError> {
++    let number = context.with_startup_intrinsics(|context| {
++        let global = context.global_root()?;
++        get(context, global, "Number")
++    })?;
++    let undefined = context.undefined();
++    context.call_rooted(number, undefined, &[value])
++}
++fn positional_backlog(context: &mut Context<'_>, args: &[RootId]) -> Result<RootId, RootedError> {
++    for index in [1, 2] {
++        let value = args.get(index).copied().unwrap_or_else(|| context.boolean(false));
++        let number = original_number(context, value)?;
++        if context.rooted_value(number).and_then(|value| value.as_number()).is_some_and(|number| number > 0.0) {
++            return Ok(number);
++        }
++    }
++    Ok(context.undefined())
++}
++
++pub(crate) fn install(context: &mut Context<'_>, prototype: RootId) -> Result<(), RootedError> {
++    let getter = context.host_constructor_named(crate::host::shared_vm::operation("netServerListening"), "get")?;
++    let descriptor = context.null_object_rooted()?;
++    let key = context.string_rooted("get");
++    context.define_data_property_rooted(descriptor, key, getter, true, true, true)?;
++    for name in ["enumerable", "configurable"] {
++        let key = context.string_rooted(name);
++        let yes = context.boolean(true);
++        context.define_data_property_rooted(descriptor, key, yes, true, true, true)?;
++    }
++    let key = context.string_rooted("listening");
++    context.define_property_descriptor_rooted(prototype, key, descriptor)?;
++    Ok(())
++}
++
++pub(crate) fn listening(context: &mut Context<'_>, server: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
++    let handle = get(context, server, "_handle")?;
++    let active = context.truthy_rooted(handle)?;
++    Ok(context.boolean(active))
++}
++
++pub(crate) fn listen(context: &mut Context<'_>, server: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
++    let handle = get(context, server, "_handle")?;
++    if context.truthy_rooted(handle)? {
++        let error = context.error_rooted("Listen method has been called more than once without closing.")?;
++        super::node_errors_shared_vm::decorate_error(context, error, "ERR_SERVER_ALREADY_LISTEN")?;
++        return Err(context.throw(error));
++    }
++    let undefined = context.undefined();
++    let first = args.first().copied().unwrap_or(undefined);
++    let first = if context.is_callable_rooted(first)? { context.number(0.0) } else { first };
++    let second = args.get(1).copied().unwrap_or(undefined);
++    let host = if context.string_text(second)?.is_some() { second } else { undefined };
++    let callback = args.last().copied().filter(|root| context.is_callable_rooted(*root).unwrap_or(false)).unwrap_or(undefined);
++    let no = context.boolean(false);
++    let plan = super::net_endpoint_shared_vm::normalize(context, undefined, &[first, host, callback, no])?;
++    if context.is_callable_rooted(callback)? { once(context, server, "listening", callback)?; }
++    let fallback = positional_backlog(context, args)?;
++    let options = get(context, plan, "options")?;
++    let reuse_port = if context.is_object_rooted(options)? {
++        let requested = get(context, options, "reusePort")?;
++        context.truthy_rooted(requested)?
++    } else { false };
++    let mut backlog = if context.is_object_rooted(options)? { get(context, options, "backlog")? } else { undefined };
++    if !context.truthy_rooted(backlog)? { backlog = fallback; }
++    if !context.truthy_rooted(backlog)? { backlog = context.number(f64::from(net_shared_vm::DEFAULT_TCP_LISTEN_BACKLOG)); }
++    let generation = advance(context, server)?;
++    let address = get(context, plan, "address")?;
++    #[cfg(unix)]
++    if let Some(path) = context.string_text(address)? {
++        return net_shared_vm::listen_local_server(context, server, &path);
++    }
++    #[cfg(not(unix))]
++    if context.string_text(address)?.is_some() {
++        return Err(RootedError::host("invalid TCP port"));
++    }
++    let port = context.rooted_value(address).and_then(|value| value.as_number()).unwrap_or(0.0) as u16;
++    let host = get(context, plan, "host")?;
++    if context.truthy_rooted(host)? {
++        let data = context.null_object_rooted()?;
++        let port = context.number(f64::from(port));
++        let reuse_port = context.boolean(reuse_port);
++        for (name, value) in [("server", server), ("generation", generation), ("backlog", backlog), ("port", port), ("reusePort", reuse_port)] {
++            let key = context.string_rooted(name);
++            context.define_data_property_rooted(data, key, value, true, true, true)?;
++        }
++        let callback = context.host_function_named_with_data(crate::host::shared_vm::operation("netServerLookupCompleted"), "", data)?;
++        let dns = crate::host::shared_vm::commonjs::dns_module(context)?;
++        let lookup = get(context, dns, "lookup")?;
++        let options = context.object_rooted()?;
++        let key = context.string_rooted("all");
++        let yes = context.boolean(true);
++        context.define_data_property_rooted(options, key, yes, true, true, true)?;
++        context.call_rooted(lookup, dns, &[host, options, callback])?;
++        return Ok(server);
++    }
++    let backlog = net_shared_vm::convert_listen_backlog(context, backlog)?;
++    let address = SocketAddr::new(IpAddr::V6(Ipv6Addr::UNSPECIFIED), port);
++    let shared = context.host_mut().shared_state();
++    let listener = net_shared_vm::listen_with_reuse_port(&mut shared.borrow_mut().tcp, address, reuse_port, backlog);
++    let listener = match listener {
++        Err(_) => net_shared_vm::listen_with_reuse_port(&mut shared.borrow_mut().tcp, SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), port), reuse_port, backlog),
++        result => result,
++    }.map_err(RootedError::host)?;
++    net_shared_vm::register_server(context, server, listener)
++}
++
++pub(crate) fn lookup_completed(context: &mut Context<'_>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
++    let data = context.host_function_data()?;
++    let server = get(context, data, "server")?;
++    let generation = get(context, data, "generation")?;
++    let current = get(context, server, "_listeningId")?;
++    if !context.strict_equal_rooted(generation, current)? { return Ok(context.undefined()); }
++    let error = args.first().copied().unwrap_or_else(|| context.undefined());
++    if context.truthy_rooted(error)? { return emit(context, server, "error", &[error]); }
++    let addresses = args.get(1).copied().unwrap_or_else(|| context.undefined());
++    let iterator = context.iterator_rooted(addresses)?;
++    let mut first = None;
++    let selected = loop {
++        let Some(address) = context.iterator_step_rooted(&iterator)? else { break first; };
++        first.get_or_insert(address);
++        let text = match get(context, address, "address") {
++            Ok(text) => text,
++            Err(error) => { let _ = context.iterator_close_rooted(&iterator); return Err(error); }
++        };
++        let link_local = context.string_text(text)?.and_then(|text| net_shared_vm::parse_ip(&text)).is_some_and(|address| matches!(address, IpAddr::V6(address) if address.is_unicast_link_local()));
++        if !link_local { context.iterator_close_rooted(&iterator)?; break Some(address); }
++    };
++    let selected = selected.unwrap_or_else(|| context.undefined());
++    let address = get(context, selected, "address")?;
++    let address = context.string_text(address)?.ok_or_else(|| RootedError::host("DNS listen address is not a string"))?;
++    let port = get(context, data, "port")?;
++    let port = context.rooted_value(port).and_then(|value| value.as_number()).unwrap_or(0.0) as u16;
++    if net_shared_vm::parse_ip(&address).is_none() {
++        return Err(RootedError::host("DNS listen address is not an IP literal"));
++    }
++    let address = (address.as_str(), port).to_socket_addrs()
++        .map_err(|error| RootedError::host(error.to_string()))?
++        .next().ok_or_else(|| RootedError::host("DNS listen address is unavailable"))?;
++    let reuse = get(context, data, "reusePort")?;
++    let reuse = context.truthy_rooted(reuse)?;
++    let backlog = get(context, data, "backlog")?;
++    let backlog = net_shared_vm::convert_listen_backlog(context, backlog)?;
++    let shared = context.host_mut().shared_state();
++    let listener = net_shared_vm::listen_with_reuse_port(&mut shared.borrow_mut().tcp, address, reuse, backlog).map_err(RootedError::host)?;
++    net_shared_vm::register_server(context, server, listener)
++}
++
++pub(crate) fn close(context: &mut Context<'_>, server: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
++    advance(context, server)?;
++    let handle = get(context, server, "_handle")?;
++    let active = context.truthy_rooted(handle)?;
++    if let Some(callback) = args.first().copied().filter(|root| context.is_callable_rooted(*root).unwrap_or(false)) {
++        let callback = if active { callback } else {
++            context.host_constructor_named_with_data(crate::host::shared_vm::operation("netServerCloseCallback"), "close", callback)?
++        };
++        once(context, server, "close", callback)?;
++    }
++    let registered = if let Some(id) = net_shared_vm::optional_server_id(context, server)? {
++        let shared = context.host_mut().shared_state();
++        let mut state = shared.borrow_mut();
++        if let Some(listener) = state.net_servers.get_mut(&id).map(|server| {
++            server.closing = true;
++            server.listening_pending = false;
++            server.listener
++        }) {
++            net_shared_vm::close_listener(&mut state.tcp, listener);
++            true
++        } else { false }
++    } else { false };
++    if !registered {
++        let callback = context.host_function(crate::host::shared_vm::operation("netServerClosePending"))?;
++        let undefined = context.undefined();
++        super::shared_event_loop::queue_next_tick(context, callback, undefined, &[server])?;
++    }
++    let null = context.null();
++    context.assign_named_property_rooted(server, "_handle", null)?;
++    Ok(server)
++}
++
++pub(crate) fn close_pending(context: &mut Context<'_>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
++    emit(context, args[0], "close", &[])
++}
++
++pub(crate) fn close_callback(context: &mut Context<'_>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
++    let callback = context.host_function_data()?;
++    let error = context.error_rooted("Server is not running.")?;
++    super::node_errors_shared_vm::decorate_error(context, error, "ERR_SERVER_NOT_RUNNING")?;
++    let undefined = context.undefined();
++    context.call_rooted(callback, undefined, &[error])?;
++    Ok(context.undefined())
++}
+diff --git a/crates/quench-node/src/modules/net_shared_vm.rs b/crates/quench-node/src/modules/net_shared_vm.rs
+index b0dd492e4..e24b27d33 100644
+--- a/crates/quench-node/src/modules/net_shared_vm.rs
++++ b/crates/quench-node/src/modules/net_shared_vm.rs
+@@ -138,25 +138,15 @@ const NET_MODULE_FACTORY: &str = r#"((Duplex, connectOperation, writeOperation,
+     if (!(this instanceof Server)) return new Server(options, listener);
+     initServerEmitterOperation(this);
+     this._handle = null; this._unref = false;
+-    this.listening = false;
+     if (typeof options === 'function') listener = options;
+     serverOptionsOperation(options);
+     if (typeof listener === 'function') this.on('connection', listener);
+     initServerOptionsOperation(this, options);
+   }
+-  Server.prototype.listen = function(port, host, callback) {
+-      if (typeof port === 'function') { callback = port; port = 0; }
+-      const plan = endpointOperation(port, host, callback, false);
+-      port = plan.address; host = plan.host; callback = plan.callback;
+-      const options = plan.options;
+-      if (typeof callback === 'function') this.once('listening', callback);
+-      listenOperation(this, port, host, options);
+-      this.listening = true;
+-      return this;
+-    };
++  Server.prototype.listen = listenOperation;
+   Server.prototype.getConnections = getConnections;
+-  Server.prototype.address = function() { return addressOperation(this); };
+-  Server.prototype.close = function(callback) { if (typeof callback === 'function') this.once('close', callback); closeOperation(this); this.listening = false; return this; };
++  Server.prototype.address = addressOperation;
++  Server.prototype.close = closeOperation;
+   Server.prototype.ref = function() { 'use strict'; return referenceOperation(this, true); };
+   Server.prototype.unref = function() { 'use strict'; return referenceOperation(this, false); };
+   const createServer = function createServer(options, listener) { return new Server(options, listener); };
+@@ -621,7 +611,7 @@ pub(crate) fn listen_with_backlog(
+     listen_with_reuse_port(transport, address, false, backlog)
+ }
+ 
+-fn listen_with_reuse_port(
++pub(super) fn listen_with_reuse_port(
+     transport: &mut Transport,
+     address: SocketAddr,
+     reuse_port: bool,
+@@ -640,7 +630,7 @@ fn listen_with_reuse_port(
+ }
+ 
+ // Node's net.Server.listen uses 511 when no backlog was supplied.
+-const DEFAULT_TCP_LISTEN_BACKLOG: i32 = 511;
++pub(super) const DEFAULT_TCP_LISTEN_BACKLOG: i32 = 511;
+ 
+ pub(crate) fn listen_backlog(
+     context: &mut NativeContext<'_, NodeHost>,
+@@ -650,6 +640,13 @@ pub(crate) fn listen_backlog(
+     let key = context.string_rooted("backlog");
+     let value = context.get_property_rooted(options, key)?;
+     if !context.truthy_rooted(value)? { return Ok(DEFAULT_TCP_LISTEN_BACKLOG); }
++    convert_listen_backlog(context, value)
++}
++
++pub(super) fn convert_listen_backlog(
++    context: &mut NativeContext<'_, NodeHost>,
++    value: RootId,
++) -> Result<i32, RootedError> {
+     // TCPWrap::Listen uses ToInt32 after the JavaScript truthy default.
+     // Apply ToNumber first so BigInt and Symbol preserve that conversion's error.
+     let number = context.to_number(value)?;
+@@ -1311,9 +1308,9 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
+         .net_socket_close_completed = Some(close_completed);
+     let encoding =
+         context.host_function(crate::host::shared_vm::operation("netSocketSetEncoding"))?;
+-    let listen = context.host_function(crate::host::shared_vm::operation("netServerListen"))?;
+-    let close = context.host_function(crate::host::shared_vm::operation("netServerClose"))?;
+-    let address = context.host_function(crate::host::shared_vm::operation("netServerAddress"))?;
++    let listen = context.host_constructor_named(crate::host::shared_vm::operation("netServerListen"), "")?;
++    let close = context.host_constructor_named(crate::host::shared_vm::operation("netServerClose"), "")?;
++    let address = context.host_constructor_named(crate::host::shared_vm::operation("netServerAddress"), "")?;
+     let stream = crate::host::shared_vm::commonjs::stream_module(context)?;
+     let duplex_key = context.string_rooted("Duplex");
+     let duplex = context.get_property_rooted(stream, duplex_key)?;
+@@ -1435,6 +1432,7 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
+     let emitter_prototype = context.get_property_rooted(emitter, key)?;
+     context.set_prototype_rooted(server_prototype, emitter_prototype)?;
+     context.set_prototype_rooted(server, emitter)?;
++    super::net_server_listen::install(context, server_prototype)?;
+     for name in [
+         "Socket",
+         "Stream",
+@@ -1800,114 +1798,29 @@ pub(crate) fn set_encoding_operation(
+     Ok(context.undefined())
+ }
+ 
+-pub(crate) fn server_listen_operation(
+-    context: &mut NativeContext<'_, NodeHost>,
+-    _: RootId,
+-    args: &[RootId],
+-) -> Result<RootId, RootedError> {
+-    let server = args
+-        .first()
+-        .copied()
+-        .ok_or_else(|| RootedError::host("net.Server.listen requires a server"))?;
+-    #[cfg(unix)]
+-    if let Some(path) = args
+-        .get(1)
+-        .copied()
+-        .map(|root| context.string_text(root))
+-        .transpose()?
+-        .flatten()
+-    {
+-        let shared = context.host_mut().shared_state();
+-        let resolved = resolve_local_path(&shared.borrow().cwd, &path);
+-        let result = resolved.and_then(|resolved| {
+-            listen_local(&mut shared.borrow_mut().tcp, resolved, path.clone())
+-        });
+-        return match result {
+-            Ok(id) => register_server(context, server, id),
+-            Err(error) => queue_listen_error(context, server, error, &path),
+-        };
+-    }
+-    let port = args
+-        .get(1)
+-        .and_then(|root| context.rooted_value(*root))
+-        .and_then(Value::as_number)
+-        .filter(|port| port.fract() == 0.0 && (0.0..=65535.0).contains(port))
+-        .ok_or_else(|| RootedError::host("invalid TCP port"))? as u16;
+-    let requested = args.get(2).copied().unwrap_or_else(|| context.undefined());
+-    let default_address = !context.truthy_rooted(requested)?;
+-    let host = context.string_text(requested)?.filter(|host| !host.is_empty())
+-        .unwrap_or_else(|| Ipv6Addr::UNSPECIFIED.to_string());
+-    let address = (host.as_str(), port)
+-        .to_socket_addrs()
+-        .map_err(|error| RootedError::host(error.to_string()))?
+-        .next()
+-        .ok_or_else(|| RootedError::host("net.Server.listen host did not resolve"))?;
+-    let shared = context.host_mut().shared_state();
+-    let reuse_port = if let Some(options) = args
+-        .get(3)
+-        .copied()
+-        .filter(|root| context.is_object_rooted(*root).unwrap_or(false))
+-    {
+-        let key = context.string_rooted("reusePort");
+-        let value = context.get_property_rooted(options, key)?;
+-        let yes = context.boolean(true);
+-        context.strict_equal_rooted(value, yes)?
+-    } else {
+-        false
+-    };
+-    let options = args.get(3).copied().filter(|root| context.is_object_rooted(*root).unwrap_or(false));
+-    let backlog = listen_backlog(context, options)?;
+-    let listener = listen_with_reuse_port(&mut shared.borrow_mut().tcp, address, reuse_port, backlog);
+-    // Node tries the IPv6 wildcard first when no host was requested, then
+-    // falls back to the IPv4 wildcard if that platform cannot bind IPv6.
+-    let listener = match listener {
+-        Err(_) if default_address => listen_with_reuse_port(
+-            &mut shared.borrow_mut().tcp,
+-            SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), port),
+-            reuse_port,
+-            backlog,
+-        ),
+-        result => result,
+-    }.map_err(RootedError::host)?;
+-    register_server(context, server, listener)
+-}
+-
+-pub(crate) fn server_close_operation(
++#[cfg(unix)]
++pub(super) fn listen_local_server(
+     context: &mut NativeContext<'_, NodeHost>,
+-    _: RootId,
+-    args: &[RootId],
++    server: RootId,
++    path: &str,
+ ) -> Result<RootId, RootedError> {
+-    let server = args
+-        .first()
+-        .copied()
+-        .ok_or_else(|| RootedError::host("net.Server.close requires a server"))?;
+-    let id = server_id(context, server)?;
+     let shared = context.host_mut().shared_state();
+-    {
+-        let mut state = shared.borrow_mut();
+-        if let Some(listener) = state.net_servers.get_mut(&id).map(|server| {
+-            server.closing = true;
+-            server.listener
+-        }) {
+-            close_listener(&mut state.tcp, listener);
+-        }
++    let resolved = resolve_local_path(&shared.borrow().cwd, path);
++    let result = resolved.and_then(|resolved| {
++        listen_local(&mut shared.borrow_mut().tcp, resolved, path.to_owned())
++    });
++    match result {
++        Ok(id) => register_server(context, server, id),
++        Err(error) => queue_listen_error(context, server, error, path),
+     }
+-    let key = context.string_rooted("_handle");
+-    let null = context.null();
+-    context.set_property_rooted(server, key, null, server)?;
+-    Ok(server)
+ }
+ 
+ pub(crate) fn server_address_operation(
+     context: &mut NativeContext<'_, NodeHost>,
+-    _: RootId,
+-    args: &[RootId],
++    server: RootId,
++    _: &[RootId],
+ ) -> Result<RootId, RootedError> {
+-    let server = args
+-        .first()
+-        .copied()
+-        .ok_or_else(|| RootedError::host("net.Server.address requires a server"))?;
+-    let id = server_id(context, server)?;
++    let Some(id) = optional_server_id(context, server)? else { return Ok(context.null()); };
+     let shared = context.host_mut().shared_state();
+     let local = listener_path(&shared.borrow().tcp, id).map(str::to_owned);
+     if let Some(path) = local {
+@@ -1934,18 +1847,16 @@ pub(crate) fn server_address_operation(
+     Ok(object)
+ }
+ 
+-fn server_id(
++pub(super) fn optional_server_id(
+     context: &mut NativeContext<'_, NodeHost>,
+     server: RootId,
+-) -> Result<u64, RootedError> {
++) -> Result<Option<u64>, RootedError> {
+     let key = context.string_rooted("__quenchNetServerId");
+     let value = context.get_property_rooted(server, key)?;
+-    context
+-        .rooted_value(value)
++    Ok(context.rooted_value(value)
+         .and_then(Value::as_number)
+         .filter(|id| id.is_finite() && id.fract() == 0.0 && *id >= 0.0)
+-        .map(|id| id as u64)
+-        .ok_or_else(|| RootedError::host("net server identifier is invalid"))
++        .map(|id| id as u64))
+ }
+ 
+ fn socket_id(
+@@ -2079,7 +1990,7 @@ pub(super) fn register_socket(
+     Ok(socket)
+ }
+ 
+-fn register_server(
++pub(super) fn register_server(
+     context: &mut NativeContext<'_, NodeHost>,
+     server: RootId,
+     listener: u64,
+diff --git a/crates/quench-node/src/modules/net_socket_options.rs b/crates/quench-node/src/modules/net_socket_options.rs
+index 555547637..e62faa06c 100644
+--- a/crates/quench-node/src/modules/net_socket_options.rs
++++ b/crates/quench-node/src/modules/net_socket_options.rs
+@@ -152,6 +152,8 @@ pub(crate) fn keep_alive(context: &mut NativeContext<'_, NodeHost>, _: RootId, a
+ 
+ pub(crate) fn initialize_server(context: &mut NativeContext<'_, NodeHost>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+     let server = args[0];
++    let generation = context.number(1.0);
++    context.assign_named_property_rooted(server, "_listeningId", generation)?;
+     let original = args[1];
+     let options = context.object_rooted()?;
+     if !context.rooted_value(original).is_some_and(|value| value.is_null() || value.is_undefined()) && !context.is_callable_rooted(original)? {
+diff --git a/crates/quench-node/src/modules/process_shared_vm.rs b/crates/quench-node/src/modules/process_shared_vm.rs
+index a4d2b4454..73cb4624a 100644
+--- a/crates/quench-node/src/modules/process_shared_vm.rs
++++ b/crates/quench-node/src/modules/process_shared_vm.rs
+@@ -1480,22 +1480,21 @@ pub(crate) fn set_uncaught_exception_capture_callback(
+     let Some(callback) = args.first().copied() else {
+         return Err(uncaught_capture_type_error(context, None)?);
+     };
+-    let current_key = context.string_rooted(HOST_CAPTURE_CALLBACK_PROPERTY);
+-    let current = context.get_property_rooted(process, current_key)?;
+-    if context.is_callable_rooted(current)? {
+-        let error = context.error_rooted(
+-            "setupUncaughtExceptionCapture() called while a capture callback is already set",
+-        )?;
+-        return Err(throw_with_code(
+-            context,
+-            error,
+-            "ERR_UNCAUGHT_EXCEPTION_CAPTURE_ALREADY_SET",
+-        ));
+-    }
+     let is_null = context.rooted_value(callback).is_some_and(Value::is_null);
+     if !is_null && !context.is_callable_rooted(callback)? {
+         return Err(uncaught_capture_type_error(context, Some(callback))?);
+     }
++    let current_key = context.string_rooted(HOST_CAPTURE_CALLBACK_PROPERTY);
++    if !is_null {
++        let current = context.get_property_rooted(process, current_key)?;
++        if context.is_callable_rooted(current)? {
++            let error = context.error_rooted(
++                "`process.setupUncaughtExceptionCapture()` was called while a capture callback was already active",
++            )?;
++            super::node_errors_shared_vm::decorate_error(context, error, "ERR_UNCAUGHT_EXCEPTION_CAPTURE_ALREADY_SET")?;
++            return Err(context.throw(error));
++        }
++    }
+     let value = if is_null {
+         context.undefined()
+     } else {
+@@ -1580,16 +1579,8 @@ fn uncaught_capture_type_error(
+     context: &mut NativeContext<'_, NodeHost>,
+     value: Option<RootId>,
+ ) -> Result<RootedError, RootedError> {
+-    let received = value.map_or_else(
+-        || Ok("undefined".to_owned()),
+-        |value| received_type(context, value),
+-    )?;
+-    throw_process_error(
+-        context,
+-        &format!("The \"fn\" argument must be of type function or null. Received {received}"),
+-        "ERR_INVALID_ARG_TYPE",
+-        true,
+-    )
++    let value = value.unwrap_or_else(|| context.undefined());
++    super::util_shared_vm::argument_type_error(context, value, "fn", "function or null")
+ }
+ 
+ pub(crate) fn set_env(
+diff --git a/crates/quench-runtime/src/api_native.rs b/crates/quench-runtime/src/api_native.rs
+index b68c36d4e..04d3d083f 100644
+--- a/crates/quench-runtime/src/api_native.rs
++++ b/crates/quench-runtime/src/api_native.rs
+@@ -988,6 +988,28 @@ impl<'a, H: Host> NativeContext<'a, H> {
+         self.completion(result)
+     }
+ 
++    /// Create an ordinary constructor with its immutable JavaScript creation name.
++    pub fn host_constructor_named(
++        &mut self,
++        id: HostFunctionId,
++        name: &str,
++    ) -> Result<RootId, RootedError> {
++        let result = self.vm.create_named_host_constructor(id, name);
++        self.completion(result)
++    }
++
++    /// Retain traced private data on a named ordinary constructor.
++    pub fn host_constructor_named_with_data(
++        &mut self,
++        id: HostFunctionId,
++        name: &str,
++        data: RootId,
++    ) -> Result<RootId, RootedError> {
++        let result = self.vm.embedding_value(data)
++            .and_then(|value| self.vm.create_named_host_constructor_with_data(id, name, value));
++        self.completion(result)
++    }
++
+     pub fn host_constructor_with_data(
+         &mut self,
+         id: HostFunctionId,
+diff --git a/crates/quench-runtime/src/api_native_tests.rs b/crates/quench-runtime/src/api_native_tests.rs
+index baf26e803..3a431d7f7 100644
+--- a/crates/quench-runtime/src/api_native_tests.rs
++++ b/crates/quench-runtime/src/api_native_tests.rs
+@@ -1164,6 +1164,12 @@ impl Host for FunctionMetadataHost {
+             let key = context.string_rooted(name);
+             context.define_data_property_rooted(global, key, function, true, true, true)?;
+         }
++        let named_constructor = context.host_constructor_named(HostFunctionId(0), "")?;
++        let key = context.string_rooted("MetadataAnonymousCtor");
++        context.define_data_property_rooted(global, key, named_constructor, true, true, true)?;
++        let captured_constructor = context.host_constructor_named_with_data(HostFunctionId(0), "", data)?;
++        let key = context.string_rooted("MetadataAnonymousCapturedCtor");
++        context.define_data_property_rooted(global, key, captured_constructor, true, true, true)?;
+         let anonymous = context.host_function_named(HostFunctionId(0), "")?;
+         let key = context.string_rooted("MetadataAnonymous");
+         context.define_data_property_rooted(global, key, anonymous, true, true, true)?;
+@@ -1180,10 +1186,10 @@ fn empty_metadata_callback(
+ #[test]
+ fn native_function_metadata_preserves_standard_key_order_and_constructor_views() {
+     let source = r#"
+-for(const [functionValue,constructor] of [[metadataCallback,false],[MetadataCaptured,false],[MetadataCtor,true],[MetadataAnonymous,false]]) {
++for(const [functionValue,constructor] of [[metadataCallback,false],[MetadataCaptured,false],[MetadataCtor,true],[MetadataAnonymous,false],[MetadataAnonymousCtor,true],[MetadataAnonymousCapturedCtor,true]]) {
+  const keys=Reflect.ownKeys(functionValue).join(',');
+  if(keys!==(constructor?'length,name,prototype':'length,name'))throw Error(keys);
+- if(functionValue.name!==(functionValue===MetadataAnonymous?'':'metadataCallback')||functionValue.length!==2)throw Error('metadata values');
++ if(functionValue.name!==(functionValue===MetadataAnonymous||functionValue===MetadataAnonymousCtor||functionValue===MetadataAnonymousCapturedCtor?'':'metadataCallback')||functionValue.length!==2)throw Error('metadata values');
+  for(const name of ['length','name']){
+   const d=Object.getOwnPropertyDescriptor(functionValue,name);
+   if(d.writable||d.enumerable||!d.configurable)throw Error('metadata attributes');
+diff --git a/crates/quench-runtime/src/vm/host_function.rs b/crates/quench-runtime/src/vm/host_function.rs
+index 32c156aa5..05d1982c3 100644
+--- a/crates/quench-runtime/src/vm/host_function.rs
++++ b/crates/quench-runtime/src/vm/host_function.rs
+@@ -57,6 +57,23 @@ impl<H: Host> Vm<H> {
+         self.create_host_function_with_capture(id, Some(data), false, None)
+     }
+ 
++    pub(crate) fn create_named_host_constructor(
++        &mut self,
++        id: HostFunctionId,
++        name: &str,
++    ) -> Result<Value, JsError> {
++        self.create_host_function_with_capture(id, None, true, Some(name))
++    }
++
++    pub(crate) fn create_named_host_constructor_with_data(
++        &mut self,
++        id: HostFunctionId,
++        name: &str,
++        data: Value,
++    ) -> Result<Value, JsError> {
++        self.create_host_function_with_capture(id, Some(data), true, Some(name))
++    }
++
+     pub(crate) fn create_named_host_function(
+         &mut self,
+         id: HostFunctionId,
+diff --git a/docs/node-host-contracts.md b/docs/node-host-contracts.md
+index c9537c251..2a0973e0b 100644
+--- a/docs/node-host-contracts.md
++++ b/docs/node-host-contracts.md
+@@ -875,4 +875,19 @@ Supplied `options.backlog` uses the JavaScript truthy default followed by shared
+ ToNumber/ToInt32 conversion. Linux syscall comparisons cover default, IPv4,
+ reuse-port and HTTP listeners plus numeric/string/nonfinite/wrapped options.
+ The comparison explicitly reports when syscall tracing is unavailable.
+-Positional backlog overloads and DNS-deferred coercion/error timing remain open.
++The native net.Server lifecycle receives the complete argument list, retains
++positional backlog/callback overloads, and delegates supplied-host lookup to the
++same public DNS module. Lookup callbacks retain traced data and compare the
++public listening generation before touching a cancelled server. New servers
++report a null address; listening derives from the actual handle. Closing before
++lookup completion and closing an already closed server complete through the
++canonical callback queue. Ordinary method/getter/wrapper constructor shapes and
++coded close errors remain separate from source-text/host-frame fidelity.
++
++DNS address selection uses the shared IP classifier and iterator protocol.
++Abrupt getters close the iterator without replacing the original thrown value;
++normal iterator-close failures remain observable. Tests collect during return
++and before callback delivery. Exception capture permits null reset before its
++occupied-slot check and uses the shared argument-type/coded-error policy.
++Bound-handle error/reentry details, original native-source/stack fidelity,
++diagnostic report flags and the wider Node lifecycle backlog remain open.

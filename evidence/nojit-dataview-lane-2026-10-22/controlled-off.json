@@ -1,0 +1,996 @@
+{
+  "schema": 16,
+  "suite": "jet-stream3",
+  "jit_mode": "no-jit",
+  "jit_diagnostics": false,
+  "jit_wasm_root": null,
+  "jit_wasm_root_only": false,
+  "jit_wasm_root_first": false,
+  "jit_wasm_selective": false,
+  "jit_wasm_memcpy_ab": false,
+  "jit_wasm_memcpy_raw_ab": false,
+  "jit_wasm_memcpy_early_ab": false,
+  "jit_wasm_compare_branch_ab": false,
+  "jit_wasm_affine_pair_ab": false,
+  "jit_wasm_reference_body_cache_ab": false,
+  "jit_wasm_memcpy_leaf_ab": false,
+  "jit_wasm_selective_ab": false,
+  "created_unix_ns": 1792665295677934307,
+  "rounds_requested": 3,
+  "timeout_ms": 600000,
+  "source_revision": "410d8392935d0904e96f5a94246d22eeef2586bf",
+  "source_dirty": true,
+  "corpus": {
+    "pinned_revision": "06785cf861ac44855f168cbbe829278c2802e6de",
+    "checkout_revision": "06785cf861ac44855f168cbbe829278c2802e6de",
+    "checkout_clean": true,
+    "fixture_set_matches": false
+  },
+  "host": {
+    "uname": "Linux acfbe6f17cde 6.18.55 #1 SMP Wed Oct 14 19:45:18 UTC 2026 x86_64 GNU/Linux",
+    "rustc": "rustc 1.99.0 (b940084d7 2026-09-28)\nbinary: rustc\ncommit-hash: b940084d7eb6a299eb4bfeb8e34901bc051e7ac4\ncommit-date: 2026-09-28\nhost: x86_64-unknown-linux-gnu\nrelease: 1.99.0\nLLVM version: 23.1.1",
+    "model": null,
+    "memory_bytes": 18882674688,
+    "memory_limit_bytes": 17179869184,
+    "cpu_quota": "400000 100000",
+    "logical_cpus": 4,
+    "process_metrics_backend": "Linux wait4 rusage"
+  },
+  "engines": [
+    {
+      "name": "quench",
+      "executable": "/tmp/quench-dataview-off",
+      "executable_sha256": "114bb3d2692d03d6ea9483a6ae979335184df4ec5edbc7781f373e19fecea12d",
+      "version": "Quench shared-VM interpreter build; package 0.1.0",
+      "argv": [],
+      "environment": {
+        "HOME": "/home/agent",
+        "LANG": "C.UTF-8",
+        "LC_ALL": "C.UTF-8",
+        "PATH": "/tmp/quench-cargo/bin:/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/override:/opt/codex/runtimes/codex-primary-runtime/dependencies/python/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin:/opt/codex/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/fallback"
+      },
+      "inherits_environment": false,
+      "jit_mode": "interpreter",
+      "jit_proof_command": [
+        "/tmp/quench-dataview-off"
+      ],
+      "jit_proof": "the measured shared VM executes interpreter bytecode; no guest JIT path is enabled",
+      "webassembly": true
+    },
+    {
+      "name": "bun",
+      "executable": "/workspace/quench/target/tmp-caches/quench-bun/bin/bun",
+      "executable_sha256": "7ce7d6b654eddeec20afddf2396317fba6dc19ab52788a27e894e1806bf8f24b",
+      "version": "1.4.3",
+      "argv": [],
+      "environment": {
+        "BUN_JSC_useJIT": "0",
+        "HOME": "/home/agent",
+        "LANG": "C.UTF-8",
+        "LC_ALL": "C.UTF-8",
+        "PATH": "/tmp/quench-cargo/bin:/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/override:/opt/codex/runtimes/codex-primary-runtime/dependencies/python/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin:/opt/codex/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/fallback"
+      },
+      "inherits_environment": false,
+      "jit_mode": "disabled-and-probed",
+      "jit_proof_command": [
+        "BUN_JSC_useJIT=0",
+        "BUN_JSC_dumpOptions=1",
+        "/workspace/quench/target/tmp-caches/quench-bun/bin/bun",
+        "-e",
+        "console.log(Bun.version)"
+      ],
+      "jit_proof": "command succeeded and reported \"useJIT=false\": 1.4.3\n\nModified JSC options:\n   dumpOptions=1 (default: 0)\n   useJIT=false (default: true)",
+      "webassembly": true
+    },
+    {
+      "name": "node",
+      "executable": "/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node",
+      "executable_sha256": "bc17c508ffeed0ec622934f9b7fa72f8e78da65350e63c3eceb56fa688aa5e12",
+      "version": "v24.19.0",
+      "argv": [
+        "--jitless"
+      ],
+      "environment": {
+        "HOME": "/home/agent",
+        "LANG": "C.UTF-8",
+        "LC_ALL": "C.UTF-8",
+        "PATH": "/tmp/quench-cargo/bin:/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/override:/opt/codex/runtimes/codex-primary-runtime/dependencies/python/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin:/opt/codex/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/fallback"
+      },
+      "inherits_environment": false,
+      "jit_mode": "disabled-and-probed",
+      "jit_proof_command": [
+        "/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node",
+        "--jitless",
+        "-e",
+        "console.log(process.execArgv.includes('--jitless'))"
+      ],
+      "jit_proof": "command succeeded and reported \"true\": true",
+      "webassembly": false
+    }
+  ],
+  "suite_inputs": [
+    {
+      "path": "quench-bench/jetstream/cli.js",
+      "size_bytes": 5600,
+      "modified_unix_ns": 1792524360887412696,
+      "sha256": "22ee4b987b07940dd7397ed7f88345c71acc415e2549b64bf45ba43f7572e5f0"
+    },
+    {
+      "path": "quench-bench/jetstream/JetStreamDriver.js",
+      "size_bytes": 110633,
+      "modified_unix_ns": 1792524359981088811,
+      "sha256": "f105bddfd402514b2325fe9ea6e1df5ce776a4ad4570a8006c7c8559159440fc"
+    },
+    {
+      "path": "quench-bench/jetstream/utils/params.js",
+      "size_bytes": 8047,
+      "modified_unix_ns": 1792524362115334866,
+      "sha256": "0e9d28c0fd2de5583c64678ffc61307b10d983bcb419fe2e3bb383c8b7ded647"
+    },
+    {
+      "path": "quench-bench/jetstream/utils/shell-config.js",
+      "size_bytes": 2352,
+      "modified_unix_ns": 1792524362115736207,
+      "sha256": "9a83000be5e6526a3c26a414fc3a23043e57ef8e4cd67aaff459066a2c347bca"
+    }
+  ],
+  "selected_fixtures": [
+    "quench-bench/jetstream/async-fs"
+  ],
+  "fixtures": {
+    "quench-bench/jetstream/async-fs": {
+      "source": {
+        "path": "quench-bench/jetstream/async-fs",
+        "size_bytes": 4096,
+        "modified_unix_ns": 1792524363121554381,
+        "sha256": "4311c39dd7f2d2e7dac6bcc09189098605edde278c3f6eb1849ae72cac716de0"
+      },
+      "valid": true,
+      "output_equal": true,
+      "summaries": {
+        "bun": {
+          "median_score": 33.78,
+          "median_max_rss_bytes": 45400064,
+          "valid_samples": 3
+        },
+        "node": {
+          "median_score": 44.27,
+          "median_max_rss_bytes": 199483392,
+          "valid_samples": 3
+        },
+        "quench": {
+          "median_score": 9.39,
+          "median_max_rss_bytes": 36835328,
+          "valid_samples": 3
+        }
+      },
+      "unsupported_engines": {},
+      "rounds": [
+        {
+          "round": 0,
+          "execution_order": [
+            "quench",
+            "bun",
+            "node"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 12799128052,
+              "peak_rss_bytes": 45400064,
+              "score": 33.78,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 45409,
+              "page_reclaims": 45409,
+              "involuntary_context_switches": 53,
+              "host_before": {
+                "captured_unix_ns": 1792665342722517615,
+                "load_average": {
+                  "one_minute": 1.01,
+                  "five_minutes": 1.08,
+                  "fifteen_minutes": 1.18
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 247018,
+                    "cpu_percent": 1.8,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.6,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.1,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.1,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792665355532662372,
+                "load_average": {
+                  "one_minute": 1.01,
+                  "five_minutes": 1.08,
+                  "fifteen_minutes": 1.17
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 247018,
+                    "cpu_percent": 1.8,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.6,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.1,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.1,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "Starting JetStream3\nRunning async-fs:\nasync-fs First-Score                            28.94 pts\nasync-fs Worst-Score                            33.59 pts\nasync-fs Average-Score                          39.64 pts\nasync-fs Score                                  33.78 pts\nasync-fs First-Time                            172.79 ms \nasync-fs Worst-Time                            148.83 ms \nasync-fs Average-Time                          126.15 ms \nasync-fs Total-Time                            447.78 ms \nasync-fs Wall-Time                            12716.00 ms \n\nOverall:\nOverall First-Score                             28.94 pts\nOverall Worst-Score                             33.59 pts\nOverall Average-Score                           39.64 pts\nOverall First-Time                             172.79 ms \nOverall Worst-Time                             148.83 ms \nOverall Average-Time                           126.15 ms \n\nOverall Score                                   33.78 pts\nOverall Wall-Time                             12718.72 ms \n\n",
+              "stderr": ""
+            },
+            "node": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 13633571753,
+              "peak_rss_bytes": 216784896,
+              "score": 33.02,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 53277,
+              "page_reclaims": 53277,
+              "involuntary_context_switches": 40,
+              "host_before": {
+                "captured_unix_ns": 1792665355545644985,
+                "load_average": {
+                  "one_minute": 1.01,
+                  "five_minutes": 1.08,
+                  "fifteen_minutes": 1.17
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 247018,
+                    "cpu_percent": 1.8,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.6,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.1,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.1,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792665369189377862,
+                "load_average": {
+                  "one_minute": 1.01,
+                  "five_minutes": 1.07,
+                  "fifteen_minutes": 1.17
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 247018,
+                    "cpu_percent": 1.9,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.6,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.1,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.1,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "Starting JetStream3\nRunning async-fs:\nasync-fs First-Score                            42.73 pts\nasync-fs Worst-Score                            22.02 pts\nasync-fs Average-Score                          38.27 pts\nasync-fs Score                                  33.02 pts\nasync-fs First-Time                            117.00 ms \nasync-fs Worst-Time                            227.06 ms \nasync-fs Average-Time                          130.64 ms \nasync-fs Total-Time                            474.70 ms \nasync-fs Wall-Time                            13487.66 ms \n\nOverall:\nOverall First-Score                             42.73 pts\nOverall Worst-Score                             22.02 pts\nOverall Average-Score                           38.27 pts\nOverall First-Time                             117.00 ms \nOverall Worst-Time                             227.06 ms \nOverall Average-Time                           130.64 ms \n\nOverall Score                                   33.02 pts\nOverall Wall-Time                             13491.84 ms \n\n",
+              "stderr": ""
+            },
+            "quench": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 46664067589,
+              "peak_rss_bytes": 36732928,
+              "score": 9.39,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 16688,
+              "page_reclaims": 16661,
+              "involuntary_context_switches": 184,
+              "host_before": {
+                "captured_unix_ns": 1792665295967156514,
+                "load_average": {
+                  "one_minute": 0.88,
+                  "five_minutes": 1.08,
+                  "fifteen_minutes": 1.18
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.6,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 247018,
+                    "cpu_percent": 0.3,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.1,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.1,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792665342701900851,
+                "load_average": {
+                  "one_minute": 1.01,
+                  "five_minutes": 1.08,
+                  "fifteen_minutes": 1.18
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 247109,
+                    "cpu_percent": 100.0,
+                    "command": "ps"
+                  },
+                  {
+                    "pid": 247018,
+                    "cpu_percent": 1.8,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.6,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.1,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.1,
+                    "command": "codex"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "Starting JetStream3\nRunning async-fs:\nasync-fs First-Score                            11.10 pts\nasync-fs Worst-Score                             7.17 pts\nasync-fs Average-Score                          10.41 pts\nasync-fs Score                                   9.39 pts\nasync-fs First-Time                            450.57 ms \nasync-fs Worst-Time                            696.96 ms \nasync-fs Average-Time                          480.30 ms \nasync-fs Total-Time                           1627.83 ms \nasync-fs Wall-Time                            46481.04 ms \n\nOverall:\nOverall First-Score                             11.10 pts\nOverall Worst-Score                              7.17 pts\nOverall Average-Score                           10.41 pts\nOverall First-Time                             450.57 ms \nOverall Worst-Time                             696.96 ms \nOverall Average-Time                           480.30 ms \n\nOverall Score                                    9.39 pts\nOverall Wall-Time                             46503.05 ms \n\n",
+              "stderr": ""
+            }
+          }
+        },
+        {
+          "round": 1,
+          "execution_order": [
+            "bun",
+            "node",
+            "quench"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 14427843106,
+              "peak_rss_bytes": 45658112,
+              "score": 27.74,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 41625,
+              "page_reclaims": 41625,
+              "involuntary_context_switches": 737,
+              "host_before": {
+                "captured_unix_ns": 1792665369195493743,
+                "load_average": {
+                  "one_minute": 1.01,
+                  "five_minutes": 1.07,
+                  "fifteen_minutes": 1.17
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 247018,
+                    "cpu_percent": 1.9,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.6,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.1,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.1,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792665383631828372,
+                "load_average": {
+                  "one_minute": 1.0,
+                  "five_minutes": 1.07,
+                  "fifteen_minutes": 1.17
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 247018,
+                    "cpu_percent": 1.8,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.6,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.1,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.1,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "Starting JetStream3\nRunning async-fs:\nasync-fs First-Score                            28.90 pts\nasync-fs Worst-Score                            21.25 pts\nasync-fs Average-Score                          34.76 pts\nasync-fs Score                                  27.74 pts\nasync-fs First-Time                            173.03 ms \nasync-fs Worst-Time                            235.33 ms \nasync-fs Average-Time                          143.86 ms \nasync-fs Total-Time                            552.23 ms \nasync-fs Wall-Time                            14369.72 ms \n\nOverall:\nOverall First-Score                             28.90 pts\nOverall Worst-Score                             21.25 pts\nOverall Average-Score                           34.76 pts\nOverall First-Time                             173.03 ms \nOverall Worst-Time                             235.33 ms \nOverall Average-Time                           143.86 ms \n\nOverall Score                                   27.74 pts\nOverall Wall-Time                             14371.43 ms \n\n",
+              "stderr": ""
+            },
+            "node": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 11323273657,
+              "peak_rss_bytes": 199483392,
+              "score": 44.27,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 49095,
+              "page_reclaims": 49095,
+              "involuntary_context_switches": 88,
+              "host_before": {
+                "captured_unix_ns": 1792665383639253347,
+                "load_average": {
+                  "one_minute": 1.0,
+                  "five_minutes": 1.07,
+                  "fifteen_minutes": 1.17
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 247018,
+                    "cpu_percent": 1.8,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.6,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.1,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.1,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792665394969645758,
+                "load_average": {
+                  "one_minute": 1.0,
+                  "five_minutes": 1.07,
+                  "fifteen_minutes": 1.17
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 247018,
+                    "cpu_percent": 1.8,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.6,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.1,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.1,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "Starting JetStream3\nRunning async-fs:\nasync-fs First-Score                            50.99 pts\nasync-fs Worst-Score                            36.80 pts\nasync-fs Average-Score                          46.23 pts\nasync-fs Score                                  44.27 pts\nasync-fs First-Time                             98.05 ms \nasync-fs Worst-Time                            135.88 ms \nasync-fs Average-Time                          108.15 ms \nasync-fs Total-Time                            342.08 ms \nasync-fs Wall-Time                            11220.35 ms \n\nOverall:\nOverall First-Score                             50.99 pts\nOverall Worst-Score                             36.80 pts\nOverall Average-Score                           46.23 pts\nOverall First-Time                              98.05 ms \nOverall Worst-Time                             135.88 ms \nOverall Average-Time                           108.15 ms \n\nOverall Score                                   44.27 pts\nOverall Wall-Time                             11222.69 ms \n\n",
+              "stderr": ""
+            },
+            "quench": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 49852876130,
+              "peak_rss_bytes": 36847616,
+              "score": 8.62,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 17318,
+              "page_reclaims": 17297,
+              "involuntary_context_switches": 152,
+              "host_before": {
+                "captured_unix_ns": 1792665394975662430,
+                "load_average": {
+                  "one_minute": 1.0,
+                  "five_minutes": 1.07,
+                  "fifteen_minutes": 1.17
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 247018,
+                    "cpu_percent": 1.8,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.6,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.1,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.1,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792665444844940125,
+                "load_average": {
+                  "one_minute": 1.05,
+                  "five_minutes": 1.07,
+                  "fifteen_minutes": 1.16
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 247018,
+                    "cpu_percent": 1.9,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.6,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.1,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.1,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "Starting JetStream3\nRunning async-fs:\nasync-fs First-Score                             9.23 pts\nasync-fs Worst-Score                             7.11 pts\nasync-fs Average-Score                           9.74 pts\nasync-fs Score                                   8.62 pts\nasync-fs First-Time                            541.62 ms \nasync-fs Worst-Time                            702.99 ms \nasync-fs Average-Time                          513.36 ms \nasync-fs Total-Time                           1757.97 ms \nasync-fs Wall-Time                            49634.44 ms \n\nOverall:\nOverall First-Score                              9.23 pts\nOverall Worst-Score                              7.11 pts\nOverall Average-Score                            9.74 pts\nOverall First-Time                             541.62 ms \nOverall Worst-Time                             702.99 ms \nOverall Average-Time                           513.36 ms \n\nOverall Score                                    8.62 pts\nOverall Wall-Time                             49655.30 ms \n\n",
+              "stderr": ""
+            }
+          }
+        },
+        {
+          "round": 2,
+          "execution_order": [
+            "node",
+            "quench",
+            "bun"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 12143776089,
+              "peak_rss_bytes": 45383680,
+              "score": 37.1,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 47055,
+              "page_reclaims": 47055,
+              "involuntary_context_switches": 49,
+              "host_before": {
+                "captured_unix_ns": 1792665503160024551,
+                "load_average": {
+                  "one_minute": 1.02,
+                  "five_minutes": 1.05,
+                  "fifteen_minutes": 1.15
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 247018,
+                    "cpu_percent": 1.8,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.6,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.1,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.1,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792665515315601873,
+                "load_average": {
+                  "one_minute": 1.01,
+                  "five_minutes": 1.05,
+                  "fifteen_minutes": 1.15
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 247018,
+                    "cpu_percent": 1.7,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.6,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.1,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.1,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "Starting JetStream3\nRunning async-fs:\nasync-fs First-Score                            37.69 pts\nasync-fs Worst-Score                            32.68 pts\nasync-fs Average-Score                          41.46 pts\nasync-fs Score                                  37.10 pts\nasync-fs First-Time                            132.67 ms \nasync-fs Worst-Time                            153.02 ms \nasync-fs Average-Time                          120.60 ms \nasync-fs Total-Time                            406.29 ms \nasync-fs Wall-Time                            12077.11 ms \n\nOverall:\nOverall First-Score                             37.69 pts\nOverall Worst-Score                             32.68 pts\nOverall Average-Score                           41.46 pts\nOverall First-Time                             132.67 ms \nOverall Worst-Time                             153.02 ms \nOverall Average-Time                           120.60 ms \n\nOverall Score                                   37.10 pts\nOverall Wall-Time                             12082.38 ms \n\n",
+              "stderr": ""
+            },
+            "node": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 11063160259,
+              "peak_rss_bytes": 198299648,
+              "score": 45.57,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 48771,
+              "page_reclaims": 48771,
+              "involuntary_context_switches": 1414,
+              "host_before": {
+                "captured_unix_ns": 1792665444854042140,
+                "load_average": {
+                  "one_minute": 1.05,
+                  "five_minutes": 1.07,
+                  "fifteen_minutes": 1.16
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 247018,
+                    "cpu_percent": 1.9,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.6,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.1,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.1,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792665455927771551,
+                "load_average": {
+                  "one_minute": 1.04,
+                  "five_minutes": 1.07,
+                  "fifteen_minutes": 1.16
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 247018,
+                    "cpu_percent": 1.8,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.6,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.1,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.1,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "Starting JetStream3\nRunning async-fs:\nasync-fs First-Score                            50.52 pts\nasync-fs Worst-Score                            39.59 pts\nasync-fs Average-Score                          47.30 pts\nasync-fs Score                                  45.57 pts\nasync-fs First-Time                             98.98 ms \nasync-fs Worst-Time                            126.29 ms \nasync-fs Average-Time                          105.70 ms \nasync-fs Total-Time                            330.96 ms \nasync-fs Wall-Time                            10897.88 ms \n\nOverall:\nOverall First-Score                             50.52 pts\nOverall Worst-Score                             39.59 pts\nOverall Average-Score                           47.30 pts\nOverall First-Time                              98.98 ms \nOverall Worst-Time                             126.29 ms \nOverall Average-Time                           105.70 ms \n\nOverall Score                                   45.57 pts\nOverall Wall-Time                             10901.38 ms \n\n",
+              "stderr": ""
+            },
+            "quench": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 47204112098,
+              "peak_rss_bytes": 36835328,
+              "score": 9.78,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 17063,
+              "page_reclaims": 17042,
+              "involuntary_context_switches": 97,
+              "host_before": {
+                "captured_unix_ns": 1792665455934912135,
+                "load_average": {
+                  "one_minute": 1.04,
+                  "five_minutes": 1.07,
+                  "fifteen_minutes": 1.16
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 247018,
+                    "cpu_percent": 1.8,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.6,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.1,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.1,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792665503150835636,
+                "load_average": {
+                  "one_minute": 1.02,
+                  "five_minutes": 1.05,
+                  "fifteen_minutes": 1.15
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 247018,
+                    "cpu_percent": 1.8,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.6,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.1,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.1,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "Starting JetStream3\nRunning async-fs:\nasync-fs First-Score                            10.77 pts\nasync-fs Worst-Score                             8.47 pts\nasync-fs Average-Score                          10.27 pts\nasync-fs Score                                   9.78 pts\nasync-fs First-Time                            464.18 ms \nasync-fs Worst-Time                            590.39 ms \nasync-fs Average-Time                          486.90 ms \nasync-fs Total-Time                           1541.47 ms \nasync-fs Wall-Time                            47042.31 ms \n\nOverall:\nOverall First-Score                             10.77 pts\nOverall Worst-Score                              8.47 pts\nOverall Average-Score                           10.27 pts\nOverall First-Time                             464.18 ms \nOverall Worst-Time                             590.39 ms \nOverall Average-Time                           486.90 ms \n\nOverall Score                                    9.78 pts\nOverall Wall-Time                             47067.08 ms \n\n",
+              "stderr": ""
+            }
+          }
+        }
+      ]
+    }
+  },
+  "complete": true,
+  "qualification_ready": false
+}

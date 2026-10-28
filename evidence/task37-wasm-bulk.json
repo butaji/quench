@@ -1,0 +1,385 @@
+{
+  "tasks": [
+    "07",
+    "19",
+    "23",
+    "37",
+    "40"
+  ],
+  "source_head": "7e60169df033dd247f34199e084e3e8080a92a29",
+  "source_state": "dirty worktree",
+  "source_hashes": {
+    "crates/quench-runtime-next/src/wasm.rs": "c4733fe55475943d2706350886407a7da4129432fcf40ade63393c579b37596d",
+    "crates/quench-runtime-next/src/wasm/memory.rs": "0aa520201f827d671b6682a6ab48bb4dd66313ecefb70140e9c21222574ed6aa",
+    "crates/quench-runtime-next/src/vm/wasm.rs": "39eed9a149189afc2b9e15e97ee7e04581b6bfd3100ae28d33efeb667fa4e90c",
+    "crates/quench-runtime-next/src/vm/dispatch.rs": "5de702a3908afe66746272cf780f9cf8f3e1ea5a07d1e718f363930896019607",
+    "crates/quench-runtime-next/src/bytecode.rs": "bd01451966257c1c1601a3daeff32a9adb19dab5ea4eb2830708cc6ef241e863",
+    "crates/quench-runtime-next/src/lib.rs": "951b530867940bec7b019cf8fa5614ac386c6341ae74d0d08e8990311d7d79ba",
+    "crates/quench-wasm/src/shared.rs": "a4c8ad0d57856b9d55bcf2b1f37c91e2495750ff0b67fc3212e0ca25945875d2",
+    "crates/quench-wasm/src/shared_wast.rs": "f8f364e2b40a9c0677a7f6d6dd0c9e6bd2316f20b54c8777948f5198286db63a"
+  },
+  "suite_head": "67c8b9dc32c47d61c05a1681df349d01c85fa8ff",
+  "suite_clean": true,
+  "host": "macOS-26.5-arm64-arm-64bit",
+  "rustc": "rustc 1.99.0 (b940084d7 2026-09-28) (Homebrew)",
+  "profile": "debug",
+  "obligation": "Passive data availability/drop lifecycle, active segments starting dropped, and Memory32 bulk initialization/copy/fill through the shared VM, including overlapping and cross-memory copies, exact bounds and independent instance ownership.",
+  "representation": "WasmDataMode owns static active/passive mode. Immutable Rc byte facts are shared; each instance Environment owns an immutable segment backing handle or Undefined as the dropped state after global and memory slots. DataDrop lowers to LoadConst/StoreCapture. Three new bulk opcode rows reuse RegisterPair layout, residual validation/disassembly/liveness, and the existing dispatch loop. MemoryInit and MemoryCopy share checked byte-copy effects; MemoryFill shares the range authority. Both copy ranges are checked before writing; same-memory copy_within preserves overlap semantics. Mutable backing has one detached/immutable guard. Residual format is 48.",
+  "runner": {
+    "path": "target/iteration/task37-wasm-bulk-qualified-runner",
+    "sha256": "8afa84074e02a96cd17dd690182a9767b52f0baea5e766d05c938a4120869fdb"
+  },
+  "before_projection": {
+    "path": "target/iteration/task37-wasm-bulk-before.json",
+    "sha256": "a0d86b4f94c33db39c4698a0528e895983938b24964b36e0ed8c49b42f290cf8"
+  },
+  "before_reports": [
+    {
+      "path": "target/iteration/task37-wasm-memory-qualified-after.json",
+      "sha256": "555fe8ed3883f2f4bcdc16644c68d0e82e9ae55b005108887a388c3bac569723"
+    },
+    {
+      "path": "target/iteration/task37-wasm-bulk-before-new.json",
+      "sha256": "763e397645efff0d30f2515e9655e34f2844f1a1657128585156ea9f303e4fbc"
+    }
+  ],
+  "after": {
+    "path": "target/iteration/task37-wasm-bulk-qualified-after.json",
+    "sha256": "501f7f74bc0e9f8e2c31210e4fbbc9429abeb2583d156db105c68b85fd55e974"
+  },
+  "comparison": {
+    "path": "target/iteration/task37-wasm-bulk-compare.log",
+    "sha256": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+  },
+  "exact_inventory_match": true,
+  "input_hashes_match": true,
+  "inventory_complete": true,
+  "total": 20359,
+  "passed": 19246,
+  "failed": 1113,
+  "gains": 4657,
+  "regressions": 0,
+  "gains_by_file": {
+    "crates/quench-wasm-test/testsuite/data.wast": 1,
+    "crates/quench-wasm-test/testsuite/data_drop0.wast": 11,
+    "crates/quench-wasm-test/testsuite/memory_copy.wast": 4354,
+    "crates/quench-wasm-test/testsuite/memory_copy0.wast": 29,
+    "crates/quench-wasm-test/testsuite/memory_copy1.wast": 14,
+    "crates/quench-wasm-test/testsuite/memory_fill.wast": 36,
+    "crates/quench-wasm-test/testsuite/memory_fill0.wast": 16,
+    "crates/quench-wasm-test/testsuite/memory_init.wast": 183,
+    "crates/quench-wasm-test/testsuite/memory_init0.wast": 13
+  },
+  "delta": {
+    "path": "target/iteration/task37-wasm-bulk-delta.json",
+    "sha256": "ab19a8ef4e5efc276c13b3c075c08459e84ed6ad9a4387808b27d5d3c20438f6"
+  },
+  "new_scopes_all_pass": {
+    "files": [
+      "crates/quench-wasm-test/testsuite/data_drop0.wast",
+      "crates/quench-wasm-test/testsuite/memory_copy.wast",
+      "crates/quench-wasm-test/testsuite/memory_copy0.wast",
+      "crates/quench-wasm-test/testsuite/memory_copy1.wast",
+      "crates/quench-wasm-test/testsuite/memory_fill.wast",
+      "crates/quench-wasm-test/testsuite/memory_fill0.wast",
+      "crates/quench-wasm-test/testsuite/memory_init.wast",
+      "crates/quench-wasm-test/testsuite/memory_init0.wast"
+    ],
+    "total": 4883,
+    "passed": 4883
+  },
+  "scopes": [
+    {
+      "path": "crates/quench-wasm-test/testsuite/block.wast",
+      "sha256": "436230d4bb629da323ee97c56a5580545f3dea7818eeb9a362a6c234f5af18d7"
+    },
+    {
+      "path": "crates/quench-wasm-test/testsuite/br.wast",
+      "sha256": "ac34486d8787d469dc7940f8e77c6b4b5999cf9d6c8918138d13b3e58460cae9"
+    },
+    {
+      "path": "crates/quench-wasm-test/testsuite/br_if.wast",
+      "sha256": "b75341e227315fc7765944e3ac09bcb1a15ca918a72c7dd478b2068147792658"
+    },
+    {
+      "path": "crates/quench-wasm-test/testsuite/br_table.wast",
+      "sha256": "9a44bc44564b70bc92e84cea94f6e7d1d3df1725619fcbf5f1d6cf3340f793a1"
+    },
+    {
+      "path": "crates/quench-wasm-test/testsuite/call.wast",
+      "sha256": "faa694f3141b25cb1cf25104298a535ddea8058396825f532b69d0912074d905"
+    },
+    {
+      "path": "crates/quench-wasm-test/testsuite/const.wast",
+      "sha256": "b1a378d5b7ddb4d4acb5ae2959ac938dfe0d9e3c2864df457bc098d3f2e00f37"
+    },
+    {
+      "path": "crates/quench-wasm-test/testsuite/conversions.wast",
+      "sha256": "70eeec77b5c5c4fa6c9547f97ac56c1e21ebd5e2a10e7318f2e22100d5f6f056"
+    },
+    {
+      "path": "crates/quench-wasm-test/testsuite/data.wast",
+      "sha256": "991bfcf105a8eb23b92b6d59a8e2e6ef8f65111006bcfc35aa7b296eda45664d"
+    },
+    {
+      "path": "crates/quench-wasm-test/testsuite/data0.wast",
+      "sha256": "7e12af1c9c52716cc7df1b407c302b39aa2eed150486f1214f64c5381ec44140"
+    },
+    {
+      "path": "crates/quench-wasm-test/testsuite/data1.wast",
+      "sha256": "effa6a1484493ef5d28bad9f93a9a1f2f462e4748b079c07af02178cbc62f565"
+    },
+    {
+      "path": "crates/quench-wasm-test/testsuite/data_drop0.wast",
+      "sha256": "4cd981a5ab79836baa05834322e42636bd8dc2c05204130cec18bff78d933a55"
+    },
+    {
+      "path": "crates/quench-wasm-test/testsuite/endianness.wast",
+      "sha256": "5d13436c8b6fe6099b89c5a16452e7d38fa170b2553b2983cf91b1fe4e5190ad"
+    },
+    {
+      "path": "crates/quench-wasm-test/testsuite/f32.wast",
+      "sha256": "91c9e9edf5500659040c6b7657fbaa942ad6c0526d80d2ea558e406257a8674f"
+    },
+    {
+      "path": "crates/quench-wasm-test/testsuite/f32_bitwise.wast",
+      "sha256": "8a514cd0c6c34cccbcd4deda8b3f1898cab2985a360d0ec10a4b1725027f0b64"
+    },
+    {
+      "path": "crates/quench-wasm-test/testsuite/f32_cmp.wast",
+      "sha256": "dc16e4361250dbf9ef2b91481e25964d6c31f9f593f2e31f08d5b4f5028a376f"
+    },
+    {
+      "path": "crates/quench-wasm-test/testsuite/f64.wast",
+      "sha256": "b8b85a753f13ae27d20ca8cb97ab58b30606854deb4fb829caac93785a90b0f7"
+    },
+    {
+      "path": "crates/quench-wasm-test/testsuite/f64_bitwise.wast",
+      "sha256": "efd4e70d58ee853b4509352292058841b775ccea4cfd3060ddd350b8ccd4db32"
+    },
+    {
+      "path": "crates/quench-wasm-test/testsuite/f64_cmp.wast",
+      "sha256": "aabcd2c5af0670a9f7ce2cfd19befd3142c300fa5091575fad21a3726dcfb8c0"
+    },
+    {
+      "path": "crates/quench-wasm-test/testsuite/func.wast",
+      "sha256": "fb48ac22e13b3f5bd34063e194756af2f558b99d0f6f230e871c0b6d56849497"
+    },
+    {
+      "path": "crates/quench-wasm-test/testsuite/global.wast",
+      "sha256": "0899df8c814d953d56a22b04d518fda6c7e6aab5a0d0472367a830e31821ee40"
+    },
+    {
+      "path": "crates/quench-wasm-test/testsuite/i32.wast",
+      "sha256": "f3b7e8fd641893ea0989a8ab801fce0654d276d27b5cad9cf482291a422cffe8"
+    },
+    {
+      "path": "crates/quench-wasm-test/testsuite/i64.wast",
+      "sha256": "7d0e27a617565e0685aef56cee01b2b4890084068e3989168c41d14c56b1945e"
+    },
+    {
+      "path": "crates/quench-wasm-test/testsuite/if.wast",
+      "sha256": "291eaa26f1951a70560cf9942edc4345557718693ec0dd60b32c560310ea81f0"
+    },
+    {
+      "path": "crates/quench-wasm-test/testsuite/load.wast",
+      "sha256": "2f69ef5634207e065d022d7c26c92016ff1d14a94c5c755927d37fe14e63e256"
+    },
+    {
+      "path": "crates/quench-wasm-test/testsuite/load0.wast",
+      "sha256": "00dbea5cae594b8a16f4a177aa1ef5f72c3042c8c31f33e1577f696ccf7339d8"
+    },
+    {
+      "path": "crates/quench-wasm-test/testsuite/load1.wast",
+      "sha256": "19b977db2c0aac9654909a7378572fe1e6a1551a49059b46948d68e788737021"
+    },
+    {
+      "path": "crates/quench-wasm-test/testsuite/load2.wast",
+      "sha256": "a270a935feaab17acf2192526ccc1e3d8b7f90551afbc9e9152655e9f63c0747"
+    },
+    {
+      "path": "crates/quench-wasm-test/testsuite/loop.wast",
+      "sha256": "4d3c043485ae6d89a397787dec3fdb53283949c116c7c5aad360fc7481c2277a"
+    },
+    {
+      "path": "crates/quench-wasm-test/testsuite/memory.wast",
+      "sha256": "fd3d84dd0bd5f6632eff0c29249329194df9fbae146d2769f717ec849080e31a"
+    },
+    {
+      "path": "crates/quench-wasm-test/testsuite/memory_copy.wast",
+      "sha256": "059813c4cd9e79cf3a287409842b9212f6f48b4a6a5f597f22c81631e7b55d08"
+    },
+    {
+      "path": "crates/quench-wasm-test/testsuite/memory_copy0.wast",
+      "sha256": "5434c232c4e29e89888a1e05a42b298186c6a18263aef5d74666d967f9402aac"
+    },
+    {
+      "path": "crates/quench-wasm-test/testsuite/memory_copy1.wast",
+      "sha256": "0c0a25890b3415d7cf0a0f43cd7904ad44e9e2fc6a1462fef48703102805e1bc"
+    },
+    {
+      "path": "crates/quench-wasm-test/testsuite/memory_fill.wast",
+      "sha256": "b8a7dccdf72878d11497a5d13ca3c628552b690f5386ef56b0a46c5dd711ad1f"
+    },
+    {
+      "path": "crates/quench-wasm-test/testsuite/memory_fill0.wast",
+      "sha256": "d747201062f410ed64b23ca9687397c33e8f5adbcd4dda54ea742e903922f767"
+    },
+    {
+      "path": "crates/quench-wasm-test/testsuite/memory_grow.wast",
+      "sha256": "8e7f73d02a5929e5a9bef22ad84fe4bab27ae30aaf14021d9c4cc1bb67f16a94"
+    },
+    {
+      "path": "crates/quench-wasm-test/testsuite/memory_init.wast",
+      "sha256": "f970c47de1bfdd8d59672c4f006fe96011236ec226ab40157c77c69b1ab25572"
+    },
+    {
+      "path": "crates/quench-wasm-test/testsuite/memory_init0.wast",
+      "sha256": "b13986c12b2d0c4d9150a004b1cf209e06ec91010e5dfe9abc21258ccb678687"
+    },
+    {
+      "path": "crates/quench-wasm-test/testsuite/memory_size.wast",
+      "sha256": "71570412caf937a389127b7ffd104efe24b89d0ccd1202d48bcf04f50bd62f76"
+    },
+    {
+      "path": "crates/quench-wasm-test/testsuite/memory_size0.wast",
+      "sha256": "34280de026ac1d919583b866e6e7c722337f6445c157f4bf80895e46f49290a3"
+    },
+    {
+      "path": "crates/quench-wasm-test/testsuite/memory_size1.wast",
+      "sha256": "7856b32b39b9bf839f90f0f818177d85e8ab704d6933c7b68bd7b90e1829b1fa"
+    },
+    {
+      "path": "crates/quench-wasm-test/testsuite/memory_size2.wast",
+      "sha256": "4737a54f4aa62ec6b10f4ef8c299fb7e354941ce13a8def85a79b1e24413bc39"
+    },
+    {
+      "path": "crates/quench-wasm-test/testsuite/memory_size3.wast",
+      "sha256": "e8c279897c70d60be758c571c2864a3b2da87d404dfe43e65ac91ad3e139281e"
+    },
+    {
+      "path": "crates/quench-wasm-test/testsuite/memory_trap.wast",
+      "sha256": "b3209d2a07576a4961c6043b097f26457900a4eaee2b4df96a5359bea2d2ebb5"
+    },
+    {
+      "path": "crates/quench-wasm-test/testsuite/memory_trap0.wast",
+      "sha256": "2ff7905e32759145f5be3a6910f09edce9f781a98f9eb602dbd96da1c5315409"
+    },
+    {
+      "path": "crates/quench-wasm-test/testsuite/memory_trap1.wast",
+      "sha256": "c0bfa1f480766ccfc1c0a4cdefa26b8ae8d01004414c5498afdb2131ab99375c"
+    },
+    {
+      "path": "crates/quench-wasm-test/testsuite/return.wast",
+      "sha256": "987f665cbf9be3d240325fcc14bfa449e8fb8ad9e8193afa3aff03ddb33bd7ce"
+    },
+    {
+      "path": "crates/quench-wasm-test/testsuite/select.wast",
+      "sha256": "2acdd7bb97af6f6f4b15538ee91ebc0a2cc4390d81010b2601e44c4f0f4ef836"
+    },
+    {
+      "path": "crates/quench-wasm-test/testsuite/store.wast",
+      "sha256": "d35ff73bab2729d3747605072cf437d863104bca375d743cbe9a7ab4b2269ab9"
+    },
+    {
+      "path": "crates/quench-wasm-test/testsuite/store0.wast",
+      "sha256": "971c814c669b126ac3dc11e9a6185d315af2ba996cb416d9e3e26773bcee0c71"
+    },
+    {
+      "path": "crates/quench-wasm-test/testsuite/store1.wast",
+      "sha256": "e03b4970ac4e6322bbc8b46e17c226f18c7f8102f5f3e1aca91a889b87fe2cad"
+    },
+    {
+      "path": "crates/quench-wasm-test/testsuite/store2.wast",
+      "sha256": "e475f48b1117bc5c73e9d61eb90f60a77698ead83623a97757f25863bd8ec41d"
+    }
+  ],
+  "remaining_failure_clusters": {
+    "unsupported shared Wasm module state, imports or section": 1100,
+    "unsupported shared Wasm argument type": 8,
+    "I32(0)": 5
+  },
+  "verification": {
+    "runtime_internal": {
+      "passed": 22,
+      "failed": 0,
+      "ignored": 0,
+      "log": {
+        "path": "target/iteration/task37-wasm-bulk-runtime.log",
+        "sha256": "a5a9487e1878c6a23b4cb718d7f9525f449921df34285402a64aeea681d7f253"
+      },
+      "new_test": "serialized_bulk_bindings_share_immutable_facts_and_drop_only_the_instance_owner"
+    },
+    "all_runtime_units": {
+      "passed": 471,
+      "failed": 0,
+      "ignored": 0,
+      "log": {
+        "path": "target/iteration/task37-wasm-bulk-all-runtime.log",
+        "sha256": "cae405959aa6a5ab4a3a81267c6f13b51e9a0899db121c7fa68f8ba1e9704fac"
+      }
+    },
+    "frontend_units": {
+      "passed": 40,
+      "failed": 0,
+      "ignored": 0,
+      "log": {
+        "path": "target/iteration/task37-wasm-bulk-frontend.log",
+        "sha256": "2ea8a221856e058c8d90c83419ffb73e133c47342a2c73f5da908e7247af9fc6"
+      }
+    },
+    "all_targets_memory_aggregate_features": {
+      "path": "target/iteration/task37-wasm-bulk-check.log",
+      "sha256": "a9818023acd71e5f561dd028e2f627336cf40f9c4628dd96fcd9bc68704c0804"
+    },
+    "bulk_controls": {
+      "total": 26,
+      "passed": 26,
+      "input": {
+        "path": "target/iteration/task37-wasm-bulk-controls.wast",
+        "sha256": "6dfef9857d0582cc05c9bd22156546d530096ff52017e7a6257784aa6d446a98"
+      },
+      "report": {
+        "path": "target/iteration/task37-wasm-bulk-qualified-controls.json",
+        "sha256": "a99572d0ea975f7e3fd2baacd4ad00944cb3ad2962eab176f70a0467c3851522"
+      }
+    },
+    "prior_memory_lifecycle_controls": {
+      "total": 423,
+      "passed": 423,
+      "input": {
+        "path": "target/iteration/task37-wasm-memory-controls.wast",
+        "sha256": "e9addb8e719c850dd3e84f9a6033c5c3a3bff5499fcdb4ae3b3912fa0bfff5cd"
+      },
+      "report": {
+        "path": "target/iteration/task37-wasm-bulk-qualified-memory-controls.json",
+        "sha256": "342b3dbe8a21ce8e47a87fcc4f4ec7dba3927e1c55af42b69ff8b266d6c9a515"
+      }
+    },
+    "node_oracle": {
+      "report": {
+        "path": "target/iteration/task37-wasm-bulk-node.json",
+        "sha256": "38b8bb02f3e11aa1c43918f94043bd960b99925e4ba4f8ea2fbb1ee51198c82e"
+      },
+      "script": {
+        "path": "target/iteration/task37-wasm-bulk-oracle.cjs",
+        "sha256": "3fabbec96ff75bbab3290875db315b093d9f009ef911d70b345ce002900c5108"
+      },
+      "input": {
+        "path": "target/iteration/task37-wasm-bulk-oracle.wat",
+        "sha256": "46122d49a69570b626e24bfa8042fbc812b18e11f050bee0af789c7894b4d36b"
+      },
+      "binary": {
+        "path": "target/iteration/task37-wasm-bulk-oracle.wasm",
+        "sha256": "325933618d253218a777c7a9404618d116fbae57d098a9de29fd246075e46524"
+      }
+    }
+  },
+  "scope_rationale": "Previous 43 scalar/control/Memory32 scopes protect shared residual and instance users. Eight bulk memory/data-drop files directly own the new transitions, overlap/bounds behavior and multi-memory indices. The pinned files and inventories are unchanged. Shared register-pair validation/liveness/serialization and heap invariants are checked by internal units; no JavaScript semantics or Node host operation changed. No full Test262, Wasm or Node run.",
+  "limits": [
+    "1,100 unsupported state/import/section failures, eight unsupported non-scalar argument failures, and five loads whose expected bytes require an unsupported importing module.",
+    "Tables/elements, indirect calls, imports, reference/SIMD transport, memory64/shared/custom-page memory and remaining proposals still need shared implementation.",
+    "This does not claim JS WebAssembly host/export/import compatibility or complete pinned Wasm qualification.",
+    "Stage A, implemented Node closure and legacy removal remain open. No performance claim or Stage B run."
+  ]
+}

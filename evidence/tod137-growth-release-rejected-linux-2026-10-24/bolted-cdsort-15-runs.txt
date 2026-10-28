@@ -1,0 +1,16 @@
+raytrace           old med 2864 max 2996 s 2149 | grow med 2820 max 3000 s 2144
+raytrace      jit  old med 2880 max 2996 s 2116 | grow med 2880 max 3224 s 2151
+regexp             old med 5792 max 5792 s 2526 | grow med 5716 max 5792 s 2490
+regexp        jit  old med 5792 max 5792 s 2535 | grow med 5780 max 5792 s 2570
+crypto             old med 3068 max 3196 s 2574 | grow med 3068 max 3196 s 2612
+crypto        jit  old med 3164 max 3248 s 2590 | grow med 3164 max 3264 s 2592
+richards           old med 2464 max 2680 s 1449 | grow med 2576 max 2604 s 1506
+richards      jit  old med 2604 max 2860 s 1558 | grow med 2608 max 2860 s 1541
+deltablue          old med 2960 max 3000 s 1254 | grow med 2876 max 3000 s 1227
+deltablue     jit  old med 3000 max 3116 s 1322 | grow med 3116 max 3120 s 1294
+navier-stokes      old med 4004 max 4004 s 2861 | grow med 4004 max 4004 s 2796
+navier-stokes jit  old med 4132 max 4132 s 2795 | grow med 4132 max 4260 s 2850
+typescript         old med 43120 max 43312 s 413 | grow med 42992 max 43248 s 404
+eslint             old med 29944 max 30304 s 318 | grow med 30004 max 30344 s 320
+acorn              old med 13944 max 14420 s 142 | grow med 13956 max 14268 s 137
+ajv                old med 20168 max 20168 s 283 | grow med 20128 max 20244 s 283

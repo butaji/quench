@@ -1,0 +1,82 @@
+[
+  {
+    "case": "server",
+    "engine": "node",
+    "client_exit": 0,
+    "client_stdout": "[true,[0,22,23,127,254,255]]\n",
+    "client_stderr": "",
+    "server_exit": 0,
+    "server_stdout": "[true,true,true,false,\"TLSv1.3\"]\n",
+    "server_stderr": ""
+  },
+  {
+    "case": "server",
+    "engine": "quench",
+    "client_exit": 0,
+    "client_stdout": "[true,[0,22,23,127,254,255]]\n",
+    "client_stderr": "",
+    "server_exit": 0,
+    "server_stdout": "[true,true,true,false,\"TLSv1.3\"]\n",
+    "server_stderr": ""
+  },
+  {
+    "case": "direct",
+    "engine": "node",
+    "client_exit": 0,
+    "client_stdout": "[true,[0,22,23,127,254,255]]\n",
+    "client_stderr": "",
+    "server_exit": 0,
+    "server_stdout": "[true,true,true,true,\"TLSv1.3\"]\n",
+    "server_stderr": ""
+  },
+  {
+    "case": "direct",
+    "engine": "quench",
+    "client_exit": 0,
+    "client_stdout": "[true,[0,22,23,127,254,255]]\n",
+    "client_stderr": "",
+    "server_exit": 0,
+    "server_stdout": "[true,true,true,true,\"TLSv1.3\"]\n",
+    "server_stderr": ""
+  },
+  {
+    "case": "delayed",
+    "engine": "node",
+    "client_exit": 0,
+    "client_stdout": "[true,[0,22,23,127,254,255]]\n",
+    "client_stderr": "",
+    "server_exit": 0,
+    "server_stdout": "[true,true,true]\n[true,true,true,true,\"TLSv1.3\"]\n",
+    "server_stderr": ""
+  },
+  {
+    "case": "delayed",
+    "engine": "quench",
+    "client_exit": 0,
+    "client_stdout": "[true,[0,22,23,127,254,255]]\n",
+    "client_stderr": "",
+    "server_exit": 0,
+    "server_stdout": "[true,true,true]\n[true,true,true,true,\"TLSv1.3\"]\n",
+    "server_stderr": ""
+  },
+  {
+    "case": "abrupt",
+    "engine": "node",
+    "client_exit": 1,
+    "client_stdout": "ECONNRESET read ECONNRESET\n",
+    "client_stderr": "",
+    "server_exit": 0,
+    "server_stdout": "[true,true,true,true,\"TLSv1.3\"]\n",
+    "server_stderr": ""
+  },
+  {
+    "case": "abrupt",
+    "engine": "quench",
+    "client_exit": 1,
+    "client_stdout": "ECONNRESET read ECONNRESET\n",
+    "client_stderr": "",
+    "server_exit": 0,
+    "server_stdout": "[true,true,true,true,\"TLSv1.3\"]\n",
+    "server_stderr": ""
+  }
+]

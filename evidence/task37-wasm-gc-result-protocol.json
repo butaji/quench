@@ -1,0 +1,89 @@
+{
+  "schema": 1,
+  "source_head": "7e60169df033dd247f34199e084e3e8080a92a29",
+  "dirty_worktree": true,
+  "source_hashes": {
+    "crates/quench-runtime-next/src/api.rs": "80b057b15c5b0bd94eff5b14fbc00b885dc2b211f79fd25351158151341dbd5f",
+    "crates/quench-runtime-next/src/vm/wasm.rs": "b21c0953edc9a92062eb4f5f825b491774cb13e128e0633402b50010c95cb0c4",
+    "crates/quench-wasm/src/shared_wast.rs": "3f2a68ce16edb9e4a6c8726defcca8e2e6fe3545e8851dac98557fb69c3fe97b",
+    "crates/quench-wasm/src/wast_exec.rs": "25f2a35f43b8eb599301d05bd6cdd7f039d675d63477a56082d4e0054ef34bb8"
+  },
+  "suite_head": "67c8b9dc32c47d61c05a1681df349d01c85fa8ff",
+  "residual_format": 59,
+  "obligation": "Check returned GC references using the live VM type predicate, distinguishing struct, array, eq, any and i31 with recursive either alternatives.",
+  "representation": "Result comparison receives its execution store. The shared store maps Wast GC patterns to abstract embedding types and queries Runtime.wasm_value_matches_type, which composes existing transport admission and graph-aware reference validity. No copied object-kind tags, side tables, object representation changes or format changes. Scalar and legacy matching retain their own semantics.",
+  "scope": "230 matching affected pinned files and44 focused files. New12-directive controls cover struct values exported as anyref, eqref or declared struct, recursive either, i31 and null results. This changes the suite result protocol rather than guest semantics.",
+  "sources": [
+    "https://raw.githubusercontent.com/WebAssembly/spec/main/interpreter/script/runner.ml"
+  ],
+  "source_review": "Reference interpreter assert_ref_pat distinguishes struct/array/i31 and eq membership; assert_result recursively visits EitherResult. Implemented matching delegates type membership to the existing production predicate.",
+  "affected": {
+    "before": {
+      "path": "target/iteration/task37-wasm-struct-allocation-after.json",
+      "sha256": "9fb4569d1b205f84a69f09a4578a811459b7cfabf83fab9e35193c885b2cdcce",
+      "binary_sha256": "01b9bc721c059731b28ae165267e1316207cc5eff7d105b6f181c0d0ca480f3b"
+    },
+    "after": {
+      "path": "target/iteration/task37-wasm-gc-result-protocol-after.json",
+      "sha256": "a7487df0e39db1816853289f20d0e2b9110b4c33d6d8ef3ca0a917403b56332d",
+      "binary_sha256": "34d12ba0419a67775ab7c84c4ae739cc5c81495d04e257b633826933e46ea6bd"
+    },
+    "files": 230,
+    "total": 62758,
+    "before_passed": 61641,
+    "passed": 61641,
+    "failed": 1117,
+    "gains": 0,
+    "gains_by_file": {},
+    "regressions": 0,
+    "same_ids_and_input_hashes": true,
+    "all_workers_completed": true
+  },
+  "controls": {
+    "before": {
+      "path": "target/iteration/task37-wasm-gc-result-protocol-controls-before.json",
+      "sha256": "fcfa2d1f7d8286136adad26883845ede4cce2200840ce943914886bb9f9fd27e",
+      "binary_sha256": "01b9bc721c059731b28ae165267e1316207cc5eff7d105b6f181c0d0ca480f3b"
+    },
+    "after": {
+      "path": "target/iteration/task37-wasm-gc-result-protocol-controls-after.json",
+      "sha256": "f97e9c8ea9d37b8f5853d8bb72e0537ff8e94275fbc4cfc9bc43c63f2000ae2e",
+      "binary_sha256": "34d12ba0419a67775ab7c84c4ae739cc5c81495d04e257b633826933e46ea6bd"
+    },
+    "files": 44,
+    "total": 3730,
+    "before_passed": 3723,
+    "passed": 3730,
+    "failed": 0,
+    "gains": 7,
+    "gains_by_file": {
+      "target/iteration/proposals/custom-descriptors/task37-wasm-gc-result-protocol-controls.wast": 7
+    },
+    "regressions": 0,
+    "same_ids_and_input_hashes": true,
+    "all_workers_completed": true
+  },
+  "runner": {
+    "path": "target/iteration/task37-wasm-gc-result-protocol-runner",
+    "sha256": "34d12ba0419a67775ab7c84c4ae739cc5c81495d04e257b633826933e46ea6bd"
+  },
+  "checks": {
+    "frontend": {
+      "path": "target/iteration/task37-wasm-gc-result-protocol-frontend.log",
+      "sha256": "4228b26e7b6477e9bd166d39bee72fbeac23d2e20e4ace66caeaa6377560856e",
+      "passed": 32
+    },
+    "runtime": {
+      "path": "target/iteration/task37-wasm-gc-result-protocol-runtime.log",
+      "sha256": "f0bb2ef94a0fe662dfe0f79be2585c056fc61377f4b1c78dde2cba76fad43c6d",
+      "passed": 33
+    },
+    "check": {
+      "path": "target/iteration/task37-wasm-gc-result-protocol-check.log",
+      "sha256": "e3cfbc2a5ba33892f956eea764ab3a8ceeea5c0de8da9d311d862fa47f2b311a",
+      "passed": null
+    }
+  },
+  "internal_obligation": "New runner-protocol regression deliberately feeds wrong array/i31/null claims for a struct, and wrong struct claims for null/i31. It verifies those assertions fail while struct/eq/any/either succeed. This checks the verifier itself, not duplicate language conformance.",
+  "limits": "Arrays are still unimplemented, so actual array-result execution is not qualified. No full conformance suite or new Node oracle run; guest execution is unchanged. Struct initializers/field operations, remaining GC mechanisms, shared resources, exceptions, embedding, complete suite qualification, implemented Node inventory and production cutover remain open."
+}

@@ -1,0 +1,8 @@
+function function 91
+/workspace/quench/target/iteration/node/lib/internal/fs/glob.js:63
+  minimatch ??= require('internal/deps/minimatch/index');
+                ^
+
+No such file or directory (os error 2)
+
+Node.js v26.12.0

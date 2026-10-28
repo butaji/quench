@@ -1,0 +1,8 @@
+/workspace/quench/crates/quench-node-test/node-tests/test-process-warning-listener-source.js:2
+const {spawnSync}=require('child_process');
+                  ^
+
+ReferenceError: require is not defined
+    at file:///workspace/quench/crates/quench-node-test/node-tests/test-process-warning-listener-source.js:2:19
+
+Node.js v26.12.0

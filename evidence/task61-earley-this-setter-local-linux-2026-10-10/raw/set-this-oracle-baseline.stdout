@@ -1,0 +1,1 @@
+[["setter",null],["result",true,true],["setter",null],["result",true,true],["setter",false],["result",true,true],["setter",0],["result",true,true],["setter",17],["result",true,true],["setter","q"],["result",true,true],["setter",{"marker":29}],["result",true,true],["throw","blocked:strict"],["pre-super","ReferenceError"],["setter","after-super"]]

@@ -1,0 +1,223 @@
+diff --git a/crates/quench-runtime/src/heap/memory_profile.rs b/crates/quench-runtime/src/heap/memory_profile.rs
+index 83d063a6f..d3386c344 100644
+--- a/crates/quench-runtime/src/heap/memory_profile.rs
++++ b/crates/quench-runtime/src/heap/memory_profile.rs
+@@ -32,11 +32,11 @@ pub(crate) struct HeapMemoryComposition {
+     pub cell_variant_counts: Vec<usize>,
+     pub slot_arena_reserved_bytes: usize,
+     pub object_record_reserved_bytes: usize,
+-    /// Subtotal already included in `object_record_reserved_bytes`.
+-    pub object_record_free_id_capacity_bytes: usize,
++    pub object_record_reusable_ids: usize,
++    pub object_record_allocation_scan_cursor: usize,
+     pub array_record_reserved_bytes: usize,
+-    /// Subtotal already included in `array_record_reserved_bytes`.
+-    pub array_record_free_id_capacity_bytes: usize,
++    pub array_record_reusable_ids: usize,
++    pub array_record_allocation_scan_cursor: usize,
+     pub legacy_cell_record_reserved_bytes: usize,
+     pub free_slot_metadata_bytes: usize,
+     pub slot_size_bytes: usize,
+@@ -588,11 +588,11 @@ impl Heap {
+             cell_variant_counts: cell_variant_counts.values().copied().collect(),
+             slot_arena_reserved_bytes: self.slots.capacity() * size_of::<Slot>(),
+             object_record_reserved_bytes: self.object_records.allocated_bytes(),
+-            object_record_free_id_capacity_bytes: self
+-                .object_records
+-                .free_id_vector_capacity_bytes(),
++            object_record_reusable_ids: self.object_records.reusable_ids(),
++            object_record_allocation_scan_cursor: self.object_records.allocation_scan_cursor(),
+             array_record_reserved_bytes: self.array_records.allocated_bytes(),
+-            array_record_free_id_capacity_bytes: self.array_records.free_id_vector_capacity_bytes(),
++            array_record_reusable_ids: self.array_records.reusable_ids(),
++            array_record_allocation_scan_cursor: self.array_records.allocation_scan_cursor(),
+             legacy_cell_record_reserved_bytes: 0,
+             free_slot_metadata_bytes: self.free_by_slab.capacity() * size_of::<FreeSlotBitmap>()
+                 + self.free_slabs.capacity() * size_of::<u32>(),
+diff --git a/crates/quench-runtime/src/heap/records.rs b/crates/quench-runtime/src/heap/records.rs
+index e5659a6d7..5d9b5b100 100644
+--- a/crates/quench-runtime/src/heap/records.rs
++++ b/crates/quench-runtime/src/heap/records.rs
+@@ -28,7 +28,7 @@ pub(super) struct RecordSpace<T> {
+     reservation_failed: bool,
+     blocks: Vec<RecordBlock>,
+     next_id: u32,
+-    free: Vec<u32>,
++    free_cursor: RecordId,
+     live: usize,
+ }
+ 
+@@ -40,7 +40,7 @@ impl<T> Default for RecordSpace<T> {
+             reservation_failed: false,
+             blocks: Vec::new(),
+             next_id: 0,
+-            free: Vec::new(),
++            free_cursor: 0,
+             live: 0,
+         }
+     }
+@@ -116,7 +116,9 @@ impl<T> RecordSpace<T> {
+         if !self.ensure_reserved() {
+             return Err(value);
+         }
+-        let reused = self.free.last().copied();
++        let reused = (self.free_cursor != 0)
++            .then(|| self.highest_free_before(self.free_cursor))
++            .flatten();
+         let id = reused.unwrap_or(self.next_id);
+         if id as usize >= RECORD_SPACE_CAPACITY {
+             return Err(value);
+@@ -135,9 +137,10 @@ impl<T> RecordSpace<T> {
+                 .add(id as usize)
+                 .write(MaybeUninit::new(value));
+         };
+-        if reused.is_some() {
+-            self.free.pop();
++        if let Some(reused_id) = reused {
++            self.free_cursor = reused_id;
+         } else {
++            self.free_cursor = 0;
+             self.next_id += 1;
+         }
+         self.live += 1;
+@@ -197,7 +200,7 @@ impl<T> RecordSpace<T> {
+         self.blocks[block_index].release(record_index);
+         self.blocks[block_index].marked[record_index / OCCUPANCY_WORD_BITS] &=
+             !(1_u64 << (record_index % OCCUPANCY_WORD_BITS));
+-        self.free.push(id);
++        self.free_cursor = self.next_id;
+         self.live -= 1;
+         // SAFETY: release cleared the bit and this id was initialized exactly once.
+         unsafe { self.base.as_ptr().add(id as usize).read().assume_init() }
+@@ -281,7 +284,6 @@ impl<T> RecordSpace<T> {
+                     let record_index = word_index * OCCUPANCY_WORD_BITS + bit;
+                     let id = (block_index * RECORDS_PER_BLOCK + record_index) as RecordId;
+                     block.occupied[word_index] &= !(1_u64 << bit);
+-                    self.free.push(id);
+                     // SAFETY: the occupied bit proves initialization and its
+                     // removal transfers this record to the drop callback.
+                     let value = unsafe { self.base.as_ptr().add(id as usize).read().assume_init() };
+@@ -293,6 +295,11 @@ impl<T> RecordSpace<T> {
+             }
+         }
+         self.live = live_count;
++        self.free_cursor = if live_count < self.next_id as usize {
++            self.next_id
++        } else {
++            0
++        };
+         (live_count, freed_count)
+     }
+ 
+@@ -351,16 +358,45 @@ impl<T> RecordSpace<T> {
+         (id / RECORDS_PER_BLOCK, id % RECORDS_PER_BLOCK)
+     }
+ 
++    fn highest_free_before(&self, mut end: RecordId) -> Option<RecordId> {
++        while end != 0 {
++            let candidate = end - 1;
++            let (block_index, record_index) = Self::split_id(candidate);
++            let word_index = record_index / OCCUPANCY_WORD_BITS;
++            let bit_count = record_index % OCCUPANCY_WORD_BITS + 1;
++            let valid_bits = u64::MAX >> (OCCUPANCY_WORD_BITS - bit_count);
++            let occupied = self
++                .blocks
++                .get(block_index)
++                .expect("every allocated ID belongs to an initialized record block")
++                .occupied[word_index];
++            let free_bits = !occupied & valid_bits;
++            if free_bits != 0 {
++                let bit = OCCUPANCY_WORD_BITS - 1 - free_bits.leading_zeros() as usize;
++                return Some(
++                    (block_index * RECORDS_PER_BLOCK + word_index * OCCUPANCY_WORD_BITS + bit)
++                        as RecordId,
++                );
++            }
++            end = (block_index * RECORDS_PER_BLOCK + word_index * OCCUPANCY_WORD_BITS) as RecordId;
++        }
++        None
++    }
++
+     #[cfg(feature = "profile-memory")]
+     pub(super) fn allocated_bytes(&self) -> usize {
+         self.blocks.len() * RECORDS_PER_BLOCK * size_of::<T>()
+             + self.blocks.capacity() * size_of::<RecordBlock>()
+-            + self.free.capacity() * size_of::<RecordId>()
+     }
+ 
+     #[cfg(feature = "profile-memory")]
+-    pub(super) fn free_id_vector_capacity_bytes(&self) -> usize {
+-        self.free.capacity() * size_of::<RecordId>()
++    pub(super) fn reusable_ids(&self) -> usize {
++        self.next_id as usize - self.live
++    }
++
++    #[cfg(feature = "profile-memory")]
++    pub(super) fn allocation_scan_cursor(&self) -> usize {
++        self.free_cursor as usize
+     }
+ }
+ 
+@@ -452,4 +488,35 @@ mod tests {
+         assert!(!arena.is_live(dead));
+         assert_eq!(arena.try_insert(String::from("reused")).unwrap(), dead);
+     }
++
++    #[test]
++    fn bitmap_reuse_preserves_descending_free_id_order_across_sweeps() {
++        use super::RecordSweep;
++
++        let mut arena = RecordSpace::default();
++        let ids: Vec<_> = (0..6)
++            .map(|value| arena.try_insert(value).unwrap())
++            .collect();
++        for &live in &[ids[1], ids[4]] {
++            assert!(arena.mark(live));
++        }
++
++        let mut dead_ids = Vec::new();
++        let (live_count, freed_count) = arena.sweep(|record| match record {
++            RecordSweep::Keep(_, _) => {}
++            RecordSweep::Dead(id, _) => dead_ids.push(id),
++        });
++        assert_eq!((live_count, freed_count), (2, 4));
++        assert_eq!(dead_ids, [ids[0], ids[2], ids[3], ids[5]]);
++
++        assert_eq!(arena.try_insert(10).unwrap(), ids[5]);
++        for &live in &[ids[1], ids[4], ids[5]] {
++            assert!(arena.mark(live));
++        }
++        assert_eq!(arena.sweep(|_| {}), (3, 0));
++        assert_eq!(arena.try_insert(11).unwrap(), ids[3]);
++        assert_eq!(arena.try_insert(12).unwrap(), ids[2]);
++        assert_eq!(arena.try_insert(13).unwrap(), ids[0]);
++        assert_eq!(arena.try_insert(14).unwrap(), 6);
++    }
+ }
+diff --git a/crates/quench-runtime/src/vm.rs b/crates/quench-runtime/src/vm.rs
+index 50427ee5b..8d92787f4 100644
+--- a/crates/quench-runtime/src/vm.rs
++++ b/crates/quench-runtime/src/vm.rs
+@@ -1448,7 +1448,7 @@ impl<H: Host> Vm<H> {
+             + heap.sparse_array_sidecar_bytes
+             + vm_metadata_bytes;
+         eprintln!(
+-            "{{\"kind\":\"quench-memory-composition\",\"phase\":\"{phase}\",\"collection\":{},\"cell_kind_names\":{:?},\"cell_counts\":{:?},\"cell_variant_names\":{:?},\"cell_variant_counts\":{:?},\"occupied_slots\":{},\"complete_slot_slabs\":{},\"fully_free_slot_slabs\":{},\"partial_slot_slabs\":{},\"fully_empty_slot_pages\":{fully_empty_slot_pages},\"slot_arena_reserved_bytes\":{},\"object_record_reserved_bytes\":{},\"object_record_free_id_capacity_bytes\":{},\"array_record_reserved_bytes\":{},\"array_record_free_id_capacity_bytes\":{},\"legacy_cell_record_reserved_bytes\":{},\"free_slot_metadata_bytes\":{},\"object_headers\":{},\"embedded_object_headers\":{},\"boxed_object_headers\":{},\"boxed_object_header_bytes\":{},\"object_property_counts_by_width\":{:?},\"inline_property_attribution_bytes_overlapping_slots\":{},\"object_header_size_bytes\":{},\"cell_size_bytes\":{},\"slot_size_bytes\":{},\"property_arena_values_bytes\":{},\"property_arena_metadata_bytes\":{},\"property_arena_used_values\":{},\"property_arena_capacity_values\":{},\"live_property_used_values\":{},\"live_property_capacity_values\":{},\"live_property_used_values_by_width\":{:?},\"live_property_capacity_values_by_width\":{:?},\"dense_array_elements_bytes\":{},\"dense_array_headers_bytes\":{},\"dense_array_backing_count\":{},\"sparse_array_sidecar_bytes\":{},\"string_buffers_bytes\":{},\"string_buffer_count\":{},\"other_cell_payload_bytes\":{},\"cell_payload_total_bytes\":{},\"shape_table_bytes\":{},\"shape_lookup_bytes\":{},\"transition_table_bytes\":{},\"descriptor_side_table_bytes\":{},\"cache_side_table_bytes\":{},\"atom_side_table_bytes\":{},\"frame_bytes\":{},\"profile_instrumentation_bytes\":{},\"accounted_runtime_bytes\":{},\"accounted_with_profile_bytes\":{}}}",
++            "{{\"kind\":\"quench-memory-composition\",\"phase\":\"{phase}\",\"collection\":{},\"cell_kind_names\":{:?},\"cell_counts\":{:?},\"cell_variant_names\":{:?},\"cell_variant_counts\":{:?},\"occupied_slots\":{},\"complete_slot_slabs\":{},\"fully_free_slot_slabs\":{},\"partial_slot_slabs\":{},\"fully_empty_slot_pages\":{fully_empty_slot_pages},\"slot_arena_reserved_bytes\":{},\"object_record_reserved_bytes\":{},\"object_record_reusable_ids\":{},\"object_record_allocation_scan_cursor\":{},\"array_record_reserved_bytes\":{},\"array_record_reusable_ids\":{},\"array_record_allocation_scan_cursor\":{},\"legacy_cell_record_reserved_bytes\":{},\"free_slot_metadata_bytes\":{},\"object_headers\":{},\"embedded_object_headers\":{},\"boxed_object_headers\":{},\"boxed_object_header_bytes\":{},\"object_property_counts_by_width\":{:?},\"inline_property_attribution_bytes_overlapping_slots\":{},\"object_header_size_bytes\":{},\"cell_size_bytes\":{},\"slot_size_bytes\":{},\"property_arena_values_bytes\":{},\"property_arena_metadata_bytes\":{},\"property_arena_used_values\":{},\"property_arena_capacity_values\":{},\"live_property_used_values\":{},\"live_property_capacity_values\":{},\"live_property_used_values_by_width\":{:?},\"live_property_capacity_values_by_width\":{:?},\"dense_array_elements_bytes\":{},\"dense_array_headers_bytes\":{},\"dense_array_backing_count\":{},\"sparse_array_sidecar_bytes\":{},\"string_buffers_bytes\":{},\"string_buffer_count\":{},\"other_cell_payload_bytes\":{},\"cell_payload_total_bytes\":{},\"shape_table_bytes\":{},\"shape_lookup_bytes\":{},\"transition_table_bytes\":{},\"descriptor_side_table_bytes\":{},\"cache_side_table_bytes\":{},\"atom_side_table_bytes\":{},\"frame_bytes\":{},\"profile_instrumentation_bytes\":{},\"accounted_runtime_bytes\":{},\"accounted_with_profile_bytes\":{}}}",
+             self.heap.collection_count(),
+             CellKind::NAMES,
+             heap.cell_counts,
+@@ -1460,9 +1460,11 @@ impl<H: Host> Vm<H> {
+             partial_slot_slabs,
+             heap.slot_arena_reserved_bytes,
+             heap.object_record_reserved_bytes,
+-            heap.object_record_free_id_capacity_bytes,
++            heap.object_record_reusable_ids,
++            heap.object_record_allocation_scan_cursor,
+             heap.array_record_reserved_bytes,
+-            heap.array_record_free_id_capacity_bytes,
++            heap.array_record_reusable_ids,
++            heap.array_record_allocation_scan_cursor,
+             heap.legacy_cell_record_reserved_bytes,
+             heap.free_slot_metadata_bytes,
+             heap.object_headers,

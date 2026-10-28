@@ -1,0 +1,31 @@
+{
+  "cwd": "/workspace/quench",
+  "commands": [
+    [
+      "python3",
+      "work/latest-node-audit/run-full.py",
+      "--bundle",
+      "/workspace/quench/work/native-buffer-pool-bin",
+      "--checkout",
+      "/workspace/quench/work/native-buffer-full-checkout",
+      "--label",
+      "native-buffer-pool",
+      "--release",
+      "stable"
+    ],
+    [
+      "python3",
+      "work/latest-node-audit/run-full.py",
+      "--bundle",
+      "/workspace/quench/work/native-buffer-pool-bin",
+      "--checkout",
+      "/workspace/quench/work/native-buffer-full-checkout",
+      "--label",
+      "native-buffer-pool",
+      "--release",
+      "pinned"
+    ]
+  ],
+  "state": "/workspace/quench/work/task-supervisor/buffer-full-state.json",
+  "log": "/workspace/quench/work/task-supervisor/buffer-full.log"
+}

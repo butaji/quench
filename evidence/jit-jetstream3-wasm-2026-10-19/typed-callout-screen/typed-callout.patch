@@ -1,0 +1,288 @@
+diff --git a/crates/quench-runtime/src/vm/compiled.rs b/crates/quench-runtime/src/vm/compiled.rs
+index 5d2046866..5a45f13f9 100644
+--- a/crates/quench-runtime/src/vm/compiled.rs
++++ b/crates/quench-runtime/src/vm/compiled.rs
+@@ -300,6 +300,7 @@ const JIT_WASM_SELECTIVE_ENV: &str = "QUENCH_WASM_JIT_SELECTIVE";
+ const JIT_DIRECT_COMPARE_BRANCHES_ENV: &str = "QUENCH_WASM_JIT_DIRECT_COMPARE_BRANCHES";
+ const JIT_AFFINE_PAIR_ENV: &str = "QUENCH_WASM_JIT_AFFINE_PAIR";
+ const JIT_REFERENCE_BODY_CACHE_ENV: &str = "QUENCH_WASM_JIT_REFERENCE_BODY_CACHE";
++const JIT_TYPED_CALLOUTS_ENV: &str = "QUENCH_WASM_JIT_TYPED_CALLOUTS";
+ const JIT_EMSCRIPTEN_MEMCPY_LEAF_ENV: &str = "QUENCH_WASM_JIT_EMSCRIPTEN_MEMCPY_LEAF";
+ const JIT_NATIVE_ENTRY_SAMPLE_INTERVAL: u64 = 256;
+ const MAX_JIT_ROOT_FUNCTIONS: usize = 128;
+@@ -351,6 +352,14 @@ fn jit_reference_body_cache_enabled() -> bool {
+         .is_ok_and(|value| matches!(value.as_str(), "1" | "true"))
+ }
+ 
++fn jit_typed_callouts_enabled() -> bool {
++    #[cfg(test)]
++    if let Some(enabled) = WASM_JIT_TYPED_CALLOUTS_TEST_OVERRIDE.with(std::cell::Cell::get) {
++        return enabled;
++    }
++    std::env::var(JIT_TYPED_CALLOUTS_ENV).is_ok_and(|value| matches!(value.as_str(), "1" | "true"))
++}
++
+ fn jit_emscripten_memcpy_leaf_enabled() -> bool {
+     std::env::var(JIT_EMSCRIPTEN_MEMCPY_LEAF_ENV)
+         .is_ok_and(|value| matches!(value.as_str(), "1" | "true"))
+@@ -386,6 +395,8 @@ thread_local! {
+         const { std::cell::Cell::new(None) };
+     static WASM_JIT_DIRECT_COMPARE_BRANCHES_TEST_OVERRIDE: std::cell::Cell<Option<bool>> =
+         const { std::cell::Cell::new(None) };
++    static WASM_JIT_TYPED_CALLOUTS_TEST_OVERRIDE: std::cell::Cell<Option<bool>> =
++        const { std::cell::Cell::new(None) };
+ }
+ 
+ #[cfg(test)]
+@@ -434,6 +445,22 @@ pub(super) fn with_jit_direct_compare_branches_for_test<R>(
+     run()
+ }
+ 
++#[cfg(test)]
++pub(super) fn with_jit_typed_callouts_for_test<R>(enabled: bool, run: impl FnOnce() -> R) -> R {
++    struct Restore(Option<bool>);
++
++    impl Drop for Restore {
++        fn drop(&mut self) {
++            WASM_JIT_TYPED_CALLOUTS_TEST_OVERRIDE.with(|override_mode| override_mode.set(self.0));
++        }
++    }
++
++    let previous = WASM_JIT_TYPED_CALLOUTS_TEST_OVERRIDE
++        .with(|override_mode| override_mode.replace(Some(enabled)));
++    let _restore = Restore(previous);
++    run()
++}
++
+ fn jit_root_opt_level(root: Option<usize>, root_only: bool) -> Result<&'static str, ()> {
+     if root.is_none() {
+         return Ok("speed");
+@@ -563,6 +590,8 @@ struct CallContext {
+     /// Per-import attribution, present only during opt-in diagnostic runs.
+     import_callout_counts: *const std::cell::Cell<u64>,
+     import_callout_count: usize,
++    /// Typed import ABI used when the signature is `(i32, i32, i32) -> ()`.
++    typed_i32x3_void_callout: usize,
+ }
+ 
+ impl CallContext {
+@@ -605,6 +634,7 @@ impl CallContext {
+             emscripten_memcpy_leaf_hits: self.emscripten_memcpy_leaf_hits,
+             import_callout_counts: self.import_callout_counts,
+             import_callout_count: self.import_callout_count,
++            typed_i32x3_void_callout: self.typed_i32x3_void_callout,
+         }
+     }
+ }
+@@ -622,6 +652,8 @@ const CONTEXT_TABLE: i32 = std::mem::offset_of!(CallContext, table) as i32;
+ const CONTEXT_ENTRY_STACK: u8 = std::mem::offset_of!(CallContext, entry_stack) as u8;
+ const CONTEXT_GLOBALS: i32 = std::mem::offset_of!(CallContext, globals) as i32;
+ const CONTEXT_CALLOUT: i32 = std::mem::offset_of!(CallContext, callout) as i32;
++const CONTEXT_TYPED_I32X3_VOID_CALLOUT: i32 =
++    std::mem::offset_of!(CallContext, typed_i32x3_void_callout) as i32;
+ const CONTEXT_CALL_REFERENCE: i32 = std::mem::offset_of!(CallContext, call_reference) as i32;
+ const CONTEXT_MEMORY_LENGTH: i32 = std::mem::offset_of!(CallContext, memory_length) as i32;
+ const CONTEXT_CALL_REFERENCE_DIAGNOSTIC: i32 =
+@@ -640,6 +672,7 @@ const MEMCPY_CACHE_FUNCTION: i32 = std::mem::offset_of!(EmscriptenMemcpyCache, f
+ /// The callout's signature: (context, function index, arguments, result) ->
+ /// status; arguments and result are Wasm bits, one word each.
+ type Callout = unsafe extern "C" fn(*mut CallContext, u64, *const u64, *mut u64) -> i64;
++type TypedI32x3VoidCallout = unsafe extern "C" fn(*mut CallContext, u64, i32, i32, i32) -> i64;
+ type DirectMemcpyLeaf = unsafe extern "C" fn(*mut CallContext, u64, i32, i32, i32) -> i64;
+ type ReferenceCallout = unsafe extern "C" fn(
+     *mut CallContext,
+@@ -653,6 +686,16 @@ type ReferenceCallout = unsafe extern "C" fn(
+ ) -> i64;
+ type DiagnosticReferenceCallout = ReferenceCallout;
+ 
++fn is_i32x3_void_signature(signature: &crate::WasmSignature) -> bool {
++    signature.params.as_slice()
++        == [
++            crate::WasmType::I32,
++            crate::WasmType::I32,
++            crate::WasmType::I32,
++        ]
++        && signature.results.is_empty()
++}
++
+ /// A monomorphic target certificate for one same-artifact indirect-call site.
+ /// The body pointer is owned by this artifact's code mapping. The VM publishes
+ /// the epoch last after a successful target return and a table-slot recheck;
+@@ -1458,6 +1501,27 @@ unsafe extern "C" fn import_callout<H: Host>(
+     finish_callout(context, called)
+ }
+ 
++/// Typed ABI adapter for imports with signature `(i32, i32, i32) -> ()`.
++/// It reuses the generic callout entry so interrupt handling, host effects,
++/// error/panic propagation, cache invalidation and memory refresh stay shared.
++unsafe extern "C" fn import_callout_i32x3_void<H: Host>(
++    context: *mut CallContext,
++    function: u64,
++    first: i32,
++    second: i32,
++    third: i32,
++) -> i64 {
++    let args = [
++        u64::from(first as u32),
++        u64::from(second as u32),
++        u64::from(third as u32),
++    ];
++    let mut out = 0u64;
++    // SAFETY: the typed signature proves three Wasm i32 words and the void
++    // result makes the local output word intentionally unread.
++    unsafe { import_callout::<H>(context, function, args.as_ptr(), &mut out) }
++}
++
+ /// A compiled function's entry: (context, memory base, memory length,
+ /// arguments, result) -> status.
+ type Entry = unsafe extern "C" fn(*mut CallContext, u64, u64, *const u64, *mut u64) -> u32;
+@@ -3632,6 +3696,8 @@ struct Emitter<'a, 'b, H: Host> {
+     reference_body_cache: bool,
+     /// Emit a guarded direct leaf for the canonical Emscripten memcpy import.
+     emscripten_memcpy_leaf: bool,
++    /// Pass `(i32, i32, i32) -> ()` imports in registers to a typed callout.
++    typed_i32x3_void_callouts: bool,
+     /// The guarded memory repeats above 2^32 (`CompiledProgram::wraps`).
+     wraps: bool,
+     /// Per `Region`, its alias region in this function.
+@@ -3656,6 +3722,7 @@ struct Emitter<'a, 'b, H: Host> {
+     /// Per callee, its imported name in this function.
+     callees: Vec<Option<ir::FuncRef>>,
+     callout_signature: Option<ir::SigRef>,
++    typed_callout_signature: Option<ir::SigRef>,
+     plans: &'a [Option<Plan>],
+     call_conv: cranelift_codegen::isa::CallConv,
+     instructions: &'a [WideInstruction],
+@@ -4335,9 +4402,53 @@ impl<H: Host> Emitter<'_, '_, H> {
+             self.callout_emscripten_memcpy_leaf(function, instruction);
+             return;
+         }
++        if self.typed_i32x3_void_callouts && is_i32x3_void_signature(signature) {
++            self.callout_i32x3_void(function, instruction);
++            return;
++        }
+         self.callout_function_generic(function, signature, instruction);
+     }
+ 
++    /// Pass a statically typed three-i32 void import through registers. The
++    /// callback retains the ordinary import-callout boundary and only builds
++    /// the Wasm-word array when it enters that shared path.
++    fn callout_i32x3_void(&mut self, function: u32, instruction: WideInstruction) {
++        let callout_signature = match self.typed_callout_signature {
++            Some(signature) => signature,
++            None => {
++                let mut callout = Signature::new(self.call_conv);
++                callout.params.push(AbiParam::new(types::I64));
++                callout.params.push(AbiParam::new(types::I64));
++                callout
++                    .params
++                    .extend((0..3).map(|_| AbiParam::new(types::I32)));
++                callout.returns.push(AbiParam::new(types::I64));
++                let callout = self.builder.import_signature(callout);
++                self.typed_callout_signature = Some(callout);
++                callout
++            }
++        };
++        let target = self.builder.ins().load(
++            types::I64,
++            invariant(),
++            self.context,
++            CONTEXT_TYPED_I32X3_VOID_CALLOUT,
++        );
++        let function = self.builder.ins().iconst(types::I64, i64::from(function));
++        let window = instruction.call_window();
++        let first = self.read(window.base, Kind::I32);
++        let second = self.read(window.base + 1, Kind::I32);
++        let third = self.read(window.base + 2, Kind::I32);
++        let call = self.builder.ins().call_indirect(
++            callout_signature,
++            target,
++            &[self.context, function, first, second, third],
++        );
++        let status = self.builder.inst_results(call)[0];
++        self.propagate(status);
++        self.write_constant(instruction.result_register(), Kind::I32, 0);
++    }
++
+     fn is_emscripten_memcpy_import(&self, function: u32, signature: &crate::WasmSignature) -> bool {
+         let Some(signatures) = self
+             .analysis
+@@ -5420,6 +5531,7 @@ impl<'a, H: Host> Analysis<'a, H> {
+             direct_compare_branches: jit_direct_compare_branches_enabled(),
+             reference_body_cache: jit_reference_body_cache_enabled(),
+             emscripten_memcpy_leaf: jit_emscripten_memcpy_leaf_enabled(),
++            typed_i32x3_void_callouts: jit_typed_callouts_enabled(),
+             wraps,
+             regions,
+             globals,
+@@ -5438,6 +5550,7 @@ impl<'a, H: Host> Analysis<'a, H> {
+             termination_block: None,
+             callees: vec![None; plans.len()],
+             callout_signature: None,
++            typed_callout_signature: None,
+             plans,
+             call_conv,
+             instructions: &instructions,
+@@ -6969,6 +7082,8 @@ impl<H: Host> Vm<H> {
+                     .diagnostics
+                     .as_ref()
+                     .map_or(0, |stats| stats.import_callout_counts.len()),
++                typed_i32x3_void_callout: import_callout_i32x3_void::<H> as TypedI32x3VoidCallout
++                    as usize,
+             };
+             let mut out = 0u64;
+             let native_entry_should_sample = compiled.note_native_entry(id as usize);
+@@ -7484,6 +7599,7 @@ mod tests {
+             emscripten_memcpy_leaf_hits: hits,
+             import_callout_counts: std::ptr::null(),
+             import_callout_count: 0,
++            typed_i32x3_void_callout: 0,
+         }
+     }
+ 
+diff --git a/crates/quench-runtime/src/vm/wasm_host.rs b/crates/quench-runtime/src/vm/wasm_host.rs
+index 728521373..5b0cca78c 100644
+--- a/crates/quench-runtime/src/vm/wasm_host.rs
++++ b/crates/quench-runtime/src/vm/wasm_host.rs
+@@ -824,7 +824,10 @@ mod tests {
+         let environment = vm
+             .root_value(instance.environment)
+             .expect("live Wasm instance environment");
+-        assert!(vm.install_compiled_diagnostics_for_test(program, environment));
++        assert!(super::compiled::with_jit_typed_callouts_for_test(
++            true,
++            || { vm.install_compiled_diagnostics_for_test(program, environment) }
++        ));
+ 
+         let cases = [
+             (7, 2, 10),
+diff --git a/quench-bench/src/main.rs b/quench-bench/src/main.rs
+index 3200a0128..3a41446d4 100644
+--- a/quench-bench/src/main.rs
++++ b/quench-bench/src/main.rs
+@@ -39,6 +39,7 @@ const QUENCH_WASM_JIT_EMSCRIPTEN_MEMCPY_LEAF: &str = "QUENCH_WASM_JIT_EMSCRIPTEN
+ const QUENCH_WASM_JIT_DIRECT_COMPARE_BRANCHES: &str = "QUENCH_WASM_JIT_DIRECT_COMPARE_BRANCHES";
+ const QUENCH_WASM_JIT_AFFINE_PAIR: &str = "QUENCH_WASM_JIT_AFFINE_PAIR";
+ const QUENCH_WASM_JIT_REFERENCE_BODY_CACHE: &str = "QUENCH_WASM_JIT_REFERENCE_BODY_CACHE";
++const QUENCH_WASM_JIT_TYPED_CALLOUTS: &str = "QUENCH_WASM_JIT_TYPED_CALLOUTS";
+ const QUENCH_WASM_JIT_SELECTIVE: &str = "QUENCH_WASM_JIT_SELECTIVE";
+ const FIXED_WORK_REPORT_SCHEMA: u32 = 5;
+ const SUITE_REPORT_SCHEMA: u32 = 16;
+@@ -767,6 +768,7 @@ fn main() {
+         && !options.jit_wasm_reference_body_cache_ab
+         && !options.jit_wasm_memcpy_leaf_ab
+         && !options.jit_wasm_selective_ab
++        && env::var_os(QUENCH_WASM_JIT_TYPED_CALLOUTS).is_none()
+         && report
+             .fixtures
+             .values()
+@@ -1900,6 +1902,9 @@ fn quench_engine(options: &Options) -> EngineSpec {
+             environment.insert("QUENCH_WASM_JIT_ROOT_OPT_LEVEL".into(), value);
+         }
+     }
++    if let Ok(value) = std::env::var(QUENCH_WASM_JIT_TYPED_CALLOUTS) {
++        environment.insert(QUENCH_WASM_JIT_TYPED_CALLOUTS.into(), value);
++    }
+     if options.jit_wasm_selective {
+         environment.insert("QUENCH_WASM_JIT_SELECTIVE".into(), "1".into());
+     }

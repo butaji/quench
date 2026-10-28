@@ -1,0 +1,175 @@
+{
+  "production_source": "faa120035a332d3b5eb232eaadcad1399f306d7d",
+  "cases": 36065,
+  "differences": 1996,
+  "by_function": {
+    "cbrt": 986,
+    "atan2": 900,
+    "atan": 110
+  },
+  "examples": [
+    {
+      "node": {
+        "name": "cbrt",
+        "args": [
+          "23ace6084e030408"
+        ],
+        "result": "36837c37a9a62e1f"
+      },
+      "quench": {
+        "name": "cbrt",
+        "args": [
+          "23ace6084e030408"
+        ],
+        "result": "36837c37a9a62e1e"
+      }
+    },
+    {
+      "node": {
+        "name": "cbrt",
+        "args": [
+          "ba390ed5d3758f8c"
+        ],
+        "result": "be076903058bbee9"
+      },
+      "quench": {
+        "name": "cbrt",
+        "args": [
+          "ba390ed5d3758f8c"
+        ],
+        "result": "be076903058bbeea"
+      }
+    },
+    {
+      "node": {
+        "name": "cbrt",
+        "args": [
+          "bde4953cf2f43630"
+        ],
+        "result": "bf4166bdfe7e0152"
+      },
+      "quench": {
+        "name": "cbrt",
+        "args": [
+          "bde4953cf2f43630"
+        ],
+        "result": "bf4166bdfe7e0153"
+      }
+    },
+    {
+      "node": {
+        "name": "cbrt",
+        "args": [
+          "45439cac4eb3ff5c"
+        ],
+        "result": "41b592f1927d3b8c"
+      },
+      "quench": {
+        "name": "cbrt",
+        "args": [
+          "45439cac4eb3ff5c"
+        ],
+        "result": "41b592f1927d3b8d"
+      }
+    },
+    {
+      "node": {
+        "name": "cbrt",
+        "args": [
+          "028de68dcfad0804"
+        ],
+        "result": "2b78d4938439f747"
+      },
+      "quench": {
+        "name": "cbrt",
+        "args": [
+          "028de68dcfad0804"
+        ],
+        "result": "2b78d4938439f748"
+      }
+    },
+    {
+      "node": {
+        "name": "cbrt",
+        "args": [
+          "1e49d7a28f5919f8"
+        ],
+        "result": "34b7a6e6ff96d5ba"
+      },
+      "quench": {
+        "name": "cbrt",
+        "args": [
+          "1e49d7a28f5919f8"
+        ],
+        "result": "34b7a6e6ff96d5b9"
+      }
+    },
+    {
+      "node": {
+        "name": "atan2",
+        "args": [
+          "a92a26b4ace7a7ea",
+          "a5ecdfd87b9f1b71"
+        ],
+        "result": "bff921fb54442d1a"
+      },
+      "quench": {
+        "name": "atan2",
+        "args": [
+          "a92a26b4ace7a7ea",
+          "a5ecdfd87b9f1b71"
+        ],
+        "result": "bff921fb54442d19"
+      }
+    },
+    {
+      "node": {
+        "name": "cbrt",
+        "args": [
+          "2dbcaa191b5482a4"
+        ],
+        "result": "39ded8dc49f3648b"
+      },
+      "quench": {
+        "name": "cbrt",
+        "args": [
+          "2dbcaa191b5482a4"
+        ],
+        "result": "39ded8dc49f3648a"
+      }
+    },
+    {
+      "node": {
+        "name": "cbrt",
+        "args": [
+          "500b3a374a06b83c"
+        ],
+        "result": "454e52a07619dfd0"
+      },
+      "quench": {
+        "name": "cbrt",
+        "args": [
+          "500b3a374a06b83c"
+        ],
+        "result": "454e52a07619dfcf"
+      }
+    },
+    {
+      "node": {
+        "name": "cbrt",
+        "args": [
+          "66ea01bc8a80f98c"
+        ],
+        "result": "4ceddcd8f97a46ca"
+      },
+      "quench": {
+        "name": "cbrt",
+        "args": [
+          "66ea01bc8a80f98c"
+        ],
+        "result": "4ceddcd8f97a46cb"
+      }
+    }
+  ],
+  "qualified": false
+}

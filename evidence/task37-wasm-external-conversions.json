@@ -1,0 +1,144 @@
+{
+  "schema": 1,
+  "source_head": "7e60169df033dd247f34199e084e3e8080a92a29",
+  "dirty_worktree": true,
+  "source_hashes": {
+    "crates/quench-runtime-next/src/wasm/reference.rs": "66e0c2c8259faf66bb468d58f99a0b46221f467628d6c5d4c69d3df15427d678",
+    "crates/quench-runtime-next/src/wasm/constant.rs": "2cc6086b5295e3bcc97c25b8cb908d4b9f9d78ca635d00ae036f2096574c17b5",
+    "crates/quench-runtime-next/src/wasm/i31.rs": "f30df7122a629a9dd9d536f607312894d65cc9bb10df023cffa973f1a044471c",
+    "crates/quench-runtime-next/src/heap.rs": "985e175a5d2a480008d37463ecdc3320f4dedd877d8788ef4cc9670075900a5a",
+    "crates/quench-runtime-next/src/heap/cell.rs": "9d5515c5e83f7a0393da327b77379bfbe33fcba3c07ca1a276736a92b5e50042",
+    "crates/quench-runtime-next/src/heap/memory_profile.rs": "9df897f8d1b65b5d430a1f588624cf32ad3dfe1d5c529e22f12a96fa09b99341",
+    "crates/quench-runtime-next/src/heap/tests.rs": "d9239ce80cf076c2ab58150a6dbe75f2ce826241bc3e6a529099a13cb3ea0768",
+    "crates/quench-runtime-next/src/vm/wasm.rs": "315a2e57ee11f47c7180a0435dd3aa250a958dfd80d20cc59253a8a305db70e0",
+    "crates/quench-runtime-next/src/vm/wasm_host.rs": "4e629098ac1db12b00b0e01c207fe1ad9f19b70d6f7543fa8585a994f457adfd",
+    "crates/quench-runtime-next/src/vm/wasm_table.rs": "890d260c1ac565a7634f72a856c426588bc04fab3bf209f2977f765e22cfc45e",
+    "crates/quench-runtime-next/src/vm/dispatch.rs": "9bc2dbf09ac33fe0a74778a85a782d42f6259ac01813106e1a422c41f0ee7f77",
+    "crates/quench-runtime-next/src/vm/json.rs": "ad7118d486cdba46cbb88638c9326969f034d11b2857e15b9af716a6a8328dc8",
+    "crates/quench-runtime-next/src/api.rs": "32e8c0f8a8364cca3667ec1797be7e020154af850b49f992d64727c09ac9b527",
+    "crates/quench-runtime-next/src/bytecode.rs": "c01d08603d9dcf81fe378c61672724264122c6b2dbb7cfd05c87a4ce7b73e699",
+    "crates/quench-runtime-next/src/bytecode/validate.rs": "9d538db895caa2a50d7d929b1a45dab92b428d8677cecb20d1c034c7a752fffc",
+    "crates/quench-runtime-next/src/bytecode/disassemble.rs": "9cca7933b20d9613b3861d9f5cec42a5fa6277e0d15ffb21111bd6cd7cedaa3e",
+    "crates/quench-wasm/src/shared_wast.rs": "7966ece0b93ef76d31d78c93db4f76410965c4630b132690e50696cf24124ce0",
+    "crates/quench-wasm/src/wast_exec.rs": "04a9e4c97d4bc4a56c6bd6019f4abf78a6a70e1ecb8f8b905ce5695edfc87a1b"
+  },
+  "suite_head": "67c8b9dc32c47d61c05a1681df349d01c85fa8ff",
+  "suite_dirty": false,
+  "residual_format": 63,
+  "obligation": "Execute any.convert_extern and extern.convert_any in instructions and constant expressions through shared semantics, preserving host and GC identity and the i31/opaque distinction.",
+  "representation": "One ExternalConversion selector derives instruction lowering, immediate validation, disassembly and symbolic initializer effects. Existing GC cells pass through; i31 bounds and signed decoding share the i31 authority. One traced WasmExtern cell retains opaque payloads outside eqref. No cache, second heap or executor. Rooted Wast host identities own script token membership; internal views derive through runtime conversion. Guest execution is never started to allocate a host identity. Residual format63 admits the appended opcode; packed field widths are unchanged.",
+  "scope": "230 matching affected pinned files, 11 focused directives, 18 matching Node observations. No full Test262 or full Wasm run; suite inputs, expectations, skips and inventory membership are unchanged.",
+  "sources": [
+    "https://raw.githubusercontent.com/WebAssembly/gc/main/proposals/gc/MVP.md"
+  ],
+  "affected": {
+    "before": {
+      "path": "target/iteration/task37-wasm-array-initializers-after.json",
+      "sha256": "6d1cfeccd6399a739963b76448970b22dbb9e3784bd1d9dd613d1c41034a3141",
+      "binary_sha256": "ebc56751c16d6372d7df7292aa6ab8e1f7923baa87d879fa3662bfea48ff92b6"
+    },
+    "after": {
+      "path": "target/iteration/task37-wasm-external-conversions-after.json",
+      "sha256": "3e7f58a807dc48c5c80466ff28c0f78797386ea3cb40972745bd9facdccd4b0f",
+      "binary_sha256": "065e22041cd73c43f01266143df7137c9f9b58a518707f0d9381a5d5c992e441"
+    },
+    "files": 230,
+    "total": 62758,
+    "before_passed": 61846,
+    "passed": 62082,
+    "failed": 676,
+    "gains": 236,
+    "gains_by_file": {
+      "crates/quench-wasm-test/testsuite/br_on_cast.wast": 27,
+      "crates/quench-wasm-test/testsuite/br_on_cast_fail.wast": 27,
+      "crates/quench-wasm-test/testsuite/extern.wast": 18,
+      "crates/quench-wasm-test/testsuite/proposals/custom-descriptors/br_on_cast.wast": 27,
+      "crates/quench-wasm-test/testsuite/proposals/custom-descriptors/br_on_cast_fail.wast": 27,
+      "crates/quench-wasm-test/testsuite/ref_cast.wast": 42,
+      "crates/quench-wasm-test/testsuite/ref_test.wast": 68
+    },
+    "regressions": 0,
+    "same_ids_and_input_hashes": true,
+    "all_workers_completed": true
+  },
+  "controls": {
+    "before": {
+      "path": "target/iteration/task37-wasm-external-conversions-controls-before.json",
+      "sha256": "ebc6219386a49f539eb4db8bf985a5af7f0c2c05977a0d196e8cb3ee94bf545f",
+      "binary_sha256": "ebc56751c16d6372d7df7292aa6ab8e1f7923baa87d879fa3662bfea48ff92b6"
+    },
+    "after": {
+      "path": "target/iteration/task37-wasm-external-conversions-controls-after.json",
+      "sha256": "3cb2ee7a5db446f190e14ac9ace99a10a0483a9f04c29581f81ce7c7baf6b0ab",
+      "binary_sha256": "065e22041cd73c43f01266143df7137c9f9b58a518707f0d9381a5d5c992e441"
+    },
+    "files": 1,
+    "total": 11,
+    "before_passed": 0,
+    "passed": 11,
+    "failed": 0,
+    "gains": 11,
+    "gains_by_file": {
+      "target/iteration/proposals/custom-descriptors/task37-wasm-external-conversions-controls.wast": 11
+    },
+    "regressions": 0,
+    "same_ids_and_input_hashes": true,
+    "all_workers_completed": true
+  },
+  "runner": {
+    "path": "target/iteration/task37-wasm-external-conversions-runner",
+    "sha256": "065e22041cd73c43f01266143df7137c9f9b58a518707f0d9381a5d5c992e441"
+  },
+  "checks": {
+    "internals": {
+      "path": "target/iteration/task37-wasm-external-conversions-internals.log",
+      "sha256": "a62809d13d6c86af7ba3cf5cca47a4e7f329bfbe2c387e934077498af95652fb"
+    },
+    "final-runtime": {
+      "path": "target/iteration/task37-wasm-external-conversions-final-runtime.log",
+      "sha256": "502dca909dc1ac0b29c1e4464eabaffc03a4d55355046d4205565332005e8ec3"
+    },
+    "frontend": {
+      "path": "target/iteration/task37-wasm-external-conversions-frontend.log",
+      "sha256": "d36f5fe218d0289765bb3161aa891f6157d2b325fca256279f7ef0633fe122f9"
+    },
+    "check": {
+      "path": "target/iteration/task37-wasm-external-conversions-check.log",
+      "sha256": "dd4b2f821270ad1cd158c227585c56f3767491ad0f43fbf18b0a633f94837c4e"
+    },
+    "build": {
+      "path": "target/iteration/task37-wasm-external-conversions-build.log",
+      "sha256": "600e6e55bbf8884e193d7f8cc16fa17a05ec97ea5f9b543be6c00b78c6c835c2"
+    }
+  },
+  "oracle": {
+    "path": "target/iteration/task37-wasm-external-conversions-oracle.json",
+    "sha256": "884815750754ae90d5b16c61492d4ca5dd7b46d5aab98edef011d933021ebe52",
+    "node": "v26.10.0",
+    "flags": [
+      "--no-sparkplug",
+      "--no-maglev",
+      "--no-turbofan",
+      "--wasm-jitless",
+      "--experimental-wasm-custom-descriptors"
+    ],
+    "matched": 18,
+    "numeric_obligation": "Ten Rust-host numeric inputs in the retained host protocol unit match Node eqref classification and exact round-trip behavior. Five global/GC observations and three opaque-host observations match focused Wast controls.",
+    "input_hashes": {
+      "target/iteration/task37-wasm-external-conversions.wat": "ae0f672460282833ff2b696b2e52deb014a76fdbf641b1812e8d7a2e8317d257",
+      "target/iteration/task37-wasm-external-conversions.wasm": "33b92063a862c77d60843c6504476782526255c99a5bed0da6f3b0c11a2867db"
+    }
+  },
+  "internal_obligation": "482 retained runtime tests pass. The existing root-lifecycle unit now traces an opaque external wrapper through GC fields. The existing Rust-host protocol unit checks numeric inputs absent from Wast opaque-token arguments. After fixing host token allocation lifecycle, all33 affected runtime checks and32 frontend checks plus profile-enabled all-target checks pass. No ordinary suite-duplicating unit added.",
+  "limits": "Array bulk and data/element-backed operations, descriptor objects, shared references/resources, exceptions and JS embedding remain open. Existing callable-type Node discrepancies remain recorded. The single-VM production cutover, complete Wasm inventory, implemented Node inventory and Stage A closure are not qualified by these affected reports.",
+  "next_first_failures": {
+    "unsupported shared Wasm: wasm-global-initializer:0..0: unsupported Wasm constant expression operator": 323,
+    "unsupported shared Wasm module state, imports or section": 117,
+    "unsupported shared Wasm: unsupported Wasm global type": 34,
+    "unsupported shared Wasm: wasm-instance:0..0: unsupported shared Wasm operator: ArrayInitElem { array_type_index: 0, array_elem_index: 0 }": 33,
+    "unsupported shared Wasm: wasm-instance:0..0: unsupported shared Wasm operator: ArrayCopy { array_type_index_dst: 1, array_type_index_src: 0 }": 31,
+    "unsupported shared Wasm: wasm-instance:0..0: unsupported shared Wasm operator: ArrayInitData { array_type_index: 1, array_data_index: 0 }": 31,
+    "unsupported shared Wasm: wasm-instance:0..0: unsupported shared Wasm operator: ArrayFill { array_type_index: 1 }": 26,
+    "unsupported shared Wasm: unsupported shared Wasm import kind": 23
+  }
+}

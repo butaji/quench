@@ -1,0 +1,12 @@
+EarleyBoyer, MemoryFirst, medians of 3 (ru.py). The mask names the segments released at every collection
+boundary; the others are released only at power-of-two boundaries. Segments: 0 = read-only data, 1 = original
+(cold after BOLT) text, 2 = BOLT hot text. Binary qseg (meas-gc-segment-release):
+mask 0: score 3756 user 4.88s sys 0.16s minflt  47427
+mask 4: score 3283 user 4.62s sys 0.40s minflt 274710   (hot text)
+mask 1: score 3705 user 4.85s sys 0.18s minflt  84550   (read-only data)
+mask 7: score 3283 user 4.58s sys 0.48s minflt 364015   (all)
+Binary qfa (fault-around mask leaves the kernel's fault-around on those segments):
+fault-around none, mask 0: score 3720 sys 0.12s minflt  40968
+fault-around none, mask 7: score 3567 sys 0.38s minflt 202658
+fault-around hot,  mask 0: score 3673 sys 0.12s minflt  39035
+fault-around hot,  mask 7: score 3477 sys 0.31s minflt 141215

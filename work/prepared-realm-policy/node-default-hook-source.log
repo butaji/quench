@@ -1,0 +1,3 @@
+function ErrorPrepareStackTrace(error, trace) {
+  return internalPrepareStackTrace(error, trace);
+}

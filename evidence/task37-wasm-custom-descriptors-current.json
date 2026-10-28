@@ -1,0 +1,44 @@
+{
+  "task": "37",
+  "source_head": "5e3ef00c3803d8e65795d49ab49c40573d95057e",
+  "source_state": "dirty shared worktree",
+  "suite_head": "67c8b9dc32c47d61c05a1681df349d01c85fa8ff",
+  "suite_clean": true,
+  "rustc": "rustc 1.99.0 (b940084d7 2026-09-28) (Homebrew)",
+  "profile": "iteration",
+  "timeout_ms_per_file": 60000,
+  "scope": {
+    "kind": "affected pinned WAST directory",
+    "directory": "proposals/custom-descriptors",
+    "files": 14,
+    "directives": 877
+  },
+  "result": {
+    "passed": 877,
+    "failed": 0,
+    "inventory_complete": true,
+    "file_errors": [],
+    "all_workers_completed": true,
+    "before_projection": null,
+    "regressions_claimed": false
+  },
+  "source_sha256": {
+    "crates/quench-wasm/src/shared.rs": "91e365c103b058b477f6eacdf5536f77fc9b9df91e554874cd80b67be9f490dd",
+    "crates/quench-runtime-next/src/wasm/scalar.rs": "24a16656e3b67bcf6e05387bfd8aa31f95deec17ee76ea558650de58b57d94f3",
+    "crates/quench-runtime-next/src/vm/wasm.rs": "700784f78eb6784921ced57c545386c12d5e21005106dea3df5c8f0d31063f78",
+    "crates/quench-wasm-test/src/bin/run-shared.rs": "cbb9799f595c39c3e1a9a33b1eee67b7123c3eb5d42ff9f7ebdad0579066b607"
+  },
+  "runner": {
+    "path": "target/iteration/run-shared",
+    "sha256": "7eaa60ee8f72aca29af2298754a0e91b308ffc088fbbf2b3b1d96383936b48e0"
+  },
+  "report": {
+    "path": "target/iteration/task37-custom-descriptors-current.json",
+    "sha256": "857ccc1d3fb0225787f7560135bc0f3b5e04754fd1c2ea98a1e286974d57f958"
+  },
+  "limits": [
+    "No matched before projection was available for this dirty-tree snapshot.",
+    "This is not a complete pinned Wasm suite result.",
+    "Production Wasm still uses legacy runtime paths until task 27."
+  ]
+}

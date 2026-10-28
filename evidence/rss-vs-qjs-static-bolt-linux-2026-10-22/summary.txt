@@ -1,0 +1,40 @@
+== board-production-dynamic
+fixture             q  q-jit    qjs target  ratio
+richards         4060   4060   3512   2809  1.156
+deltablue        4144   4672   3888   3110  1.202
+crypto           4660   5360   3756   3004  1.427
+raytrace         4060   4356   3628   2902  1.201
+earley-boyer     7652   7828  17848  14278  0.439  OK
+regexp           7724   7840   7320   5856  1.071
+splay           32612  32652  61464  49171  0.531  OK
+navier-stokes    5392   5712   5404   4323  1.057
+== board-static
+fixture             q  q-jit    qjs target  ratio
+richards         3360   3516   3628   2902  0.969
+deltablue        3532   3872   4028   3222  0.961
+crypto           4056   4380   3764   3011  1.164
+raytrace         3580   3616   3576   2860  1.011
+earley-boyer     7060   7108  17860  14288  0.398  OK
+regexp           6788   7024   7168   5734  0.980
+splay           31740  31880  60504  48403  0.527  OK
+navier-stokes    4892   4896   5296   4236  0.924
+== board-static-bolt-old-order
+fixture             q  q-jit    qjs target  ratio
+richards         2696   2820   3580   2864  0.788  OK
+deltablue        2948   3716   3944   3155  0.942
+crypto           3388   4108   3724   2979  1.103
+raytrace         2872   3092   3524   2819  0.877
+earley-boyer     6644   6768  17720  14176  0.382  OK
+regexp           6532   6636   7248   5798  0.916
+splay           31608  31616  61296  49036  0.516  OK
+navier-stokes    4360   4484   5344   4275  0.839
+== board-static-bolt-new-order
+fixture             q  q-jit    qjs target  ratio
+richards         2612   2612   3508   2806  0.745  OK
+deltablue        2788   3372   3940   3152  0.856
+crypto           3176   4124   3864   3091  1.067
+raytrace         2660   2660   3604   2883  0.738  OK
+earley-boyer     6352   6420  17752  14201  0.362  OK
+regexp           6652   6700   7096   5676  0.944
+splay           31524  31636  61260  49008  0.516  OK
+navier-stokes    4188   4148   5364   4291  0.781  OK

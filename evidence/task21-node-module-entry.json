@@ -1,0 +1,85 @@
+{
+  "schema": 1,
+  "tasks": [
+    "19",
+    "21",
+    "22",
+    "43",
+    "48",
+    "86"
+  ],
+  "source_head": "7e60169df033dd247f34199e084e3e8080a92a29",
+  "source_state": "dirty worktree",
+  "source_sha256": {
+    "crates/quench-node/src/bin/quench-node-next.rs": "bbe56aa7388622f5b0bde639a3917f6ea52ec40f6a2932861fbc3d27e7820064",
+    "crates/quench-runtime-next/src/api.rs": "b48cd014ccc83857ea78c87ae6ef9587979588bfed1cb48a8f9024c62e28e093",
+    "crates/quench-runtime-next/src/vm/promise.rs": "4f66902544e23c67481756e1fa4b7073235b79b683712003848debdbc89f0a7c"
+  },
+  "host": "Darwin arm64",
+  "cpu": "Apple M4",
+  "rustc": "rustc 1.99.0 (b940084d7 2026-09-28) (Homebrew)",
+  "build_profile": "dev, correctness only",
+  "build_command": "cargo build -p quench-node -p quench-test262 --bin quench-node-next --bin run-stages-next",
+  "build_log": "target/iteration/task21-node-module-final-source-build.log",
+  "residual_format": 71,
+  "representation": "The entry projects .mjs to the existing SourceKind::Module. OXC and the shared VM own parsing, module semantics, Promise jobs and evaluation. The Runtime pending query projects the existing ModuleRecord.outcome; it adds no state, cache, opcode, heap cell or executor. The Node entry owns the named unsettled-top-level-await exit status 13.",
+  "oracle": {
+    "node_version": "v26.10.0",
+    "report": "target/iteration/task21-node-module-controls/final-report.json",
+    "report_sha256": "14f54c0946f18966cd94a44a41d8f08befaca337316c47bc7ddfe6ce063596c6",
+    "controls": 8,
+    "exit_and_stdout_matches": 8,
+    "tracked_case_full_observations_match": "tests/node-compat/stage-2042/esm-top-level-await.mjs",
+    "source": "https://nodejs.org/api/esm.html#top-level-await",
+    "format_source": "https://nodejs.org/api/esm.html#enabling",
+    "scope": "Settled/rejected/unsettled top-level await, module strict this, exports, CJS await rejection, ordinary CJS parse goal, and the unchanged tracked TLA fixture. Error controls compare exit/stdout and rejection reason, not full diagnostic rendering. Scratch Node controls explicitly disable warnings; the tracked case uses an ordinary Node file invocation.",
+    "diagnostic_limits": "Node emits a pending-TLA warning by default and formats exception stacks differently. The development entry diagnostic policy and full Node host observations remain unqualified."
+  },
+  "binaries": {
+    "target/iteration/task21-node-module-before": "ad8f791a092e25afe1391b2efa224c7d976e9a7d019af27c9a82621d3afd2599",
+    "target/iteration/task21-node-module-after": "54cff9b32f57c2f1aa38a869aacda972d221fd8a4201d98225a3761704776183",
+    "target/iteration/task37-wasm-wait-js-runner": "70480b3fb810e2336d6cefb0077db5d1fd0051e870a168beef4cda24c9711f5d",
+    "target/iteration/task21-node-module-js-runner": "c56996fe1b38e7bb08f1000095ece9cae7c3436fa2456de4ac60ac0f5171240e"
+  },
+  "test262": {
+    "stage": 20,
+    "scope": "language/module-code, module execution and Promise-job callers",
+    "total": 599,
+    "before_passed": 599,
+    "passed": 599,
+    "gains": 0,
+    "regressions": 0,
+    "same_ids": true,
+    "before": "target/iteration/task21-node-module-js-before.json",
+    "before_sha256": "47c7e0b3e0858866475fa98101b0d07a1732cc907616d39aa2c97e290144a7ab",
+    "after": "target/iteration/task21-node-module-js-after.json",
+    "after_sha256": "7c4b4b9b5580e5d1b7c065ff4484a76c89b8a6d2026992ce82924d88b2973b30",
+    "inputs": "target/iteration/task21-node-module-js-inputs.json",
+    "inputs_sha256": "46872791a9391baf52965a6c3f36df76e150005e672ed20c537c7a66a5307fd0",
+    "harness": "target/iteration/task21-node-module-js-harness.json",
+    "harness_sha256": "7c8176f98e5d665681824b227372df7c8111223437cab20dab17b27a197bb07c",
+    "suite_head": "6eec1ac9ee144dafd8f344d73a21f36bfc9f6755",
+    "suite_clean": true,
+    "worker_timeout_ms": 30000,
+    "comparison": "target/iteration/task21-node-module-js-comparison.log"
+  },
+  "internal": {
+    "test": "module_evaluation_query_follows_execution_gc_and_reinitialization",
+    "passed": 1,
+    "failed": 0,
+    "ignored": 0,
+    "log": "target/iteration/task21-node-module-internal.log",
+    "obligation": "Absent evaluation fails closed, pending evaluation survives GC/jobs, and reinitialization releases old module records without leaking completion into another source unit. Replaces an ordinary module compilation smoke unit; no duplicate conformance unit is added."
+  },
+  "checks": [
+    "node tools/check-task-coherence.mjs passed",
+    "git diff --check passed"
+  ],
+  "limits": [
+    "Production Node remains legacy",
+    "Node host APIs, module resolution/package type selection, CJS wrapping and event-loop migration remain open",
+    "Implemented inventory is not frozen and Stage A remains open",
+    "No full conformance suite or performance campaign run",
+    "Wasm execution/lowering/storage and the residual ABI are unchanged; no Wasm scope is affected by this host query"
+  ]
+}

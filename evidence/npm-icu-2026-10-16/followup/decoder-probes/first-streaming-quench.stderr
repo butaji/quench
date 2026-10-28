@@ -1,0 +1,11 @@
+/workspace/scratch/npm-decoder-streaming.cjs:3
+for(const [encoding,bytes]of inputs)for(const fatal of [false,true])for(const ignoreBOM of [false,true])for(let cut=0;cut<=bytes.length;cut++){
+^
+
+TypeError: "fatal" option is not supported on Node.js compiled without ICU
+    at /workspace/scratch/npm-decoder-production-draft/node/lib/internal/errors.js:513:17
+    at #prepareConverter (/workspace/scratch/npm-decoder-production-draft/node/lib/internal/encoding.js:473:31)
+    at /workspace/scratch/npm-decoder-production-draft/node/lib/internal/encoding.js:460:7
+    at /workspace/scratch/npm-decoder-streaming.cjs:4:16
+
+Node.js v22.0.0

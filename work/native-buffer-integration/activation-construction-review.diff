@@ -1,0 +1,400 @@
+diff --git a/crates/quench-runtime/src/vm/activation.rs b/crates/quench-runtime/src/vm/activation.rs
+index 049d5f8b8..f6205dbca 100644
+--- a/crates/quench-runtime/src/vm/activation.rs
++++ b/crates/quench-runtime/src/vm/activation.rs
+@@ -37,9 +37,28 @@ pub(crate) enum CallContext {
+     DirectEval(Value),
+     IndirectEval(Value),
+     Internal,
++    Constructor(Value),
++}
++
++/// A pending constructor entry belongs only to its actual callee.
++#[derive(Clone, Copy)]
++pub(super) struct ConstructionTarget {
++    pub(super) callee: Value,
++    pub(super) new_target: Value,
+ }
+ 
+ impl CallContext {
++    pub(super) fn constructed(self) -> Self {
++        match self {
++            Self::Function(value) | Self::Constructor(value) => Self::Constructor(value),
++            other => other,
++        }
++    }
++
++    pub(super) fn is_constructor(self) -> bool {
++        matches!(self, Self::Constructor(_))
++    }
++
+     pub(super) fn user_function(id: u32, callable: Value) -> Self {
+         if id == super::ROOT_FUNCTION_ID {
+             Self::Internal
+@@ -50,7 +69,7 @@ impl CallContext {
+ 
+     pub(super) fn callee(self) -> Option<Value> {
+         match self {
+-            Self::Function(value) | Self::DirectEval(value) | Self::IndirectEval(value) => {
++            Self::Function(value) | Self::Constructor(value) | Self::DirectEval(value) | Self::IndirectEval(value) => {
+                 Some(value)
+             }
+             Self::Internal => None,
+@@ -59,7 +78,7 @@ impl CallContext {
+ 
+     pub(super) fn callable(self) -> Option<Value> {
+         match self {
+-            Self::Function(value) => Some(value),
++            Self::Function(value) | Self::Constructor(value) => Some(value),
+             Self::DirectEval(_) | Self::IndirectEval(_) | Self::Internal => None,
+         }
+     }
+diff --git a/crates/quench-runtime/src/vm/construction.rs b/crates/quench-runtime/src/vm/construction.rs
+index bcef7cd84..b8dd092fe 100644
+--- a/crates/quench-runtime/src/vm/construction.rs
++++ b/crates/quench-runtime/src/vm/construction.rs
+@@ -281,27 +281,13 @@ impl<H: Host> Vm<H> {
+         }
+         let has_instance_prototype = function_plan.constructible || function_plan.is_generator;
+         let prototype = if has_instance_prototype {
+-            let generator_prototype_parent = if function_plan.is_async && function_plan.is_generator
+-            {
+-                let constructor_atom = self.intern_atom("AsyncGeneratorFunction");
+-                let prototype_atom = self.prototype_atom();
+-                self.own_property(realm, constructor_atom)
+-                    .and_then(|constructor| self.own_property(constructor, prototype_atom))
+-                    .and_then(|function_prototype| {
+-                        self.own_property(function_prototype, prototype_atom)
+-                    })
+-                    .filter(|prototype| self.object_data(*prototype).is_some())
+-                    .unwrap_or(self.async_generator_proto)
+-            } else if function_plan.is_generator {
+-                let constructor_atom = self.intern_atom("GeneratorFunction");
+-                let prototype_atom = self.prototype_atom();
+-                self.own_property(realm, constructor_atom)
+-                    .and_then(|constructor| self.own_property(constructor, prototype_atom))
+-                    .and_then(|function_prototype| {
+-                        self.own_property(function_prototype, prototype_atom)
+-                    })
+-                    .filter(|prototype| self.object_data(*prototype).is_some())
+-                    .unwrap_or(self.generator_proto)
++            let generator_prototype_parent = if function_plan.is_generator {
++                let prototypes = &self.realm.intrinsics.iterator_prototypes[&realm];
++                if function_plan.is_async {
++                    prototypes.async_generator
++                } else {
++                    prototypes.generator
++                }
+             } else {
+                 self.realm_object_prototype(realm)
+             };
+@@ -312,31 +298,13 @@ impl<H: Host> Vm<H> {
+         } else {
+             None
+         };
+-        let function_prototype_atom = self.prototype_atom();
+         let intrinsic = match (function_plan.is_async, function_plan.is_generator) {
+-            (true, true) => Some(Native::AsyncGeneratorFunction),
+-            (false, true) => Some(Native::GeneratorFunction),
+-            (true, false) => Some(Native::AsyncFunction),
+-            (false, false) => None,
+-        };
+-        let function_object_prototype = if let Some(intrinsic) = intrinsic {
+-            let name = match intrinsic {
+-                Native::AsyncFunction => "AsyncFunction",
+-                Native::GeneratorFunction => "GeneratorFunction",
+-                Native::AsyncGeneratorFunction => "AsyncGeneratorFunction",
+-                _ => unreachable!(),
+-            };
+-            let name = self.intern_atom(name);
+-            self.own_property(realm, name)
+-                .and_then(|constructor| self.own_property(constructor, function_prototype_atom))
+-                .filter(|prototype| self.object_data(*prototype).is_some())
+-                .or_else(|| {
+-                    self.own_property(self.native_value(intrinsic), function_prototype_atom)
+-                })
+-                .unwrap_or(self.function_proto)
+-        } else {
+-            self.realm_function_prototype(realm)
++            (true, true) => Native::AsyncGeneratorFunction,
++            (false, true) => Native::GeneratorFunction,
++            (true, false) => Native::AsyncFunction,
++            (false, false) => Native::Function,
+         };
++        let function_object_prototype = self.realm.intrinsics.builtin_prototypes[&(realm, intrinsic)];
+         let function = self.heap.alloc(Cell::Function {
+             object: Box::new(crate::heap::FunctionObject {
+                 object: Self::empty_object(function_object_prototype),
+@@ -433,22 +401,10 @@ impl<H: Host> Vm<H> {
+                 },
+             )?;
+         }
+-        let constructor = match (function_plan.is_async, function_plan.is_generator) {
+-            (true, true) => self
+-                .realm_constructor(realm, "AsyncGeneratorFunction")
+-                .unwrap_or_else(|| self.native_value(Native::AsyncGeneratorFunction)),
+-            (true, false) => self
+-                .realm_constructor(realm, "AsyncFunction")
+-                .unwrap_or_else(|| self.native_value(Native::AsyncFunction)),
+-            (false, true) => self
+-                .realm_constructor(realm, "GeneratorFunction")
+-                .unwrap_or_else(|| self.native_value(Native::GeneratorFunction)),
+-            (false, false) => function,
+-        };
+         if !function_plan.is_generator
+             && let Some(prototype) = prototype
+         {
+-            self.set_builtin_value_named(prototype, "constructor", constructor)?;
++            self.set_builtin_value_named(prototype, "constructor", function)?;
+             recorded.prototype =
+                 Some((self.closure_shape(function), self.closure_shape(prototype)));
+         }
+@@ -474,11 +430,6 @@ impl<H: Host> Vm<H> {
+             .shape()
+     }
+ 
+-    fn realm_constructor(&mut self, realm: Value, name: &str) -> Option<Value> {
+-        let atom = self.intern_atom(name);
+-        self.own_property(realm, atom)
+-    }
+-
+     pub(super) fn realm_object_prototype(&self, realm: Value) -> Value {
+         self.realm
+             .intrinsics
+@@ -647,7 +598,7 @@ impl<H: Host> Vm<H> {
+                     vm.heap.alloc(Cell::Object(object))
+                 };
+                 let previous_target = vm.construct_target;
+-                vm.construct_target = Some(new_target);
++                vm.construct_target = Some(ConstructionTarget { callee, new_target });
+                 let result = if derived_constructor {
+                     vm.call_user_for_construct(p, callee, args)
+                         .map(|(value, this)| (value, Some(this)))
+diff --git a/crates/quench-runtime/src/vm/error.rs b/crates/quench-runtime/src/vm/error.rs
+index 25c4a6b43..76e666d29 100644
+--- a/crates/quench-runtime/src/vm/error.rs
++++ b/crates/quench-runtime/src/vm/error.rs
+@@ -510,6 +510,34 @@ impl<H: Host> Vm<H> {
+         Ok(found.map(|name| self.atom_value(name)))
+     }
+ 
++    fn call_site_type_name(&mut self, record: &CallSiteRecord) -> Result<Option<JsString>, JsError> {
++        let receiver = record.this_value;
++        if record.is_constructor
++            || receiver.is_null()
++            || receiver.is_undefined()
++            || self
++                .realm
++                .intrinsics
++                .function_constructors
++                .contains_key(&(receiver, Native::Function))
++        {
++            return Ok(None);
++        }
++        let receiver = self.box_object(receiver)?;
++        if self.proxy_parts(receiver).is_some() {
++            return Ok(Some(JsString::from_str("Proxy")));
++        }
++        if matches!(self.heap.get(receiver), Some(Cell::Function { kind, .. }) if !matches!(kind, FunctionKind::Native(Native::FunctionBoundCall)))
++        {
++            if let Some(name) = self.debug_function_name(receiver) {
++                if !name.units().is_empty() {
++                    return Ok(Some(name));
++                }
++            }
++        }
++        Ok(self.constructor_name(receiver))
++    }
++
+     pub(super) fn error_capture_stack_trace(
+         &mut self,
+         program: &ResidualProgram,
+@@ -541,6 +569,7 @@ impl<H: Host> Vm<H> {
+                         name: CallSiteName::Static(JsString::from_str(name)),
+                         this_value: Value::UNDEFINED,
+                         hide_identity: true,
++                        is_constructor: false,
+                     });
+                 }
+             }
+@@ -584,6 +613,7 @@ impl<H: Host> Vm<H> {
+                 },
+                 name,
+                 hide_identity,
++                is_constructor: frame.context.is_constructor(),
+                 this_value: if frame.this == Value::DELETED {
+                     Value::UNDEFINED
+                 } else {
+@@ -599,6 +629,7 @@ impl<H: Host> Vm<H> {
+                     name: CallSiteName::Static(JsString::from_str(name)),
+                     this_value: Value::UNDEFINED,
+                     hide_identity: true,
++                    is_constructor: false,
+                 });
+             }
+         }
+@@ -695,8 +726,12 @@ impl<H: Host> Vm<H> {
+             CallSiteLocation::Native => "native".to_owned(),
+         };
+         let location = JsString::from_str(&location);
+-        let Some(name) = self.call_site_name(record) else { return Ok(location); };
++        let name = self.call_site_name(record).or_else(|| {
++            record.is_constructor.then(|| JsString::from_str("<anonymous>"))
++        });
++        let Some(name) = name else { return Ok(location); };
+         let mut text = super::wtf16::JsStringBuilder::default();
++        if record.is_constructor { text.append(&JsString::from_str("new ")); }
+         text.append(&name);
+         text.append(&JsString::from_str(" ("));
+         text.append(&location);
+@@ -758,7 +793,7 @@ impl<H: Host> Vm<H> {
+                 CallSiteLocation::Native => Value::NULL,
+             }),
+             Native::CallSiteIsEval => Ok(Value::FALSE),
+-            Native::CallSiteIsConstructor => Ok(Value::FALSE),
++            Native::CallSiteIsConstructor => Ok(if record.is_constructor { Value::TRUE } else { Value::FALSE }),
+             Native::CallSiteIsNative => {
+                 Ok(if matches!(record.location, CallSiteLocation::Native) {
+                     Value::TRUE
+@@ -766,7 +801,10 @@ impl<H: Host> Vm<H> {
+                     Value::FALSE
+                 })
+             }
+-            Native::CallSiteGetTypeName | Native::CallSiteGetEvalOrigin => Ok(Value::UNDEFINED),
++            Native::CallSiteGetTypeName => Ok(self.call_site_type_name(&record)?
++                .map(|name| self.heap.alloc(Cell::String(name)))
++                .unwrap_or(Value::NULL)),
++            Native::CallSiteGetEvalOrigin => Ok(Value::UNDEFINED),
+             Native::CallSiteToString => {
+                 let text = self.format_call_site(program, &record)?;
+                 Ok(self.heap.alloc(Cell::String(text)))
+@@ -976,14 +1014,9 @@ impl<H: Host> Vm<H> {
+     }
+ 
+     pub(super) fn box_primitive_object(&mut self, value: Value) -> Result<Value, JsError> {
+-        let marker = match self.heap.get(value) {
+-            Some(Cell::String(_)) => "\0quench:string-value",
+-            Some(Cell::Symbol(_)) => "\0quench:symbol-value",
+-            Some(Cell::BigInt(_)) => "\0quench:bigint-value",
+-            _ if value.as_number().is_some() => "\0quench:number-value",
+-            _ if value.as_bool().is_some() => "\0quench:boolean-value",
+-            _ => return Ok(self.object()),
+-        };
++        if !matches!(self.heap.get(value), Some(Cell::String(_) | Cell::Symbol(_) | Cell::BigInt(_)))
++            && value.as_number().is_none() && value.as_bool().is_none()
++        { return Ok(self.object()); }
+         let prototype = self.primitive_prototype(value).unwrap_or(self.object_proto);
+         let object = self.heap.alloc(Cell::Object(Self::empty_object(prototype)));
+         if let Some(Cell::String(text)) = self.heap.get(value).cloned() {
+@@ -1021,8 +1054,7 @@ impl<H: Host> Vm<H> {
+                 },
+             )?;
+         }
+-        let marker_atom = self.intern_atom(marker);
+-        self.set_property(object, marker_atom, value)?;
++        self.object_data_mut(object).expect("primitive wrapper").set_boxed_primitive(value);
+         Ok(object)
+     }
+ 
+@@ -1035,8 +1067,7 @@ impl<H: Host> Vm<H> {
+         let prototype = self.realm.intrinsics.builtin_prototypes.get(&(realm, Native::BigInt)).copied()
+             .or_else(|| self.primitive_prototype(value)).unwrap_or(self.object_proto);
+         let object = self.heap.alloc(Cell::Object(Self::empty_object(prototype)));
+-        let value_atom = self.intern_atom("\0quench:bigint-value");
+-        self.set_property(object, value_atom, value)?;
++        self.object_data_mut(object).expect("bigint wrapper").set_boxed_primitive(value);
+         Ok(object)
+     }
+ 
+@@ -1046,6 +1077,10 @@ impl<H: Host> Vm<H> {
+     ) -> Result<(), JsError> {
+         self.global(program, "globalThis", self.realm.globals)?;
+         let function = self.native_value(Native::Function);
++        self.realm
++            .intrinsics
++            .function_constructors
++            .insert((self.realm.globals, Native::Function), function);
+         self.set_builtin_value_named(function, "prototype", self.function_proto)?;
+         let prototype = self.prototype_atom();
+         self.set_property_attributes(
+@@ -1602,6 +1637,11 @@ impl<H: Host> Vm<H> {
+                 .builtin_prototypes
+                 .insert((global, native), prototype);
+             let constructor = self.native_with_realm(native, global, global);
++            self.set_builtin_function_name(constructor, name)?;
++            self.realm
++                .intrinsics
++                .function_constructors
++                .insert((global, native), constructor);
+             self.object_data_mut(constructor)
+                 .expect("realm dynamic function")
+                 .set_proto(function);
+@@ -2015,6 +2055,10 @@ impl<H: Host> Vm<H> {
+             .intrinsics
+             .builtin_prototypes
+             .insert((global, Native::Function), prototype);
++        self.realm
++            .intrinsics
++            .function_constructors
++            .insert((global, Native::Function), constructor);
+         self.set_builtin_value_named(constructor, "prototype", prototype)?;
+         let prototype_atom = self.prototype_atom();
+         self.set_property_attributes(
+diff --git a/crates/quench-runtime/src/vm/gc.rs b/crates/quench-runtime/src/vm/gc.rs
+index 4990e1b1f..c0c8c3806 100644
+--- a/crates/quench-runtime/src/vm/gc.rs
++++ b/crates/quench-runtime/src/vm/gc.rs
+@@ -43,7 +43,7 @@ pub(super) fn active_shape_attributes(
+                 }
+             }
+             ShapeTransition::Vacant => entries.push(None),
+-            ShapeTransition::Root | ShapeTransition::FunctionName { .. } | ShapeTransition::Constructed { .. } | ShapeTransition::Dictionary { .. } => {}
++            ShapeTransition::Root | ShapeTransition::FunctionName { .. } | ShapeTransition::FunctionNameReconfigured | ShapeTransition::Constructed { .. } | ShapeTransition::Dictionary { .. } => {}
+         }
+     }
+     entries
+@@ -183,9 +183,10 @@ fn rebuild_shape(
+     transitions: &mut super::shape_transitions::ShapeTransitionIndex,
+ ) -> u32 {
+     let mut parent = 0;
+-    let (function_name, constructed_name) = provenance::shape_names(old_shapes, old_shape);
++    let (function_name, constructed_name, name_reconfigured) = provenance::shape_names(old_shapes, old_shape);
+     for transition in [
+         function_name.map(|name| ShapeTransition::FunctionName { name }),
++        name_reconfigured.then_some(ShapeTransition::FunctionNameReconfigured),
+         constructed_name.map(|(constructor, new_target_is_base)| ShapeTransition::Constructed { constructor, new_target_is_base }),
+     ].into_iter().flatten() {
+         parent = append_compacted_shape(shapes, transitions, parent, transition, 0);
+@@ -409,6 +410,13 @@ impl<H: Host> Vm<H> {
+                 .iter()
+                 .flat_map(|((realm, _), prototype)| [*realm, *prototype]),
+         );
++        roots.extend(
++            self.realm
++                .intrinsics
++                .function_constructors
++                .iter()
++                .flat_map(|((realm, _), constructor)| [*realm, *constructor]),
++        );
+         roots.extend(
+             self.realm
+                 .intrinsics
+@@ -995,14 +1003,16 @@ mod tests {
+         let mut transitions = crate::vm::shape_transitions::ShapeTransitionIndex::default();
+         let named = append_compacted_shape(&mut shapes, &mut transitions, 0,
+             ShapeTransition::FunctionName { name: 7 }, 0);
+-        let created = append_compacted_shape(&mut shapes, &mut transitions, named,
++        let reconfigured = append_compacted_shape(&mut shapes, &mut transitions, named,
++            ShapeTransition::FunctionNameReconfigured, 0);
++        let created = append_compacted_shape(&mut shapes, &mut transitions, reconfigured,
+             ShapeTransition::Constructed { constructor: Value::heap(17), new_target_is_base: false }, 0);
+         let with_field = append_compacted_shape(&mut shapes, &mut transitions, created,
+             ShapeTransition::Add { key: PropertyKey::string(9), slot: 0, attributes: DEFAULT_DATA_ATTRIBUTES }, 1);
+         let mut rebuilt = vec![Shape::root()];
+         let shape = rebuild_shape(&shapes, &[], with_field, &mut rebuilt,
+             &mut Vec::new(), &mut crate::vm::shape_transitions::ShapeTransitionIndex::default());
+-        assert_eq!(provenance::shape_names(&rebuilt, shape), (Some(7), Some((Value::heap(17), false))));
++        assert_eq!(provenance::shape_names(&rebuilt, shape), (Some(7), Some((Value::heap(17), false)), true));
+         assert_eq!(rebuilt[shape as usize].storage_len(), 1);
+         assert_eq!(super::active_shape_attributes(&rebuilt, shape).len(), 1);
+     }

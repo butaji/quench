@@ -1,0 +1,697 @@
+{
+  "schema": 1,
+  "report_kind": "jit_wasm_selective_handoff_ab_diagnostic",
+  "created_unix_ns": 1792369416898896249,
+  "input_report_path": "/tmp/quench-selective-gcc-handoff-2026-10-19/paired-confirmation-11-round.json",
+  "input_report_sha256": "6b37b1a1504cc49ca1465d9c4cbe08f619f9ac83ba81c7768ba542b1fb44a9dd",
+  "suite": "jet-stream3",
+  "jit_mode": "jit",
+  "quench_bench_binary": {
+    "path": "/workspace/quench/target/production/quench-bench",
+    "size_bytes": 1638112,
+    "modified_unix_ns": 1792369155347825531,
+    "sha256": "0737fba993ad13425133719c169af867245e95ed8deb598c359ee84c9a78994b"
+  },
+  "source_revision": "a4edc8e85176d7d706d3928b29127d25fd5a4d79",
+  "source_dirty": false,
+  "corpus_revision": "06785cf861ac44855f168cbbe829278c2802e6de",
+  "timeout_ms": 600000,
+  "host": {
+    "uname": "Linux f3da3ef8e0e6 6.18.55 #1 SMP Wed Oct 14 19:45:18 UTC 2026 x86_64 GNU/Linux",
+    "rustc": "rustc 1.99.1 (58cf8f9c3 2026-10-13)\nbinary: rustc\ncommit-hash: 58cf8f9c35b355199727627d07ae34a4e2846d67\ncommit-date: 2026-10-13\nhost: x86_64-unknown-linux-gnu\nrelease: 1.99.1\nLLVM version: 23.1.1",
+    "model": null,
+    "memory_bytes": 18882674688,
+    "memory_limit_bytes": 17179869184,
+    "cpu_quota": "400000 100000",
+    "process_metrics_backend": "Linux wait4 rusage"
+  },
+  "engine_provenance": [
+    {
+      "name": "quench_selective_handoff_off",
+      "executable": "/workspace/quench/target/production/quench-node",
+      "executable_sha256": "90914fdc6f19e423d278f0db56d279c6b7bbf016a1c32adcd0a984021bb60119",
+      "version": "Quench shared-VM JIT build; package 0.1.0",
+      "argv": [
+        "--jit"
+      ],
+      "environment": {
+        "HOME": "/home/agent",
+        "LANG": "C.UTF-8",
+        "LC_ALL": "C.UTF-8",
+        "PATH": "/home/agent/.cargo/bin:/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/override:/opt/codex/runtimes/codex-primary-runtime/dependencies/python/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin:/opt/codex/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/fallback",
+        "QUENCH_WASM_JIT_SELECTIVE": "0"
+      },
+      "inherits_environment": false,
+      "jit_mode": "enabled-by-cli-flag",
+      "jit_proof_command": [
+        "/workspace/quench/target/production/quench-node",
+        "--jit"
+      ],
+      "jit_proof": "the measured Quench process is launched with --jit; diagnostic selective CallKnown handoff A/B arm with QUENCH_WASM_JIT_SELECTIVE=0; not for qualification"
+    },
+    {
+      "name": "quench_selective_handoff_on",
+      "executable": "/workspace/quench/target/production/quench-node",
+      "executable_sha256": "90914fdc6f19e423d278f0db56d279c6b7bbf016a1c32adcd0a984021bb60119",
+      "version": "Quench shared-VM JIT build; package 0.1.0",
+      "argv": [
+        "--jit"
+      ],
+      "environment": {
+        "HOME": "/home/agent",
+        "LANG": "C.UTF-8",
+        "LC_ALL": "C.UTF-8",
+        "PATH": "/home/agent/.cargo/bin:/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/override:/opt/codex/runtimes/codex-primary-runtime/dependencies/python/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin:/opt/codex/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/fallback",
+        "QUENCH_WASM_JIT_SELECTIVE": "1"
+      },
+      "inherits_environment": false,
+      "jit_mode": "enabled-by-cli-flag",
+      "jit_proof_command": [
+        "/workspace/quench/target/production/quench-node",
+        "--jit"
+      ],
+      "jit_proof": "the measured Quench process is launched with --jit; diagnostic selective CallKnown handoff A/B arm with QUENCH_WASM_JIT_SELECTIVE=1; not for qualification"
+    },
+    {
+      "name": "bun",
+      "executable": "/workspace/.local/bench-runtimes/bun-v1.4.3/bun-linux-x64/bun",
+      "executable_sha256": "7ce7d6b654eddeec20afddf2396317fba6dc19ab52788a27e894e1806bf8f24b",
+      "version": "1.4.3",
+      "argv": [],
+      "environment": {
+        "BUN_JSC_useJIT": "1",
+        "HOME": "/home/agent",
+        "LANG": "C.UTF-8",
+        "LC_ALL": "C.UTF-8",
+        "PATH": "/home/agent/.cargo/bin:/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/override:/opt/codex/runtimes/codex-primary-runtime/dependencies/python/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin:/opt/codex/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/fallback"
+      },
+      "inherits_environment": false,
+      "jit_mode": "enabled-and-probed",
+      "jit_proof_command": [
+        "BUN_JSC_useJIT=1",
+        "BUN_JSC_dumpOptions=1",
+        "/workspace/.local/bench-runtimes/bun-v1.4.3/bun-linux-x64/bun",
+        "-e",
+        "console.log(Bun.version)"
+      ],
+      "jit_proof": "command succeeded and reported \"useJIT=true\": 1.4.3\n\nModified JSC options:\n   dumpOptions=1 (default: 0)\n   useJIT=true (default: true)"
+    },
+    {
+      "name": "node",
+      "executable": "/workspace/.local/bench-runtimes/node-v26.12.0-linux-x64/bin/node",
+      "executable_sha256": "caa24debe02770c92a70677e2a62ca98890150e7ac1c17bcfe31bcc98cc89943",
+      "version": "v26.12.0",
+      "argv": [],
+      "environment": {
+        "HOME": "/home/agent",
+        "LANG": "C.UTF-8",
+        "LC_ALL": "C.UTF-8",
+        "PATH": "/home/agent/.cargo/bin:/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/override:/opt/codex/runtimes/codex-primary-runtime/dependencies/python/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin:/opt/codex/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/fallback"
+      },
+      "inherits_environment": false,
+      "jit_mode": "enabled-and-probed",
+      "jit_proof_command": [
+        "/workspace/.local/bench-runtimes/node-v26.12.0-linux-x64/bin/node",
+        "--trace-opt",
+        "--no-concurrent-recompilation",
+        "-e",
+        "function hot(x) { return x + 1; } for (let i = 0; i < 100000; i++) hot(i);"
+      ],
+      "jit_proof": "command succeeded and reported \"completed compiling\": [marking 0x3bbd6d637a31 <JSFunction hot (sfi = 0x3bbd6d634211)> for optimization to MAGLEV, ConcurrencyMode::kConcurrent, reason: hot and stable]\n[compiling method 0x3bbd6d637a31 <JSFunction hot (sfi = 0x3bbd6d634211)> (target MAGLEV), mode: ConcurrencyMode::kSynchronous]\n[completed compiling 0x3bbd6d637a31 <JSFunction hot (sfi = 0x3bbd6d634211)> (target MAGLEV) - took 0.001, 0.133, 0.001 ms]\n[marking 0x3bbd6d6379c1 <JSFunction (sfi = 0x3bbd6d634169)> for optimization to MAGLEV, ConcurrencyMode::kConcurrent, reason: hot and stable]\n[marking 0x3bbd6d637a31 <JSFunction hot (sfi = 0x3bbd6d634211)> for optimization to TURBOFAN_JS, ConcurrencyMode::kConcurrent, reason: hot and stable]\n[compiling method 0x3bbd6d637a31 <JSFunction hot (sfi = 0x3bbd6d634211)> (target TURBOFAN_JS), mode: ConcurrencyMode::kSynchronous]\n[completed compiling 0x3bbd6d637a31 <JSFunction hot (sfi = 0x3bbd6d634211)> (target TURBOFAN_JS) - took 0.004, 0.345, 0.007 ms]\n[compiling method 0x3bbd6d6379c1 <JSFunction (sfi = 0x3bbd6d634169)> (target MAGLEV) OSR, mode: ConcurrencyMode::kSynchronous]\n[completed compiling 0x3bbd6d6379c1 <JSFunction (sfi = 0x3bbd6d634169)> (target MAGLEV) OSR - took 0.000, 0.149, 0.002 ms]"
+    }
+  ],
+  "rounds_per_fixture": 11,
+  "analysis_runtime": "quench-bench Rust analyzer; rustc 1.99.1 (58cf8f9c3 2026-10-13)\nbinary: rustc\ncommit-hash: 58cf8f9c35b355199727627d07ae34a4e2846d67\ncommit-date: 2026-10-13\nhost: x86_64-unknown-linux-gnu\nrelease: 1.99.1\nLLVM version: 23.1.1",
+  "suite_inputs": [
+    {
+      "path": "quench-bench/jetstream/cli.js",
+      "size_bytes": 5600,
+      "modified_unix_ns": 1792229119091972874,
+      "sha256": "22ee4b987b07940dd7397ed7f88345c71acc415e2549b64bf45ba43f7572e5f0"
+    },
+    {
+      "path": "quench-bench/jetstream/JetStreamDriver.js",
+      "size_bytes": 110633,
+      "modified_unix_ns": 1792229118593919588,
+      "sha256": "f105bddfd402514b2325fe9ea6e1df5ce776a4ad4570a8006c7c8559159440fc"
+    },
+    {
+      "path": "quench-bench/jetstream/utils/params.js",
+      "size_bytes": 8047,
+      "modified_unix_ns": 1792229119770704165,
+      "sha256": "0e9d28c0fd2de5583c64678ffc61307b10d983bcb419fe2e3bb383c8b7ded647"
+    },
+    {
+      "path": "quench-bench/jetstream/utils/shell-config.js",
+      "size_bytes": 2352,
+      "modified_unix_ns": 1792229119770904880,
+      "sha256": "9a83000be5e6526a3c26a414fc3a23043e57ef8e4cd67aaff459066a2c347bca"
+    }
+  ],
+  "bootstrap": {
+    "name": "paired percentile bootstrap of median log-ratios, reported as ratios",
+    "interval_level": 0.95,
+    "replicates": 100000,
+    "base_seed": "0x51a7beefcafe2c31",
+    "resampling": "resample matching round indices jointly for candidate and reference",
+    "statistic": "exp(median(log(candidate / reference)))",
+    "interval": "exponentiated linear-interpolated log-ratio percentiles"
+  },
+  "fixtures": {
+    "gcc-loops-wasm": {
+      "input_sha256": "22e54dd411e29379a6ba08d84e54b890d620f7c1f2ba9b37ff108c4fe3c98c48",
+      "paired_rounds": 11,
+      "raw_rounds": [
+        {
+          "round": 0,
+          "execution_order": [
+            "quench_selective_handoff_off",
+            "quench_selective_handoff_on",
+            "bun",
+            "node"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 1203395075,
+              "score": 179.3,
+              "peak_rss_bytes": 55697408
+            },
+            "node": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 1160207475,
+              "score": 196.26,
+              "peak_rss_bytes": 96288768
+            },
+            "quench_selective_handoff_off": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2495107774,
+              "score": 55.27,
+              "peak_rss_bytes": 50089984
+            },
+            "quench_selective_handoff_on": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2450256569,
+              "score": 67.51,
+              "peak_rss_bytes": 49795072
+            }
+          }
+        },
+        {
+          "round": 1,
+          "execution_order": [
+            "quench_selective_handoff_on",
+            "bun",
+            "node",
+            "quench_selective_handoff_off"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 1162640401,
+              "score": 181.1,
+              "peak_rss_bytes": 58527744
+            },
+            "node": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 1200116396,
+              "score": 185.6,
+              "peak_rss_bytes": 96616448
+            },
+            "quench_selective_handoff_off": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2558897533,
+              "score": 54.63,
+              "peak_rss_bytes": 50065408
+            },
+            "quench_selective_handoff_on": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2504663045,
+              "score": 67.54,
+              "peak_rss_bytes": 49913856
+            }
+          }
+        },
+        {
+          "round": 2,
+          "execution_order": [
+            "bun",
+            "node",
+            "quench_selective_handoff_off",
+            "quench_selective_handoff_on"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 1118780601,
+              "score": 195.0,
+              "peak_rss_bytes": 57421824
+            },
+            "node": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 1158270179,
+              "score": 194.89,
+              "peak_rss_bytes": 96677888
+            },
+            "quench_selective_handoff_off": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2405457624,
+              "score": 57.39,
+              "peak_rss_bytes": 50143232
+            },
+            "quench_selective_handoff_on": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2461860643,
+              "score": 68.56,
+              "peak_rss_bytes": 49930240
+            }
+          }
+        },
+        {
+          "round": 3,
+          "execution_order": [
+            "node",
+            "quench_selective_handoff_off",
+            "quench_selective_handoff_on",
+            "bun"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 1131736145,
+              "score": 195.83,
+              "peak_rss_bytes": 55828480
+            },
+            "node": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 1133747761,
+              "score": 200.44,
+              "peak_rss_bytes": 96612352
+            },
+            "quench_selective_handoff_off": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2615159954,
+              "score": 51.28,
+              "peak_rss_bytes": 50106368
+            },
+            "quench_selective_handoff_on": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2516230644,
+              "score": 64.35,
+              "peak_rss_bytes": 49643520
+            }
+          }
+        },
+        {
+          "round": 4,
+          "execution_order": [
+            "quench_selective_handoff_off",
+            "quench_selective_handoff_on",
+            "bun",
+            "node"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 1177453287,
+              "score": 186.13,
+              "peak_rss_bytes": 58372096
+            },
+            "node": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 1194001883,
+              "score": 190.77,
+              "peak_rss_bytes": 96550912
+            },
+            "quench_selective_handoff_off": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2455865722,
+              "score": 56.53,
+              "peak_rss_bytes": 50106368
+            },
+            "quench_selective_handoff_on": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2492224717,
+              "score": 66.14,
+              "peak_rss_bytes": 49803264
+            }
+          }
+        },
+        {
+          "round": 5,
+          "execution_order": [
+            "quench_selective_handoff_on",
+            "bun",
+            "node",
+            "quench_selective_handoff_off"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 1166470903,
+              "score": 178.12,
+              "peak_rss_bytes": 58073088
+            },
+            "node": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 1125572577,
+              "score": 198.95,
+              "peak_rss_bytes": 96751616
+            },
+            "quench_selective_handoff_off": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2472439179,
+              "score": 56.47,
+              "peak_rss_bytes": 50089984
+            },
+            "quench_selective_handoff_on": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2437205691,
+              "score": 68.09,
+              "peak_rss_bytes": 49688576
+            }
+          }
+        },
+        {
+          "round": 6,
+          "execution_order": [
+            "bun",
+            "node",
+            "quench_selective_handoff_off",
+            "quench_selective_handoff_on"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 1164357861,
+              "score": 187.45,
+              "peak_rss_bytes": 57991168
+            },
+            "node": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 1265723772,
+              "score": 174.37,
+              "peak_rss_bytes": 96555008
+            },
+            "quench_selective_handoff_off": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2678084579,
+              "score": 51.33,
+              "peak_rss_bytes": 50110464
+            },
+            "quench_selective_handoff_on": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2628313102,
+              "score": 59.24,
+              "peak_rss_bytes": 49803264
+            }
+          }
+        },
+        {
+          "round": 7,
+          "execution_order": [
+            "node",
+            "quench_selective_handoff_off",
+            "quench_selective_handoff_on",
+            "bun"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 1234034079,
+              "score": 175.24,
+              "peak_rss_bytes": 58081280
+            },
+            "node": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 1149580393,
+              "score": 194.54,
+              "peak_rss_bytes": 96354304
+            },
+            "quench_selective_handoff_off": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2757873907,
+              "score": 47.16,
+              "peak_rss_bytes": 50077696
+            },
+            "quench_selective_handoff_on": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2625895870,
+              "score": 60.99,
+              "peak_rss_bytes": 49917952
+            }
+          }
+        },
+        {
+          "round": 8,
+          "execution_order": [
+            "quench_selective_handoff_off",
+            "quench_selective_handoff_on",
+            "bun",
+            "node"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 1190389511,
+              "score": 174.84,
+              "peak_rss_bytes": 57532416
+            },
+            "node": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 1167875306,
+              "score": 193.66,
+              "peak_rss_bytes": 96546816
+            },
+            "quench_selective_handoff_off": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2613452195,
+              "score": 52.9,
+              "peak_rss_bytes": 50094080
+            },
+            "quench_selective_handoff_on": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2538961576,
+              "score": 67.45,
+              "peak_rss_bytes": 49803264
+            }
+          }
+        },
+        {
+          "round": 9,
+          "execution_order": [
+            "quench_selective_handoff_on",
+            "bun",
+            "node",
+            "quench_selective_handoff_off"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 1169188777,
+              "score": 188.4,
+              "peak_rss_bytes": 57860096
+            },
+            "node": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 1201291721,
+              "score": 181.52,
+              "peak_rss_bytes": 96481280
+            },
+            "quench_selective_handoff_off": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2662589930,
+              "score": 51.28,
+              "peak_rss_bytes": 50102272
+            },
+            "quench_selective_handoff_on": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2453858786,
+              "score": 67.38,
+              "peak_rss_bytes": 49926144
+            }
+          }
+        },
+        {
+          "round": 10,
+          "execution_order": [
+            "bun",
+            "node",
+            "quench_selective_handoff_off",
+            "quench_selective_handoff_on"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 1153132898,
+              "score": 182.77,
+              "peak_rss_bytes": 55697408
+            },
+            "node": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 1197840302,
+              "score": 186.5,
+              "peak_rss_bytes": 96612352
+            },
+            "quench_selective_handoff_off": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2459305171,
+              "score": 54.91,
+              "peak_rss_bytes": 50089984
+            },
+            "quench_selective_handoff_on": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2377946630,
+              "score": 69.31,
+              "peak_rss_bytes": 49922048
+            }
+          }
+        }
+      ],
+      "engine_medians": {
+        "bun": {
+          "score": 182.77,
+          "max_rss_bytes": 57860096.0
+        },
+        "node": {
+          "score": 193.66,
+          "max_rss_bytes": 96555008.0
+        },
+        "quench_selective_handoff_off": {
+          "score": 54.63,
+          "max_rss_bytes": 50094080.0
+        },
+        "quench_selective_handoff_on": {
+          "score": 67.45,
+          "max_rss_bytes": 49803264.0
+        }
+      },
+      "comparisons": {
+        "quench_selective_handoff_on_vs_bun": {
+          "candidate_engine": "quench_selective_handoff_on",
+          "reference_engine": "bun",
+          "score": {
+            "candidate_median": 67.45,
+            "reference_median": 182.77,
+            "median_ratio": 0.35764331210191086,
+            "paired_ratio_interval_95": [
+              0.3480369778589364,
+              0.3792197844285167
+            ],
+            "interval_excludes_tie": true,
+            "seed": "0xc2728e243328cdf2"
+          },
+          "max_rss": {
+            "candidate_median": 49803264.0,
+            "reference_median": 57860096.0,
+            "median_ratio": 0.8628769644626929,
+            "paired_ratio_interval_95": [
+              0.8556213852447454,
+              0.8892149669845928
+            ],
+            "interval_excludes_tie": true,
+            "seed": "0x04c08ef634aca679"
+          }
+        },
+        "quench_selective_handoff_on_vs_node": {
+          "candidate_engine": "quench_selective_handoff_on",
+          "reference_engine": "node",
+          "score": {
+            "candidate_median": 67.45,
+            "reference_median": 193.66,
+            "median_ratio": 0.3467002149184883,
+            "paired_ratio_interval_95": [
+              0.33973734013878537,
+              0.36390086206896555
+            ],
+            "interval_excludes_tie": true,
+            "seed": "0xc0f846c716daf225"
+          },
+          "max_rss": {
+            "candidate_median": 49803264.0,
+            "reference_median": 96555008.0,
+            "median_ratio": 0.5164597720628734,
+            "paired_ratio_interval_95": [
+              0.5158019768379077,
+              0.5171431002212012
+            ],
+            "interval_excludes_tie": true,
+            "seed": "0x41a2adf797b1a69e"
+          }
+        },
+        "quench_selective_handoff_on_vs_quench_selective_handoff_off": {
+          "candidate_engine": "quench_selective_handoff_on",
+          "reference_engine": "quench_selective_handoff_off",
+          "score": {
+            "candidate_median": 67.45,
+            "reference_median": 54.63,
+            "median_ratio": 1.23631704191836,
+            "paired_ratio_interval_95": [
+              1.1946332113608642,
+              1.2750472589792061
+            ],
+            "interval_excludes_tie": true,
+            "seed": "0x8f7cea2dcfa6fd29"
+          },
+          "max_rss": {
+            "candidate_median": 49803264.0,
+            "reference_median": 50094080.0,
+            "median_ratio": 0.9941946034341782,
+            "paired_ratio_interval_95": [
+              0.9938695438940657,
+              0.9966473137623681
+            ],
+            "interval_excludes_tie": true,
+            "seed": "0x256931af1bca2c62"
+          }
+        }
+      },
+      "qualified": false
+    }
+  },
+  "qualified": false
+}

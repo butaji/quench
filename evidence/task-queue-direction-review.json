@@ -1,0 +1,623 @@
+{
+  "schema": 1,
+  "kind": "task_direction_review_snapshot",
+  "date": "2026-10-04",
+  "authority": {
+    "queue": "tasks/index.json",
+    "queue_sha256": "b493230080a8aaa91e01bb4821c439d031addb94f2e4b8d366d13485ab2ea501",
+    "contract": "tasks/README.md",
+    "contract_sha256": "c43c832ad7d828a0adfb7ef9e273e51883b3a7eebd981bfb9b3aee6cb62b7c61",
+    "rules": "AGENTS.md",
+    "skill": "/Users/admin/.agents/skills/lisp-mindset/SKILL.md"
+  },
+  "scope": {
+    "queued_tasks": 82,
+    "markdown_files": 83,
+    "local_markdown_links_checked": 380,
+    "referenced_evidence_files": 99,
+    "json_files_reviewed": 118
+  },
+  "checks": {
+    "json_errors_broken_links_or_anchors": [],
+    "queue_coherence": "passed",
+    "whitespace": "passed",
+    "full_suites_run": false,
+    "performance_campaign_run": false,
+    "json_format": "passed",
+    "queue_controls": {
+      "passed": 8,
+      "raw": "target/iteration/task-direction-review/queue-controls.json"
+    },
+    "checker_lint": "passed",
+    "isolated_queue_coherence": "passed on committed core plus reviewed strategy files"
+  },
+  "findings": [
+    {
+      "tasks": ["19", "48"],
+      "decision": "Close ratchet tooling independently of 100% conformance; freeze implemented Node membership before migration closure."
+    },
+    {
+      "tasks": ["20", "22", "23", "24", "27", "86"],
+      "decision": "One integrated qualification campaign may close suite owners and gate 24; legacy deletion follows at 27; only final gate 86 enables B."
+    },
+    {
+      "tasks": ["23", "37", "45"],
+      "decision": "Remove pre-cutover legacy-deletion and deferred extraction requirements from shared lowering closure."
+    },
+    {
+      "tasks": ["21", "22"],
+      "decision": "Replace source-driven child output simulation and package facsimiles without removing implemented cases; framework expansion stays deferred."
+    },
+    {
+      "tasks": ["30", "31", "34", "71", "81"],
+      "decision": "Use static facts or exact guards; observed stability is not proof. Preserve parameter effects, TDZ, live bindings and protocol observability."
+    },
+    {
+      "tasks": ["33", "73", "76", "78", "81"],
+      "decision": "Census first; correctly distinguish pinned-v2 retained results, rejected experiments and subsequent compositions; require paired admission for retries."
+    },
+    {
+      "tasks": ["61", "68", "77", "83", "84"],
+      "decision": "Eight per-benchmark Score/RSS wins close B; catalogue completion, empty-script leadership and exhaustive compiler flag sweeps add no gates."
+    },
+    {
+      "tasks": [
+        "29",
+        "30",
+        "31",
+        "32",
+        "33",
+        "34",
+        "78",
+        "79",
+        "80",
+        "81",
+        "82",
+        "83",
+        "84",
+        "85"
+      ],
+      "decision": "Matched measurement task 62 replaces the optional physical-process mechanism 25 as prerequisite for unrelated experiments."
+    },
+    {
+      "tasks": ["11", "12", "13", "14", "15", "16", "50"],
+      "decision": "Label historical starting gaps and measurements; current failure frontier remains task 20; no status is closed from stale evidence."
+    },
+    {
+      "tasks": [
+        "38",
+        "44",
+        "45",
+        "46",
+        "47",
+        "49",
+        "66",
+        "87",
+        "88",
+        "89",
+        "90"
+      ],
+      "decision": "Keep deferred work non-blocking; retain truthful status and useful evidence, without introducing a third stage."
+    },
+    {
+      "tasks": ["48", "53", "63", "64", "66"],
+      "decision": "Derive lane membership from ordered lane lists; reject copied lane facts; allow null next_task at critical-path closure. Remove stale support-task prerequisite claims and keep completed tooling evidence concise. Deployment verification was removed from scope by the user."
+    },
+    {
+      "tasks": ["37", "23"],
+      "decision": "Require the completed VM foundation for Wasm lowering rather than closure of historical support plans; remove the Node inventory prerequisite from Wasm suite closure. Require done prerequisites for in-progress tasks; integrated task 24 retains all three suite closures."
+    },
+    {
+      "tasks": ["19", "27", "40", "86", "88", "89"],
+      "decision": "Preserve runtime/Node/Wasm ownership; remove mandatory CLI/runner extraction, parser vocabulary copies and deferred framework validation from current completion gates."
+    }
+  ],
+  "tasks": [
+    {
+      "task": "01",
+      "file_sha256": "f0f131e16a72a928bdaceaa8c8a7bedefdef304a20f47858299431bc2ed00078",
+      "verdict": "keep",
+      "findings": []
+    },
+    {
+      "task": "02",
+      "file_sha256": "802138e6b458d9f28d47a8409a00a8ec16dea86f7539164db1825b9eb45b4764",
+      "verdict": "keep",
+      "findings": []
+    },
+    {
+      "task": "03",
+      "file_sha256": "e87ab54f99a63e02ce5e49bcdbf520743335d3543e58c035dac8093ddedd4fd9",
+      "verdict": "keep",
+      "findings": []
+    },
+    {
+      "task": "04",
+      "file_sha256": "90124394934b5c4aad286cae9a210b4ff264cd283c945267cd02ddb15ffc496d",
+      "verdict": "keep",
+      "findings": []
+    },
+    {
+      "task": "05",
+      "file_sha256": "1ea3b354cc675d8a1502763ec78bcb8ba568c3b108ee2d621cdcab90c8dc7913",
+      "verdict": "keep",
+      "findings": []
+    },
+    {
+      "task": "06",
+      "file_sha256": "b353e106875b40e58d045b82dc64c88e32c2b99d59cf19fa1aa9dabdb0d7d093",
+      "verdict": "keep",
+      "findings": []
+    },
+    {
+      "task": "07",
+      "file_sha256": "0af407e60766c29600ef19bf1ddd2b2596b611b85df1c722ca46dff1018da4a3",
+      "verdict": "keep",
+      "findings": []
+    },
+    {
+      "task": "08",
+      "file_sha256": "5cc2524be685e9bcd5b4fcb8defc48787f3475f7ac0ffbc83d05658a028cd558",
+      "verdict": "keep",
+      "findings": []
+    },
+    {
+      "task": "09",
+      "file_sha256": "3429ab07f257f5362d1e1eb486ee04c1315b4c7aba45000c91d725fb808cde2f",
+      "verdict": "keep",
+      "findings": []
+    },
+    {
+      "task": "10",
+      "file_sha256": "4f3c779d49301e10ebc8d1dc1bc0eaf6069a7dda10fd37e66a95468015209da8",
+      "verdict": "keep",
+      "findings": []
+    },
+    {
+      "task": "11",
+      "file_sha256": "32aa619b8c6182144d9bdc29feabfb82c90bd37184f4c423fccf995c560af0ad",
+      "verdict": "corrected",
+      "findings": [9]
+    },
+    {
+      "task": "12",
+      "file_sha256": "0b729fb2349863e723cdcba4dbd727e880b85348e1d629bb71ed135c96c473b2",
+      "verdict": "corrected",
+      "findings": [9]
+    },
+    {
+      "task": "13",
+      "file_sha256": "a5979bf8c72261cc4db208278acba817087db512491539c7aa211cbe339851b8",
+      "verdict": "corrected",
+      "findings": [9]
+    },
+    {
+      "task": "14",
+      "file_sha256": "1a8bdaa91c3293a67e2d255b59ed38d7f36984603714607493a43c1f0db9f67a",
+      "verdict": "corrected",
+      "findings": [9]
+    },
+    {
+      "task": "15",
+      "file_sha256": "9f5951401cff78cbe2235f2616f9b67ef54f801e4135612184f87828835f14d8",
+      "verdict": "corrected",
+      "findings": [9]
+    },
+    {
+      "task": "16",
+      "file_sha256": "1ad447a14550bf999caac0f232756eec42e8421315f823ee55efeeddd5305ec3",
+      "verdict": "corrected",
+      "findings": [9]
+    },
+    {
+      "task": "17",
+      "file_sha256": "43a150d726b2996a771b17209ac2a76534dff30443d505c0c401b445a2e26977",
+      "verdict": "keep",
+      "findings": []
+    },
+    {
+      "task": "18",
+      "file_sha256": "6221b937c0a24a8c2faa3d7aeaa9bf84c2ed74d100437856f4babffbc3b60c84",
+      "verdict": "keep",
+      "findings": []
+    },
+    {
+      "task": "19",
+      "file_sha256": "5cad756fb89c0fee5b2d73c8aeb5c7b944627a38891a8ab72cb55ab586621629",
+      "verdict": "keep",
+      "findings": [1]
+    },
+    {
+      "task": "20",
+      "file_sha256": "0628538079b8fa21a7612b92c700d8e659589e0f55d456a8b13034d69441e1c9",
+      "verdict": "corrected",
+      "findings": [2]
+    },
+    {
+      "task": "21",
+      "file_sha256": "4eaefa505651694df4840b97e2bb5b3abcdbce049d58e9fd51a385f4311a1ab3",
+      "verdict": "corrected",
+      "findings": [4]
+    },
+    {
+      "task": "22",
+      "file_sha256": "3b6c5e64d86ab70e83694e9e2059ded3f696f21de8e23a2c57e435239fe5a50b",
+      "verdict": "keep",
+      "findings": [2, 4]
+    },
+    {
+      "task": "88",
+      "file_sha256": "1314de361af64cd80fc64125fde7e5e138e0db66232107675febef3b9eb5c5cc",
+      "verdict": "deferred_non_blocking",
+      "findings": [10]
+    },
+    {
+      "task": "89",
+      "file_sha256": "38aebc7c387c1245ecd442048f06ccae6c1aaf07e03a9818279b7f2bb157a2ab",
+      "verdict": "deferred_non_blocking",
+      "findings": [10]
+    },
+    {
+      "task": "90",
+      "file_sha256": "b9a1fd55784dfcf5ae0981cf1a8ac8661ac3be7832cf98142452b0482817f959",
+      "verdict": "deferred_non_blocking",
+      "findings": [10]
+    },
+    {
+      "task": "23",
+      "file_sha256": "4e20a58a6c18e7ead4acce4be1185799f207aa5515e2c3f581c7e7cf72b80fce",
+      "verdict": "corrected",
+      "findings": [2, 3, 12]
+    },
+    {
+      "task": "24",
+      "file_sha256": "511905679ae878c1bfbb9bd8c057010675388635a1f96e73a1cc7af271e89bb8",
+      "verdict": "keep",
+      "findings": [2]
+    },
+    {
+      "task": "25",
+      "file_sha256": "b350fd3d1574545a2c190bb9ca88e20d0f359cc0435df6206dde0590bf5c2602",
+      "verdict": "corrected",
+      "findings": []
+    },
+    {
+      "task": "26",
+      "file_sha256": "db8252dbdc231c2b2b2dbf4c2c1d2fa6478f55029bf7cfca11ed3ee91c3d0032",
+      "verdict": "keep",
+      "findings": []
+    },
+    {
+      "task": "27",
+      "file_sha256": "1d7dde27e3016ade059e7e8a43c382cd93b31caed826abad8c02b933b4373fe1",
+      "verdict": "corrected",
+      "findings": [2]
+    },
+    {
+      "task": "86",
+      "file_sha256": "6a8f7e826b9c3d5d04d1dd4bcf276cce7e85aa48360b40374034de641f951a3a",
+      "verdict": "keep",
+      "findings": [2]
+    },
+    {
+      "task": "28",
+      "file_sha256": "2a14295f2f2301c60af0e524951b55e4483a52f49c045387733b72c130775554",
+      "verdict": "keep",
+      "findings": []
+    },
+    {
+      "task": "29",
+      "file_sha256": "870ffba544e3585012688e88cffe7839b39da49d2b868947069668f60d592334",
+      "verdict": "corrected",
+      "findings": [8]
+    },
+    {
+      "task": "30",
+      "file_sha256": "25f767ea54bb17ccb6bf020965f41bc469702f0967cf3a78d7f66be216e45561",
+      "verdict": "corrected",
+      "findings": [5, 8]
+    },
+    {
+      "task": "31",
+      "file_sha256": "eefccd9f3e4f6f7749671388fbf62bd2e051b0b7e2d97b16e4c0516af962092b",
+      "verdict": "corrected",
+      "findings": [5, 8]
+    },
+    {
+      "task": "32",
+      "file_sha256": "17c6b303dcdfd25e0a9b719c36f1390c89b2db83fad5eab3cac789501307b2b7",
+      "verdict": "corrected",
+      "findings": [8]
+    },
+    {
+      "task": "33",
+      "file_sha256": "9f2dac69e56d9771712e74e9adccfe344a815541f430d702a915dc5a7979dad1",
+      "verdict": "corrected",
+      "findings": [6, 8]
+    },
+    {
+      "task": "34",
+      "file_sha256": "7b2d290304603f16812f8928f13dd96ed6b596acb2ffc1de9f71c9df9adcacbf",
+      "verdict": "corrected",
+      "findings": [5, 8]
+    },
+    {
+      "task": "37",
+      "file_sha256": "2164d349092e73e8604f3b729c4fb784b1095bcfec69f81cb3c4d219d0ebace5",
+      "verdict": "corrected",
+      "findings": [3, 12]
+    },
+    {
+      "task": "38",
+      "file_sha256": "80487a5a0a82c982976c4f11c141a91d0ccb5c719ac3aad00703dfcf1a9b9609",
+      "verdict": "deferred_non_blocking",
+      "findings": [10]
+    },
+    {
+      "task": "40",
+      "file_sha256": "ebf0ed90f4b715383dede8f8b9b05eaf7a61edcf7aa642c98824a79dcd68d6c7",
+      "verdict": "keep",
+      "findings": []
+    },
+    {
+      "task": "42",
+      "file_sha256": "a3cc8ed3f37faba1136fd3e01e3157ea4500bcdcfd60c8f7bc0950b90d074e76",
+      "verdict": "keep",
+      "findings": []
+    },
+    {
+      "task": "43",
+      "file_sha256": "5b3e271577a9e3d497e3c6358d63df054a29fa1a8085e453b7ac47015394346e",
+      "verdict": "keep",
+      "findings": []
+    },
+    {
+      "task": "44",
+      "file_sha256": "3b898b3eff7740a153028ec2b62402bafee46f2e1d5fc9a1ca46a120bdca9cbe",
+      "verdict": "deferred_non_blocking",
+      "findings": [10]
+    },
+    {
+      "task": "45",
+      "file_sha256": "5b2ea4896f082abb74ee628b8a902db1635f40a0fda8b3fcbe84da7afaa0c92b",
+      "verdict": "corrected_deferred_non_blocking",
+      "findings": [3, 10]
+    },
+    {
+      "task": "46",
+      "file_sha256": "9b58f147cb4b93d3cb241991fbf8b7887c5517073cfe965b2d12f41dcabf8c4f",
+      "verdict": "deferred_non_blocking",
+      "findings": [10]
+    },
+    {
+      "task": "47",
+      "file_sha256": "903cf86bedda1f52be31c9522f847fd1a7a369d062cf1b3dcb4236e4e0838757",
+      "verdict": "deferred_non_blocking",
+      "findings": [10]
+    },
+    {
+      "task": "48",
+      "file_sha256": "8ceaac91c5f958c60cfd1951efc97de032b54fbeb1087cddd0b39517072a901e",
+      "verdict": "corrected",
+      "findings": [1, 11]
+    },
+    {
+      "task": "49",
+      "file_sha256": "8591a69fdf84fa22a0c848b13007097ba1d370e7f4c317c8aeae9786073e1d8f",
+      "verdict": "deferred_non_blocking",
+      "findings": [10]
+    },
+    {
+      "task": "50",
+      "file_sha256": "34cedf3b1591016d2b018436fd4893c332479cee2de6bbd83d4105a95a4fb172",
+      "verdict": "corrected",
+      "findings": [9]
+    },
+    {
+      "task": "52",
+      "file_sha256": "faa293cff065c4bf67e8dd422c0a57eb14e580c625ef281a7c8bb07ad58394f9",
+      "verdict": "keep",
+      "findings": []
+    },
+    {
+      "task": "53",
+      "file_sha256": "eb6742eeeaa8890bc51745b6ca84e356e793295fe56f220e760da282cf87a06a",
+      "verdict": "corrected",
+      "findings": [11]
+    },
+    {
+      "task": "54",
+      "file_sha256": "a5072e783865ba40c875e0c0eacd7179e5b897581a7e5ebb9a5ada55c9d7069c",
+      "verdict": "keep",
+      "findings": []
+    },
+    {
+      "task": "55",
+      "file_sha256": "a74eb2d259ecc69f6c931c02c8c4a1a7b536f278e98095f4a3312ef3ac449ca4",
+      "verdict": "keep",
+      "findings": []
+    },
+    {
+      "task": "56",
+      "file_sha256": "43b493bb185a7e2cc7efc8d97fe7b6534169ca6b90f364a8cd176fb2e528d192",
+      "verdict": "keep",
+      "findings": []
+    },
+    {
+      "task": "57",
+      "file_sha256": "6e1333918f9644e159412f522fda132edeab5b86e981089aa5206501733262a1",
+      "verdict": "corrected",
+      "findings": []
+    },
+    {
+      "task": "58",
+      "file_sha256": "5b6a61aae0dbe1ddf679a6af4b8c3454681d85518bd8ff3aacecf850d148434b",
+      "verdict": "keep",
+      "findings": []
+    },
+    {
+      "task": "61",
+      "file_sha256": "be950357dab412502593bdcfc3a3904d6e4f4fa317df34c8877867f1d49b0f24",
+      "verdict": "keep",
+      "findings": [7]
+    },
+    {
+      "task": "62",
+      "file_sha256": "400c3e3077e977a03279a0bc67fc7a1f7477053caf92536dea9cb45b1daec851",
+      "verdict": "keep",
+      "findings": []
+    },
+    {
+      "task": "63",
+      "file_sha256": "c470696bd69428250bb7ea4a64016cab4fc5fd253c581d8d6a30e2685bafab79",
+      "verdict": "corrected",
+      "findings": [11]
+    },
+    {
+      "task": "64",
+      "file_sha256": "da33c021a652e03b2226bdb7a2570b2c454a9390c9492a452493a95700a1f2a2",
+      "verdict": "corrected",
+      "findings": [11]
+    },
+    {
+      "task": "65",
+      "file_sha256": "0f941d1729b7735b8054a0441f28671877b1d08adb5497635aab7cad63ed4cad",
+      "verdict": "keep",
+      "findings": []
+    },
+    {
+      "task": "66",
+      "file_sha256": "70596e66b4f2a72028d4d8316edd42a4401b02df59f6bfe9f91637dacf2ad451",
+      "verdict": "corrected_deferred_non_blocking",
+      "findings": [10, 11]
+    },
+    {
+      "task": "67",
+      "file_sha256": "1c6905a35c069578fa6b4f5c1b79484af1ad560115f76a0cf114cbdc7c3688ea",
+      "verdict": "corrected",
+      "findings": []
+    },
+    {
+      "task": "68",
+      "file_sha256": "72e15dd70f87b353cad2257c9abecf92c9064d82e86b9b5acbaf793fc0af44c3",
+      "verdict": "corrected",
+      "findings": [7]
+    },
+    {
+      "task": "70",
+      "file_sha256": "36429ad23a1816f188cd815edc304b7cd0ef4a83ee09537d07e7ae0cdabae33c",
+      "verdict": "corrected",
+      "findings": []
+    },
+    {
+      "task": "71",
+      "file_sha256": "eeec9934724bdf459163e5b4d50e576e4ca863d5dc0ca9731a94f24085f7ddc4",
+      "verdict": "corrected",
+      "findings": [5]
+    },
+    {
+      "task": "72",
+      "file_sha256": "6e58c00b47fc3e015bf9890431f00b5fb4da3c966e8ca0358f5fc217479f1f4b",
+      "verdict": "corrected",
+      "findings": []
+    },
+    {
+      "task": "73",
+      "file_sha256": "dda74d4d051382faccf89e7f82187777c7ffdbc30ea12efde4c645ab6174148d",
+      "verdict": "corrected",
+      "findings": [6]
+    },
+    {
+      "task": "74",
+      "file_sha256": "e6331123f7fabdf0b741b1bf011d9cbaff1fa570abcdeca667bc5489ab270c64",
+      "verdict": "corrected",
+      "findings": []
+    },
+    {
+      "task": "75",
+      "file_sha256": "3b173f524518c6d98030c8024a6ba7d725e0452d07bf287c9b31c389b50bdcaa",
+      "verdict": "corrected",
+      "findings": []
+    },
+    {
+      "task": "76",
+      "file_sha256": "e324135ae377abf25301accbe2f47fd4d953f491dafc9ee162736eee964579ce",
+      "verdict": "corrected",
+      "findings": [6]
+    },
+    {
+      "task": "77",
+      "file_sha256": "48e2f35c71bbaf95163a0cf048ded9e882371568280d6ce5448cacf2afda5d74",
+      "verdict": "corrected",
+      "findings": [7]
+    },
+    {
+      "task": "78",
+      "file_sha256": "e869bfb9d493ee629e8c1c3bcfe920b0607f88b2237b2a07d8412d531a4015ec",
+      "verdict": "corrected",
+      "findings": [6, 8]
+    },
+    {
+      "task": "79",
+      "file_sha256": "ff7f0afa17de51b1e4e40b6697e170e70366026f9da854fd9470afe4b1564369",
+      "verdict": "corrected",
+      "findings": [8]
+    },
+    {
+      "task": "80",
+      "file_sha256": "259542e9482252725d84ef66dd0451ed1d906bdb7342a097d4ab14a37a01256f",
+      "verdict": "corrected",
+      "findings": [8]
+    },
+    {
+      "task": "81",
+      "file_sha256": "22d8c1478a5157d1234e919b65ae5baf62844f307374aefd051559284d926165",
+      "verdict": "corrected",
+      "findings": [5, 6, 8]
+    },
+    {
+      "task": "82",
+      "file_sha256": "cdf38383da12ac56bd619c05465446ad3ad9a8750885b82dc24c0609840bd41c",
+      "verdict": "corrected",
+      "findings": [8]
+    },
+    {
+      "task": "83",
+      "file_sha256": "17ab782453fdb22e127df69336e4eebdcc9eafe2d8f5dd070cb1eb90a1ea8085",
+      "verdict": "corrected",
+      "findings": [7, 8]
+    },
+    {
+      "task": "84",
+      "file_sha256": "3cf0bfbfca8bdf550e1bde434c16ecc514ebd0203ecb122abf495d0330f0c43c",
+      "verdict": "corrected",
+      "findings": [7, 8]
+    },
+    {
+      "task": "85",
+      "file_sha256": "56fd02fa4837b74f7b0f7626552ec62f313f26de33c00b0157c6d12457b0ebd1",
+      "verdict": "corrected",
+      "findings": [8]
+    },
+    {
+      "task": "87",
+      "file_sha256": "cec0a4630506bbb75f223069203f8a6df3cbaf4792d348b55cc83aa657decea8",
+      "verdict": "deferred_non_blocking",
+      "findings": [10]
+    }
+  ],
+  "qualification_limits": [
+    "Stage A remains open: legacy production execution, unfrozen implemented Node membership, unresolved corpus conflicts and missing complete final-build qualifications.",
+    "Historical or mixed-binary pass reports are triage evidence only.",
+    "No task status changed or gate claimed complete by this review.",
+    "Runtime/Node/Wasm ownership remains required; new CLI/runner crates, a duplicate decoded-operator vocabulary and deferred framework inventories add no completion gate."
+  ],
+  "source_evidence": {
+    "v2_repository": "../v2",
+    "pinned_commit": "e511d1f7e401ecff8cfc4f7cccb6292e6426be44",
+    "directly_checked_tasks": [
+      12, 86, 132, 134, 140, 146, 150, 154, 164, 165, 166, 172, 191, 194, 196,
+      197, 200, 207, 327, 341, 355, 357, 360, 361, 367, 368, 372
+    ]
+  }
+}

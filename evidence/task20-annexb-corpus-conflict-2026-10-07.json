@@ -1,0 +1,109 @@
+{
+  "schema": 1,
+  "task": "20",
+  "kind": "affected_stage_annexb_corpus_conflict_recheck",
+  "reviewed_on": "2026-10-07",
+  "source": {
+    "revision": "74a6ea72b724573a0fe0a72334d431dce15c0296",
+    "dirty": true,
+    "host": "macos-aarch64",
+    "binary": "target/iteration/run-stages-next",
+    "binary_sha256": "ec4b1224c6606cd2c45b4b40f21ff3403824989c546ad30b57a32e44a79135d5",
+    "snapshot_algorithm": "SHA-256 over sorted UTF-8 relative path, NUL, file SHA-256 hex, newline records",
+    "snapshot_roots": [
+      "crates/quench-runtime-next/src",
+      "crates/quench-test262/src",
+      "vendor/oxc-parser-next/src"
+    ],
+    "snapshot_additional_files": [
+      "Cargo.toml",
+      "Cargo.lock",
+      "crates/quench-runtime-next/Cargo.toml",
+      "crates/quench-test262/Cargo.toml",
+      "vendor/oxc-parser-next/Cargo.toml",
+      "docs/STAGES.md"
+    ],
+    "snapshot_file_count": 292,
+    "snapshot_sha256": "cc663106be28ee700be01e02c8c38fe7a5dee7358badea780c0fd5bbf467d39a"
+  },
+  "corpus": {
+    "path": "tests/test262",
+    "revision": "f2d1435644797268dca1f7988cad5a4e89ccd8d2",
+    "worktree_clean": true,
+    "stage_definitions": "docs/STAGES.md",
+    "stage_definitions_sha256": "4cb13c366db7ed8d7ae0a1b7fe63eb18f93def77fd09231630ba5050f7d7d3d2",
+    "harness_file_count": 44,
+    "harness_sha256": "df7ef3025b3f5e610a083551eccb1d225d0f27315a7e2945fcbd7abf4ee3e917"
+  },
+  "scope": {
+    "full_test262_run": false,
+    "unit_tests_run": false,
+    "stages": [
+      {
+        "cases": 845,
+        "passed": 844,
+        "failed": 1,
+        "inventory_file_count": 845,
+        "inventory_sha256": "a4ed04a2fb9185519a238f3abb4dc42168260ac0b408892fc5dbac4167a47941",
+        "report_path": "target/iteration/task20-recheck-2026-10-07/stages-94-114.json",
+        "report_sha256": "41692f93abda765663dbecf7c8f2e7145512113aa3282502e41d254200e43308",
+        "provenance": {
+          "binary": "/Users/admin/Code/GitHub/quench-v2/target/iteration/run-stages-next",
+          "host": "macos-aarch64",
+          "jobs": 4,
+          "source_dirty": true,
+          "source_revision": "74a6ea72b724573a0fe0a72334d431dce15c0296",
+          "timeout_ms": 900000
+        }
+      },
+      {
+        "cases": 1482,
+        "passed": 1482,
+        "failed": 0,
+        "inventory_file_count": 1482,
+        "inventory_sha256": "b1d644687b49295f961c3d4355b56fb333fc626484133aaf30742ec229d5d38c",
+        "report_path": "target/iteration/task20-recheck-2026-10-07/stage-114.json",
+        "report_sha256": "392284775fb270081f3010e261d4402dc382fbac53bc962708ae9f656a614f96",
+        "provenance": {
+          "binary": "/Users/admin/Code/GitHub/quench-v2/target/iteration/run-stages-next",
+          "host": "macos-aarch64",
+          "jobs": 4,
+          "source_dirty": true,
+          "source_revision": "74a6ea72b724573a0fe0a72334d431dce15c0296",
+          "timeout_ms": 900000
+        }
+      }
+    ]
+  },
+  "conflict": {
+    "pinned_fixture": "tests/test262/test/annexB/language/function-code/block-decl-func-skip-arguments.js",
+    "pinned_fixture_sha256": "8a225aefbeb41d9a8f5630403141e3b718330d1e946c15a9fb35678da9a90d01",
+    "opposite_stage_fixture": "tests/test262/test/staging/sm/lexical-environment/block-scoped-functions-annex-b-arguments.js",
+    "opposite_stage_fixture_sha256": "1bc4233bfb75d6b06a47773ad93e9fd3e7c500a0fbeb2de4a5b7eb508fdd8dab",
+    "quench_stage94": {
+      "passed": 844,
+      "failed": 1,
+      "total": 845
+    },
+    "quench_stage114": {
+      "passed": 1482,
+      "failed": 0,
+      "total": 1482
+    },
+    "local_node": {
+      "version": "v26.10.0",
+      "stage94_exit": 1,
+      "stage94_stderr_sha256": "6f287d22a73069aab2e7f4246e52088104f1fe670af49438149d33d9a4942aa3",
+      "stage114_exit": 0,
+      "stage114_stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "official_upstream": {
+      "issue": "https://github.com/tc39/test262/issues/5113",
+      "issue_status": "open",
+      "correction_pr": "https://github.com/tc39/test262/pull/5112",
+      "correction_pr_status": "open",
+      "checked_on": "2026-10-07"
+    }
+  },
+  "result": "The current shared runner reproduces the stale Stage 94 expectation; Stage 114 and local Node agree on the function binding. This is an upstream corpus conflict, not a Quench semantic gap; no fixture or expected result was changed."
+}

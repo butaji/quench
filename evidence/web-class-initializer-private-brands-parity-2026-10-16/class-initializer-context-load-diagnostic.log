@@ -1,0 +1,10 @@
+quench/express round 0: false
+quench/fastify round 0: true
+quench/hono round 0: false
+node/express round 0: true
+node/fastify round 0: true
+node/hono round 0: true
+bun/elysia round 0: true
+bun/hono round 0: true
+bun/fastify round 0: true
+web: incomplete benchmark: see retained report

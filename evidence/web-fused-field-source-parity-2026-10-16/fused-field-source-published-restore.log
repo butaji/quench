@@ -1,0 +1,24 @@
+On branch v2-web
+Your branch is up to date with 'origin/v2-web'.
+
+Changes not staged for commit:
+  (use "git add <file>..." to update what will be committed)
+  (use "git restore <file>..." to discard changes in working directory)
+	modified:   crates/quench-node-test/tests/child_entry.rs
+	modified:   crates/quench-runtime/src/bytecode.rs
+	modified:   crates/quench-runtime/src/bytecode/binary.rs
+	modified:   crates/quench-runtime/src/bytecode/tests.rs
+	modified:   crates/quench-runtime/src/bytecode/validate.rs
+	modified:   crates/quench-runtime/src/compile/ast/expression.rs
+	modified:   crates/quench-runtime/src/compile/rewrite.rs
+	modified:   crates/quench-runtime/src/vm.rs
+	modified:   crates/quench-runtime/src/vm/activation.rs
+	modified:   crates/quench-runtime/src/vm/dispatch.rs
+	modified:   crates/quench-runtime/src/vm/error.rs
+	modified:   crates/quench-runtime/src/vm/tests.rs
+
+Untracked files:
+  (use "git add <file>..." to include in what will be committed)
+	crates/quench-node-test/node-tests/test-fused-field-source-positions.js
+
+no changes added to commit (use "git add" and/or "git commit -a")

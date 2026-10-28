@@ -1,0 +1,228 @@
+diff --git a/crates/quench-runtime/src/heap.rs b/crates/quench-runtime/src/heap.rs
+index 026c84d3e..2c93bec2d 100644
+--- a/crates/quench-runtime/src/heap.rs
++++ b/crates/quench-runtime/src/heap.rs
+@@ -353,6 +352,0 @@ impl Heap {
+-    pub(crate) fn live_object_shapes(&self) -> Vec<u32> {
+-        self.slots
+-            .iter()
+-            .filter_map(|slot| slot.cell.as_ref()?.object().map(Object::shape))
+-            .collect()
+-    }
+@@ -557,4 +551,3 @@ impl Heap {
+-            if let Some(elements) = self
+-                .sparse_arrays
+-                .as_ref()
+-                .and_then(|arrays| arrays.get(&(index as u32)))
++            if let Some(arrays) = self.sparse_arrays.as_ref()
++                && matches!(cell, Cell::Array { .. })
++                && let Some(elements) = arrays.get(&(index as u32))
+diff --git a/crates/quench-runtime/src/heap/weak.rs b/crates/quench-runtime/src/heap/weak.rs
+index a5db1f870..665b17106 100644
+--- a/crates/quench-runtime/src/heap/weak.rs
++++ b/crates/quench-runtime/src/heap/weak.rs
+@@ -45,5 +45,7 @@ impl EphemeronWork {
+-        let mut next = self.heads.remove(&index);
+-        while let Some(index) = next {
+-            let pending = self.values[index];
+-            work.push(pending.value);
+-            next = pending.next;
++        if !self.heads.is_empty() {
++            let mut next = self.heads.remove(&index);
++            while let Some(index) = next {
++                let pending = self.values[index];
++                work.push(pending.value);
++                next = pending.next;
++            }
+diff --git a/crates/quench-runtime/src/vm.rs b/crates/quench-runtime/src/vm.rs
+index 8b463e905..91036cb0f 100644
+--- a/crates/quench-runtime/src/vm.rs
++++ b/crates/quench-runtime/src/vm.rs
+@@ -359,0 +360,10 @@ impl ShapeTransition {
++    fn introduces_gc_roots(self) -> bool {
++        match self {
++            Self::Add { key, .. } => key.symbol_value().is_some(),
++            Self::Descriptor { attributes, .. } => {
++                attributes.getter.is_some() || attributes.setter.is_some()
++            }
++            Self::Root | Self::Delete { .. } | Self::Vacant | Self::Dictionary { .. } => false,
++        }
++    }
++
+@@ -426,0 +437 @@ struct Shape {
++    may_have_gc_roots: bool,
+@@ -431 +442 @@ impl Shape {
+-        Self::child(None, ShapeTransition::Root, 0, None)
++        Self::child(None, ShapeTransition::Root, 0, None, false)
+@@ -438,0 +450 @@ impl Shape {
++        parent_may_have_gc_roots: bool,
+@@ -444,0 +457 @@ impl Shape {
++            may_have_gc_roots: parent_may_have_gc_roots || transition.introduces_gc_roots(),
+diff --git a/crates/quench-runtime/src/vm/gc.rs b/crates/quench-runtime/src/vm/gc.rs
+index 6b12ce08e..6078da8c3 100644
+--- a/crates/quench-runtime/src/vm/gc.rs
++++ b/crates/quench-runtime/src/vm/gc.rs
+@@ -79,0 +80 @@ fn append_compacted_shape(
++    let parent_may_have_gc_roots = shapes[parent as usize].may_have_gc_roots;
+@@ -84,0 +86 @@ fn append_compacted_shape(
++        parent_may_have_gc_roots,
+@@ -521 +523,4 @@ impl<H: Host> Vm<H> {
+-        let shapes = &self.shapes;
++        let shape_count = self.shapes.len();
++        let mut scanned_root_shapes = None::<Vec<u64>>;
++        let mut live_shapes = Vec::new();
++        let shapes = &mut self.shapes;
+@@ -525,2 +530,16 @@ impl<H: Host> Vm<H> {
+-                    append_shape_roots(shapes, shape, roots);
+-                    if let Some(edges) = owned_roots.get(&owner) {
++                    live_shapes.push(shape);
++                    if shapes[shape as usize].may_have_gc_roots {
++                        let shape_index = shape as usize;
++                        let visited = scanned_root_shapes.get_or_insert_with(|| {
++                            vec![0; shape_count.div_ceil(u64::BITS as usize)]
++                        });
++                        let word = shape_index / u64::BITS as usize;
++                        let mask = 1_u64 << (shape_index % u64::BITS as usize);
++                        if visited[word] & mask == 0 {
++                            visited[word] |= mask;
++                            append_shape_roots(shapes, shape, roots);
++                        }
++                    }
++                    if !owned_roots.is_empty()
++                        && let Some(edges) = owned_roots.get(&owner)
++                    {
+@@ -533 +551,0 @@ impl<H: Host> Vm<H> {
+-        let live_shapes = self.heap.live_object_shapes();
+@@ -774,0 +793,5 @@ mod tests {
++    use crate::value::Value;
++    use crate::vm::{
++        DEFAULT_PROPERTY_ATTRIBUTES, DictionaryTrigger, PropertyAttributes, Shape, ShapeTransition,
++        property_key::PropertyKey,
++    };
+@@ -782,0 +806,57 @@ mod tests {
++
++    #[test]
++    fn shape_gc_root_fact_is_inherited_from_symbol_and_accessor_transitions() {
++        let root = Shape::root();
++        assert!(!root.may_have_gc_roots);
++        let string_key = Shape::child(
++            Some(0),
++            ShapeTransition::Add {
++                key: PropertyKey::string(0),
++                slot: 0,
++            },
++            1,
++            None,
++            root.may_have_gc_roots,
++        );
++        assert!(!string_key.may_have_gc_roots);
++
++        let symbol_key = PropertyKey::symbol(Value::heap(1));
++        let symbol_shape = Shape::child(
++            Some(0),
++            ShapeTransition::Add {
++                key: symbol_key,
++                slot: 0,
++            },
++            1,
++            None,
++            root.may_have_gc_roots,
++        );
++        assert!(symbol_shape.may_have_gc_roots);
++        let deleted_symbol_shape = Shape::child(
++            Some(1),
++            ShapeTransition::Delete {
++                key: symbol_key,
++                slot: 0,
++            },
++            1,
++            None,
++            symbol_shape.may_have_gc_roots,
++        );
++        assert!(deleted_symbol_shape.may_have_gc_roots);
++
++        let attributes = PropertyAttributes {
++            getter: Some(Value::heap(2)),
++            ..DEFAULT_PROPERTY_ATTRIBUTES
++        };
++        let accessor_shape = Shape::child(
++            Some(1),
++            ShapeTransition::Descriptor {
++                slot: 0,
++                attributes,
++            },
++            1,
++            Some(DictionaryTrigger::PropertyCount),
++            string_key.may_have_gc_roots,
++        );
++        assert!(accessor_shape.may_have_gc_roots);
++    }
+diff --git a/crates/quench-runtime/src/vm/object.rs b/crates/quench-runtime/src/vm/object.rs
+index 21a2968d6..0f18b4311 100644
+--- a/crates/quench-runtime/src/vm/object.rs
++++ b/crates/quench-runtime/src/vm/object.rs
+@@ -171,0 +172 @@ impl<H: Host> Vm<H> {
++        let parent_may_have_gc_roots = self.shapes[parent as usize].may_have_gc_roots;
+@@ -176,0 +178 @@ impl<H: Host> Vm<H> {
++            parent_may_have_gc_roots,
+diff --git a/crates/quench-runtime/src/vm/tests.rs b/crates/quench-runtime/src/vm/tests.rs
+index 795a0619c..b6d718c8a 100644
+--- a/crates/quench-runtime/src/vm/tests.rs
++++ b/crates/quench-runtime/src/vm/tests.rs
+@@ -79,0 +80,56 @@ fn fallback_descriptor_edges_follow_their_owner_lifetime() {
++#[test]
++fn shape_roots_keep_symbols_and_active_accessors_alive() {
++    use super::{DEFAULT_PROPERTY_ATTRIBUTES, property_key::PropertyKey};
++    use crate::heap::Cell;
++
++    let program = Engine::specialize("", "shape-roots.js").unwrap();
++    let mut vm = Vm::new(SilentHost);
++    let symbol = vm.heap.alloc(Cell::Symbol(None));
++    let symbol_weak = vm.heap.weak_handle(symbol).unwrap();
++    let symbol_shape = vm.transition_property_shape(0, PropertyKey::symbol(symbol));
++    let first =
++        vm.heap
++            .alloc_object_with_properties(Value::NULL, symbol_shape, &[Value::UNDEFINED]);
++    let second =
++        vm.heap
++            .alloc_object_with_properties(Value::NULL, symbol_shape, &[Value::UNDEFINED]);
++    let first_root = vm.heap.root(first);
++    let second_root = vm.heap.root(second);
++
++    vm.collect_now(&program);
++    assert_eq!(vm.heap.weak_value(symbol_weak), Some(symbol));
++    assert!(vm.heap.release_root(first_root));
++    assert!(vm.heap.release_root(second_root));
++    vm.collect_now(&program);
++    assert!(vm.heap.weak_value(symbol_weak).is_none());
++
++    let atom = vm.intern_atom("field");
++    let data_shape = vm.transition_shape(0, atom);
++    let owner = vm
++        .heap
++        .alloc_object_with_properties(Value::NULL, data_shape, &[Value::UNDEFINED]);
++    let getter = vm.heap.alloc(Cell::String("getter".into()));
++    let getter_weak = vm.heap.weak_handle(getter).unwrap();
++    vm.set_property_attributes(
++        owner,
++        PropertyKey::string(atom),
++        super::PropertyAttributes {
++            accessor: true,
++            getter: Some(getter),
++            ..DEFAULT_PROPERTY_ATTRIBUTES
++        },
++    );
++    let owner_root = vm.heap.root(owner);
++    vm.collect_now(&program);
++    assert_eq!(vm.heap.weak_value(getter_weak), Some(getter));
++
++    vm.set_property_attributes(
++        owner,
++        PropertyKey::string(atom),
++        DEFAULT_PROPERTY_ATTRIBUTES,
++    );
++    vm.collect_now(&program);
++    assert!(vm.heap.weak_value(getter_weak).is_none());
++    assert!(vm.heap.release_root(owner_root));
++}
++

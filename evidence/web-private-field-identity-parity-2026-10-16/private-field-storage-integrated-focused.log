@@ -1,0 +1,10 @@
+
+running 5 tests
+test buffer_private_encoding_does_not_consult_typed_length_or_subarray_hooks ... ok
+test crypto_hash_handle_symbols_are_private_canonical_and_not_public_registry_keys ... ok
+test optional_private_and_complex_call_columns_follow_actual_syntax_tokens ... ok
+test private_fields_keep_class_creation_identity_and_atomic_internal_initialization ... ok
+test shadow_realms_own_original_node_error_policy_default_hooks_and_private_fallbacks ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 373 filtered out; finished in 3.68s
+

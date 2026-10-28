@@ -1,0 +1,1 @@
+Error: setupUncaughtExceptionCapture() called while a capture callback is already set

@@ -1,0 +1,1127 @@
+{
+  "task": 61,
+  "experiment": "Cell Object/Array early-return V8-v7 fixture gate",
+  "platform": "macOS-26.5-arm64-arm-64bit",
+  "machine": "arm64",
+  "rounds_per_fixture": 11,
+  "binary_sha256": {
+    "baseline": "2854be3031531d0e71cbdd4098ae8bdfb64079aff34831a6e9c28bce4113f7b7",
+    "candidate": "a5c92c4f93bdbb0d66570f16157b2f606b5501b65e24c326d1b1f2ed4fb3b39c"
+  },
+  "runner_sha256": "88e53b2f86527ba45b3926b01c5e6be6e3f15430860bdcc4ca7dd7e9af739c87",
+  "base_sha256": "ac383759c3cbf5f3a499ade526a4e296f7925733d8c3889b6d5840ce6867ff51",
+  "inputs": {
+    "richards.js": {
+      "source_sha256": "d86eac4108343a54ba6e10621a77b46f82f554c3b0a46e8fb4032d5cf65a2a11",
+      "materialized_sha256": "b501f150708fa94cc6973a0fe6e07004635150c6c7794bab660abbf1beed5ed0",
+      "materialized_path": "tasks/evidence/task61-cell-object-fast-path-fixture-pairs-2026-10-09/materialized-richards.js"
+    },
+    "deltablue.js": {
+      "source_sha256": "74b5a95f4877701073c6efef08e4ae306562747067e292925b69cbd629a511b9",
+      "materialized_sha256": "60bde6bd8a2faa0fc8d2f7309bb9f62234919616186a768ab59ba486955ca97c",
+      "materialized_path": "tasks/evidence/task61-cell-object-fast-path-fixture-pairs-2026-10-09/materialized-deltablue.js"
+    }
+  },
+  "records": [
+    {
+      "fixture": "richards.js",
+      "pair": 1,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "results": {
+        "candidate": {
+          "fixture": "richards.js",
+          "pair": 1,
+          "variant": "candidate",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "target/pinned/a5c92c4f93bdbb0d66570f16157b2f606b5501b65e24c326d1b1f2ed4fb3b39c/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-cell-object-fast-path-fixture-pairs-2026-10-09/materialized-richards.js"
+          ],
+          "exit_code": 0,
+          "score": 91.7,
+          "instructions_retired": 16001788903,
+          "cycles_elapsed": 3147400314,
+          "maximum_rss_bytes": 18382848,
+          "elapsed_seconds": 3.11,
+          "wall_seconds": 3.119703084,
+          "stdout": "__quenchBenchResult: Richards: 91.7\n----\nScore: 91.7\n",
+          "stderr": "        3.11 real         0.92 user         0.01 sys\n            18382848  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1365  page reclaims\n                 353  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   3  voluntary context switches\n                2099  involuntary context switches\n         16001788903  instructions retired\n          3147400314  cycles elapsed\n             8978840  peak memory footprint\n"
+        },
+        "baseline": {
+          "fixture": "richards.js",
+          "pair": 1,
+          "variant": "baseline",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "target/pinned/2854be3031531d0e71cbdd4098ae8bdfb64079aff34831a6e9c28bce4113f7b7/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-cell-object-fast-path-fixture-pairs-2026-10-09/materialized-richards.js"
+          ],
+          "exit_code": 0,
+          "score": 70.8,
+          "instructions_retired": 13977457341,
+          "cycles_elapsed": 2796223787,
+          "maximum_rss_bytes": 18546688,
+          "elapsed_seconds": 3.1,
+          "wall_seconds": 3.111217792,
+          "stdout": "__quenchBenchResult: Richards: 70.8\n----\nScore: 70.8\n",
+          "stderr": "        3.10 real         0.83 user         0.01 sys\n            18546688  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1499  page reclaims\n                 339  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   5  voluntary context switches\n                1957  involuntary context switches\n         13977457341  instructions retired\n          2796223787  cycles elapsed\n             9257392  peak memory footprint\n"
+        }
+      }
+    },
+    {
+      "fixture": "richards.js",
+      "pair": 2,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "results": {
+        "baseline": {
+          "fixture": "richards.js",
+          "pair": 2,
+          "variant": "baseline",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "target/pinned/2854be3031531d0e71cbdd4098ae8bdfb64079aff34831a6e9c28bce4113f7b7/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-cell-object-fast-path-fixture-pairs-2026-10-09/materialized-richards.js"
+          ],
+          "exit_code": 0,
+          "score": 86.5,
+          "instructions_retired": 16161312329,
+          "cycles_elapsed": 3083944647,
+          "maximum_rss_bytes": 18399232,
+          "elapsed_seconds": 3.07,
+          "wall_seconds": 3.081173624999999,
+          "stdout": "__quenchBenchResult: Richards: 86.5\n----\nScore: 86.5\n",
+          "stderr": "        3.07 real         0.90 user         0.01 sys\n            18399232  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1755  page reclaims\n                  25  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   1  voluntary context switches\n                1706  involuntary context switches\n         16161312329  instructions retired\n          3083944647  cycles elapsed\n             9044376  peak memory footprint\n"
+        },
+        "candidate": {
+          "fixture": "richards.js",
+          "pair": 2,
+          "variant": "candidate",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "target/pinned/a5c92c4f93bdbb0d66570f16157b2f606b5501b65e24c326d1b1f2ed4fb3b39c/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-cell-object-fast-path-fixture-pairs-2026-10-09/materialized-richards.js"
+          ],
+          "exit_code": 0,
+          "score": 81.8,
+          "instructions_retired": 15974731903,
+          "cycles_elapsed": 3206599651,
+          "maximum_rss_bytes": 18743296,
+          "elapsed_seconds": 3.16,
+          "wall_seconds": 3.1689754170000004,
+          "stdout": "__quenchBenchResult: Richards: 81.8\n----\nScore: 81.8\n",
+          "stderr": "        3.16 real         0.97 user         0.01 sys\n            18743296  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1563  page reclaims\n                  37  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   4  voluntary context switches\n                1724  involuntary context switches\n         15974731903  instructions retired\n          3206599651  cycles elapsed\n             9454000  peak memory footprint\n"
+        }
+      }
+    },
+    {
+      "fixture": "richards.js",
+      "pair": 3,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "results": {
+        "candidate": {
+          "fixture": "richards.js",
+          "pair": 3,
+          "variant": "candidate",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "target/pinned/a5c92c4f93bdbb0d66570f16157b2f606b5501b65e24c326d1b1f2ed4fb3b39c/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-cell-object-fast-path-fixture-pairs-2026-10-09/materialized-richards.js"
+          ],
+          "exit_code": 0,
+          "score": 80.1,
+          "instructions_retired": 14774499608,
+          "cycles_elapsed": 2941998175,
+          "maximum_rss_bytes": 18169856,
+          "elapsed_seconds": 3.1,
+          "wall_seconds": 3.1165088329999993,
+          "stdout": "__quenchBenchResult: Richards: 80.1\n----\nScore: 80.1\n",
+          "stderr": "        3.10 real         0.88 user         0.01 sys\n            18169856  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1655  page reclaims\n                  25  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   1  voluntary context switches\n                1324  involuntary context switches\n         14774499608  instructions retired\n          2941998175  cycles elapsed\n             8831384  peak memory footprint\n"
+        },
+        "baseline": {
+          "fixture": "richards.js",
+          "pair": 3,
+          "variant": "baseline",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "target/pinned/2854be3031531d0e71cbdd4098ae8bdfb64079aff34831a6e9c28bce4113f7b7/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-cell-object-fast-path-fixture-pairs-2026-10-09/materialized-richards.js"
+          ],
+          "exit_code": 0,
+          "score": 80.0,
+          "instructions_retired": 16161794475,
+          "cycles_elapsed": 3080524284,
+          "maximum_rss_bytes": 18595840,
+          "elapsed_seconds": 3.06,
+          "wall_seconds": 3.0743730420000013,
+          "stdout": "__quenchBenchResult: Richards: 80.0\n----\nScore: 80.0\n",
+          "stderr": "        3.06 real         0.90 user         0.01 sys\n            18595840  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1779  page reclaims\n                  37  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   7  voluntary context switches\n                1491  involuntary context switches\n         16161794475  instructions retired\n          3080524284  cycles elapsed\n             9224600  peak memory footprint\n"
+        }
+      }
+    },
+    {
+      "fixture": "richards.js",
+      "pair": 4,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "results": {
+        "baseline": {
+          "fixture": "richards.js",
+          "pair": 4,
+          "variant": "baseline",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "target/pinned/2854be3031531d0e71cbdd4098ae8bdfb64079aff34831a6e9c28bce4113f7b7/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-cell-object-fast-path-fixture-pairs-2026-10-09/materialized-richards.js"
+          ],
+          "exit_code": 0,
+          "score": 91.6,
+          "instructions_retired": 17174080765,
+          "cycles_elapsed": 3422683959,
+          "maximum_rss_bytes": 18759680,
+          "elapsed_seconds": 3.09,
+          "wall_seconds": 3.099781,
+          "stdout": "__quenchBenchResult: Richards: 91.6\n----\nScore: 91.6\n",
+          "stderr": "        3.09 real         1.02 user         0.01 sys\n            18759680  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1647  page reclaims\n                  15  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                2293  involuntary context switches\n         17174080765  instructions retired\n          3422683959  cycles elapsed\n             9224624  peak memory footprint\n"
+        },
+        "candidate": {
+          "fixture": "richards.js",
+          "pair": 4,
+          "variant": "candidate",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "target/pinned/a5c92c4f93bdbb0d66570f16157b2f606b5501b65e24c326d1b1f2ed4fb3b39c/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-cell-object-fast-path-fixture-pairs-2026-10-09/materialized-richards.js"
+          ],
+          "exit_code": 0,
+          "score": 93.8,
+          "instructions_retired": 17759244289,
+          "cycles_elapsed": 3382023877,
+          "maximum_rss_bytes": 18300928,
+          "elapsed_seconds": 3.12,
+          "wall_seconds": 3.130211625000001,
+          "stdout": "__quenchBenchResult: Richards: 93.8\n----\nScore: 93.8\n",
+          "stderr": "        3.12 real         0.99 user         0.01 sys\n            18300928  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1741  page reclaims\n                  37  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   7  voluntary context switches\n                1504  involuntary context switches\n         17759244289  instructions retired\n          3382023877  cycles elapsed\n             8962456  peak memory footprint\n"
+        }
+      }
+    },
+    {
+      "fixture": "richards.js",
+      "pair": 5,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "results": {
+        "candidate": {
+          "fixture": "richards.js",
+          "pair": 5,
+          "variant": "candidate",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "target/pinned/a5c92c4f93bdbb0d66570f16157b2f606b5501b65e24c326d1b1f2ed4fb3b39c/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-cell-object-fast-path-fixture-pairs-2026-10-09/materialized-richards.js"
+          ],
+          "exit_code": 0,
+          "score": 96.3,
+          "instructions_retired": 17559322753,
+          "cycles_elapsed": 3440177242,
+          "maximum_rss_bytes": 18644992,
+          "elapsed_seconds": 3.05,
+          "wall_seconds": 3.0640785410000007,
+          "stdout": "__quenchBenchResult: Richards: 96.3\n----\nScore: 96.3\n",
+          "stderr": "        3.05 real         1.02 user         0.01 sys\n            18644992  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1640  page reclaims\n                  25  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   1  voluntary context switches\n                1824  involuntary context switches\n         17559322753  instructions retired\n          3440177242  cycles elapsed\n             9109912  peak memory footprint\n"
+        },
+        "baseline": {
+          "fixture": "richards.js",
+          "pair": 5,
+          "variant": "baseline",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "target/pinned/2854be3031531d0e71cbdd4098ae8bdfb64079aff34831a6e9c28bce4113f7b7/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-cell-object-fast-path-fixture-pairs-2026-10-09/materialized-richards.js"
+          ],
+          "exit_code": 0,
+          "score": 80.8,
+          "instructions_retired": 16166133160,
+          "cycles_elapsed": 3169975203,
+          "maximum_rss_bytes": 18579456,
+          "elapsed_seconds": 3.07,
+          "wall_seconds": 3.0835002090000003,
+          "stdout": "__quenchBenchResult: Richards: 80.8\n----\nScore: 80.8\n",
+          "stderr": "        3.07 real         0.94 user         0.01 sys\n            18579456  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1788  page reclaims\n                  37  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   7  voluntary context switches\n                1857  involuntary context switches\n         16166133160  instructions retired\n          3169975203  cycles elapsed\n             9175424  peak memory footprint\n"
+        }
+      }
+    },
+    {
+      "fixture": "richards.js",
+      "pair": 6,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "results": {
+        "baseline": {
+          "fixture": "richards.js",
+          "pair": 6,
+          "variant": "baseline",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "target/pinned/2854be3031531d0e71cbdd4098ae8bdfb64079aff34831a6e9c28bce4113f7b7/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-cell-object-fast-path-fixture-pairs-2026-10-09/materialized-richards.js"
+          ],
+          "exit_code": 0,
+          "score": 79.1,
+          "instructions_retired": 15758387772,
+          "cycles_elapsed": 3004662884,
+          "maximum_rss_bytes": 18415616,
+          "elapsed_seconds": 3.12,
+          "wall_seconds": 3.130724959000002,
+          "stdout": "__quenchBenchResult: Richards: 79.1\n----\nScore: 79.1\n",
+          "stderr": "        3.12 real         0.88 user         0.01 sys\n            18415616  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1733  page reclaims\n                  25  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   1  voluntary context switches\n                1564  involuntary context switches\n         15758387772  instructions retired\n          3004662884  cycles elapsed\n             9126320  peak memory footprint\n"
+        },
+        "candidate": {
+          "fixture": "richards.js",
+          "pair": 6,
+          "variant": "candidate",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "target/pinned/a5c92c4f93bdbb0d66570f16157b2f606b5501b65e24c326d1b1f2ed4fb3b39c/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-cell-object-fast-path-fixture-pairs-2026-10-09/materialized-richards.js"
+          ],
+          "exit_code": 0,
+          "score": 89.7,
+          "instructions_retired": 17161611508,
+          "cycles_elapsed": 3259163977,
+          "maximum_rss_bytes": 18300928,
+          "elapsed_seconds": 3.05,
+          "wall_seconds": 3.0638232499999987,
+          "stdout": "__quenchBenchResult: Richards: 89.7\n----\nScore: 89.7\n",
+          "stderr": "        3.05 real         0.95 user         0.01 sys\n            18300928  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1748  page reclaims\n                  38  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   4  voluntary context switches\n                1596  involuntary context switches\n         17161611508  instructions retired\n          3259163977  cycles elapsed\n             8978816  peak memory footprint\n"
+        }
+      }
+    },
+    {
+      "fixture": "richards.js",
+      "pair": 7,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "results": {
+        "candidate": {
+          "fixture": "richards.js",
+          "pair": 7,
+          "variant": "candidate",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "target/pinned/a5c92c4f93bdbb0d66570f16157b2f606b5501b65e24c326d1b1f2ed4fb3b39c/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-cell-object-fast-path-fixture-pairs-2026-10-09/materialized-richards.js"
+          ],
+          "exit_code": 0,
+          "score": 87.1,
+          "instructions_retired": 16566437767,
+          "cycles_elapsed": 3264214593,
+          "maximum_rss_bytes": 18628608,
+          "elapsed_seconds": 3.1,
+          "wall_seconds": 3.1097763750000027,
+          "stdout": "__quenchBenchResult: Richards: 87.1\n----\nScore: 87.1\n",
+          "stderr": "        3.10 real         0.97 user         0.01 sys\n            18628608  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1735  page reclaims\n                  25  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   1  voluntary context switches\n                1730  involuntary context switches\n         16566437767  instructions retired\n          3264214593  cycles elapsed\n             9142680  peak memory footprint\n"
+        },
+        "baseline": {
+          "fixture": "richards.js",
+          "pair": 7,
+          "variant": "baseline",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "target/pinned/2854be3031531d0e71cbdd4098ae8bdfb64079aff34831a6e9c28bce4113f7b7/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-cell-object-fast-path-fixture-pairs-2026-10-09/materialized-richards.js"
+          ],
+          "exit_code": 0,
+          "score": 81.3,
+          "instructions_retired": 15561044001,
+          "cycles_elapsed": 3101841695,
+          "maximum_rss_bytes": 18972672,
+          "elapsed_seconds": 3.13,
+          "wall_seconds": 3.136986125,
+          "stdout": "__quenchBenchResult: Richards: 81.3\n----\nScore: 81.3\n",
+          "stderr": "        3.13 real         0.93 user         0.01 sys\n            18972672  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1655  page reclaims\n                  37  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   6  voluntary context switches\n                1624  involuntary context switches\n         15561044001  instructions retired\n          3101841695  cycles elapsed\n             9437616  peak memory footprint\n"
+        }
+      }
+    },
+    {
+      "fixture": "richards.js",
+      "pair": 8,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "results": {
+        "baseline": {
+          "fixture": "richards.js",
+          "pair": 8,
+          "variant": "baseline",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "target/pinned/2854be3031531d0e71cbdd4098ae8bdfb64079aff34831a6e9c28bce4113f7b7/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-cell-object-fast-path-fixture-pairs-2026-10-09/materialized-richards.js"
+          ],
+          "exit_code": 0,
+          "score": 81.8,
+          "instructions_retired": 17168583503,
+          "cycles_elapsed": 3298258529,
+          "maximum_rss_bytes": 18546688,
+          "elapsed_seconds": 3.05,
+          "wall_seconds": 3.0634574999999984,
+          "stdout": "__quenchBenchResult: Richards: 81.8\n----\nScore: 81.8\n",
+          "stderr": "        3.05 real         0.97 user         0.01 sys\n            18546688  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1789  page reclaims\n                  25  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   1  voluntary context switches\n                1859  involuntary context switches\n         17168583503  instructions retired\n          3298258529  cycles elapsed\n             9191808  peak memory footprint\n"
+        },
+        "candidate": {
+          "fixture": "richards.js",
+          "pair": 8,
+          "variant": "candidate",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "target/pinned/a5c92c4f93bdbb0d66570f16157b2f606b5501b65e24c326d1b1f2ed4fb3b39c/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-cell-object-fast-path-fixture-pairs-2026-10-09/materialized-richards.js"
+          ],
+          "exit_code": 0,
+          "score": 76.2,
+          "instructions_retired": 15976994298,
+          "cycles_elapsed": 3130391857,
+          "maximum_rss_bytes": 18120704,
+          "elapsed_seconds": 3.13,
+          "wall_seconds": 3.1355497080000063,
+          "stdout": "__quenchBenchResult: Richards: 76.2\n----\nScore: 76.2\n",
+          "stderr": "        3.13 real         0.92 user         0.01 sys\n            18120704  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1768  page reclaims\n                  37  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   7  voluntary context switches\n                1964  involuntary context switches\n         15976994298  instructions retired\n          3130391857  cycles elapsed\n             8765848  peak memory footprint\n"
+        }
+      }
+    },
+    {
+      "fixture": "richards.js",
+      "pair": 9,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "results": {
+        "candidate": {
+          "fixture": "richards.js",
+          "pair": 9,
+          "variant": "candidate",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "target/pinned/a5c92c4f93bdbb0d66570f16157b2f606b5501b65e24c326d1b1f2ed4fb3b39c/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-cell-object-fast-path-fixture-pairs-2026-10-09/materialized-richards.js"
+          ],
+          "exit_code": 0,
+          "score": 79.7,
+          "instructions_retired": 14581409218,
+          "cycles_elapsed": 2852589910,
+          "maximum_rss_bytes": 18300928,
+          "elapsed_seconds": 3.07,
+          "wall_seconds": 3.083120334,
+          "stdout": "__quenchBenchResult: Richards: 79.7\n----\nScore: 79.7\n",
+          "stderr": "        3.07 real         0.84 user         0.01 sys\n            18300928  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1790  page reclaims\n                  25  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   1  voluntary context switches\n                1676  involuntary context switches\n         14581409218  instructions retired\n          2852589910  cycles elapsed\n             9011608  peak memory footprint\n"
+        },
+        "baseline": {
+          "fixture": "richards.js",
+          "pair": 9,
+          "variant": "baseline",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "target/pinned/2854be3031531d0e71cbdd4098ae8bdfb64079aff34831a6e9c28bce4113f7b7/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-cell-object-fast-path-fixture-pairs-2026-10-09/materialized-richards.js"
+          ],
+          "exit_code": 0,
+          "score": 103.0,
+          "instructions_retired": 18580805574,
+          "cycles_elapsed": 3575177093,
+          "maximum_rss_bytes": 18530304,
+          "elapsed_seconds": 3.11,
+          "wall_seconds": 3.116277334000003,
+          "stdout": "__quenchBenchResult: Richards: 103\n----\nScore: 103\n",
+          "stderr": "        3.11 real         1.05 user         0.01 sys\n            18530304  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1732  page reclaims\n                  41  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   4  voluntary context switches\n                2036  involuntary context switches\n         18580805574  instructions retired\n          3575177093  cycles elapsed\n             9142680  peak memory footprint\n"
+        }
+      }
+    },
+    {
+      "fixture": "richards.js",
+      "pair": 10,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "results": {
+        "baseline": {
+          "fixture": "richards.js",
+          "pair": 10,
+          "variant": "baseline",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "target/pinned/2854be3031531d0e71cbdd4098ae8bdfb64079aff34831a6e9c28bce4113f7b7/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-cell-object-fast-path-fixture-pairs-2026-10-09/materialized-richards.js"
+          ],
+          "exit_code": 0,
+          "score": 71.1,
+          "instructions_retired": 15157551190,
+          "cycles_elapsed": 3024542722,
+          "maximum_rss_bytes": 18857984,
+          "elapsed_seconds": 3.18,
+          "wall_seconds": 3.187593665999998,
+          "stdout": "__quenchBenchResult: Richards: 71.1\n----\nScore: 71.1\n",
+          "stderr": "        3.18 real         0.90 user         0.01 sys\n            18857984  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1845  page reclaims\n                  25  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   1  voluntary context switches\n                1833  involuntary context switches\n         15157551190  instructions retired\n          3024542722  cycles elapsed\n             9322904  peak memory footprint\n"
+        },
+        "candidate": {
+          "fixture": "richards.js",
+          "pair": 10,
+          "variant": "candidate",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "target/pinned/a5c92c4f93bdbb0d66570f16157b2f606b5501b65e24c326d1b1f2ed4fb3b39c/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-cell-object-fast-path-fixture-pairs-2026-10-09/materialized-richards.js"
+          ],
+          "exit_code": 0,
+          "score": 81.4,
+          "instructions_retired": 15183434571,
+          "cycles_elapsed": 2972332830,
+          "maximum_rss_bytes": 18333696,
+          "elapsed_seconds": 3.07,
+          "wall_seconds": 3.0777103340000025,
+          "stdout": "__quenchBenchResult: Richards: 81.4\n----\nScore: 81.4\n",
+          "stderr": "        3.07 real         0.87 user         0.01 sys\n            18333696  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1746  page reclaims\n                  37  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   4  voluntary context switches\n                2025  involuntary context switches\n         15183434571  instructions retired\n          2972332830  cycles elapsed\n             9044376  peak memory footprint\n"
+        }
+      }
+    },
+    {
+      "fixture": "richards.js",
+      "pair": 11,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "results": {
+        "candidate": {
+          "fixture": "richards.js",
+          "pair": 11,
+          "variant": "candidate",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "target/pinned/a5c92c4f93bdbb0d66570f16157b2f606b5501b65e24c326d1b1f2ed4fb3b39c/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-cell-object-fast-path-fixture-pairs-2026-10-09/materialized-richards.js"
+          ],
+          "exit_code": 0,
+          "score": 88.2,
+          "instructions_retired": 16569565442,
+          "cycles_elapsed": 3233254287,
+          "maximum_rss_bytes": 18726912,
+          "elapsed_seconds": 3.11,
+          "wall_seconds": 3.117607792000001,
+          "stdout": "__quenchBenchResult: Richards: 88.2\n----\nScore: 88.2\n",
+          "stderr": "        3.11 real         0.95 user         0.01 sys\n            18726912  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1663  page reclaims\n                  25  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   1  voluntary context switches\n                1927  involuntary context switches\n         16569565442  instructions retired\n          3233254287  cycles elapsed\n             9191832  peak memory footprint\n"
+        },
+        "baseline": {
+          "fixture": "richards.js",
+          "pair": 11,
+          "variant": "baseline",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "target/pinned/2854be3031531d0e71cbdd4098ae8bdfb64079aff34831a6e9c28bce4113f7b7/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-cell-object-fast-path-fixture-pairs-2026-10-09/materialized-richards.js"
+          ],
+          "exit_code": 0,
+          "score": 78.6,
+          "instructions_retired": 15164235962,
+          "cycles_elapsed": 2959050451,
+          "maximum_rss_bytes": 18726912,
+          "elapsed_seconds": 3.1,
+          "wall_seconds": 3.1168440419999968,
+          "stdout": "__quenchBenchResult: Richards: 78.6\n----\nScore: 78.6\n",
+          "stderr": "        3.10 real         0.87 user         0.01 sys\n            18726912  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1764  page reclaims\n                  37  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   6  voluntary context switches\n                2155  involuntary context switches\n         15164235962  instructions retired\n          2959050451  cycles elapsed\n             9339288  peak memory footprint\n"
+        }
+      }
+    },
+    {
+      "fixture": "deltablue.js",
+      "pair": 1,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "results": {
+        "candidate": {
+          "fixture": "deltablue.js",
+          "pair": 1,
+          "variant": "candidate",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "target/pinned/a5c92c4f93bdbb0d66570f16157b2f606b5501b65e24c326d1b1f2ed4fb3b39c/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-cell-object-fast-path-fixture-pairs-2026-10-09/materialized-deltablue.js"
+          ],
+          "exit_code": 0,
+          "score": 39.6,
+          "instructions_retired": 29008633707,
+          "cycles_elapsed": 7077398037,
+          "maximum_rss_bytes": 19415040,
+          "elapsed_seconds": 7.47,
+          "wall_seconds": 7.484606959000004,
+          "stdout": "__quenchBenchResult: DeltaBlue: 39.6\n----\nScore: 39.6\n",
+          "stderr": "        7.47 real         2.11 user         0.02 sys\n            19415040  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1621  page reclaims\n                  38  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   1  voluntary context switches\n                3998  involuntary context switches\n         29008633707  instructions retired\n          7077398037  cycles elapsed\n             9879984  peak memory footprint\n"
+        },
+        "baseline": {
+          "fixture": "deltablue.js",
+          "pair": 1,
+          "variant": "baseline",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "target/pinned/2854be3031531d0e71cbdd4098ae8bdfb64079aff34831a6e9c28bce4113f7b7/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-cell-object-fast-path-fixture-pairs-2026-10-09/materialized-deltablue.js"
+          ],
+          "exit_code": 0,
+          "score": 33.7,
+          "instructions_retired": 27505563725,
+          "cycles_elapsed": 6709928119,
+          "maximum_rss_bytes": 19628032,
+          "elapsed_seconds": 7.6,
+          "wall_seconds": 7.618343624999994,
+          "stdout": "__quenchBenchResult: DeltaBlue: 33.7\n----\nScore: 33.7\n",
+          "stderr": "        7.60 real         2.01 user         0.02 sys\n            19628032  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1658  page reclaims\n                  48  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                  10  voluntary context switches\n                3473  involuntary context switches\n         27505563725  instructions retired\n          6709928119  cycles elapsed\n            10043776  peak memory footprint\n"
+        }
+      }
+    },
+    {
+      "fixture": "deltablue.js",
+      "pair": 2,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "results": {
+        "baseline": {
+          "fixture": "deltablue.js",
+          "pair": 2,
+          "variant": "baseline",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "target/pinned/2854be3031531d0e71cbdd4098ae8bdfb64079aff34831a6e9c28bce4113f7b7/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-cell-object-fast-path-fixture-pairs-2026-10-09/materialized-deltablue.js"
+          ],
+          "exit_code": 0,
+          "score": 36.7,
+          "instructions_retired": 28794433964,
+          "cycles_elapsed": 7132052310,
+          "maximum_rss_bytes": 19562496,
+          "elapsed_seconds": 7.53,
+          "wall_seconds": 7.542727416999995,
+          "stdout": "__quenchBenchResult: DeltaBlue: 36.7\n----\nScore: 36.7\n",
+          "stderr": "        7.53 real         2.16 user         0.02 sys\n            19562496  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1650  page reclaims\n                  40  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   8  voluntary context switches\n                3735  involuntary context switches\n         28794433964  instructions retired\n          7132052310  cycles elapsed\n             9978264  peak memory footprint\n"
+        },
+        "candidate": {
+          "fixture": "deltablue.js",
+          "pair": 2,
+          "variant": "candidate",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "target/pinned/a5c92c4f93bdbb0d66570f16157b2f606b5501b65e24c326d1b1f2ed4fb3b39c/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-cell-object-fast-path-fixture-pairs-2026-10-09/materialized-deltablue.js"
+          ],
+          "exit_code": 0,
+          "score": 37.6,
+          "instructions_retired": 28391984858,
+          "cycles_elapsed": 7089867610,
+          "maximum_rss_bytes": 19415040,
+          "elapsed_seconds": 7.6,
+          "wall_seconds": 7.612204500000004,
+          "stdout": "__quenchBenchResult: DeltaBlue: 37.6\n----\nScore: 37.6\n",
+          "stderr": "        7.60 real         2.11 user         0.03 sys\n            19415040  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1348  page reclaims\n                 350  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   9  voluntary context switches\n                4340  involuntary context switches\n         28391984858  instructions retired\n          7089867610  cycles elapsed\n             9847192  peak memory footprint\n"
+        }
+      }
+    },
+    {
+      "fixture": "deltablue.js",
+      "pair": 3,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "results": {
+        "candidate": {
+          "fixture": "deltablue.js",
+          "pair": 3,
+          "variant": "candidate",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "target/pinned/a5c92c4f93bdbb0d66570f16157b2f606b5501b65e24c326d1b1f2ed4fb3b39c/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-cell-object-fast-path-fixture-pairs-2026-10-09/materialized-deltablue.js"
+          ],
+          "exit_code": 0,
+          "score": 40.9,
+          "instructions_retired": 25833574596,
+          "cycles_elapsed": 6398503735,
+          "maximum_rss_bytes": 19447808,
+          "elapsed_seconds": 6.38,
+          "wall_seconds": 6.397814624999995,
+          "stdout": "__quenchBenchResult: DeltaBlue: 40.9\n----\nScore: 40.9\n",
+          "stderr": "        6.38 real         1.90 user         0.02 sys\n            19447808  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1645  page reclaims\n                  48  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                  10  voluntary context switches\n                4726  involuntary context switches\n         25833574596  instructions retired\n          6398503735  cycles elapsed\n             9879984  peak memory footprint\n"
+        },
+        "baseline": {
+          "fixture": "deltablue.js",
+          "pair": 3,
+          "variant": "baseline",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "target/pinned/2854be3031531d0e71cbdd4098ae8bdfb64079aff34831a6e9c28bce4113f7b7/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-cell-object-fast-path-fixture-pairs-2026-10-09/materialized-deltablue.js"
+          ],
+          "exit_code": 0,
+          "score": 35.2,
+          "instructions_retired": 26908267512,
+          "cycles_elapsed": 6742580061,
+          "maximum_rss_bytes": 19808256,
+          "elapsed_seconds": 7.67,
+          "wall_seconds": 7.685390666999993,
+          "stdout": "__quenchBenchResult: DeltaBlue: 35.2\n----\nScore: 35.2\n",
+          "stderr": "        7.67 real         2.03 user         0.03 sys\n            19808256  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1367  page reclaims\n                 350  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                  10  voluntary context switches\n                5077  involuntary context switches\n         26908267512  instructions retired\n          6742580061  cycles elapsed\n            10256816  peak memory footprint\n"
+        }
+      }
+    },
+    {
+      "fixture": "deltablue.js",
+      "pair": 4,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "results": {
+        "baseline": {
+          "fixture": "deltablue.js",
+          "pair": 4,
+          "variant": "baseline",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "target/pinned/2854be3031531d0e71cbdd4098ae8bdfb64079aff34831a6e9c28bce4113f7b7/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-cell-object-fast-path-fixture-pairs-2026-10-09/materialized-deltablue.js"
+          ],
+          "exit_code": 0,
+          "score": 40.1,
+          "instructions_retired": 26215137768,
+          "cycles_elapsed": 6393713406,
+          "maximum_rss_bytes": 19513344,
+          "elapsed_seconds": 6.68,
+          "wall_seconds": 6.689172166999995,
+          "stdout": "__quenchBenchResult: DeltaBlue: 40.1\n----\nScore: 40.1\n",
+          "stderr": "        6.68 real         1.90 user         0.02 sys\n            19513344  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1654  page reclaims\n                  32  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   3  voluntary context switches\n                4507  involuntary context switches\n         26215137768  instructions retired\n          6393713406  cycles elapsed\n             9945520  peak memory footprint\n"
+        },
+        "candidate": {
+          "fixture": "deltablue.js",
+          "pair": 4,
+          "variant": "candidate",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "target/pinned/a5c92c4f93bdbb0d66570f16157b2f606b5501b65e24c326d1b1f2ed4fb3b39c/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-cell-object-fast-path-fixture-pairs-2026-10-09/materialized-deltablue.js"
+          ],
+          "exit_code": 0,
+          "score": 35.9,
+          "instructions_retired": 27760363653,
+          "cycles_elapsed": 6883091836,
+          "maximum_rss_bytes": 19283968,
+          "elapsed_seconds": 7.6,
+          "wall_seconds": 7.616312833000009,
+          "stdout": "__quenchBenchResult: DeltaBlue: 35.9\n----\nScore: 35.9\n",
+          "stderr": "        7.60 real         2.04 user         0.03 sys\n            19283968  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1409  page reclaims\n                 350  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   7  voluntary context switches\n                4713  involuntary context switches\n         27760363653  instructions retired\n          6883091836  cycles elapsed\n             9699736  peak memory footprint\n"
+        }
+      }
+    },
+    {
+      "fixture": "deltablue.js",
+      "pair": 5,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "results": {
+        "candidate": {
+          "fixture": "deltablue.js",
+          "pair": 5,
+          "variant": "candidate",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "target/pinned/a5c92c4f93bdbb0d66570f16157b2f606b5501b65e24c326d1b1f2ed4fb3b39c/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-cell-object-fast-path-fixture-pairs-2026-10-09/materialized-deltablue.js"
+          ],
+          "exit_code": 0,
+          "score": 39.3,
+          "instructions_retired": 29007536557,
+          "cycles_elapsed": 7168464887,
+          "maximum_rss_bytes": 19382272,
+          "elapsed_seconds": 7.48,
+          "wall_seconds": 7.494428082999988,
+          "stdout": "__quenchBenchResult: DeltaBlue: 39.3\n----\nScore: 39.3\n",
+          "stderr": "        7.48 real         2.14 user         0.02 sys\n            19382272  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1621  page reclaims\n                  48  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                  11  voluntary context switches\n                4155  involuntary context switches\n         29007536557  instructions retired\n          7168464887  cycles elapsed\n             9830808  peak memory footprint\n"
+        },
+        "baseline": {
+          "fixture": "deltablue.js",
+          "pair": 5,
+          "variant": "baseline",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "target/pinned/2854be3031531d0e71cbdd4098ae8bdfb64079aff34831a6e9c28bce4113f7b7/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-cell-object-fast-path-fixture-pairs-2026-10-09/materialized-deltablue.js"
+          ],
+          "exit_code": 0,
+          "score": 70.4,
+          "instructions_retired": 35318720948,
+          "cycles_elapsed": 8301543425,
+          "maximum_rss_bytes": 19431424,
+          "elapsed_seconds": 5.38,
+          "wall_seconds": 5.385331416000014,
+          "stdout": "__quenchBenchResult: DeltaBlue: 70.4\n----\nScore: 70.4\n",
+          "stderr": "        5.38 real         2.45 user         0.02 sys\n            19431424  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1179  page reclaims\n                 350  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   8  voluntary context switches\n                3920  involuntary context switches\n         35318720948  instructions retired\n          8301543425  cycles elapsed\n             9879960  peak memory footprint\n"
+        }
+      }
+    },
+    {
+      "fixture": "deltablue.js",
+      "pair": 6,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "results": {
+        "baseline": {
+          "fixture": "deltablue.js",
+          "pair": 6,
+          "variant": "baseline",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "target/pinned/2854be3031531d0e71cbdd4098ae8bdfb64079aff34831a6e9c28bce4113f7b7/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-cell-object-fast-path-fixture-pairs-2026-10-09/materialized-deltablue.js"
+          ],
+          "exit_code": 0,
+          "score": 195.0,
+          "instructions_retired": 55360419011,
+          "cycles_elapsed": 11023057039,
+          "maximum_rss_bytes": 19693568,
+          "elapsed_seconds": 3.08,
+          "wall_seconds": 3.090431040999988,
+          "stdout": "__quenchBenchResult: DeltaBlue: 195\n----\nScore: 195\n",
+          "stderr": "        3.08 real         2.99 user         0.00 sys\n            19693568  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1382  page reclaims\n                  18  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   1  voluntary context switches\n                 935  involuntary context switches\n         55360419011  instructions retired\n         11023057039  cycles elapsed\n             9961904  peak memory footprint\n"
+        },
+        "candidate": {
+          "fixture": "deltablue.js",
+          "pair": 6,
+          "variant": "candidate",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "target/pinned/a5c92c4f93bdbb0d66570f16157b2f606b5501b65e24c326d1b1f2ed4fb3b39c/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-cell-object-fast-path-fixture-pairs-2026-10-09/materialized-deltablue.js"
+          ],
+          "exit_code": 0,
+          "score": 213.0,
+          "instructions_retired": 41120282101,
+          "cycles_elapsed": 7921722425,
+          "maximum_rss_bytes": 19513344,
+          "elapsed_seconds": 2.06,
+          "wall_seconds": 2.0673679580000055,
+          "stdout": "__quenchBenchResult: DeltaBlue: 213\n----\nScore: 213\n",
+          "stderr": "        2.06 real         2.05 user         0.00 sys\n            19513344  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1358  page reclaims\n                  31  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   1  voluntary context switches\n                 414  involuntary context switches\n         41120282101  instructions retired\n          7921722425  cycles elapsed\n             9765272  peak memory footprint\n"
+        }
+      }
+    },
+    {
+      "fixture": "deltablue.js",
+      "pair": 7,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "results": {
+        "candidate": {
+          "fixture": "deltablue.js",
+          "pair": 7,
+          "variant": "candidate",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "target/pinned/a5c92c4f93bdbb0d66570f16157b2f606b5501b65e24c326d1b1f2ed4fb3b39c/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-cell-object-fast-path-fixture-pairs-2026-10-09/materialized-deltablue.js"
+          ],
+          "exit_code": 0,
+          "score": 203.0,
+          "instructions_retired": 59676182439,
+          "cycles_elapsed": 11587875515,
+          "maximum_rss_bytes": 19398656,
+          "elapsed_seconds": 3.03,
+          "wall_seconds": 3.041988042000014,
+          "stdout": "__quenchBenchResult: DeltaBlue: 203\n----\nScore: 203\n",
+          "stderr": "        3.03 real         3.02 user         0.00 sys\n            19398656  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1367  page reclaims\n                  14  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   4  voluntary context switches\n                 872  involuntary context switches\n         59676182439  instructions retired\n         11587875515  cycles elapsed\n             9617792  peak memory footprint\n"
+        },
+        "baseline": {
+          "fixture": "deltablue.js",
+          "pair": 7,
+          "variant": "baseline",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "target/pinned/2854be3031531d0e71cbdd4098ae8bdfb64079aff34831a6e9c28bce4113f7b7/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-cell-object-fast-path-fixture-pairs-2026-10-09/materialized-deltablue.js"
+          ],
+          "exit_code": 0,
+          "score": 210.0,
+          "instructions_retired": 41727603326,
+          "cycles_elapsed": 7874867462,
+          "maximum_rss_bytes": 19644416,
+          "elapsed_seconds": 2.05,
+          "wall_seconds": 2.0604134589999887,
+          "stdout": "__quenchBenchResult: DeltaBlue: 210\n----\nScore: 210\n",
+          "stderr": "        2.05 real         2.04 user         0.00 sys\n            19644416  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1382  page reclaims\n                  14  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   1  voluntary context switches\n                 387  involuntary context switches\n         41727603326  instructions retired\n          7874867462  cycles elapsed\n             9863552  peak memory footprint\n"
+        }
+      }
+    },
+    {
+      "fixture": "deltablue.js",
+      "pair": 8,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "results": {
+        "baseline": {
+          "fixture": "deltablue.js",
+          "pair": 8,
+          "variant": "baseline",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "target/pinned/2854be3031531d0e71cbdd4098ae8bdfb64079aff34831a6e9c28bce4113f7b7/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-cell-object-fast-path-fixture-pairs-2026-10-09/materialized-deltablue.js"
+          ],
+          "exit_code": 0,
+          "score": 207.0,
+          "instructions_retired": 61832238084,
+          "cycles_elapsed": 11681513231,
+          "maximum_rss_bytes": 19562496,
+          "elapsed_seconds": 3.05,
+          "wall_seconds": 3.058039917000002,
+          "stdout": "__quenchBenchResult: DeltaBlue: 207\n----\nScore: 207\n",
+          "stderr": "        3.05 real         3.04 user         0.00 sys\n            19562496  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1377  page reclaims\n                  14  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   4  voluntary context switches\n                 444  involuntary context switches\n         61832238084  instructions retired\n         11681513231  cycles elapsed\n             9814448  peak memory footprint\n"
+        },
+        "candidate": {
+          "fixture": "deltablue.js",
+          "pair": 8,
+          "variant": "candidate",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "target/pinned/a5c92c4f93bdbb0d66570f16157b2f606b5501b65e24c326d1b1f2ed4fb3b39c/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-cell-object-fast-path-fixture-pairs-2026-10-09/materialized-deltablue.js"
+          ],
+          "exit_code": 0,
+          "score": 209.0,
+          "instructions_retired": 40479232389,
+          "cycles_elapsed": 7760594774,
+          "maximum_rss_bytes": 19742720,
+          "elapsed_seconds": 2.03,
+          "wall_seconds": 2.03942008300001,
+          "stdout": "__quenchBenchResult: DeltaBlue: 209\n----\nScore: 209\n",
+          "stderr": "        2.03 real         2.02 user         0.00 sys\n            19742720  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1389  page reclaims\n                  14  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   3  voluntary context switches\n                 396  involuntary context switches\n         40479232389  instructions retired\n          7760594774  cycles elapsed\n             9994648  peak memory footprint\n"
+        }
+      }
+    },
+    {
+      "fixture": "deltablue.js",
+      "pair": 9,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "results": {
+        "candidate": {
+          "fixture": "deltablue.js",
+          "pair": 9,
+          "variant": "candidate",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "target/pinned/a5c92c4f93bdbb0d66570f16157b2f606b5501b65e24c326d1b1f2ed4fb3b39c/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-cell-object-fast-path-fixture-pairs-2026-10-09/materialized-deltablue.js"
+          ],
+          "exit_code": 0,
+          "score": 210.0,
+          "instructions_retired": 41116226790,
+          "cycles_elapsed": 7853246467,
+          "maximum_rss_bytes": 19808256,
+          "elapsed_seconds": 2.05,
+          "wall_seconds": 2.0534095420000256,
+          "stdout": "__quenchBenchResult: DeltaBlue: 210\n----\nScore: 210\n",
+          "stderr": "        2.05 real         2.03 user         0.00 sys\n            19808256  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1392  page reclaims\n                  14  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   1  voluntary context switches\n                 371  involuntary context switches\n         41116226790  instructions retired\n          7853246467  cycles elapsed\n            10043800  peak memory footprint\n"
+        },
+        "baseline": {
+          "fixture": "deltablue.js",
+          "pair": 9,
+          "variant": "baseline",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "target/pinned/2854be3031531d0e71cbdd4098ae8bdfb64079aff34831a6e9c28bce4113f7b7/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-cell-object-fast-path-fixture-pairs-2026-10-09/materialized-deltablue.js"
+          ],
+          "exit_code": 0,
+          "score": 221.0,
+          "instructions_retired": 44315122775,
+          "cycles_elapsed": 8116338525,
+          "maximum_rss_bytes": 19644416,
+          "elapsed_seconds": 2.05,
+          "wall_seconds": 2.05472850000001,
+          "stdout": "__quenchBenchResult: DeltaBlue: 221\n----\nScore: 221\n",
+          "stderr": "        2.05 real         2.04 user         0.00 sys\n            19644416  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1383  page reclaims\n                  14  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   1  voluntary context switches\n                 155  involuntary context switches\n         44315122775  instructions retired\n          8116338525  cycles elapsed\n             9896344  peak memory footprint\n"
+        }
+      }
+    },
+    {
+      "fixture": "deltablue.js",
+      "pair": 10,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "results": {
+        "baseline": {
+          "fixture": "deltablue.js",
+          "pair": 10,
+          "variant": "baseline",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "target/pinned/2854be3031531d0e71cbdd4098ae8bdfb64079aff34831a6e9c28bce4113f7b7/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-cell-object-fast-path-fixture-pairs-2026-10-09/materialized-deltablue.js"
+          ],
+          "exit_code": 0,
+          "score": 223.0,
+          "instructions_retired": 44314613245,
+          "cycles_elapsed": 8078043507,
+          "maximum_rss_bytes": 19611648,
+          "elapsed_seconds": 2.04,
+          "wall_seconds": 2.049196541000015,
+          "stdout": "__quenchBenchResult: DeltaBlue: 223\n----\nScore: 223\n",
+          "stderr": "        2.04 real         2.03 user         0.00 sys\n            19611648  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1381  page reclaims\n                  14  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                 410  involuntary context switches\n         44314613245  instructions retired\n          8078043507  cycles elapsed\n             9863576  peak memory footprint\n"
+        },
+        "candidate": {
+          "fixture": "deltablue.js",
+          "pair": 10,
+          "variant": "candidate",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "target/pinned/a5c92c4f93bdbb0d66570f16157b2f606b5501b65e24c326d1b1f2ed4fb3b39c/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-cell-object-fast-path-fixture-pairs-2026-10-09/materialized-deltablue.js"
+          ],
+          "exit_code": 0,
+          "score": 221.0,
+          "instructions_retired": 44317799607,
+          "cycles_elapsed": 8193007868,
+          "maximum_rss_bytes": 19546112,
+          "elapsed_seconds": 2.06,
+          "wall_seconds": 2.0688534580000066,
+          "stdout": "__quenchBenchResult: DeltaBlue: 221\n----\nScore: 221\n",
+          "stderr": "        2.06 real         2.05 user         0.00 sys\n            19546112  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1377  page reclaims\n                  14  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   2  voluntary context switches\n                 195  involuntary context switches\n         44317799607  instructions retired\n          8193007868  cycles elapsed\n             9798040  peak memory footprint\n"
+        }
+      }
+    },
+    {
+      "fixture": "deltablue.js",
+      "pair": 11,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "results": {
+        "candidate": {
+          "fixture": "deltablue.js",
+          "pair": 11,
+          "variant": "candidate",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "target/pinned/a5c92c4f93bdbb0d66570f16157b2f606b5501b65e24c326d1b1f2ed4fb3b39c/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-cell-object-fast-path-fixture-pairs-2026-10-09/materialized-deltablue.js"
+          ],
+          "exit_code": 0,
+          "score": 222.0,
+          "instructions_retired": 44317651574,
+          "cycles_elapsed": 8167720736,
+          "maximum_rss_bytes": 19595264,
+          "elapsed_seconds": 2.05,
+          "wall_seconds": 2.056887250000017,
+          "stdout": "__quenchBenchResult: DeltaBlue: 222\n----\nScore: 222\n",
+          "stderr": "        2.05 real         2.04 user         0.00 sys\n            19595264  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1378  page reclaims\n                  15  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                 145  involuntary context switches\n         44317651574  instructions retired\n          8167720736  cycles elapsed\n             9798016  peak memory footprint\n"
+        },
+        "baseline": {
+          "fixture": "deltablue.js",
+          "pair": 11,
+          "variant": "baseline",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "target/pinned/2854be3031531d0e71cbdd4098ae8bdfb64079aff34831a6e9c28bce4113f7b7/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-cell-object-fast-path-fixture-pairs-2026-10-09/materialized-deltablue.js"
+          ],
+          "exit_code": 0,
+          "score": 221.0,
+          "instructions_retired": 44312966793,
+          "cycles_elapsed": 8069698229,
+          "maximum_rss_bytes": 19628032,
+          "elapsed_seconds": 2.04,
+          "wall_seconds": 2.044865625,
+          "stdout": "__quenchBenchResult: DeltaBlue: 221\n----\nScore: 221\n",
+          "stderr": "        2.04 real         2.03 user         0.00 sys\n            19628032  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1382  page reclaims\n                  14  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   1  voluntary context switches\n                 163  involuntary context switches\n         44312966793  instructions retired\n          8069698229  cycles elapsed\n             9879960  peak memory footprint\n"
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,32 @@
+{
+  "scenarios": {
+    "behavior-pass": 260,
+    "declarations-pass": 13,
+    "quench-failed": 26,
+    "oracle-failed": 1
+  },
+  "surface": {
+    "surface-diff": 143,
+    "surface-match-unqualified": 148,
+    "oracle-failed": 9
+  },
+  "callable_paths": 70236,
+  "behavior_checked_paths": 336,
+  "uncovered_paths": 69900,
+  "qualified": false,
+  "source_commit": "40060bac0323fd1d96d5e9af1ad73ef188814712",
+  "source_dirty": false,
+  "node_version": "v26.11.1",
+  "node_sha256": "5a7b8a3cf5ccb57d297519754fd73238f64cf560afd0ef19a2f9bf7384cbb657",
+  "quench_sha256": "2aadab82c50d1d18606638e8f6a0f29e5a2590a208178e1dc2276f0ac8002186",
+  "inventory_sha256": "d75fd451e8fe84c11eb1e1c0522745ae99a3deed4e03841a3567e147a933e303",
+  "lock_sha256": "62e8fa517a95fd709da2c1ed7bca2ff63cb7b9133d8444ec590f08b680634d4d",
+  "runtime_tests_passed": 606,
+  "focused_node_fixtures_passed": 6,
+  "canonical_console_node_test_passed": true,
+  "maximum_per_run_delta_percent": 0.469568756707818,
+  "guard_completion_passes": 32,
+  "integration_contained": "cb077bb75",
+  "wide_control_flow_fix": "dd3ddf046",
+  "lazy_formatter_fix": "40060bac0"
+}

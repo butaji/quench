@@ -1,0 +1,218 @@
+{
+  "schema": 1,
+  "experiment": "EarleyBoyer ordinary [[GetPrototypeOf]] fast path for instanceof",
+  "baseline_sha256": "ef44efdbab5c74177f23b610c72e65395a97f42627c5d9e088f9c7b757d8339f",
+  "candidate_sha256": "a06f934e20c188c152490a25e86c4d64991b1083631f338e7dbceb0f00307c3a",
+  "fixture_sha256": "aa379c1d54f5d13de32ebf2b50729d0cbc64bb23de5e524256c7b2270213cc0b",
+  "node_oracle_sha256": "a56d55f22cb6e6fbdc856a83045f32c1225f5e4fe6cf163ecaf996197967b004",
+  "rounds": 11,
+  "bootstrap_replicates": 100000,
+  "baseline_score_median": 397.0,
+  "candidate_score_median": 414.0,
+  "score_delta_median": 13.0,
+  "score_delta_95_ci": [
+    7.0,
+    19.0
+  ],
+  "baseline_maximum_rss_median_bytes": 42749952,
+  "candidate_maximum_rss_median_bytes": 42778624,
+  "maximum_rss_delta_median_bytes": 77824,
+  "maximum_rss_delta_95_ci_bytes": [
+    -192512,
+    151552
+  ],
+  "candidate_score_worse_pairs": 1,
+  "candidate_rss_lower_pairs": 5,
+  "valid": true,
+  "output_equal": true,
+  "qualification_ready": false,
+  "pairs": [
+    {
+      "pair": 1,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "valid": true,
+      "output_equal": true,
+      "baseline_score": 395.0,
+      "candidate_score": 412.0,
+      "score_delta": 17.0,
+      "baseline_rss_bytes": 42754048,
+      "candidate_rss_bytes": 42450944,
+      "rss_delta_bytes": -303104,
+      "baseline_wall_ns": 24049690377,
+      "candidate_wall_ns": 22463328103
+    },
+    {
+      "pair": 2,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "valid": true,
+      "output_equal": true,
+      "baseline_score": 394.0,
+      "candidate_score": 414.0,
+      "score_delta": 20.0,
+      "baseline_rss_bytes": 42692608,
+      "candidate_rss_bytes": 42770432,
+      "rss_delta_bytes": 77824,
+      "baseline_wall_ns": 24176915246,
+      "candidate_wall_ns": 22330442102
+    },
+    {
+      "pair": 3,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "valid": true,
+      "output_equal": true,
+      "baseline_score": 389.0,
+      "candidate_score": 415.0,
+      "score_delta": 26.0,
+      "baseline_rss_bytes": 42971136,
+      "candidate_rss_bytes": 42778624,
+      "rss_delta_bytes": -192512,
+      "baseline_wall_ns": 23779122621,
+      "candidate_wall_ns": 22326554549
+    },
+    {
+      "pair": 4,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "valid": true,
+      "output_equal": true,
+      "baseline_score": 397.0,
+      "candidate_score": 416.0,
+      "score_delta": 19.0,
+      "baseline_rss_bytes": 42704896,
+      "candidate_rss_bytes": 42840064,
+      "rss_delta_bytes": 135168,
+      "baseline_wall_ns": 23795538219,
+      "candidate_wall_ns": 22205325305
+    },
+    {
+      "pair": 5,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "valid": true,
+      "output_equal": true,
+      "baseline_score": 397.0,
+      "candidate_score": 404.0,
+      "score_delta": 7.0,
+      "baseline_rss_bytes": 42840064,
+      "candidate_rss_bytes": 42737664,
+      "rss_delta_bytes": -102400,
+      "baseline_wall_ns": 23822677803,
+      "candidate_wall_ns": 22679855766
+    },
+    {
+      "pair": 6,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "valid": true,
+      "output_equal": true,
+      "baseline_score": 397.0,
+      "candidate_score": 414.0,
+      "score_delta": 17.0,
+      "baseline_rss_bytes": 42848256,
+      "candidate_rss_bytes": 42582016,
+      "rss_delta_bytes": -266240,
+      "baseline_wall_ns": 23810163752,
+      "candidate_wall_ns": 22541404872
+    },
+    {
+      "pair": 7,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "valid": true,
+      "output_equal": true,
+      "baseline_score": 405.0,
+      "candidate_score": 418.0,
+      "score_delta": 13.0,
+      "baseline_rss_bytes": 42627072,
+      "candidate_rss_bytes": 42909696,
+      "rss_delta_bytes": 282624,
+      "baseline_wall_ns": 23126315210,
+      "candidate_wall_ns": 22309172780
+    },
+    {
+      "pair": 8,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "valid": true,
+      "output_equal": true,
+      "baseline_score": 402.0,
+      "candidate_score": 407.0,
+      "score_delta": 5.0,
+      "baseline_rss_bytes": 42684416,
+      "candidate_rss_bytes": 42778624,
+      "rss_delta_bytes": 94208,
+      "baseline_wall_ns": 23176604668,
+      "candidate_wall_ns": 22553280627
+    },
+    {
+      "pair": 9,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "valid": true,
+      "output_equal": true,
+      "baseline_score": 396.0,
+      "candidate_score": 407.0,
+      "score_delta": 11.0,
+      "baseline_rss_bytes": 42864640,
+      "candidate_rss_bytes": 42713088,
+      "rss_delta_bytes": -151552,
+      "baseline_wall_ns": 23318732776,
+      "candidate_wall_ns": 22876694086
+    },
+    {
+      "pair": 10,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "valid": true,
+      "output_equal": true,
+      "baseline_score": 402.0,
+      "candidate_score": 401.0,
+      "score_delta": -1.0,
+      "baseline_rss_bytes": 42749952,
+      "candidate_rss_bytes": 42901504,
+      "rss_delta_bytes": 151552,
+      "baseline_wall_ns": 23584208973,
+      "candidate_wall_ns": 22552349026
+    },
+    {
+      "pair": 11,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "valid": true,
+      "output_equal": true,
+      "baseline_score": 402.0,
+      "candidate_score": 414.0,
+      "score_delta": 12.0,
+      "baseline_rss_bytes": 42532864,
+      "candidate_rss_bytes": 42835968,
+      "rss_delta_bytes": 303104,
+      "baseline_wall_ns": 23288718267,
+      "candidate_wall_ns": 22317000859
+    }
+  ]
+}

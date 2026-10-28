@@ -1,0 +1,12 @@
+crypto fin2 RssAnon=2068 RssFile=3212 VmHWM=5008
+crypto c146c RssAnon=2084 RssFile=3620 VmHWM=4984
+crypto m146 RssAnon=2156 RssFile=3408 VmHWM=4956
+crypto c147 RssAnon=2136 RssFile=3324 VmHWM=4988
+richards fin2 RssAnon=1532 RssFile=3260 VmHWM=4596
+richards c146c RssAnon=1536 RssFile=3176 VmHWM=4352
+richards m146 RssAnon=1512 RssFile=2940 VmHWM=4300
+richards c147 RssAnon=1484 RssFile=3304 VmHWM=4336
+navier-stokes fin2 RssAnon=3232 RssFile=3492 VmHWM=5228
+navier-stokes c146c RssAnon=3236 RssFile=2940 VmHWM=5196
+navier-stokes m146 RssAnon=3224 RssFile=3096 VmHWM=5072
+navier-stokes c147 RssAnon=3236 RssFile=2992 VmHWM=5184

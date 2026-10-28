@@ -1,0 +1,93 @@
+{
+  "source_commit": "ebf7ddcdd1c270a5c04ad44d82eb14afaa75356f",
+  "scope": "Normal shared merge preserving prepared-code ownership and all incoming eval/array/lazy-policy oracle comparisons",
+  "oracle": "Node v26.12.0 latest stable",
+  "checks": {
+    "core": 659,
+    "api": 374,
+    "framework": 43,
+    "shared": 7,
+    "workspace_all_targets": true
+  },
+  "limitations": [
+    "No new full-suite totals for this merge. Frozen e9 full audits are running separately.",
+    "No performance claim. Unchanged fixture assertions and deadlines."
+  ],
+  "raw": [
+    {
+      "path": "work/shared-post-prepared/qualify.sh",
+      "bytes": 1076,
+      "sha256": "f9749ee47e80019c9fa46891575300925d447b49fa7ab43d713b7aad0a83855a"
+    },
+    {
+      "path": "work/shared-post-prepared/check.log",
+      "bytes": 284,
+      "sha256": "a572c0deeb973c0cf1a13e17cb50977c62d87600e076e5fc4277c7406e9a6d5f"
+    },
+    {
+      "path": "work/shared-post-prepared/core.log",
+      "bytes": 58037,
+      "sha256": "63098220c4aec46f228b6ef0afa63508d8f4f0f43a26e84b81b815fa8d2ade13"
+    },
+    {
+      "path": "work/shared-post-prepared/paired-build.log",
+      "bytes": 365,
+      "sha256": "70e1e93207a48fae2e9dcdf0bd91d4cbb75ce092b6811fc4927f2b25a98f8e71"
+    },
+    {
+      "path": "work/shared-post-prepared/all-api.log",
+      "bytes": 30796,
+      "sha256": "00c0c6e0f5a1955b0ee4cbbb2ba5778d142924d5742a64e6bfb9d63bd16080f8"
+    },
+    {
+      "path": "work/shared-post-prepared/framework.log",
+      "bytes": 3798,
+      "sha256": "b41881f94821125815bc87efbbbd7d26b13fd072686394014795864fa55f2ae8"
+    },
+    {
+      "path": "work/shared-post-prepared/shared.log",
+      "bytes": 882,
+      "sha256": "2442971160f4cb7de6bc4e75790fb1b6efeca3f58238c3dd2f2e718e5f073de3"
+    },
+    {
+      "path": "work/shared-post-prepared/workspace.log",
+      "bytes": 519,
+      "sha256": "800035298e232e18c68f1691b82f32d93467139fb23f4de2ec5eef9a21ad5085"
+    },
+    {
+      "path": "work/shared-post-prepared/core656-cache-reclamation.json",
+      "bytes": 353,
+      "sha256": "53d785039e02948d799e3631316dfc1da276ea7b852e8bdd72c2babd128f95c9"
+    },
+    {
+      "path": "work/task-supervisor/shared-post-prepared-state.json",
+      "bytes": 249,
+      "sha256": "913c927328735d62b59ea30427fe71a58f955b23d27add993dd237b88ca2a6b2"
+    },
+    {
+      "path": "work/task-supervisor/shared-post-prepared-config.json",
+      "bytes": 267,
+      "sha256": "a34cc05f1c5e3c362818fae3006ea6c1293595f384318f78d63da3877cc9e925"
+    },
+    {
+      "path": "work/task-supervisor/shared-post-prepared.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "work/shared-post-prepared-bin/source-commit.txt",
+      "bytes": 41,
+      "sha256": "d1d3bd1a9b6fc6c4c12737c1175a611ff8bb7ac4d4f060c5fa99c39b77058c93"
+    },
+    {
+      "path": "work/shared-post-prepared-bin/source-sha256.json",
+      "bytes": 83494,
+      "sha256": "52f24fcf8efc227cf3d6ea0dc5809062420b6455f701ff17ea77e4bec8f04818"
+    },
+    {
+      "path": "work/shared-post-prepared-bin/sha256.txt",
+      "bytes": 235,
+      "sha256": "49ee4a0ce8426aa56263c24a58db83adaf6ee8ce5688297fb123dbf0e1f14df3"
+    }
+  ]
+}

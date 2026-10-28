@@ -1,0 +1,120 @@
+{
+  "schema_version": 2,
+  "inventory_hash": "1e51ca4121020d14",
+  "timeout_secs": 30,
+  "jobs": 4,
+  "node_version": "v27.0.0-nightly20260819c79868f102",
+  "runtime_commit": "725a3463cf9bbdf2ab183c5767306717ca4cedc0",
+  "tests_node_commit": "55e4ca33f3a6dfe364bd9558b726576a6d1a2fba",
+  "platform": "linux-x86_64",
+  "scope": "Complete pinned upstream parallel inventory on retained fs/gc/TCP revision",
+  "counts": {
+    "timeout": 119,
+    "fail": 2744,
+    "pass": 1181,
+    "skip": 679,
+    "crash": 4
+  },
+  "total": 4727,
+  "host": {
+    "cpu_max": "400000 100000",
+    "memory_max_bytes": 17179869184
+  },
+  "raw_results": "work/parallel-lifetime.json",
+  "binary_sha256": "530d7c94a545f0f0dc7ed09ff93a3cbebebb879c9066351d9625cf044e48fe3f  work/sweep-lifetime-bin/run-parallel\n6ea85a5fb5854f672e66aa0d3d31ddf234c6a37dd5f2f08b3568864f8580c59e  work/sweep-lifetime-bin/quench-node\n",
+  "memory_before": "low 0\nhigh 0\nmax 4406740\noom 174\noom_kill 44\noom_group_kill 0\n",
+  "memory_after": "low 0\nhigh 0\nmax 4538212\noom 176\noom_kill 46\noom_group_kill 0\n",
+  "crashes": [
+    {
+      "fixture": "/workspace/work/node-fixtures/test/parallel/test-signal-args.js",
+      "status": "crash",
+      "observation": {
+        "Ok": {
+          "exit_code": null,
+          "signal": 2,
+          "timed_out": false,
+          "worker": null,
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/workspace/work/node-fixtures/test/parallel/test-signal-handler.js",
+      "status": "crash",
+      "observation": {
+        "Ok": {
+          "exit_code": null,
+          "signal": 1,
+          "timed_out": false,
+          "worker": null,
+          "stdout": [
+            112,
+            114,
+            111,
+            99,
+            101,
+            115,
+            115,
+            46,
+            112,
+            105,
+            100,
+            58,
+            32,
+            50,
+            57,
+            50,
+            53,
+            55,
+            53,
+            10
+          ],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/workspace/work/node-fixtures/test/parallel/test-zlib-brotli-16GB.js",
+      "status": "crash",
+      "observation": {
+        "Ok": {
+          "exit_code": null,
+          "signal": 9,
+          "timed_out": false,
+          "worker": null,
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/workspace/work/node-fixtures/test/parallel/test-zlib-close-in-ondata.js",
+      "status": "crash",
+      "observation": {
+        "Ok": {
+          "exit_code": null,
+          "signal": 9,
+          "timed_out": false,
+          "worker": null,
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    }
+  ],
+  "qualifications": [
+    "Full goal remains incomplete.",
+    "30s timeout differs from earlier 10s runs; no performance claim.",
+    "Native signal fixes were developed concurrently but are absent from these frozen binaries.",
+    "Ordinary compilation and focused tests overlapped this correctness sweep.",
+    "Late zlib decompression/materialization caused two new OOM kills."
+  ],
+  "comparison": {
+    "prior_runtime_commit": "b926a42b5e208cac84c120c9ac8336330e04a334",
+    "prior_timeout_secs": 10,
+    "previous_passes_lost": 0,
+    "new_passes": 16,
+    "qualification": "Timeout changes prevent a matched speed comparison; outcomes compared by unchanged fixture identity."
+  }
+}

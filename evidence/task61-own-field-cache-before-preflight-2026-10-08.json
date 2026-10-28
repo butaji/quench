@@ -1,0 +1,285 @@
+{
+  "schema": 1,
+  "task": "61",
+  "experiment": "Use the existing own-field site cache before semantic preflight",
+  "decision": "retain as a measured Stage B candidate; full Task 61 qualification remains open",
+  "binding_time": {
+    "static": "The bytecode site identifies the property atom; an immutable receiver shape identifies its own slot and descriptor attributes.",
+    "quasi_static": "A site cache maps receiver shape to slot. The existing exact shape guard validates the cached layout.",
+    "dynamic": "Setter/proxy/exotic behavior, property descriptor changes, private names, module namespaces, mapped arguments, and misses continue through the existing semantic path.",
+    "single_authority": "Reuses the existing FieldCache and megamorphic field table; adds no parallel cache representation or prototype invalidation state."
+  },
+  "source": {
+    "base_revision": "d77a94aacb88a4cdd4bfe49d1a1a58c90bf8159a",
+    "working_tree_dirty_during_candidate_build_and_checks": true,
+    "owner_file": "crates/quench-runtime/src/vm/object.rs",
+    "baseline_sha256": "b95284eb7a08a1995e260e2b205944a5419ca09bace9f84d1e04bc9bc0d2aca9",
+    "candidate_sha256": "ef1e0da14a1cc3de22cc0e4a30c2084f18c3c095cecac99091db90c7baba778e",
+    "candidate_delta": "For specialized writes to ordinary Cell::Object receivers, excluding private names, module namespaces, and arguments objects, try the existing shape/slot cache before property_accessor and inherited-write preflight. Proxy, primitive, exotic, private, and cache-miss behavior stays on the prior path. The later cache check now uses the same shared helper.",
+    "cargo_lock_sha256": "02b0a61df0566b30cc3644995cbad9f142abac9c538a276a24cc9f502a1d6d14"
+  },
+  "host": {
+    "model": "Mac16,10",
+    "cpu": "Apple M4",
+    "os": "macOS 26.5 ARM64",
+    "kernel": "Darwin 25.5.0",
+    "rustc": "rustc 1.99.0 (b940084d7 2026-09-28) (Homebrew)",
+    "cargo": "cargo 1.99.0 (5f94df478 2026-08-27) (Homebrew)"
+  },
+  "build": {
+    "command": "CARGO_INCREMENTAL=0 cargo build --locked --profile production -p quench-node --bin quench-node",
+    "profile": "production",
+    "baseline_binary": {
+      "path": "/tmp/quench-node-array-baseline",
+      "sha256": "60cc517562cdf0bb6b6beeb3a14fb2379e590eb38e8f1a3574629bb50b3f5089"
+    },
+    "candidate_binary": {
+      "path": "target/production/quench-node",
+      "sha256": "cc74a0a5386f705bfe110b4fefc17d0ad2ea92d629bcc1ea7ceadd8900b0c8e5"
+    }
+  },
+  "measurement": {
+    "kind": "diagnostic paired microbenchmark",
+    "operation": "repeated writes to a cached own data property",
+    "input": {
+      "source": "function P(){this.x=0;} var o=new P(); function f(){for(var t=0;t<4000;t++) for(var i=0;i<2500;i++) o.x=i;} f(); if(o.x!==2499) throw new Error(\"write result\");",
+      "sha256": "b8e4ff0a69065b3cf82c7912e4d1e04f88a2d6ea964b5ea9e0d71fed67e1aefc",
+      "sha256_encoding": "UTF-8 bytes of the exact source string",
+      "iterations": 10000000,
+      "timer": "/usr/bin/time -lp",
+      "raw_runner": {
+        "path": "tasks/evidence/task61-own-field-cache-before-preflight-2026-10-08.zsh",
+        "sha256": "e41b27eda3409578a84909768ce3560acc98fa83edffaab45bc24a861afe0952"
+      },
+      "raw_csv": {
+        "path": "tasks/evidence/task61-own-field-cache-before-preflight-2026-10-08.csv",
+        "sha256": "c5c7f129e76de7b1037b908c6a6574cfb81d5bafb7d00ec88d600af673b07496",
+        "rows": 22
+      }
+    },
+    "pairs": 11,
+    "order": "alternating baseline/candidate and candidate/baseline",
+    "bootstrap": {
+      "method": "paired percentile bootstrap of the median paired delta",
+      "replicates": 100000,
+      "prng": "xorshift32",
+      "seed": 6102026,
+      "quantiles": [
+        0.025,
+        0.975
+      ]
+    },
+    "summary": {
+      "baseline_median_seconds": 1.29,
+      "candidate_median_seconds": 1.01,
+      "median_paired_time_delta_percent": -21.875000000000004,
+      "paired_time_delta_percent_bootstrap_95_ci": [
+        -22.48062015503876,
+        -19.68503937007874
+      ],
+      "median_paired_instructions_delta_percent": -20.771686459208667,
+      "paired_instructions_delta_percent_bootstrap_95_ci": [
+        -20.7743281139101,
+        -20.770996485403003
+      ],
+      "median_paired_max_rss_delta_bytes": -180224,
+      "paired_max_rss_delta_bytes_bootstrap_95_ci": [
+        -212992,
+        -131072
+      ],
+      "candidate_faster_pairs": 11,
+      "candidate_lower_rss_pairs": 11
+    }
+  },
+  "cross_path_screen": {
+    "operation": "construct one million two-field instances",
+    "input": "function P(){this.x=1;this.y=2;} var last; for(var i=0;i<1000000;i++) last=new P(); if(last.x!==1||last.y!==2) throw new Error(\"constructor result\");",
+    "input_sha256": "ff0f95a6c3cbd4e96770e1eae413df7d38c29afb643b4032cb89b97d12533ce8",
+    "input_sha256_encoding": "UTF-8 bytes of the exact source string",
+    "iterations": 1000000,
+    "pairs": 3,
+    "raw_runner": {
+      "path": "tasks/evidence/task61-own-field-cache-constructor-screen-2026-10-08.zsh",
+      "sha256": "6aa7e5d7e7e185cb0f9e91250deef375cceb5b12810320bbfb434798c234b990"
+    },
+    "raw_csv": {
+      "path": "tasks/evidence/task61-own-field-cache-constructor-screen-2026-10-08.csv",
+      "sha256": "c6eb74f449ae79eb26f915feb4919359b6b3740323c17932ac76661bf41a2ed4",
+      "rows": 6
+    },
+    "median_paired_time_delta_percent": -1.9108280254777086,
+    "median_paired_instructions_delta_percent": 0.4658643258221614,
+    "interpretation": "Three-pair diagnostic only. No material constructor-time regression was observed; instruction count was 0.47% higher. This sample is too small for a constructor performance claim."
+  },
+  "v8_v7_richards_diagnostic": {
+    "kind": "two separate 11-round four-engine campaigns; not interleaved across builds and not a Task 61 gate",
+    "fixture": "quench-bench/js-engine-benchmark/v8-v7/richards.js",
+    "runner_binary_sha256": "7530076292020d65cc1cc9c47fbe90534470144588e8ed17ec0107553c8c44fc",
+    "baseline_report": {
+      "path": "target/production/stageb-field-cache/v8v7-richards-baseline-11.json",
+      "sha256": "3a8c202dc78310880cdef1d8d95d73253f9577c860b16f1d8fc13506a4ae51ea"
+    },
+    "candidate_report": {
+      "path": "target/production/stageb-field-cache/v8v7-richards-candidate-11.json",
+      "sha256": "9a7afc7d4bb03e1d91acf8e22f37bac5095a8f3945568be550a380369dd577d9"
+    },
+    "both_reports": {
+      "source_dirty": true,
+      "pinned_corpus_revision": "64e1860c736c1b899708f4cd646721bc71e53d8b",
+      "corpus_checkout_clean": true,
+      "selected_fixture_set_matches_full_suite": false,
+      "output_equal": true,
+      "valid_rounds_per_engine": 11
+    },
+    "engine_medians": {
+      "quench_baseline": {
+        "score": 200,
+        "max_rss_bytes": 22183936,
+        "instructions": 49206762910
+      },
+      "quench_candidate": {
+        "score": 225,
+        "max_rss_bytes": 21889024,
+        "instructions": 48613165200
+      },
+      "quickjs_baseline": {
+        "score": 1839,
+        "max_rss_bytes": 2555904
+      },
+      "quickjs_candidate": {
+        "score": 1836,
+        "max_rss_bytes": 2555904
+      },
+      "bun_baseline": {
+        "score": 3085,
+        "max_rss_bytes": 21200896
+      },
+      "bun_candidate": {
+        "score": 3082,
+        "max_rss_bytes": 21217280
+      },
+      "node_baseline": {
+        "score": 2634,
+        "max_rss_bytes": 44777472
+      },
+      "node_candidate": {
+        "score": 2623,
+        "max_rss_bytes": 44695552
+      }
+    },
+    "unpaired_bootstrap_of_medians": {
+      "method": "independently resample the 11 baseline and 11 candidate rounds; candidate median minus baseline median",
+      "replicates": 100000,
+      "prng": "xorshift32",
+      "seed": 6102030,
+      "quench_score_delta": 25,
+      "quench_score_delta_95_ci": [
+        24,
+        34
+      ],
+      "quench_rss_delta_bytes": -294912,
+      "quench_rss_delta_95_ci": [
+        -1196032,
+        -229376
+      ],
+      "quench_instructions_delta": -593597710,
+      "quench_instructions_delta_95_ci": [
+        -599131646,
+        1125761627
+      ]
+    },
+    "interpretation": "The one-fixture diagnostic corroborates the own-field microbenchmark on Score and RSS. The instruction interval includes zero; the campaigns were run separately, so this is not a matched paired estimate. All engines remained valid and outputs matched, but the report cannot qualify task 61."
+  },
+  "verification": {
+    "production_build": "passed",
+    "rustfmt_touched_file": "rustfmt --check --edition 2024 crates/quench-runtime/src/vm/object.rs passed",
+    "workspace_format_check": "cargo fmt --all -- --check reports pre-existing formatting differences in unrelated files and vendored OXC; touched file check passes",
+    "test262": {
+      "stages": [
+        {
+          "stage": 10,
+          "path": "language/expressions",
+          "baseline": 11102,
+          "candidate": 11102,
+          "failures": 0,
+          "baseline_report_sha256": "673ae038cacbcd7b75f69c42f4f348840966ffc4177f4ad9ff7511404c4a07eb",
+          "candidate_report_sha256": "4793e076c631921c0a23a73b85bd0eca6965fd90ccdfb7a15f5c651c4330f42c"
+        },
+        {
+          "stage": 60,
+          "path": "built-ins/Object",
+          "baseline": 3411,
+          "candidate": 3411,
+          "failures": 0,
+          "baseline_report_sha256": "54e016e1e3115477ce78b2f00d8cc713972d67d80ca8f05a923d9c200749430a",
+          "candidate_report_sha256": "d7a1cb0ba3019211919a380229a79a21e98b15c3108191d042610c28c23ee639"
+        },
+        {
+          "stage": 61,
+          "path": "built-ins/Promise",
+          "baseline": 729,
+          "candidate": 729,
+          "failures": 0
+        },
+        {
+          "stage": 62,
+          "path": "built-ins/Proxy",
+          "baseline": 311,
+          "candidate": 311,
+          "failures": 0
+        },
+        {
+          "stage": 63,
+          "path": "built-ins/Reflect",
+          "baseline": 153,
+          "candidate": 153,
+          "failures": 0
+        }
+      ],
+      "total_baseline": 15706,
+      "total_candidate": 15706,
+      "compare_runs_regressions": 0,
+      "compare_runs_binary_sha256": "424de7aac2062817aedb586077d699a926261d76760fd9858c09cd1ae45f4c59",
+      "baseline_runner_sha256": "d5d12fb09bf4d50a59e73a61cc3e8f6984bec706061655eba1f0241aab62c736",
+      "candidate_runner_sha256": "ab7f9dbb920a4dbb4c273181e68db596d6aadc182a25ea45f6059530c893b3a9",
+      "commands": [
+        "TEST262_REPORT=<report> TEST262_TEST_TIMEOUT_MS=900000 TEST262_JOBS=4 <runner> 10 10",
+        "TEST262_REPORT=<report> TEST262_TEST_TIMEOUT_MS=900000 TEST262_JOBS=4 <runner> 60 63"
+      ]
+    },
+    "node_oracle": {
+      "node_version": "v26.10.0",
+      "script_sha256": "d78879e68db87d49ac8f2b1558686c9781a48abc88b9d2d630f01ae51e4c4743",
+      "candidate_stdout": "[true,true,true,true,true,true,true]\n",
+      "node_stdout": "[true,true,true,true,true,true,true]\n",
+      "outputs_equal": true,
+      "cases": [
+        "cached own writable assignment",
+        "descriptor changed to read-only after cache warmup: sloppy no-op and strict TypeError",
+        "inherited setter receiver and value",
+        "new inherited setter after warmup while own data property still wins",
+        "Proxy set trap remains observed",
+        "delete own property after warmup then inherited setter is called"
+      ]
+    },
+    "node_framework_core": {
+      "passed": 43,
+      "skipped": 0,
+      "failed": 0,
+      "timeouts": 0,
+      "crashes": 0,
+      "unclassified": 0,
+      "command": "cargo run --locked --profile iteration -p quench-node-test --bin run-parallel -- --profile framework-core",
+      "binary_sha256": "e4206a92863211753f4d04a988752c2b5c4be7dc64617aa369bf25cec8c487ae"
+    },
+    "wasm": {
+      "passed_directives": 67124,
+      "failed_directives": 0,
+      "command": "WASM_FILE_TIMEOUT_MS=900000 cargo run --locked --profile iteration -p quench-wasm-test --bin run -- --report <report> crates/quench-wasm-test/testsuite",
+      "runner_binary_sha256": "9907b0a6ad280bf5ddd7112dfbd6a3133a31f6d5ea2abd665f2016cf2ef3b363",
+      "report_sha256": "89503e2436ef2e43bfd9e6791e46c8d103bbc97f244e899074e589221a7535eb"
+    },
+    "rust_unit_tests": "not run, per instruction"
+  },
+  "task61_limit": "The full eight-fixture, all-reference-engine qualification remains open. This record supports retaining a general own-field cache hit fast path; it does not claim broad V8-v7 leadership."
+}

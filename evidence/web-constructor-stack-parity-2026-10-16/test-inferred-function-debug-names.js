@@ -1,0 +1,7 @@
+const vm=require('vm'),out=[];
+const actions=['','void f.name;','Object.getOwnPropertyDescriptor(f,"name");','Object.defineProperty(f,"name",{});','Object.defineProperty(f,"name",{enumerable:false});','Object.defineProperty(f,"name",{enumerable:true});','Object.defineProperty(f,"name",{writable:true});','Object.defineProperty(f,"name",{value:""});','Object.defineProperty(f,"name",{value:"Changed"});','Object.defineProperty(f,"name",{get(){calls++;throw Error("getter")}});','Object.defineProperty(f,"name",{configurable:false});','delete f.name;','f.extra=1;','Object.freeze(f);','Object.seal(f);','Object.preventExtensions(f);','Object.freeze(f);Object.defineProperty(f,"name",{value:""});'];
+for(const action of actions){out.push([action,vm.runInNewContext('Error.prepareStackTrace=(_,s)=>s[0].getFunctionName();let calls=0;const f=(0,function(){return new Error().stack});'+action+'const name=f(),d=Object.getOwnPropertyDescriptor(f,"name");[name,!!d,!!d&&"value"in d,d&&d.value,calls]')])}
+for(const expression of ['(0,function(){return new Error().stack})','true?function(){return new Error().stack}:null','null||function(){return new Error().stack}','null??function(){return new Error().stack}','(0,()=>new Error().stack)','(0,function Named(){return new Error().stack})']){
+ out.push(vm.runInNewContext('Error.prepareStackTrace=(_,s)=>s[0].getFunctionName();const selected='+expression+';[selected(),selected.name]'));
+}
+console.log(JSON.stringify(out));

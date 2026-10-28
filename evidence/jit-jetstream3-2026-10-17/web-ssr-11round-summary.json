@@ -1,0 +1,76 @@
+{
+  "schema": 1,
+  "suite": "jetstream3",
+  "fixture": "web-ssr",
+  "qualification": "screen only: source tree was dirty and only one of 30 fixtures was measured",
+  "inputs": {
+    "web-ssr-11round-jit.json": "2957f46e615decb307c985353491e5d27b2ce0e55e466094a9d9b90694c73982",
+    "web-ssr-11round-nojit.json": "11a40d33999070341bc173718bb652b4842f6fd3d4671d6c0d5b87d5fe9053c1"
+  },
+  "jit_mode": {
+    "rounds": 11,
+    "median_score": 14.85,
+    "median_peak_rss_bytes": 130134016,
+    "comparisons": {
+      "bun": {
+        "score": {
+          "median_ratio": 0.10837685099077188,
+          "percentile_95_ci": [
+            0.10587980039054026,
+            0.1181510710259301
+          ],
+          "method": "paired percentile bootstrap of median log ratio, resampling round indices jointly",
+          "replicates": 100000,
+          "seed": "0x51a7beefcafe2c31"
+        },
+        "peak_rss": {
+          "median_ratio": 0.5171863291304206,
+          "percentile_95_ci": [
+            0.48484617262849466,
+            0.5298593382389748
+          ],
+          "method": "paired percentile bootstrap of median log ratio, resampling round indices jointly",
+          "replicates": 100000,
+          "seed": "0x51a7beefcafe2c3b"
+        }
+      },
+      "node": {
+        "score": {
+          "median_ratio": 0.11548492257538714,
+          "percentile_95_ci": [
+            0.11344446849967528,
+            0.11631163853467974
+          ],
+          "method": "paired percentile bootstrap of median log ratio, resampling round indices jointly",
+          "replicates": 100000,
+          "seed": "0x51a7beefcafe2c32"
+        },
+        "peak_rss": {
+          "median_ratio": 0.5043333333333333,
+          "percentile_95_ci": [
+            0.5021105050984112,
+            0.507261114112301
+          ],
+          "method": "paired percentile bootstrap of median log ratio, resampling round indices jointly",
+          "replicates": 100000,
+          "seed": "0x51a7beefcafe2c3c"
+        }
+      }
+    }
+  },
+  "interpreted_mode": {
+    "rounds": 11,
+    "median_score": 14.99,
+    "median_peak_rss_bytes": 129130496
+  },
+  "jit_vs_interpreted_score": {
+    "median_ratio": 0.9906604402935288,
+    "percentile_95_ci": [
+      0.952980132450331,
+      1.035864978902954
+    ],
+    "method": "independent percentile bootstrap of median log ratio, resampling each mode separately",
+    "replicates": 100000,
+    "seed": "0x0000000000c0ffee"
+  }
+}

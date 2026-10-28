@@ -1,0 +1,172 @@
+{
+  "schema": 1,
+  "tasks": [
+    "17",
+    "20"
+  ],
+  "baseline_source_head": "97453497a747e49cea49da92d473e439b8e8ce67",
+  "qualification": "Isolated per-iteration disposal finalizers; unqualified main-tree Wasm, Node and other changes excluded.",
+  "source_sha256": {
+    "crates/quench-runtime-next/src/compile/ast/iteration.rs": "f848f71072689faf7a39f9740c44496e5bf404a7b9ea3a5ea7d24c74511278ee"
+  },
+  "suite_pin": "6eec1ac9ee144dafd8f344d73a21f36bfc9f6755",
+  "representation": {
+    "authority": "For-of iteration resources use the existing disposal scope, FinallyContext and Handler return metadata. The loop control and iterator boundaries are resolved before the resource binding/body is compiled.",
+    "transitions": "Each iteration disposes its resource on normal completion, return, throw, break or continue. The enclosing iterator-close handler covers the resource cleanup, preserving disposal-before-close and thrown-completion suppression. Generator return follows the existing per-scope handler target.",
+    "reduction": "Two separate normal/break disposal branches removed. Shared disposal-scope exit handles the iteration lifetime; no new runtime state, serializer field, guest shim, fixture branch or duplicated semantic unit test."
+  },
+  "contracts": [
+    "https://tc39.es/ecma262/multipage/ecmascript-language-statements-and-declarations.html#sec-runtime-semantics-forin-div-ofbodyevaluation-lhs-stmt-iterator-lhskind-labelset",
+    "https://tc39.es/ecma262/multipage/abstract-operations.html#sec-disposeresources"
+  ],
+  "upstream_node_pin": "55e4ca33f3a6dfe364bd9558b726576a6d1a2fba",
+  "upstream_node_source": {
+    "tests/node/deps/v8/src/interpreter/bytecode-generator.cc": "3c081422abdeaa3d48784fe5f1e37cd79d7b7297d470daa8ebc326c6a484f278"
+  },
+  "build": {
+    "profile": "release; correctness only, no Stage B performance claim",
+    "log": "target/iteration/task17-iteration-disposal/build.log",
+    "before_binary_sha256": "455a6e126293219108516818728be77dcf7dcd02cfa0cec6141b27c50c9ef5bb",
+    "after_binary_sha256": "58933479b90cf5d6bc741170463fa4b989e3b7fbb0c0290fdb4513a57cc2f90a"
+  },
+  "affected_test262": {
+    "full_suite_run": false,
+    "jobs_per_scope": 2,
+    "timeout_ms": 10000,
+    "distinct_cases": 3558,
+    "passed_before": 3558,
+    "passed_after": 3558,
+    "gained": [],
+    "regressions": [],
+    "scopes": [
+      {
+        "scope": "for-of",
+        "total": 751,
+        "passed_before": 751,
+        "passed_after": 751,
+        "gained": [],
+        "regressions": [],
+        "reports": {
+          "target/iteration/task17-iteration-disposal/before-for-of.json": "2919fc412d4dbc8bccf451f6ff12af55be03253c845b99d083a70be44ab4ad29",
+          "target/iteration/task17-iteration-disposal/after-for-of.json": "938fb8a7c647061c54759b791e5d326ab9490b2ddb6d481be3ea340484de85b2",
+          "target/iteration/task17-iteration-disposal/compare-for-of.log": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+        }
+      },
+      {
+        "scope": "for-await",
+        "total": 1234,
+        "passed_before": 1234,
+        "passed_after": 1234,
+        "gained": [],
+        "regressions": [],
+        "reports": {
+          "target/iteration/task17-iteration-disposal/before-for-await.json": "d3e232d10d39318e5dda202b40ff34a732c63193b195e8fb73ae261dac6b28e7",
+          "target/iteration/task17-iteration-disposal/after-for-await.json": "40a0df5c4cc4761000ce4f503133ac2a051c134bf0e87d812ab27ea815221d09",
+          "target/iteration/task17-iteration-disposal/compare-for-await.log": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+        }
+      },
+      {
+        "scope": "for-in",
+        "total": 115,
+        "passed_before": 115,
+        "passed_after": 115,
+        "gained": [],
+        "regressions": [],
+        "reports": {
+          "target/iteration/task17-iteration-disposal/before-for-in.json": "bcc9aceac965935d9eecd7f4825099d61e13b6c41e5f9e0518b837d588173bdf",
+          "target/iteration/task17-iteration-disposal/after-for-in.json": "9964d860aa3d1d040e4c9c4912b5b6744656662d5cc08c296bb1f32e83ca390e",
+          "target/iteration/task17-iteration-disposal/compare-for-in.log": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+        }
+      },
+      {
+        "scope": "using",
+        "total": 78,
+        "passed_before": 78,
+        "passed_after": 78,
+        "gained": [],
+        "regressions": [],
+        "reports": {
+          "target/iteration/task17-iteration-disposal/before-using.json": "d5690e84181f35b41d5a4e0daea7d085229b223195dc1d67d53ab2c187775c13",
+          "target/iteration/task17-iteration-disposal/after-using.json": "ceb71025ffd2b3245d269646253e787c762b760a3683716e4289a7b34eaa6244",
+          "target/iteration/task17-iteration-disposal/compare-using.log": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+        }
+      },
+      {
+        "scope": "await-using",
+        "total": 100,
+        "passed_before": 100,
+        "passed_after": 100,
+        "gained": [],
+        "regressions": [],
+        "reports": {
+          "target/iteration/task17-iteration-disposal/before-await-using.json": "511fa9c614671647a33a9f8ed344bb34682d7a065a6dd52a28d9e5b38673aa5d",
+          "target/iteration/task17-iteration-disposal/after-await-using.json": "2c7df545aa6b00004318ac50b9ac30742754a176494fe724a322e4388bd37cd9",
+          "target/iteration/task17-iteration-disposal/compare-await-using.log": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+        }
+      },
+      {
+        "scope": "generators",
+        "total": 1032,
+        "passed_before": 1032,
+        "passed_after": 1032,
+        "gained": [],
+        "regressions": [],
+        "reports": {
+          "target/iteration/task17-iteration-disposal/before-generators.json": "3ab97ffdc7597e317b84b366ad18682cf20c6ed5473327dba72ffbc6f1119641",
+          "target/iteration/task17-iteration-disposal/after-generators.json": "75443a0eec5d0e69317a5315a54e9be3aab26d466eee8843f99ca9645f795768",
+          "target/iteration/task17-iteration-disposal/compare-generators.log": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+        }
+      },
+      {
+        "scope": "try",
+        "total": 201,
+        "passed_before": 201,
+        "passed_after": 201,
+        "gained": [],
+        "regressions": [],
+        "reports": {
+          "target/iteration/task17-iteration-disposal/before-try.json": "f65218c5e1d71eddf7c05711409199efc98b35a86e40dff11af056a8f41f755b",
+          "target/iteration/task17-iteration-disposal/after-try.json": "7f3a28834ceedb9b3172d9178a111fab35c92f439a0c820b3477ab27957db22d",
+          "target/iteration/task17-iteration-disposal/compare-try.log": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+        }
+      },
+      {
+        "scope": "staged-disposal",
+        "total": 53,
+        "passed_before": 53,
+        "passed_after": 53,
+        "gained": [],
+        "regressions": [],
+        "reports": {
+          "target/iteration/task17-iteration-disposal/before-staged-disposal.json": "dc41e44062c2105ed76c90d3750f7134a47a107cc5c446a21f2a742aadbac250",
+          "target/iteration/task17-iteration-disposal/after-staged-disposal.json": "7514fb0e86f3818ffd97a66774c73f277b2c779db5b930142909ae1a031e7f87",
+          "target/iteration/task17-iteration-disposal/compare-staged-disposal.log": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+        }
+      }
+    ]
+  },
+  "node_controls": {
+    "sources": 156,
+    "observations_per_build": 312,
+    "before_matches": 234,
+    "after_matches": 306,
+    "losses": 0,
+    "node_version": "v26.10.0",
+    "report": "target/iteration/task17-iteration-disposal/node-controls.json",
+    "sha256": "264a153055e1c13d540803e3d731693a94fce680870d475895122e970500d208",
+    "gains": 72,
+    "remaining_cases": [
+      "sync-arrow-for-head-return",
+      "sync-function-for-head-return",
+      "resource-for-head-break"
+    ],
+    "remaining_difference": "Three unchanged synchronous classic-for initializer controls (six normal/generic observations): local Node invokes the same disposer twice on return/break; Quench once.",
+    "scope": "Previous block/function finalizer controls plus using/await-using iteration under synchronous and asynchronous iteration, normal/return/throw/break/continue paths, disposal failures and suppression, nested scopes and finalizers, injected/explicit generator return, registration getter throws and explicit async disposer settlement/rejection."
+  },
+  "verification": "Release compile, identical affected inventories and compare-runs --reports pass. Source overlay excludes unrelated dirty work. No suite duplicated unit tests added.",
+  "limits": [
+    "Pins, fixtures, discovery, harnesses, expectations, exclusions and deadlines unchanged.",
+    "Focused evidence does not establish all async iterator-close timing paths or a complete suite result.",
+    "Complete Test262/Wasm, frozen implemented Node, single production VM cutover and Stage A remain open."
+  ]
+}

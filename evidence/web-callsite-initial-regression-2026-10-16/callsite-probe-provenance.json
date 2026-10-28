@@ -1,0 +1,31 @@
+{
+  "callsite-prototype": {
+    "quench_source": "6a8ef406b",
+    "quench_binary": "work/quench-native-types-qualified",
+    "quench_sha256": "81c74e4b2b9022462f73be33e0f3f663a8ac669c195646ca622c63821fd72269"
+  },
+  "callsite-method": {
+    "quench_source": "38ba06b83",
+    "quench_binary": "work/quench-callsite-integrated-qualified",
+    "quench_sha256": "8208629f0bf56668012c95ea072845c30b8ccb0abf84d7491d13b4bdc7e12f8e"
+  },
+  "callsite-constructor-newtarget": {
+    "quench_source": "41e9b9f03",
+    "quench_binary": "work/quench-callsite-qualified",
+    "quench_sha256": "fa9ed45f1a8550f4c28bad1f527d93e0a3a90b1f5014e0cfd1bbe6b6b99d7ca5"
+  },
+  "function-factory-origin": {
+    "quench_source": "41e9b9f03",
+    "quench_binary": "work/quench-callsite-qualified",
+    "quench_sha256": "fa9ed45f1a8550f4c28bad1f527d93e0a3a90b1f5014e0cfd1bbe6b6b99d7ca5"
+  },
+  "util-callsites": {
+    "quench_source": "41e9b9f03",
+    "quench_binary": "work/quench-callsite-qualified",
+    "quench_sha256": "fa9ed45f1a8550f4c28bad1f527d93e0a3a90b1f5014e0cfd1bbe6b6b99d7ca5"
+  },
+  "oracle": {
+    "version": "v26.12.0",
+    "sha256": "caa24debe02770c92a70677e2a62ca98890150e7ac1c17bcfe31bcc98cc89943"
+  }
+}

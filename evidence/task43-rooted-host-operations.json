@@ -1,0 +1,90 @@
+{
+  "schema": 1,
+  "task": "43",
+  "kind": "rooted_host_operation_qualification",
+  "timestamp_utc": "2026-10-04T23:51:21.388224+00:00",
+  "git_head": "7e60169df033dd247f34199e084e3e8080a92a29",
+  "worktree": "uncommitted; this API slice does not close host migration",
+  "sources": {
+    "crates/quench-runtime-next/src/api.rs": "5889d24b90ee78d6faeff65e569dd081be55a4ea5a69683f1f31f9a0c31cc95c",
+    "crates/quench-runtime-next/src/lib.rs": "61bd1282e072d309db1cbf5b95f9aa845bcb4f912582075cbb2624308059a16b",
+    "crates/quench-runtime-next/src/vm.rs": "4382aaec42558ced4a815b0d9153f4cc6a56d42e3761059e43c42523a8870898",
+    "crates/quench-runtime-next/src/api_embedding.rs": "39936e3a7a8f04628ef2fd4b12d929a47d1b91b904765f8d695d6d16dc35c3e1",
+    "crates/quench-runtime-next/src/api_embedding_tests.rs": "027f86f97283cb295827b703080a601013a3ff1c754156366e2894d084d161c0",
+    "crates/quench-runtime-next/src/vm/embedding.rs": "e8fc22f264cf053683decd68d11a2943b1b11fa2a218600c6816b325f0d544b9"
+  },
+  "operations": [
+    "global_root",
+    "string_rooted",
+    "get_property_rooted",
+    "call_rooted"
+  ],
+  "ownership_contract": [
+    "Live generation-checked input roots must belong to this runtime; all input validation completes before guest coercion/getters/callbacks.",
+    "Program context is derived from the VM program store, with no caller-supplied residual or duplicate initialization flag.",
+    "Property reads delegate to get_index; calls delegate to call_value and its existing GC/program/realm ownership.",
+    "One completion operation retains success and actual thrown values immediately. Validation errors have no guest exception.",
+    "Host explicitly releases result/exception roots. Fresh execute invalidates earlier roots."
+  ],
+  "checks": [
+    {
+      "command": "cargo test -p quench-runtime-next --lib api::embedding::tests -- --nocapture",
+      "passed": 5,
+      "failed": 0,
+      "ignored": 0,
+      "exit": 0
+    },
+    {
+      "command": "cargo test -p quench-runtime-next --lib api::tests::root -- --nocapture",
+      "passed": 2,
+      "failed": 0,
+      "ignored": 0,
+      "exit": 0
+    },
+    {
+      "command": "cargo test -p quench-runtime-next --lib api::tests::explicit_collection_preserves_runtime_roots -- --nocapture",
+      "passed": 1,
+      "failed": 0,
+      "ignored": 0,
+      "exit": 0
+    },
+    {
+      "command": "cargo check -p quench-node --bin quench-node-next",
+      "exit": 0,
+      "warnings": "Two existing deprecated atomic API warnings in the legacy runtime; no Node migration qualification."
+    },
+    {
+      "command": "cargo clippy -p quench-runtime-next --lib --no-deps -- -D warnings",
+      "exit": 101,
+      "diagnostics": 153,
+      "embedding_file_diagnostics": 0,
+      "owner": "86"
+    }
+  ],
+  "scope": {
+    "units": "Embedding lifecycle and ownership invisible to guest suites; guest source is setup for root/exception/program/realm checks.",
+    "test262": "Not run: existing guest property/call/GC operation bodies are unchanged; added only an embedding boundary and internal root tests.",
+    "node": "No Node policy changed. The existing shared diagnostic entry still compiles; Node production remains legacy.",
+    "wasm": "Not run: no Wasm lowering, resource, dispatch or callable operation changed.",
+    "full_suites_run": false,
+    "benchmark_campaign_run": false,
+    "inventories_or_expectations_changed": false
+  },
+  "counterexamples_closed": [
+    "Initial new global lookup accepted the pre-execution null sentinel; initialization now derives from program-store availability.",
+    "Initial embedding errors were misleadingly labeled invalid residual program; boundary errors now retain their own message without inventing a guest exception."
+  ],
+  "raw_artifacts": {
+    "target/iteration/task-direction-review/embedding-tests.log": "939533f2d531e4e03a35876cf690a65297b87d2611a813167aac539eaa7eed85",
+    "target/iteration/task-direction-review/embedding-tests-final.log": "70101930c42bc9e1451d24099817ee2b4904ed662bb68876ed5eb47c4f3af549",
+    "target/iteration/task-direction-review/existing-root-tests.log": "106c451386aae5974c8f9e5a06782f3ee281a99efbffc2aafd675377f3970ce6",
+    "target/iteration/task-direction-review/existing-collection-test.log": "4fb62a0dda4596a2703bde8dc78c717d51b7c084a6896c1877365636c20b3027",
+    "target/iteration/task-direction-review/embedding-clippy.log": "5aa1fa758144e21816d2ecc5c256573d7bd8c480573b1f42a5ea86af7c793547",
+    "target/iteration/task-direction-review/node-next-check.log": "a6fa3d0786bc581b07b73c702741814cae570f368d84689b22ca676c94c4c724"
+  },
+  "qualification_limits": [
+    "No task status or Stage A gate closes.",
+    "Native Node registration, property writes, conversions, jobs and actual host migration remain open.",
+    "Warning-denied runtime Clippy and final workspace lint remain open under task 86."
+  ]
+}

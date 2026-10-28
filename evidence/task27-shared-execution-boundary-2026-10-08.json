@@ -1,0 +1,90 @@
+{
+  "schema": 1,
+  "task": "27",
+  "kind": "shared_execution_library_boundary",
+  "recorded_on": "2026-10-08",
+  "source": {
+    "revision": "ecaa675a8e10fccf06e90953a7a0dc34faf21ca9",
+    "worktree_dirty": true,
+    "platform": "Darwin arm64",
+    "node": "v26.10.0",
+    "rustc": "rustc 1.99.0 (b940084d7 2026-09-28) (Homebrew)",
+    "files_sha256": {
+      "crates/quench-node/src/lib.rs": "127a1c8399f3a1f0a93b2e42256426a1ac15ed6a5dd3659e4ca0a914e6fe8acb",
+      "crates/quench-node/src/host.rs": "d2ce62f60bae6549787cb9ba66b9c817d251085c1147bc3abed723cfc20170b9",
+      "crates/quench-node/src/shared_run.rs": "77462a3f96008ec3cbde541d07ce30f332bb6097765363f951f5e8f8ed63584c",
+      "crates/quench-node/src/modules/process.rs": "dba4dab09ef39bb85aae9742e9c067edbd4a2a30dd9b0f69c226ecb1165456d9",
+      "crates/quench-node/src/dispatch_handlers.rs": "0dd466366969b13d6261b009b56352fcaacd453f49b4d54cc2ee89b22d66d536",
+      "crates/quench-node/src/modules/child_process.rs": "fb86029ea9b8fb4bb3a070123e024e043173c3d223f74a7d055939dff55850a2",
+      "crates/quench-node/src/modules/worker_threads.rs": "494247eda73c0b3b3f203073a9c672c0e3ffd6398e9bdd1e56e9c28d33b4b97f",
+      "crates/quench-node-test/src/case_process.rs": "bd23fbd37f5dd6b00c1413444f5a070c15fc2ae34f4e3627da792d0aba72dc85",
+      "crates/quench-node-test/src/shared_runner.rs": "6b20c3f481aa12a57f4ce3dfd6852949018e39633deb7a1291123263d4988488",
+      "crates/quench-node-test/node-tests/parallel.txt": "0209917422a2f0f3fa241d941ec4bc88c9917d5322b69014ab1a662a52e9dfca",
+      "tests/frameworks/driver.cjs": "e8dd245f9bbfcdcd3a430ff7ed663c3310fdf32fae23cfc5c24d24cbeda96bfb",
+      "tests/frameworks/scenarios/express.cjs": "85eebbbc5c9cfaa01f2f16b6c7e181a4c4bc2e308bd1bb179f49c5d9700f8158",
+      "tests/frameworks/scenarios/koa.cjs": "962e4c326df72b30eed4306494e2218475456c7c816220a6e46a898b040185f9",
+      "tests/frameworks/scenarios/fastify.cjs": "1ff4fc87e2a4c792761c286bc0f255d0ab9be27e810dbf98938a1ac717d1ba6a",
+      "target/iteration/quench-node": "f6ffe612c913675d3da0fbb76de2f83ef4bef2cb81b9ca5a6e9f223518d778e0",
+      "target/iteration/run-parallel": "acf3999cca0f39b930c3ea879fac2cc163dc8367c114f8871c66d456a4fe04f7"
+    }
+  },
+  "change": {
+    "single_authority": "shared_run::CHILD_RUNNER_ENV owns the worker environment name; host process output and all subprocess launch paths read that constant.",
+    "external_consumer": "quench-node-test no longer imports quench_node::modules::process::CHILD_RUNNER_ENV; EntryGoal is defined beside SharedInput.",
+    "remaining_boundary": "Legacy modules remain public because hiding the old graph before deleting its unused items causes 541 dead-code warnings. quench-node still directly depends on quench-runtime.",
+    "runtime_dependency_removed": false
+  },
+  "verification": {
+    "checks": [
+      {
+        "command": "cargo check --quiet -p quench-node -p quench-node-test",
+        "exit_code": 0,
+        "result": "passed; two existing deprecated Atomic::fetch_update warnings in quench-runtime"
+      },
+      {
+        "command": "cargo build --quiet --profile iteration -p quench-node --bin quench-node && cargo build --quiet --profile iteration -p quench-node-test --bin run-parallel",
+        "exit_code": 0,
+        "result": "passed"
+      },
+      {
+        "command": "rustfmt --edition 2021 --check on the nine changed Rust files",
+        "exit_code": 0,
+        "result": "passed"
+      },
+      {
+        "command": "node tools/check-task-coherence.mjs and git diff --check",
+        "exit_code": 0,
+        "result": "passed; task 27 remains the only active task"
+      },
+      {
+        "command": "search crates for quench_node::modules::process::CHILD_RUNNER_ENV and CHILD_RUNNER_ENV declaration",
+        "exit_code": 0,
+        "result": "no external legacy module path remains; one declaration in shared_run.rs"
+      },
+      {
+        "command": "target/iteration/run-parallel --profile framework-core",
+        "exit_code": 0,
+        "result": {
+          "pass": 43,
+          "skip": 0,
+          "fail": 0,
+          "timeout": 0,
+          "crash": 0,
+          "unclassified": 0,
+          "total": 43
+        }
+      },
+      {
+        "command": "node driver.cjs and ../../target/iteration/quench-node driver.cjs for Express, Koa, and Fastify from tests/frameworks",
+        "exit_code": 0,
+        "result": "all six processes exited 0 with matching stdout bytes `statuses 200,200,200,200,404\\n` and empty stderr"
+      }
+    ],
+    "unit_tests": "not run"
+  },
+  "deferred_experiment": {
+    "change": "make all legacy implementation modules private",
+    "result": "build succeeded but emitted 541 dead-code warnings from the retained graph; visibility change was reverted",
+    "next_use": "seal module exports when the legacy graph is deleted or its unused items are removed"
+  }
+}

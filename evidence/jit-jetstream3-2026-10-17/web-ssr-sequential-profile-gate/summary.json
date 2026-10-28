@@ -1,0 +1,142 @@
+{
+  "schema": 1,
+  "source_revision": "4237e8e39b55c506333f27610f7138ae42770a6a",
+  "source_dirty": false,
+  "corpus_revision": "06785cf861ac44855f168cbbe829278c2802e6de",
+  "host": {
+    "uname": "Linux f3da3ef8e0e6 6.18.55 #1 SMP Wed Oct 14 19:45:18 UTC 2026 x86_64 GNU/Linux",
+    "rustc": "",
+    "model": null,
+    "memory_bytes": 18882674688,
+    "memory_limit_bytes": 17179869184,
+    "cpu_quota": "400000 100000",
+    "logical_cpus": 4,
+    "process_metrics_backend": "Linux wait4 rusage"
+  },
+  "fixture": "quench-bench/jetstream/web-ssr",
+  "rounds_per_mode": 11,
+  "valid_and_output_equal": true,
+  "fixture_coverage": {
+    "run": 1,
+    "total": 30
+  },
+  "qualification_ready": false,
+  "engine_versions": {
+    "quench": "Quench shared-VM JIT build; package 0.1.0",
+    "bun": "1.4.2",
+    "node": "v26.10.0"
+  },
+  "median": {
+    "jit": {
+      "bun": {
+        "score": 129.34,
+        "max_rss_bytes": 244072448
+      },
+      "node": {
+        "score": 119.96,
+        "max_rss_bytes": 225312768
+      },
+      "quench": {
+        "score": 14.7,
+        "max_rss_bytes": 130879488
+      }
+    },
+    "interpreter": {
+      "bun": {
+        "score": 89.75,
+        "max_rss_bytes": 122806272
+      },
+      "node": {
+        "score": 85.23,
+        "max_rss_bytes": 191279104
+      },
+      "quench": {
+        "score": 15.16,
+        "max_rss_bytes": 130682880
+      }
+    }
+  },
+  "paired_jit_vs_engines": {
+    "bun": {
+      "score": {
+        "median_ratio": 0.11387226305023107,
+        "ci95": [
+          0.11047055157369894,
+          0.11884469696969696
+        ],
+        "method": "paired percentile bootstrap of median per-round log ratios; round indices resampled jointly",
+        "replicates": 100000,
+        "seed": 6828737491849810526
+      },
+      "peak_rss_bytes": {
+        "median_ratio": 0.5359247754176815,
+        "ci95": [
+          0.5215876873228026,
+          0.5498208131140796
+        ],
+        "method": "paired percentile bootstrap of median per-round log ratios; round indices resampled jointly",
+        "replicates": 100000,
+        "seed": 17453954822237951584
+      }
+    },
+    "node": {
+      "score": {
+        "median_ratio": 0.12220773576705786,
+        "ci95": [
+          0.11585639491398654,
+          0.13309765797613782
+        ],
+        "method": "paired percentile bootstrap of median per-round log ratios; round indices resampled jointly",
+        "replicates": 100000,
+        "seed": 15641259930612923337
+      },
+      "peak_rss_bytes": {
+        "median_ratio": 0.5796133119720361,
+        "ci95": [
+          0.5757014388489207,
+          0.6256315584920318
+        ],
+        "method": "paired percentile bootstrap of median per-round log ratios; round indices resampled jointly",
+        "replicates": 100000,
+        "seed": 14678997580838488432
+      }
+    }
+  },
+  "independent_jit_vs_interpreter_quench": {
+    "score": {
+      "median_ratio": 0.9696569920844327,
+      "ci95": [
+        0.9292267365661862,
+        1.0336307481125602
+      ],
+      "method": "independent percentile bootstrap of sample medians; each mode resampled separately",
+      "replicates": 100000,
+      "seed": 8278305707323487246
+    },
+    "peak_rss_bytes": {
+      "median_ratio": 1.0015044663845791,
+      "ci95": [
+        0.9978686726218461,
+        1.0070208431280363
+      ],
+      "method": "independent percentile bootstrap of sample medians; each mode resampled separately",
+      "replicates": 100000,
+      "seed": 13085265388085317754
+    }
+  },
+  "bootstrap": {
+    "replicates": 100000,
+    "interval": "percentile 95%",
+    "percentile_method": "linear interpolation at (n-1)p",
+    "seed": "first 64 bits of SHA-256(source_revision|fixture|contrast label)",
+    "paired_statistic": "median of per-round log ratios, exponentiated",
+    "jit_vs_interpreter": "independent resampling of JIT and interpreter round samples; ratio of medians"
+  },
+  "report_sha256": {
+    "jit": "b035da9011dcdba816424207e5b429216361b4fa67fa827b9f3cf373fe94c7a2",
+    "interpreter": "0a8967055339fdd23603cc010b1a836d1b5b015d45c5417f066a9c49c2b254ad"
+  },
+  "build_rustc": "rustc 1.99.1 (58cf8f9c3 2026-10-13)",
+  "host_rustc_capture": "empty in raw reports because rustc was not on benchmark shell PATH",
+  "notes": "Development screen only: a single JetStream 3 fixture, not the full suite; native entry counters are test-only and the harness records --jit selection."
+}

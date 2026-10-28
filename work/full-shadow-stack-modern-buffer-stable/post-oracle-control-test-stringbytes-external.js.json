@@ -1,0 +1,26 @@
+{
+  "schema_version": 2,
+  "inventory_hash": "851223abf8f71743",
+  "timeout_secs": 30,
+  "jobs": 1,
+  "node_version": "v26.12.0",
+  "runtime_commit": "c4f7844bd397cd702363a2ba54185e613c6d8273",
+  "tests_node_commit": "unknown",
+  "platform": "linux-x86_64",
+  "results": [
+    {
+      "fixture": "/workspace/work/node-stable-release/node-v26.12.0/test/parallel/test-stringbytes-external.js",
+      "status": "timeout",
+      "observation": {
+        "Ok": {
+          "exit_code": null,
+          "signal": 9,
+          "timed_out": true,
+          "worker": null,
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    }
+  ]
+}

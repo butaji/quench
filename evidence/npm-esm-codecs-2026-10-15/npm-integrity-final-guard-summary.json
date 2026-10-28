@@ -1,0 +1,88 @@
+{
+  "source_candidate": "71db8015352e6056208f091a67645620226267e7",
+  "source_baseline": "791776ba46e7920212949c49bbf43baa0da8fadc",
+  "rows": [
+    {
+      "benchmark": "crypto",
+      "work": 1,
+      "baseline_per_run": 1764068269.0,
+      "candidate_per_run": 1764120347.0,
+      "delta_percent": 0.002952153321680772,
+      "baseline_startup": 182651730,
+      "candidate_startup": 185948878
+    },
+    {
+      "benchmark": "deltablue",
+      "work": 10,
+      "baseline_per_run": 267417678.6,
+      "candidate_per_run": 267509346.6,
+      "delta_percent": 0.03427896034394788,
+      "baseline_startup": 110545966,
+      "candidate_startup": 113803567
+    },
+    {
+      "benchmark": "earley-boyer",
+      "work": 1,
+      "baseline_per_run": 3121719921.0,
+      "candidate_per_run": 3120972082.0,
+      "delta_percent": -0.02395599281566682,
+      "baseline_startup": 370683031,
+      "candidate_startup": 373979365
+    },
+    {
+      "benchmark": "navier-stokes",
+      "work": 1,
+      "baseline_per_run": 1425096770.0,
+      "candidate_per_run": 1425101065.0,
+      "delta_percent": 0.0003013830422196522,
+      "baseline_startup": 631793855,
+      "candidate_startup": 639408434
+    },
+    {
+      "benchmark": "raytrace",
+      "work": 3,
+      "baseline_per_run": 902808099.6666666,
+      "candidate_per_run": 903775530.6666666,
+      "delta_percent": 0.10715798854232625,
+      "baseline_startup": 123349487,
+      "candidate_startup": 126600066
+    },
+    {
+      "benchmark": "regexp",
+      "work": 1,
+      "baseline_per_run": 1771662460.0,
+      "candidate_per_run": 1771203920.0,
+      "delta_percent": -0.02588190529250137,
+      "baseline_startup": 3290319129,
+      "candidate_startup": 3293277521
+    },
+    {
+      "benchmark": "richards",
+      "work": 25,
+      "baseline_per_run": 105419497.0,
+      "candidate_per_run": 105419813.64,
+      "delta_percent": 0.00030036189605476497,
+      "baseline_startup": 97227206,
+      "candidate_startup": 100486689
+    },
+    {
+      "benchmark": "splay",
+      "work": 75,
+      "baseline_per_run": 24571747.946666665,
+      "candidate_per_run": 24570108.72,
+      "delta_percent": -0.006671184606909254,
+      "baseline_startup": 2279479254,
+      "candidate_startup": 2282934221
+    }
+  ],
+  "maximum": {
+    "benchmark": "raytrace",
+    "work": 3,
+    "baseline_per_run": 902808099.6666666,
+    "candidate_per_run": 903775530.6666666,
+    "delta_percent": 0.10715798854232625,
+    "baseline_startup": 123349487,
+    "candidate_startup": 126600066
+  },
+  "package_speed_claim": false
+}

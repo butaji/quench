@@ -1,0 +1,6 @@
+Traceback (most recent call last):
+  File "/workspace/scratch/npm-icu-fixed-suites.py", line 132, in <module>
+    main()
+  File "/workspace/scratch/npm-icu-fixed-suites.py", line 119, in main
+    raise RuntimeError('instruction guard failed')
+RuntimeError: instruction guard failed

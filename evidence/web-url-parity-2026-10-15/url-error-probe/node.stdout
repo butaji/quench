@@ -1,0 +1,2 @@
+TypeError [ERR_INVALID_URL_SCHEME]: The URL must be of scheme file ["code","message"]
+TypeError [ERR_INVALID_FILE_URL_HOST]: File URL host must be "localhost" or empty on linux ["message","code"]

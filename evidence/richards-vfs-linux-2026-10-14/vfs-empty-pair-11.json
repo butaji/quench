@@ -1,0 +1,274 @@
+{
+  "samples": [
+    {
+      "round": 0,
+      "order": [
+        "control",
+        "candidate"
+      ],
+      "samples": {
+        "control": {
+          "status": 0,
+          "wall_ns": 218267267,
+          "peak_rss_bytes": 43053056,
+          "stdout": "",
+          "stderr": ""
+        },
+        "candidate": {
+          "status": 0,
+          "wall_ns": 206336452,
+          "peak_rss_bytes": 39219200,
+          "stdout": "",
+          "stderr": ""
+        }
+      }
+    },
+    {
+      "round": 1,
+      "order": [
+        "candidate",
+        "control"
+      ],
+      "samples": {
+        "candidate": {
+          "status": 0,
+          "wall_ns": 326121619,
+          "peak_rss_bytes": 39219200,
+          "stdout": "",
+          "stderr": ""
+        },
+        "control": {
+          "status": 0,
+          "wall_ns": 284446616,
+          "peak_rss_bytes": 43057152,
+          "stdout": "",
+          "stderr": ""
+        }
+      }
+    },
+    {
+      "round": 2,
+      "order": [
+        "control",
+        "candidate"
+      ],
+      "samples": {
+        "control": {
+          "status": 0,
+          "wall_ns": 225864505,
+          "peak_rss_bytes": 43053056,
+          "stdout": "",
+          "stderr": ""
+        },
+        "candidate": {
+          "status": 0,
+          "wall_ns": 332567894,
+          "peak_rss_bytes": 39219200,
+          "stdout": "",
+          "stderr": ""
+        }
+      }
+    },
+    {
+      "round": 3,
+      "order": [
+        "candidate",
+        "control"
+      ],
+      "samples": {
+        "candidate": {
+          "status": 0,
+          "wall_ns": 180617826,
+          "peak_rss_bytes": 39219200,
+          "stdout": "",
+          "stderr": ""
+        },
+        "control": {
+          "status": 0,
+          "wall_ns": 218359020,
+          "peak_rss_bytes": 42991616,
+          "stdout": "",
+          "stderr": ""
+        }
+      }
+    },
+    {
+      "round": 4,
+      "order": [
+        "control",
+        "candidate"
+      ],
+      "samples": {
+        "control": {
+          "status": 0,
+          "wall_ns": 198330080,
+          "peak_rss_bytes": 43053056,
+          "stdout": "",
+          "stderr": ""
+        },
+        "candidate": {
+          "status": 0,
+          "wall_ns": 398163867,
+          "peak_rss_bytes": 39219200,
+          "stdout": "",
+          "stderr": ""
+        }
+      }
+    },
+    {
+      "round": 5,
+      "order": [
+        "candidate",
+        "control"
+      ],
+      "samples": {
+        "candidate": {
+          "status": 0,
+          "wall_ns": 268182829,
+          "peak_rss_bytes": 39219200,
+          "stdout": "",
+          "stderr": ""
+        },
+        "control": {
+          "status": 0,
+          "wall_ns": 421984958,
+          "peak_rss_bytes": 43036672,
+          "stdout": "",
+          "stderr": ""
+        }
+      }
+    },
+    {
+      "round": 6,
+      "order": [
+        "control",
+        "candidate"
+      ],
+      "samples": {
+        "control": {
+          "status": 0,
+          "wall_ns": 278264498,
+          "peak_rss_bytes": 43053056,
+          "stdout": "",
+          "stderr": ""
+        },
+        "candidate": {
+          "status": 0,
+          "wall_ns": 296373664,
+          "peak_rss_bytes": 39251968,
+          "stdout": "",
+          "stderr": ""
+        }
+      }
+    },
+    {
+      "round": 7,
+      "order": [
+        "candidate",
+        "control"
+      ],
+      "samples": {
+        "candidate": {
+          "status": 0,
+          "wall_ns": 188792289,
+          "peak_rss_bytes": 39219200,
+          "stdout": "",
+          "stderr": ""
+        },
+        "control": {
+          "status": 0,
+          "wall_ns": 199275016,
+          "peak_rss_bytes": 43053056,
+          "stdout": "",
+          "stderr": ""
+        }
+      }
+    },
+    {
+      "round": 8,
+      "order": [
+        "control",
+        "candidate"
+      ],
+      "samples": {
+        "control": {
+          "status": 0,
+          "wall_ns": 219840824,
+          "peak_rss_bytes": 43053056,
+          "stdout": "",
+          "stderr": ""
+        },
+        "candidate": {
+          "status": 0,
+          "wall_ns": 320802648,
+          "peak_rss_bytes": 39219200,
+          "stdout": "",
+          "stderr": ""
+        }
+      }
+    },
+    {
+      "round": 9,
+      "order": [
+        "candidate",
+        "control"
+      ],
+      "samples": {
+        "candidate": {
+          "status": 0,
+          "wall_ns": 227881283,
+          "peak_rss_bytes": 39219200,
+          "stdout": "",
+          "stderr": ""
+        },
+        "control": {
+          "status": 0,
+          "wall_ns": 285240563,
+          "peak_rss_bytes": 43053056,
+          "stdout": "",
+          "stderr": ""
+        }
+      }
+    },
+    {
+      "round": 10,
+      "order": [
+        "control",
+        "candidate"
+      ],
+      "samples": {
+        "control": {
+          "status": 0,
+          "wall_ns": 208527137,
+          "peak_rss_bytes": 43053056,
+          "stdout": "",
+          "stderr": ""
+        },
+        "candidate": {
+          "status": 0,
+          "wall_ns": 349328595,
+          "peak_rss_bytes": 39219200,
+          "stdout": "",
+          "stderr": ""
+        }
+      }
+    }
+  ],
+  "summaries": {
+    "control": {
+      "median_rss_bytes": 43053056,
+      "median_wall_ns": 219840824
+    },
+    "candidate": {
+      "median_rss_bytes": 39219200,
+      "median_wall_ns": 296373664
+    }
+  },
+  "environment": {
+    "HOME": "/home/agent",
+    "LANG": "C.UTF-8",
+    "LC_ALL": "C.UTF-8",
+    "PATH": "/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/override:/opt/codex/runtimes/codex-primary-runtime/dependencies/python/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin:/opt/codex/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/fallback"
+  },
+  "note": "11 interleaved empty startup probes; idle host, wait4 RSS, perf_counter_ns wall including launch. Not a Score qualification."
+}

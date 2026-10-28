@@ -1,0 +1,23 @@
+Starting JetStream3
+Running acorn-wtb:
+acorn-wtb First-Score                            0.29 pts
+acorn-wtb Worst-Score                            0.21 pts
+acorn-wtb Average-Score                          0.31 pts
+acorn-wtb Score                                  0.27 pts
+acorn-wtb First-Time                          17528.88 ms 
+acorn-wtb Worst-Time                          23256.84 ms 
+acorn-wtb Average-Time                        15884.70 ms 
+acorn-wtb Total-Time                          56670.42 ms 
+acorn-wtb Wall-Time                           240098.33 ms 
+
+Overall:
+Overall First-Score                              0.29 pts
+Overall Worst-Score                              0.21 pts
+Overall Average-Score                            0.31 pts
+Overall First-Time                            17528.88 ms 
+Overall Worst-Time                            23256.84 ms 
+Overall Average-Time                          15884.70 ms 
+
+Overall Score                                    0.27 pts
+Overall Wall-Time                             240152.15 ms 
+

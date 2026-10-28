@@ -1,0 +1,8 @@
+/workspace/quench/work/write-sync-policy-probe.cjs:4
+try{
+^
+
+RangeError: File size (9007199254740993) is greater than 2 GiB
+    at /workspace/quench/work/write-sync-policy-probe.cjs:11:233
+
+Node.js v22.0.0

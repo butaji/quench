@@ -1,0 +1,5 @@
+valid 3 3 01 true
+error RangeError ERR_OUT_OF_RANGE The value of "size" is out of range. It must be >= 0 && <= 9007199254740991. Received -1
+error TypeError ERR_INVALID_ARG_VALUE The argument 'alignment' must be a power of two. Received 3
+error TypeError ERR_INVALID_ARG_TYPE The "list[0]" argument must be an instance of Buffer or Uint8Array. Received type number (1)
+error TypeError ERR_INVALID_ARG_TYPE The "input" argument must be of type string. Received type number (1)

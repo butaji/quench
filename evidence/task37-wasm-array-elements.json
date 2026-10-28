@@ -1,0 +1,185 @@
+{
+  "schema": 1,
+  "source_head": "7e60169df033dd247f34199e084e3e8080a92a29",
+  "dirty_worktree": true,
+  "source_hashes": {
+    "crates/quench-runtime-next/src/wasm/gc.rs": "a74809c8ffea4cb79d5aeec025e2d1afc5d4a3bfdbdcc49bb3866f8f84db2155",
+    "crates/quench-runtime-next/src/vm/wasm_gc.rs": "0248e327d4d97a5bc87209b5118b094d1206fb7258567458847a558223b250b8",
+    "crates/quench-runtime-next/src/vm/dispatch.rs": "a19574581a363c5d67387eccb7b04e53ff1e1e57fc8a2ac9e0359de2f1d89fba",
+    "crates/quench-runtime-next/src/wasm.rs": "9c51652c0869c1640524cbc20d7f83b653689acb6f27349a80a0b1c8de1defd1",
+    "crates/quench-runtime-next/src/bytecode.rs": "e23994ca6ee00f6fccdf987e5fc4413c82dcb5491e08659881c5e0e7557761e9",
+    "crates/quench-runtime-next/src/bytecode/instruction.rs": "bc692ae5326749a26785a59867b714fe063b9f1975ce8110059e94304011285d"
+  },
+  "suite_head": "67c8b9dc32c47d61c05a1681df349d01c85fa8ff",
+  "residual_format": 62,
+  "obligation": "Execute unshared array.get/get_s/get_u/set through the single VM and preserve correctness across the packed opcode-width boundary.",
+  "representation": "GcFieldAccess owns one struct/array opcode projection and common storage/mutability/read rules. GcFieldIndex names static struct fields versus unsigned array element indices. One live graph-owned operation checks original layout, null and bounds, normalizes writes and traces existing fields. Four opcodes are appended. Packed opcode width derives from Op::COUNT; compound immediate high width derives from the remaining layout, so overlarge call windows use the existing wide fallback. Format62 rejects older encodings. No new heap representation, copied layout, side map or executor.",
+  "scope": "230 matching affected pinned files and48 focused files. New18-directive controls cover packed truncation/signed/unsigned access, scalar defaults and i64 minimum, immutable negative zero, V128 reads, retained reference mutation across50000 allocations, shifted foreign declarations and null/unsigned bounds traps with prior operand effects. Because instruction packing changed, matched Test262 stages0/11 and stage10 call-expression subset were also run; no full suite.",
+  "sources": [
+    "https://raw.githubusercontent.com/WebAssembly/gc/main/proposals/gc/MVP.md"
+  ],
+  "affected": {
+    "before": {
+      "path": "target/iteration/task37-wasm-array-allocation-after.json",
+      "sha256": "a81e48dd176ddbd1d1c8509548dd6eeb6282854a0fd13996ce8fec7c1264f50f",
+      "binary_sha256": "67071f5d6a7340978ec263a32184b407a3e1a76ea871ed4c63f80c474a47f644"
+    },
+    "after": {
+      "path": "target/iteration/task37-wasm-array-elements-after.json",
+      "sha256": "610a65761c5c02d137d216d475869e996edd35e3cc3f0319997c68fda8b6a0d7",
+      "binary_sha256": "a6ced47e963d220d850f4af6542a36eda1f2c23a37f2b5cf9588c4d880f2e58d"
+    },
+    "files": 230,
+    "total": 62758,
+    "before_passed": 61786,
+    "passed": 61788,
+    "failed": 970,
+    "gains": 2,
+    "gains_by_file": {
+      "crates/quench-wasm-test/testsuite/array.wast": 2
+    },
+    "regressions": 0,
+    "same_ids_and_input_hashes": true,
+    "all_workers_completed": true
+  },
+  "controls": {
+    "before": {
+      "path": "target/iteration/task37-wasm-array-elements-controls-before.json",
+      "sha256": "5f9a5436b4354b8f0ca01bc2126111429955591bf32d6c465e6ba2ec90c8c245",
+      "binary_sha256": "67071f5d6a7340978ec263a32184b407a3e1a76ea871ed4c63f80c474a47f644"
+    },
+    "after": {
+      "path": "target/iteration/task37-wasm-array-elements-controls-after.json",
+      "sha256": "330a0dfffbaa148255a55ad40dd80f2c035bd9c6403bc6ca89feee9f0c0b33dd",
+      "binary_sha256": "a6ced47e963d220d850f4af6542a36eda1f2c23a37f2b5cf9588c4d880f2e58d"
+    },
+    "files": 48,
+    "total": 3807,
+    "before_passed": 3791,
+    "passed": 3807,
+    "failed": 0,
+    "gains": 16,
+    "gains_by_file": {
+      "target/iteration/proposals/custom-descriptors/task37-wasm-array-elements-controls.wast": 16
+    },
+    "regressions": 0,
+    "same_ids_and_input_hashes": true,
+    "all_workers_completed": true
+  },
+  "runner": {
+    "path": "target/iteration/task37-wasm-array-elements-runner",
+    "sha256": "a6ced47e963d220d850f4af6542a36eda1f2c23a37f2b5cf9588c4d880f2e58d"
+  },
+  "javascript": {
+    "suite_head": "6eec1ac9ee144dafd8f344d73a21f36bfc9f6755",
+    "suite_dirty": false,
+    "scope": [
+      {
+        "stage": 0,
+        "filter": null,
+        "before": {
+          "path": "target/iteration/task37-wasm-array-elements-js-stage0-before.json",
+          "sha256": "b16ddbcf213831b4382af854be1b8a7aa676a73dbabfa3ffe1f9e006d621a04c"
+        },
+        "after": {
+          "path": "target/iteration/task37-wasm-array-elements-js-stage0-after.json",
+          "sha256": "2877735abfe36db0e157fda90768c25fea4e74f19ab03f44b121bd364e8311a3"
+        },
+        "passed": 116,
+        "total": 116,
+        "regressions": 0,
+        "same_ids": true
+      },
+      {
+        "stage": 11,
+        "filter": null,
+        "before": {
+          "path": "target/iteration/task37-wasm-array-elements-js-stage11-before.json",
+          "sha256": "de8e3965b3211d84494ed23c75804bb6dc47539571a17ea55158e6ae7b6923e5"
+        },
+        "after": {
+          "path": "target/iteration/task37-wasm-array-elements-js-stage11-after.json",
+          "sha256": "06655ba05d2bdfcf48d7a0279d7a007c980b10b7116860b731d7f68fa52b6efd"
+        },
+        "passed": 217,
+        "total": 217,
+        "regressions": 0,
+        "same_ids": true
+      },
+      {
+        "stage": 10,
+        "filter": "/expressions/call/",
+        "before": {
+          "path": "target/iteration/task37-wasm-array-elements-js-stage10-call-before.json",
+          "sha256": "8102621a953dd9265f6d914c20ad1ec618de880ccfc1509cdb0c46942cd76885"
+        },
+        "after": {
+          "path": "target/iteration/task37-wasm-array-elements-js-stage10-call-after.json",
+          "sha256": "c8526289b9909dc8540c285d3acd7b54e316dbd9d55b684c0ffbbff1d64d0b72"
+        },
+        "passed": 92,
+        "total": 92,
+        "regressions": 0,
+        "same_ids": true
+      }
+    ],
+    "before_runner": {
+      "path": "target/iteration/task37-wasm-array-elements-js-before-runner",
+      "sha256": "4ecaaaf953a0188066076ef65309562d1d4f70f4bcd6391d396cf8b14847eeef"
+    },
+    "after_runner": {
+      "path": "target/iteration/task37-wasm-array-elements-js-after-runner",
+      "sha256": "879085e05f9be624ec1636d103c6fdfbef3049a687696e351cda930bcc7120a6"
+    },
+    "total": 425,
+    "passed": 425
+  },
+  "checks": {
+    "internals": {
+      "path": "target/iteration/task37-wasm-array-elements-internals.log",
+      "sha256": "71640c64f9f7c5a2655df04a564dfa99344fb450ccf2f4fc684903bc865e26b0",
+      "passed": 482
+    },
+    "frontend": {
+      "path": "target/iteration/task37-wasm-array-elements-frontend.log",
+      "sha256": "033ea6d63204ad40ae32646cd134722fec0f1c4aeefd14206b8bd7fb79e24014",
+      "passed": 32
+    },
+    "check": {
+      "path": "target/iteration/task37-wasm-array-elements-check.log",
+      "sha256": "96b7491760d6b5df4085d5d0e767f97c3ea935d8d210ca004148b394f9cd47b1",
+      "passed": null
+    }
+  },
+  "oracle": {
+    "path": "target/iteration/task37-wasm-array-elements-oracle.json",
+    "sha256": "64a70f8fc0a5cb7f090f18e6a9b9fe6e6815c650bbc14fe74ff7732e0140fd52",
+    "node": "v26.10.0",
+    "flags": [
+      "--no-sparkplug",
+      "--no-maglev",
+      "--no-turbofan",
+      "--wasm-jitless",
+      "--experimental-wasm-custom-descriptors"
+    ],
+    "matched": 24,
+    "input_hashes": {
+      "target/iteration/task37-wasm-array-elements-a.wat": "09cfc28c375879a9ca1d0f818335039094ed7b3f35ca62fb0aac65499b7421b6",
+      "target/iteration/task37-wasm-array-elements-a.wasm": "355fe45a04e7306f984746e22c74586bac488dd7072baa3f4e80071cd4afca6e",
+      "target/iteration/task37-wasm-array-elements-b.wat": "e87213d9479385d7e91244ec7882adea9f5e2014776b31dd6649471d3419b95c",
+      "target/iteration/task37-wasm-array-elements-b.wasm": "047764cc297ad6a3e413d9490ec150fb7528c11197a08ec669fb3041650e6a97"
+    }
+  },
+  "internal_obligation": "Existing packed-word/overflow/wide-marker internal regressions now derive their tested boundaries from the owning layout; all482 runtime internal tests pass. Initial qualification exposed compound call-window truncation after opcode width growth, which was fixed before final reports. Existing root-window, foreign identity/GC and verifier regressions remain passing. No duplicate ordinary conformance unit added.",
+  "next_first_failures": {
+    "unsupported shared Wasm: wasm-global-initializer:0..0: unsupported Wasm constant expression operator": 513,
+    "unsupported shared Wasm: wasm-instance:0..0: unsupported shared Wasm operator: AnyConvertExtern": 218,
+    "unsupported shared Wasm module state, imports or section": 117,
+    "unsupported shared Wasm: unsupported Wasm global type": 34,
+    "unsupported shared Wasm: unsupported shared Wasm import kind": 23,
+    "unsupported shared Wasm: wasm-reference-initializer:0..0: unsupported Wasm constant expression operator": 19,
+    "unsupported shared Wasm: wasm-instance:0..0: unsupported shared Wasm operator: ArrayNewData { array_type_index: 0, array_data_index: 0 }": 14,
+    "unsupported shared Wasm: wasm-instance:0..0: unsupported shared Wasm operator: ArrayInitData { array_type_index: 0, array_data_index: 0 }": 13
+  },
+  "limits": "Array bulk operations, data/element-backed construction and constant construction remain unsupported. Descriptor objects, shared references/resources, external/internal conversions, exceptions and JS embedding remain open. Existing callable-type Node discrepancies remain recorded. These affected checks do not establish full pinned-suite or implemented Node qualification, production cutover or Stage A closure."
+}

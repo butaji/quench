@@ -1,0 +1,42 @@
+{
+  "base_source": "73bd7e8695fec839efab958000613dcfd19e74ea",
+  "patch": "work/boxed-slots-published-source.patch",
+  "patch_sha256": "12f837bc41cbc9ba13655c4c4724719aa9691901eddde5b9eec1c102dd815122",
+  "extra_fixture_sha256": "f4ebedc52aa29ba2d9f3aebbe32674eaad15fdec41c25f887760b399fd947127",
+  "sdk_provenance": [
+    "work/brotli-node/provenance.json",
+    "work/zlib-node/provenance.json"
+  ],
+  "binaries": {
+    "cli": {
+      "path": "work/quench-boxed-slots-published-qualified",
+      "sha256": "7151c37813267b49c0de8dfaff510385b4f165ab7064d64a2bcb02764149c99a",
+      "sha256_after": "7151c37813267b49c0de8dfaff510385b4f165ab7064d64a2bcb02764149c99a"
+    },
+    "runner": {
+      "path": "work/host-build/iteration/run-parallel",
+      "sha256": "5c8c6933055d08f30cdbe28fe43663c81cb6fb82d7b306a3bfe7743a783a3e9d",
+      "sha256_after": "5c8c6933055d08f30cdbe28fe43663c81cb6fb82d7b306a3bfe7743a783a3e9d"
+    },
+    "api_tests": {
+      "path": "work/host-build/iteration/deps/child_entry-31d840cbe55a2b28",
+      "sha256": "a897238822e46cae32f60f9e2aa7ad75147447c8633991848aaac1dbe7031e82",
+      "sha256_after": "a897238822e46cae32f60f9e2aa7ad75147447c8633991848aaac1dbe7031e82"
+    }
+  },
+  "identity_checks": {
+    "cli": true,
+    "runner": true,
+    "api_tests": true
+  },
+  "api_exit_code": 0,
+  "reconciled_candidate_source": "217e80460a7d411f3eed37d4aab7cde44d6457e2",
+  "candidate_source": "217e80460a7d411f3eed37d4aab7cde44d6457e2",
+  "api_cases_passed": 354,
+  "runtime_tests": 651,
+  "framework_fixtures": 43,
+  "web_correctness_targets": 9,
+  "all_instrumented_executions_valid": true,
+  "instruction_limit_met": false,
+  "subsequent_detailed_stack_work_excluded": true
+}

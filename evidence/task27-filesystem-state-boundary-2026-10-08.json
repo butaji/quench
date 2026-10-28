@@ -1,0 +1,119 @@
+{
+  "schema": 1,
+  "task": "27",
+  "kind": "shared_filesystem_descriptor_state_boundary",
+  "recorded_on": "2026-10-08",
+  "source": {
+    "revision": "165f8a2dbfcc1cb2f8de4fef4d39c8b60bb68aa1",
+    "worktree_dirty": true,
+    "platform": "Darwin arm64",
+    "node": "v26.10.0",
+    "rustc": "rustc 1.99.0 (b940084d7 2026-09-28) (Homebrew)",
+    "binaries_sha256": {
+      "target/iteration/quench-node": "c05769629151f22671cfbb6c516c267b8b3238b201e2dca7cdf3afbf042cf2e0",
+      "target/iteration/run-parallel": "0f10659c6b5546aed47e0b731d57ecdf24e78a4437085628cada243cd8feee00"
+    },
+    "files_sha256": {
+      "crates/quench-node/src/host.rs": "7780f0df2eed11ec0064378ac2e2bef9a29d2523260b94c49971b29ed8f730bd",
+      "crates/quench-node/src/modules/fs.rs": "9956c82846758ec3c0d3c0714cd657ce72079a1808125ece2e6837a330d29823",
+      "crates/quench-node/src/modules/fs_sync.rs": "4177cd566344a3d89d7341459dcd816ebf026ec4dddcda2aef51191233fd5a4b",
+      "crates/quench-node/src/modules/fs/shared_vm.rs": "c85481e0e5d6c7db6b439aa728450a751f0b2a63c778a9cccfe84b6effa0d73c",
+      "crates/quench-node/src/modules/fs/shared_vm/write_stream.rs": "fe02c2e2424dc5048f98481361566cf876ef0777b3cc3b26817a934b3eab0683",
+      "crates/quench-node-test/node-tests/parallel.txt": "0209917422a2f0f3fa241d941ec4bc88c9917d5322b69014ab1a662a52e9dfca",
+      "tests/frameworks/driver.cjs": "e8dd245f9bbfcdcd3a430ff7ed663c3310fdf32fae23cfc5c24d24cbeda96bfb",
+      "tests/frameworks/scenarios/express.cjs": "85eebbbc5c9cfaa01f2f16b6c7e181a4c4bc2e308bd1bb179f49c5d9700f8158",
+      "tests/frameworks/scenarios/koa.cjs": "962e4c326df72b30eed4306494e2218475456c7c816220a6e46a898b040185f9",
+      "tests/frameworks/scenarios/fastify.cjs": "1ff4fc87e2a4c792761c286bc0f255d0ab9be27e810dbf98938a1ac717d1ba6a",
+      "tests/node/test/parallel/test-fs-read-stream-double-close.js": "5ededd265c6d80aa7b776a5167d7bf12d11631386f2d6c16784d76eda725591e",
+      "tests/node/test/parallel/test-fs-read-stream-autoClose.js": "793f81efe017f718c49feccac6f61184da2434482e115e5292d933875cdfa6e5",
+      "tests/node/test/parallel/test-fs-write-stream-double-close.js": "3ec5d927da584787451e43b48f11a400ffa6bf7bf96dc1a8937216cf42270f73",
+      "tests/node/test/parallel/test-fs-write-stream-autoclose-option.js": "f97c5a0b863b036a2b792811c96c38907754134ef770e2231e76345a654a7901",
+      "tests/node/test/parallel/test-fs-write-stream-end.js": "f99eed7d89ae6a6c6329778803cc137986ae6a41cfc5f00a50cf94a48c42a88d",
+      "tests/node/test/parallel/test-fs-read-stream-resume.js": "10a15e6f5519a5d656112baa16f78d1d5c0c93e66321fa6dd138e3b8576c49b0",
+      "tests/node/test/parallel/test-fs-read-stream-fd.js": "e36f9059c115b9b5301623fe8d6ee8d287870ca76d527b39f5fc2eef29719b4d",
+      "tests/node/test/parallel/test-fs-write-stream-fs.js": "2532dab29c297eb8785ac753c87e77a9cf7f838fb4c069c4a9c73a2a9fb6ef5e"
+    }
+  },
+  "change": {
+    "authority": "FsState(Rc<RefCell<FsStateData>>) is the one descriptor allocation and table; NodeHost::new clones its handle into HostState.fs and SharedNodeState.fs.",
+    "shared_consumers_moved": [
+      "shared read-stream open/read/close",
+      "shared write-stream open/write/close"
+    ],
+    "legacy_consumers_preserved": [
+      "openSync/closeSync and descriptor-backed read/write/stat/truncate operations",
+      "legacy read/write stream adapters"
+    ],
+    "runtime_dependency_removed": false
+  },
+  "verification": {
+    "checks": [
+      {
+        "command": "cargo check -p quench-node",
+        "exit_code": 0,
+        "result": "passed; only pre-existing deprecated Atomic::fetch_update warnings in quench-runtime"
+      },
+      {
+        "command": "cargo build --profile iteration -p quench-node --bin quench-node",
+        "exit_code": 0,
+        "result": "passed"
+      },
+      {
+        "command": "cargo build --profile iteration -p quench-node-test --bin run-parallel",
+        "exit_code": 0,
+        "result": "passed"
+      },
+      {
+        "command": "rustfmt --edition 2021 --check crates/quench-node/src/host.rs crates/quench-node/src/modules/fs.rs crates/quench-node/src/modules/fs_sync.rs crates/quench-node/src/modules/fs/shared_vm.rs crates/quench-node/src/modules/fs/shared_vm/write_stream.rs",
+        "exit_code": 0
+      },
+      {
+        "command": "git diff --check",
+        "exit_code": 0
+      },
+      {
+        "command": "target/iteration/run-parallel --profile framework-core",
+        "exit_code": 0,
+        "result": {
+          "pass": 43,
+          "skip": 0,
+          "fail": 0,
+          "timeout": 0,
+          "crash": 0,
+          "unclassified": 0,
+          "total": 43
+        }
+      }
+    ],
+    "framework_scenarios": {
+      "comparison": "Fresh target/iteration/quench-node versus local Node, exact process status/stdout/stderr",
+      "stdout": "statuses 200,200,200,200,404\n",
+      "stdout_sha256": "6a8388b87cdb9dc7618e136828b626c2213b937ea1645882ef0c33bedf95b54d",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "scenarios": {
+        "express": {"result": "MATCH", "status": [0, 0]},
+        "koa": {"result": "MATCH", "status": [0, 0]},
+        "fastify": {"result": "MATCH", "status": [0, 0]}
+      }
+    },
+    "upstream_filesystem_probes": {
+      "local_node_oracle": "all eight cases passed using a temporary CommonJS Module._compile driver because the repository root package.json marks .js files as ESM",
+      "quench_shared_runner": {
+        "pass": [
+          "test-fs-read-stream-autoClose.js",
+          "test-fs-write-stream-double-close.js",
+          "test-fs-write-stream-end.js",
+          "test-fs-read-stream-resume.js"
+        ],
+        "fail": [
+          "test-fs-read-stream-double-close.js",
+          "test-fs-write-stream-autoclose-option.js",
+          "test-fs-read-stream-fd.js",
+          "test-fs-write-stream-fs.js"
+        ],
+        "scope": "Diagnostic tests, outside framework-core; two failures exercise shared stream lifecycle behavior and remain follow-up mismatches. test-fs-read-stream-fd.js requires shared openSync plus adopting options.fd; test-fs-write-stream-fs.js requires custom fs method injection. This change only centralizes descriptor state and does not implement those APIs."
+      }
+    },
+    "unit_tests": "not run"
+  }
+}

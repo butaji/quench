@@ -1,0 +1,3715 @@
+{
+  "engine": "quench",
+  "failed": 0,
+  "families": {},
+  "outcomes": [
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/BigInt64Array/BYTES_PER_ELEMENT.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/BigInt64Array/constructor.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/BigInt64Array/is-a-constructor.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/BigInt64Array/length.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/BigInt64Array/name.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/BigInt64Array/prop-desc.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/BigInt64Array/proto.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/BigInt64Array/prototype/BYTES_PER_ELEMENT.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/BigInt64Array/prototype/constructor.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/BigInt64Array/prototype/not-typedarray-object.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/BigInt64Array/prototype/proto.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/BigInt64Array/prototype.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/BigUint64Array/BYTES_PER_ELEMENT.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/BigUint64Array/constructor.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/BigUint64Array/is-a-constructor.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/BigUint64Array/length.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/BigUint64Array/name.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/BigUint64Array/prop-desc.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/BigUint64Array/proto.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/BigUint64Array/prototype/BYTES_PER_ELEMENT.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/BigUint64Array/prototype/constructor.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/BigUint64Array/prototype/not-typedarray-object.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/BigUint64Array/prototype/proto.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/BigUint64Array/prototype.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/Float32Array/BYTES_PER_ELEMENT.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/Float32Array/constructor.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/Float32Array/is-a-constructor.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/Float32Array/length.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/Float32Array/name.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/Float32Array/proto.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/Float32Array/prototype/BYTES_PER_ELEMENT.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/Float32Array/prototype/constructor.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/Float32Array/prototype/not-typedarray-object.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/Float32Array/prototype/proto.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/Float32Array/prototype.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/Float64Array/BYTES_PER_ELEMENT.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/Float64Array/constructor.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/Float64Array/is-a-constructor.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/Float64Array/length.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/Float64Array/name.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/Float64Array/proto.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/Float64Array/prototype/BYTES_PER_ELEMENT.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/Float64Array/prototype/constructor.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/Float64Array/prototype/not-typedarray-object.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/Float64Array/prototype/proto.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/Float64Array/prototype.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/Int16Array/BYTES_PER_ELEMENT.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/Int16Array/constructor.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/Int16Array/is-a-constructor.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/Int16Array/length.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/Int16Array/name.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/Int16Array/proto.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/Int16Array/prototype/BYTES_PER_ELEMENT.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/Int16Array/prototype/constructor.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/Int16Array/prototype/not-typedarray-object.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/Int16Array/prototype/proto.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/Int16Array/prototype.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/Int32Array/BYTES_PER_ELEMENT.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/Int32Array/constructor.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/Int32Array/is-a-constructor.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/Int32Array/length.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/Int32Array/name.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/Int32Array/proto.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/Int32Array/prototype/BYTES_PER_ELEMENT.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/Int32Array/prototype/constructor.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/Int32Array/prototype/not-typedarray-object.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/Int32Array/prototype/proto.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/Int32Array/prototype.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/Int8Array/BYTES_PER_ELEMENT.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/Int8Array/constructor.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/Int8Array/is-a-constructor.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/Int8Array/length.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/Int8Array/name.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/Int8Array/proto.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/Int8Array/prototype/BYTES_PER_ELEMENT.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/Int8Array/prototype/constructor.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/Int8Array/prototype/not-typedarray-object.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/Int8Array/prototype/proto.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/Int8Array/prototype.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/Uint16Array/BYTES_PER_ELEMENT.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/Uint16Array/constructor.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/Uint16Array/is-a-constructor.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/Uint16Array/length.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/Uint16Array/name.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/Uint16Array/proto.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/Uint16Array/prototype/BYTES_PER_ELEMENT.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/Uint16Array/prototype/constructor.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/Uint16Array/prototype/not-typedarray-object.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/Uint16Array/prototype/proto.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/Uint16Array/prototype.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/Uint32Array/BYTES_PER_ELEMENT.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/Uint32Array/constructor.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/Uint32Array/is-a-constructor.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/Uint32Array/length.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/Uint32Array/name.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/Uint32Array/proto.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/Uint32Array/prototype/BYTES_PER_ELEMENT.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/Uint32Array/prototype/constructor.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/Uint32Array/prototype/not-typedarray-object.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/Uint32Array/prototype/proto.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/Uint32Array/prototype.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/Uint8Array/BYTES_PER_ELEMENT.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/Uint8Array/constructor.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/Uint8Array/is-a-constructor.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/Uint8Array/length.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/Uint8Array/name.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/Uint8Array/proto.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/Uint8Array/prototype/BYTES_PER_ELEMENT.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/Uint8Array/prototype/constructor.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/Uint8Array/prototype/not-typedarray-object.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/Uint8Array/prototype/proto.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/Uint8Array/prototype.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/Uint8ClampedArray/BYTES_PER_ELEMENT.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/Uint8ClampedArray/constructor.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/Uint8ClampedArray/is-a-constructor.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/Uint8ClampedArray/length.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/Uint8ClampedArray/name.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/Uint8ClampedArray/proto.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/Uint8ClampedArray/prototype/BYTES_PER_ELEMENT.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/Uint8ClampedArray/prototype/constructor.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/Uint8ClampedArray/prototype/not-typedarray-object.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/Uint8ClampedArray/prototype/proto.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/Uint8ClampedArray/prototype.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors/buffer-arg/bufferbyteoffset-throws-from-modulo-element-size-sab.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors/buffer-arg/bufferbyteoffset-throws-from-modulo-element-size.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors/buffer-arg/byteoffset-is-negative-throws-sab.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors/buffer-arg/byteoffset-is-negative-throws.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors/buffer-arg/byteoffset-is-negative-zero-sab.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors/buffer-arg/byteoffset-is-negative-zero.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors/buffer-arg/byteoffset-is-symbol-throws-sab.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors/buffer-arg/byteoffset-is-symbol-throws.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors/buffer-arg/byteoffset-throws-from-modulo-element-size-sab.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors/buffer-arg/byteoffset-throws-from-modulo-element-size.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors/buffer-arg/byteoffset-to-number-detachbuffer.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors/buffer-arg/byteoffset-to-number-throws-sab.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors/buffer-arg/byteoffset-to-number-throws.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors/buffer-arg/custom-proto-access-throws-sab.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors/buffer-arg/custom-proto-access-throws.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors/buffer-arg/defined-length-and-offset-sab.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors/buffer-arg/defined-length-and-offset.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors/buffer-arg/defined-length-sab.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors/buffer-arg/defined-length.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors/buffer-arg/defined-negative-length-sab.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors/buffer-arg/defined-negative-length.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors/buffer-arg/defined-offset-sab.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors/buffer-arg/defined-offset.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors/buffer-arg/detachedbuffer.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors/buffer-arg/excessive-length-throws-sab.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors/buffer-arg/excessive-length-throws.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors/buffer-arg/excessive-offset-throws-resizable-ab.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors/buffer-arg/excessive-offset-throws-sab.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors/buffer-arg/excessive-offset-throws.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors/buffer-arg/invoked-with-undefined-newtarget-sab.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors/buffer-arg/invoked-with-undefined-newtarget.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors/buffer-arg/is-referenced-sab.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors/buffer-arg/is-referenced.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors/buffer-arg/length-access-throws-sab.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors/buffer-arg/length-access-throws.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors/buffer-arg/length-is-symbol-throws-sab.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors/buffer-arg/length-is-symbol-throws.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors/buffer-arg/length-to-number-detachbuffer.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors/buffer-arg/new-instance-extensibility-sab.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors/buffer-arg/new-instance-extensibility.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors/buffer-arg/proto-from-ctor-realm-sab.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors/buffer-arg/proto-from-ctor-realm.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors/buffer-arg/resizable-out-of-bounds.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors/buffer-arg/returns-new-instance-sab.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors/buffer-arg/returns-new-instance.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors/buffer-arg/toindex-bytelength-sab.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors/buffer-arg/toindex-bytelength.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors/buffer-arg/toindex-byteoffset-sab.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors/buffer-arg/toindex-byteoffset.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors/buffer-arg/typedarray-backed-by-sharedarraybuffer.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors/buffer-arg/use-custom-proto-if-object-sab.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors/buffer-arg/use-custom-proto-if-object.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors/buffer-arg/use-default-proto-if-custom-proto-is-not-object-sab.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors/buffer-arg/use-default-proto-if-custom-proto-is-not-object.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors/length-arg/custom-proto-access-throws.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors/length-arg/init-zeros.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors/length-arg/is-infinity-throws-rangeerror.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors/length-arg/is-negative-integer-throws-rangeerror.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors/length-arg/is-symbol-throws.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors/length-arg/new-instance-extensibility.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors/length-arg/proto-from-ctor-realm.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors/length-arg/returns-object.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors/length-arg/toindex-length.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors/length-arg/undefined-newtarget-throws.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors/length-arg/use-custom-proto-if-object.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors/length-arg/use-default-proto-if-custom-proto-is-not-object.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors/no-args/custom-proto-access-throws.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors/no-args/new-instance-extensibility.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors/no-args/proto-from-ctor-realm.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors/no-args/returns-object.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors/no-args/undefined-newtarget-throws.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors/no-args/use-custom-proto-if-object.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors/no-args/use-default-proto-if-custom-proto-is-not-object.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors/no-species.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors/object-arg/as-array-returns.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors/object-arg/as-generator-iterable-returns.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors/object-arg/conversion-operation-consistent-nan.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors/object-arg/conversion-operation.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors/object-arg/custom-proto-access-throws.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors/object-arg/iterated-array-changed-by-tonumber.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors/object-arg/iterated-array-with-modified-array-iterator.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors/object-arg/iterating-throws.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors/object-arg/iterator-is-null-as-array-like.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors/object-arg/iterator-not-callable-throws.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors/object-arg/iterator-throws.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors/object-arg/length-excessive-throws.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors/object-arg/length-is-symbol-throws.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors/object-arg/length-throws.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors/object-arg/new-instance-extensibility.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors/object-arg/proto-from-ctor-realm.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors/object-arg/returns.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors/object-arg/throws-from-property.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors/object-arg/throws-setting-obj-to-primitive-typeerror.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors/object-arg/throws-setting-obj-to-primitive.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors/object-arg/throws-setting-obj-tostring.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors/object-arg/throws-setting-obj-valueof-typeerror.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors/object-arg/throws-setting-obj-valueof.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors/object-arg/throws-setting-property.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors/object-arg/throws-setting-symbol-property.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors/object-arg/undefined-newtarget-throws.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors/object-arg/use-custom-proto-if-object.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors/object-arg/use-default-proto-if-custom-proto-is-not-object.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors/typedarray-arg/custom-proto-access-throws.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors/typedarray-arg/new-instance-extensibility.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors/typedarray-arg/other-ctor-returns-new-typedarray.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors/typedarray-arg/proto-from-ctor-realm.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors/typedarray-arg/returns-new-instance.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors/typedarray-arg/same-ctor-buffer-ctor-species-null.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors/typedarray-arg/same-ctor-buffer-ctor-species-undefined.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors/typedarray-arg/same-ctor-returns-new-cloned-typedarray.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors/typedarray-arg/src-typedarray-big-throws.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors/typedarray-arg/src-typedarray-resizable-buffer.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors/typedarray-arg/throw-type-error-before-custom-proto-access.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors/typedarray-arg/undefined-newtarget-throws.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors/typedarray-arg/use-custom-proto-if-object.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors/typedarray-arg/use-default-proto-if-custom-proto-is-not-object.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors-bigint/buffer-arg/bufferbyteoffset-throws-from-modulo-element-size-sab.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors-bigint/buffer-arg/bufferbyteoffset-throws-from-modulo-element-size.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors-bigint/buffer-arg/byteoffset-is-negative-throws-sab.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors-bigint/buffer-arg/byteoffset-is-negative-throws.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors-bigint/buffer-arg/byteoffset-is-negative-zero-sab.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors-bigint/buffer-arg/byteoffset-is-negative-zero.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors-bigint/buffer-arg/byteoffset-is-symbol-throws-sab.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors-bigint/buffer-arg/byteoffset-is-symbol-throws.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors-bigint/buffer-arg/byteoffset-throws-from-modulo-element-size-sab.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors-bigint/buffer-arg/byteoffset-throws-from-modulo-element-size.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors-bigint/buffer-arg/byteoffset-to-number-detachbuffer.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors-bigint/buffer-arg/byteoffset-to-number-throws-sab.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors-bigint/buffer-arg/byteoffset-to-number-throws.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors-bigint/buffer-arg/custom-proto-access-throws-sab.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors-bigint/buffer-arg/custom-proto-access-throws.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors-bigint/buffer-arg/defined-length-and-offset-sab.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors-bigint/buffer-arg/defined-length-and-offset.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors-bigint/buffer-arg/defined-length-sab.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors-bigint/buffer-arg/defined-length.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors-bigint/buffer-arg/defined-negative-length-sab.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors-bigint/buffer-arg/defined-negative-length.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors-bigint/buffer-arg/defined-offset-sab.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors-bigint/buffer-arg/defined-offset.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors-bigint/buffer-arg/detachedbuffer.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors-bigint/buffer-arg/excessive-length-throws-sab.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors-bigint/buffer-arg/excessive-length-throws.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors-bigint/buffer-arg/excessive-offset-throws-sab.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors-bigint/buffer-arg/excessive-offset-throws.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors-bigint/buffer-arg/invoked-with-undefined-newtarget-sab.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors-bigint/buffer-arg/invoked-with-undefined-newtarget.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors-bigint/buffer-arg/is-referenced-sab.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors-bigint/buffer-arg/is-referenced.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors-bigint/buffer-arg/length-access-throws-sab.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors-bigint/buffer-arg/length-access-throws.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors-bigint/buffer-arg/length-is-symbol-throws-sab.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors-bigint/buffer-arg/length-is-symbol-throws.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors-bigint/buffer-arg/length-to-number-detachbuffer.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors-bigint/buffer-arg/new-instance-extensibility-sab.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors-bigint/buffer-arg/new-instance-extensibility.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors-bigint/buffer-arg/proto-from-ctor-realm-sab.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors-bigint/buffer-arg/proto-from-ctor-realm.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors-bigint/buffer-arg/returns-new-instance-sab.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors-bigint/buffer-arg/returns-new-instance.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors-bigint/buffer-arg/toindex-bytelength-sab.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors-bigint/buffer-arg/toindex-bytelength.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors-bigint/buffer-arg/toindex-byteoffset-sab.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors-bigint/buffer-arg/toindex-byteoffset.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors-bigint/buffer-arg/typedarray-backed-by-sharedarraybuffer.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors-bigint/buffer-arg/use-custom-proto-if-object-sab.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors-bigint/buffer-arg/use-custom-proto-if-object.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors-bigint/buffer-arg/use-default-proto-if-custom-proto-is-not-object-sab.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors-bigint/buffer-arg/use-default-proto-if-custom-proto-is-not-object.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors-bigint/length-arg/custom-proto-access-throws.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors-bigint/length-arg/init-zeros.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors-bigint/length-arg/is-infinity-throws-rangeerror.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors-bigint/length-arg/is-negative-integer-throws-rangeerror.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors-bigint/length-arg/is-symbol-throws.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors-bigint/length-arg/new-instance-extensibility.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors-bigint/length-arg/proto-from-ctor-realm.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors-bigint/length-arg/returns-object.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors-bigint/length-arg/toindex-length.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors-bigint/length-arg/undefined-newtarget-throws.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors-bigint/length-arg/use-custom-proto-if-object.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors-bigint/length-arg/use-default-proto-if-custom-proto-is-not-object.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors-bigint/no-args/custom-proto-access-throws.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors-bigint/no-args/new-instance-extensibility.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors-bigint/no-args/proto-from-ctor-realm.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors-bigint/no-args/returns-object.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors-bigint/no-args/undefined-newtarget-throws.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors-bigint/no-args/use-custom-proto-if-object.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors-bigint/no-args/use-default-proto-if-custom-proto-is-not-object.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors-bigint/object-arg/as-array-returns.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors-bigint/object-arg/as-generator-iterable-returns.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors-bigint/object-arg/bigint-tobigint64.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors-bigint/object-arg/bigint-tobiguint64.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors-bigint/object-arg/boolean-tobigint.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors-bigint/object-arg/custom-proto-access-throws.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors-bigint/object-arg/iterating-throws.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors-bigint/object-arg/iterator-not-callable-throws.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors-bigint/object-arg/iterator-throws.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors-bigint/object-arg/length-excessive-throws.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors-bigint/object-arg/length-is-symbol-throws.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors-bigint/object-arg/length-throws.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors-bigint/object-arg/new-instance-extensibility.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors-bigint/object-arg/null-tobigint.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors-bigint/object-arg/number-tobigint.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors-bigint/object-arg/proto-from-ctor-realm.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors-bigint/object-arg/string-nan-tobigint.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors-bigint/object-arg/string-tobigint.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors-bigint/object-arg/symbol-tobigint.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors-bigint/object-arg/throws-from-property.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors-bigint/object-arg/throws-setting-obj-to-primitive-typeerror.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors-bigint/object-arg/throws-setting-obj-to-primitive.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors-bigint/object-arg/throws-setting-obj-tostring.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors-bigint/object-arg/throws-setting-obj-valueof-typeerror.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors-bigint/object-arg/throws-setting-obj-valueof.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors-bigint/object-arg/throws-setting-property.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors-bigint/object-arg/throws-setting-symbol-property.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors-bigint/object-arg/undefined-newtarget-throws.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors-bigint/object-arg/undefined-tobigint.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors-bigint/object-arg/use-custom-proto-if-object.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors-bigint/object-arg/use-default-proto-if-custom-proto-is-not-object.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors-bigint/typedarray-arg/custom-proto-access-throws.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors-bigint/typedarray-arg/new-instance-extensibility.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors-bigint/typedarray-arg/other-ctor-buffer-ctor-species-null.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors-bigint/typedarray-arg/other-ctor-buffer-ctor-species-undefined.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors-bigint/typedarray-arg/other-ctor-returns-new-typedarray.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors-bigint/typedarray-arg/proto-from-ctor-realm.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors-bigint/typedarray-arg/same-ctor-buffer-ctor-species-null.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors-bigint/typedarray-arg/same-ctor-buffer-ctor-species-undefined.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors-bigint/typedarray-arg/same-ctor-returns-new-cloned-typedarray.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors-bigint/typedarray-arg/src-typedarray-not-big-throws.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/ctors-bigint/typedarray-arg/undefined-newtarget-throws.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/from/BigInt/arylk-get-length-error.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/from/BigInt/arylk-to-length-error.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/from/BigInt/custom-ctor-does-not-instantiate-ta-throws.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/from/BigInt/custom-ctor-returns-other-instance.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/from/BigInt/custom-ctor-returns-smaller-instance-throws.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/from/BigInt/custom-ctor.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/from/BigInt/inherited.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/from/BigInt/invoked-as-func.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/from/BigInt/iter-access-error.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/from/BigInt/iter-invoke-error.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/from/BigInt/iter-next-error.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/from/BigInt/iter-next-value-error.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/from/BigInt/mapfn-abrupt-completion.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/from/BigInt/mapfn-arguments.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/from/BigInt/mapfn-is-not-callable.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/from/BigInt/mapfn-this-with-thisarg.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/from/BigInt/mapfn-this-without-thisarg-non-strict.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/from/BigInt/mapfn-this-without-thisarg-strict.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/from/BigInt/new-instance-empty.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/from/BigInt/new-instance-from-ordinary-object.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/from/BigInt/new-instance-from-sparse-array.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/from/BigInt/new-instance-using-custom-ctor.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/from/BigInt/new-instance-with-mapfn.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/from/BigInt/new-instance-without-mapfn.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/from/BigInt/property-abrupt-completion.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/from/BigInt/set-value-abrupt-completion.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/from/BigInt/source-value-is-symbol-throws.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/from/BigInt/this-is-not-constructor.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/from/arylk-get-length-error.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/from/arylk-to-length-error.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/from/custom-ctor-does-not-instantiate-ta-throws.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/from/custom-ctor-returns-immutable-arraybuffer.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/from/custom-ctor-returns-other-instance.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/from/custom-ctor-returns-smaller-instance-throws.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/from/custom-ctor.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/from/inherited.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/from/invoked-as-func.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/from/iter-access-error.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/from/iter-invoke-error.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/from/iter-next-error.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/from/iter-next-value-error.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/from/mapfn-abrupt-completion.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/from/mapfn-arguments.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/from/mapfn-is-not-callable.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/from/mapfn-this-with-thisarg.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/from/mapfn-this-without-thisarg-non-strict.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/from/mapfn-this-without-thisarg-strict.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/from/nan-conversion.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/from/new-instance-empty.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/from/new-instance-from-ordinary-object.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/from/new-instance-from-sparse-array.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/from/new-instance-from-zero.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/from/new-instance-using-custom-ctor.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/from/new-instance-with-mapfn.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/from/new-instance-without-mapfn.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/from/property-abrupt-completion.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/from/set-value-abrupt-completion.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/from/source-value-is-symbol-throws.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/from/this-is-not-constructor.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/DefineOwnProperty/BigInt/desc-value-throws.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/DefineOwnProperty/BigInt/detached-buffer-throws-realm.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/DefineOwnProperty/BigInt/detached-buffer-throws.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/DefineOwnProperty/BigInt/detached-buffer.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/DefineOwnProperty/BigInt/key-is-greater-than-last-index.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/DefineOwnProperty/BigInt/key-is-lower-than-zero.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/DefineOwnProperty/BigInt/key-is-minus-zero.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/DefineOwnProperty/BigInt/key-is-not-canonical-index.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/DefineOwnProperty/BigInt/key-is-not-integer.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/DefineOwnProperty/BigInt/key-is-not-numeric-index-throws.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/DefineOwnProperty/BigInt/key-is-not-numeric-index.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/DefineOwnProperty/BigInt/key-is-numericindex-accessor-desc-throws.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/DefineOwnProperty/BigInt/key-is-numericindex-accessor-desc.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/DefineOwnProperty/BigInt/key-is-numericindex-desc-configurable.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/DefineOwnProperty/BigInt/key-is-numericindex-desc-not-configurable-throws.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/DefineOwnProperty/BigInt/key-is-numericindex-desc-not-enumerable-throws.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/DefineOwnProperty/BigInt/key-is-numericindex-desc-not-enumerable.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/DefineOwnProperty/BigInt/key-is-numericindex-desc-not-writable-throws.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/DefineOwnProperty/BigInt/key-is-numericindex-desc-not-writable.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/DefineOwnProperty/BigInt/key-is-numericindex.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/DefineOwnProperty/BigInt/key-is-symbol.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/DefineOwnProperty/BigInt/non-extensible-new-key.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/DefineOwnProperty/BigInt/non-extensible-redefine-key.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/DefineOwnProperty/BigInt/set-value.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/DefineOwnProperty/BigInt/this-is-not-extensible.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/DefineOwnProperty/BigInt/tonumber-value-detached-buffer.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/DefineOwnProperty/conversion-operation-consistent-nan.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/DefineOwnProperty/conversion-operation.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/DefineOwnProperty/desc-value-throws.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/DefineOwnProperty/detached-buffer-throws-realm.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/DefineOwnProperty/detached-buffer-throws.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/DefineOwnProperty/detached-buffer.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/DefineOwnProperty/key-is-greater-than-last-index.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/DefineOwnProperty/key-is-lower-than-zero.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/DefineOwnProperty/key-is-minus-zero.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/DefineOwnProperty/key-is-not-canonical-index.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/DefineOwnProperty/key-is-not-integer.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/DefineOwnProperty/key-is-not-numeric-index-throws.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/DefineOwnProperty/key-is-not-numeric-index.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/DefineOwnProperty/key-is-numericindex-accessor-desc-throws.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/DefineOwnProperty/key-is-numericindex-accessor-desc.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/DefineOwnProperty/key-is-numericindex-desc-configurable.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/DefineOwnProperty/key-is-numericindex-desc-not-configurable-throws.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/DefineOwnProperty/key-is-numericindex-desc-not-enumerable-throws.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/DefineOwnProperty/key-is-numericindex-desc-not-enumerable.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/DefineOwnProperty/key-is-numericindex-desc-not-writable-throws.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/DefineOwnProperty/key-is-numericindex-desc-not-writable.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/DefineOwnProperty/key-is-numericindex.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/DefineOwnProperty/key-is-symbol.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/DefineOwnProperty/non-extensible-new-key.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/DefineOwnProperty/non-extensible-redefine-key.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/DefineOwnProperty/set-value.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/DefineOwnProperty/this-is-not-extensible.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/DefineOwnProperty/tonumber-value-detached-buffer.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/Delete/BigInt/detached-buffer-key-is-not-numeric-index.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/Delete/BigInt/detached-buffer-key-is-symbol.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/Delete/BigInt/detached-buffer-realm.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/Delete/BigInt/detached-buffer.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/Delete/BigInt/indexed-value-ab-non-strict.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/Delete/BigInt/indexed-value-ab-strict.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/Delete/BigInt/indexed-value-sab-non-strict.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/Delete/BigInt/indexed-value-sab-strict.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/Delete/BigInt/infinity-detached-buffer.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/Delete/BigInt/key-is-not-canonical-index-non-strict.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/Delete/BigInt/key-is-not-canonical-index-strict.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/Delete/BigInt/key-is-not-minus-zero-non-strict.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/Delete/BigInt/key-is-not-minus-zero-strict.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/Delete/BigInt/key-is-not-numeric-index-get-throws.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/Delete/BigInt/key-is-not-numeric-index-non-strict.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/Delete/BigInt/key-is-not-numeric-index-strict.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/Delete/BigInt/key-is-out-of-bounds-non-strict.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/Delete/BigInt/key-is-out-of-bounds-strict.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/Delete/BigInt/key-is-symbol.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/Delete/detached-buffer-key-is-not-numeric-index.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/Delete/detached-buffer-key-is-symbol.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/Delete/detached-buffer-realm.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/Delete/detached-buffer.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/Delete/indexed-value-ab-non-strict.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/Delete/indexed-value-ab-strict.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/Delete/indexed-value-sab-non-strict.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/Delete/indexed-value-sab-strict.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/Delete/infinity-detached-buffer.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/Delete/key-is-not-canonical-index-non-strict.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/Delete/key-is-not-canonical-index-strict.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/Delete/key-is-not-integer.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/Delete/key-is-not-minus-zero-non-strict.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/Delete/key-is-not-minus-zero-strict.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/Delete/key-is-not-numeric-index-get-throws.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/Delete/key-is-not-numeric-index-non-strict.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/Delete/key-is-not-numeric-index-strict.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/Delete/key-is-out-of-bounds-non-strict.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/Delete/key-is-out-of-bounds-strict.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/Delete/key-is-symbol.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/Get/BigInt/detached-buffer-key-is-not-numeric-index.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/Get/BigInt/detached-buffer-key-is-symbol.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/Get/BigInt/detached-buffer-realm.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/Get/BigInt/detached-buffer.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/Get/BigInt/indexed-value-sab.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/Get/BigInt/indexed-value.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/Get/BigInt/infinity-detached-buffer.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/Get/BigInt/key-is-not-canonical-index.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/Get/BigInt/key-is-not-integer.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/Get/BigInt/key-is-not-minus-zero.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/Get/BigInt/key-is-not-numeric-index-get-throws.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/Get/BigInt/key-is-not-numeric-index.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/Get/BigInt/key-is-out-of-bounds.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/Get/BigInt/key-is-symbol.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/Get/detached-buffer-key-is-not-numeric-index.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/Get/detached-buffer-key-is-symbol.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/Get/detached-buffer-realm.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/Get/detached-buffer.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/Get/indexed-value-sab.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/Get/indexed-value.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/Get/infinity-detached-buffer.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/Get/key-is-not-canonical-index.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/Get/key-is-not-integer.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/Get/key-is-not-minus-zero.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/Get/key-is-not-numeric-index-get-throws.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/Get/key-is-not-numeric-index.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/Get/key-is-out-of-bounds.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/Get/key-is-symbol.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/GetOwnProperty/BigInt/detached-buffer-key-is-not-number.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/GetOwnProperty/BigInt/detached-buffer-key-is-symbol.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/GetOwnProperty/BigInt/detached-buffer-realm.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/GetOwnProperty/BigInt/detached-buffer.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/GetOwnProperty/BigInt/enumerate-detached-buffer.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/GetOwnProperty/BigInt/index-prop-desc.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/GetOwnProperty/BigInt/key-is-minus-zero.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/GetOwnProperty/BigInt/key-is-not-canonical-index.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/GetOwnProperty/BigInt/key-is-not-integer.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/GetOwnProperty/BigInt/key-is-not-numeric-index.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/GetOwnProperty/BigInt/key-is-out-of-bounds.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/GetOwnProperty/BigInt/key-is-symbol.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/GetOwnProperty/detached-buffer-key-is-not-number.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/GetOwnProperty/detached-buffer-key-is-symbol.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/GetOwnProperty/detached-buffer-realm.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/GetOwnProperty/detached-buffer.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/GetOwnProperty/enumerate-detached-buffer.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/GetOwnProperty/index-prop-desc.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/GetOwnProperty/key-is-minus-zero.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/GetOwnProperty/key-is-not-canonical-index.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/GetOwnProperty/key-is-not-integer.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/GetOwnProperty/key-is-not-numeric-index.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/GetOwnProperty/key-is-out-of-bounds.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/GetOwnProperty/key-is-symbol.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/HasProperty/BigInt/abrupt-from-ordinary-has-parent-hasproperty.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/HasProperty/BigInt/detached-buffer-key-is-not-number.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/HasProperty/BigInt/detached-buffer-key-is-symbol.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/HasProperty/BigInt/detached-buffer-realm.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/HasProperty/BigInt/detached-buffer.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/HasProperty/BigInt/indexed-value.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/HasProperty/BigInt/infinity-with-detached-buffer.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/HasProperty/BigInt/inherited-property.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/HasProperty/BigInt/key-is-greater-than-last-index.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/HasProperty/BigInt/key-is-lower-than-zero.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/HasProperty/BigInt/key-is-minus-zero.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/HasProperty/BigInt/key-is-not-canonical-index.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/HasProperty/BigInt/key-is-not-integer.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/HasProperty/BigInt/key-is-not-numeric-index.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/HasProperty/BigInt/key-is-symbol.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/HasProperty/abrupt-from-ordinary-has-parent-hasproperty.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/HasProperty/detached-buffer-key-is-not-number.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/HasProperty/detached-buffer-key-is-symbol.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/HasProperty/detached-buffer-realm.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/HasProperty/detached-buffer.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/HasProperty/indexed-value.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/HasProperty/infinity-with-detached-buffer.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/HasProperty/inherited-property.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/HasProperty/key-is-greater-than-last-index.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/HasProperty/key-is-lower-than-zero.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/HasProperty/key-is-minus-zero.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/HasProperty/key-is-not-canonical-index.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/HasProperty/key-is-not-integer.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/HasProperty/key-is-not-numeric-index.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/HasProperty/key-is-symbol.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/HasProperty/resizable-array-buffer-auto.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/HasProperty/resizable-array-buffer-fixed.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/OwnPropertyKeys/BigInt/integer-indexes-and-string-and-symbol-keys-.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/OwnPropertyKeys/BigInt/integer-indexes-and-string-keys.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/OwnPropertyKeys/BigInt/integer-indexes.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/OwnPropertyKeys/BigInt/not-enumerable-keys.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/OwnPropertyKeys/integer-indexes-and-string-and-symbol-keys-.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/OwnPropertyKeys/integer-indexes-and-string-keys.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/OwnPropertyKeys/integer-indexes-resizable-array-buffer-auto.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/OwnPropertyKeys/integer-indexes-resizable-array-buffer-fixed.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/OwnPropertyKeys/integer-indexes.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/OwnPropertyKeys/not-enumerable-keys.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/Set/BigInt/bigint-tobigint64.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/Set/BigInt/bigint-tobiguint64.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/Set/BigInt/boolean-tobigint.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/Set/BigInt/detached-buffer-key-is-not-numeric-index.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/Set/BigInt/detached-buffer-key-is-symbol.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/Set/BigInt/detached-buffer-realm.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/Set/BigInt/detached-buffer.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/Set/BigInt/indexed-value.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/Set/BigInt/key-is-canonical-invalid-index-prototype-chain-set.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/Set/BigInt/key-is-canonical-invalid-index-reflect-set.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/Set/BigInt/key-is-minus-zero.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/Set/BigInt/key-is-not-canonical-index.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/Set/BigInt/key-is-not-integer.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/Set/BigInt/key-is-not-numeric-index-set-throws.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/Set/BigInt/key-is-not-numeric-index.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/Set/BigInt/key-is-out-of-bounds.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/Set/BigInt/key-is-symbol.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/Set/BigInt/key-is-valid-index-prototype-chain-set.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/Set/BigInt/key-is-valid-index-reflect-set.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/Set/BigInt/null-tobigint.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/Set/BigInt/number-tobigint.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/Set/BigInt/string-nan-tobigint.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/Set/BigInt/string-tobigint.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/Set/BigInt/symbol-tobigint.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/Set/BigInt/tonumber-value-detached-buffer.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/Set/BigInt/tonumber-value-throws.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/Set/BigInt/undefined-tobigint.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/Set/bigint-tonumber.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/Set/conversion-operation-consistent-nan.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/Set/conversion-operation.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/Set/detached-buffer-key-is-not-numeric-index.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/Set/detached-buffer-key-is-symbol.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/Set/detached-buffer-realm.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/Set/detached-buffer.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/Set/indexed-value.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/Set/key-is-canonical-invalid-index-prototype-chain-set.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/Set/key-is-canonical-invalid-index-reflect-set.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/Set/key-is-in-bounds-receiver-is-not-typed-array.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/Set/key-is-minus-zero.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/Set/key-is-not-canonical-index.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/Set/key-is-not-integer.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/Set/key-is-not-numeric-index-set-throws.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/Set/key-is-not-numeric-index.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/Set/key-is-out-of-bounds-receiver-is-not-object.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/Set/key-is-out-of-bounds-receiver-is-not-typed-array.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/Set/key-is-out-of-bounds-receiver-is-proto.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/Set/key-is-out-of-bounds.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/Set/key-is-symbol.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/Set/key-is-valid-index-prototype-chain-set.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/Set/key-is-valid-index-reflect-set.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/Set/resized-out-of-bounds-to-in-bounds-index.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/Set/tonumber-value-detached-buffer.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/internals/Set/tonumber-value-throws.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/of/BigInt/argument-is-symbol-throws.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/of/BigInt/argument-number-value-throws.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/of/BigInt/custom-ctor-does-not-instantiate-ta-throws.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/of/BigInt/custom-ctor-returns-other-instance.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/of/BigInt/custom-ctor-returns-smaller-instance-throws.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/of/BigInt/custom-ctor.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/of/BigInt/inherited.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/of/BigInt/invoked-as-func.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/of/BigInt/new-instance-empty.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/of/BigInt/new-instance-using-custom-ctor.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/of/BigInt/new-instance.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/of/BigInt/this-is-not-constructor.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/of/argument-is-symbol-throws.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/of/argument-number-value-throws.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/of/custom-ctor-does-not-instantiate-ta-throws.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/of/custom-ctor-returns-immutable-arraybuffer.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/of/custom-ctor-returns-other-instance.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/of/custom-ctor-returns-smaller-instance-throws.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/of/custom-ctor.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/of/inherited.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/of/invoked-as-func.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/of/nan-conversion.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/of/new-instance-empty.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/of/new-instance-from-zero.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/of/new-instance-using-custom-ctor.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/of/new-instance.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/of/this-is-not-constructor.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/prototype/Symbol.iterator.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/prototype/Symbol.toStringTag/bigint-inherited.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/prototype/Symbol.toStringTag/inherited.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/prototype/bigint-Symbol.iterator.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/prototype/buffer/bigint-inherited.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/prototype/buffer/inherited.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/prototype/byteLength/bigint-inherited.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/prototype/byteLength/inherited.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/prototype/byteOffset/bigint-inherited.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/prototype/byteOffset/inherited.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/prototype/copyWithin/bigint-inherited.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/prototype/copyWithin/inherited.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/prototype/entries/bigint-inherited.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/prototype/entries/inherited.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/prototype/every/bigint-inherited.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/prototype/every/inherited.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/prototype/fill/bigint-inherited.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/prototype/fill/inherited.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/prototype/filter/bigint-inherited.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/prototype/filter/inherited.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/prototype/find/bigint-inherited.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/prototype/find/inherited.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/prototype/findIndex/bigint-inherited.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/prototype/findIndex/inherited.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/prototype/forEach/bigint-inherited.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/prototype/forEach/inherited.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/prototype/indexOf/bigint-inherited.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/prototype/indexOf/inherited.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/prototype/join/bigint-inherited.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/prototype/join/inherited.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/prototype/keys/bigint-inherited.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/prototype/keys/inherited.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/prototype/lastIndexOf/bigint-inherited.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/prototype/lastIndexOf/inherited.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/prototype/length/bigint-inherited.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/prototype/length/inherited.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/prototype/map/bigint-inherited.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/prototype/map/inherited.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/prototype/reduce/bigint-inherited.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/prototype/reduce/inherited.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/prototype/reduceRight/bigint-inherited.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/prototype/reduceRight/inherited.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/prototype/reverse/bigint-inherited.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/prototype/reverse/inherited.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/prototype/set/bigint-inherited.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/prototype/set/inherited.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/prototype/slice/bigint-inherited.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/prototype/slice/inherited.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/prototype/some/bigint-inherited.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/prototype/some/inherited.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/prototype/sort/bigint-inherited.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/prototype/sort/inherited.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/prototype/subarray/bigint-inherited.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/prototype/subarray/inherited.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/prototype/toLocaleString/bigint-inherited.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/prototype/toLocaleString/inherited.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/prototype/toString/bigint-inherited.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/prototype/toString/inherited.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/prototype/values/bigint-inherited.js",
+      "stage": "77"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/TypedArrayConstructors/prototype/values/inherited.js",
+      "stage": "77"
+    }
+  ],
+  "passed": 738,
+  "provenance": {
+    "binary": "/Users/admin/Code/GitHub/quench-v2/target/iteration/cell-object-fast-path-2026-10-09/candidate-target/iteration/run-stages",
+    "host": "macos-aarch64",
+    "jobs": 8,
+    "source_dirty": true,
+    "source_revision": "855a083a4e398743b359a8ac1efeecee4eea60d4",
+    "timeout_ms": 900000
+  },
+  "schema": 1,
+  "stages": {
+    "77": {
+      "failed": 0,
+      "passed": 738,
+      "total": 738
+    }
+  },
+  "total": 738
+}

@@ -1,0 +1,119 @@
+{
+  "qualification": false,
+  "notes": "Three-round screen only; raw wall, no hardware counters or clean rounds. Excludes nonpositive setup-subtracted samples. RayTrace and EarleyBoyer require repeat before retention.",
+  "fixtures": [
+    {
+      "fixture": "crypto.js",
+      "valid": true,
+      "output_equal": true,
+      "raw_paired_marginal_wall_median_change_pct": -10.618812650657471,
+      "ratios": [
+        0.7249654849033075,
+        1.5300583185102494,
+        0.8938118734934253
+      ],
+      "nonpositive_marginal_rounds": [],
+      "control_rss": 46043136,
+      "candidate_rss": 42168320
+    },
+    {
+      "fixture": "deltablue.js",
+      "valid": true,
+      "output_equal": true,
+      "raw_paired_marginal_wall_median_change_pct": -8.179078487894653,
+      "ratios": [
+        0.9182092151210535,
+        1.4045781399167636,
+        0.9155627613514874
+      ],
+      "nonpositive_marginal_rounds": [],
+      "control_rss": 44662784,
+      "candidate_rss": 40660992
+    },
+    {
+      "fixture": "earley-boyer.js",
+      "valid": true,
+      "output_equal": true,
+      "raw_paired_marginal_wall_median_change_pct": 5.145737302065312,
+      "ratios": [
+        1.0487559267811988,
+        1.0514573730206531,
+        1.1225780287133693
+      ],
+      "nonpositive_marginal_rounds": [],
+      "control_rss": 56901632,
+      "candidate_rss": 53235712
+    },
+    {
+      "fixture": "navier-stokes.js",
+      "valid": true,
+      "output_equal": true,
+      "raw_paired_marginal_wall_median_change_pct": -0.39214486122731707,
+      "ratios": [
+        0.8782293454523654,
+        0.9960785513877268,
+        1.4200211649990067
+      ],
+      "nonpositive_marginal_rounds": [],
+      "control_rss": 45486080,
+      "candidate_rss": 41451520
+    },
+    {
+      "fixture": "raytrace.js",
+      "valid": true,
+      "output_equal": true,
+      "raw_paired_marginal_wall_median_change_pct": 29.277580461853624,
+      "ratios": [
+        1.2927758046185363,
+        0.7839470268916839,
+        1.3832325441232602
+      ],
+      "nonpositive_marginal_rounds": [],
+      "control_rss": 45273088,
+      "candidate_rss": 41136128
+    },
+    {
+      "fixture": "regexp.js",
+      "valid": true,
+      "output_equal": true,
+      "raw_paired_marginal_wall_median_change_pct": 24.848506607896926,
+      "ratios": [
+        1.2484850660789693
+      ],
+      "nonpositive_marginal_rounds": [
+        0,
+        2
+      ],
+      "control_rss": 72626176,
+      "candidate_rss": 68943872
+    },
+    {
+      "fixture": "richards.js",
+      "valid": true,
+      "output_equal": true,
+      "raw_paired_marginal_wall_median_change_pct": 7.06522171968853,
+      "ratios": [
+        0.9722423195502599,
+        1.0706522171968853,
+        1.5733159075035794
+      ],
+      "nonpositive_marginal_rounds": [],
+      "control_rss": 44314624,
+      "candidate_rss": 40046592
+    },
+    {
+      "fixture": "splay.js",
+      "valid": true,
+      "output_equal": true,
+      "raw_paired_marginal_wall_median_change_pct": -14.457101253106352,
+      "ratios": [
+        1.2316532880245787,
+        0.6119507004499526,
+        0.8554289874689365
+      ],
+      "nonpositive_marginal_rounds": [],
+      "control_rss": 96579584,
+      "candidate_rss": 92758016
+    }
+  ]
+}

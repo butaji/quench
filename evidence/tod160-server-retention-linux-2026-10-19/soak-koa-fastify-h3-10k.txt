@@ -1,0 +1,36 @@
+== koa c158
+{"requests":0,"VmHWM":"24.4","VmRSS":"23.1","RssAnon":"20.1","RssFile":"3.1","cpu_ms":670}
+{"requests":2500,"ms":25074,"bad":0,"VmHWM":"37.4","VmRSS":"37.1","RssAnon":"33.5","RssFile":"3.6","cpu_ms":5920}
+{"requests":5000,"ms":50050,"bad":0,"VmHWM":"41.4","VmRSS":"41.1","RssAnon":"37.5","RssFile":"3.6","cpu_ms":10900}
+{"requests":7500,"ms":74882,"bad":0,"VmHWM":"46.2","VmRSS":"44.2","RssAnon":"40.6","RssFile":"3.6","cpu_ms":16110}
+{"requests":10000,"ms":99494,"bad":0,"VmHWM":"46.4","VmRSS":"46.0","RssAnon":"42.4","RssFile":"3.6","cpu_ms":21100}
+== koa c160
+{"requests":0,"VmHWM":"24.3","VmRSS":"23.2","RssAnon":"20.0","RssFile":"3.1","cpu_ms":690}
+{"requests":2500,"ms":25270,"bad":0,"VmHWM":"35.8","VmRSS":"34.7","RssAnon":"31.1","RssFile":"3.6","cpu_ms":5930}
+{"requests":5000,"ms":50298,"bad":0,"VmHWM":"36.2","VmRSS":"35.9","RssAnon":"32.3","RssFile":"3.6","cpu_ms":11190}
+{"requests":7500,"ms":75266,"bad":0,"VmHWM":"37.6","VmRSS":"34.6","RssAnon":"31.0","RssFile":"3.6","cpu_ms":16400}
+{"requests":10000,"ms":100161,"bad":0,"VmHWM":"37.6","VmRSS":"35.3","RssAnon":"31.7","RssFile":"3.6","cpu_ms":21580}
+== fastify c158
+{"requests":0,"VmHWM":"28.0","VmRSS":"28.0","RssAnon":"22.5","RssFile":"5.5","cpu_ms":910}
+{"requests":2500,"ms":24635,"bad":0,"VmHWM":"31.1","VmRSS":"30.8","RssAnon":"27.5","RssFile":"3.3","cpu_ms":5370}
+{"requests":5000,"ms":49291,"bad":0,"VmHWM":"34.6","VmRSS":"34.1","RssAnon":"30.8","RssFile":"3.3","cpu_ms":9800}
+{"requests":7500,"ms":73951,"bad":0,"VmHWM":"37.7","VmRSS":"37.3","RssAnon":"33.9","RssFile":"3.4","cpu_ms":14520}
+{"requests":10000,"ms":98510,"bad":0,"VmHWM":"40.9","VmRSS":"40.6","RssAnon":"37.3","RssFile":"3.3","cpu_ms":19160}
+== fastify c160
+{"requests":0,"VmHWM":"28.0","VmRSS":"28.0","RssAnon":"22.5","RssFile":"5.5","cpu_ms":980}
+{"requests":2500,"ms":24768,"bad":0,"VmHWM":"30.5","VmRSS":"28.5","RssAnon":"25.2","RssFile":"3.4","cpu_ms":5350}
+{"requests":5000,"ms":49424,"bad":0,"VmHWM":"30.5","VmRSS":"28.9","RssAnon":"25.5","RssFile":"3.4","cpu_ms":9840}
+{"requests":7500,"ms":74116,"bad":0,"VmHWM":"30.5","VmRSS":"29.4","RssAnon":"26.0","RssFile":"3.4","cpu_ms":14660}
+{"requests":10000,"ms":98500,"bad":0,"VmHWM":"30.5","VmRSS":"29.8","RssAnon":"26.4","RssFile":"3.4","cpu_ms":19350}
+== h3 c158
+{"requests":0,"VmHWM":"28.8","VmRSS":"28.2","RssAnon":"23.1","RssFile":"5.1","cpu_ms":840}
+{"requests":2500,"ms":24928,"bad":0,"VmHWM":"31.8","VmRSS":"31.8","RssAnon":"27.9","RssFile":"3.9","cpu_ms":5290}
+{"requests":5000,"ms":49683,"bad":0,"VmHWM":"33.4","VmRSS":"33.4","RssAnon":"29.5","RssFile":"3.9","cpu_ms":9760}
+{"requests":7500,"ms":74509,"bad":0,"VmHWM":"34.3","VmRSS":"33.3","RssAnon":"30.3","RssFile":"3.0","cpu_ms":14400}
+{"requests":10000,"ms":99175,"bad":0,"VmHWM":"37.1","VmRSS":"36.9","RssAnon":"33.2","RssFile":"3.7","cpu_ms":18620}
+== h3 c160
+{"requests":0,"VmHWM":"28.9","VmRSS":"28.2","RssAnon":"23.1","RssFile":"5.2","cpu_ms":890}
+{"requests":2500,"ms":24804,"bad":0,"VmHWM":"31.0","VmRSS":"30.9","RssAnon":"27.0","RssFile":"4.0","cpu_ms":5180}
+{"requests":5000,"ms":49795,"bad":0,"VmHWM":"31.7","VmRSS":"31.7","RssAnon":"27.7","RssFile":"4.0","cpu_ms":9830}
+{"requests":7500,"ms":74404,"bad":0,"VmHWM":"32.0","VmRSS":"30.4","RssAnon":"26.4","RssFile":"3.9","cpu_ms":14430}
+{"requests":10000,"ms":98976,"bad":0,"VmHWM":"32.0","VmRSS":"31.2","RssAnon":"27.8","RssFile":"3.4","cpu_ms":18590}

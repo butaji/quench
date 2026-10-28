@@ -1,0 +1,17 @@
+/workspace/work/node-stable-release/node-v26.12.0/lib/internal/vm.js:14
+} = ContextifyScript.prototype;
+                     ^
+
+TypeError: Cannot read properties of undefined (reading 'prototype')
+    at node:internal/vm:14:22
+    at load (/workspace/quench/work/test-runner-policy/module-dependency-probe.cjs:17:102)
+    at node:internal/modules/cjs/loader:153:5
+    at load (/workspace/quench/work/test-runner-policy/module-dependency-probe.cjs:23:2)
+    at node:internal/modules/esm/loader:25:5
+    at load (/workspace/quench/work/test-runner-policy/module-dependency-probe.cjs:23:2)
+    at node:internal/test_runner/mock/mock:35:19
+    at load (/workspace/quench/work/test-runner-policy/module-dependency-probe.cjs:23:2)
+    at node:internal/test_runner/test:57:25
+    at load (/workspace/quench/work/test-runner-policy/module-dependency-probe.cjs:23:2)
+
+Node.js v26.12.0

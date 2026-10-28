@@ -1,0 +1,663 @@
+Baseline production layout:
+print-type-size type: `heap::Slot`: 112 bytes, alignment: 16 bytes
+print-type-size     field `.cell`: 112 bytes
+print-type-size type: `heap::cell::Cell`: 112 bytes, alignment: 16 bytes
+print-type-size     variant `RegExp`: 112 bytes
+print-type-size         field `.legacy_constructor`: 16 bytes
+print-type-size         field `.source`: 40 bytes
+print-type-size         field `.flags`: 24 bytes
+print-type-size         field `.matcher`: 8 bytes
+print-type-size         field `.object`: 24 bytes
+print-type-size     variant `ArrayFromAsyncState`: 104 bytes
+print-type-size         padding: 8 bytes
+print-type-size         field `.0`: 96 bytes, alignment: 8 bytes
+print-type-size     variant `Environment`: 101 bytes
+print-type-size         padding: 8 bytes
+print-type-size         field `.with_objects`: 24 bytes, alignment: 8 bytes
+print-type-size         field `.dynamic_bindings`: 24 bytes
+print-type-size         field `.program`: 8 bytes
+print-type-size         field `.binding_site_pc`: 8 bytes
+print-type-size         field `.slots`: 16 bytes
+print-type-size         field `.parent`: 8 bytes
+print-type-size         field `.function`: 4 bytes
+print-type-size         field `.root_eval_scope`: 1 bytes
+print-type-size     variant `TemporalDuration`: 96 bytes
+print-type-size         padding: 8 bytes
+print-type-size         field `.object`: 8 bytes, alignment: 8 bytes
+print-type-size         field `.fields`: 80 bytes
+print-type-size     variant `WeakMap`: 88 bytes
+print-type-size         padding: 8 bytes
+print-type-size         field `.entries`: 56 bytes, alignment: 8 bytes
+print-type-size         field `.object`: 24 bytes
+print-type-size     variant `TemporalZonedDateTime`: 88 bytes
+print-type-size         padding: 16 bytes
+print-type-size         field `.epoch_nanoseconds`: 16 bytes, alignment: 16 bytes
+print-type-size         field `.time_zone`: 24 bytes
+print-type-size         field `.calendar`: 24 bytes
+print-type-size         field `.object`: 8 bytes
+print-type-size     variant `Iterator`: 84 bytes
+print-type-size         padding: 8 bytes
+print-type-size         field `.next_method`: 16 bytes, alignment: 8 bytes
+print-type-size         field `.object`: 24 bytes
+print-type-size         field `.source`: 8 bytes
+print-type-size         field `.helper`: 8 bytes
+print-type-size         field `.index`: 8 bytes
+print-type-size         field `.generator`: 8 bytes
+print-type-size         field `.helper_running`: 1 bytes
+print-type-size         field `.helper_started`: 1 bytes
+print-type-size         field `.done`: 1 bytes
+print-type-size         field `.kind`: 1 bytes
+print-type-size     variant `TemporalPlainDateTime`: 76 bytes
+print-type-size         padding: 8 bytes
+print-type-size         field `.calendar`: 24 bytes, alignment: 8 bytes
+print-type-size         field `.object`: 8 bytes
+print-type-size         field `.time`: 24 bytes
+print-type-size         field `.date`: 12 bytes
+print-type-size     variant `WasmTable`: 69 bytes
+print-type-size         padding: 8 bytes
+print-type-size         field `.maximum`: 16 bytes, alignment: 8 bytes
+print-type-size         field `.elements`: 24 bytes
+print-type-size         field `.declarations`: 16 bytes
+print-type-size         field `.element_type`: 4 bytes
+print-type-size         field `.table64`: 1 bytes
+print-type-size     variant `WasmGc`: 68 bytes
+print-type-size         padding: 8 bytes
+print-type-size         field `.descriptor`: 16 bytes, alignment: 8 bytes
+print-type-size         field `.fields`: 24 bytes
+print-type-size         field `.declarations`: 16 bytes
+print-type-size         field `.ty`: 4 bytes
+print-type-size     variant `TypedArray`: 58 bytes
+print-type-size         padding: 8 bytes
+print-type-size         field `.object`: 24 bytes, alignment: 8 bytes
+print-type-size         field `.buffer`: 8 bytes
+print-type-size         field `.offset`: 8 bytes
+print-type-size         field `.length`: 8 bytes
+print-type-size         field `.kind`: 1 bytes
+print-type-size         field `.length_tracking`: 1 bytes
+print-type-size     variant `DataView`: 57 bytes
+print-type-size         padding: 8 bytes
+print-type-size         field `.object`: 24 bytes, alignment: 8 bytes
+print-type-size         field `.buffer`: 8 bytes
+print-type-size         field `.offset`: 8 bytes
+print-type-size         field `.length`: 8 bytes
+print-type-size         field `.length_tracking`: 1 bytes
+print-type-size     variant `Map`: 56 bytes
+print-type-size         padding: 8 bytes
+print-type-size         field `.entries`: 24 bytes, alignment: 8 bytes
+print-type-size         field `.object`: 24 bytes
+print-type-size     variant `Set`: 56 bytes
+print-type-size         padding: 8 bytes
+print-type-size         field `.entries`: 24 bytes, alignment: 8 bytes
+print-type-size         field `.object`: 24 bytes
+print-type-size     variant `WeakSet`: 56 bytes
+print-type-size         padding: 8 bytes
+print-type-size         field `.entries`: 24 bytes, alignment: 8 bytes
+print-type-size         field `.object`: 24 bytes
+print-type-size     variant `WasmMemory`: 56 bytes
+print-type-size         padding: 8 bytes
+print-type-size         field `.ty`: 40 bytes, alignment: 8 bytes
+print-type-size         field `.bytes`: 8 bytes
+print-type-size     variant `ArrayBuffer`: 52 bytes
+print-type-size         padding: 8 bytes
+print-type-size         field `.object`: 24 bytes, alignment: 8 bytes
+print-type-size         field `.max_byte_length`: 8 bytes
+print-type-size         field `.bytes`: 8 bytes
+print-type-size         field `.shared`: 1 bytes
+print-type-size         field `.detached`: 1 bytes
+print-type-size         field `.resizable`: 1 bytes
+print-type-size         field `.immutable`: 1 bytes
+print-type-size     variant `TemporalPlainDate`: 52 bytes
+print-type-size         padding: 8 bytes
+print-type-size         field `.calendar`: 24 bytes, alignment: 8 bytes
+print-type-size         field `.object`: 8 bytes
+print-type-size         field `.year`: 4 bytes
+print-type-size         field `.month`: 4 bytes
+print-type-size         field `.day`: 4 bytes
+print-type-size     variant `TemporalPlainMonthDay`: 52 bytes
+print-type-size         padding: 8 bytes
+print-type-size         field `.calendar`: 24 bytes, alignment: 8 bytes
+print-type-size         field `.object`: 8 bytes
+print-type-size         field `.month`: 4 bytes
+print-type-size         field `.day`: 4 bytes
+print-type-size         field `.reference_iso_year`: 4 bytes
+print-type-size     variant `TemporalPlainYearMonth`: 52 bytes
+print-type-size         padding: 8 bytes
+print-type-size         field `.calendar`: 24 bytes, alignment: 8 bytes
+print-type-size         field `.object`: 8 bytes
+print-type-size         field `.year`: 4 bytes
+print-type-size         field `.month`: 4 bytes
+print-type-size         field `.reference_iso_day`: 4 bytes
+print-type-size     variant `Proxy`: 49 bytes
+print-type-size         padding: 8 bytes
+print-type-size         field `.object`: 24 bytes, alignment: 8 bytes
+print-type-size         field `.target`: 8 bytes
+print-type-size         field `.handler`: 8 bytes
+print-type-size         field `.kind`: 1 bytes
+print-type-size     variant `ShadowRealm`: 48 bytes
+print-type-size         padding: 8 bytes
+print-type-size         field `.object`: 24 bytes, alignment: 8 bytes
+print-type-size         field `.caller_global`: 8 bytes
+print-type-size         field `.realm_global`: 8 bytes
+print-type-size     variant `FinalizationRegistry`: 48 bytes
+print-type-size         padding: 8 bytes
+print-type-size         field `.entries`: 8 bytes, alignment: 8 bytes
+print-type-size         field `.object`: 24 bytes
+print-type-size         field `.callback`: 8 bytes
+print-type-size     variant `String`: 48 bytes
+print-type-size         padding: 8 bytes
+print-type-size         field `.0`: 40 bytes, alignment: 8 bytes
+print-type-size     variant `WasmGlobal`: 45 bytes
+print-type-size         padding: 8 bytes
+print-type-size         field `.declarations`: 16 bytes, alignment: 8 bytes
+print-type-size         field `.value`: 8 bytes
+print-type-size         field `.ty`: 12 bytes
+print-type-size         field `.mutable`: 1 bytes
+print-type-size     variant `WeakRef`: 44 bytes
+print-type-size         padding: 8 bytes
+print-type-size         field `.object`: 24 bytes, alignment: 8 bytes
+print-type-size         field `.target`: 12 bytes
+print-type-size     variant `Function`: 44 bytes
+print-type-size         padding: 8 bytes
+print-type-size         field `.object`: 8 bytes, alignment: 8 bytes
+print-type-size         field `.env`: 8 bytes
+print-type-size         field `.realm`: 8 bytes
+print-type-size         field `.kind`: 12 bytes
+print-type-size     variant `Array`: 40 bytes
+print-type-size         padding: 8 bytes
+print-type-size         field `.elements`: 8 bytes, alignment: 8 bytes
+print-type-size         field `.object`: 24 bytes
+print-type-size     variant `WasmException`: 40 bytes
+print-type-size         padding: 8 bytes
+print-type-size         field `.payload`: 24 bytes, alignment: 8 bytes
+print-type-size         field `.tag`: 8 bytes
+print-type-size     variant `TemporalInstant`: 40 bytes
+print-type-size         padding: 16 bytes
+print-type-size         field `.epoch_nanoseconds`: 16 bytes, alignment: 16 bytes
+print-type-size         field `.object`: 8 bytes
+print-type-size     variant `Object`: 32 bytes
+print-type-size         padding: 8 bytes
+print-type-size         field `.0`: 24 bytes, alignment: 8 bytes
+print-type-size     variant `WasmElements`: 32 bytes
+print-type-size         padding: 8 bytes
+print-type-size         field `.0`: 24 bytes, alignment: 8 bytes
+print-type-size     variant `BigInt`: 32 bytes
+print-type-size         padding: 8 bytes
+print-type-size         field `.0`: 24 bytes, alignment: 8 bytes
+print-type-size     variant `Symbol`: 32 bytes
+print-type-size         padding: 8 bytes
+print-type-size         field `.0`: 24 bytes, alignment: 8 bytes
+print-type-size     variant `Error`: 32 bytes
+print-type-size         padding: 8 bytes
+print-type-size         field `.0`: 24 bytes, alignment: 8 bytes
+print-type-size     variant `WasmTag`: 28 bytes
+print-type-size         padding: 8 bytes
+print-type-size         field `.declarations`: 16 bytes, alignment: 8 bytes
+print-type-size         field `.ty`: 4 bytes
+print-type-size     variant `WasmV128`: 24 bytes
+print-type-size         padding: 8 bytes
+print-type-size         field `.0`: 16 bytes, alignment: 1 bytes
+print-type-size     variant `Date`: 24 bytes
+print-type-size         padding: 8 bytes
+print-type-size         field `.object`: 8 bytes, alignment: 8 bytes
+print-type-size         field `.milliseconds`: 8 bytes
+print-type-size     variant `WasmHostFunction`: 20 bytes
+print-type-size         padding: 8 bytes
+print-type-size         field `.signature`: 8 bytes, alignment: 8 bytes
+print-type-size         field `.id`: 4 bytes
+print-type-size     variant `BindingReference`: 19 bytes
+print-type-size         padding: 8 bytes
+print-type-size         field `.environment`: 8 bytes, alignment: 8 bytes
+print-type-size         field `.slot`: 2 bytes
+print-type-size         field `.kind`: 1 bytes
+print-type-size     variant `PromiseResolvingState`: 17 bytes
+print-type-size         padding: 8 bytes
+print-type-size         field `.promise`: 8 bytes, alignment: 8 bytes
+print-type-size         field `.already_resolved`: 1 bytes
+print-type-size     variant `WasmBits64`: 16 bytes
+print-type-size         padding: 8 bytes
+print-type-size         field `.0`: 8 bytes, alignment: 8 bytes
+print-type-size     variant `WasmExtern`: 16 bytes
+print-type-size         padding: 8 bytes
+print-type-size         field `.0`: 8 bytes, alignment: 8 bytes
+Intermediate Box<Vec<Value>> layout:
+print-type-size type: `heap::Slot`: 96 bytes, alignment: 16 bytes
+print-type-size     field `.cell`: 96 bytes
+print-type-size type: `heap::cell::Cell`: 96 bytes, alignment: 16 bytes
+print-type-size     variant `RegExp`: 96 bytes
+print-type-size         field `.legacy_constructor`: 16 bytes
+print-type-size         field `.source`: 40 bytes
+print-type-size         field `.flags`: 24 bytes
+print-type-size         field `.object`: 8 bytes
+print-type-size         field `.matcher`: 8 bytes
+print-type-size     variant `TemporalDuration`: 96 bytes
+print-type-size         padding: 8 bytes
+print-type-size         field `.object`: 8 bytes, alignment: 8 bytes
+print-type-size         field `.fields`: 80 bytes
+print-type-size     variant `WeakMap`: 88 bytes
+print-type-size         padding: 8 bytes
+print-type-size         field `.entries`: 56 bytes, alignment: 8 bytes
+print-type-size         field `.object`: 24 bytes
+print-type-size     variant `TemporalZonedDateTime`: 88 bytes
+print-type-size         padding: 16 bytes
+print-type-size         field `.epoch_nanoseconds`: 16 bytes, alignment: 16 bytes
+print-type-size         field `.time_zone`: 24 bytes
+print-type-size         field `.calendar`: 24 bytes
+print-type-size         field `.object`: 8 bytes
+print-type-size     variant `Environment`: 85 bytes
+print-type-size         padding: 8 bytes
+print-type-size         field `.dynamic_bindings`: 24 bytes, alignment: 8 bytes
+print-type-size         field `.program`: 8 bytes
+print-type-size         field `.binding_site_pc`: 8 bytes
+print-type-size         field `.slots`: 16 bytes
+print-type-size         field `.with_objects`: 8 bytes
+print-type-size         field `.parent`: 8 bytes
+print-type-size         field `.function`: 4 bytes
+print-type-size         field `.root_eval_scope`: 1 bytes
+print-type-size     variant `Iterator`: 84 bytes
+print-type-size         padding: 8 bytes
+print-type-size         field `.next_method`: 16 bytes, alignment: 8 bytes
+print-type-size         field `.object`: 24 bytes
+print-type-size         field `.source`: 8 bytes
+print-type-size         field `.helper`: 8 bytes
+print-type-size         field `.index`: 8 bytes
+print-type-size         field `.generator`: 8 bytes
+print-type-size         field `.helper_running`: 1 bytes
+print-type-size         field `.helper_started`: 1 bytes
+print-type-size         field `.done`: 1 bytes
+print-type-size         field `.kind`: 1 bytes
+print-type-size     variant `TemporalPlainDateTime`: 76 bytes
+print-type-size         padding: 8 bytes
+print-type-size         field `.calendar`: 24 bytes, alignment: 8 bytes
+print-type-size         field `.object`: 8 bytes
+print-type-size         field `.time`: 24 bytes
+print-type-size         field `.date`: 12 bytes
+print-type-size     variant `WasmTable`: 69 bytes
+print-type-size         padding: 8 bytes
+print-type-size         field `.maximum`: 16 bytes, alignment: 8 bytes
+print-type-size         field `.elements`: 24 bytes
+print-type-size         field `.declarations`: 16 bytes
+print-type-size         field `.element_type`: 4 bytes
+print-type-size         field `.table64`: 1 bytes
+print-type-size     variant `WasmGc`: 68 bytes
+print-type-size         padding: 8 bytes
+print-type-size         field `.descriptor`: 16 bytes, alignment: 8 bytes
+print-type-size         field `.fields`: 24 bytes
+print-type-size         field `.declarations`: 16 bytes
+print-type-size         field `.ty`: 4 bytes
+print-type-size     variant `TypedArray`: 58 bytes
+print-type-size         padding: 8 bytes
+print-type-size         field `.object`: 24 bytes, alignment: 8 bytes
+print-type-size         field `.buffer`: 8 bytes
+print-type-size         field `.offset`: 8 bytes
+print-type-size         field `.length`: 8 bytes
+print-type-size         field `.kind`: 1 bytes
+print-type-size         field `.length_tracking`: 1 bytes
+print-type-size     variant `DataView`: 57 bytes
+print-type-size         padding: 8 bytes
+print-type-size         field `.object`: 24 bytes, alignment: 8 bytes
+print-type-size         field `.buffer`: 8 bytes
+print-type-size         field `.offset`: 8 bytes
+print-type-size         field `.length`: 8 bytes
+print-type-size         field `.length_tracking`: 1 bytes
+print-type-size     variant `Map`: 56 bytes
+print-type-size         padding: 8 bytes
+print-type-size         field `.entries`: 24 bytes, alignment: 8 bytes
+print-type-size         field `.object`: 24 bytes
+print-type-size     variant `Set`: 56 bytes
+print-type-size         padding: 8 bytes
+print-type-size         field `.entries`: 24 bytes, alignment: 8 bytes
+print-type-size         field `.object`: 24 bytes
+print-type-size     variant `WeakSet`: 56 bytes
+print-type-size         padding: 8 bytes
+print-type-size         field `.entries`: 24 bytes, alignment: 8 bytes
+print-type-size         field `.object`: 24 bytes
+print-type-size     variant `WasmMemory`: 56 bytes
+print-type-size         padding: 8 bytes
+print-type-size         field `.ty`: 40 bytes, alignment: 8 bytes
+print-type-size         field `.bytes`: 8 bytes
+print-type-size     variant `ArrayBuffer`: 52 bytes
+print-type-size         padding: 8 bytes
+print-type-size         field `.object`: 24 bytes, alignment: 8 bytes
+print-type-size         field `.max_byte_length`: 8 bytes
+print-type-size         field `.bytes`: 8 bytes
+print-type-size         field `.shared`: 1 bytes
+print-type-size         field `.detached`: 1 bytes
+print-type-size         field `.resizable`: 1 bytes
+print-type-size         field `.immutable`: 1 bytes
+print-type-size     variant `TemporalPlainDate`: 52 bytes
+print-type-size         padding: 8 bytes
+print-type-size         field `.calendar`: 24 bytes, alignment: 8 bytes
+print-type-size         field `.object`: 8 bytes
+print-type-size         field `.year`: 4 bytes
+print-type-size         field `.month`: 4 bytes
+print-type-size         field `.day`: 4 bytes
+print-type-size     variant `TemporalPlainMonthDay`: 52 bytes
+print-type-size         padding: 8 bytes
+print-type-size         field `.calendar`: 24 bytes, alignment: 8 bytes
+print-type-size         field `.object`: 8 bytes
+print-type-size         field `.month`: 4 bytes
+print-type-size         field `.day`: 4 bytes
+print-type-size         field `.reference_iso_year`: 4 bytes
+print-type-size     variant `TemporalPlainYearMonth`: 52 bytes
+print-type-size         padding: 8 bytes
+print-type-size         field `.calendar`: 24 bytes, alignment: 8 bytes
+print-type-size         field `.object`: 8 bytes
+print-type-size         field `.year`: 4 bytes
+print-type-size         field `.month`: 4 bytes
+print-type-size         field `.reference_iso_day`: 4 bytes
+print-type-size     variant `Proxy`: 49 bytes
+print-type-size         padding: 8 bytes
+print-type-size         field `.object`: 24 bytes, alignment: 8 bytes
+print-type-size         field `.target`: 8 bytes
+print-type-size         field `.handler`: 8 bytes
+print-type-size         field `.kind`: 1 bytes
+print-type-size     variant `ShadowRealm`: 48 bytes
+print-type-size         padding: 8 bytes
+print-type-size         field `.object`: 24 bytes, alignment: 8 bytes
+print-type-size         field `.caller_global`: 8 bytes
+print-type-size         field `.realm_global`: 8 bytes
+print-type-size     variant `FinalizationRegistry`: 48 bytes
+print-type-size         padding: 8 bytes
+print-type-size         field `.entries`: 8 bytes, alignment: 8 bytes
+print-type-size         field `.object`: 24 bytes
+print-type-size         field `.callback`: 8 bytes
+print-type-size     variant `String`: 48 bytes
+print-type-size         padding: 8 bytes
+print-type-size         field `.0`: 40 bytes, alignment: 8 bytes
+print-type-size     variant `WasmGlobal`: 45 bytes
+print-type-size         padding: 8 bytes
+print-type-size         field `.declarations`: 16 bytes, alignment: 8 bytes
+print-type-size         field `.value`: 8 bytes
+print-type-size         field `.ty`: 12 bytes
+print-type-size         field `.mutable`: 1 bytes
+print-type-size     variant `WeakRef`: 44 bytes
+print-type-size         padding: 8 bytes
+print-type-size         field `.object`: 24 bytes, alignment: 8 bytes
+print-type-size         field `.target`: 12 bytes
+print-type-size     variant `Function`: 44 bytes
+print-type-size         padding: 8 bytes
+print-type-size         field `.object`: 8 bytes, alignment: 8 bytes
+print-type-size         field `.env`: 8 bytes
+print-type-size         field `.realm`: 8 bytes
+print-type-size         field `.kind`: 12 bytes
+print-type-size     variant `Array`: 40 bytes
+print-type-size         padding: 8 bytes
+print-type-size         field `.elements`: 8 bytes, alignment: 8 bytes
+print-type-size         field `.object`: 24 bytes
+print-type-size     variant `WasmException`: 40 bytes
+print-type-size         padding: 8 bytes
+print-type-size         field `.payload`: 24 bytes, alignment: 8 bytes
+print-type-size         field `.tag`: 8 bytes
+print-type-size     variant `TemporalInstant`: 40 bytes
+print-type-size         padding: 16 bytes
+print-type-size         field `.epoch_nanoseconds`: 16 bytes, alignment: 16 bytes
+print-type-size         field `.object`: 8 bytes
+print-type-size     variant `Object`: 32 bytes
+print-type-size         padding: 8 bytes
+print-type-size         field `.0`: 24 bytes, alignment: 8 bytes
+print-type-size     variant `WasmElements`: 32 bytes
+print-type-size         padding: 8 bytes
+print-type-size         field `.0`: 24 bytes, alignment: 8 bytes
+print-type-size     variant `BigInt`: 32 bytes
+print-type-size         padding: 8 bytes
+print-type-size         field `.0`: 24 bytes, alignment: 8 bytes
+print-type-size     variant `Symbol`: 32 bytes
+print-type-size         padding: 8 bytes
+print-type-size         field `.0`: 24 bytes, alignment: 8 bytes
+print-type-size     variant `Error`: 32 bytes
+print-type-size         padding: 8 bytes
+print-type-size         field `.0`: 24 bytes, alignment: 8 bytes
+print-type-size     variant `WasmTag`: 28 bytes
+print-type-size         padding: 8 bytes
+print-type-size         field `.declarations`: 16 bytes, alignment: 8 bytes
+print-type-size         field `.ty`: 4 bytes
+print-type-size     variant `WasmV128`: 24 bytes
+print-type-size         padding: 8 bytes
+print-type-size         field `.0`: 16 bytes, alignment: 1 bytes
+print-type-size     variant `Date`: 24 bytes
+print-type-size         padding: 8 bytes
+print-type-size         field `.object`: 8 bytes, alignment: 8 bytes
+print-type-size         field `.milliseconds`: 8 bytes
+print-type-size     variant `WasmHostFunction`: 20 bytes
+print-type-size         padding: 8 bytes
+print-type-size         field `.signature`: 8 bytes, alignment: 8 bytes
+print-type-size         field `.id`: 4 bytes
+print-type-size     variant `BindingReference`: 19 bytes
+print-type-size         padding: 8 bytes
+print-type-size         field `.environment`: 8 bytes, alignment: 8 bytes
+print-type-size         field `.slot`: 2 bytes
+print-type-size         field `.kind`: 1 bytes
+print-type-size     variant `PromiseResolvingState`: 17 bytes
+print-type-size         padding: 8 bytes
+print-type-size         field `.promise`: 8 bytes, alignment: 8 bytes
+print-type-size         field `.already_resolved`: 1 bytes
+print-type-size     variant `ArrayFromAsyncState`: 16 bytes
+print-type-size         padding: 8 bytes
+print-type-size         field `.0`: 8 bytes, alignment: 8 bytes
+print-type-size     variant `WasmBits64`: 16 bytes
+print-type-size         padding: 8 bytes
+print-type-size         field `.0`: 8 bytes, alignment: 8 bytes
+print-type-size     variant `WasmExtern`: 16 bytes
+print-type-size         padding: 8 bytes
+print-type-size         field `.0`: 8 bytes, alignment: 8 bytes
+Final Box<[Value]> layout:
+print-type-size type: `heap::Slot`: 96 bytes, alignment: 16 bytes
+print-type-size     field `.cell`: 96 bytes
+print-type-size type: `heap::cell::Cell`: 96 bytes, alignment: 16 bytes
+print-type-size     variant `RegExp`: 96 bytes
+print-type-size         field `.legacy_constructor`: 16 bytes
+print-type-size         field `.source`: 40 bytes
+print-type-size         field `.flags`: 24 bytes
+print-type-size         field `.object`: 8 bytes
+print-type-size         field `.matcher`: 8 bytes
+print-type-size     variant `TemporalDuration`: 96 bytes
+print-type-size         padding: 8 bytes
+print-type-size         field `.object`: 8 bytes, alignment: 8 bytes
+print-type-size         field `.fields`: 80 bytes
+print-type-size     variant `Environment`: 93 bytes
+print-type-size         padding: 8 bytes
+print-type-size         field `.dynamic_bindings`: 24 bytes, alignment: 8 bytes
+print-type-size         field `.program`: 8 bytes
+print-type-size         field `.binding_site_pc`: 8 bytes
+print-type-size         field `.slots`: 16 bytes
+print-type-size         field `.with_objects`: 16 bytes
+print-type-size         field `.parent`: 8 bytes
+print-type-size         field `.function`: 4 bytes
+print-type-size         field `.root_eval_scope`: 1 bytes
+print-type-size     variant `WeakMap`: 88 bytes
+print-type-size         padding: 8 bytes
+print-type-size         field `.entries`: 56 bytes, alignment: 8 bytes
+print-type-size         field `.object`: 24 bytes
+print-type-size     variant `TemporalZonedDateTime`: 88 bytes
+print-type-size         padding: 16 bytes
+print-type-size         field `.epoch_nanoseconds`: 16 bytes, alignment: 16 bytes
+print-type-size         field `.time_zone`: 24 bytes
+print-type-size         field `.calendar`: 24 bytes
+print-type-size         field `.object`: 8 bytes
+print-type-size     variant `Iterator`: 84 bytes
+print-type-size         padding: 8 bytes
+print-type-size         field `.next_method`: 16 bytes, alignment: 8 bytes
+print-type-size         field `.object`: 24 bytes
+print-type-size         field `.source`: 8 bytes
+print-type-size         field `.helper`: 8 bytes
+print-type-size         field `.index`: 8 bytes
+print-type-size         field `.generator`: 8 bytes
+print-type-size         field `.helper_running`: 1 bytes
+print-type-size         field `.helper_started`: 1 bytes
+print-type-size         field `.done`: 1 bytes
+print-type-size         field `.kind`: 1 bytes
+print-type-size     variant `TemporalPlainDateTime`: 76 bytes
+print-type-size         padding: 8 bytes
+print-type-size         field `.calendar`: 24 bytes, alignment: 8 bytes
+print-type-size         field `.object`: 8 bytes
+print-type-size         field `.time`: 24 bytes
+print-type-size         field `.date`: 12 bytes
+print-type-size     variant `WasmTable`: 69 bytes
+print-type-size         padding: 8 bytes
+print-type-size         field `.maximum`: 16 bytes, alignment: 8 bytes
+print-type-size         field `.elements`: 24 bytes
+print-type-size         field `.declarations`: 16 bytes
+print-type-size         field `.element_type`: 4 bytes
+print-type-size         field `.table64`: 1 bytes
+print-type-size     variant `WasmGc`: 68 bytes
+print-type-size         padding: 8 bytes
+print-type-size         field `.descriptor`: 16 bytes, alignment: 8 bytes
+print-type-size         field `.fields`: 24 bytes
+print-type-size         field `.declarations`: 16 bytes
+print-type-size         field `.ty`: 4 bytes
+print-type-size     variant `TypedArray`: 58 bytes
+print-type-size         padding: 8 bytes
+print-type-size         field `.object`: 24 bytes, alignment: 8 bytes
+print-type-size         field `.buffer`: 8 bytes
+print-type-size         field `.offset`: 8 bytes
+print-type-size         field `.length`: 8 bytes
+print-type-size         field `.kind`: 1 bytes
+print-type-size         field `.length_tracking`: 1 bytes
+print-type-size     variant `DataView`: 57 bytes
+print-type-size         padding: 8 bytes
+print-type-size         field `.object`: 24 bytes, alignment: 8 bytes
+print-type-size         field `.buffer`: 8 bytes
+print-type-size         field `.offset`: 8 bytes
+print-type-size         field `.length`: 8 bytes
+print-type-size         field `.length_tracking`: 1 bytes
+print-type-size     variant `Map`: 56 bytes
+print-type-size         padding: 8 bytes
+print-type-size         field `.entries`: 24 bytes, alignment: 8 bytes
+print-type-size         field `.object`: 24 bytes
+print-type-size     variant `Set`: 56 bytes
+print-type-size         padding: 8 bytes
+print-type-size         field `.entries`: 24 bytes, alignment: 8 bytes
+print-type-size         field `.object`: 24 bytes
+print-type-size     variant `WeakSet`: 56 bytes
+print-type-size         padding: 8 bytes
+print-type-size         field `.entries`: 24 bytes, alignment: 8 bytes
+print-type-size         field `.object`: 24 bytes
+print-type-size     variant `WasmMemory`: 56 bytes
+print-type-size         padding: 8 bytes
+print-type-size         field `.ty`: 40 bytes, alignment: 8 bytes
+print-type-size         field `.bytes`: 8 bytes
+print-type-size     variant `ArrayBuffer`: 52 bytes
+print-type-size         padding: 8 bytes
+print-type-size         field `.object`: 24 bytes, alignment: 8 bytes
+print-type-size         field `.max_byte_length`: 8 bytes
+print-type-size         field `.bytes`: 8 bytes
+print-type-size         field `.shared`: 1 bytes
+print-type-size         field `.detached`: 1 bytes
+print-type-size         field `.resizable`: 1 bytes
+print-type-size         field `.immutable`: 1 bytes
+print-type-size     variant `TemporalPlainDate`: 52 bytes
+print-type-size         padding: 8 bytes
+print-type-size         field `.calendar`: 24 bytes, alignment: 8 bytes
+print-type-size         field `.object`: 8 bytes
+print-type-size         field `.year`: 4 bytes
+print-type-size         field `.month`: 4 bytes
+print-type-size         field `.day`: 4 bytes
+print-type-size     variant `TemporalPlainMonthDay`: 52 bytes
+print-type-size         padding: 8 bytes
+print-type-size         field `.calendar`: 24 bytes, alignment: 8 bytes
+print-type-size         field `.object`: 8 bytes
+print-type-size         field `.month`: 4 bytes
+print-type-size         field `.day`: 4 bytes
+print-type-size         field `.reference_iso_year`: 4 bytes
+print-type-size     variant `TemporalPlainYearMonth`: 52 bytes
+print-type-size         padding: 8 bytes
+print-type-size         field `.calendar`: 24 bytes, alignment: 8 bytes
+print-type-size         field `.object`: 8 bytes
+print-type-size         field `.year`: 4 bytes
+print-type-size         field `.month`: 4 bytes
+print-type-size         field `.reference_iso_day`: 4 bytes
+print-type-size     variant `Proxy`: 49 bytes
+print-type-size         padding: 8 bytes
+print-type-size         field `.object`: 24 bytes, alignment: 8 bytes
+print-type-size         field `.target`: 8 bytes
+print-type-size         field `.handler`: 8 bytes
+print-type-size         field `.kind`: 1 bytes
+print-type-size     variant `ShadowRealm`: 48 bytes
+print-type-size         padding: 8 bytes
+print-type-size         field `.object`: 24 bytes, alignment: 8 bytes
+print-type-size         field `.caller_global`: 8 bytes
+print-type-size         field `.realm_global`: 8 bytes
+print-type-size     variant `FinalizationRegistry`: 48 bytes
+print-type-size         padding: 8 bytes
+print-type-size         field `.entries`: 8 bytes, alignment: 8 bytes
+print-type-size         field `.object`: 24 bytes
+print-type-size         field `.callback`: 8 bytes
+print-type-size     variant `String`: 48 bytes
+print-type-size         padding: 8 bytes
+print-type-size         field `.0`: 40 bytes, alignment: 8 bytes
+print-type-size     variant `WasmGlobal`: 45 bytes
+print-type-size         padding: 8 bytes
+print-type-size         field `.declarations`: 16 bytes, alignment: 8 bytes
+print-type-size         field `.value`: 8 bytes
+print-type-size         field `.ty`: 12 bytes
+print-type-size         field `.mutable`: 1 bytes
+print-type-size     variant `WeakRef`: 44 bytes
+print-type-size         padding: 8 bytes
+print-type-size         field `.object`: 24 bytes, alignment: 8 bytes
+print-type-size         field `.target`: 12 bytes
+print-type-size     variant `Function`: 44 bytes
+print-type-size         padding: 8 bytes
+print-type-size         field `.object`: 8 bytes, alignment: 8 bytes
+print-type-size         field `.env`: 8 bytes
+print-type-size         field `.realm`: 8 bytes
+print-type-size         field `.kind`: 12 bytes
+print-type-size     variant `Array`: 40 bytes
+print-type-size         padding: 8 bytes
+print-type-size         field `.elements`: 8 bytes, alignment: 8 bytes
+print-type-size         field `.object`: 24 bytes
+print-type-size     variant `WasmException`: 40 bytes
+print-type-size         padding: 8 bytes
+print-type-size         field `.payload`: 24 bytes, alignment: 8 bytes
+print-type-size         field `.tag`: 8 bytes
+print-type-size     variant `TemporalInstant`: 40 bytes
+print-type-size         padding: 16 bytes
+print-type-size         field `.epoch_nanoseconds`: 16 bytes, alignment: 16 bytes
+print-type-size         field `.object`: 8 bytes
+print-type-size     variant `Object`: 32 bytes
+print-type-size         padding: 8 bytes
+print-type-size         field `.0`: 24 bytes, alignment: 8 bytes
+print-type-size     variant `WasmElements`: 32 bytes
+print-type-size         padding: 8 bytes
+print-type-size         field `.0`: 24 bytes, alignment: 8 bytes
+print-type-size     variant `BigInt`: 32 bytes
+print-type-size         padding: 8 bytes
+print-type-size         field `.0`: 24 bytes, alignment: 8 bytes
+print-type-size     variant `Symbol`: 32 bytes
+print-type-size         padding: 8 bytes
+print-type-size         field `.0`: 24 bytes, alignment: 8 bytes
+print-type-size     variant `Error`: 32 bytes
+print-type-size         padding: 8 bytes
+print-type-size         field `.0`: 24 bytes, alignment: 8 bytes
+print-type-size     variant `WasmTag`: 28 bytes
+print-type-size         padding: 8 bytes
+print-type-size         field `.declarations`: 16 bytes, alignment: 8 bytes
+print-type-size         field `.ty`: 4 bytes
+print-type-size     variant `WasmV128`: 24 bytes
+print-type-size         padding: 8 bytes
+print-type-size         field `.0`: 16 bytes, alignment: 1 bytes
+print-type-size     variant `Date`: 24 bytes
+print-type-size         padding: 8 bytes
+print-type-size         field `.object`: 8 bytes, alignment: 8 bytes
+print-type-size         field `.milliseconds`: 8 bytes
+print-type-size     variant `WasmHostFunction`: 20 bytes
+print-type-size         padding: 8 bytes
+print-type-size         field `.signature`: 8 bytes, alignment: 8 bytes
+print-type-size         field `.id`: 4 bytes
+print-type-size     variant `BindingReference`: 19 bytes
+print-type-size         padding: 8 bytes
+print-type-size         field `.environment`: 8 bytes, alignment: 8 bytes
+print-type-size         field `.slot`: 2 bytes
+print-type-size         field `.kind`: 1 bytes
+print-type-size     variant `PromiseResolvingState`: 17 bytes
+print-type-size         padding: 8 bytes
+print-type-size         field `.promise`: 8 bytes, alignment: 8 bytes
+print-type-size         field `.already_resolved`: 1 bytes
+print-type-size     variant `ArrayFromAsyncState`: 16 bytes
+print-type-size         padding: 8 bytes
+print-type-size         field `.0`: 8 bytes, alignment: 8 bytes
+print-type-size     variant `WasmBits64`: 16 bytes
+print-type-size         padding: 8 bytes
+print-type-size         field `.0`: 8 bytes, alignment: 8 bytes
+print-type-size     variant `WasmExtern`: 16 bytes
+print-type-size         padding: 8 bytes
+print-type-size         field `.0`: 8 bytes, alignment: 8 bytes

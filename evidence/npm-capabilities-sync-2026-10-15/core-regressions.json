@@ -1,0 +1,122 @@
+{
+  "before_source": "9cfb428b8f794b281febc4d002474f7245bb850f",
+  "before_sha256": "12730708b74f914e2640e1583f6e12c9f1ae78dd6d60386d0a7241421674f7b6",
+  "after_source": "eb484f8699ad65be3f4c02683b6ef61f7eb942ff",
+  "after_sha256": "ce3fede325f9c8af78035bd9fe7e466c6f733316713100c202afea9d1fc36583",
+  "changes": [
+    {
+      "package": "jiti",
+      "before": {
+        "package": {
+          "name": "jiti",
+          "version": "2.7.0",
+          "types_only": false,
+          "installation": null
+        },
+        "verdict": "behavior-pass",
+        "node": {
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "worker": null,
+          "stdout": "npm-behavior-ok:jiti\n",
+          "stderr": ""
+        },
+        "quench": {
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "worker": null,
+          "stdout": "npm-behavior-ok:jiti\n",
+          "stderr": ""
+        },
+        "node_function_checks": null,
+        "quench_function_checks": null
+      },
+      "after": {
+        "package": {
+          "name": "jiti",
+          "version": "2.7.0",
+          "types_only": false,
+          "installation": null
+        },
+        "verdict": "quench-failed",
+        "node": {
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "worker": null,
+          "stdout": "npm-behavior-ok:jiti\n",
+          "stderr": ""
+        },
+        "quench": {
+          "exit_code": 1,
+          "signal": null,
+          "timed_out": false,
+          "worker": null,
+          "stdout": "",
+          "stderr": "Error: undefined: [BABEL] cannot define property  \n /tmp/.tmpDtzojM/input.ts:0:0\n\nNode.js v22.0.0\n"
+        },
+        "node_function_checks": null,
+        "quench_function_checks": null
+      }
+    },
+    {
+      "package": "@typescript-eslint/project-service",
+      "before": {
+        "package": {
+          "name": "@typescript-eslint/project-service",
+          "version": "8.71.2",
+          "types_only": false,
+          "installation": null
+        },
+        "verdict": "behavior-pass",
+        "node": {
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "worker": null,
+          "stdout": "npm-behavior-ok:@typescript-eslint/project-service\n",
+          "stderr": ""
+        },
+        "quench": {
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "worker": null,
+          "stdout": "npm-behavior-ok:@typescript-eslint/project-service\n",
+          "stderr": ""
+        },
+        "node_function_checks": null,
+        "quench_function_checks": null
+      },
+      "after": {
+        "package": {
+          "name": "@typescript-eslint/project-service",
+          "version": "8.71.2",
+          "types_only": false,
+          "installation": null
+        },
+        "verdict": "quench-failed",
+        "node": {
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "worker": null,
+          "stdout": "npm-behavior-ok:@typescript-eslint/project-service\n",
+          "stderr": ""
+        },
+        "quench": {
+          "exit_code": 1,
+          "signal": null,
+          "timed_out": false,
+          "worker": null,
+          "stdout": "",
+          "stderr": "TypeError: value is not callable\n    at /workspace/quench/tests/npm-top300/node_modules/typescript/lib/typescript.js:8684:3\n    at /workspace/quench/tests/npm-top300/node_modules/typescript/lib/typescript.js:16:14\n    at /workspace/quench/tests/npm-top300/node_modules/typescript/lib/tsserverlibrary.js:17:22\n    at createProjectService (/workspace/quench/tests/npm-top300/node_modules/@typescript-eslint/project-service/dist/createProjectService.js:48:22)\n    at exercise (/workspace/quench/tests/npm-top300/scenario.mjs:619:66)\n    at /workspace/quench/tests/npm-top300/scenario.mjs:646:7\n\nNode.js v22.0.0\n"
+        },
+        "node_function_checks": null,
+        "quench_function_checks": null
+      }
+    }
+  ]
+}

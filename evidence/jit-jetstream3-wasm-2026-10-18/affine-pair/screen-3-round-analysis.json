@@ -1,0 +1,385 @@
+{
+  "schema": 1,
+  "report_kind": "jit_wasm_affine_pair_ab_diagnostic",
+  "created_unix_ns": 1792365051493277959,
+  "input_report_path": "evidence/jit-jetstream3-wasm-2026-10-18/affine-pair/screen-3-round.json",
+  "input_report_sha256": "0a8e005019769383cf8b7f0b9d40ebeed53ba78f4544492b36854766b0d887b7",
+  "suite": "jet-stream3",
+  "jit_mode": "jit",
+  "quench_bench_binary": {
+    "path": "/workspace/quench/target/production/quench-bench",
+    "size_bytes": 1613440,
+    "modified_unix_ns": 1792365042552759813,
+    "sha256": "42b3ff870d11a05503ed8ad1aace780876e7dc6b0eec569e62f2f57b35f6f5bd"
+  },
+  "source_revision": "6e10e0a83d52dd630868df090c7f27ebd6d164e5",
+  "source_dirty": true,
+  "corpus_revision": "06785cf861ac44855f168cbbe829278c2802e6de",
+  "timeout_ms": 600000,
+  "host": {
+    "uname": "Linux f3da3ef8e0e6 6.18.55 #1 SMP Wed Oct 14 19:45:18 UTC 2026 x86_64 GNU/Linux",
+    "rustc": "rustc 1.99.1 (58cf8f9c3 2026-10-13)\nbinary: rustc\ncommit-hash: 58cf8f9c35b355199727627d07ae34a4e2846d67\ncommit-date: 2026-10-13\nhost: x86_64-unknown-linux-gnu\nrelease: 1.99.1\nLLVM version: 23.1.1",
+    "model": null,
+    "memory_bytes": 18882674688,
+    "memory_limit_bytes": 17179869184,
+    "cpu_quota": "400000 100000",
+    "process_metrics_backend": "Linux wait4 rusage"
+  },
+  "engine_provenance": [
+    {
+      "name": "quench_affine_pair_off",
+      "executable": "/workspace/quench/target/production/quench-node",
+      "executable_sha256": "4bd99dcd04b5aeb800604b0784847e3661c685ece764240df5974ad6e51bdee2",
+      "version": "Quench shared-VM JIT build; package 0.1.0",
+      "argv": [
+        "--jit"
+      ],
+      "environment": {
+        "HOME": "/home/agent",
+        "LANG": "C.UTF-8",
+        "LC_ALL": "C.UTF-8",
+        "PATH": "/home/agent/.cargo/bin:/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/override:/opt/codex/runtimes/codex-primary-runtime/dependencies/python/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin:/opt/codex/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/fallback",
+        "QUENCH_WASM_JIT_AFFINE_PAIR": "0"
+      },
+      "inherits_environment": false,
+      "jit_mode": "enabled-by-cli-flag",
+      "jit_proof_command": [
+        "/workspace/quench/target/production/quench-node",
+        "--jit"
+      ],
+      "jit_proof": "the measured Quench process is launched with --jit; diagnostic affine-pair A/B arm with QUENCH_WASM_JIT_AFFINE_PAIR=0"
+    },
+    {
+      "name": "quench_affine_pair_on",
+      "executable": "/workspace/quench/target/production/quench-node",
+      "executable_sha256": "4bd99dcd04b5aeb800604b0784847e3661c685ece764240df5974ad6e51bdee2",
+      "version": "Quench shared-VM JIT build; package 0.1.0",
+      "argv": [
+        "--jit"
+      ],
+      "environment": {
+        "HOME": "/home/agent",
+        "LANG": "C.UTF-8",
+        "LC_ALL": "C.UTF-8",
+        "PATH": "/home/agent/.cargo/bin:/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/override:/opt/codex/runtimes/codex-primary-runtime/dependencies/python/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin:/opt/codex/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/fallback",
+        "QUENCH_WASM_JIT_AFFINE_PAIR": "1"
+      },
+      "inherits_environment": false,
+      "jit_mode": "enabled-by-cli-flag",
+      "jit_proof_command": [
+        "/workspace/quench/target/production/quench-node",
+        "--jit"
+      ],
+      "jit_proof": "the measured Quench process is launched with --jit; diagnostic affine-pair A/B arm with QUENCH_WASM_JIT_AFFINE_PAIR=1"
+    },
+    {
+      "name": "bun",
+      "executable": "/workspace/.local/bench-runtimes/bun-v1.4.3/bun-linux-x64/bun",
+      "executable_sha256": "7ce7d6b654eddeec20afddf2396317fba6dc19ab52788a27e894e1806bf8f24b",
+      "version": "1.4.3",
+      "argv": [],
+      "environment": {
+        "BUN_JSC_useJIT": "1",
+        "HOME": "/home/agent",
+        "LANG": "C.UTF-8",
+        "LC_ALL": "C.UTF-8",
+        "PATH": "/home/agent/.cargo/bin:/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/override:/opt/codex/runtimes/codex-primary-runtime/dependencies/python/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin:/opt/codex/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/fallback"
+      },
+      "inherits_environment": false,
+      "jit_mode": "enabled-and-probed",
+      "jit_proof_command": [
+        "BUN_JSC_useJIT=1",
+        "BUN_JSC_dumpOptions=1",
+        "/workspace/.local/bench-runtimes/bun-v1.4.3/bun-linux-x64/bun",
+        "-e",
+        "console.log(Bun.version)"
+      ],
+      "jit_proof": "command succeeded and reported \"useJIT=true\": 1.4.3\n\nModified JSC options:\n   dumpOptions=1 (default: 0)\n   useJIT=true (default: true)"
+    },
+    {
+      "name": "node",
+      "executable": "/workspace/.local/bench-runtimes/node-v26.12.0-linux-x64/bin/node",
+      "executable_sha256": "caa24debe02770c92a70677e2a62ca98890150e7ac1c17bcfe31bcc98cc89943",
+      "version": "v26.12.0",
+      "argv": [],
+      "environment": {
+        "HOME": "/home/agent",
+        "LANG": "C.UTF-8",
+        "LC_ALL": "C.UTF-8",
+        "PATH": "/home/agent/.cargo/bin:/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/override:/opt/codex/runtimes/codex-primary-runtime/dependencies/python/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin:/opt/codex/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/fallback"
+      },
+      "inherits_environment": false,
+      "jit_mode": "enabled-and-probed",
+      "jit_proof_command": [
+        "/workspace/.local/bench-runtimes/node-v26.12.0-linux-x64/bin/node",
+        "--trace-opt",
+        "--no-concurrent-recompilation",
+        "-e",
+        "function hot(x) { return x + 1; } for (let i = 0; i < 100000; i++) hot(i);"
+      ],
+      "jit_proof": "command succeeded and reported \"completed compiling\": [marking 0x1fbcca9b7a31 <JSFunction hot (sfi = 0x1fbcca9b4211)> for optimization to MAGLEV, ConcurrencyMode::kConcurrent, reason: hot and stable]\n[compiling method 0x1fbcca9b7a31 <JSFunction hot (sfi = 0x1fbcca9b4211)> (target MAGLEV), mode: ConcurrencyMode::kSynchronous]\n[completed compiling 0x1fbcca9b7a31 <JSFunction hot (sfi = 0x1fbcca9b4211)> (target MAGLEV) - took 0.000, 0.089, 0.002 ms]\n[marking 0x1fbcca9b79c1 <JSFunction (sfi = 0x1fbcca9b4169)> for optimization to MAGLEV, ConcurrencyMode::kConcurrent, reason: hot and stable]\n[marking 0x1fbcca9b7a31 <JSFunction hot (sfi = 0x1fbcca9b4211)> for optimization to TURBOFAN_JS, ConcurrencyMode::kConcurrent, reason: hot and stable]\n[compiling method 0x1fbcca9b7a31 <JSFunction hot (sfi = 0x1fbcca9b4211)> (target TURBOFAN_JS), mode: ConcurrencyMode::kSynchronous]\n[completed compiling 0x1fbcca9b7a31 <JSFunction hot (sfi = 0x1fbcca9b4211)> (target TURBOFAN_JS) - took 0.003, 0.365, 0.007 ms]\n[compiling method 0x1fbcca9b79c1 <JSFunction (sfi = 0x1fbcca9b4169)> (target MAGLEV) OSR, mode: ConcurrencyMode::kSynchronous]\n[completed compiling 0x1fbcca9b79c1 <JSFunction (sfi = 0x1fbcca9b4169)> (target MAGLEV) OSR - took 0.001, 0.112, 0.002 ms]"
+    }
+  ],
+  "rounds_per_fixture": 3,
+  "analysis_runtime": "quench-bench Rust analyzer; rustc 1.99.1 (58cf8f9c3 2026-10-13)\nbinary: rustc\ncommit-hash: 58cf8f9c35b355199727627d07ae34a4e2846d67\ncommit-date: 2026-10-13\nhost: x86_64-unknown-linux-gnu\nrelease: 1.99.1\nLLVM version: 23.1.1",
+  "suite_inputs": [
+    {
+      "path": "quench-bench/jetstream/cli.js",
+      "size_bytes": 5600,
+      "modified_unix_ns": 1792229119091972874,
+      "sha256": "22ee4b987b07940dd7397ed7f88345c71acc415e2549b64bf45ba43f7572e5f0"
+    },
+    {
+      "path": "quench-bench/jetstream/JetStreamDriver.js",
+      "size_bytes": 110633,
+      "modified_unix_ns": 1792229118593919588,
+      "sha256": "f105bddfd402514b2325fe9ea6e1df5ce776a4ad4570a8006c7c8559159440fc"
+    },
+    {
+      "path": "quench-bench/jetstream/utils/params.js",
+      "size_bytes": 8047,
+      "modified_unix_ns": 1792229119770704165,
+      "sha256": "0e9d28c0fd2de5583c64678ffc61307b10d983bcb419fe2e3bb383c8b7ded647"
+    },
+    {
+      "path": "quench-bench/jetstream/utils/shell-config.js",
+      "size_bytes": 2352,
+      "modified_unix_ns": 1792229119770904880,
+      "sha256": "9a83000be5e6526a3c26a414fc3a23043e57ef8e4cd67aaff459066a2c347bca"
+    }
+  ],
+  "bootstrap": {
+    "name": "paired percentile bootstrap of median log-ratios, reported as ratios",
+    "interval_level": 0.95,
+    "replicates": 100000,
+    "base_seed": "0x51a7beefcafe2c31",
+    "resampling": "resample matching round indices jointly for candidate and reference",
+    "statistic": "exp(median(log(candidate / reference)))",
+    "interval": "exponentiated linear-interpolated log-ratio percentiles"
+  },
+  "fixtures": {
+    "gcc-loops-wasm": {
+      "input_sha256": "22e54dd411e29379a6ba08d84e54b890d620f7c1f2ba9b37ff108c4fe3c98c48",
+      "paired_rounds": 3,
+      "raw_rounds": [
+        {
+          "round": 0,
+          "execution_order": [
+            "quench_affine_pair_off",
+            "quench_affine_pair_on",
+            "bun",
+            "node"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 1199551905,
+              "score": 183.92,
+              "peak_rss_bytes": 58908672
+            },
+            "node": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 1232847959,
+              "score": 180.36,
+              "peak_rss_bytes": 96481280
+            },
+            "quench_affine_pair_off": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2414264987,
+              "score": 56.39,
+              "peak_rss_bytes": 50503680
+            },
+            "quench_affine_pair_on": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 3116242283,
+              "score": 54.86,
+              "peak_rss_bytes": 50110464
+            }
+          }
+        },
+        {
+          "round": 1,
+          "execution_order": [
+            "quench_affine_pair_on",
+            "bun",
+            "node",
+            "quench_affine_pair_off"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 1162255609,
+              "score": 184.91,
+              "peak_rss_bytes": 58859520
+            },
+            "node": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 1158633826,
+              "score": 184.31,
+              "peak_rss_bytes": 96743424
+            },
+            "quench_affine_pair_off": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2313312758,
+              "score": 59.48,
+              "peak_rss_bytes": 50483200
+            },
+            "quench_affine_pair_on": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 3236905854,
+              "score": 51.28,
+              "peak_rss_bytes": 50233344
+            }
+          }
+        },
+        {
+          "round": 2,
+          "execution_order": [
+            "bun",
+            "node",
+            "quench_affine_pair_off",
+            "quench_affine_pair_on"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 1120806979,
+              "score": 196.53,
+              "peak_rss_bytes": 57401344
+            },
+            "node": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 1204261930,
+              "score": 178.73,
+              "peak_rss_bytes": 96415744
+            },
+            "quench_affine_pair_off": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2397764097,
+              "score": 57.44,
+              "peak_rss_bytes": 50479104
+            },
+            "quench_affine_pair_on": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 3132578128,
+              "score": 53.24,
+              "peak_rss_bytes": 50307072
+            }
+          }
+        }
+      ],
+      "engine_medians": {
+        "bun": {
+          "score": 184.91,
+          "max_rss_bytes": 58859520.0
+        },
+        "node": {
+          "score": 180.36,
+          "max_rss_bytes": 96481280.0
+        },
+        "quench_affine_pair_off": {
+          "score": 57.44,
+          "max_rss_bytes": 50483200.0
+        },
+        "quench_affine_pair_on": {
+          "score": 53.24,
+          "max_rss_bytes": 50233344.0
+        }
+      },
+      "comparisons": {
+        "quench_affine_pair_on_vs_bun": {
+          "candidate_engine": "quench_affine_pair_on",
+          "reference_engine": "bun",
+          "score": {
+            "candidate_median": 53.24,
+            "reference_median": 184.91,
+            "median_ratio": 0.2773241036179763,
+            "paired_ratio_interval_95": [
+              0.27090011703047884,
+              0.2982818616789909
+            ],
+            "interval_excludes_tie": true,
+            "seed": "0x69dca3beb4d27079"
+          },
+          "max_rss": {
+            "candidate_median": 50233344.0,
+            "reference_median": 58859520.0,
+            "median_ratio": 0.8534446764091858,
+            "paired_ratio_interval_95": [
+              0.8506466416353775,
+              0.8764093049807336
+            ],
+            "interval_excludes_tie": true,
+            "seed": "0xd0cf796aadac1792"
+          }
+        },
+        "quench_affine_pair_on_vs_node": {
+          "candidate_engine": "quench_affine_pair_on",
+          "reference_engine": "node",
+          "score": {
+            "candidate_median": 53.24,
+            "reference_median": 180.36,
+            "median_ratio": 0.29787948301907907,
+            "paired_ratio_interval_95": [
+              0.27822690033096414,
+              0.3041694388999778
+            ],
+            "interval_excludes_tie": true,
+            "seed": "0x38cbcab5d5938d48"
+          },
+          "max_rss": {
+            "candidate_median": 50233344.0,
+            "reference_median": 96481280.0,
+            "median_ratio": 0.519380174060709,
+            "paired_ratio_interval_95": [
+              0.5192429823447224,
+              0.5217723777560644
+            ],
+            "interval_excludes_tie": true,
+            "seed": "0xf091d769037220c7"
+          }
+        },
+        "quench_affine_pair_on_vs_quench_affine_pair_off": {
+          "candidate_engine": "quench_affine_pair_on",
+          "reference_engine": "quench_affine_pair_off",
+          "score": {
+            "candidate_median": 53.24,
+            "reference_median": 57.44,
+            "median_ratio": 0.9268802228412257,
+            "paired_ratio_interval_95": [
+              0.8621385339609954,
+              0.9728675297038482
+            ],
+            "interval_excludes_tie": true,
+            "seed": "0xaa26b7252c743c9b"
+          },
+          "max_rss": {
+            "candidate_median": 50233344.0,
+            "reference_median": 50483200.0,
+            "median_ratio": 0.9950507099391481,
+            "paired_ratio_interval_95": [
+              0.9922141119221412,
+              0.9965920155793574
+            ],
+            "interval_excludes_tie": true,
+            "seed": "0xe601c2fe368b5f94"
+          }
+        }
+      },
+      "qualified": false
+    }
+  },
+  "qualified": false
+}

@@ -1,0 +1,75 @@
+{
+  "schema": 1,
+  "task": "61",
+  "date": "2026-10-09",
+  "experiment": "Optimized run_frame_general_until disassembly across the no-TLS StackGuard candidate",
+  "finding": "The control-path machine code changes across the candidate build. Alignment alone cannot explain its retired-instruction movement, but this comparison does not establish global inlining as the sole cause.",
+  "decision": "diagnostic-recorded-no-code-change",
+  "host": {
+    "cpu": "Apple M4",
+    "os": "macOS 26.5 ARM64",
+    "kernel": "Darwin 25.5",
+    "memory_bytes": 17179869184,
+    "resource_limits": "No container memory or CPU quota reported",
+    "toolchain": "rustc 1.99.0 (b940084d7 2026-09-28), LLVM 23.1.2"
+  },
+  "build": {
+    "command": "CARGO_TARGET_DIR=target/candidate-{a,b} CARGO_INCREMENTAL=0 CARGO_PROFILE_PRODUCTION_DEBUG=true CARGO_PROFILE_PRODUCTION_STRIP=none cargo build --locked --offline --profile production -p quench-node --bin quench-node",
+    "effective_rustc_flags": [
+      "-C opt-level=3",
+      "-C panic=abort",
+      "-C lto=thin",
+      "-C codegen-units=1",
+      "-C debuginfo=2",
+      "-C split-debuginfo=unpacked"
+    ],
+    "profile_policy_note": "Cargo.toml declares release LTO as fat and production inherits release. /Users/admin/.cargo/config.toml overrides profile.release lto to thin; the verbose candidate rustc command confirms the effective thin-LTO flag. Both compared builds used thin LTO, so their comparison is matched, but it does not test the declared fat-LTO policy.",
+    "baseline_source_revision": "974d31f0949eaa196718be026eb2a6c6c84d2482",
+    "candidate_source_base_revision": "974d31f0949eaa196718be026eb2a6c6c84d2482",
+    "candidate_patch_sha256": "8cde7afd90e7518c6570a7fad051f45a1febe6bdeeb4404779928d63899e829b",
+    "baseline_binary": "target/pinned/341207b2f06f9176be6f22bc678d9088ae1e7636899bb3c32ec6e1c7c5a17ca4/quench-node",
+    "baseline_binary_sha256": "341207b2f06f9176be6f22bc678d9088ae1e7636899bb3c32ec6e1c7c5a17ca4",
+    "candidate_binary": "target/pinned/a0a27a41624b0c52986bf0e0214bc710a2a377157b443c4105528a0cc13c6d83/quench-node",
+    "candidate_binary_sha256": "a0a27a41624b0c52986bf0e0214bc710a2a377157b443c4105528a0cc13c6d83"
+  },
+  "assembly": {
+    "tool": "otool -tV; source attribution checked with atos -inlineFrames",
+    "symbol": "run_frame_general_until0B1c_",
+    "static_instruction_count": {
+      "baseline": 10171,
+      "candidate": 9708,
+      "counting_rule": "Count disassembly lines in the extracted symbol body that begin with a 16-digit address and instruction mnemonic."
+    },
+    "direct_bl_count": {
+      "baseline": 618,
+      "candidate": 594
+    },
+    "stack_addressed_instruction_count": {
+      "baseline": 1299,
+      "candidate": 1156,
+      "counting_rule": "Among the counted instruction lines, count operands containing [sp or [x29."
+    },
+    "frame_allocation_bytes": {
+      "baseline": 1808,
+      "candidate": 1856
+    },
+    "incdec_observation": "The source-mapped Op::IncDec boolean-flag decode has 7 instructions in the baseline and 8 in the candidate; the candidate adds a nop on the loop's index++ path. In the checked_sub overflow path, the baseline emits b.vs while the candidate emits an unconditional b to a differently laid-out continuation.",
+    "local_opcode_observation": "The sampled LoadLocalPlain body has the same five load/address instructions plus its shared-result branch in both builds. The sampled StoreLocalPlain body has the same instruction count. Register assignments and addresses differ.",
+    "interpretation": "Compiled dispatch code changed, including a repeated IncDec path. The added nop cannot by itself account for the measured +1.2032% retired-instruction change; other changed hot paths remain unattributed. Differences in static call counts and stack traffic show whole-function codegen changes, but this disassembly alone does not identify a particular LLVM inlining decision as the root cause."
+  },
+  "measurement": {
+    "source": "tasks/evidence/task61-stackguard-vm-cached-no-tls-2026-10-09.json",
+    "control": "tasks/evidence/task61-dispatch-executing-program-local-store-10m-2026-10-08.cjs",
+    "control_median_delta_pct": {
+      "instructions_retired": 1.2032,
+      "cycles_elapsed": 5.4069,
+      "elapsed_seconds": 8.0
+    },
+    "interpretation": "The no-TLS StackGuard candidate was inconclusive because the unrelated control moved more than the target cycle delta. This disassembly independently confirms machine-code drift; it does not convert that candidate into a performance win."
+  },
+  "follow_up_policy": {
+    "inlining_annotations": "No broad inline/noinline annotations were added. Inspect and attribute additional changed hot paths before making a reviewed annotation list.",
+    "small_change_gate": "For candidates below roughly 3%, compare target and control movement in the same campaign and prefer fixture-level pairs; retired instructions are attribution, while cycles or elapsed time decide retention.",
+    "alignment": "Test alignment flags as a separate experiment after machine-code drift is understood."
+  }
+}

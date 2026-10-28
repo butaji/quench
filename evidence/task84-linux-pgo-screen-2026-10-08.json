@@ -1,0 +1,272 @@
+{
+  "schema": 1,
+  "task": "84 / 61",
+  "experiment": "Linux opt-level-2 corpus-PGO challenge",
+  "decision": "keep as an opt-in pre-gate candidate; do not change production policy or close Task 84/61",
+  "source": {
+    "revision": "ac8febd3729384a382a7947d4cddb4b8ed167d6a",
+    "dirty": false,
+    "build": "CARGO_PROFILE_PRODUCTION_OPT_LEVEL=2; RUSTFLAGS=-D warnings -C profile-use=target/stageb-pgo-opt2/training.profdata",
+    "profile": "target/stageb-pgo-opt2/training.profdata",
+    "profile_sha256": "f48784ae189c44306033b9b775b12ff3e335434bf4a4bf65cb9e87c0b7042b2d",
+    "training_raw_count": 100,
+    "training_raw_bytes": 409739264,
+    "training_raw_manifest_sha256": "d7c4087488712cefe185c95cf1aaf3b784d0395d848fd21533d8c36b05daec7a",
+    "training_corpus": "quench-bench/micros/001.js through 100.js, disjoint from V8-v7 scored fixtures",
+    "training_outputs_node_equal": true,
+    "node_version": "v24.19.0",
+    "instrumented_binary_sha256": "bd0ca7d63b12e47f2e277dff2034f8e9fce898faca61db1e75c661b3622fd254",
+    "candidate_binary_sha256": "f1c29f9e6b4cf55ef82b0d53c3dab4e74636bfe14f1c1bbd46fa9ab7437d9860",
+    "generic_binary_sha256": "01e8a4b55912b3acb29222bd5ee090a2ac0b953f7013b1654cd7b3ca8fd89f49"
+  },
+  "host": {
+    "uname": "Linux 8d342269933b 6.18.44 #1 SMP Sat Sep 26 20:02:31 UTC 2026 x86_64 GNU/Linux",
+    "rustc": "rustc 1.99.0 (b940084d7 2026-09-28)\nbinary: rustc\ncommit-hash: b940084d7eb6a299eb4bfeb8e34901bc051e7ac4\ncommit-date: 2026-09-28\nhost: x86_64-unknown-linux-gnu\nrelease: 1.99.0\nLLVM version: 23.1.1",
+    "model": null,
+    "memory_bytes": 18882699264,
+    "memory_limit_bytes": 17179869184,
+    "cpu_quota": "400000 100000",
+    "process_metrics_backend": "Linux wait4 rusage"
+  },
+  "richards_paired": {
+    "pairs": 11,
+    "baseline_score_samples": [
+      106.0,
+      118.0,
+      109.0,
+      107.0,
+      114.0,
+      117.0,
+      106.0,
+      99.2,
+      99.4,
+      111.0,
+      101.0
+    ],
+    "candidate_score_samples": [
+      127.0,
+      133.0,
+      130.0,
+      140.0,
+      132.0,
+      133.0,
+      129.0,
+      125.0,
+      112.0,
+      128.0,
+      130.0
+    ],
+    "baseline_rss_bytes_samples": [
+      19034112,
+      19099648,
+      18968576,
+      18968576,
+      19095552,
+      19095552,
+      18968576,
+      19238912,
+      18935808,
+      18968576,
+      19095552
+    ],
+    "candidate_rss_bytes_samples": [
+      17772544,
+      17674240,
+      19329024,
+      19435520,
+      17727488,
+      17772544,
+      17764352,
+      17842176,
+      17674240,
+      17772544,
+      17674240
+    ],
+    "score_median_baseline": 107.0,
+    "score_median_candidate": 130.0,
+    "score_delta_percent": 21.495,
+    "score_delta_95_ci": [
+      16,
+      25.8
+    ],
+    "rss_median_baseline_bytes": 19034112,
+    "rss_median_candidate_bytes": 17772544,
+    "rss_delta_percent": -6.628,
+    "rss_delta_95_ci": [
+      -1396736,
+      -1196032
+    ],
+    "all_11_scores_improve": true,
+    "all_outputs_equal": true,
+    "progress_path": "target/production/stageb-pgo-richards-paired/progress.json",
+    "progress_sha256": "5dfa27daf0d721d58a53ee6cbe62f386f0c97e841b1fd5122cfaccd4539b0eb6",
+    "score_difference_of_medians": 23.0,
+    "paired_score_delta_median": 21.0,
+    "rss_difference_of_medians_bytes": -1261568,
+    "paired_rss_delta_median_bytes": -1261568
+  },
+  "all_eight_one_round_screen": {
+    "report_path": "target/production/stageb-pgo-all-eight-one-round.json",
+    "report_sha256": "b757c9d8eed0c4a0c93a7b157e363610f97a800653a7e39a145e9f984168fc7c",
+    "qualification_ready": false,
+    "all_fixtures_valid_and_output_equal": true,
+    "quench_score_rank_each_fixture": [
+      4,
+      4,
+      4,
+      4,
+      4,
+      4,
+      4,
+      4
+    ],
+    "rows": [
+      {
+        "fixture": "crypto.js",
+        "scores": {
+          "bun": 1828.0,
+          "node": 1447.0,
+          "quench": 85.5,
+          "quickjs": 1069.0
+        },
+        "max_rss_bytes": {
+          "bun": 25464832,
+          "node": 26329088,
+          "quench": 19517440,
+          "quickjs": 2334720
+        },
+        "score_rank_quench": 4,
+        "valid": true,
+        "output_equal": true
+      },
+      {
+        "fixture": "deltablue.js",
+        "scores": {
+          "bun": 1088.0,
+          "node": 1640.0,
+          "quench": 76.6,
+          "quickjs": 898.0
+        },
+        "max_rss_bytes": {
+          "bun": 26222592,
+          "node": 28426240,
+          "quench": 19308544,
+          "quickjs": 2588672
+        },
+        "score_rank_quench": 4,
+        "valid": true,
+        "output_equal": true
+      },
+      {
+        "fixture": "earley-boyer.js",
+        "scores": {
+          "bun": 5256.0,
+          "node": 7313.0,
+          "quench": 143.0,
+          "quickjs": 2379.0
+        },
+        "max_rss_bytes": {
+          "bun": 34156544,
+          "node": 161640448,
+          "quench": 56287232,
+          "quickjs": 16023552
+        },
+        "score_rank_quench": 4,
+        "valid": true,
+        "output_equal": true
+      },
+      {
+        "fixture": "navier-stokes.js",
+        "scores": {
+          "bun": 2868.0,
+          "node": 2016.0,
+          "quench": 28.4,
+          "quickjs": 2413.0
+        },
+        "max_rss_bytes": {
+          "bun": 17768448,
+          "node": 31047680,
+          "quench": 24305664,
+          "quickjs": 4235264
+        },
+        "score_rank_quench": 4,
+        "valid": true,
+        "output_equal": true
+      },
+      {
+        "fixture": "raytrace.js",
+        "scores": {
+          "bun": 2893.0,
+          "node": 4776.0,
+          "quench": 200.0,
+          "quickjs": 1981.0
+        },
+        "max_rss_bytes": {
+          "bun": 26324992,
+          "node": 33275904,
+          "quench": 21213184,
+          "quickjs": 2179072
+        },
+        "score_rank_quench": 4,
+        "valid": true,
+        "output_equal": true
+      },
+      {
+        "fixture": "regexp.js",
+        "scores": {
+          "bun": 848.0,
+          "node": 3188.0,
+          "quench": 19.9,
+          "quickjs": 519.0
+        },
+        "max_rss_bytes": {
+          "bun": 30535680,
+          "node": 36814848,
+          "quench": 41582592,
+          "quickjs": 5570560
+        },
+        "score_rank_quench": 4,
+        "valid": true,
+        "output_equal": true
+      },
+      {
+        "fixture": "richards.js",
+        "scores": {
+          "bun": 1573.0,
+          "node": 1882.0,
+          "quench": 119.0,
+          "quickjs": 1005.0
+        },
+        "max_rss_bytes": {
+          "bun": 17244160,
+          "node": 26329088,
+          "quench": 19476480,
+          "quickjs": 2088960
+        },
+        "score_rank_quench": 4,
+        "valid": true,
+        "output_equal": true
+      },
+      {
+        "fixture": "splay.js",
+        "scores": {
+          "bun": 5028.0,
+          "node": 7065.0,
+          "quench": 893.0,
+          "quickjs": 3300.0
+        },
+        "max_rss_bytes": {
+          "bun": 58413056,
+          "node": 503169024,
+          "quench": 254623744,
+          "quickjs": 149647360
+        },
+        "score_rank_quench": 4,
+        "valid": true,
+        "output_equal": true
+      }
+    ]
+  },
+  "macos_contrast": "The 2026-10-07 M4 instrumentation probe failed under both LTO and no-LTO and llvm-profdata rejected its raw files; Linux Rust 1.99.0/LLVM 23.1.1 emitted mergeable profiles. Keep host-specific results separate.",
+  "next_gate": "Repeat a clean 11-round all-eight four-engine campaign on required M4 and Linux using one committed production build policy; current one-round PGO all-eight report is diagnostic."
+}

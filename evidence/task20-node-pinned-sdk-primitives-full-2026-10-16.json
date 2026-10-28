@@ -1,0 +1,87 @@
+{
+  "scope": "Complete unchanged pinned parallel inventory after genuine SDK error/caller/protocol bindings and deferred promises glob policy",
+  "source_commit": "3218431de1e87a51b63fee8bd3091aa631eec046",
+  "release": "v27.0.0-nightly20260819c79868f102",
+  "fixture_commit": "55e4ca33f3a6dfe364bd9558b726576a6d1a2fba",
+  "counts": {
+    "timeout": 81,
+    "fail": 2144,
+    "pass": 1824,
+    "skip": 678
+  },
+  "total": 4727,
+  "inventory_hash": "1e51ca4121020d14",
+  "baseline": {
+    "counts": {
+      "timeout": 79,
+      "fail": 2150,
+      "pass": 1821,
+      "skip": 677
+    },
+    "total": 4727,
+    "inventory_hash": "1e51ca4121020d14"
+  },
+  "gained": [
+    "test-assert-first-line.js",
+    "test-assert.js",
+    "test-os-checked-function.js"
+  ],
+  "lost": [],
+  "skip_changes": {
+    "test-repl-highlight.js": {
+      "before": "fail",
+      "after": "skip"
+    }
+  },
+  "memory_events_delta": {
+    "low": 0,
+    "high": 0,
+    "max": 4183,
+    "oom": 0,
+    "oom_kill": 0,
+    "oom_group_kill": 0
+  },
+  "elapsed_seconds": 1543.126609766041,
+  "raw": [
+    {
+      "path": "work/full-sdk-primitives-pinned/results.json",
+      "bytes": 14083189,
+      "sha256": "3462a982da2ea314470144b644e373b8449efe5014f55ee843866023d51e5814"
+    },
+    {
+      "path": "work/full-sdk-primitives-pinned/runner.log",
+      "bytes": 391273,
+      "sha256": "df50e9a6024f4402e665b0ff881194a6ddee210262bcc1f57e98fe649275cfda"
+    },
+    {
+      "path": "work/full-sdk-primitives-pinned/receipt-before.json",
+      "bytes": 1115,
+      "sha256": "ab8cfd7883d09a16296f2e0492b7c6e1d681c3f609120271132fb33298224992"
+    },
+    {
+      "path": "work/full-sdk-primitives-pinned/receipt.json",
+      "bytes": 1758,
+      "sha256": "2428f5bdaec3e2f802d89853e578c138646cf5758e91796ffa8a67c7aed45af5"
+    },
+    {
+      "path": "work/full-sdk-primitives-pinned/summary.json",
+      "bytes": 150,
+      "sha256": "ce3bffd047e53e22e6605032d33f2d58192d37d4d15022db2a86e015cc6644b4"
+    },
+    {
+      "path": "work/full-sdk-primitives-pinned/comparison.json",
+      "bytes": 234,
+      "sha256": "79482fa3696918e05ff0d8ac3b9c1693950205991680d7f7863ccb6c69f31ea8"
+    },
+    {
+      "path": "work/full-sdk-primitives-pinned/skip-control.json",
+      "bytes": 1148,
+      "sha256": "b6d3c26f838fcd339f25ab766e2ff517e228b0dcd5e21b9a412f4a961585c3d7"
+    }
+  ],
+  "limitations": [
+    "Goal remains open; all nonpass outcomes retained. No selected-case sums, skips/deadline/budget changes or speed claim.",
+    "This frozen321 run includes SDK primitives but excludes subsequent function-info/atom-guard/owned-Script work.",
+    "Native compilation overlapped part of this run. Actual memory.events deltas are retained below; concurrent resource pressure is not subtracted from outcomes. All full outcomes retained, no speed claim or adjusted totals."
+  ]
+}

@@ -1,0 +1,316 @@
+diff --git a/crates/quench-runtime/src/heap.rs b/crates/quench-runtime/src/heap.rs
+index f7aacf650..fe6ede328 100644
+--- a/crates/quench-runtime/src/heap.rs
++++ b/crates/quench-runtime/src/heap.rs
+@@ -267,7 +267,7 @@ impl Heap {
+                 continue;
+             };
+             self.generations[index as usize] = generation;
+-            self.slots.get_mut(index as usize).unwrap().cell = Some(cell);
++            self.slots.ensure_mut(index as usize).cell = Some(cell);
+             #[cfg(feature = "profile-memory")]
+             self.profile_allocation(index as usize);
+             self.peak_live = self
+@@ -465,6 +465,7 @@ impl Heap {
+         #[cfg(feature = "profile-aggregate")]
+         let sweep_started = std::time::Instant::now();
+         let mut live = 0;
++        let mut empty_slabs = Vec::new();
+         let properties = &mut self.properties;
+         #[cfg(feature = "profile-aggregate")]
+         {
+@@ -473,10 +474,12 @@ impl Heap {
+         // Live arena owners, keyed for the offset-ordered compaction below.
+         let mut property_owners = Vec::new();
+         for (base, slab) in self.slots.slabs_mut() {
++            let mut slab_live = false;
+             for (offset, slot) in slab.iter_mut().enumerate() {
+                 let index = base + offset;
+                 if Self::marked(&self.marks, index) {
+                     live += 1;
++                    slab_live = true;
+                     if let Some(object) = slot.cell.as_ref().and_then(Cell::object)
+                         && properties.has_compact_range(object.properties)
+                     {
+@@ -498,15 +501,23 @@ impl Heap {
+                     if let Some(arrays) = &mut self.sparse_arrays {
+                         arrays.remove(&(index as u32));
+                     }
+-                    self.free.push(index as u32);
++                    if self.generations[index] == u32::MAX {
++                        self.retired_slots += 1;
++                    } else {
++                        self.free.push(index as u32);
++                    }
+                     #[cfg(feature = "profile-aggregate")]
+                     {
+                         self.gc_profile.freed += 1;
+                     }
+                 }
+             }
++            if !slab_live {
++                empty_slabs.push(base / slots::SLOTS_PER_SLAB);
++            }
+         }
+         self.compact_property_arena(property_owners);
++        self.slots.release_empty_slabs(&empty_slabs);
+         #[cfg(feature = "profile-aggregate")]
+         {
+             self.gc_profile.sweep_nanos += sweep_started.elapsed().as_nanos() as u64;
+diff --git a/crates/quench-runtime/src/heap/slots.rs b/crates/quench-runtime/src/heap/slots.rs
+index ec3c8b8cc..df5181cc7 100644
+--- a/crates/quench-runtime/src/heap/slots.rs
++++ b/crates/quench-runtime/src/heap/slots.rs
+@@ -1,11 +1,21 @@
+ use super::Slot;
+ 
+-const SLOTS_PER_SLAB: usize = 2_048;
++pub(super) const SLOTS_PER_SLAB: usize = 2_048;
+ 
+-#[derive(Default)]
+ pub(super) struct SlotArena {
+-    slabs: Vec<Box<[Slot]>>,
++    slabs: Vec<Option<Box<[Slot]>>>,
+     len: usize,
++    empty: Slot,
++}
++
++impl Default for SlotArena {
++    fn default() -> Self {
++        Self {
++            slabs: Vec::new(),
++            len: 0,
++            empty: Slot { cell: None },
++        }
++    }
+ }
+ 
+ impl SlotArena {
+@@ -13,73 +23,109 @@ impl SlotArena {
+         Self::default()
+     }
+ 
++    fn empty_slab() -> Box<[Slot]> {
++        let mut slab = Vec::with_capacity(SLOTS_PER_SLAB);
++        slab.resize_with(SLOTS_PER_SLAB, || Slot { cell: None });
++        slab.into_boxed_slice()
++    }
++
+     pub(super) fn push(&mut self, slot: Slot) {
+-        if self.len == self.capacity() {
+-            let mut slab = Vec::with_capacity(SLOTS_PER_SLAB);
+-            slab.resize_with(SLOTS_PER_SLAB, || Slot { cell: None });
+-            self.slabs.push(slab.into_boxed_slice());
+-        }
+         let index = self.len;
++        let slab_index = index / SLOTS_PER_SLAB;
++        if slab_index == self.slabs.len() {
++            self.slabs.push(Some(Self::empty_slab()));
++        } else if self.slabs[slab_index].is_none() {
++            self.slabs[slab_index] = Some(Self::empty_slab());
++        }
+         self.len += 1;
+-        *self.get_mut(index).unwrap() = slot;
++        self.slabs[slab_index].as_mut().unwrap()[index % SLOTS_PER_SLAB] = slot;
+     }
+ 
+     pub(super) fn get_mut(&mut self, index: usize) -> Option<&mut Slot> {
+-        (index < self.len).then(|| &mut self.slabs[index / SLOTS_PER_SLAB][index % SLOTS_PER_SLAB])
++        if index >= self.len {
++            return None;
++        }
++        let slab_index = index / SLOTS_PER_SLAB;
++        if self.slabs[slab_index].is_none() {
++            return Some(&mut self.empty);
++        }
++        Some(&mut self.slabs[slab_index].as_deref_mut().unwrap()[index % SLOTS_PER_SLAB])
+     }
+ 
+-    #[cfg(feature = "profile-memory")]
++    /// Materialize a returned slab when a free flat slot in it is reused.
++    pub(super) fn ensure_mut(&mut self, index: usize) -> &mut Slot {
++        assert!(index < self.len);
++        let slab_index = index / SLOTS_PER_SLAB;
++        if self.slabs[slab_index].is_none() {
++            self.slabs[slab_index] = Some(Self::empty_slab());
++        }
++        &mut self.slabs[slab_index].as_deref_mut().unwrap()[index % SLOTS_PER_SLAB]
++    }
++
++    #[cfg(any(test, feature = "profile-memory"))]
+     pub(super) fn get(&self, index: usize) -> Option<&Slot> {
+-        (index < self.len).then(|| &self.slabs[index / SLOTS_PER_SLAB][index % SLOTS_PER_SLAB])
++        (index < self.len).then(|| {
++            // SAFETY: the length check proves the flat index is in range.
++            unsafe { self.get_unchecked(index) }
++        })
+     }
+ 
+     pub(super) unsafe fn get_unchecked(&self, index: usize) -> &Slot {
+         debug_assert!(index < self.len);
+-        // SAFETY: the caller proves the flat index is live; every slab has the
+-        // fixed size used by this decomposition.
+-        unsafe {
+-            self.slabs
+-                .get_unchecked(index / SLOTS_PER_SLAB)
+-                .get_unchecked(index % SLOTS_PER_SLAB)
++        match &self.slabs[index / SLOTS_PER_SLAB] {
++            Some(slab) => &slab[index % SLOTS_PER_SLAB],
++            None => &self.empty,
+         }
+     }
+ 
+     pub(super) unsafe fn get_unchecked_mut(&mut self, index: usize) -> &mut Slot {
+         debug_assert!(index < self.len);
+-        // SAFETY: same flat-index invariant as `get_unchecked`, with unique
+-        // access inherited from `&mut self`.
+-        unsafe {
+-            self.slabs
+-                .get_unchecked_mut(index / SLOTS_PER_SLAB)
+-                .get_unchecked_mut(index % SLOTS_PER_SLAB)
++        match &mut self.slabs[index / SLOTS_PER_SLAB] {
++            Some(slab) => &mut slab[index % SLOTS_PER_SLAB],
++            None => &mut self.empty,
+         }
+     }
+ 
+     #[cfg(any(test, feature = "profile-memory"))]
+     pub(super) fn iter(&self) -> impl Iterator<Item = &Slot> {
+-        self.slabs
+-            .iter()
+-            .flat_map(|slab| slab.iter())
+-            .take(self.len)
++        (0..self.len).map(|index| self.get(index).unwrap())
+     }
+ 
+     pub(super) fn iter_mut(&mut self) -> impl Iterator<Item = &mut Slot> {
++        self.slabs_mut().flat_map(|(_, slab)| slab.iter_mut())
++    }
++
++    /// Allocated slabs with their flat base indices, skipping slabs returned
++    /// after a full collection proved every cell in them empty.
++    pub(super) fn slabs_mut(&mut self) -> impl Iterator<Item = (usize, &mut [Slot])> {
+         let len = self.len;
+         self.slabs
+             .iter_mut()
+-            .flat_map(|slab| slab.iter_mut())
+-            .take(len)
++            .enumerate()
++            .filter_map(move |(slab_index, slab)| {
++                let base = slab_index * SLOTS_PER_SLAB;
++                if base >= len {
++                    return None;
++                }
++                let occupied = (len - base).min(SLOTS_PER_SLAB);
++                slab.as_deref_mut()
++                    .map(|slots| (base, &mut slots[..occupied]))
++            })
+     }
+ 
+-    /// Occupied slots grouped by slab, each with the flat index of its first
+-    /// slot, so whole-heap passes run a plain loop per slab.
+-    pub(super) fn slabs_mut(&mut self) -> impl Iterator<Item = (usize, &mut [Slot])> {
+-        let len = self.len;
+-        self.slabs.iter_mut().enumerate().map(move |(slab, slots)| {
+-            let base = slab * SLOTS_PER_SLAB;
+-            let occupied = (len - base).min(SLOTS_PER_SLAB);
+-            (base, &mut slots[..occupied])
+-        })
++    /// Release complete slabs after mark-sweep has proved they contain no live
++    /// cells. Flat indices and generation counters remain stable.
++    pub(super) fn release_empty_slabs(&mut self, empty_slabs: &[usize]) {
++        for slab_index in empty_slabs.iter().copied() {
++            let Some(slab) = self.slabs.get_mut(slab_index) else {
++                continue;
++            };
++            debug_assert!(
++                slab.as_ref()
++                    .is_some_and(|slots| slots.iter().all(|slot| slot.cell.is_none()))
++            );
++            *slab = None;
++        }
+     }
+ 
+     pub(super) fn clear(&mut self) {
+@@ -91,7 +137,13 @@ impl SlotArena {
+         self.len
+     }
+ 
++    /// Number of slot records in slabs currently backed by memory.
++    #[cfg(any(test, feature = "profile-memory"))]
+     pub(super) fn capacity(&self) -> usize {
+-        self.slabs.len() * SLOTS_PER_SLAB
++        self.slabs
++            .iter()
++            .filter_map(Option::as_deref)
++            .map(|slots| slots.len())
++            .sum()
+     }
+ }
+diff --git a/crates/quench-runtime/src/heap/tests.rs b/crates/quench-runtime/src/heap/tests.rs
+index 03496fb35..ebc19ffba 100644
+--- a/crates/quench-runtime/src/heap/tests.rs
++++ b/crates/quench-runtime/src/heap/tests.rs
+@@ -242,6 +242,62 @@ fn stale_weak_handles_cannot_resolve_reused_slots() {
+     assert_eq!(heap.weak_value(current), Some(replacement));
+ }
+ 
++#[test]
++fn full_collection_releases_empty_slabs_and_preserves_generations() {
++    let mut heap = Heap::new();
++    let live = heap.alloc(Cell::String("live".into()));
++    let stale_value = (1..super::slots::SLOTS_PER_SLAB * 2)
++        .map(|_| heap.alloc(Cell::String("dead".into())))
++        .last()
++        .unwrap();
++    let stale = heap.weak_handle(stale_value).unwrap();
++
++    heap.collect([live]);
++
++    assert_eq!(heap.slots.len(), super::slots::SLOTS_PER_SLAB * 2);
++    assert_eq!(heap.slots.capacity(), super::slots::SLOTS_PER_SLAB);
++    assert!(heap.weak_value(stale).is_none());
++
++    let replacement = std::iter::from_fn(|| Some(heap.alloc(Cell::String("new".into()))))
++        .find(|value| value.heap_index() == Some(stale.slot))
++        .unwrap();
++    let replacement_handle = heap.weak_handle(replacement).unwrap();
++    assert_ne!(replacement_handle.generation, stale.generation);
++    assert_eq!(heap.slots.capacity(), super::slots::SLOTS_PER_SLAB * 2);
++    assert!(heap.weak_value(stale).is_none());
++    assert_eq!(heap.weak_value(replacement_handle), Some(replacement));
++}
++
++#[test]
++fn released_exhausted_generations_retire_on_slot_reuse() {
++    let mut heap = Heap::new();
++    let live = heap.alloc(Cell::String("live".into()));
++    let exhausted_value = (1..super::slots::SLOTS_PER_SLAB * 2)
++        .map(|_| heap.alloc(Cell::String("dead".into())))
++        .last()
++        .unwrap();
++    let exhausted_slot = exhausted_value.heap_index().unwrap() as usize;
++    heap.generations[exhausted_slot] = u32::MAX;
++    let stale = heap.weak_handle(exhausted_value).unwrap();
++
++    heap.collect([live]);
++
++    assert_eq!(heap.slots.len(), super::slots::SLOTS_PER_SLAB * 2);
++    assert_eq!(heap.slots.capacity(), super::slots::SLOTS_PER_SLAB);
++    assert!(heap.weak_value(stale).is_none());
++
++    let replacement = std::iter::from_fn(|| Some(heap.alloc(Cell::String("new".into()))))
++        .find(|value| {
++            value
++                .heap_index()
++                .is_some_and(|slot| slot as usize > exhausted_slot)
++        })
++        .unwrap();
++    assert_eq!(heap.retired_slots, 1);
++    assert!(heap.weak_value(stale).is_none());
++    assert!(replacement.heap_index().unwrap() as usize > exhausted_slot);
++}
++
+ #[test]
+ fn sparse_array_metadata_is_removed_before_a_slot_is_reused() {
+     let mut heap = Heap::new();

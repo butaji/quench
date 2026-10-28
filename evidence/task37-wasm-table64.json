@@ -1,0 +1,174 @@
+{
+  "tasks": [
+    "19",
+    "23",
+    "37",
+    "40",
+    "48",
+    "86"
+  ],
+  "source_head": "7e60169df033dd247f34199e084e3e8080a92a29",
+  "source_state": "dirty worktree",
+  "source_hashes": {
+    "crates/quench-runtime-next/src/wasm.rs": "1b757d44e3052e621c418af3318200c71e0421a9634a426686455db93c61c819",
+    "crates/quench-runtime-next/src/wasm/table.rs": "704b2db2ecefa2c1a4bd97c80dc4f5cbf582e30e63f5de502620e7268570f23d",
+    "crates/quench-runtime-next/src/heap/cell.rs": "002541bc8f627bc40a9ffdde8ac82740f393722910b55b0c7b5f013e83445102",
+    "crates/quench-runtime-next/src/vm/wasm.rs": "b4a841a5ad9b5ea45080b69dddc3ee75c9ec1263567a8c324b7cb81b803e9a9f",
+    "crates/quench-runtime-next/src/vm/wasm_table.rs": "18d5da9ad9815aec38a645bd52202ccda7e25ea210b05152b72e191817000f27",
+    "crates/quench-runtime-next/src/vm/dispatch.rs": "e7d9928566935b35620a5ef5575a48c353e7367010457a646ba813fa2de6fbe7",
+    "crates/quench-wasm/src/shared.rs": "ee8cffb203f8e73e0555e8fa91eaf7bf782317350f14e08c2940f7321b846f7d",
+    "crates/quench-wasm/src/shared_wast.rs": "e1c0e32fee252c3ee6ec5c5c9a48e21cdc16fa79d823d7cf602518c29121ad95"
+  },
+  "suite_head": "67c8b9dc32c47d61c05a1681df349d01c85fa8ff",
+  "suite_clean": true,
+  "host": "macOS-26.5-arm64-arm-64bit",
+  "rustc": "rustc 1.99.0 (b940084d7 2026-09-28) (Homebrew)",
+  "profile": "debug",
+  "residual_format": 52,
+  "obligation": "Execute unshared abstract func/extern Table64 through the existing shared heap, scalar ABI and table operators without truncating unsigned I64 indices or losing imported resource width/identity.",
+  "representation": "The existing table cell owns the declared table64 bit; operand and size types project from that resource. Index values decode through the shared scalar ABI to unsigned u64, then checked host indices/ranges. Table init retains I32 segment input/length and the destination width; mixed table copy uses each source/destination width and the smaller length width. Growth projects its old-size/failure result through the actual index type and preserves state on representability, bounds or allocation failure. Active element offsets validate and evaluate against the destination table index type. Imported table matching checks the original width together with reference type, current minimum and original maximum. Standard spectest table64 is an ordinary resource export. No new opcodes, identity map, forwarding body or second executor.",
+  "scope": "Previous 129-file host/import/reference/instantiation ratchet plus every top-level pinned Wast source declaring/importing an i64 table: 135 files. Identical frozen-baseline/current directive IDs, input hashes and 60-second completed worker deadlines. No full suite, Test262, Node compat or benchmark campaign; production JavaScript and Node paths are unchanged.",
+  "inventory": {
+    "path": "target/iteration/task37-wasm-table64-files.json",
+    "sha256": "34e0295a928e7be39b0d1f67f7d06ab274cd882464f4e2e1bcbfbc7a2f594fee"
+  },
+  "qualification": {
+    "files": 135,
+    "total": 31097,
+    "before_passed": 28893,
+    "passed": 29235,
+    "failed": 1862,
+    "gains": 342,
+    "regressions": 0,
+    "gains_by_file": {
+      "crates/quench-wasm-test/testsuite/call_indirect64.wast": 2,
+      "crates/quench-wasm-test/testsuite/memory64-imports.wast": 28,
+      "crates/quench-wasm-test/testsuite/table64.wast": 11,
+      "crates/quench-wasm-test/testsuite/table_copy64.wast": 44,
+      "crates/quench-wasm-test/testsuite/table_copy_mixed.wast": 1,
+      "crates/quench-wasm-test/testsuite/table_fill64.wast": 71,
+      "crates/quench-wasm-test/testsuite/table_get64.wast": 11,
+      "crates/quench-wasm-test/testsuite/table_grow64.wast": 22,
+      "crates/quench-wasm-test/testsuite/table_init64.wast": 96,
+      "crates/quench-wasm-test/testsuite/table_set64.wast": 19,
+      "crates/quench-wasm-test/testsuite/table_size64.wast": 37
+    },
+    "exact_directive_ids": true,
+    "identical_input_hashes": true,
+    "complete_workers": true
+  },
+  "controls": {
+    "files": 14,
+    "total": 742,
+    "passed": 742,
+    "failed": 0,
+    "new_table64_directives": 30,
+    "same_runner": true,
+    "obligations": "Unsigned indices above 2**32 and -1 cannot alias low slots; indirect out-of-bounds classification; grow overflow/maximum failure leaves size intact; end and large zero-length bounds; active/passive/drop lifecycle; overlap and mixed-width copy; imported original width and size; 32/64 mismatch; standard table64 provider."
+  },
+  "checks": {
+    "wasm_internal": 35,
+    "heap_related": 21,
+    "frontend": 39,
+    "profile_feature_all_target_check": "passed",
+    "internal_obligations": "Extended the existing serialized element/capture ownership unit to Table64/I64 addressing and active offsets. Residual reattachment preserves width, foreign captures, root transfer, GC and invalid canonical-type rejection. Table32 ownership remains covered by existing units. No added conformance unit."
+  },
+  "oracle": {
+    "path": "target/iteration/task37-wasm-table64-oracle.json",
+    "source": "target/iteration/task37-wasm-table64-oracle.cjs",
+    "sha256": "e4ade1e9bb476337568dfcf42f7b1656b68acfb3f70bcfc92484aacc328a2a67",
+    "source_sha256": "c3b4e777194b592ae5e0d0b1210a4efd034aa10c79ba8712725167a0ace5ad81",
+    "result": {
+      "node": "v26.10.0",
+      "flags": [
+        "--no-sparkplug",
+        "--no-maglev",
+        "--no-turbofan",
+        "--wasm-jitless"
+      ],
+      "modules": 2,
+      "checks": 17,
+      "qualification": "Same modules/operations as focused shared-Wast controls: Table64 unsigned indices, size/grow/failure state, zero-length bounds, init/drop, overlap and mixed-width copy, indirect calls and imported original-width size."
+    },
+    "qualification_limit": "Two exact modules extracted from shared-Wast controls execute the same operations through local Node with JITs disabled; 17 explicit value/trap checks. Does not qualify JS WebAssembly API installation, typed/GC reference tables or embedding reentry.",
+    "module_inputs": {
+      "target/iteration/task37-wasm-table64-oracle-0.wasm": "8d4173f1c650dd935a4e7841b40e525696029898066473a7e18d8dcde7700ffe",
+      "target/iteration/task37-wasm-table64-oracle-0.wat": "ecfbfbf3b4da0783e9edde2ee594ee845307705701cf479015439da81c6b9191",
+      "target/iteration/task37-wasm-table64-oracle-1.wasm": "6420d634f6aac8cc08521ed91ff9f002eecc16c0b86f9b383a7371b7dda3e261",
+      "target/iteration/task37-wasm-table64-oracle-1.wat": "f35244e1d202583d994dd56e974dc4099aade3ce1f18306291935baecd210e0e"
+    }
+  },
+  "specification": {
+    "table_copy": "https://webassembly.github.io/spec/core/valid/instructions.html#valid-table-copy",
+    "table_init": "https://webassembly.github.io/spec/core/valid/instructions.html#valid-table-init",
+    "execution": "https://webassembly.github.io/spec/core/exec/instructions.html"
+  },
+  "reports": {
+    "before": {
+      "path": "target/iteration/task37-wasm-table64-before.json",
+      "sha256": "91017c0d75a7eaf7b33ff949c9f7a72e474d7cb94220a4f4aa186c0528de2cac",
+      "binary_sha256": "9f11c91c1fb7f1f76e710855d358a8844f6322c737e6cb054ad0c2415c03889d",
+      "command_source": "provenance.command in this report"
+    },
+    "after": {
+      "path": "target/iteration/task37-wasm-table64-after.json",
+      "sha256": "d8c0f1b487970f61459f8ab0cdb9ac0dee257d599ce3dd7ae7eb740626f96d05",
+      "binary_sha256": "a580195ad39256546247f4797f5fca2e205139077da924d606d66ad6cf11551a",
+      "command_source": "provenance.command in this report"
+    },
+    "controls": {
+      "path": "target/iteration/task37-wasm-table64-controls.json",
+      "sha256": "08807023e8416637645a99ef2dbb45e702b5ac7d853fee146ded7e9a65937de6",
+      "binary_sha256": "a580195ad39256546247f4797f5fca2e205139077da924d606d66ad6cf11551a",
+      "command_source": "provenance.command in this report"
+    }
+  },
+  "frozen_runner": {
+    "path": "target/iteration/task37-wasm-table64-runner",
+    "sha256": "a580195ad39256546247f4797f5fca2e205139077da924d606d66ad6cf11551a"
+  },
+  "logs": {
+    "runtime": {
+      "path": "target/iteration/task37-wasm-table64-runtime.log",
+      "sha256": "09719c9797d96013eeed1b485f5e67ef4a3cad868e0c48697924173dae5728f8"
+    },
+    "frontend": {
+      "path": "target/iteration/task37-wasm-table64-frontend.log",
+      "sha256": "046dfa2e50a36a57fda4629bdc58de51d17fed446db6848e9f68cbd6faaf09bc"
+    },
+    "heap": {
+      "path": "target/iteration/task37-wasm-table64-heap.log",
+      "sha256": "30be8c1567d89afd4b7795fb251ee8f9c77558805e51d99478b5bcbbc97db384"
+    },
+    "build": {
+      "path": "target/iteration/task37-wasm-table64-build.log",
+      "sha256": "4067a372cf3e542f452d403a92403f0ca70205b66faf0c9ca5167912492cba5d"
+    },
+    "check": {
+      "path": "target/iteration/task37-wasm-table64-check.log",
+      "sha256": "80e145390b406e38fed2630f3754d742c8efa2036e2b1143950f9db1da7a07c3"
+    },
+    "compare": {
+      "path": "target/iteration/task37-wasm-table64-compare.log",
+      "sha256": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+    },
+    "after": {
+      "path": "target/iteration/task37-wasm-table64-after.log",
+      "sha256": "a13e6d72dad92d96d6c23615a335f3b754b9ee77f1d3c73ca5eece3cb456a474"
+    },
+    "before": {
+      "path": "target/iteration/task37-wasm-table64-before.log",
+      "sha256": "06bee3f16161a14e07d683d4054985715149aef8d51b3a70953abba8304fe92b"
+    },
+    "controls": {
+      "path": "target/iteration/task37-wasm-table64-controls.log",
+      "sha256": "2d1e037bb89c3a5b091bf2639e24963c9e3017c20007dab9f67172c4c2e3be74"
+    },
+    "oracle": {
+      "path": "target/iteration/task37-wasm-table64-oracle.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  },
+  "remaining": "Concrete typed/GC/non-null references, shared tables, SIMD, remaining memory/proposal forms, JS/Wasm adapters and embedding reentry. Complete three-suite qualification, implemented Node inventory/migration, production cutover and cleanup remain open. Stage A stays open; Stage B has not started.",
+  "profile_limit": "Feature builds pass; profile execution attribution remains an independent task68 gap. No profile execution or performance claim."
+}

@@ -1,0 +1,12 @@
+{
+  "runtime_source_commit": "1238a8c8a8f53090b208b4c8a0d6062058558078",
+  "runtime_source_changed": false,
+  "harness_source_sha256": "8432feb93e90e2b5f84ecd090b12c1e4785a6da60b62d071a5c359da8507d1d8",
+  "quench_binary_sha256": "caf38f7b9b37fb3aea09d442a921dfb32ba1b17a02340613eabf812b41fdcc24",
+  "quench_profile": "iteration (diagnostic only)",
+  "node_release_index_url": "https://nodejs.org/dist/index.json",
+  "node_release_checksums_url": "https://nodejs.org/dist/v26.12.0/SHASUMS256.txt",
+  "full_node_parity": false,
+  "optimization_allowed": false,
+  "upstream": "f654bcd175165bce2e3c83b65eaecd8e34294ffd"
+}

@@ -1,0 +1,16 @@
+richards           [100] rss 4116 sc 1523  [dbl] rss 3936 sc 1529  [0] rss 3588 sc 1506
+richards     --jit [100] rss 4028 sc 1557  [dbl] rss 3960 sc 1546  [0] rss 3680 sc 1511
+deltablue          [100] rss 4180 sc 1290  [dbl] rss 4312 sc 1315  [0] rss 3840 sc 1297
+deltablue    --jit [100] rss 4284 sc 1217  [dbl] rss 4596 sc 1235  [0] rss 4044 sc 1175
+crypto             [100] rss 4508 sc 2754  [dbl] rss 4616 sc 2746  [0] rss 4356 sc 2718
+crypto       --jit [100] rss 4968 sc 5179  [dbl] rss 5020 sc 5431  [0] rss 4920 sc 5239
+raytrace           [100] rss 4504 sc 2493  [dbl] rss 4080 sc 2544  [0] rss 3824 sc 2482
+raytrace     --jit [100] rss 4068 sc 2535  [dbl] rss 4232 sc 2541  [0] rss 3968 sc 2467
+earley-boyer       [100] rss 7716 sc 3824  [dbl] rss 7796 sc 3826  [0] rss 7504 sc 3773
+earley-boyer --jit [100] rss 7736 sc 3785  [dbl] rss 7932 sc 3802  [0] rss 7612 sc 3833
+regexp             [100] rss 7532 sc 2899  [dbl] rss 7388 sc 2838  [0] rss 7172 sc 2851
+regexp       --jit [100] rss 7404 sc 2890  [dbl] rss 7624 sc 2868  [0] rss 7272 sc 2889
+splay              [100] rss 32204 sc 4193  [dbl] rss 32288 sc 4125  [0] rss 32200 sc 4062
+splay        --jit [100] rss 32272 sc 4071  [dbl] rss 32268 sc 4323  [0] rss 32280 sc 4102
+navier-stokes      [100] rss 5832 sc 2664  [dbl] rss 5444 sc 2822  [0] rss 5268 sc 2705
+navier-stokes--jit [100] rss 8664 sc 20100  [dbl] rss 8552 sc 21175  [0] rss 8676 sc 20862

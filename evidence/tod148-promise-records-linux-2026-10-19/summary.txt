@@ -1,0 +1,12 @@
+async-fs        x1.031 wins 4/5 RSS 22.1->21.8
+doxbee-async    x1.224 wins 5/5 RSS 64.9->58.8
+doxbee-promise  x1.142 wins 4/5 RSS 71.3->65.9
+crypto         x1.113 wins 2/3 RSS 5.0->4.9
+deltablue      x1.032 wins 2/3 RSS 4.4->4.3
+earley-boyer   x1.030 wins 2/3 RSS 10.3->10.2
+navier-stokes  x1.018 wins 3/3 RSS 5.3->5.2
+raytrace       x0.939 wins 1/3 RSS 4.5->4.4
+regexp         x0.960 wins 1/3 RSS 7.7->7.6
+richards       x0.898 wins 1/3 RSS 4.4->4.3
+splay          x1.000 wins 2/3 RSS 39.1->39.0
+v8 geomean 0.997

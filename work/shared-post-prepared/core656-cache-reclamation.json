@@ -1,0 +1,6 @@
+{
+  "path": "target/debug/deps/quench_runtime-faba0c2c63dca90b",
+  "bytes": 547475224,
+  "sha256": "82d314381148abf5593b3e2265f23e11831a555a3c0faf332290ebe778b0210e",
+  "reason": "Completed Core656 executable cache only; all PASS evidence published82512a439. Incoming language changes require a fresh link. Immutable prepared/full bundles untouched."
+}

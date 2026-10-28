@@ -1,0 +1,341 @@
+{
+  "schema": 1,
+  "benchmark": "V8-v7 Splay only",
+  "platform": "Apple M4 arm64 macOS",
+  "candidate_parent_revision": "761903894",
+  "change": "Replace each RecordSpace free-ID Vec with a cursor that derives reusable IDs from the occupied bitmap; preserve descending/LIFO reuse order.",
+  "parent_binary_sha256": "4d3ce990fbb675dfea95e81d65f644dffc217804287564ab079aa5f4753c08c4",
+  "candidate_binary_sha256": "b7484bbf994a6fd7eae2d3dcbc634edbe11bbf03e8b72f663e99b0e63d7015c2",
+  "runner_sha256": "bdc9d6c4afc537fe8ed30d4fccba9157cd4232e345ce75810465a0fff98db109",
+  "allocator_patch_sha256": "afe4cc04130ef409bc840fb8ee68e7cf4ce4954815f16e8f5e760adb8d06c690",
+  "build": {
+    "profile": "production",
+    "command": "cargo build --locked -v --profile production -p quench-node",
+    "RUSTFLAGS": "-C link-arg=-mmacosx-version-min=15.0 -D warnings -C llvm-args=-align-all-functions=6 --cap-lints allow",
+    "effective_rustc_flags": [
+      "-C opt-level=3",
+      "-C panic=abort",
+      "-C linker-plugin-lto",
+      "-C codegen-units=1",
+      "-C link-arg=-mmacosx-version-min=15.0",
+      "-D warnings",
+      "-C llvm-args=-align-all-functions=6",
+      "--cap-lints allow"
+    ],
+    "note": "Same flags for both; the manifest production profile specifies thin LTO. cap-lints allow was needed because the merged base has unrelated dead-code warnings under -D warnings. Temporary M4-only signal constants and non-Linux unused-argument fixes were also applied identically; no Splay code path uses them.",
+    "lto": "thin"
+  },
+  "workload": {
+    "iterations_per_benchmark": 300,
+    "rounds": 11,
+    "metric": "paired marginal work minus setup-only, divided by 300",
+    "bootstrap": "20,000 paired resamples; xorshift64 seed 0x61F17ED520261010 xor sample count"
+  },
+  "splay_aa": {
+    "sha256": "a3cfc66632727e8be7db484106e87299ebd426f96102bd34280de1d518b7f55f",
+    "valid": true,
+    "output_equal": true,
+    "rounds": 11,
+    "clean_rounds": 11,
+    "baseline_work_median_max_rss_bytes": 127254528,
+    "candidate_work_median_max_rss_bytes": 127205376,
+    "baseline_marginal_per_run": {
+      "median_wall_ns": 884830.6966666667,
+      "median_cycles": 3573496.59,
+      "median_instructions": 20237408.94333333,
+      "paired_samples": 11,
+      "clean_paired_samples": 11
+    },
+    "candidate_marginal_per_run": {
+      "median_wall_ns": 877982.9166666666,
+      "median_cycles": 3565444.8866666667,
+      "median_instructions": 20240946.12,
+      "paired_samples": 11,
+      "clean_paired_samples": 11
+    },
+    "paired": {
+      "wall_percent": {
+        "n": 11,
+        "median": -0.7739085031517323,
+        "bootstrap_95": [
+          -1.9567933109514213,
+          1.7997479546705275
+        ]
+      },
+      "cycles_percent": {
+        "n": 11,
+        "median": 0.16379817689442522,
+        "bootstrap_95": [
+          -0.8317120609039441,
+          0.7655675246108773
+        ]
+      },
+      "instructions_percent": {
+        "n": 11,
+        "median": 0.02933167875240894,
+        "bootstrap_95": [
+          -0.006502342036562858,
+          0.03791935375874189
+        ]
+      },
+      "rss_percent": {
+        "n": 11,
+        "median": -0.05148667782211014,
+        "bootstrap_95": [
+          -0.11578541103820505,
+          0.03867973182052342
+        ]
+      }
+    }
+  },
+  "splay_ab": {
+    "sha256": "8b647c9c2cb6592717f13974c5635cba443e5c837a11829f09d6338b91bff6a2",
+    "valid": true,
+    "output_equal": true,
+    "rounds": 11,
+    "clean_rounds": 10,
+    "baseline_work_median_max_rss_bytes": 127254528,
+    "candidate_work_median_max_rss_bytes": 117719040,
+    "baseline_marginal_per_run": {
+      "median_wall_ns": 875067.4966666667,
+      "median_cycles": 3564293.15,
+      "median_instructions": 20234447.78,
+      "paired_samples": 11,
+      "clean_paired_samples": 11
+    },
+    "candidate_marginal_per_run": {
+      "median_wall_ns": 884103.4733333334,
+      "median_cycles": 3580025.4766666666,
+      "median_instructions": 20235889.94333333,
+      "paired_samples": 11,
+      "clean_paired_samples": 10
+    },
+    "paired": {
+      "wall_percent": {
+        "n": 10,
+        "median": -0.6799092122602823,
+        "bootstrap_95": [
+          -1.211468482970962,
+          1.1793059818406615
+        ]
+      },
+      "cycles_percent": {
+        "n": 10,
+        "median": -0.01655221458228273,
+        "bootstrap_95": [
+          -1.0543294431593409,
+          0.9421175874851029
+        ]
+      },
+      "instructions_percent": {
+        "n": 10,
+        "median": 0.0029646363768454087,
+        "bootstrap_95": [
+          -0.012420103803856275,
+          0.022032085035883497
+        ]
+      },
+      "rss_percent": {
+        "n": 11,
+        "median": -7.504183292573041,
+        "bootstrap_95": [
+          -7.523834063385726,
+          -7.485184230868336
+        ]
+      }
+    }
+  },
+  "decision": "The earlier M4 fixed-work gate passed on base 761903894, but origin/v2-merged advanced to f76795545 and rebuilt M4 binaries have different hashes. Treat those measurements as stale; rerun the Splay and all-eight gates on the refreshed parent/candidate binaries before deciding. No official Score/RSS distances change.",
+  "all_eight_guard": {
+    "overall": "passed",
+    "all_fixtures_classified": true,
+    "minimum_clean_pairs": 11,
+    "same_binary_aa_sha256": "c1760c3dd7c6556cc91c45b88c8176254c7c7fcca410b926779697141aa77bf1",
+    "initial_ab_sha256": "75b3e5310d602c2c05146fee61264df12c2b492833d98e5feaa718f736f4c30c",
+    "top_up_report_sha256": "21dbfa5191fb6d2c41704910d964dc45e429222d37dd110667f0173d9520c723",
+    "decision_sha256": "8b0094df8d0dd653b6d2014c8c67ec292fd5396e831cd9cfd0bbe392e4231cf5",
+    "all_fixture_outputs_equal": true,
+    "splay_top_up_valid_rounds": 7,
+    "splay_top_up_clean_rounds": 7,
+    "fixtures": [
+      {
+        "fixture": "crypto.js",
+        "clean_pairs": 11,
+        "valid_pairs": 11,
+        "classification": "cycles",
+        "cycles_median_percent": 0.09558494093719894,
+        "cycles_interval_95_percent": [
+          -0.461661715720707,
+          0.2789253155371485
+        ],
+        "instructions_median_percent": -0.001996825521632939,
+        "rss_median_percent": -0.2607561929595881
+      },
+      {
+        "fixture": "deltablue.js",
+        "clean_pairs": 11,
+        "valid_pairs": 11,
+        "classification": "cycles",
+        "cycles_median_percent": 0.5342250746427801,
+        "cycles_interval_95_percent": [
+          -0.017051386549549186,
+          1.00031750316123
+        ],
+        "instructions_median_percent": 0.00838431608303214,
+        "rss_median_percent": -0.10148849797022574
+      },
+      {
+        "fixture": "earley-boyer.js",
+        "clean_pairs": 11,
+        "valid_pairs": 11,
+        "classification": "cycles",
+        "cycles_median_percent": 0.24695843991158206,
+        "cycles_interval_95_percent": [
+          -0.3350148563659783,
+          1.121226248513385
+        ],
+        "instructions_median_percent": 0.02093280579715806,
+        "rss_median_percent": -0.8892276422764245
+      },
+      {
+        "fixture": "navier-stokes.js",
+        "clean_pairs": 11,
+        "valid_pairs": 11,
+        "classification": "cycles",
+        "cycles_median_percent": 0.3902135567634746,
+        "cycles_interval_95_percent": [
+          -0.24715433549249433,
+          1.1157059032944838
+        ],
+        "instructions_median_percent": -0.0005463828035345841,
+        "rss_median_percent": 0.06682258603407654
+      },
+      {
+        "fixture": "raytrace.js",
+        "clean_pairs": 11,
+        "valid_pairs": 11,
+        "classification": "cycles",
+        "cycles_median_percent": -0.6714693662071114,
+        "cycles_interval_95_percent": [
+          -0.7876570003208294,
+          -0.5494278549275311
+        ],
+        "instructions_median_percent": 0.04924201341325318,
+        "rss_median_percent": -0.1332001332001287
+      },
+      {
+        "fixture": "regexp.js",
+        "clean_pairs": 11,
+        "valid_pairs": 11,
+        "classification": "cycles",
+        "cycles_median_percent": 1.8128338614759931,
+        "cycles_interval_95_percent": [
+          -0.7693313585490746,
+          3.410283613353249
+        ],
+        "instructions_median_percent": 0.0708279904065856,
+        "rss_median_percent": -0.19027484143763207
+      },
+      {
+        "fixture": "richards.js",
+        "clean_pairs": 11,
+        "valid_pairs": 11,
+        "classification": "cycles",
+        "cycles_median_percent": -0.3689148998416769,
+        "cycles_interval_95_percent": [
+          -0.5288921756432696,
+          0.9800790855385877
+        ],
+        "instructions_median_percent": 0.011911093851035837,
+        "rss_median_percent": 0.06927606511950568
+      },
+      {
+        "fixture": "splay.js",
+        "clean_pairs": 17,
+        "valid_pairs": 18,
+        "classification": "cycles",
+        "cycles_median_percent": -0.6927401480777862,
+        "cycles_interval_95_percent": [
+          -1.5705250121433756,
+          -0.47293837522462967
+        ],
+        "instructions_median_percent": 0.0023984733239890144,
+        "rss_median_percent": -7.4822928337886
+      }
+    ]
+  },
+  "stock_attempts": [
+    {
+      "file": "splay-stock-contended-11.json",
+      "sha256": "33163819eac158b9f1b36a9a7a440c6bf64ca538a9e5b1f9a7a18443c45b1c0b",
+      "rounds_valid": 11,
+      "output_equal": true,
+      "qualification_ready": false,
+      "accepted_for_distance": false,
+      "reason": "Deno/Node/Bun CPU bursts were visible in rounds 4\u201310.",
+      "diagnostic_medians_excluded": {
+        "bun": {
+          "median_score": 9934.0,
+          "median_max_rss_bytes": 64126976,
+          "valid_samples": 11
+        },
+        "node": {
+          "median_score": 14872.0,
+          "median_max_rss_bytes": 406339584,
+          "valid_samples": 11
+        },
+        "quench": {
+          "median_score": 9213.0,
+          "median_max_rss_bytes": 117915648,
+          "valid_samples": 11
+        },
+        "quickjs": {
+          "median_score": 8638.0,
+          "median_max_rss_bytes": 151044096,
+          "valid_samples": 11
+        }
+      }
+    },
+    {
+      "file": "splay-stock-contended-clean-corpus-11.json",
+      "sha256": "0e4bbbfaf66fd2b93b93d9849f2fcf6afe38b935a33dc8829594e69d7025eaa8",
+      "rounds_valid": 11,
+      "output_equal": true,
+      "qualification_ready": false,
+      "accepted_for_distance": false,
+      "reason": "Deno was visible from round 0 and remained active through round 10; this report used the clean pinned corpus.",
+      "diagnostic_medians_excluded": {
+        "bun": {
+          "median_score": 7774.0,
+          "median_max_rss_bytes": 66093056,
+          "valid_samples": 11
+        },
+        "node": {
+          "median_score": 9940.0,
+          "median_max_rss_bytes": 404979712,
+          "valid_samples": 11
+        },
+        "quench": {
+          "median_score": 8105.0,
+          "median_max_rss_bytes": 119668736,
+          "valid_samples": 11
+        },
+        "quickjs": {
+          "median_score": 7579.0,
+          "median_max_rss_bytes": 151060480,
+          "valid_samples": 11
+        }
+      }
+    }
+  ],
+  "base_refresh": {
+    "previous_base_revision": "7619038947a90589d573290471dad31750fe1542",
+    "current_base_revision": "f76795545b4f2f8cc7cf423da49e758215525b9f",
+    "intervening_changes": "x86-64 Wasm lowering and link-order changes; no JavaScript runtime source changes",
+    "refreshed_parent_binary_sha256": "c6e60e98592418ca595b1bb15aff2005e5388a321a757fbafae9723155d7e1ca",
+    "refreshed_candidate_binary_sha256": "d71b870433be8173470951e76872e2cddb71fd0723cbb6c2d7695ffbaf345ebe",
+    "previous_measurements_current_for_refreshed_binaries": false,
+    "refreshed_fixed_work_gate": "pending quiet host window",
+    "refreshed_stock_gate": "pending quiet host window"
+  }
+}

@@ -1,0 +1,58 @@
+{
+  "schema": 1,
+  "task": "43",
+  "kind": "rooted_constructor_boundary",
+  "timestamp_utc": "2026-10-05T02:33:27.086501+00:00",
+  "git_head": "217ff675ab3623929e2dc0416e7147785ecf5f42",
+  "staged_sources": {
+    "crates/quench-runtime-next/src/api.rs": "a1efe4c2aa0d6140ab58422683538e21f685eba4ae1b236c6a52f7d10b73fc51",
+    "crates/quench-runtime-next/src/api_embedding.rs": "d6e01022ba5d24a5064855cee9bfdb5dc8e7f688bb71fb4575fe5c0fa618a63e",
+    "crates/quench-runtime-next/src/api_embedding_tests.rs": "3b0c605c5d6bf2e150960bd2bf1747b52b5e7e1be34b50d21081f4f2b72f16f5",
+    "crates/quench-runtime-next/src/heap/root.rs": "833a4202d873e87002fcc76138e4afff6301b678d5f825935be1ab1097b45cdb",
+    "crates/quench-runtime-next/src/lib.rs": "71eed04a3962381977eb7da663f1e9b1de7de63daaf2b3f399ea2023809f6623",
+    "crates/quench-runtime-next/src/vm.rs": "7610179f7c1c262a71aa771af1ef06b710c4442f388dbddd134bfe6de3819588",
+    "crates/quench-runtime-next/src/vm/embedding.rs": "cf5b5c7b76c3caddfb626160cf492c1c9a77dd0c8504217e070d355aa2ee310d",
+    "crates/quench-runtime-next/src/vm/error.rs": "8fdd28f93ad43482d3869da3d3fa2b74301f8e04a2798ca839d1178d072f5d79"
+  },
+  "isolated_commit_check": {
+    "status": "passed",
+    "checkout": "/private/tmp/quench-rooted-embedding-check",
+    "log": "target/iteration/task43-rooted-construction/isolated-embedding.log",
+    "exit": 0,
+    "passed": 7,
+    "failed": 0
+  },
+  "migration_worktree_checks": {
+    "embedding_passed": 7,
+    "native_passed": 5,
+    "failed": 0
+  },
+  "affected_test262": {
+    "scope": "built-ins/Reflect/construct/",
+    "stage": 63,
+    "before_passed": 10,
+    "after_passed": 10,
+    "regressions": 0,
+    "timeout_ms": 10000,
+    "jobs": 2,
+    "before_report": "target/iteration/task43-rooted-construction/before-reflect.json",
+    "after_report": "target/iteration/task43-rooted-construction/after-reflect.json"
+  },
+  "scope": {
+    "full_suites_run": false,
+    "performance_claim": false,
+    "pins_or_inventory_changed": false
+  },
+  "limits": [
+    "Native callback integration remains uncommitted with the embedding migration.",
+    "Node native constructor roles and actual class registration are still open.",
+    "Stage A and task 43 remain open."
+  ],
+  "raw_artifacts": {
+    "target/iteration/task43-rooted-construction/isolated-embedding.log": "a31a344889ffbe5eff6269980307dac2668a0b9bafd0cd6f50330eeaeb4a0c72",
+    "target/iteration/task43-rooted-construction/embedding.log": "4e7fc053e02c0c55e88c1e5b19e129f5da6445e5a80d1fc71101b79ae48685a8",
+    "target/iteration/task43-rooted-construction/native.log": "731839f15c06abdd442d410a3064aa32281d786b4208fd43b0bd55a7d34e3426",
+    "target/iteration/task43-rooted-construction/before-reflect.json": "8fa2ec4941b93679a1a877ac0a33abb64b1c08c34d9eede425bf7aef415184a6",
+    "target/iteration/task43-rooted-construction/after-reflect.json": "05ae5cd0d3e1088928c118b2f5caa2889b8f6f7b457680afb2c679c842e37983"
+  }
+}

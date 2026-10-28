@@ -1,0 +1,21 @@
+{
+  "round": 12,
+  "mode": "direct-equals-disabled",
+  "command": [
+    "/workspace/quench/target/production/quench-node",
+    "--jit",
+    "/tmp/jetstream3-prelude.js",
+    "quench-bench/jetstream",
+    "--no-prefetch",
+    "--test=hash-map"
+  ],
+  "source_head": "925ce77e6e5be107c6343ea1dc318da9645e8fb1",
+  "source_dirty": true,
+  "source_diff_sha256": "1aac124027eca20705c1f9c01a1a3f9636a6ac1f0301636f8e6af1c6e5b78d7e",
+  "binary_sha256": "c6e5fba4f4544b08d7108328c56a36a21771f7d3ef9699a793aaefe7e8dd014b",
+  "exit_code": 0,
+  "elapsed_ns": 155712996828,
+  "peak_rss_bytes_sampled": 77692928,
+  "stdout": "Starting JetStream3\nRunning hash-map:\nhash-map First-Score                             2.57 pts\nhash-map Worst-Score                             2.28 pts\nhash-map Average-Score                           3.89 pts\nhash-map Score                                   2.83 pts\nhash-map First-Time                           1946.72 ms \nhash-map Worst-Time                           2194.78 ms \nhash-map Average-Time                         1284.44 ms \nhash-map Total-Time                           5425.95 ms \nhash-map Wall-Time                            154852.31 ms \n\nOverall:\nOverall First-Score                              2.57 pts\nOverall Worst-Score                              2.28 pts\nOverall Average-Score                            3.89 pts\nOverall First-Time                            1946.72 ms \nOverall Worst-Time                            2194.78 ms \nOverall Average-Time                          1284.44 ms \n\nOverall Score                                    2.83 pts\nOverall Wall-Time                             154882.99 ms \n\n",
+  "stderr": ""
+}

@@ -1,0 +1,483 @@
+{
+  "schema": 1,
+  "task": "20",
+  "kind": "affected_test262_owner_stage_requalification",
+  "recorded_at": "2026-10-07",
+  "source": {
+    "revision": "1cb3fcc83c73c80c4f07c1c6784f4a0f306af78e",
+    "dirty": true,
+    "host": "macOS arm64",
+    "rustc": "rustc 1.99.0 (b940084d7 2026-09-28) (Homebrew)",
+    "runner": "target/iteration/run-stages-next",
+    "binary_sha256": "ec4b1224c6606cd2c45b4b40f21ff3403824989c546ad30b57a32e44a79135d5",
+    "compare_runs": "target/iteration/compare-runs",
+    "compare_runs_sha256": "7667d4435e4fea32d6d2b00b34509250ffac1d2dac882688c9fd732321031ba2",
+    "snapshot_algorithm": "SHA-256 over sorted UTF-8 relative path, NUL, file SHA-256 hex, newline records",
+    "snapshot_file_count": 292,
+    "snapshot_sha256": "cc663106be28ee700be01e02c8c38fe7a5dee7358badea780c0fd5bbf467d39a",
+    "snapshot_roots": [
+      "crates/quench-runtime-next/src",
+      "crates/quench-test262/src",
+      "vendor/oxc-parser-next/src"
+    ],
+    "snapshot_additional_files": [
+      "Cargo.toml",
+      "Cargo.lock",
+      "crates/quench-runtime-next/Cargo.toml",
+      "crates/quench-test262/Cargo.toml",
+      "vendor/oxc-parser-next/Cargo.toml",
+      "docs/STAGES.md"
+    ]
+  },
+  "corpus": {
+    "path": "tests/test262",
+    "revision": "f2d1435644797268dca1f7988cad5a4e89ccd8d2",
+    "stage_definitions": "docs/STAGES.md",
+    "stage_definitions_sha256": "4cb13c366db7ed8d7ae0a1b7fe63eb18f93def77fd09231630ba5050f7d7d3d2"
+  },
+  "scope": {
+    "full_test262_run": false,
+    "unit_tests_run": false,
+    "affected_stage_ids": [
+      9,
+      10,
+      11,
+      14,
+      16,
+      20,
+      26,
+      31,
+      34,
+      35,
+      36,
+      37,
+      38,
+      39,
+      40,
+      46,
+      47,
+      48,
+      49,
+      50,
+      53,
+      58,
+      60,
+      61,
+      73,
+      79,
+      80,
+      81
+    ],
+    "affected_stage_count": 28,
+    "passed": 30599,
+    "failed": 0,
+    "total": 30599,
+    "stage_comparisons_with_zero_regressions": 28
+  },
+  "stages": [
+    {
+      "stage": 9,
+      "passed": 3,
+      "failed": 0,
+      "total": 3,
+      "report": "target/iteration/task20-current-owner-refresh-2026-10-07/stage-9.json",
+      "report_sha256": "8c5e6ec21a0145bccb0922ad7ef389a6840f0b8f724078e5b86c9a51cc9b4f6b",
+      "baseline_report": "target/iteration/task20-current-baseline-stage-9.json",
+      "baseline_sha256": "0101a6b0db7e164e73360078ae399d41abea28bfc38929800d087666fa005409",
+      "comparison": {
+        "exit_code": 0,
+        "verdict": "regressions=0"
+      }
+    },
+    {
+      "stage": 10,
+      "passed": 11102,
+      "failed": 0,
+      "total": 11102,
+      "report": "target/iteration/task20-current-owner-refresh-2026-10-07/stage-10.json",
+      "report_sha256": "63f09af0c96b9ecd57b1074a91da9da797124e345b5c526d9e1b1285ea6ea90d",
+      "baseline_report": "target/iteration/test262-pin-f2d-stage-10-final.json",
+      "baseline_sha256": "479d3b830f7239ee8f10a16a2c767e7e6a135d1fcfaa42dc4b944cf01d69cb25",
+      "comparison": {
+        "exit_code": 0,
+        "verdict": "regressions=0"
+      }
+    },
+    {
+      "stage": 11,
+      "passed": 217,
+      "failed": 0,
+      "total": 217,
+      "report": "target/iteration/task20-current-owner-refresh-2026-10-07/stage-11.json",
+      "report_sha256": "7184c0f6ff3a8576326ba07b46383519b4dba79a282c5f69e23a7b57b1b1893c",
+      "baseline_report": "target/iteration/task20-current-baseline-stage-11.json",
+      "baseline_sha256": "4e2ae0d680763b52f5b492897281fa6b0977d76126a8e49d5d1c3da5f3b39da0",
+      "comparison": {
+        "exit_code": 0,
+        "verdict": "regressions=0"
+      }
+    },
+    {
+      "stage": 14,
+      "passed": 14,
+      "failed": 0,
+      "total": 14,
+      "report": "target/iteration/task20-current-owner-refresh-2026-10-07/stage-14.json",
+      "report_sha256": "deeece8f75a5c09bfd0dc974233cb9962b02ecbe2e6de11629a52f1ecc84918e",
+      "baseline_report": "target/iteration/task20-current-baseline-stage-14.json",
+      "baseline_sha256": "4d6d4a9fd7dbf14786a3332ca0dcf309f0f8bfab16a5488dc08ff3fc9d5d5404",
+      "comparison": {
+        "exit_code": 0,
+        "verdict": "regressions=0"
+      }
+    },
+    {
+      "stage": 16,
+      "passed": 128,
+      "failed": 0,
+      "total": 128,
+      "report": "target/iteration/task20-current-owner-refresh-2026-10-07/stage-16.json",
+      "report_sha256": "277345f9842a950b8cf3c0156e2ce85c8c7164fc47bd7c6c5572c570e6ba788b",
+      "baseline_report": "target/iteration/task20-current-owner-refresh-2026-10-07/baseline-stage-16.json",
+      "baseline_sha256": "096da41fa2c0034348beba344d3e3b28fbabf710a0f0bc05811c4d75e250493f",
+      "comparison": {
+        "exit_code": 0,
+        "verdict": "regressions=0"
+      }
+    },
+    {
+      "stage": 20,
+      "passed": 599,
+      "failed": 0,
+      "total": 599,
+      "report": "target/iteration/task20-current-owner-refresh-2026-10-07/stage-20.json",
+      "report_sha256": "b91cdfb175fe7a980554a790d98529cf9994be3746396e16a03793dbde4bfe98",
+      "baseline_report": "target/iteration/task20-current-owner-refresh-2026-10-07/baseline-stage-20.json",
+      "baseline_sha256": "e2b0a7bc65288c15d114dd951ebd7457f5080cda014888733135efb792c0edab",
+      "comparison": {
+        "exit_code": 0,
+        "verdict": "regressions=0"
+      }
+    },
+    {
+      "stage": 26,
+      "passed": 9337,
+      "failed": 0,
+      "total": 9337,
+      "report": "target/iteration/task20-current-owner-refresh-2026-10-07/stage-26.json",
+      "report_sha256": "d44c53f5e1fea6c4f1fa256eb34daccbaae730f8705bcea359efc66bd8600877",
+      "baseline_report": "target/iteration/task20-current-baseline-stage-26.json",
+      "baseline_sha256": "ad091518e1115d0b5f063105fc9621e51345cdbaa0d25b43a156f36c6e01e408",
+      "comparison": {
+        "exit_code": 0,
+        "verdict": "regressions=0"
+      }
+    },
+    {
+      "stage": 31,
+      "passed": 3081,
+      "failed": 0,
+      "total": 3081,
+      "report": "target/iteration/task20-current-owner-refresh-2026-10-07/stage-31.json",
+      "report_sha256": "881c5a471a377eff55afc5092579e6cbfea98fd810321b5b1c1bf81a0649c4c6",
+      "baseline_report": "target/iteration/task20-current-baseline-stage-31.json",
+      "baseline_sha256": "953b8e1981ca1a686787a8dafd87a394f8d84601144404c131870f453c20249d",
+      "comparison": {
+        "exit_code": 0,
+        "verdict": "regressions=0"
+      }
+    },
+    {
+      "stage": 34,
+      "passed": 104,
+      "failed": 0,
+      "total": 104,
+      "report": "target/iteration/task20-current-owner-refresh-2026-10-07/stage-34.json",
+      "report_sha256": "0d1ec5047ca2f4d93d21db73534b7885646db7dba69fa3b61fc8a2bced248f3c",
+      "baseline_report": "target/iteration/task20-current-baseline-stage-34.json",
+      "baseline_sha256": "0bed9ae6c0f934e27569d2432d78c3fb9f97f3adc4ab72909d5c43fc19780399",
+      "comparison": {
+        "exit_code": 0,
+        "verdict": "regressions=0"
+      }
+    },
+    {
+      "stage": 35,
+      "passed": 38,
+      "failed": 0,
+      "total": 38,
+      "report": "target/iteration/task20-current-owner-refresh-2026-10-07/stage-35.json",
+      "report_sha256": "5b097a44e84257b77d9028db25a391579a28087bd2cc7c377d9dd292dbec5414",
+      "baseline_report": "target/iteration/task20-current-baseline-stage-35.json",
+      "baseline_sha256": "9d69d2c266d2940d3f084d05f6e061ed27bcb419fff21f9d5128230463f49208",
+      "comparison": {
+        "exit_code": 0,
+        "verdict": "regressions=0"
+      }
+    },
+    {
+      "stage": 36,
+      "passed": 18,
+      "failed": 0,
+      "total": 18,
+      "report": "target/iteration/task20-current-owner-refresh-2026-10-07/stage-36.json",
+      "report_sha256": "36c2ba0cbba83aea736384abca47a004179c052a10a453b82d5e37f6a49e4bd3",
+      "baseline_report": "target/iteration/task20-current-baseline-stage-36.json",
+      "baseline_sha256": "3f63c79744dfb3c9042d18e06f64a1f34a8a817a0430a82b6a8a49f81b5d91f9",
+      "comparison": {
+        "exit_code": 0,
+        "verdict": "regressions=0"
+      }
+    },
+    {
+      "stage": 37,
+      "passed": 23,
+      "failed": 0,
+      "total": 23,
+      "report": "target/iteration/task20-current-owner-refresh-2026-10-07/stage-37.json",
+      "report_sha256": "b848a1679906cfea6adea4ff009eae4fac9386fccd214551d2fe5ba7fc1c2112",
+      "baseline_report": "target/iteration/task20-current-baseline-stage-37.json",
+      "baseline_sha256": "2c1c5d7f026cbc620744e4cd3064b89c8b9901b20b8658715757105325ba4102",
+      "comparison": {
+        "exit_code": 0,
+        "verdict": "regressions=0"
+      }
+    },
+    {
+      "stage": 38,
+      "passed": 48,
+      "failed": 0,
+      "total": 48,
+      "report": "target/iteration/task20-current-owner-refresh-2026-10-07/stage-38.json",
+      "report_sha256": "14914e63e360ef33f76765c903b34e5773a7f92a50f3ef9b64b3f15f63d084f2",
+      "baseline_report": "target/iteration/task20-current-baseline-stage-38.json",
+      "baseline_sha256": "a654e160c1660bde23542e6b64fc005de1633e633a4e24c5186f25a1a4bf4b49",
+      "comparison": {
+        "exit_code": 0,
+        "verdict": "regressions=0"
+      }
+    },
+    {
+      "stage": 39,
+      "passed": 13,
+      "failed": 0,
+      "total": 13,
+      "report": "target/iteration/task20-current-owner-refresh-2026-10-07/stage-39.json",
+      "report_sha256": "66c74096193d1d0d5c47db992c7477ee81cbc2570c81c760461cf8ccafca5e9d",
+      "baseline_report": "target/iteration/test262-pin-f2d-stage-39.json",
+      "baseline_sha256": "32568d12ec676fa032fdb2887b10f5ddf56cb68e8cfa99c0c5888f426cc26a0e",
+      "comparison": {
+        "exit_code": 0,
+        "verdict": "regressions=0"
+      }
+    },
+    {
+      "stage": 40,
+      "passed": 389,
+      "failed": 0,
+      "total": 389,
+      "report": "target/iteration/task20-current-owner-refresh-2026-10-07/stage-40.json",
+      "report_sha256": "936b84ad76e338a175e18891f7d8d119ec37f8d9bd7be8f737d83bdc96d58769",
+      "baseline_report": "target/iteration/task20-current-owner-refresh-2026-10-07/baseline-stage-40.json",
+      "baseline_sha256": "59913bea857147f62b572b761a96efa45fd30ff7f2a4712fc0a0d89f4630d3a5",
+      "comparison": {
+        "exit_code": 0,
+        "verdict": "regressions=0"
+      }
+    },
+    {
+      "stage": 46,
+      "passed": 93,
+      "failed": 0,
+      "total": 93,
+      "report": "target/iteration/task20-current-owner-refresh-2026-10-07/stage-46.json",
+      "report_sha256": "67df2a27dc41d1520c613a326437d2f08a254cbfdfe61fa815730bb136c081c0",
+      "baseline_report": "target/iteration/task20-current-baseline-stage-46.json",
+      "baseline_sha256": "38630085355a4c0ba99240aef197e43db8f24ad0c2e89e0307fa02c5943391a5",
+      "comparison": {
+        "exit_code": 0,
+        "verdict": "regressions=0"
+      }
+    },
+    {
+      "stage": 47,
+      "passed": 47,
+      "failed": 0,
+      "total": 47,
+      "report": "target/iteration/task20-current-owner-refresh-2026-10-07/stage-47.json",
+      "report_sha256": "d43e16a5c76896e701d8de6778e3199550267ee22a0b6d6605b7fc5d4071fea0",
+      "baseline_report": "target/iteration/task20-current-baseline-stage-47.json",
+      "baseline_sha256": "87149f5bb5d089c35760c784b63ef9e10d5c3d8dc24a8cfbac0d345e9d0dc7ea",
+      "comparison": {
+        "exit_code": 0,
+        "verdict": "regressions=0"
+      }
+    },
+    {
+      "stage": 48,
+      "passed": 509,
+      "failed": 0,
+      "total": 509,
+      "report": "target/iteration/task20-current-owner-refresh-2026-10-07/stage-48.json",
+      "report_sha256": "2b2bdc30a0a13907f925f59476fcc97f036e9b04df2426b74c1af81f3beefc0a",
+      "baseline_report": "target/iteration/task20-current-owner-refresh-2026-10-07/baseline-stage-48.json",
+      "baseline_sha256": "6b28bcc6f6060a7dad659aee6a63168928e217245001e80fcc7ea2cb6527b754",
+      "comparison": {
+        "exit_code": 0,
+        "verdict": "regressions=0"
+      }
+    },
+    {
+      "stage": 49,
+      "passed": 23,
+      "failed": 0,
+      "total": 23,
+      "report": "target/iteration/task20-current-owner-refresh-2026-10-07/stage-49.json",
+      "report_sha256": "fcdcf7d4a45af7829f5f76b367be8a66c12b746f436c28c7d2c42e0fd52a25e5",
+      "baseline_report": "target/iteration/task20-current-baseline-stage-49.json",
+      "baseline_sha256": "6a2f6af667be1025d785b54668713f5488f1ab2bb6ce79045ee5bbef263c7841",
+      "comparison": {
+        "exit_code": 0,
+        "verdict": "regressions=0"
+      }
+    },
+    {
+      "stage": 50,
+      "passed": 61,
+      "failed": 0,
+      "total": 61,
+      "report": "target/iteration/task20-current-owner-refresh-2026-10-07/stage-50.json",
+      "report_sha256": "f8bd1535c6fd5cf8456b5eaa6688e162e419f54db8764b55587ddcd2c46b08e4",
+      "baseline_report": "target/iteration/task20-current-baseline-stage-50.json",
+      "baseline_sha256": "2147fe8251b8b44a0a192d13216967414043fa0b877bb9cd6b6e155d6feae43f",
+      "comparison": {
+        "exit_code": 0,
+        "verdict": "regressions=0"
+      }
+    },
+    {
+      "stage": 53,
+      "passed": 165,
+      "failed": 0,
+      "total": 165,
+      "report": "target/iteration/task20-current-owner-refresh-2026-10-07/stage-53.json",
+      "report_sha256": "b2f643dc01d02e429dd9ae0834d64a0c86776ed6814563a85f5958820325f781",
+      "baseline_report": "target/iteration/task20-current-baseline-stage-53.json",
+      "baseline_sha256": "33bef58cde7da409ce9e356dd2ecab9be5a5a3eb11212fd326acb968abe08117",
+      "comparison": {
+        "exit_code": 0,
+        "verdict": "regressions=0"
+      }
+    },
+    {
+      "stage": 58,
+      "passed": 94,
+      "failed": 0,
+      "total": 94,
+      "report": "target/iteration/task20-current-owner-refresh-2026-10-07/stage-58.json",
+      "report_sha256": "92b4cea7ea679e76b236d631ef48921fe715ac5cf3479f346d99d41a1459c212",
+      "baseline_report": "target/iteration/task20-current-baseline-stage-58.json",
+      "baseline_sha256": "7a53897b3449cbceedd991791437598bde19f808bf5188a4fbcbd725a85a8efb",
+      "comparison": {
+        "exit_code": 0,
+        "verdict": "regressions=0"
+      }
+    },
+    {
+      "stage": 60,
+      "passed": 3411,
+      "failed": 0,
+      "total": 3411,
+      "report": "target/iteration/task20-current-owner-refresh-2026-10-07/stage-60.json",
+      "report_sha256": "9bf96a553467428a0f25ce937018adf5f8b2399adf3ad6498fc4812597f6daf8",
+      "baseline_report": "target/iteration/task20-current-baseline-stage-60.json",
+      "baseline_sha256": "05950ba2ee90327bf3875500e88070b8f36c7fc2e4afcae830017bc0f8dab490",
+      "comparison": {
+        "exit_code": 0,
+        "verdict": "regressions=0"
+      }
+    },
+    {
+      "stage": 61,
+      "passed": 729,
+      "failed": 0,
+      "total": 729,
+      "report": "target/iteration/task20-current-owner-refresh-2026-10-07/stage-61.json",
+      "report_sha256": "f8c6759e98e32cd9689172a09dcd0bec39e427cad41b43fbe195f3ee19869fe8",
+      "baseline_report": "target/iteration/test262-pin-f2d-stage-61.json",
+      "baseline_sha256": "500bd15240061ba2e72a268b49bd1593aeca31976220ee58892f31a3efbfc05d",
+      "comparison": {
+        "exit_code": 0,
+        "verdict": "regressions=0"
+      }
+    },
+    {
+      "stage": 73,
+      "passed": 98,
+      "failed": 0,
+      "total": 98,
+      "report": "target/iteration/task20-current-owner-refresh-2026-10-07/stage-73.json",
+      "report_sha256": "55c9dbfaf08f8b4930f71f2b8b871cff24373f0c619c56f0921d5b03d5992600",
+      "baseline_report": "target/iteration/task20-current-baseline-stage-73.json",
+      "baseline_sha256": "90a3f63fe608e117628ea0d7a22dd0120646f1bd5162fb50f919c9ac962e6062",
+      "comparison": {
+        "exit_code": 0,
+        "verdict": "regressions=0"
+      }
+    },
+    {
+      "stage": 79,
+      "passed": 141,
+      "failed": 0,
+      "total": 141,
+      "report": "target/iteration/task20-current-owner-refresh-2026-10-07/stage-79.json",
+      "report_sha256": "45f7c3a27cadd1b5eeb024e5756e0b5046190630b402a779ac2bc390e1eec2eb",
+      "baseline_report": "target/iteration/task20-current-baseline-stage-79.json",
+      "baseline_sha256": "ff7549c37fb9bf64bba283559e9156793b796146aeb92085557c37b0e61cadfe",
+      "comparison": {
+        "exit_code": 0,
+        "verdict": "regressions=0"
+      }
+    },
+    {
+      "stage": 80,
+      "passed": 29,
+      "failed": 0,
+      "total": 29,
+      "report": "target/iteration/task20-current-owner-refresh-2026-10-07/stage-80.json",
+      "report_sha256": "bbe048565256ee309f4a41069b9d6711ae0fa0f551c2fea2dad6bd0b70eba55a",
+      "baseline_report": "target/iteration/task20-current-baseline-stage-80.json",
+      "baseline_sha256": "be60537d17020f9ed034195e5bcb5001c6353d04e737896cb5a9eb5382c2b842",
+      "comparison": {
+        "exit_code": 0,
+        "verdict": "regressions=0"
+      }
+    },
+    {
+      "stage": 81,
+      "passed": 85,
+      "failed": 0,
+      "total": 85,
+      "report": "target/iteration/task20-current-owner-refresh-2026-10-07/stage-81.json",
+      "report_sha256": "7ec75fe8a5aac8ab56ab2d79cc8044613f590d4af630080c35a41fcf0d217754",
+      "baseline_report": "target/iteration/task20-current-baseline-stage-81.json",
+      "baseline_sha256": "dbe9589dfa9e67ec792bfd3e7e6efe5151ccec8a8b9499640104f0c010d87946",
+      "comparison": {
+        "exit_code": 0,
+        "verdict": "regressions=0"
+      }
+    }
+  ],
+  "reused_complete_stage": {
+    "stage": 114,
+    "report": "target/iteration/task20-recheck-2026-10-07/stage-114.json",
+    "report_sha256": "392284775fb270081f3010e261d4402dc382fbac53bc962708ae9f656a614f96",
+    "passed": 1482,
+    "failed": 0,
+    "total": 1482,
+    "source_snapshot_sha256": "cc663106be28ee700be01e02c8c38fe7a5dee7358badea780c0fd5bbf467d39a",
+    "runner_sha256": "ec4b1224c6606cd2c45b4b40f21ff3403824989c546ad30b57a32e44a79135d5",
+    "evidence": "tasks/evidence/task20-annexb-corpus-conflict-2026-10-07.json"
+  },
+  "gate_status": "Task 20 remains open: the same source-bound report records Stage 94 at 844/845 due to the pinned Annex B expectation conflict."
+}

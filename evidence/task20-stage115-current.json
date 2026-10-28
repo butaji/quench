@@ -1,0 +1,43 @@
+{
+  "task": "20",
+  "scope": "Stage 115 only: 22 direct intl402 cases; child stages 95-113 excluded by stage ownership. This is an affected-stage check, not a full Test262 run.",
+  "command": "TEST262_TEST_TIMEOUT_MS=10000 TEST262_JOBS=8 TEST262_RATCHET=target/iteration/task20-stage115-herdr-ratchet.json TEST262_REPORT=target/iteration/task20-stage115-herdr-current.json cargo run --profile iteration -p quench-test262 --bin run-stages-next -- 115 115",
+  "result": {
+    "cases": 22,
+    "passed": 22,
+    "failed": 0,
+    "baseline_passed": 22,
+    "gains": 0,
+    "regressions": 0,
+    "matching_exact_inventory": true,
+    "path_inventory_sha256": "15291a3b8f957be1dc2b69d603949716558627500843579eeadf3318d2428b35"
+  },
+  "inputs": {
+    "test262_revision": "6eec1ac9ee144dafd8f344d73a21f36bfc9f6755",
+    "stage_definitions": {
+      "path": "docs/STAGES.md",
+      "sha256": "4cb13c366db7ed8d7ae0a1b7fe63eb18f93def77fd09231630ba5050f7d7d3d2"
+    },
+    "previous_complete_report": {
+      "path": "target/iteration/task20-intl-frontier.json",
+      "sha256": "9a412a904d57a4a8f48a8fa61a6326bd2616f670f73b66c24881a63794a364fb",
+      "fixture_hashes_recorded_in": "tasks/evidence/task20-intl-frontier.json"
+    }
+  },
+  "provenance": {
+    "source_revision": "7d50262d807f0e73f3b7aeb62fbfa441ade36129",
+    "source_dirty": true,
+    "runner": {
+      "path": "target/iteration/run-stages-next",
+      "sha256": "ad7a3b4973d71c4d7d5a2085e2dc10bde7b2790a44d917a66bea5ff546fbf8ba"
+    },
+    "report": {
+      "path": "target/iteration/task20-stage115-herdr-current.json",
+      "sha256": "8932de393fbb1186d9c2c79200357a9f2a7d06e5806348f9a7f7063696590bd3"
+    },
+    "host": "macos-aarch64",
+    "timeout_ms": 10000,
+    "jobs": 8
+  },
+  "limitations": "No implementation or fixture changes. No other Test262 stage, Wasm suite, Node suite or performance run. Task 20 and Stage A remain open."
+}

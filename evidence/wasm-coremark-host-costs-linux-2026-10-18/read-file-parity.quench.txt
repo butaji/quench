@@ -1,0 +1,21 @@
+file object true 5 true own hello
+file-null object true 5 true pooled hello
+empty object true 0 true own 
+dir ERR EISDIR read nopath EISDIR: illegal operation on a directory, read
+missing ERR ENOENT open path ENOENT: no such file or directory, open 'nope.txt'
+nul ERR ERR_INVALID_ARG_VALUE undefined nopath The argument 'path' must be a string, Uint8Array, or URL without null bytes. Received 'a\x00b'
+num ERR EBADF fstat nopath EBADF: bad file descriptor, fstat
+url object true 5 true pooled hello
+bufpath object true 5 true pooled hello
+utf8 string false 5 undefined pooled hello
+opts object true 5 true pooled hello
+proc object true 302 true pooled 14426 (e
+true true 65600 68656c6c6f
+pool true true 16 8
+patched object true 5 true pooled hello
+open,close
+alloc object true 5 true pooled hello
+open,close,alloc5
+hrefget object true 5 true pooled hello
+href reads 1
+exists object true 4 true pooled true

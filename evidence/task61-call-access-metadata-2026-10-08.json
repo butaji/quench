@@ -1,0 +1,107 @@
+{
+  "kind": "task61_call_access_metadata_candidate",
+  "decision": "retain_focused_candidate",
+  "source_revision": "a55e7cf16c6068fd9ac1dcefcfee03225fc4763d",
+  "source_tree": "dirty; baseline and candidate were built from the same workspace, with this four-file change as their only difference",
+  "source_diff_sha256": "e5d16ca9aa70797dfaa71c02f7d23912d4b4a545e865d2a469ef3ce4cd70ba0f",
+  "host": {
+    "os": "macOS 26.5 ARM64",
+    "cpu": "Apple M4, Mac16,10",
+    "memory_gib": 16,
+    "rustc": "1.99.0 (b940084d7 2026-09-28)",
+    "cargo": "1.99.0 (5f94df478 2026-08-27)"
+  },
+  "change": {
+    "files": [
+      "crates/quench-runtime/src/bytecode.rs",
+      "crates/quench-runtime/src/vm/dispatch_frame.rs",
+      "crates/quench-runtime/src/vm/function.rs",
+      "crates/quench-runtime/src/vm/generator.rs"
+    ],
+    "behavior": "Derive the legacy Function.prototype caller/arguments restriction from the active Function metadata already passed to frame activation, instead of resolving the callable heap cell and looking up its ProgramStore metadata again. The existing restriction predicate is shared by all callers.",
+    "semantic_boundary": "The original_arguments snapshot remains intact for active, reflectable sloppy functions. It is observable through Function.prototype.arguments, preserves extra arguments and recursive activations, and remains a GC root across suspension.",
+    "binding_time": "strictness, constructibility, and class-constructor status are immutable Function metadata available before activation"
+  },
+  "production_build": {
+    "command": "CARGO_INCREMENTAL=0 cargo build --locked --profile production -p quench-runtime --bin quench",
+    "baseline_binary": "/tmp/quench-call-args-2026-10-08/quench",
+    "baseline_binary_sha256": "79d90ef3cc4587bd70b84b51276e7f682ea5ed7903050695ccc268aaa016bc07",
+    "candidate_binary": "/tmp/quench-call-args-2026-10-08/candidate",
+    "candidate_binary_sha256": "48b04834459e74147d2a25bc07b1081afba6a3cfe218527df3978643bf2e3670",
+    "binary_size": {
+      "baseline_text_bytes": 6914048,
+      "candidate_text_bytes": 6914048,
+      "baseline_dot_text_bytes": 4994944,
+      "candidate_dot_text_bytes": 4994944
+    }
+  },
+  "paired_v8_v7_richards": {
+    "fixture": "tasks/evidence/task61-call-access-metadata-richards-2026-10-08.js",
+    "fixture_sha256": "c6e5fd39715ae35ebb5bca9474b69a6eeb180da5ac2fc1455ed4d7ff4a29b60c",
+    "command_per_sample": "/usr/bin/time -l BINARY tasks/evidence/task61-call-access-metadata-richards-2026-10-08.js",
+    "pairs": 44,
+    "order": "odd pairs candidate then baseline; even pairs baseline then candidate",
+    "bootstrap": "100000 paired resamples of the difference of medians, using the same pair indices for both variants, percentile 95% interval; seed 61102045",
+    "score": {
+      "baseline_median": 209,
+      "candidate_median": 210,
+      "candidate_minus_baseline_points": 1,
+      "difference_of_medians_95_interval_points": [0, 1.5],
+      "candidate_higher_pairs": 28,
+      "interpretation": "median is one point higher; the interval touches a tie, so no statistically clear Score gain is claimed"
+    },
+    "maximum_rss": {
+      "baseline_median_bytes": 15089664,
+      "candidate_median_bytes": 14991360,
+      "candidate_minus_baseline_bytes": -98304,
+      "difference_of_medians_95_interval_bytes": [-163840, -8192],
+      "difference_of_medians_95_interval_percent": [-1.0858, -0.0543],
+      "candidate_lower_pairs": 29
+    },
+    "instructions_retired": {
+      "baseline_median": 47851458532,
+      "candidate_median": 47564264423.5,
+      "candidate_minus_baseline": -287194108.5,
+      "difference_of_medians_95_interval_percent": [-0.6013, -0.5984],
+      "candidate_lower_pairs": 30
+    },
+    "completion": {
+      "successful_pairs": 44,
+      "normalized_completion_signature_equal_pairs": 44,
+      "exact_stdout_equal_pairs": 8,
+      "note": "The raw V8-v7 output contains timing-dependent result and score values; the normalized signature preserves result names/order and successful completion."
+    },
+    "measurement_artifacts": {
+      "raw_json": "tasks/evidence/task61-call-access-metadata-richards-raw-2026-10-08.json",
+      "raw_json_sha256": "f29391350860d2889b969cf94d65ac3716a310f16e7c72b6fb95f8702393d6a6",
+      "paired_csv": "tasks/evidence/task61-call-access-metadata-richards-paired-2026-10-08.csv",
+      "paired_csv_sha256": "0b72666f2ade5b84eded81d7093b07f272819fced0267d4a5de3ebaa55e0bb23",
+      "summary": "tasks/evidence/task61-call-access-metadata-richards-summary-2026-10-08.json",
+      "summary_sha256": "a8b4aecb49119a6153cd8169572ad79a359dfb938232e9474ce1127b3b72a2c5"
+    }
+  },
+  "test262": {
+    "passed": 10,
+    "failed": 0,
+    "total": 10,
+    "runner": "target/iteration/run-stages",
+    "runner_sha256": "6c427d98fc217514372769587ca5fa6e949708dd4bf3d9d4d0fd4bc74818fcfc",
+    "report": "tasks/evidence/task61-call-access-metadata-test262-2026-10-08.json",
+    "report_sha256": "085c73cbe654817e63475c6cbc4584c8e46982a1d2d1b8d8a283f8d7d3dcd713",
+    "coverage": "active sloppy Function.prototype.arguments, strict functions/callers, restricted accessors, bound functions, arrows, class methods, generators, native/newer function types"
+  },
+  "node_oracle": {
+    "version": "v26.10.0",
+    "quench_and_node_status": 0,
+    "stdout_equal": true,
+    "probe": "tasks/evidence/task61-call-access-metadata-node-oracle-2026-10-08.js",
+    "probe_sha256": "8c6fa6e272450124804487401b6267a8fe02d369a7aa6a3699f4d900b353e37c",
+    "output": "{\"recursive\":[2,0,\"outer\",true],\"sloppyExtra\":[2,5,6],\"strict\":{\"error\":\"TypeError\"},\"arrow\":{\"error\":\"TypeError\"},\"classCtor\":{\"error\":\"TypeError\"},\"classMethod\":{\"error\":\"TypeError\"},\"nativeCaller\":{\"error\":\"TypeError\"},\"nativeArguments\":{\"error\":\"TypeError\"},\"underWith\":[2,7,8]}"
+  },
+  "verification": {
+    "production_build": "passed",
+    "git_diff_check": "passed",
+    "unit_tests": "not run"
+  },
+  "scope_limit": "One-fixture diagnostic, not full Task 61 qualification; other V8-v7 fixtures and Linux measurements remain open."
+}

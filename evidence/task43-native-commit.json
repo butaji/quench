@@ -1,0 +1,59 @@
+{
+  "schema": 1,
+  "task": "43",
+  "kind": "standalone_native_binding_commit",
+  "timestamp_utc": "2026-10-05T02:40:45.338763+00:00",
+  "base_commit": "c16f9bcd1275385c30c7e9c277ee79f2b3a65740",
+  "staged_sources": {
+    "crates/quench-runtime-next/src/api.rs": "625799a1a0fb7eeb57b331ed95e1c82ff535c7158860b003396562a629725a61",
+    "crates/quench-runtime-next/src/api_native.rs": "a16268c53506fe5bd9e89ad13f3ddef44763fbed7c59b6e9d93c885ec85b63de",
+    "crates/quench-runtime-next/src/api_native_tests.rs": "38b630e13feaad2cd1c2d631f1b2cb55927dce7bd0d880507873c4e2810f14b0",
+    "crates/quench-runtime-next/src/heap/cell.rs": "bd519fe87b8dabcbc00bcb8b9a7ed46ac021395082a822a34b92ba5c51c44c9e",
+    "crates/quench-runtime-next/src/host.rs": "2c4eecf21531b3f74455ee17510430a585b9b95cfaacfc926f89b5e5f612feec",
+    "crates/quench-runtime-next/src/lib.rs": "52b30b284dd6515a349d1c8d2ff6b7d658f53524d8cd6199a506cf7e089f7722",
+    "crates/quench-runtime-next/src/vm.rs": "fe3d057a890c407fa3cec0a7cb85b9078a747be552039fb51d6484a5679d9c3b",
+    "crates/quench-runtime-next/src/vm/error.rs": "c449a6816d81ac117b498deabced6451932da9a17e157b8050c335a51fc32a1d",
+    "crates/quench-runtime-next/src/vm/host_function.rs": "e92996809cca546cd8f4c749505487da0457bef2885ba888634d8856818660e1",
+    "crates/quench-runtime-next/src/vm/operations.rs": "8a3d0d6ca077b4c01708da505a48c22aa1b8f5f4383424d540b07f5cf27d8d72"
+  },
+  "isolated_check": {
+    "status": "passed",
+    "log": "target/iteration/task43-native-commit/isolated-native.log",
+    "exit": 0,
+    "native_passed": 5,
+    "api_passed": 208,
+    "failed": 0,
+    "api_log": "target/iteration/task43-native-commit/isolated-api.log"
+  },
+  "contract": [
+    "One stable operation table owns callbacks, name, length and optional global installation.",
+    "Host initialization follows shared intrinsics and precedes guest execution.",
+    "Callback receiver, arguments, results and exceptions have scoped roots; explicit retain promotes host roots.",
+    "Re-entry uses the public rooted property, call and constructor operations.",
+    "Error transfer preserves typed metadata and trusts guest identities only through validated roots.",
+    "Default hosts install no extra functions; native callbacks remain nonconstructible."
+  ],
+  "affected_test262": {
+    "historical_qualification": "tasks/evidence/task43-native-host-registration.json",
+    "passed_before": 309,
+    "passed_after": 309,
+    "regressions": 0,
+    "scope": "built-ins/Function/prototype/",
+    "qualification_limit": "Historical migration-worktree comparison; exact standalone commit is independently checked by the ownership tests.",
+    "raw_hashes_reverified": 25
+  },
+  "scope": {
+    "full_suites_run": false,
+    "suite_inputs_or_inventory_changed": false,
+    "performance_claim": false
+  },
+  "limits": [
+    "Stage A and task 43 remain open.",
+    "Actual Node host registration follows; native classes, jobs and module loading remain migration work.",
+    "Workspace strict lint closure remains owned by task 86."
+  ],
+  "raw_artifacts": {
+    "target/iteration/task43-native-commit/isolated-native.log": "9f2114f5a8ed9dc39e4770054234eaf3076d393dd8c7f7da0159c7c38c893dbd",
+    "target/iteration/task43-native-commit/isolated-api.log": "74d0f43e49ec9cf84139bfcfa6dbcd6a236c0ba53ce1d844651f3670c6af17b0"
+  }
+}

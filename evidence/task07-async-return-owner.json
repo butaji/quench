@@ -1,0 +1,319 @@
+{
+  "task": "07",
+  "source_head": "7e60169df033dd247f34199e084e3e8080a92a29",
+  "source_state": "dirty worktree",
+  "suite_head": "6eec1ac9ee144dafd8f344d73a21f36bfc9f6755",
+  "suite_clean": true,
+  "profile": "release",
+  "timeout_ms": 10000,
+  "rustc": "rustc 1.99.0 (b940084d7 2026-09-28) (Homebrew)",
+  "host": "macOS-26.5-arm64-arm-64bit",
+  "commands": {
+    "suite": "TEST262_REPORT=<report> TEST262_TEST_TIMEOUT_MS=10000 <runner> <stage> <stage> [filter]",
+    "compare": "target/debug/compare-runs --reports <before> <after>",
+    "units": "cargo test -p quench-runtime-next --lib --test subset",
+    "features": "cargo check -p quench-runtime-next --features profile-memory,profile-aggregate"
+  },
+  "producer_owner": "17",
+  "obligation": "Async generator return request and internal then handlers survive constructor/species GC reentry.",
+  "representation": "Existing with_call_roots protects generator/value/request Promise during return setup; the shared promise_then operation protects source and handlers through species/capability creation. No additional persistent table.",
+  "source_hashes": {
+    "crates/quench-runtime-next/src/vm/generator.rs": "d6816093ff4e22f2875267ee6ae2c0e5721383a2c02c6dc0dd179dbc11b0156b",
+    "crates/quench-runtime-next/src/vm/promise.rs": "87275df6656f0128937e79933a9fdf250b37e87a6928f859d12bd4d26aa71ca8",
+    "crates/quench-runtime-next/src/vm/tests.rs": "fb4454234cfb4aa3934aef9f670e99a73dc71f3801068904717bac958543cdd3"
+  },
+  "runners": {
+    "before": {
+      "path": "target/iteration/task07-dynamic-import-owner-run-stages-next",
+      "sha256": "99eb129b6cfcc7570ce081e9ef43601945a399c3c49494762a3b1513a5bc4b10"
+    },
+    "after": {
+      "path": "target/iteration/task07-async-return-owner-shared-then-run-stages-next",
+      "sha256": "0993ae6697890e1a1ff8733fb70908e778388d6173acecf6ec8dbe7892c5de66"
+    }
+  },
+  "scopes": [
+    {
+      "name": "promise",
+      "stage": 61,
+      "filter": null,
+      "cases": 729,
+      "before_passed": 728,
+      "after_passed": 728,
+      "regressions": 0,
+      "before_report": "target/iteration/task07-async-return-owner-shared-then-before-promise.json",
+      "before_sha256": "394972e2d163e8814d4f3c0469c3ed05476cbcbee96e5f94e9d7a264735a3bf4",
+      "after_report": "target/iteration/task07-async-return-owner-shared-then-after-promise.json",
+      "after_sha256": "b4d485512e9ee00f632953cdf4f9bb0f6c427e83ec24f03e5fc81b154063b575"
+    },
+    {
+      "name": "async-function",
+      "stage": 36,
+      "filter": null,
+      "cases": 18,
+      "before_passed": 18,
+      "after_passed": 18,
+      "regressions": 0,
+      "before_report": "target/iteration/task07-async-return-owner-shared-then-before-async-function.json",
+      "before_sha256": "9601e21c1442764de5406561ae802f6819f7519a7cb9bed160bdaef114491602",
+      "after_report": "target/iteration/task07-async-return-owner-shared-then-after-async-function.json",
+      "after_sha256": "a91b6b75fedf128e5b6fe11763a4916b1e4af7e2b8e42b31b38ca9df1a359186"
+    },
+    {
+      "name": "async-generator",
+      "stage": 38,
+      "filter": null,
+      "cases": 48,
+      "before_passed": 48,
+      "after_passed": 48,
+      "regressions": 0,
+      "before_report": "target/iteration/task07-async-return-owner-shared-then-before-async-generator.json",
+      "before_sha256": "8f836ada1b8e08ba833e6f85fc21bc8df9f36fd16198dd1b355c3f4d53eb3100",
+      "after_report": "target/iteration/task07-async-return-owner-shared-then-after-async-generator.json",
+      "after_sha256": "49d558e49bcbe9439575f37f3607fe535db6e81295d37fd7008d104543cc7aed"
+    },
+    {
+      "name": "generator",
+      "stage": 50,
+      "filter": null,
+      "cases": 61,
+      "before_passed": 61,
+      "after_passed": 61,
+      "regressions": 0,
+      "before_report": "target/iteration/task07-async-return-owner-shared-then-before-generator.json",
+      "before_sha256": "3662098e76d99b7b12cf05688cc64c115c886d090ccb4835961b16eb7351d132",
+      "after_report": "target/iteration/task07-async-return-owner-shared-then-after-generator.json",
+      "after_sha256": "d0d06d2257d38b6878cb5721be249284cb20c36fc2df8ae7a51776d90918f8a6"
+    },
+    {
+      "name": "async-iterator",
+      "stage": 39,
+      "filter": null,
+      "cases": 13,
+      "before_passed": 13,
+      "after_passed": 13,
+      "regressions": 0,
+      "before_report": "target/iteration/task07-async-return-owner-shared-then-before-async-iterator.json",
+      "before_sha256": "d1fedaad7d1f5fc7715892ce8a3b18b70bd92092994b87ebdc081bf01f0083d3",
+      "after_report": "target/iteration/task07-async-return-owner-shared-then-after-async-iterator.json",
+      "after_sha256": "61074d0ad85aac2c092befaf8d2a441d0bc4b87e7d564ad18a085c3a22700db0"
+    },
+    {
+      "name": "disposal",
+      "stage": 34,
+      "filter": null,
+      "cases": 104,
+      "before_passed": 104,
+      "after_passed": 104,
+      "regressions": 0,
+      "before_report": "target/iteration/task07-async-return-owner-shared-then-before-disposal.json",
+      "before_sha256": "d34117fabdc394a6b2abedb7f5b013e1d33cd7af24ce9edc531d3c2dd80be023",
+      "after_report": "target/iteration/task07-async-return-owner-shared-then-after-disposal.json",
+      "after_sha256": "48357bfce2c22c80dc189d1db2f421c2e8c65c8829b869f25adf2277e1d6a383"
+    },
+    {
+      "name": "import",
+      "stage": 16,
+      "filter": null,
+      "cases": 127,
+      "before_passed": 127,
+      "after_passed": 127,
+      "regressions": 0,
+      "before_report": "target/iteration/task07-async-return-owner-shared-then-before-import.json",
+      "before_sha256": "761b618fc0395fdbc0921b11935e7b2402e3725dffb77df871047792d57251f5",
+      "after_report": "target/iteration/task07-async-return-owner-shared-then-after-import.json",
+      "after_sha256": "c5acc80abd45427bf4489297c353431e6cd2ee5d7b02b3d94a758300705e44bf"
+    },
+    {
+      "name": "module",
+      "stage": 20,
+      "filter": null,
+      "cases": 599,
+      "before_passed": 599,
+      "after_passed": 599,
+      "regressions": 0,
+      "before_report": "target/iteration/task07-async-return-owner-shared-then-before-module.json",
+      "before_sha256": "5f051099a787b18c664941ab1c5662bdfc90eb746e172637182da9cc3f3da89e",
+      "after_report": "target/iteration/task07-async-return-owner-shared-then-after-module.json",
+      "after_sha256": "d8ca2054737b525ddd409a95d2f1a594c6a4ea0658251088ea6efa29875914e5"
+    },
+    {
+      "name": "async-from-sync",
+      "stage": 35,
+      "filter": null,
+      "cases": 38,
+      "before_passed": 38,
+      "after_passed": 38,
+      "regressions": 0,
+      "before_report": "target/iteration/task07-async-return-owner-shared-then-before-async-from-sync.json",
+      "before_sha256": "e0e91890e4cb6ab6233954efaa6393f4f2a67038624f6ab1e09567f5c63a22ab",
+      "after_report": "target/iteration/task07-async-return-owner-shared-then-after-async-from-sync.json",
+      "after_sha256": "33f3eee4a68fc3468c091f3098ef1d3ee18c633d98943ba8e55f39fd340393e2"
+    },
+    {
+      "name": "array-from-async",
+      "stage": 31,
+      "filter": "fromAsync/",
+      "cases": 95,
+      "before_passed": 95,
+      "after_passed": 95,
+      "regressions": 0,
+      "before_report": "target/iteration/task07-async-return-owner-shared-then-before-array-from-async.json",
+      "before_sha256": "ecd2f1e82776d30cde5137910cab034fc54828c179e0334183410af55686070f",
+      "after_report": "target/iteration/task07-async-return-owner-shared-then-after-array-from-async.json",
+      "after_sha256": "e2b9436bd6cdd25d14c43dc80f56e0cdfbca7b44c9fb98b109bc0ce5839ddf07"
+    },
+    {
+      "name": "dynamic-import",
+      "stage": 10,
+      "filter": "dynamic-import/",
+      "cases": 1004,
+      "before_passed": 1004,
+      "after_passed": 1004,
+      "regressions": 0,
+      "before_report": "target/iteration/task07-async-return-owner-shared-then-before-dynamic-import.json",
+      "before_sha256": "307ed48509890d31a59c083861d9cc030be817f433448b446f3d439fe7c627a4",
+      "after_report": "target/iteration/task07-async-return-owner-shared-then-after-dynamic-import.json",
+      "after_sha256": "5ba32693c5b6e88be5dee154b3bfa03ff748984b4279c43a8d4216d14c16d330"
+    },
+    {
+      "name": "async-arrow",
+      "stage": 10,
+      "filter": "async-arrow-function/",
+      "cases": 60,
+      "before_passed": 60,
+      "after_passed": 60,
+      "regressions": 0,
+      "before_report": "target/iteration/task07-async-return-owner-shared-then-before-async-arrow.json",
+      "before_sha256": "64fb14596b04857d0692fc198ab3e3f1397ec46d94219186f1974c07a2f44a37",
+      "after_report": "target/iteration/task07-async-return-owner-shared-then-after-async-arrow.json",
+      "after_sha256": "8088d36b2ff4ae7f8a3fb2fbaa0291a16299b9df8cad7e9c25228cd98bacee51"
+    },
+    {
+      "name": "async-statements",
+      "stage": 26,
+      "filter": "async-function/",
+      "cases": 74,
+      "before_passed": 74,
+      "after_passed": 74,
+      "regressions": 0,
+      "before_report": "target/iteration/task07-async-return-owner-shared-then-before-async-statements.json",
+      "before_sha256": "01a1158af446c8ce867affb335da8724cda67859030e7d996369a35dc42e5c8b",
+      "after_report": "target/iteration/task07-async-return-owner-shared-then-after-async-statements.json",
+      "after_sha256": "ae8be7fcfcf4bfb7ded09a94e119d31f60c4a2bbe1dc01d42e3f664a8ebe3dd3"
+    },
+    {
+      "name": "function-traversal",
+      "stage": 48,
+      "filter": "toString/built-in-function-object.js",
+      "cases": 1,
+      "before_passed": 1,
+      "after_passed": 1,
+      "regressions": 0,
+      "before_report": "target/iteration/task07-async-return-owner-shared-then-before-function-traversal.json",
+      "before_sha256": "76bbcb94cd6b7f18b9bbe8cb47df0e6050d1d13909b65c4465073e9c9df8c542",
+      "after_report": "target/iteration/task07-async-return-owner-shared-then-after-function-traversal.json",
+      "after_sha256": "c87e0f0af7eb5cc025fd01872b05b178e23003c754eb30aa7bfffa16c90d95ce"
+    },
+    {
+      "name": "async-generator-function",
+      "stage": 37,
+      "filter": null,
+      "cases": 23,
+      "before_passed": 23,
+      "after_passed": 23,
+      "regressions": 0,
+      "before_report": "target/iteration/task07-async-return-owner-shared-then-before-async-generator-function.json",
+      "before_sha256": "08f5e5f0ac1f5ab3afadb53b9f7ed5862b8f0ae93fafb1fbb39443c181d5ae45",
+      "after_report": "target/iteration/task07-async-return-owner-shared-then-after-async-generator-function.json",
+      "after_sha256": "4363347d3196f5b2c390c4440797d7765c889d897c80d49d5c44e654579a564b"
+    },
+    {
+      "name": "async-generator-expressions",
+      "stage": 10,
+      "filter": "async-generator",
+      "cases": 663,
+      "before_passed": 663,
+      "after_passed": 663,
+      "regressions": 0,
+      "before_report": "target/iteration/task07-async-return-owner-shared-then-before-async-generator-expressions.json",
+      "before_sha256": "f767194c3cffa5721e50183cdc12650993311fbf9386553827e5971c680b728e",
+      "after_report": "target/iteration/task07-async-return-owner-shared-then-after-async-generator-expressions.json",
+      "after_sha256": "f261ee1b50d6057c1f5e5fdab9765e719addf9ce5615ecedbba73e1ccb9a7aa0"
+    },
+    {
+      "name": "async-generator-statements",
+      "stage": 26,
+      "filter": "async-generator",
+      "cases": 357,
+      "before_passed": 357,
+      "after_passed": 357,
+      "regressions": 0,
+      "before_report": "target/iteration/task07-async-return-owner-shared-then-before-async-generator-statements.json",
+      "before_sha256": "6118f882f5da6b1b4bd48faf6a914f3576d4ee0cdeed95dc474c696ccfcc032b",
+      "after_report": "target/iteration/task07-async-return-owner-shared-then-after-async-generator-statements.json",
+      "after_sha256": "dae3ad234f0ae00c8e66c91077b6b423cccc919a4895a37afd3fa41113989b97"
+    },
+    {
+      "name": "yield-expressions",
+      "stage": 10,
+      "filter": "yield/",
+      "cases": 63,
+      "before_passed": 63,
+      "after_passed": 63,
+      "regressions": 0,
+      "before_report": "target/iteration/task07-async-return-owner-shared-then-before-yield-expressions.json",
+      "before_sha256": "8a3920b6e2d4786095fba0f3bd849f8feb6f48de870c994731436b3739b4daed",
+      "after_report": "target/iteration/task07-async-return-owner-shared-then-after-yield-expressions.json",
+      "after_sha256": "667147b4db3ec79c027b052e2ef830e3a9cf766bd5d02f86d25bab449ba3bb1a"
+    }
+  ],
+  "total": 4077,
+  "passed": 4076,
+  "regressions": 0,
+  "inventory_sha256": "b63b1d10086c8b9fc0978ca7dd68ede15584074cebd2fbd5b727c7970c5b9fa1",
+  "known_failure": "Unchanged keyed-Promise helper deletion conflict.",
+  "units": {
+    "library_passed": 463,
+    "integration_passed": 6,
+    "failed": 0,
+    "ignored": 0,
+    "log": "target/iteration/task07-async-return-owner-shared-then-units.log",
+    "sha256": "9a9ed00ef6f070c70776779e570125f7cc2570a4666117e19874cc3785a32ccb",
+    "internal_regression": "internal_promise_then_handlers_survive_species_reentry_and_release_after_jobs",
+    "coverage": "Directly observes handler-state lifetime through species collection, queued execution, scoped-root release and weak collection; not a duplicated conformance assertion."
+  },
+  "features": {
+    "passed": true,
+    "log": "target/iteration/task07-async-return-owner-shared-then-features.log",
+    "sha256": "1965be9fcabca41f2805dd4d4995bfd7f68a5cfbf72dafe7d3c5f120280052b1"
+  },
+  "node_controls": {
+    "cases": 36,
+    "comparisons": 72,
+    "matches": 70,
+    "remaining_mismatches": [
+      {
+        "name": "async-return-finally-gc",
+        "mode": "normal",
+        "node_stdout": "finally\n{\"value\":59,\"done\":true}\n",
+        "quench_stdout": "finally\n{\"value\":{},\"done\":true}\n"
+      },
+      {
+        "name": "async-return-finally-gc",
+        "mode": "generic",
+        "node_stdout": "finally\n{\"value\":59,\"done\":true}\n",
+        "quench_stdout": "finally\n{\"value\":{},\"done\":true}\n"
+      }
+    ],
+    "sources": "target/iteration/task07-async-return-owner-node-controls.json",
+    "sources_sha256": "2c2f44659c7c8922a7ca009525ab945cc5e24036ded2a0666be8653d5aec9919",
+    "results": "target/iteration/task07-async-return-owner-shared-then-node-results.json",
+    "results_sha256": "a27a7540df5ac90d503766f4cd5b1c3fa9ed8c80fdd725ed8e371ac0a41cda32",
+    "node_version": "v26.10.0",
+    "host": "target/iteration/task07-async-return-owner-shared-then-control-host",
+    "host_sha256": "155c7c1489ece74f196d6fa2c1329f8ca1658d039f2660de4a760923338df3a6",
+    "before_results": "target/iteration/task07-async-return-owner-node-before.json"
+  },
+  "limits": "Ownership fix only: async return value Await before finally remains open in these two recorded controls. Does not close task 17, Test262 or Stage A."
+}

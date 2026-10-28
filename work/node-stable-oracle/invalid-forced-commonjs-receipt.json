@@ -1,0 +1,35 @@
+{
+  "engine": "official Node v26.12.0",
+  "node_sha256": "caa24debe02770c92a70677e2a62ca98890150e7ac1c17bcfe31bcc98cc89943",
+  "runner": "unchanged official Node tools/test.py and stock platform status rules",
+  "command": [
+    "python3",
+    "/workspace/work/node-stable-release/node-v26.12.0/tools/test.py",
+    "--shell",
+    "/workspace/quench/work/node-v26.12.0-linux-x64/bin/node",
+    "--test-root",
+    "/workspace/quench/work/node-stable-oracle-root/test",
+    "--mode",
+    "release",
+    "--timeout",
+    "30",
+    "-j",
+    "4",
+    "-p",
+    "tap",
+    "parallel"
+  ],
+  "isolated_test_root": "/workspace/quench/work/node-stable-oracle-root/test",
+  "cwd": "/workspace/quench/work/node-stable-oracle-root",
+  "package_boundary": "explicit CommonJS root reproduces official source outside the Quench ESM package",
+  "parallel_source_count": 5015,
+  "started_utc": "2026-10-16T08:19:58.666442+00:00",
+  "limitations": [
+    "Official harness selection/status rules and timeout multipliers differ from the raw Quench inventory; retain results as an independent oracle baseline, not a replacement Quench score."
+  ],
+  "exit": -15,
+  "protected_restored": true,
+  "elapsed_seconds": 297.84871585899964,
+  "finished_utc": "2026-10-16T08:24:56.515560+00:00",
+  "changed_parallel_sources": []
+}

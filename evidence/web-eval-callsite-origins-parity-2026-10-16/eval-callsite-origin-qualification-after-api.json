@@ -1,0 +1,42 @@
+{
+  "base_source": "5c3a411604e85fa1e2ac5cee3e6cd3c12e541ee7",
+  "patch": "work/eval-callsite-origin-source.patch",
+  "patch_sha256": "8316637e691842fd890482642c4142991dd983be2039078abd8b3a9a546af3cf",
+  "extra_fixture_sha256": {
+    "test-callsite-eval-origins.js": "be7ae7a4323dda9fe46defd66dd1528be321f88da1fd351b414347ff29d0d7cd",
+    "test-indirect-eval-script-identity.js": "32af238113dd07f967abf30f20a994250dba116de05551b09ad796616a892be7"
+  },
+  "runtime_test_build_environment": {
+    "CARGO_INCREMENTAL": "0",
+    "CARGO_BUILD_JOBS": "2"
+  },
+  "binaries": {
+    "cli": {
+      "path": "work/quench-eval-callsite-origin-qualified",
+      "sha256": "d87201972ac05e3150dff59ec4582c976cb1592af910ff2bb88731a37b27b45a",
+      "sha256_after": "d87201972ac05e3150dff59ec4582c976cb1592af910ff2bb88731a37b27b45a"
+    },
+    "runner": {
+      "path": "work/host-build/iteration/run-parallel",
+      "sha256": "ded9c1fe3eeb5f67646344fbc2b1112eb9b106f2e75d624a8d1eec079d14fa5c",
+      "sha256_after": "ded9c1fe3eeb5f67646344fbc2b1112eb9b106f2e75d624a8d1eec079d14fa5c"
+    },
+    "api_tests": {
+      "path": "work/host-build/iteration/deps/child_entry-70660f0a4dee9e77",
+      "sha256": "91fd7d1872359b7418edff83fdd97e9b6781209780f6b81140928dd42266edc2",
+      "sha256_after": "91fd7d1872359b7418edff83fdd97e9b6781209780f6b81140928dd42266edc2"
+    }
+  },
+  "oracle": {
+    "path": "work/node-v26.12.0-linux-x64/bin/node",
+    "sha256": "caa24debe02770c92a70677e2a62ca98890150e7ac1c17bcfe31bcc98cc89943",
+    "version": "v26.12.0"
+  },
+  "identity_checks": {
+    "cli": true,
+    "runner": true,
+    "api_tests": true
+  },
+  "api_exit_code": 0,
+  "reconciled_candidate_source": "725f91d335c1b13568b9497183d208389e502046"
+}

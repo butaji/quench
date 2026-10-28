@@ -1,0 +1,7 @@
+
+running 2 tests
+test tcp_default_listen_backlog_matches_node_when_syscall_tracing_is_available ... ok
+test tcp_option_listen_backlog_matches_node_truthiness_and_int32_when_tracing_is_available ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 381 filtered out; finished in 2.25s
+

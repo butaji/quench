@@ -1,0 +1,129 @@
+{
+  "schema": 1,
+  "source_head": "7e60169df033dd247f34199e084e3e8080a92a29",
+  "dirty_worktree": true,
+  "source_hashes": {
+    "crates/quench-runtime-next/src/wasm.rs": "c615da84238fbf2f7c3725da124bded82b30098ad6e22348c66209062eae0e99",
+    "crates/quench-runtime-next/src/wasm/reference.rs": "96007cb0bda405c768f1975f7a3ee7ddbaab33c3fe933a0be8c1b7ac96facac1",
+    "crates/quench-runtime-next/src/bytecode.rs": "d41f360fdd5fcca0251d0d5c698ca7dc6fef6c9720b59ea58ee7afe0da2a352e",
+    "crates/quench-runtime-next/src/bytecode/validate.rs": "1aeb982771b1d0a4cc566c0004470708270554a38c6791e9d4f25320bc7729a9",
+    "crates/quench-runtime-next/src/bytecode/disassemble.rs": "68452759709f650c813381941ebc64602318ee00f7a4f9f58dd09580ca6fa16a",
+    "crates/quench-runtime-next/src/vm/dispatch.rs": "93b25f5e12b0bec90b7e8b113ef19c9047328dd2dd95a3865220afeaff64f0ad",
+    "crates/quench-runtime-next/src/vm/wasm.rs": "93bf58a9a6285f89327a4d55b9d581779082e7a51da89ffadda5321b301b0ffe",
+    "crates/quench-runtime-next/src/vm/program_store.rs": "b13e1501f456d02125c5f4d0a7afc5ed90f423d520f63f9f9225f25f2c52ceb8",
+    "crates/quench-runtime-next/src/vm/wasm_table.rs": "1b633f82a3cdd249998ece692510926f827bf18e8d830e4c71067983ec031518"
+  },
+  "suite_head": "67c8b9dc32c47d61c05a1681df349d01c85fa8ff",
+  "residual_format": 57,
+  "obligation": "Execute ref.test and ref.cast through shared declaration matching, preserving nullability, exactness, original foreign callable identity and traps.",
+  "representation": "ReferenceTarget encodes the source module heap-type index or abstract heap type plus named nullable/defined/exact flags. The graph remains in the existing program authority. Two appended opcodes use the same pure reference predicate as boundary decoding; test returns I32 and cast preserves the original Value or emits typed CastFailure. Registration rejects targets absent from the attached graph before instance effects. Residual format57 rejects older encodings. No constant pool, cell, side map, copied graph or executor is added.",
+  "scope": "230 existing affected pinned files plus41 focused files. This is affected-scope verification, not a full suite. Controls cover i31/abstract/null tests and casts, exact function targets, rejected child-as-exact-base casts and shifted foreign imports. Existing scopes cover prior call, table, global, initializer and host paths.",
+  "sources": [
+    "https://webassembly.github.io/spec/core/exec/instructions.html#exec-ref-test",
+    "https://webassembly.github.io/spec/core/exec/instructions.html#exec-ref-cast"
+  ],
+  "affected": {
+    "before": {
+      "path": "target/iteration/task37-wasm-i31-after.json",
+      "sha256": "ddec805ee5e4a6db214faeee2910d0eb1069a21c492c07b0050976f344152312",
+      "binary_sha256": "5fef9b6384885ba8e43411b4035a97afd011e75c92a602f7c4f586f45eb77e25"
+    },
+    "after": {
+      "path": "target/iteration/task37-wasm-reference-casts-after.json",
+      "sha256": "7c807e824e5c9f1e66ee9861ca58a568a0a2a66ee8ea67b81596b68d865a997f",
+      "binary_sha256": "cb062d38bffb7d380986a3c70019d9b868676e3a48a3ab47dbd4f0039b1deedd"
+    },
+    "files": 230,
+    "total": 62758,
+    "before_passed": 61543,
+    "passed": 61587,
+    "failed": 1171,
+    "gains": 44,
+    "gains_by_file": {
+      "crates/quench-wasm-test/testsuite/i31.wast": 22,
+      "crates/quench-wasm-test/testsuite/type-subtyping.wast": 22
+    },
+    "regressions": 0,
+    "same_ids_and_input_hashes": true,
+    "all_workers_completed": true
+  },
+  "controls": {
+    "before": {
+      "path": "target/iteration/task37-wasm-reference-casts-controls-before.json",
+      "sha256": "11270f72652602633e9bdcf181f2f2df7b8b3b54693727d4e1b986e57b62afff",
+      "binary_sha256": "5fef9b6384885ba8e43411b4035a97afd011e75c92a602f7c4f586f45eb77e25"
+    },
+    "after": {
+      "path": "target/iteration/task37-wasm-reference-casts-controls-after.json",
+      "sha256": "95f3e204a607bf06e40b2132e40c6f728c0716cc0e88f0117ab1d8378c2ae0f1",
+      "binary_sha256": "cb062d38bffb7d380986a3c70019d9b868676e3a48a3ab47dbd4f0039b1deedd"
+    },
+    "files": 41,
+    "total": 3685,
+    "before_passed": 3666,
+    "passed": 3685,
+    "failed": 0,
+    "gains": 19,
+    "gains_by_file": {
+      "target/iteration/proposals/custom-descriptors/task37-wasm-reference-casts-controls.wast": 19
+    },
+    "regressions": 0,
+    "same_ids_and_input_hashes": true,
+    "all_workers_completed": true
+  },
+  "runner": {
+    "path": "target/iteration/task37-wasm-reference-casts-runner",
+    "sha256": "cb062d38bffb7d380986a3c70019d9b868676e3a48a3ab47dbd4f0039b1deedd"
+  },
+  "checks": {
+    "runtime": {
+      "path": "target/iteration/task37-wasm-reference-casts-runtime.log",
+      "sha256": "56768ce57e77e8f83719781e1be93afffa050ae0b24be13bcc68197ca76b405e",
+      "passed": 33
+    },
+    "bytecode": {
+      "path": "target/iteration/task37-wasm-reference-casts-bytecode.log",
+      "sha256": "1fd7f6af663a5d043e2ac510cbc1f694d1ab95b1852f889354ec9505a1d826df",
+      "passed": 19
+    },
+    "frontend": {
+      "path": "target/iteration/task37-wasm-reference-casts-frontend.log",
+      "sha256": "379f222e4a3d0f286cad22d63268cf6961af44acf319267b4ba1b0e198d23721",
+      "passed": 31
+    },
+    "check": {
+      "path": "target/iteration/task37-wasm-reference-casts-check.log",
+      "sha256": "411c9409fd049f9a5802256325d70c093c9c86828faa01644453d50b8c948b55",
+      "passed": null
+    }
+  },
+  "oracle": {
+    "path": "target/iteration/task37-wasm-reference-casts-oracle.json",
+    "sha256": "ccbbf3dabbe529112556e55497929f75b38ca50c26a4e1777be6482d0ee54fb0",
+    "node": "v26.10.0",
+    "flags": [
+      "--no-sparkplug",
+      "--no-maglev",
+      "--no-turbofan",
+      "--wasm-jitless",
+      "--experimental-wasm-custom-descriptors"
+    ],
+    "matched": 18,
+    "input_hashes": {
+      "target/iteration/task37-wasm-reference-casts-b.wat": "00970c9583cb364347eb95ad678486d5e45c231b5d64648de8d886391bc7dcfd",
+      "target/iteration/task37-wasm-reference-casts-a.wat": "ff65d47006b29f8ea701cfcf67f912ad643cd646abc08615b217ddd954530859"
+    }
+  },
+  "internal_obligation": "Existing bytecode admission test checks invalid exact/abstract target flags with a valid control. Existing serialized element/capture/GC ownership test casts through the registered graph and checks original foreign identity/capture, collection/release and rejection of a wide-encoded target outside the graph. No ordinary conformance unit is added.",
+  "next_first_failures": {
+    "unsupported shared Wasm: wasm-global-initializer:0..0: unsupported Wasm constant expression operator": 573,
+    "unsupported shared Wasm module state, imports or section": 117,
+    "unsupported shared Wasm: wasm-instance:0..0: unsupported shared Wasm operator: StructNewDefault { struct_type_index: 1 }": 110,
+    "unsupported shared Wasm: wasm-instance:0..0: unsupported shared Wasm operator: StructNew { struct_type_index: 1 }": 108,
+    "unsupported shared Wasm: wasm-instance:0..0: unsupported shared Wasm operator: StructNewDefault { struct_type_index: 0 }": 101,
+    "unsupported shared Wasm: wasm-instance:0..0: unsupported shared Wasm operator: BrOnCast { relative_depth: 0, from_ref_type: funcref, to_ref_type: (ref (exact (module 0))) }": 36,
+    "unsupported shared Wasm: unsupported Wasm global type": 34,
+    "unsupported shared Wasm: unsupported shared Wasm import kind": 23
+  },
+  "limits": "GC struct/array object allocation, fields and constant construction remain unsupported. Cast branches, descriptor equality casts, ref.eq, external/internal conversion, shared refs/resources, exceptions and JS embedding remain open. Earlier six callable-type Node discrepancies remain recorded. Full-suite qualification, production cutover, frozen implemented Node inventory and Stage A are incomplete."
+}

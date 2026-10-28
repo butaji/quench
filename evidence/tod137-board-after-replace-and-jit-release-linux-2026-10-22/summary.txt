@@ -1,0 +1,20 @@
+== memory-first
+fixture             q  q-jit    qjs target  ratio
+richards         3248   3160   3492   2793  0.930
+deltablue        3428   3300   3808   3046  0.900
+crypto           3760   4120   3664   2931  1.124
+raytrace         3744   3160   3548   2838  1.055
+earley-boyer     7048   6672  17768  14214  0.397  OK
+regexp           6864   6684   7016   5612  0.978
+splay           31772  31584  61572  49257  0.516  OK
+navier-stokes    4832   7696   5236   4188  1.470
+== throughput
+fixture             q  q-jit    qjs target  ratio
+richards         4448   4056   3408   2726  1.305
+deltablue        7012   6528   3936   3148  1.782
+crypto           8284   8540   3688   2950  2.316
+raytrace         7048   6376   3532   2825  1.995
+earley-boyer    11340  10820  17824  14259  0.636  OK
+regexp          12020  11516   7072   5657  1.700
+splay           33260  32792  61432  49145  0.541  OK
+navier-stokes    4832   7944   5268   4214  1.508

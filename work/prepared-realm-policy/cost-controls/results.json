@@ -1,0 +1,113 @@
+{
+  "purpose": "Directional cost diagnostics under concurrent audits; no speed claim",
+  "rows": [
+    {
+      "workload": "shadow20",
+      "label": "before",
+      "command": [
+        "/workspace/quench/work/native-buffer-pool-bin/quench-node",
+        "--no-warnings",
+        "--experimental-shadow-realm",
+        "-e",
+        "let sum=0;for(let i=0;i<20;i++){const r=new ShadowRealm();sum+=r.evaluate('1+1')}console.log(sum)"
+      ],
+      "elapsed_seconds": 0.2741802240489051,
+      "exit": 0,
+      "timeout": false
+    },
+    {
+      "workload": "shadow20",
+      "label": "c4f",
+      "command": [
+        "/workspace/quench/work/shadow-stack-bin/quench-node",
+        "--no-warnings",
+        "--experimental-shadow-realm",
+        "-e",
+        "let sum=0;for(let i=0;i<20;i++){const r=new ShadowRealm();sum+=r.evaluate('1+1')}console.log(sum)"
+      ],
+      "elapsed_seconds": 2.4843309419811703,
+      "exit": 0,
+      "timeout": false
+    },
+    {
+      "workload": "shadow20",
+      "label": "prepared",
+      "command": [
+        "/workspace/quench/work/prepared-realm-bin/quench-node",
+        "--no-warnings",
+        "--experimental-shadow-realm",
+        "-e",
+        "let sum=0;for(let i=0;i<20;i++){const r=new ShadowRealm();sum+=r.evaluate('1+1')}console.log(sum)"
+      ],
+      "elapsed_seconds": 2.195344809035305,
+      "exit": 0,
+      "timeout": false
+    },
+    {
+      "workload": "shadow20",
+      "label": "node26",
+      "command": [
+        "/workspace/quench/work/node-v26.12.0-linux-x64/bin/node",
+        "--no-warnings",
+        "--experimental-shadow-realm",
+        "-e",
+        "let sum=0;for(let i=0;i<20;i++){const r=new ShadowRealm();sum+=r.evaluate('1+1')}console.log(sum)"
+      ],
+      "elapsed_seconds": 0.24117469997145236,
+      "exit": 0,
+      "timeout": false
+    },
+    {
+      "workload": "buffer20000",
+      "label": "before",
+      "command": [
+        "/workspace/quench/work/native-buffer-pool-bin/quench-node",
+        "--no-warnings",
+        "-e",
+        "let sum=0;for(let i=0;i<20000;i++){const b=Buffer.allocUnsafe(1);sum+=b.length}console.log(sum)"
+      ],
+      "elapsed_seconds": 0.4614385309978388,
+      "exit": 0,
+      "timeout": false
+    },
+    {
+      "workload": "buffer20000",
+      "label": "c4f",
+      "command": [
+        "/workspace/quench/work/shadow-stack-bin/quench-node",
+        "--no-warnings",
+        "-e",
+        "let sum=0;for(let i=0;i<20000;i++){const b=Buffer.allocUnsafe(1);sum+=b.length}console.log(sum)"
+      ],
+      "elapsed_seconds": 0.6127529360237531,
+      "exit": 0,
+      "timeout": false
+    },
+    {
+      "workload": "buffer20000",
+      "label": "prepared",
+      "command": [
+        "/workspace/quench/work/prepared-realm-bin/quench-node",
+        "--no-warnings",
+        "-e",
+        "let sum=0;for(let i=0;i<20000;i++){const b=Buffer.allocUnsafe(1);sum+=b.length}console.log(sum)"
+      ],
+      "elapsed_seconds": 0.7363701199647039,
+      "exit": 0,
+      "timeout": false
+    },
+    {
+      "workload": "buffer20000",
+      "label": "node26",
+      "command": [
+        "/workspace/quench/work/node-v26.12.0-linux-x64/bin/node",
+        "--no-warnings",
+        "-e",
+        "let sum=0;for(let i=0;i<20000;i++){const b=Buffer.allocUnsafe(1);sum+=b.length}console.log(sum)"
+      ],
+      "elapsed_seconds": 0.029716888966504484,
+      "exit": 0,
+      "timeout": false
+    }
+  ]
+}

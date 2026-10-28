@@ -1,0 +1,54 @@
+{
+  "schema": 1,
+  "task": "61",
+  "kind": "array_index_access_source_audit",
+  "recorded_on": "2026-10-08",
+  "source": {
+    "revision": "e3d3e40a93033cb7d2f16b0bd8c9823d3827d079",
+    "worktree_dirty": true,
+    "sha256": {
+      "crates/quench-runtime/src/vm/index.rs": "0e70f72bfde2faf23830a4fd6f6d58e413fe11943ac765bf391d419f358e1cd9",
+      "crates/quench-runtime/src/vm/object_array.rs": "ecd7c67b612fa81359d5831c1df0ba146963f12ff5afd04beec3da80dfe3b5e2",
+      "crates/quench-runtime/src/vm/object.rs": "3c16c9ee26fc9f595e132bb909a7ec15eaf6c529bfe80f7f0279eb15ac68c647",
+      "crates/quench-runtime/src/heap.rs": "5dace25a871e45f8558649f60399e70c67e0d1c05a24bb4396adb382522b2646",
+      "crates/quench-runtime/src/value.rs": "95452bf50ac76c340ee5fbaa34423b767ec506da35639f14a6bc89aa7b8fb79d",
+      "crates/quench-runtime/src/vm/arguments.rs": "5e3f0d369c516b4997316c14ebd962f8c7abac21f94b6bdffce26942982a33d9"
+    }
+  },
+  "confirmed_source_facts": [
+    {
+      "owner": "vm/index.rs::get_index",
+      "location": "53-80",
+      "fact": "For nonnegative int-tagged keys on arrays, indexed descriptor lookup runs before the dense element load."
+    },
+    {
+      "owner": "vm/object_array.rs::array_descriptor",
+      "location": "208-218",
+      "fact": "Descriptor lookup formats the usize index as a String, looks up its atom, then probes the descriptor map."
+    },
+    {
+      "owner": "vm/index.rs::set_index",
+      "location": "230-270",
+      "fact": "Array writes can call array_descriptor repeatedly before the element write or generic fallback."
+    },
+    {
+      "owner": "vm/object.rs::set_property_attributes/remove_property_attributes and vm/object_array.rs::define_array_length",
+      "location": "object.rs:218-256; object_array.rs:83-168, 350-380",
+      "fact": "Descriptor insertion/removal and array-length truncation are split across multiple owner paths; a per-array summary flag would need derived updates at all these transitions."
+    }
+  ],
+  "corrections": [
+    "Value::number canonicalizes integral f64 values in the i32 range to int-tagged Values, except negative zero. The supplied small-index timing does not establish that those keys take a double slow path.",
+    "The heap collection threshold is already survivor-scaled after collection and has a 384-allocation floor; the generic proposal to make it survivor-proportional is already present."
+  ],
+  "qualification": {
+    "reported_microbenchmarks": "User-supplied batch 7 timings were not independently rerun and include no stored scripts, raw samples, binary hash, or profile artifact.",
+    "implementation": "No code change. Treat the unconditional descriptor lookup as a profile lead, not a demonstrated benchmark win.",
+    "next_evidence": [
+      "Store the exact guest scripts, Quench and Node --jitless commands, paired raw timings, source/build hashes, and a symbolized profile for array read/write cases.",
+      "Before adding a per-array flag, audit descriptor insertion/removal, freeze/seal, defineProperty, array-length shrink, inherited index accessors, arguments objects, proxies, and typed-array boundaries.",
+      "After Stage A, measure the common descriptor-free array path and verify exact fallback behavior against affected Test262 stages and the local Node oracle."
+    ],
+    "unit_tests": "not run"
+  }
+}

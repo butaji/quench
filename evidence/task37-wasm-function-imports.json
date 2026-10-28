@@ -1,0 +1,147 @@
+{
+  "tasks": [
+    "23",
+    "37",
+    "40",
+    "48",
+    "86"
+  ],
+  "source_head": "7e60169df033dd247f34199e084e3e8080a92a29",
+  "source_state": "dirty worktree",
+  "source_hashes": {
+    "crates/quench-runtime-next/src/wasm.rs": "246d6902c14ba740b5008daee88c8431ce7371391075b659ad6380c504b3e40a",
+    "crates/quench-runtime-next/src/wasm/scalar.rs": "69fc934b3d35d8f45cc6bc25ba7012e6ca584390b7d407dfd935a88e38b7208d",
+    "crates/quench-runtime-next/src/api.rs": "196428044bc05a72fccffbab1704fb91c719b573b93da1f6400370d9262066e7",
+    "crates/quench-runtime-next/src/lib.rs": "15ddf5483e2137e4659838cc08dc80bbaa8ad1daab8c7804dcb07b2a5f8e7ed5",
+    "crates/quench-runtime-next/src/bytecode.rs": "4e0969314a44127bda936502afd79cef0587983e87526e5a4cb838fca0aebc25",
+    "crates/quench-runtime-next/src/bytecode/validate.rs": "ca4cf7319dc0af035c943cfcc9cd1d453d0e1991ae574aba61a22a2d345beff8",
+    "crates/quench-runtime-next/src/bytecode/disassemble.rs": "709534c7db232007584143fb86f2f1979559b02794911ba14a1962da240c008e",
+    "crates/quench-runtime-next/src/vm/program_store.rs": "72ef9268b578fe883e1c089aaadc08c0e2c6c35c9daea30d042255371494ec7f",
+    "crates/quench-runtime-next/src/vm/dispatch.rs": "48a50b13a24fed7cb2d0ffb3c51d2e1faa12a4b56d34575eaa567b14be50775c",
+    "crates/quench-runtime-next/src/vm/wasm.rs": "e72d206d87d50414e49c242d63f245f8221678e2e02233f8d7501c8eb9a05142",
+    "crates/quench-runtime-next/src/vm/wasm_table.rs": "8cd6cc9504316f4921e2fda55b37081d7f1623ab0b7f3851a1736881a48a9ece",
+    "crates/quench-wasm/src/shared.rs": "8eda28095c18b833df592ec2d9d8c6a7abd1d5a89a29cd5f299cd3c77f22f0ef",
+    "crates/quench-wasm/src/shared_wast.rs": "846089a34893f602fbc84f298cbc17ce9739cb3be644828cea3fa8de02c95b4a"
+  },
+  "suite_head": "67c8b9dc32c47d61c05a1681df349d01c85fa8ff",
+  "suite_clean": true,
+  "host": "macOS-26.5-arm64-arm-64bit",
+  "rustc": "rustc 1.99.0 (b940084d7 2026-09-28) (Homebrew)",
+  "profile": "debug",
+  "residual_format": 52,
+  "obligation": "Wasm-to-Wasm function imports and reexports retain original identity, captures and canonical signatures, and execute through the existing shared ABI/dispatch. Function-index and residual-body-index domains remain distinct; no import forwarding bodies are synthesized.",
+  "representation": "WasmSignatures retains canonical type facts, function-to-type indices and ordered imported function names. Only definitions produce residual bodies; defined_index/defined_signature derive source/residual projections. WasmFunctionImport expected facts are consumed during lowering. Import lookup derives mixed function/global/table/memory names from their owners. Runtime environments append the original rooted function cells, deriving their offset from slots and import count. Existing closure identity, active ProgramId, call_user/call_value and multi-result bundles transport calls/captures without another function map or executor.",
+  "validation": "Linking checks original function kind and structural parameter/result signature, rejecting kind/type/arity mismatches, missing modules/fields and released roots as link failures. WasmRefFunc carries a source WasmFunctionIndex rather than a residual ClosureFunctionIndex. The frontend/lowerer checks source indices; ProgramStore attachment validates full source-index/signature domains and definition count against residual bodies. Imported direct calls use WasmRefFunc and ordinary Op::Call; defined direct calls retain CallKnown with the derived body index. Starts and reference/element initializers use the same function projection.",
+  "scope": "Previous 115-file global/import/instantiation ratchet plus every top-level pinned Wast file with an explicit or inline function import (multiline-aware matching): 122 files. Includes direct/indirect calls, refs, results, starts, traps/exhaustion and mixed import callers. No full suite.",
+  "inventory": {
+    "path": "target/iteration/task37-wasm-function-imports-files.json",
+    "sha256": "a11a4942ab09ad1663dcd0ec0032638bd139ca4fe22aafa7c6cab9d9c9c6bc10"
+  },
+  "qualification": {
+    "files": 122,
+    "total": 30521,
+    "before_passed": 25749,
+    "passed": 28454,
+    "failed": 2067,
+    "gains": 2705,
+    "regressions": 0,
+    "gains_by_file": {
+      "crates/quench-wasm-test/testsuite/imports.wast": 26,
+      "crates/quench-wasm-test/testsuite/imports0.wast": 2,
+      "crates/quench-wasm-test/testsuite/linking.wast": 55,
+      "crates/quench-wasm-test/testsuite/linking1.wast": 5,
+      "crates/quench-wasm-test/testsuite/linking3.wast": 1,
+      "crates/quench-wasm-test/testsuite/table_copy.wast": 1116,
+      "crates/quench-wasm-test/testsuite/table_copy64.wast": 1116,
+      "crates/quench-wasm-test/testsuite/table_init.wast": 192,
+      "crates/quench-wasm-test/testsuite/table_init64.wast": 192
+    },
+    "exact_directive_ids": true,
+    "identical_input_hashes": true,
+    "complete_workers": true
+  },
+  "controls": {
+    "files": 10,
+    "total": 666,
+    "passed": 666,
+    "failed": 0,
+    "new_function_directives": 28,
+    "same_runner": true
+  },
+  "checks": {
+    "wasm_internal": 33,
+    "frontend": 39,
+    "bytecode_related": 19,
+    "profile_feature_all_target_check": "passed",
+    "internal_obligation": "One new serialization/root-transfer test proves original identity/capture retention, imported/defined index-domain separation, invalid source-index rejection during pool attachment, canonical signature matching, GC/release, and stale-root failure without root growth. Ordinary conformance remains in pinned suite/oracle controls.",
+    "unit_cleanup": "Removed the now-invalid unsupported-function-import assertion from the typed-entry boundary test. The failed-replacement lifecycle test still rejects reuse of the previous/current/named instance and now recognizes its actual unknown-import failure."
+  },
+  "oracle": {
+    "path": "target/iteration/task37-wasm-function-imports-oracle.json",
+    "source": "target/iteration/task37-wasm-function-imports-oracle.cjs",
+    "sha256": "c2b0e0f2d25681687eb78e68d142eddff43a3dd4a5235ae397db0bcf8adaa8e1",
+    "result": {
+      "node": "v26.10.0",
+      "flags": [
+        "--no-sparkplug",
+        "--no-maglev",
+        "--no-turbofan",
+        "--wasm-jitless"
+      ],
+      "modules": 12,
+      "checks": "original identity/reexports, captured global state, interleaved resources, imported start, live argument-window operands, multi-results and signed zero, externref/funcref identity, table references, trapped calls/starts and effects, cross-instance stack exhaustion, exact parameter/result/arity/kind/missing-import errors"
+    }
+  },
+  "specification": {
+    "instantiation": "https://webassembly.github.io/spec/core/exec/modules.html#exec-instantiation",
+    "type_matching": "https://webassembly.github.io/spec/core/valid/matching.html#match-functype"
+  },
+  "reports": {
+    "before": {
+      "path": "target/iteration/task37-wasm-function-imports-before.json",
+      "sha256": "bc7418be6726e4c15ab316b2d3f8d413d4bb075f7ed3c034be5b43f920cdc562",
+      "binary_sha256": "349043f60168afb946a86fed27512c50a40254ba5e503c9e33028637f2ad75d1",
+      "command_source": "provenance.command in this report; inputs frozen by inventory path above"
+    },
+    "after": {
+      "path": "target/iteration/task37-wasm-function-imports-after.json",
+      "sha256": "3dfa0a57b9bfbbc6665af4af1913d3ebe96c0959c6fa267c1a807205d23074a8",
+      "binary_sha256": "7923b88644bb4fd90e0a943d0e484bb8460f586f763eeddb05b37ca35d6ef617",
+      "command_source": "provenance.command in this report; inputs frozen by inventory path above"
+    },
+    "controls": {
+      "path": "target/iteration/task37-wasm-function-imports-controls.json",
+      "sha256": "14b5a4b8137be2023bdc4d59d59cd49531ee7b3e8b3dd641a5740b959cb32333",
+      "binary_sha256": "7923b88644bb4fd90e0a943d0e484bb8460f586f763eeddb05b37ca35d6ef617",
+      "command_source": "provenance.command in this report; inputs frozen by inventory path above"
+    }
+  },
+  "logs": {
+    "runtime": {
+      "path": "target/iteration/task37-wasm-function-imports-runtime.log",
+      "sha256": "c43cdf2985b2560c5ef68acb5f51b6d14e37f5603091ee4bccc46383a163a389"
+    },
+    "frontend": {
+      "path": "target/iteration/task37-wasm-function-imports-frontend.log",
+      "sha256": "40ba7b96836c44c786fc14057d0c883115b1e20e96f89332f3ad2349472fd4e2"
+    },
+    "bytecode": {
+      "path": "target/iteration/task37-wasm-function-imports-bytecode.log",
+      "sha256": "457de39db7756508d72586f138dc0f83e69cfa1798d2a515b252863c3252447e"
+    },
+    "build": {
+      "path": "target/iteration/task37-wasm-function-imports-build.log",
+      "sha256": "df1fc88df944762321859d30a118d5307efe177e99b08f24a0305c6797a549f9"
+    },
+    "check": {
+      "path": "target/iteration/task37-wasm-function-imports-check.log",
+      "sha256": "34c8a064d84c10011163aac06eda96e9fa4f1b4b4cff6b51edf16ac1f6986995"
+    },
+    "compare": {
+      "path": "target/iteration/task37-wasm-function-imports-compare.log",
+      "sha256": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+    }
+  },
+  "remaining": "Host/native function imports including spectest print and JS/Wasm interoperation; dynamic imported-operand expressions/offsets/reference initializers, ref.func global initializers, concrete typed/GC/non-null boundaries, SIMD and remaining memory/table/proposal paths. Full three-suite qualification, frozen implemented Node migration, production cutover and cleanup remain open. Stage A stays open; Stage B has not started.",
+  "profile_limit": "Feature builds pass; profile execution site/program attribution remains task 68\u2019s known separate gap. No profile execution or performance claim."
+}

@@ -1,0 +1,334 @@
+diff --git a/crates/quench-runtime/src/bytecode.rs b/crates/quench-runtime/src/bytecode.rs
+index 315d451f8..9d7142a97 100644
+--- a/crates/quench-runtime/src/bytecode.rs
++++ b/crates/quench-runtime/src/bytecode.rs
+@@ -18,6 +18,11 @@ pub(crate) use numeric_ops::specialized_numeric_op;
+ pub(crate) const RETURN_REGISTER: Register = 1 << 15;
+ pub(crate) const SET_THIS_REGISTER: Register = 1 << 14;
+ pub(crate) const REGISTER_MASK: Register = SET_THIS_REGISTER - 1;
++pub(crate) const BINARY_BRANCH_REGISTER_BITS: u32 = 7;
++pub(crate) const BINARY_BRANCH_REGISTER_MASK: Register = (1 << BINARY_BRANCH_REGISTER_BITS) - 1;
++pub(crate) const BINARY_BRANCH_OPERATOR_SHIFT: u32 = BINARY_BRANCH_REGISTER_BITS;
++pub(crate) const BINARY_BRANCH_OPERATOR_LIMIT: u32 =
++    1 << (REGISTER_MASK.count_ones() - 2 - BINARY_BRANCH_OPERATOR_SHIFT);
+ pub(crate) const INLINE_OBJECT_SITE_ATOMS: usize = 2;
+ pub(crate) const MAX_ARRAY_LENGTH: usize = u32::MAX as usize;
+ pub(crate) const NO_REGISTER_ROOT_MAP: u32 = u32::MAX;
+@@ -666,6 +671,7 @@ opcodes!(
+     SetThisFieldStrictLocal => WRITE_THROW; layout Scalar; meaning AtomIndex, @ Register, @ fields(LocalSlot, Unused, CacheSiteIndex),
+     LoadLocalPlain => Effect::PURE; layout Scalar; meaning LocalSlot, @ Register, @ fields(ResultRegister, NumericLocalTarget, NumericLocalStoreMarker),
+     StoreLocalPlain => Effect::PURE; layout Scalar; meaning LocalSlot, @ Register, @ fields(Register, OptionalRegister, BooleanFlag),
++    JumpBinaryFalseKeep => READ_THROW.union(Effect::CONTROL); layout Scalar; meaning JumpTarget; flow ConditionalJump, @ Register, @ fields(ResultRegister, Operand, Operand),
+ 
+ );
+ 
+@@ -1376,7 +1382,7 @@ fn local_loads_in_bounds(code: &[Instr], wide: &[WideInstruction], locals: u16)
+ }
+ 
+ impl ResidualProgram {
+-    pub const FORMAT_VERSION: u8 = 83;
++    pub const FORMAT_VERSION: u8 = 84;
+     pub const RUNTIME_ABI_FINGERPRINT: u64 = {
+         const ABI_SIGNATURE: u64 = 0x5251_4a00_0000_0000;
+         const FORMAT_VERSION_SHIFT: u32 = 16;
+diff --git a/crates/quench-runtime/src/bytecode/disassemble.rs b/crates/quench-runtime/src/bytecode/disassemble.rs
+index a465c2c08..72a039fac 100644
+--- a/crates/quench-runtime/src/bytecode/disassemble.rs
++++ b/crates/quench-runtime/src/bytecode/disassemble.rs
+@@ -1,6 +1,8 @@
+ use super::ResidualProgram;
+ use super::instruction::WideInstruction;
+-use super::{FieldLayout, ImmediateLayout, ImmediateRole, InstructionField, Operand, OperandKind};
++use super::{
++    FieldLayout, ImmediateLayout, ImmediateRole, InstructionField, Op, Operand, OperandKind,
++};
+ use std::fmt::{self, Write};
+ 
+ impl ResidualProgram {
+@@ -133,6 +135,9 @@ fn write_scalar_field(
+     layout: FieldLayout,
+ ) -> fmt::Result {
+     if layout.is_register_field() {
++        if field == InstructionField::A && instruction.op() == Op::JumpBinaryFalseKeep {
++            return write!(output, " a={}", instruction.result_register());
++        }
+         return write!(
+             output,
+             " {}={}",
+@@ -436,6 +441,12 @@ fn write_scalar_value(output: &mut String, instruction: WideInstruction) -> fmt:
+         ImmediateRole::UnaryOperator => {
+             write!(output, " operator={}", instruction.unary_operator())
+         }
++        ImmediateRole::JumpTarget if instruction.op() == Op::JumpBinaryFalseKeep => write!(
++            output,
++            " operator={} target={}",
++            instruction.binary_operator_field(),
++            instruction.jump_target()
++        ),
+         ImmediateRole::JumpTarget => write!(output, " target={}", instruction.jump_target()),
+         _ => Ok(()),
+     }
+diff --git a/crates/quench-runtime/src/bytecode/instruction.rs b/crates/quench-runtime/src/bytecode/instruction.rs
+index f78fbaa05..c61d05604 100644
+--- a/crates/quench-runtime/src/bytecode/instruction.rs
++++ b/crates/quench-runtime/src/bytecode/instruction.rs
+@@ -1,6 +1,7 @@
+ use super::{
+-    Effect, FieldBase, FieldLayout, FieldLookup, ImmediateLayout, ImmediateRole, InstructionField,
+-    Op, Operand, REGISTER_MASK, RETURN_REGISTER, Register, ResultLayout, SET_THIS_REGISTER,
++    BINARY_BRANCH_OPERATOR_SHIFT, BINARY_BRANCH_REGISTER_MASK, Effect, FieldBase, FieldLayout,
++    FieldLookup, ImmediateLayout, ImmediateRole, InstructionField, Op, Operand, REGISTER_MASK,
++    RETURN_REGISTER, Register, ResultLayout, SET_THIS_REGISTER,
+ };
+ 
+ const PACKED_PAIR_LOW_BITS: u32 = 8;
+@@ -91,11 +92,19 @@ macro_rules! layout_accessors {
+                     self.op().field_layout(InstructionField::A),
+                     FieldLayout::ResultRegister
+                 );
+-                self.a() & REGISTER_MASK
++                if self.op() == Op::JumpBinaryFalseKeep {
++                    self.a() & BINARY_BRANCH_REGISTER_MASK
++                } else {
++                    self.a() & REGISTER_MASK
++                }
+             }
+ 
+             pub(crate) fn result_flags(self) -> Register {
+-                self.a() & !REGISTER_MASK
++                if self.op() == Op::JumpBinaryFalseKeep {
++                    0
++                } else {
++                    self.a() & !REGISTER_MASK
++                }
+             }
+ 
+             #[allow(dead_code)]
+@@ -105,8 +114,14 @@ macro_rules! layout_accessors {
+                     FieldLayout::ResultRegister
+                 );
+                 debug_assert!(register <= REGISTER_MASK);
+-                let flags = self.result_flags();
+-                *self = Self::new(self.op(), register | flags, self.b(), self.c(), self.imm());
++                let a = if self.op() == Op::JumpBinaryFalseKeep {
++                    ((u32::from(self.binary_operator_field()) << BINARY_BRANCH_OPERATOR_SHIFT)
++                        as Register)
++                        | register
++                } else {
++                    register | self.result_flags()
++                };
++                *self = Self::new(self.op(), a, self.b(), self.c(), self.imm());
+             }
+ 
+             pub(crate) fn returns_from_frame(self) -> bool {
+@@ -397,11 +412,15 @@ macro_rules! layout_accessors {
+ 
+             #[allow(dead_code)]
+             pub(crate) fn binary_operator_field(self) -> u32 {
+-                debug_assert_eq!(
+-                    self.op().field_layout(InstructionField::A),
+-                    FieldLayout::BinaryOperator
+-                );
+-                u32::from(self.a())
++                if self.op() == Op::JumpBinaryFalseKeep {
++                    u32::from(self.a()) >> BINARY_BRANCH_OPERATOR_SHIFT
++                } else {
++                    debug_assert_eq!(
++                        self.op().field_layout(InstructionField::A),
++                        FieldLayout::BinaryOperator
++                    );
++                    u32::from(self.a())
++                }
+             }
+ 
+             #[allow(dead_code)]
+diff --git a/crates/quench-runtime/src/bytecode/validate.rs b/crates/quench-runtime/src/bytecode/validate.rs
+index 7378d54b3..086a109cb 100644
+--- a/crates/quench-runtime/src/bytecode/validate.rs
++++ b/crates/quench-runtime/src/bytecode/validate.rs
+@@ -112,11 +112,15 @@ fn field_domains_in_bounds(instruction: super::WideInstruction, bounds: Validati
+         let value = instruction.field_value(field);
+         match instruction.op().field_layout(field) {
+             FieldLayout::ResultRegister => {
+-                if let Some(local) = instruction.numeric_local_target() {
++                let valid_result = if let Some(local) = instruction.numeric_local_target() {
+                     local < bounds.locals
+                 } else {
+                     register_in_bounds(instruction.result_register(), bounds.registers, 0)
+-                }
++                };
++                valid_result
++                    && (instruction.op() != super::Op::JumpBinaryFalseKeep
++                        || instruction.binary_operator_field()
++                            <= oxc_ast::ast::BinaryOperator::Instanceof as u32)
+             }
+             FieldLayout::Register | FieldLayout::WriteRegister | FieldLayout::ReadWriteRegister => {
+                 register_in_bounds(value, bounds.registers, 0)
+diff --git a/crates/quench-runtime/src/compile/rewrite.rs b/crates/quench-runtime/src/compile/rewrite.rs
+index 44e54a12a..96e5e36e0 100644
+--- a/crates/quench-runtime/src/compile/rewrite.rs
++++ b/crates/quench-runtime/src/compile/rewrite.rs
+@@ -117,6 +117,27 @@ fusion_recipes! {
+                 second.jump_target(),
+             ))
+         };
++    BinaryJumpFalseKeep: [Binary, JumpFalse] =>
++        |first: Instr, second: Instr, _: &mut Vec<FieldSite>| {
++            let result = first.result_register();
++            let operator = first.binary_operator();
++            if result != second.register_a()
++                || result > crate::bytecode::BINARY_BRANCH_REGISTER_MASK
++                || first.result_flags() != 0
++                || operator >= crate::bytecode::BINARY_BRANCH_OPERATOR_LIMIT
++            {
++                return None;
++            }
++            let encoded = ((operator << crate::bytecode::BINARY_BRANCH_OPERATOR_SHIFT) as u16)
++                | result;
++            Instr::try_new(
++                Op::JumpBinaryFalseKeep,
++                encoded,
++                first.operand_b().0,
++                first.operand_c().0,
++                second.jump_target(),
++            )
++        };
+     UnaryJumpFalse: [Unary, JumpFalse] =>
+         |first: Instr, second: Instr, _: &mut Vec<FieldSite>| {
+             if first.result_register() != second.register_a() {
+@@ -677,7 +698,7 @@ mod tests {
+ 
+     #[test]
+     fn recipe_schema_generates_ordered_pattern_rows() {
+-        assert_eq!(RULES.len(), 25);
++        assert_eq!(RULES.len(), 26);
+         assert_eq!(RULES[0].pattern, [Op::LoadConst, Op::Binary]);
+         assert_eq!(RULES[1].pattern, [Op::LoadConst, Op::Binary]);
+         assert!(matches!(RULES[0].recipe, Recipe::ConstantLeft));
+diff --git a/crates/quench-runtime/src/vm/dispatch.rs b/crates/quench-runtime/src/vm/dispatch.rs
+index 46ba9a381..f5a17c6d7 100644
+--- a/crates/quench-runtime/src/vm/dispatch.rs
++++ b/crates/quench-runtime/src/vm/dispatch.rs
+@@ -1520,6 +1520,44 @@ impl<H: Host> Vm<H> {
+                     *pc = i.jump_target() as usize;
+                 }
+             }
++            Op::JumpBinaryFalseKeep => {
++                let operator = i.binary_operator_field();
++                let left_operand = i.operand_b();
++                let right_operand = i.operand_c();
++                self.profile
++                    .binary(operator as usize, left_operand.0, right_operand.0);
++                let left = self.resolve_operand(p, f, left_operand)?;
++                let right = self.resolve_operand(p, f, right_operand)?;
++                let site_pc = *pc - 1;
++                let armed = self.profile_regional_binary(f, site_pc, operator, left, right);
++                let value = if armed {
++                    match self.numeric_binary(operator, left, right) {
++                        Some(value) => {
++                            self.record_binary_value_path(
++                                operator,
++                                left,
++                                right,
++                                crate::profile::BinaryValuePath::IntegerFastPath,
++                            );
++                            value
++                        }
++                        None => {
++                            self.deopt_numeric_site(f, site_pc);
++                            self.binary(p, operator, left, right)?
++                        }
++                    }
++                } else {
++                    self.binary(p, operator, left, right)?
++                };
++                self.write(f, i.result_register(), value);
++                let truthy = self.truthy(value);
++                #[cfg(feature = "profile-aggregate")]
++                self.profile
++                    .branch_value(value.profile_kind() as usize, truthy);
++                if !truthy {
++                    *pc = i.jump_target() as usize;
++                }
++            }
+             Op::JumpUnaryFalse => {
+                 let operator = i.unary_operator_field();
+                 let input = self.resolve_operand(p, f, i.operand_b())?;
+diff --git a/crates/quench-runtime/src/vm/dispatch_numeric.rs b/crates/quench-runtime/src/vm/dispatch_numeric.rs
+index 502da4c3a..ced4e69dd 100644
+--- a/crates/quench-runtime/src/vm/dispatch_numeric.rs
++++ b/crates/quench-runtime/src/vm/dispatch_numeric.rs
+@@ -218,18 +218,7 @@ impl<H: Host> Vm<H> {
+                             Some(value) => value,
+                             None => self.binary(p, operator, left, right)?,
+                         };
+-                        if ins.returns_from_frame() {
+-                            return Ok(StepResult::Return(value));
+-                        }
+-                        if let Some(local) = ins.numeric_local_target() {
+-                            self.frames[frame].locals[local as usize] = value;
+-                            self.profile.virtual_opcode(
+-                                self.frames[frame].program.raw(),
+-                                Op::StoreLocal as usize,
+-                            );
+-                        } else {
+-                            self.write(frame, ins.result_register(), value);
+-                        }
++                        self.write(frame, ins.result_register(), value);
+                     }
+                     Op::NumericAdd => {
+                         execute_specialized_numeric!(
+@@ -295,6 +284,53 @@ impl<H: Host> Vm<H> {
+                             pc = ins.jump_target() as usize;
+                         }
+                     }
++                    Op::JumpBinaryFalseKeep => {
++                        let operator = ins.binary_operator_field();
++                        let left_operand = ins.operand_b();
++                        let right_operand = ins.operand_c();
++                        self.profile
++                            .binary(operator as usize, left_operand.0, right_operand.0);
++                        let left = self.resolve_operand(p, frame, left_operand)?;
++                        let right = self.resolve_operand(p, frame, right_operand)?;
++                        let fast = self.numeric_binary(operator, left, right);
++                        #[cfg(feature = "profile-aggregate")]
++                        self.profile.numeric_binary_path(
++                            operator as usize,
++                            fast.is_some(),
++                            left.as_int().is_some() && right.as_int().is_some(),
++                        );
++                        if fast.is_some() {
++                            self.record_binary_value_path(
++                                operator,
++                                left,
++                                right,
++                                crate::profile::BinaryValuePath::IntegerFastPath,
++                            );
++                        }
++                        let value = match fast {
++                            Some(value) => value,
++                            None => self.binary(p, operator, left, right)?,
++                        };
++                        if ins.returns_from_frame() {
++                            return Ok(StepResult::Return(value));
++                        }
++                        if let Some(local) = ins.numeric_local_target() {
++                            self.frames[frame].locals[local as usize] = value;
++                            self.profile.virtual_opcode(
++                                self.frames[frame].program.raw(),
++                                Op::StoreLocal as usize,
++                            );
++                        } else {
++                            self.write(frame, ins.result_register(), value);
++                        }
++                        let truthy = self.truthy(value);
++                        #[cfg(feature = "profile-aggregate")]
++                        self.profile
++                            .branch_value(value.profile_kind() as usize, truthy);
++                        if !truthy {
++                            pc = ins.jump_target() as usize;
++                        }
++                    }
+                     Op::JumpUnaryFalse => {
+                         let operator = ins.unary_operator_field();
+                         let input = self.resolve_operand(p, frame, ins.operand_b())?;

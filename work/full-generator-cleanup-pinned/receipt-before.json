@@ -1,0 +1,29 @@
+{
+  "source_commit": "63bb54bdda93af01b71838e18c26bb9c9afb3340",
+  "checkout_commit": "63bb54bdda93af01b71838e18c26bb9c9afb3340",
+  "release": "v27.0.0-nightly20260819c79868f102",
+  "fixture_commit": "55e4ca33f3a6dfe364bd9558b726576a6d1a2fba",
+  "command": [
+    "/workspace/quench/work/generator-cleanup-bin/run-parallel",
+    "--all",
+    "--parallel-dir",
+    "/workspace/work/node-fixtures/test/parallel",
+    "--jobs",
+    "4",
+    "--timeout-secs",
+    "30",
+    "--results",
+    "/workspace/quench/work/full-generator-cleanup-pinned/results.json"
+  ],
+  "binaries_before": {
+    "quench-node": "bdc28c5da9e6cc7313ac019c40b12df301f2303749c26d9494f262e10a982ed9",
+    "run-parallel": "8dff70b3bdf0621f590b63072c75b709f1372b0d4e00280f336089da5725c57c",
+    "openssl-cli": "f4aa15f2822f670af7b5c1043d7aa6ebbbc64229fd2fae382edfc6a4524749c1"
+  },
+  "protected_before": {
+    "restored": true,
+    "sha256": "b0e78cd4bb13929391b33a2ad7d80f61d8b2f1d66533aaf31d95807e5f3863eb"
+  },
+  "memory_before": "low 0\nhigh 0\nmax 729353\noom 0\noom_kill 0\noom_group_kill 0\n",
+  "started_utc": "2026-10-16T03:35:29.365004+00:00"
+}

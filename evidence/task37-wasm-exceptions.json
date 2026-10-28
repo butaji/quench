@@ -1,0 +1,264 @@
+{
+  "schema": 1,
+  "source_head": "7e60169df033dd247f34199e084e3e8080a92a29",
+  "dirty_worktree": true,
+  "source_hashes": {
+    "crates/quench-runtime-next/src/wasm.rs": "7f02dccdcca24f7beee090f845c4425db53ed3b53b568caac70d58d113983ee8",
+    "crates/quench-runtime-next/src/wasm/control.rs": "a7ff87d8ba5ea0828ec213e107ee1a3b8a1e3b59eee29716f898f71fcf605ab9",
+    "crates/quench-runtime-next/src/wasm/tag.rs": "33160f6585224921a875a1e5f7d4113919daf7d808d17b493a73c5824b4b3b27",
+    "crates/quench-runtime-next/src/wasm/scalar.rs": "24a16656e3b67bcf6e05387bfd8aa31f95deec17ee76ea558650de58b57d94f3",
+    "crates/quench-runtime-next/src/wasm/types.rs": "55d9ca4f433dd93b31fb630af626b7aeddc4e1ab60fc8350f028096ee932c044",
+    "crates/quench-runtime-next/src/wasm/reference.rs": "fd31a76373489e43b1d4b9a6852ebc5ccfec35ac2c7c8a5f9d3aebed08f875fb",
+    "crates/quench-runtime-next/src/bytecode.rs": "6083e7d036b51c35a6d656a274fd9cc40a7478de0e13415ffd499120b1ce3e84",
+    "crates/quench-runtime-next/src/bytecode/validate.rs": "6e703b3c8f9172695eab75c4463df40e9cd16a3b55a93896fc5893c1b3e524a8",
+    "crates/quench-runtime-next/src/bytecode/disassemble.rs": "2006b8f6ff91bbbabce25b53813f6fb99c1c8e61b5c4aff4b95196ef619a4721",
+    "crates/quench-runtime-next/src/bytecode/tests.rs": "6a44ebff70c1b48d568e0b8118139d672c9f504fc88b4dee538bcf7593739c47",
+    "crates/quench-runtime-next/src/compile/liveness.rs": "19d8fb9ee20fb8cd4252d7dcdf0ec6b21b7f8eee60de18c1690f7712e1b19b8b",
+    "crates/quench-runtime-next/src/heap.rs": "cc6935da8a13deb5f6b518094cc42f434189649b2fb76249be890e17f29470f1",
+    "crates/quench-runtime-next/src/heap/cell.rs": "fa5d1c8e9d87c28bcef1081f79304439bdd01d2140e5c17c423956b6c1750fae",
+    "crates/quench-runtime-next/src/heap/memory_profile.rs": "37a75b4772267318b39402fbbd86e6417cc07b95bd9724d88790ac9e6701a14d",
+    "crates/quench-runtime-next/src/heap/tests.rs": "522377682aa9ba2c8ade4d6f455a868857947b20498be61e9589e7f78cfb2a08",
+    "crates/quench-runtime-next/src/vm.rs": "04c8bd31941e645344783ac826e98850f102e679582ac99faae2c892996ea1f7",
+    "crates/quench-runtime-next/src/vm/wasm_exception.rs": "8a4a40d03b3f13d3191251a35b796c90d66e6eda97be5c4823c6af39416f196e",
+    "crates/quench-runtime-next/src/vm/wasm_table.rs": "e07a32893482739679b4f018680690c5bab3da0633b70bcac88bd61b68eb0004",
+    "crates/quench-runtime-next/src/vm/json.rs": "2af173b4980b930be17d1cea41758907f6d2de990b81b056f1a74254b34dfd08",
+    "crates/quench-runtime-next/src/vm/error.rs": "7d6125479875c707e54a166bf77f20ae4071e308b8c48828098f58c5d6421d4c",
+    "crates/quench-runtime-next/src/vm/dispatch.rs": "bd6047018bf83e516ed64ca52882cbe03391b6525f5952ebd2425165dba5098c",
+    "crates/quench-runtime-next/src/vm/dispatch_frame.rs": "97c3d34787abc4ded210adc5541ba8a18e139a57721e3dbd346b40dbf0ab68da",
+    "crates/quench-wasm/src/shared_wast.rs": "1650162b70e070148e22563b30e94131bfcd3e1d02c1b5b77d3a4db9e4b5fe0d",
+    "crates/quench-wasm/src/wast_exec.rs": "6faf936f92051eb0b3da52e4a28a1ffca39b499e60b9a77a6ddfccce32e475c2"
+  },
+  "suite_head": "67c8b9dc32c47d61c05a1681df349d01c85fa8ff",
+  "suite_dirty": false,
+  "test262_head": "6eec1ac9ee144dafd8f344d73a21f36bfc9f6755",
+  "test262_dirty": false,
+  "residual_format": 67,
+  "obligation": "Execute modern try_table, throw and throw_ref through the single VM, preserving original tag/reference identity, payload roots, trap classification and tail-frame handler lifetime.",
+  "representation": "One WasmException cell owns original tag and payload. Four appended residual operations share VM heap and activation machinery. Static try regions lower to existing Handler records and catch trampolines; typed JsError transport derives the exception reference from its existing thrown slot. One handler-target operation serves initial and instruction errors, preserving JavaScript PC behavior. Traps and ordinary JavaScript errors bypass Wasm catches; null throw_ref is a typed trap. Complete constructor windows use shared validation/liveness and named layout.",
+  "affected": {
+    "before": {
+      "path": "target/iteration/task37-wasm-exceptions-before.json",
+      "sha256": "386632b67f0d40f5583c12d81294bcb36098ab5308b9309de20a3f185ea4f081"
+    },
+    "after": {
+      "path": "target/iteration/task37-wasm-exceptions-after.json",
+      "sha256": "c0b8fbbfd45425493d7a281998ec180d07c2688e565208efc53bf33658fa1612"
+    },
+    "binary_sha256": {
+      "before": "1b55a8546e91107595ad42badd6202963e22264324737ed01c2ed1754ef86671",
+      "after": "2726100b6e01a4241e70765b8aee45e60a870465264e02d38ac9a1d25eca7c7d"
+    },
+    "files": 7,
+    "total": 519,
+    "before_passed": 441,
+    "passed": 519,
+    "failed": 0,
+    "gains": 78,
+    "gains_by_file": {
+      "crates/quench-wasm-test/testsuite/throw.wast": 10,
+      "crates/quench-wasm-test/testsuite/throw_ref.wast": 13,
+      "crates/quench-wasm-test/testsuite/try_table.wast": 55
+    },
+    "regressions": 0,
+    "same_ids_and_input_hashes": true,
+    "all_workers_completed": true
+  },
+  "controls": {
+    "before": {
+      "path": "target/iteration/task37-wasm-exceptions-controls-before.json",
+      "sha256": "f0a37ffe43480e2bf1445b41d1154278e2b2dc5af1012fcd94a148c5bcd16e98"
+    },
+    "after": {
+      "path": "target/iteration/task37-wasm-exceptions-controls-after.json",
+      "sha256": "7367ac642ecd904fcecafe09b5bf54197c49200f5be5c57b945f62e4d24a1796"
+    },
+    "binary_sha256": {
+      "before": "1b55a8546e91107595ad42badd6202963e22264324737ed01c2ed1754ef86671",
+      "after": "2726100b6e01a4241e70765b8aee45e60a870465264e02d38ac9a1d25eca7c7d"
+    },
+    "files": 1,
+    "total": 22,
+    "before_passed": 0,
+    "passed": 22,
+    "failed": 0,
+    "gains": 22,
+    "gains_by_file": {
+      "target/iteration/task37-wasm-exceptions-controls.wast": 22
+    },
+    "regressions": 0,
+    "same_ids_and_input_hashes": true,
+    "all_workers_completed": true
+  },
+  "runner": {
+    "path": "target/iteration/task37-wasm-exceptions-runner",
+    "sha256": "2726100b6e01a4241e70765b8aee45e60a870465264e02d38ac9a1d25eca7c7d"
+  },
+  "javascript": {
+    "reason": "Shared activation error routing affects ordinary try/throw and resumed generators/functions.",
+    "total": 541,
+    "groups": [
+      {
+        "stage": 26,
+        "filter": "language/statements/try/",
+        "total": 201,
+        "passed": 201,
+        "regressions": 0,
+        "same_ids": true,
+        "fixture_content_sha256": "d48ff09682c562bbeccf87fa9feac4dd8ac4728e8e684203bf6e7e318296400c",
+        "before": {
+          "path": "target/iteration/task37-wasm-exceptions-js-before-try.json",
+          "sha256": "b8cea9ad43206021689274f513648cf151d2391c56d92dfd8e31af9934aecf47"
+        },
+        "after": {
+          "path": "target/iteration/task37-wasm-exceptions-js-after-try.json",
+          "sha256": "8a91625d36f17a126e7eed7f6a9a1100fd5489cbd47dec2555252a6451cd53a6"
+        }
+      },
+      {
+        "stage": 26,
+        "filter": "language/statements/throw/",
+        "total": 14,
+        "passed": 14,
+        "regressions": 0,
+        "same_ids": true,
+        "fixture_content_sha256": "cff61fd9868234e85fb5d45123f47ffa909789cd6a32e46a795b2ecac9fd0954",
+        "before": {
+          "path": "target/iteration/task37-wasm-exceptions-js-before-throw.json",
+          "sha256": "a10360bace8fb3bd186d4e5622f56a02a2996ec674011c898f10df1e4e021126"
+        },
+        "after": {
+          "path": "target/iteration/task37-wasm-exceptions-js-after-throw.json",
+          "sha256": "8f80ec18ce70959056daa8b7e6a67b5ac7ed3ff5367c33eae03c5dc2cc6d31b8"
+        }
+      },
+      {
+        "stage": 38,
+        "filter": null,
+        "total": 48,
+        "passed": 48,
+        "regressions": 0,
+        "same_ids": true,
+        "fixture_content_sha256": "8be90b34a3cb28d4594ee981b0f1e970a72bd963b2f992a94cb3d2dc0c5b55b6",
+        "before": {
+          "path": "target/iteration/task37-wasm-exceptions-js-before-async-generators.json",
+          "sha256": "6d1b4f6dc0a9d4eff392734dad6baecedeb853fbe374c211a5f9212dd6d1f411"
+        },
+        "after": {
+          "path": "target/iteration/task37-wasm-exceptions-js-after-async-generators.json",
+          "sha256": "b039c12bb57237ba9b14fbc3941a68e331586a74dc98b0e23dec9657344e1b17"
+        }
+      },
+      {
+        "stage": 50,
+        "filter": null,
+        "total": 61,
+        "passed": 61,
+        "regressions": 0,
+        "same_ids": true,
+        "fixture_content_sha256": "dc580dcef94e9d791fd3b915486e60a878b6f78d8bc34062944deeac368f9cb5",
+        "before": {
+          "path": "target/iteration/task37-wasm-exceptions-js-before-generators.json",
+          "sha256": "7ea8b6c227ad9cc0259f87a06dae7e0fbe17002168ffab863798aba78a4b536e"
+        },
+        "after": {
+          "path": "target/iteration/task37-wasm-exceptions-js-after-generators.json",
+          "sha256": "00776e803f360e992a0b30b9b735bda8242b802cec8833e328cbf5c83b0045f3"
+        }
+      },
+      {
+        "stage": 11,
+        "filter": null,
+        "total": 217,
+        "passed": 217,
+        "regressions": 0,
+        "same_ids": true,
+        "fixture_content_sha256": "528336a653b380b2cf5b176d2373e2bc1e02eeb5327e8725b114ed46b503b8f9",
+        "before": {
+          "path": "target/iteration/task37-wasm-exceptions-js-before-function-code.json",
+          "sha256": "06655ba05d2bdfcf48d7a0279d7a007c980b10b7116860b731d7f68fa52b6efd"
+        },
+        "after": {
+          "path": "target/iteration/task37-wasm-exceptions-js-after-function-code.json",
+          "sha256": "5c1acd1fe33f09b07527626da6a19c2cdda1fdde3ea330b082cdcbf631303ff1"
+        }
+      }
+    ],
+    "before_runner": {
+      "path": "target/iteration/task37-wasm-array-elements-js-after-runner",
+      "sha256": "879085e05f9be624ec1636d103c6fdfbef3049a687696e351cda930bcc7120a6"
+    },
+    "after_runner": {
+      "path": "target/iteration/task37-wasm-exceptions-js-runner",
+      "sha256": "9c198e62ad708421318b85f5e78726fa1365fec5a0c6ffcce3e460440b59ab9d"
+    },
+    "harness_content_sha256": "8ed90739b38180524c964b42072ab75f5639bf671d175fce3fa32ba4eba68bb6",
+    "regressions": 0
+  },
+  "checks": {
+    "runtime": {
+      "path": "target/iteration/task37-wasm-exceptions-runtime.log",
+      "sha256": "cf343504da5e353b870e9537e4cf4854ea66bed8bc8e43d6fa1c425f220f0120",
+      "passed": 35
+    },
+    "heap": {
+      "path": "target/iteration/task37-wasm-exceptions-heap.log",
+      "sha256": "c817e01823691fa93bd4b68cd9cf9c14fd5b66406fc8b7c23788e2194d29d62a",
+      "passed": 21
+    },
+    "frontend": {
+      "path": "target/iteration/task37-wasm-exceptions-frontend.log",
+      "sha256": "3d03d7f0dff710ae1caf968ecba48adb60ecb579ba70924a555e4160fa8bb4f0",
+      "passed": 32
+    },
+    "bytecode": {
+      "path": "target/iteration/task37-wasm-exceptions-bytecode.log",
+      "sha256": "af26f52ecd9ef2d788195194c429adb09b65873bd5d75ea13a3c87a12a595afd",
+      "passed": 19
+    },
+    "roots": {
+      "path": "target/iteration/task37-wasm-exceptions-roots.log",
+      "sha256": "dc412c5f18d450f37a1da8bf076d94d937aa7c1e73fb500a2054f8c295c5ab7e",
+      "passed": 1
+    },
+    "check": {
+      "path": "target/iteration/task37-wasm-exceptions-check.log",
+      "sha256": "c0daf9e39403cf14c2bfe747628273dd705715e4688f49a8b34e2c247242e9e3",
+      "passed": null
+    },
+    "build": {
+      "path": "target/iteration/task37-wasm-exceptions-build.log",
+      "sha256": "bc7d0abf901be60b7e692354e86aa0702b8c662797bf8b8cf41aad4b69d10fb2",
+      "passed": null
+    },
+    "js-build": {
+      "path": "target/iteration/task37-wasm-exceptions-js-build.log",
+      "sha256": "f7f93bc60ad3875262057661cd079937cba4ac58db83d32fbc66778153a6cc74",
+      "passed": null
+    }
+  },
+  "oracle": {
+    "path": "target/iteration/task37-wasm-exceptions-oracle.json",
+    "sha256": "c4f0b80be7443030c7d8fd60ba6f9f1841a8acd0f1e1ade40aa403bbd594a276",
+    "node": "v26.10.0",
+    "observations": 26,
+    "flags": [
+      "--no-sparkplug",
+      "--no-maglev",
+      "--no-turbofan",
+      "--wasm-jitless",
+      "--experimental-wasm-custom-descriptors"
+    ],
+    "input_hashes": {
+      "target/iteration/task37-wasm-exceptions-a.wasm": "0aeea9f16dd1eda42b9b5c1090988ed19b293cd1a042a5651f88143e60396e19",
+      "target/iteration/task37-wasm-exceptions-a.wat": "c432e365e89e426c07717dbd159792ae6da37eebf42321b0c3ca7a10bf1395dd",
+      "target/iteration/task37-wasm-exceptions-b.wasm": "a98005fd4ae42c17c032ca62142067ec8792f89cd57eca8ecce04a897792c884",
+      "target/iteration/task37-wasm-exceptions-b.wat": "5269c2c33b66c66c20deef8ac2fc504641273094ec0102d4ba4c8eb8b4137ba3",
+      "target/iteration/task37-wasm-exceptions-oracle.cjs": "622424c1e3a6f3253cc16a5504baa3d75d42972d4265b7515dade56e897c4ad1",
+      "target/iteration/task37-wasm-exceptions-start.wasm": "50ad7634bdda6fb654892ab8f9ac14adc2eb067e10cce89441d5e54808e9c067",
+      "target/iteration/task37-wasm-exceptions-start.wat": "8f46798e36d7b6d871678f68e6fe60e3c9348c03cd5ca1167932fcfcbeddd2b2"
+    },
+    "limit": "Node reflection/getArg observations define embedding contracts, not completed shared-VM JavaScript WebAssembly.Exception facade qualification. Focused Wast directives cover core values, trap classification and external-token identity; Rust internals verify transport identity and root lifetime."
+  },
+  "internal_obligation": "One internal Rust regression proves typed transport preserves exception identity and classification through repeated throws and collection; existing heap/root-window/validator tests extend owned payload tracing and operand invariants. These observations are unavailable to Wast; ordinary exception conformance remains in the pinned suite.",
+  "limits": "Only affected scopes ran. Legacy exception proposal operators, shared types/tags, descriptor proposals, JS/foreign-host exception embedding and complete Wasm/implemented Node inventories remain open. Production cutover and Stage A closure remain open. No expectations, skips or pinned inputs changed."
+}

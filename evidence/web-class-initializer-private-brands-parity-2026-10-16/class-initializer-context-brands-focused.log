@@ -1,0 +1,6 @@
+
+running 1 test
+test private_brands_follow_initialization_without_branding_the_declaring_prototype ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 380 filtered out; finished in 0.30s
+

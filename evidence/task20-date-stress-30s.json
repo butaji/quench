@@ -1,0 +1,61 @@
+{
+  "schema": 1,
+  "task": "20",
+  "scope": {
+    "stage": "114",
+    "path_filter": "staging/sm/Date/",
+    "suite_revision": "6eec1ac9ee144dafd8f344d73a21f36bfc9f6755",
+    "full_test262_run": false
+  },
+  "source": {
+    "revision": "652bf64e4e2bdf5d62ee6d41edef4933ec94477e",
+    "dirty": true,
+    "working_tree_sha256": "ddabb3c8b62d2a4d05c68ce1b592e1420f0b4751ef5350fcb1529177374dc75b"
+  },
+  "build": {
+    "profile": "release",
+    "command": "cargo build --release -p quench-test262 --bin run-stages-next",
+    "binary": "target/release/run-stages-next",
+    "binary_sha256": "b3831fb03f64b9a5a3677e24225f7944dc4aa13290658037a123007889641fcb"
+  },
+  "run": {
+    "command": "TEST262_TEST_TIMEOUT_MS=30000 TEST262_REPORT=target/iteration/task20-date-current/date-release.json target/release/run-stages-next 114 114 staging/sm/Date/",
+    "timeout_ms": 30000,
+    "jobs": 10,
+    "elapsed_seconds": 19.14,
+    "report_sha256": "a2b16d84b2aa31a633781b5b599f5c4aa17e1f2b85ae79a9a249c936f9f7cd2a"
+  },
+  "result": {
+    "passed": 28,
+    "failed": 0,
+    "total": 28,
+    "previously_timed_out_at_10000ms": [
+      "staging/sm/Date/dst-offset-caching-1-of-8.js",
+      "staging/sm/Date/dst-offset-caching-2-of-8.js",
+      "staging/sm/Date/dst-offset-caching-3-of-8.js",
+      "staging/sm/Date/dst-offset-caching-4-of-8.js",
+      "staging/sm/Date/dst-offset-caching-5-of-8.js",
+      "staging/sm/Date/dst-offset-caching-6-of-8.js",
+      "staging/sm/Date/dst-offset-caching-7-of-8.js",
+      "staging/sm/Date/dst-offset-caching-8-of-8.js"
+    ]
+  },
+  "rejected_experiment": {
+    "mechanism": "VM-local bounded direct-mapped exact-timestamp Date offset cache",
+    "retained": false,
+    "fixture": "staging/sm/Date/dst-offset-caching-1-of-8.js",
+    "profile": "iteration",
+    "jobs": 1,
+    "timeout_ms": 30000,
+    "baseline_binary_sha256": "5f1b80d07758867d729c1c431e602807a241951faa842fdc6c1d34c9f2fb8d21",
+    "candidate_binary_sha256": "b47adc2ad1cca4d8bbc62b52753f07d64e82be4e400ee20097850e5f77cb1a12",
+    "baseline_seconds": 13.71,
+    "candidate_seconds": 13.11,
+    "ten_second_batch_report_sha256": "87cff3447fca8e09495af9232013e385bf2e6d4f4d9b98518dfbdfcd9f8f9dea",
+    "reason": "The 4% single-case reduction did not clear the 10-second batch deadline; the eight-case 10-second batch still timed out 8/8. A timestamp-only cache also lacks invalidation when the host local zone changes, including Node TZ changes."
+  },
+  "limits": [
+    "The focused release run uses the documented 30-second Test262 gate timeout and does not qualify all of Stage 114, the full Test262 inventory, or Stage A.",
+    "No runtime change was retained; historical 10-second reports remain accurate for their recorded deadline."
+  ]
+}

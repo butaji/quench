@@ -1,0 +1,11 @@
+-rwxr-xr-x 1 root root 55528960 Oct 22 15:59 /tmp/claude-0/-home-user-quench/7b48bd7e-c8b8-513f-8fda-df3008a36a8f/scratchpad/qbnp/quench-node
+config               score_geo  rss_geo  per-fixture maxRSS KiB
+throughput/old           1.000    1.000    4740   7008   9076   6936  11904  12568  33180   4960
+mf-backoff               0.962    0.655    3520   3580   4144   3740   7596   7432  32772   4820
+mf-backoff+np            0.873    0.625    3372   3408   3840   3520   7172   7068  31708   4820
+config               score_geo  rss_geo  per-fixture maxRSS KiB
+throughput/old           1.000    1.000    4832   8048  11256   7188  12144  12884  33456   9812
+mf-backoff               0.980    0.659    3472   4288   5840   3724   7560   7488  32848   9520
+mf-backoff+np            0.916    0.640    3296   4268   5412   3772   7180   7280  31696   9528
+
+[exited with code 0]

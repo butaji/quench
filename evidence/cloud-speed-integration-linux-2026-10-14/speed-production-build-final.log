@@ -1,0 +1,6 @@
+   Compiling quench-runtime v0.1.0 (/workspace/quench/crates/quench-runtime)
+   Compiling quench-wasm v0.1.0 (/workspace/quench/crates/quench-wasm)
+   Compiling quench-node v0.1.0 (/workspace/quench/crates/quench-node)
+   Compiling quench-test262 v0.1.0 (/workspace/quench/crates/quench-test262)
+   Compiling quench-wasm-test v0.1.0 (/workspace/quench/crates/quench-wasm-test)
+    Finished `production` profile [optimized] target(s) in 4m 34s

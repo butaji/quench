@@ -1,0 +1,235 @@
+diff --git a/crates/quench-node-test/node-tests/test-callsite-eval-origin.js b/crates/quench-node-test/node-tests/test-callsite-eval-origin.js
+new file mode 100644
+index 000000000..c26db5a7e
+--- /dev/null
++++ b/crates/quench-node-test/node-tests/test-callsite-eval-origin.js
+@@ -0,0 +1,21 @@
++Error.prepareStackTrace=(_,frames)=>frames;
++function capture(){return new Error().stack.slice(0,2).map(frame=>frame.isEval())}
++function ordinary(){return capture()}
++function direct(){return eval('capture()')}
++const escaped=eval('(function escaped(){return capture()})');
++const indirectEscaped=(0,eval)('(function indirectEscaped(){return capture()})');
++const vm=require('vm');
++const hostScript=vm.runInThisContext('(function hostScript(){return capture()})',{filename:'<Eval:script>'});
++const retained=eval('new Error().stack');
++const strictEscaped=eval("'use strict'; (function strictEscaped(){return capture()})");
++for(let i=0;i<3;i++)gc();
++const FunctionKinds=[Function,(async function(){}).constructor,(function*(){}).constructor,(async function*(){}).constructor];
++(async()=>{
++  const results=[ordinary(),direct(),(0,eval)('capture()'),escaped(),indirectEscaped(),hostScript(),eval('ordinary()'),strictEscaped(),retained.slice(0,1).map(frame=>frame.isEval())];
++  for(const Kind of FunctionKinds){
++    const dynamic=Kind('return capture()');
++    const value=dynamic();
++    results.push(typeof value?.next==='function'?(await value.next()).value:await value);
++  }
++  console.log(JSON.stringify(results));
++})();
+diff --git a/crates/quench-node-test/tests/child_entry.rs b/crates/quench-node-test/tests/child_entry.rs
+index 4627e8b89..bc55d316c 100644
+--- a/crates/quench-node-test/tests/child_entry.rs
++++ b/crates/quench-node-test/tests/child_entry.rs
+@@ -9498,3 +9498,8 @@ fn source_positions_use_javascript_line_terminators_and_utf16_columns() {
+ fn fused_field_reads_preserve_each_getter_operation_source() {
+     compare_node_source_with_args(include_str!("../node-tests/test-fused-field-source-positions.js"), &[]);
+ }
++
++#[test]
++fn callsite_eval_classification_follows_compilation_origin_and_survives_escaped_closures() {
++    compare_node_source_with_args(include_str!("../node-tests/test-callsite-eval-origin.js"), &["--expose-gc"]);
++}
+diff --git a/crates/quench-runtime/src/heap/cell.rs b/crates/quench-runtime/src/heap/cell.rs
+index e37d99570..3aa35acb7 100644
+--- a/crates/quench-runtime/src/heap/cell.rs
++++ b/crates/quench-runtime/src/heap/cell.rs
+@@ -1235,6 +1235,7 @@ pub(crate) struct CallSiteRecord {
+     pub(crate) this_value: Value,
+     pub(crate) hide_identity: bool,
+     pub(crate) is_constructor: bool,
++    pub(crate) is_eval: bool,
+ }
+ 
+ impl CallSiteRecord {
+diff --git a/crates/quench-runtime/src/vm/error.rs b/crates/quench-runtime/src/vm/error.rs
+index a381236c7..2e0675fd0 100644
+--- a/crates/quench-runtime/src/vm/error.rs
++++ b/crates/quench-runtime/src/vm/error.rs
+@@ -564,6 +564,7 @@ impl<H: Host> Vm<H> {
+             name,
+             hide_identity,
+             is_constructor: frame.context.is_constructor(),
++            is_eval: self.programs.is_eval(frame.program),
+             this_value: if frame.this == Value::DELETED { Value::UNDEFINED } else { frame.this },
+         }, residual.kind == crate::bytecode::ProgramKind::Module))
+     }
+@@ -606,6 +607,7 @@ impl<H: Host> Vm<H> {
+                         this_value: Value::UNDEFINED,
+                         hide_identity: true,
+                         is_constructor: false,
++                        is_eval: false,
+                     });
+                 }
+             }
+@@ -643,6 +645,7 @@ impl<H: Host> Vm<H> {
+                     this_value: Value::UNDEFINED,
+                     hide_identity: true,
+                     is_constructor: false,
++                    is_eval: false,
+                 });
+             }
+         }
+@@ -805,7 +808,7 @@ impl<H: Host> Vm<H> {
+                 CallSiteLocation::Source { column, .. } => Value::number(f64::from(column)),
+                 CallSiteLocation::Native => Value::NULL,
+             }),
+-            Native::CallSiteIsEval => Ok(Value::FALSE),
++            Native::CallSiteIsEval => Ok(if record.is_eval { Value::TRUE } else { Value::FALSE }),
+             Native::CallSiteIsConstructor => Ok(if record.is_constructor { Value::TRUE } else { Value::FALSE }),
+             Native::CallSiteIsNative => {
+                 Ok(if matches!(record.location, CallSiteLocation::Native) {
+@@ -1342,6 +1345,7 @@ impl<H: Host> Vm<H> {
+         let Some(program_id) = self.store_dynamic_program(residual) else {
+             return Err(self.type_error(program, "dynamic program store is full".into()));
+         };
++        self.programs.set_origin(program_id, super::program_store::CompilationOrigin::Eval);
+         let residual = self
+             .programs
+             .get(program_id)
+diff --git a/crates/quench-runtime/src/vm/eval.rs b/crates/quench-runtime/src/vm/eval.rs
+index 227f002e4..77566b0d7 100644
+--- a/crates/quench-runtime/src/vm/eval.rs
++++ b/crates/quench-runtime/src/vm/eval.rs
+@@ -1,5 +1,6 @@
+ use super::object_descriptors::PropertyDescriptorRecord;
+ use super::*;
++use super::program_store::CompilationOrigin;
+ 
+ use crate::compile::eval_context_source;
+ 
+@@ -40,7 +41,7 @@ impl<H: Host> Vm<H> {
+         source_name: &str,
+     ) -> Result<Value, JsError> {
+         if let Some(expression) = crate::Engine::eval_single_expression(source) {
+-            return self.eval_compiled_expression_named(p, expression, false, source_name);
++            return self.eval_compiled_expression_named(p, expression, false, source_name, CompilationOrigin::Source);
+         }
+         let residual =
+             match crate::Engine::specialize_script_with_atom_prefix(source, source_name, &*self) {
+@@ -216,7 +217,7 @@ impl<H: Host> Vm<H> {
+         if !self.direct_eval
+             && let Some(expression) = crate::Engine::eval_single_expression(source)
+         {
+-            return self.eval_compiled_expression_named(p, expression, strict, source_name);
++            return self.eval_compiled_expression_named(p, expression, strict, source_name, CompilationOrigin::Eval);
+         }
+         let context = self.direct_eval_context(p).unwrap_or_default();
+         let private_names = if context.home_atom.is_some() {
+@@ -851,7 +852,7 @@ impl<H: Host> Vm<H> {
+                 self.load_eval_name(p, atom)
+             }
+             crate::compile::EvalExpressionKind::Import => {
+-                self.eval_compiled_expression_named(p, expression, strict, &p.source_name)
++                self.eval_compiled_expression_named(p, expression, strict, &p.source_name, CompilationOrigin::Eval)
+             }
+             crate::compile::EvalExpressionKind::Other if self.direct_eval => {
+                 self.eval_global_script(p, expression, strict)
+@@ -869,7 +870,7 @@ impl<H: Host> Vm<H> {
+         strict: bool,
+     ) -> Result<Value, JsError> {
+         let source_name = format!("<Eval:{}>", self.programs.len());
+-        self.eval_compiled_expression_named(p, expression, strict, &source_name)
++        self.eval_compiled_expression_named(p, expression, strict, &source_name, CompilationOrigin::Eval)
+     }
+ 
+     fn eval_compiled_expression_named(
+@@ -878,6 +879,7 @@ impl<H: Host> Vm<H> {
+         expression: &str,
+         strict: bool,
+         source_name: &str,
++        origin: CompilationOrigin,
+     ) -> Result<Value, JsError> {
+         let body = if strict {
+             format!("'use strict'; return ({expression});")
+@@ -915,6 +917,7 @@ impl<H: Host> Vm<H> {
+         let Some(program_id) = self.store_dynamic_program(residual) else {
+             return Err(self.type_error(p, "dynamic program store is full".into()));
+         };
++        self.programs.set_origin(program_id, origin);
+         if self.direct_eval {
+             self.programs.mark_caller_scope(program_id);
+         }
+diff --git a/crates/quench-runtime/src/vm/program_store.rs b/crates/quench-runtime/src/vm/program_store.rs
+index 31cb665c7..c1c36981a 100644
+--- a/crates/quench-runtime/src/vm/program_store.rs
++++ b/crates/quench-runtime/src/vm/program_store.rs
+@@ -20,6 +20,8 @@ struct ProgramEntry {
+     compiled: Option<Option<Rc<super::compiled::CompiledProgram>>>,
+     /// The environment the program's root body evaluates in.
+     scope: ProgramScope,
++    /// Source provenance is independent of the root binding environment.
++    origin: CompilationOrigin,
+     /// Dynamic code (eval, `Function`, host scripts): reclaimed once nothing
+     /// can run it. The main program and modules stay for the realm's life.
+     reclaimable: bool,
+@@ -27,6 +29,9 @@ struct ProgramEntry {
+     pass: u64,
+ }
+ 
++#[derive(Clone, Copy, PartialEq, Eq)]
++pub(super) enum CompilationOrigin { Source, Eval }
++
+ /// Where a stored program's root body evaluates, which decides whether its
+ /// by-name loads can only reach the global environment.
+ #[derive(Clone, Copy, Default, PartialEq, Eq)]
+@@ -151,6 +156,14 @@ impl ProgramStore {
+         id
+     }
+ 
++    pub(super) fn set_origin(&mut self, id: ProgramId, origin: CompilationOrigin) {
++        if let Some(entry) = self.entry_mut(id) { entry.origin = origin; }
++    }
++
++    pub(super) fn is_eval(&self, id: ProgramId) -> bool {
++        self.entry(id).is_some_and(|entry| entry.origin == CompilationOrigin::Eval)
++    }
++
+     pub(crate) fn mark_global_scope(&mut self, id: ProgramId) {
+         self.set_scope(id, ProgramScope::Global);
+     }
+@@ -198,6 +211,7 @@ impl ProgramStore {
+             .iter()
+             .map(|_| std::cell::OnceCell::new())
+             .collect();
++        let origin = if program.kind == crate::bytecode::ProgramKind::Eval { CompilationOrigin::Eval } else { CompilationOrigin::Source };
+         self.programs.push(Some(ProgramEntry {
+             residual: program,
+             wasm_signatures: None,
+@@ -212,6 +226,7 @@ impl ProgramStore {
+             lane_views,
+             compiled: None,
+             scope: ProgramScope::Own,
++            origin,
+             reclaimable: false,
+             pass: self.reclaim_passes,
+         }));
+diff --git a/docs/node-host-contracts.md b/docs/node-host-contracts.md
+index 184d8e4cd..f657d4465 100644
+--- a/docs/node-host-contracts.md
++++ b/docs/node-host-contracts.md
+@@ -38,8 +38,14 @@ both creation names and that transition. The added metadata opcode requires
+ bytecode format 90; opcodes outside the dense fast table use general dispatch.
+ This covers those inference contexts, not every V8 debug-name inference rule.
+ 
+-This describes the implemented subset; complete Node stack APIs and eval frames
+-still require conformance work.
++CallSite `isEval` derives from the stored program's compilation origin, which
++is independent of its binding environment. Full eval, expression eval and
++Function-constructor bodies retain that origin across escaped closures and
++collection. Ordinary functions called from eval and host-compiled scripts remain
++source code, including host scripts with eval-like filenames. Captured CallSites
++copy the classification before their program can be reclaimed. Eval origins,
++filenames, source URLs and the complete Node stack API still require conformance
++work.
+ 
+ Function factory origins derive from the existing function kind and creation
+ realm. The realm owns its original constructors and intrinsic prototypes, so

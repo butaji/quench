@@ -1,0 +1,14 @@
+proto	true true true\ntrue true true
+ctor-first	true Buffer Buffer
+pool	7684 65600 0 100000 0 65600\ntrue 7688\ntrue 56\ntransfer TypeError
+inspect	<Buffer 00 0\n100 acc,true,false, data,true,true,true data,false,true,true
+desc-first	acc,true,false, acc,true,false, data,true,true,true data,true,true,true\n97
+write-first	mine mine 79
+delete-first	function false 95
+define-first	data,false,true,false 1 94
+buffer-first	function true 97 true
+parent	true true
+freeze	true function 97
+forin	95 ["readBigUInt64LE","readBigUInt64BE","readBigUint64LE"] ["swap32","swap64","toLocaleString"]
+sym	function true ["Symbol(nodejs.util.inspect.custom)"]
+stream-first	function 00010203 true 97

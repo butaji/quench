@@ -1,0 +1,15 @@
+v8/crypto                        speed x0.963 wins 1/5  RSS     4.4 ->     4.4 MB  wall 5.1s
+v8/deltablue                     speed x1.077 wins 4/5  RSS     3.8 ->     3.7 MB  wall 2.0s
+v8/earley-boyer                  speed x1.072 wins 4/5  RSS     8.2 ->     8.3 MB  wall 5.2s
+v8/navier-stokes                 speed x0.972 wins 2/5  RSS     4.9 ->     4.9 MB  wall 3.1s
+v8/raytrace                      speed x1.118 wins 5/5  RSS     3.7 ->     3.7 MB  wall 3.1s
+v8/regexp                        speed x1.002 wins 3/5  RSS     7.0 ->     6.9 MB  wall 8.0s
+v8/richards                      speed x0.893 wins 1/5  RSS     3.8 ->     3.7 MB  wall 2.0s
+v8/splay                         speed x1.082 wins 4/5  RSS    38.2 ->    38.2 MB  wall 2.2s
+fw/express                       speed x1.020 wins 3/5  RSS    22.3 ->    22.2 MB  wall 0.7s
+fw/koa                           speed x1.163 wins 3/5  RSS    32.9 ->    32.7 MB  wall 0.4s
+fw/fastify                       speed x1.025 wins 4/5  RSS    53.9 ->    53.9 MB  wall 1.1s
+fw/hono                          speed x1.053 wins 4/5  RSS    28.7 ->    28.9 MB  wall 0.3s
+fw/h3                            speed x0.997 wins 2/5  RSS    28.3 ->    28.2 MB  wall 0.3s
+== fw        speed geomean x1.050  RSS ratio geomean x0.998  (5 workloads)
+== v8        speed geomean x1.020  RSS ratio geomean x0.990  (8 workloads)

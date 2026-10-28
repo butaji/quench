@@ -1,0 +1,35 @@
+{
+  "latest_stable": "v26.12.0",
+  "candidate_build": "working-tree native Buffer allocation/pool, parent1c05b481c",
+  "flags": [
+    "--no-warnings",
+    "--experimental-stream-iter"
+  ],
+  "scope": "28 top-level builtin export names/descriptors only; matching shape does not prove behavioral parity",
+  "raw": {
+    "quench.json": {
+      "bytes": 67784,
+      "sha256": "ad5e803922ba57b5dd587f9a1dd9e817bb02a9221e8d9ac1a62ed28be5dd1ba5"
+    },
+    "comparison.json": {
+      "bytes": 127987,
+      "sha256": "9204a1445a84594183d7d05cb5f2d94545f1df21d0c80c3f364f3cd849260a34"
+    },
+    "node.json": {
+      "bytes": 102143,
+      "sha256": "226c77c2476a52dca5b97ff7069a11051fb40c760295711ffdd1d635ace77522"
+    },
+    "quench.stderr": {
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "audit.cjs": {
+      "bytes": 898,
+      "sha256": "e1a6007ff83987a23ac998fa3d03558465b7fa9b8e997b20ab48d2ae4417ac9d"
+    },
+    "node.stderr": {
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  }
+}

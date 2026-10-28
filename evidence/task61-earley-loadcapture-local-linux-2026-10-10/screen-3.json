@@ -1,0 +1,70 @@
+{
+  "experiment": "EarleyBoyer late LoadCapture -> LoadLocalPlain fusion",
+  "baseline_sha256": "e46537823eb25a37cf5646af793e6873ceaeff1069fb878a96813cae3a86ab32",
+  "candidate_sha256": "e4fb2e4309b184ad52857bbdd938f86ff67dc272907df91a0f8e22056a64f0b3",
+  "fixture_sha256": "aa379c1d54f5d13de32ebf2b50729d0cbc64bb23de5e524256c7b2270213cc0b",
+  "node_oracle_sha256": "b10fc521c1a1e60d01afa68a9a7baf67ebb28ebd94b4689215fa6d1438b9591a",
+  "node_oracle_match": true,
+  "pairs": [
+    {
+      "pair": 1,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "baseline_score": 430.0,
+      "candidate_score": 422.0,
+      "score_delta": -8.0,
+      "baseline_rss_bytes": 41725952,
+      "candidate_rss_bytes": 41787392,
+      "rss_delta_bytes": 61440,
+      "output_equal": true,
+      "baseline_exit": 0,
+      "candidate_exit": 0,
+      "valid": true
+    },
+    {
+      "pair": 2,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "baseline_score": 400.0,
+      "candidate_score": 414.0,
+      "score_delta": 14.0,
+      "baseline_rss_bytes": 41697280,
+      "candidate_rss_bytes": 41717760,
+      "rss_delta_bytes": 20480,
+      "output_equal": true,
+      "baseline_exit": 0,
+      "candidate_exit": 0,
+      "valid": true
+    },
+    {
+      "pair": 3,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "baseline_score": 424.0,
+      "candidate_score": 415.0,
+      "score_delta": -9.0,
+      "baseline_rss_bytes": 41832448,
+      "candidate_rss_bytes": 41652224,
+      "rss_delta_bytes": -180224,
+      "output_equal": true,
+      "baseline_exit": 0,
+      "candidate_exit": 0,
+      "valid": true
+    }
+  ],
+  "baseline_score_median": 424.0,
+  "candidate_score_median": 415.0,
+  "score_delta_median": -8.0,
+  "baseline_maximum_rss_median_bytes": 41725952,
+  "candidate_maximum_rss_median_bytes": 41717760,
+  "maximum_rss_delta_median_bytes": 20480,
+  "valid": true,
+  "output_equal": true,
+  "qualification_ready": false
+}

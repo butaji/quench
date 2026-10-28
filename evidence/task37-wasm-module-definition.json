@@ -1,0 +1,199 @@
+{
+  "tasks": [
+    "07",
+    "19",
+    "23",
+    "37",
+    "40"
+  ],
+  "source_head": "7e60169df033dd247f34199e084e3e8080a92a29",
+  "source_state": "dirty worktree",
+  "source_hashes": {
+    "crates/quench-runtime-next/src/wasm.rs": "e1b56fdc2870a8e80b020dc15a529f06e9e40b1b918417939745fc4933af3651",
+    "crates/quench-runtime-next/src/vm/wasm.rs": "9406ce8f4cd2c7020f8b90b3b4b10141e286f6157f65b51d19a37871ff55f81f",
+    "crates/quench-runtime-next/src/vm.rs": "6e5e24f3e6bb4a5214986fc6207cb059a04f86422ab7300b0f3b4a51a98147f3",
+    "crates/quench-runtime-next/src/api.rs": "3c44b0a52b7e8c10e9a6b3d7cb3d6a00d252b95a5beef468cb7fd76b3ef69e74",
+    "crates/quench-runtime-next/src/lib.rs": "c8fb8269f00013ce1013b3e1c4ea0e4f6166411f90441c98d11c0c0699c35f8d",
+    "crates/quench-runtime-next/src/bytecode/validate.rs": "d34ca26d27b0d4e53e8832d5d5662b25d79ec0e4ffe10a5138c5ccb1201ab026",
+    "crates/quench-wasm/src/shared.rs": "aa3a2b1095736df74b0fec2d442855614aa02f517667e3ae614e7a6b4d7b06bf",
+    "crates/quench-wasm/src/shared_wast.rs": "9155f29e51fe72c34d5fcb18fcf47b2e99c6402dd8c750032f9d78bf8d843aac"
+  },
+  "suite_head": "67c8b9dc32c47d61c05a1681df349d01c85fa8ff",
+  "suite_clean": true,
+  "host": "macOS-26.5-arm64-arm-64bit",
+  "rustc": "rustc 1.99.0 (b940084d7 2026-09-28) (Homebrew)",
+  "profile": "debug",
+  "obligation": "Instantiate modules independently of executable entries, preserving rooted scalar bindings in function-free modules without creating dummy functions or weakening script-entry validation.",
+  "representation": "WasmModule owns shared residual, signature and global tables. WasmFunction derives a valid index view; WasmInstance roots module bindings without selecting a function. Shared frontend lowers module facts once. Empty function tables validate only for Wasm; ordinary execute rejects absent entries before resetting the VM. No opcode or residual format version change.",
+  "runner": {
+    "path": "target/iteration/task37-wasm-module-runner",
+    "sha256": "fbd487147334b22e784071c7f89647c8a071d70badabd875081ca3893b40fe2d"
+  },
+  "before": {
+    "path": "target/iteration/task37-wasm-globals-after.json",
+    "sha256": "265b4b38e8da4b70a623d6068fc8249e78c677cc9eb2074eaa197316f4913357"
+  },
+  "after": {
+    "path": "target/iteration/task37-wasm-module-after.json",
+    "sha256": "07d1e27f27bbb7cddad76b1d16bca222f4756f3a126d77c5f9dc551a042b0393"
+  },
+  "comparison": {
+    "path": "target/iteration/task37-wasm-module-compare.log",
+    "sha256": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+  },
+  "exact_inventory_match": true,
+  "input_hashes_match": true,
+  "all_pinned_outcomes_unchanged": true,
+  "regressions": 0,
+  "total": 13424,
+  "passed": 12570,
+  "failed": 854,
+  "inventory_complete": true,
+  "scopes": [
+    {
+      "path": "crates/quench-wasm-test/testsuite/block.wast",
+      "sha256": "436230d4bb629da323ee97c56a5580545f3dea7818eeb9a362a6c234f5af18d7"
+    },
+    {
+      "path": "crates/quench-wasm-test/testsuite/br.wast",
+      "sha256": "ac34486d8787d469dc7940f8e77c6b4b5999cf9d6c8918138d13b3e58460cae9"
+    },
+    {
+      "path": "crates/quench-wasm-test/testsuite/br_if.wast",
+      "sha256": "b75341e227315fc7765944e3ac09bcb1a15ca918a72c7dd478b2068147792658"
+    },
+    {
+      "path": "crates/quench-wasm-test/testsuite/br_table.wast",
+      "sha256": "9a44bc44564b70bc92e84cea94f6e7d1d3df1725619fcbf5f1d6cf3340f793a1"
+    },
+    {
+      "path": "crates/quench-wasm-test/testsuite/call.wast",
+      "sha256": "faa694f3141b25cb1cf25104298a535ddea8058396825f532b69d0912074d905"
+    },
+    {
+      "path": "crates/quench-wasm-test/testsuite/conversions.wast",
+      "sha256": "70eeec77b5c5c4fa6c9547f97ac56c1e21ebd5e2a10e7318f2e22100d5f6f056"
+    },
+    {
+      "path": "crates/quench-wasm-test/testsuite/f32.wast",
+      "sha256": "91c9e9edf5500659040c6b7657fbaa942ad6c0526d80d2ea558e406257a8674f"
+    },
+    {
+      "path": "crates/quench-wasm-test/testsuite/f32_bitwise.wast",
+      "sha256": "8a514cd0c6c34cccbcd4deda8b3f1898cab2985a360d0ec10a4b1725027f0b64"
+    },
+    {
+      "path": "crates/quench-wasm-test/testsuite/f32_cmp.wast",
+      "sha256": "dc16e4361250dbf9ef2b91481e25964d6c31f9f593f2e31f08d5b4f5028a376f"
+    },
+    {
+      "path": "crates/quench-wasm-test/testsuite/f64.wast",
+      "sha256": "b8b85a753f13ae27d20ca8cb97ab58b30606854deb4fb829caac93785a90b0f7"
+    },
+    {
+      "path": "crates/quench-wasm-test/testsuite/f64_bitwise.wast",
+      "sha256": "efd4e70d58ee853b4509352292058841b775ccea4cfd3060ddd350b8ccd4db32"
+    },
+    {
+      "path": "crates/quench-wasm-test/testsuite/f64_cmp.wast",
+      "sha256": "aabcd2c5af0670a9f7ce2cfd19befd3142c300fa5091575fad21a3726dcfb8c0"
+    },
+    {
+      "path": "crates/quench-wasm-test/testsuite/global.wast",
+      "sha256": "0899df8c814d953d56a22b04d518fda6c7e6aab5a0d0472367a830e31821ee40"
+    },
+    {
+      "path": "crates/quench-wasm-test/testsuite/i32.wast",
+      "sha256": "f3b7e8fd641893ea0989a8ab801fce0654d276d27b5cad9cf482291a422cffe8"
+    },
+    {
+      "path": "crates/quench-wasm-test/testsuite/i64.wast",
+      "sha256": "7d0e27a617565e0685aef56cee01b2b4890084068e3989168c41d14c56b1945e"
+    },
+    {
+      "path": "crates/quench-wasm-test/testsuite/if.wast",
+      "sha256": "291eaa26f1951a70560cf9942edc4345557718693ec0dd60b32c560310ea81f0"
+    },
+    {
+      "path": "crates/quench-wasm-test/testsuite/loop.wast",
+      "sha256": "4d3c043485ae6d89a397787dec3fdb53283949c116c7c5aad360fc7481c2277a"
+    },
+    {
+      "path": "crates/quench-wasm-test/testsuite/select.wast",
+      "sha256": "2acdd7bb97af6f6f4b15538ee91ebc0a2cc4390d81010b2601e44c4f0f4ef836"
+    }
+  ],
+  "verification": {
+    "runtime_internal": {
+      "passed": 19,
+      "failed": 0,
+      "ignored": 0,
+      "log": {
+        "path": "target/iteration/task37-wasm-module-runtime.log",
+        "sha256": "576e19a7c00438ffea8ef87639ab7cadc751188219febb9d50a82085fcafece8"
+      },
+      "new_test": "wasm_module_without_functions_has_bindings_but_no_executable_entry"
+    },
+    "all_runtime_units": {
+      "passed": 468,
+      "failed": 0,
+      "ignored": 0,
+      "log": {
+        "path": "target/iteration/task37-wasm-module-all-runtime.log",
+        "sha256": "472204e43011f1cb908cb42c020c28af40fa658f88dfe4178aac62c95dcc149d"
+      }
+    },
+    "frontend_units": {
+      "passed": 40,
+      "failed": 0,
+      "ignored": 0,
+      "log": {
+        "path": "target/iteration/task37-wasm-module-frontend.log",
+        "sha256": "aa9363b6bce723ce221f2c11efc4cb1b4924b673a50c266e67e5228b30e03421"
+      }
+    },
+    "all_targets_with_memory_and_aggregate_features": {
+      "path": "target/iteration/task37-wasm-module-check.log",
+      "sha256": "c49e9fa7b4d633181ba5b5c7572391b4dbb4d2fc9fba7c8fcc7c0738a8aa2af9"
+    },
+    "module_controls": {
+      "total": 30,
+      "passed": 30,
+      "before_passed": 18,
+      "gains": 12,
+      "before": {
+        "path": "target/iteration/task37-wasm-module-before-controls.json",
+        "sha256": "edb0c7e26b89800281b87271c2c3fd8c20e038b81f43c5bb63b24e37ca60876a"
+      },
+      "after": {
+        "path": "target/iteration/task37-wasm-module-controls.json",
+        "sha256": "8e96f5560e26e82597c7d388516ff93dd1a6194338a48fe25e51a56f4a1d7ac5"
+      },
+      "input": {
+        "path": "target/iteration/task37-wasm-module-controls.wast",
+        "sha256": "9c4b5b840f800371a1c0e2cf2a0f28af383aee7055e34a77b21480304d8aa6d2"
+      },
+      "comparison": {
+        "path": "target/iteration/task37-wasm-module-controls-compare.log",
+        "sha256": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+      }
+    },
+    "previous_global_controls": {
+      "passed": 40,
+      "report": {
+        "path": "target/iteration/task37-wasm-module-global-controls.json",
+        "sha256": "f4b4cf0eb64dd03fd45de2ee4a2e36f1ed2ea979c8b08de5e83a4b5174647600"
+      }
+    },
+    "node_oracle": {
+      "path": "target/iteration/task37-wasm-module-node.json",
+      "sha256": "5f1d104e062047cc239c50644f47d6f54d0cc21e1b2ac9a674a7bdaa8d5c243e"
+    }
+  },
+  "scope_rationale": "All 18 previously qualified scalar/control/global scripts exercise module lowering and instance creation. Disposable controls cover pure-global modules absent executable functions, repeated instantiation and aliases. The internal test covers residual-kind validation, entry rejection before reset, root ownership and collection, rather than duplicating a suite case.",
+  "limits": [
+    "Imports, memory/table state, non-scalar globals, shared globals, extended constant expressions, function multi-results and remaining operators/proposals still require shared implementation.",
+    "The 12 new passes belong to disposable controls; pinned suite outcomes are unchanged.",
+    "This is affected-scope evidence, not full Wasm, Test262 or Node closure; legacy removal and Stage A final verification remain open."
+  ]
+}

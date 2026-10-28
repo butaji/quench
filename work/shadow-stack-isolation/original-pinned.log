@@ -1,0 +1,2 @@
+Pass /workspace/work/node-fixtures/test/parallel/test-shadow-realm-prepare-stack-trace.js
+all: pass=1 skip=0 fail=0 timeout=0 crash=0 unclassified=0 total=1 inventory_hash=8ef390189a8e50e6

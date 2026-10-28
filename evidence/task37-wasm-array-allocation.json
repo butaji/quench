@@ -1,0 +1,129 @@
+{
+  "schema": 1,
+  "source_head": "7e60169df033dd247f34199e084e3e8080a92a29",
+  "dirty_worktree": true,
+  "source_hashes": {
+    "crates/quench-runtime-next/src/wasm/gc.rs": "cc551573f13fc6dc5aa89b9fb1b2e2bc0eafe8b11f835de8cc7abdaf57746d8d",
+    "crates/quench-runtime-next/src/wasm/types.rs": "3e0e12888a2999f8e4bfbbf18482fd6dae845a95977f6dfd9e8918b670da1a93",
+    "crates/quench-runtime-next/src/vm/wasm_gc.rs": "9f1dd24ad6b19ba52a8c7d48bfb887a579f2cf608f597dba006321acaa966342",
+    "crates/quench-runtime-next/src/wasm.rs": "a33a4c752ff87ec4f7b891d5e6248fa38f72c56a0e4488f1010a628873a30476",
+    "crates/quench-runtime-next/src/bytecode.rs": "4f86e9cfe93d3b3395e13bf77d1f246ccedea12f0456d4dd365b91eb5c66f86e",
+    "crates/quench-runtime-next/src/bytecode/instruction.rs": "c304261e42b32566f56effab9b62d97605e544fa1eb3e163a34580ee28ddc577",
+    "crates/quench-runtime-next/src/bytecode/validate.rs": "deb1966053ee995f079767f5e161bcbb4b3e31f995081347f2f90adc977ed6d4",
+    "crates/quench-runtime-next/src/bytecode/disassemble.rs": "1707b49a555fc050a58219023769243c3060fe0a8d05912fb1d5e5ba018dfb0e",
+    "crates/quench-runtime-next/src/compile/liveness.rs": "75582feffcd68b06f1d70daee9a04c9e81edcdd28d3656abf3689b284ec2fa46",
+    "crates/quench-runtime-next/src/vm/program_store.rs": "874af5346c70fd7b843413eb06931bd368ec24146bff6f10a69cc273a078de32",
+    "crates/quench-runtime-next/src/vm/dispatch.rs": "ecedb46ad01f422ed197f33534842be5bd1c228a1d2849383b9705852cb534d8",
+    "crates/quench-wasm/src/shared_wast.rs": "4c93eb863528eeba6c82fb14e3e51a2187b3d986368cc709ec42f8a9e7eaa378"
+  },
+  "suite_head": "67c8b9dc32c47d61c05a1681df349d01c85fa8ff",
+  "residual_format": 61,
+  "obligation": "Execute ordinary unshared array.new, array.new_default, array.new_fixed and array.len on the single VM, with complete constructor operand roots and explicit exhaustion.",
+  "representation": "The existing WasmGc cell owns original declaration graph, type index and Value fields for structs and arrays. ArrayInitialization has repeated/default/fixed forms; fixed length derives from its vector. Storage defaults and normalization are shared with structures. The retained graph owns element type and reference membership. RegisterWindowBase/RegisterCount expose constructor windows to common bounds validation and GC liveness; struct windows derive count from field declarations and registration verifies equality. Four opcodes are appended and format61 rejects older encodings. No new cell, side map, copied layout or second executor.",
+  "resource_limit": "Vm.wasm_array_new bounds each dense Value payload to64MiB to prevent unsigned guest lengths from inducing unbounded committed writes after virtual reservation. Element maximum derives from Value size. Oversize and reserve failure produce typed ArrayTooLarge before publication; nullable length emits NullArrayReference.",
+  "scope": "230 matching affected pinned files and47 focused files. New22-directive controls cover repeated/default/fixed/empty arrays, original exact/subtype identity, Eq/Any/Array result predicates, shifted foreign declarations, null length and unsigned oversized length traps. Collection controls retain reference arrays and preserve all fixed array/struct operands across50000 transient allocations while the last operand is evaluated. Shared storage/root changes include existing struct/initializer controls; no full suite.",
+  "sources": [
+    "https://github.com/WebAssembly/gc/blob/main/proposals/gc/MVP.md",
+    "https://webassembly.github.io/spec/core/appendix/implementation.html"
+  ],
+  "affected": {
+    "before": {
+      "path": "target/iteration/task37-wasm-struct-initializers-after.json",
+      "sha256": "e098594d44870f66736b9ea117f409ba07a4da43b7a47aa847e91918bd02ce4a",
+      "binary_sha256": "1c4a2db97383a4a8ae29878fe720c3e193e217a60a55b444d91bc89c8531db8e"
+    },
+    "after": {
+      "path": "target/iteration/task37-wasm-array-allocation-after.json",
+      "sha256": "a81e48dd176ddbd1d1c8509548dd6eeb6282854a0fd13996ce8fec7c1264f50f",
+      "binary_sha256": "67071f5d6a7340978ec263a32184b407a3e1a76ea871ed4c63f80c474a47f644"
+    },
+    "files": 230,
+    "total": 62758,
+    "before_passed": 61703,
+    "passed": 61786,
+    "failed": 972,
+    "gains": 83,
+    "gains_by_file": {
+      "crates/quench-wasm-test/testsuite/ref_eq.wast": 83
+    },
+    "regressions": 0,
+    "same_ids_and_input_hashes": true,
+    "all_workers_completed": true
+  },
+  "controls": {
+    "before": {
+      "path": "target/iteration/task37-wasm-array-allocation-controls-before.json",
+      "sha256": "d6f0bfad0c0de6782f80ccdc015b2d36be0a06dbb0fbb37b9f7432e64839c593",
+      "binary_sha256": "1c4a2db97383a4a8ae29878fe720c3e193e217a60a55b444d91bc89c8531db8e"
+    },
+    "after": {
+      "path": "target/iteration/task37-wasm-array-allocation-controls-after.json",
+      "sha256": "2d150321375c53d7dd20823fdf669aa7331c5925b3a217c7fa2d3c4a310f1aa3",
+      "binary_sha256": "67071f5d6a7340978ec263a32184b407a3e1a76ea871ed4c63f80c474a47f644"
+    },
+    "files": 47,
+    "total": 3789,
+    "before_passed": 3769,
+    "passed": 3789,
+    "failed": 0,
+    "gains": 20,
+    "gains_by_file": {
+      "target/iteration/proposals/custom-descriptors/task37-wasm-array-allocation-controls.wast": 20
+    },
+    "regressions": 0,
+    "same_ids_and_input_hashes": true,
+    "all_workers_completed": true
+  },
+  "runner": {
+    "path": "target/iteration/task37-wasm-array-allocation-runner",
+    "sha256": "67071f5d6a7340978ec263a32184b407a3e1a76ea871ed4c63f80c474a47f644"
+  },
+  "checks": {
+    "internals": {
+      "path": "target/iteration/task37-wasm-array-allocation-internals.log",
+      "sha256": "2607a2819c0c146eb58968dbfe35c71e6e1fc76ac30178637d9ae28b69940205",
+      "passed": 482
+    },
+    "frontend": {
+      "path": "target/iteration/task37-wasm-array-allocation-frontend.log",
+      "sha256": "c878e7127da6c001c73ae1e6bc1305c668e97129672d7c4a6ddd9e7092979fb8",
+      "passed": 32
+    },
+    "check": {
+      "path": "target/iteration/task37-wasm-array-allocation-check.log",
+      "sha256": "8fcfbed8d01f6ce23f3b650bf66e472a8cc47acdc28e0a85ea941f80b5ae8b9d",
+      "passed": null
+    }
+  },
+  "oracle": {
+    "path": "target/iteration/task37-wasm-array-allocation-oracle.json",
+    "sha256": "e7c0e45fe71f90a4420adcfd9166de1dd9686bf82282d89217d4a66cb8563534",
+    "node": "v26.10.0",
+    "flags": [
+      "--no-sparkplug",
+      "--no-maglev",
+      "--no-turbofan",
+      "--wasm-jitless",
+      "--experimental-wasm-custom-descriptors"
+    ],
+    "matched": 15,
+    "input_hashes": {
+      "target/iteration/task37-wasm-array-allocation-a.wat": "e25a8576d993c13cbad31f55eb432c22093e67696c74d507aeb4db12da75dddb",
+      "target/iteration/task37-wasm-array-allocation-a.wasm": "854222320c98089a0c2d898c987d395548b5e47155cbc66ceabffa8715c23397",
+      "target/iteration/task37-wasm-array-allocation-b.wat": "b3bd86190dd64843d6462035a2dc6545e7337e8715594606e5d02257c0fdbc99",
+      "target/iteration/task37-wasm-array-allocation-b.wasm": "8fbc1ba86132c05595ac3a4c477fe697d30adc10016efaa0727f9b56894f83f2"
+    }
+  },
+  "internal_obligation": "A new liveness internal regression verifies every constructor-window operand is a root, only the result is defined and empty windows add no roots. The existing runner-protocol regression now rejects wrong struct/i31 claims for returned arrays and recursively accepts array alternatives. All482 retained runtime internal checks pass; no duplicate ordinary conformance unit added.",
+  "next_first_failures": {
+    "unsupported shared Wasm: wasm-global-initializer:0..0: unsupported Wasm constant expression operator": 513,
+    "unsupported shared Wasm: wasm-instance:0..0: unsupported shared Wasm operator: AnyConvertExtern": 218,
+    "unsupported shared Wasm module state, imports or section": 117,
+    "unsupported shared Wasm: unsupported Wasm global type": 34,
+    "unsupported shared Wasm: unsupported shared Wasm import kind": 23,
+    "unsupported shared Wasm: wasm-reference-initializer:0..0: unsupported Wasm constant expression operator": 19,
+    "unsupported shared Wasm: wasm-instance:0..0: unsupported shared Wasm operator: ArrayNewData { array_type_index: 0, array_data_index: 0 }": 14,
+    "unsupported shared Wasm: wasm-instance:0..0: unsupported shared Wasm operator: ArrayInitData { array_type_index: 0, array_data_index: 0 }": 13
+  },
+  "limits": "Array element reads/writes, bulk operations, data/element-backed construction and constant construction remain unsupported. Descriptor objects, shared references/resources, external/internal conversions, exceptions and JS embedding remain open. Existing callable-type Node discrepancies remain recorded. This affected evidence does not qualify the full pinned suite, frozen implemented Node inventory, production cutover or Stage A."
+}

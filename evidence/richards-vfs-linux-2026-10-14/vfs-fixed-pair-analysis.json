@@ -1,0 +1,104 @@
+{
+  "raw_median_paired_wall_change_pct": -5.339201351516354,
+  "raw_paired_median_bootstrap_95ci_pct": [
+    -14.029905156613943,
+    0.8055202183476551
+  ],
+  "wall_wins": 8,
+  "rss_wins": 11,
+  "control_median_work_rss": 44314624,
+  "candidate_median_work_rss": 40046592,
+  "valid_rounds": 11,
+  "clean_rounds": 0,
+  "notes": "Raw-wall diagnostic only; fixed-work cleanliness unqualified because Linux counters unavailable. Defunct rustc entries in host snapshots are historical %CPU/RSS0, not active builds. Stock comparison still required.",
+  "samples": [
+    {
+      "round": 0,
+      "control_marginal_ns": 9122496.95,
+      "candidate_marginal_ns": 7842619.28,
+      "ratio": 0.8597009484338606,
+      "control_rss": 44314624,
+      "candidate_rss": 40046592
+    },
+    {
+      "round": 1,
+      "control_marginal_ns": 8600501.32,
+      "candidate_marginal_ns": 8061123.69,
+      "ratio": 0.9372853267581384,
+      "control_rss": 44314624,
+      "candidate_rss": 40046592
+    },
+    {
+      "round": 2,
+      "control_marginal_ns": 8446358.74,
+      "candidate_marginal_ns": 7995390.64,
+      "ratio": 0.9466079864848365,
+      "control_rss": 44314624,
+      "candidate_rss": 40050688
+    },
+    {
+      "round": 3,
+      "control_marginal_ns": 8242273.82,
+      "candidate_marginal_ns": 7871912.17,
+      "ratio": 0.9550655974203002,
+      "control_rss": 44314624,
+      "candidate_rss": 40046592
+    },
+    {
+      "round": 4,
+      "control_marginal_ns": 10439470.44,
+      "candidate_marginal_ns": 8427479.16,
+      "ratio": 0.8072707527107094,
+      "control_rss": 44314624,
+      "candidate_rss": 39976960
+    },
+    {
+      "round": 5,
+      "control_marginal_ns": 6883577.34,
+      "candidate_marginal_ns": 7740433.8,
+      "ratio": 1.124478366070047,
+      "control_rss": 44314624,
+      "candidate_rss": 40046592
+    },
+    {
+      "round": 6,
+      "control_marginal_ns": 8025920.21,
+      "candidate_marginal_ns": 8090570.62,
+      "ratio": 1.0080552021834766,
+      "control_rss": 44351488,
+      "candidate_rss": 40046592
+    },
+    {
+      "round": 7,
+      "control_marginal_ns": 8691305.82,
+      "candidate_marginal_ns": 7987174.62,
+      "ratio": 0.9189844179249005,
+      "control_rss": 44314624,
+      "candidate_rss": 40046592
+    },
+    {
+      "round": 8,
+      "control_marginal_ns": 8447194.65,
+      "candidate_marginal_ns": 8066991.66,
+      "ratio": 0.9549906204659319,
+      "control_rss": 44314624,
+      "candidate_rss": 40046592
+    },
+    {
+      "round": 9,
+      "control_marginal_ns": 14489546.48,
+      "candidate_marginal_ns": 8352093.78,
+      "ratio": 0.5764220289108731,
+      "control_rss": 44355584,
+      "candidate_rss": 40046592
+    },
+    {
+      "round": 10,
+      "control_marginal_ns": 8177060.97,
+      "candidate_marginal_ns": 8416391.18,
+      "ratio": 1.0292684878929061,
+      "control_rss": 44314624,
+      "candidate_rss": 40046592
+    }
+  ]
+}

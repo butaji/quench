@@ -1,0 +1,12 @@
+{
+  "source": "5dfcf152c056f6ba6974be3c1ae94d486307064f",
+  "cli_sha256": "49f4b6e458937483618ddcef1e68eb0684084ab952747664409c487eb9d24013",
+  "node_api": {
+    "passed": 318,
+    "failed": 1,
+    "failure": "util_parse_args_uses_captured_intrinsics_after_nonconfigurable_guest_replacement"
+  },
+  "optimized_core_run": false,
+  "suite_completed": false,
+  "production_qualified": false
+}

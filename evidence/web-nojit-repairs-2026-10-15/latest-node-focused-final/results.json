@@ -1,0 +1,232 @@
+[
+  {
+    "fixture": "test-http-write-head.js",
+    "engine": "node",
+    "command": [
+      "/workspace/quench/work/node-v26.12.0-linux-x64/bin/node",
+      "--jitless",
+      "/workspace/quench/work/node_modules/node-stable-source/test/parallel/test-http-write-head.js"
+    ],
+    "exit_code": 0,
+    "status": "exited",
+    "duration_secs": 0.1545373480003036
+  },
+  {
+    "fixture": "test-http-write-head.js",
+    "engine": "quench",
+    "command": [
+      "/workspace/quench/work/quench-web-final",
+      "/workspace/quench/work/node_modules/node-stable-source/test/parallel/test-http-write-head.js"
+    ],
+    "exit_code": 0,
+    "status": "exited",
+    "duration_secs": 0.933070439000403
+  },
+  {
+    "fixture": "test-http-zero-length-write.js",
+    "engine": "node",
+    "command": [
+      "/workspace/quench/work/node-v26.12.0-linux-x64/bin/node",
+      "--jitless",
+      "/workspace/quench/work/node_modules/node-stable-source/test/parallel/test-http-zero-length-write.js"
+    ],
+    "exit_code": 0,
+    "status": "exited",
+    "duration_secs": 0.2993186909998258
+  },
+  {
+    "fixture": "test-http-zero-length-write.js",
+    "engine": "quench",
+    "command": [
+      "/workspace/quench/work/quench-web-final",
+      "/workspace/quench/work/node_modules/node-stable-source/test/parallel/test-http-zero-length-write.js"
+    ],
+    "exit_code": 0,
+    "status": "exited",
+    "duration_secs": 1.9933658239997385
+  },
+  {
+    "fixture": "test-http-res-write-after-end.js",
+    "engine": "node",
+    "command": [
+      "/workspace/quench/work/node-v26.12.0-linux-x64/bin/node",
+      "--jitless",
+      "/workspace/quench/work/node_modules/node-stable-source/test/parallel/test-http-res-write-after-end.js"
+    ],
+    "exit_code": 0,
+    "status": "exited",
+    "duration_secs": 0.12826804199994513
+  },
+  {
+    "fixture": "test-http-res-write-after-end.js",
+    "engine": "quench",
+    "command": [
+      "/workspace/quench/work/quench-web-final",
+      "/workspace/quench/work/node_modules/node-stable-source/test/parallel/test-http-res-write-after-end.js"
+    ],
+    "exit_code": 1,
+    "status": "exited",
+    "duration_secs": 0.9455173769993053
+  },
+  {
+    "fixture": "test-http-res-write-end-dont-take-array.js",
+    "engine": "node",
+    "command": [
+      "/workspace/quench/work/node-v26.12.0-linux-x64/bin/node",
+      "--jitless",
+      "/workspace/quench/work/node_modules/node-stable-source/test/parallel/test-http-res-write-end-dont-take-array.js"
+    ],
+    "exit_code": 0,
+    "status": "exited",
+    "duration_secs": 0.12872694799989404
+  },
+  {
+    "fixture": "test-http-res-write-end-dont-take-array.js",
+    "engine": "quench",
+    "command": [
+      "/workspace/quench/work/quench-web-final",
+      "/workspace/quench/work/node_modules/node-stable-source/test/parallel/test-http-res-write-end-dont-take-array.js"
+    ],
+    "exit_code": 0,
+    "status": "exited",
+    "duration_secs": 1.8988339850002376
+  },
+  {
+    "fixture": "test-http-request-methods.js",
+    "engine": "node",
+    "command": [
+      "/workspace/quench/work/node-v26.12.0-linux-x64/bin/node",
+      "--jitless",
+      "/workspace/quench/work/node_modules/node-stable-source/test/parallel/test-http-request-methods.js"
+    ],
+    "exit_code": 0,
+    "status": "exited",
+    "duration_secs": 0.26970446899940725
+  },
+  {
+    "fixture": "test-http-request-methods.js",
+    "engine": "quench",
+    "command": [
+      "/workspace/quench/work/quench-web-final",
+      "/workspace/quench/work/node_modules/node-stable-source/test/parallel/test-http-request-methods.js"
+    ],
+    "exit_code": 0,
+    "status": "exited",
+    "duration_secs": 1.9268281289996594
+  },
+  {
+    "fixture": "test-http-request-method-delete-payload.js",
+    "engine": "node",
+    "command": [
+      "/workspace/quench/work/node-v26.12.0-linux-x64/bin/node",
+      "--jitless",
+      "/workspace/quench/work/node_modules/node-stable-source/test/parallel/test-http-request-method-delete-payload.js"
+    ],
+    "exit_code": 0,
+    "status": "exited",
+    "duration_secs": 0.2750094800003353
+  },
+  {
+    "fixture": "test-http-request-method-delete-payload.js",
+    "engine": "quench",
+    "command": [
+      "/workspace/quench/work/quench-web-final",
+      "/workspace/quench/work/node_modules/node-stable-source/test/parallel/test-http-request-method-delete-payload.js"
+    ],
+    "exit_code": 1,
+    "status": "exited",
+    "duration_secs": 1.1138975679996292
+  },
+  {
+    "fixture": "test-http-request-arguments.js",
+    "engine": "node",
+    "command": [
+      "/workspace/quench/work/node-v26.12.0-linux-x64/bin/node",
+      "--jitless",
+      "/workspace/quench/work/node_modules/node-stable-source/test/parallel/test-http-request-arguments.js"
+    ],
+    "exit_code": 0,
+    "status": "exited",
+    "duration_secs": 0.2628012660006789
+  },
+  {
+    "fixture": "test-http-request-arguments.js",
+    "engine": "quench",
+    "command": [
+      "/workspace/quench/work/quench-web-final",
+      "/workspace/quench/work/node_modules/node-stable-source/test/parallel/test-http-request-arguments.js"
+    ],
+    "exit_code": null,
+    "status": "timeout",
+    "duration_secs": 10.016466267999931
+  },
+  {
+    "fixture": "test-http-transfer-encoding-repeated-chunked.js",
+    "engine": "node",
+    "command": [
+      "/workspace/quench/work/node-v26.12.0-linux-x64/bin/node",
+      "--jitless",
+      "/workspace/quench/work/node_modules/node-stable-source/test/parallel/test-http-transfer-encoding-repeated-chunked.js"
+    ],
+    "exit_code": 0,
+    "status": "exited",
+    "duration_secs": 0.11910046100001637
+  },
+  {
+    "fixture": "test-http-transfer-encoding-repeated-chunked.js",
+    "engine": "quench",
+    "command": [
+      "/workspace/quench/work/quench-web-final",
+      "/workspace/quench/work/node_modules/node-stable-source/test/parallel/test-http-transfer-encoding-repeated-chunked.js"
+    ],
+    "exit_code": null,
+    "status": "timeout",
+    "duration_secs": 10.017098733999774
+  },
+  {
+    "fixture": "test-http-malformed-request.js",
+    "engine": "node",
+    "command": [
+      "/workspace/quench/work/node-v26.12.0-linux-x64/bin/node",
+      "--jitless",
+      "/workspace/quench/work/node_modules/node-stable-source/test/parallel/test-http-malformed-request.js"
+    ],
+    "exit_code": 0,
+    "status": "exited",
+    "duration_secs": 0.09895641999992222
+  },
+  {
+    "fixture": "test-http-malformed-request.js",
+    "engine": "quench",
+    "command": [
+      "/workspace/quench/work/quench-web-final",
+      "/workspace/quench/work/node_modules/node-stable-source/test/parallel/test-http-malformed-request.js"
+    ],
+    "exit_code": 0,
+    "status": "exited",
+    "duration_secs": 0.7952064689998224
+  },
+  {
+    "fixture": "test-http-server-de-chunked-trailer.js",
+    "engine": "node",
+    "command": [
+      "/workspace/quench/work/node-v26.12.0-linux-x64/bin/node",
+      "--jitless",
+      "/workspace/quench/work/node_modules/node-stable-source/test/parallel/test-http-server-de-chunked-trailer.js"
+    ],
+    "exit_code": 0,
+    "status": "exited",
+    "duration_secs": 0.10941771299985703
+  },
+  {
+    "fixture": "test-http-server-de-chunked-trailer.js",
+    "engine": "quench",
+    "command": [
+      "/workspace/quench/work/quench-web-final",
+      "/workspace/quench/work/node_modules/node-stable-source/test/parallel/test-http-server-de-chunked-trailer.js"
+    ],
+    "exit_code": 1,
+    "status": "exited",
+    "duration_secs": 0.7315848340003868
+  }
+]

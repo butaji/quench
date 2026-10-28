@@ -1,0 +1,129 @@
+{
+  "schema": 1,
+  "task": "20",
+  "kind": "current_lower_stage_annexb_requalification",
+  "recorded_at": "2026-10-07",
+  "policy": {
+    "rule": "When pinned Test262 stages directly conflict, the lower-numbered stage is authoritative.",
+    "accounting": "Preserve every fixture and inventory identity. Keep contradictory higher-stage outcomes as raw failures and waive them; never count them as passes.",
+    "node_oracle_used": false,
+    "authority": "Latest user instruction in this session"
+  },
+  "source": {
+    "revision": "993994ca3b5ecbaa29cd3e706053084ed0ed8041",
+    "dirty": true,
+    "host": "macOS arm64",
+    "rustc": "rustc 1.99.0 (b940084d7 2026-09-28) (Homebrew)",
+    "snapshot_algorithm": "SHA-256 over sorted UTF-8 relative path, NUL, file SHA-256 hex, newline records",
+    "snapshot_file_count": 292,
+    "snapshot_sha256": "4ff813ff40a6a7e797007019ebe8e380a364e9484a0992726fccce3c85a7ad98",
+    "snapshot_roots": [
+      "crates/quench-runtime-next/src",
+      "crates/quench-test262/src",
+      "vendor/oxc-parser-next/src"
+    ],
+    "snapshot_additional_files": [
+      "Cargo.toml",
+      "Cargo.lock",
+      "crates/quench-runtime-next/Cargo.toml",
+      "crates/quench-test262/Cargo.toml",
+      "vendor/oxc-parser-next/Cargo.toml",
+      "docs/STAGES.md"
+    ]
+  },
+  "corpus": {
+    "path": "tests/test262",
+    "revision": "f2d1435644797268dca1f7988cad5a4e89ccd8d2",
+    "clean": true,
+    "stage_definitions_sha256": "4cb13c366db7ed8d7ae0a1b7fe63eb18f93def77fd09231630ba5050f7d7d3d2",
+    "inputs_changed": false
+  },
+  "change": {
+    "owner": "FunctionCompiler::annex_b_outer_binding_allowed",
+    "rule": "An Annex B block function named arguments does not overwrite the containing function's existing implicit arguments-object binding.",
+    "representation": "Pass the already-computed semantic arguments_slot into FunctionCompiler and derive the Annex B store guard from that slot. Keep the existing parameter-slot and lexical-collision guards.",
+    "stage_or_fixture_identity_in_runtime": false
+  },
+  "verification": {
+    "full_test262_run": false,
+    "unit_tests_run": false,
+    "build_command": "cargo build --profile iteration -p quench-test262 --bin run-stages-next",
+    "runner": "target/iteration/run-stages-next",
+    "runner_sha256": "4c2f6fffcb56953f02e2224aee2f3472bbdd7a9de3ef297a2b16eac40e5b30b5",
+    "compare_runs_binary_sha256": "7667d4435e4fea32d6d2b00b34509250ffac1d2dac882688c9fd732321031ba2",
+    "stages": [
+      {
+        "stage": 93,
+        "command": "TEST262_JOBS=4 TEST262_TEST_TIMEOUT_MS=900000 TEST262_REPORT=target/iteration/task20-lower-stage-2026-10-07/stage-93.json target/iteration/run-stages-next 93 93",
+        "exit_code": 0,
+        "passed": 241,
+        "failed": 0,
+        "total": 241,
+        "report": "target/iteration/task20-lower-stage-2026-10-07/stage-93.json",
+        "report_sha256": "50c0aaf8e75fa6ef2f9aad92369a981bc60fa99afb5eb677463ee49f8ff7d2dd",
+        "baseline_projection": "target/iteration/task20-lower-stage-2026-10-07/stage-93-baseline.json",
+        "baseline_projection_sha256": "a71077bec2006942745fd0318fc4ce38669dee7d3a447bcd22610d10d640a1f8",
+        "baseline_source_report": "target/iteration/test262-full-2026-10-07/stages-65-93.json",
+        "baseline_source_report_sha256": "5ec883fbb442bf8af75b4273ed97a40aab4a96cf61d49e44584615ad56593184",
+        "comparison": "regressions=0; projection contains only stage 93 identities"
+      },
+      {
+        "stage": 94,
+        "command": "TEST262_JOBS=4 TEST262_TEST_TIMEOUT_MS=900000 TEST262_REPORT=target/iteration/task20-lower-stage-2026-10-07/stage-94.json target/iteration/run-stages-next 94 94",
+        "exit_code": 0,
+        "passed": 845,
+        "failed": 0,
+        "total": 845,
+        "report": "target/iteration/task20-lower-stage-2026-10-07/stage-94.json",
+        "report_sha256": "3ef0a7e62a02b89298c8fb66042201d68fd02387864794fd39f1d094c96bfcf8",
+        "compared_with": "target/iteration/annexb-lower-stage-2026-10-07/stage-94.json",
+        "compared_with_sha256": "c29c22affa3ef6f53fccab371edc265b65e084189626489308e4e4158ecef1cb",
+        "comparison": "regressions=0"
+      },
+      {
+        "stage": 114,
+        "command": "TEST262_JOBS=4 TEST262_TEST_TIMEOUT_MS=900000 TEST262_REPORT=target/iteration/task20-lower-stage-2026-10-07/stage-114.json target/iteration/run-stages-next 114 114",
+        "exit_code": 1,
+        "passed": 1480,
+        "failed": 2,
+        "total": 1482,
+        "report": "target/iteration/task20-lower-stage-2026-10-07/stage-114.json",
+        "report_sha256": "3b307ae4e894d9ff4e45831ae11517c44d20826a09537d2f60c6aaa81bb980e3",
+        "failures": [
+          "staging/sm/lexical-environment/block-scoped-functions-annex-b-arguments.js",
+          "staging/sm/regress/regress-602621.js"
+        ],
+        "compared_with": "target/iteration/annexb-lower-stage-2026-10-07/stage-114.json",
+        "compared_with_sha256": "f5056e28d40bc17092da570471689a051243f8be3b704203613c3bc4ae3dbb36",
+        "comparison": "regressions=0"
+      }
+    ],
+    "commands": [
+      "target/iteration/compare-runs --reports target/iteration/task20-lower-stage-2026-10-07/stage-93-baseline.json target/iteration/task20-lower-stage-2026-10-07/stage-93.json",
+      "target/iteration/compare-runs --reports target/iteration/annexb-lower-stage-2026-10-07/stage-94.json target/iteration/task20-lower-stage-2026-10-07/stage-94.json",
+      "target/iteration/compare-runs --reports target/iteration/annexb-lower-stage-2026-10-07/stage-114.json target/iteration/task20-lower-stage-2026-10-07/stage-114.json"
+    ]
+  },
+  "conflict": {
+    "authoritative_stage": 94,
+    "authoritative_fixture": {
+      "path": "annexB/language/function-code/block-decl-func-skip-arguments.js",
+      "sha256": "8a225aefbeb41d9a8f5630403141e3b718330d1e946c15a9fb35678da9a90d01",
+      "result": "pass"
+    },
+    "waived_higher_stage": 114,
+    "waived_fixtures": [
+      {
+        "path": "staging/sm/lexical-environment/block-scoped-functions-annex-b-arguments.js",
+        "sha256": "1bc4233bfb75d6b06a47773ad93e9fd3e7c500a0fbeb2de4a5b7eb508fdd8dab"
+      },
+      {
+        "path": "staging/sm/regress/regress-602621.js",
+        "sha256": "43ec595a2220317a7b295e1ab23c3d0f94bb104bc65398e606a38a0d323f95cf"
+      }
+    ],
+    "reason": "Both higher-stage fixtures require the same block function to overwrite an arguments binding that the lower-stage fixture requires to remain the arguments object.",
+    "fixtures_and_inventory_identities_preserved": true
+  },
+  "result": "Stage 93 passes 241/241 and Stage 94 passes 845/845. Stage 114 retains exactly the two directly conflicting raw failures; all selected outcomes match prior lower-stage reports without regressions. Final complete-inventory qualification remains at the Stage A cleanup gate."
+}

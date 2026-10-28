@@ -1,0 +1,820 @@
+{
+  "brotli": {
+    "matched_files": 107,
+    "different": [],
+    "missing": [],
+    "files": [
+      {
+        "path": "brotli/c/common/constants.c",
+        "sha256": "630f40ca2ac787025175eaf39b9569a60aff6ddec7e5085197e4cb0d43641b0d",
+        "matches_stable": true
+      },
+      {
+        "path": "brotli/c/common/constants.h",
+        "sha256": "c9c898542360e811dc44aa9be270d21ce0d18f3ecf45310f3d9f285f3692a59e",
+        "matches_stable": true
+      },
+      {
+        "path": "brotli/c/common/context.c",
+        "sha256": "c9aa1acb35af38c90c4a38ba168885b649838236b2d57adb5e76d687bdbe252e",
+        "matches_stable": true
+      },
+      {
+        "path": "brotli/c/common/context.h",
+        "sha256": "2745ef910928a4acd58e1cb98128a0a228fa1812c61e69538c9d393d405bf047",
+        "matches_stable": true
+      },
+      {
+        "path": "brotli/c/common/dictionary.c",
+        "sha256": "0890056e4ae595efab6bbf3bf1fd244332e2cfad3adcb9f5793ee29a8f3a18c5",
+        "matches_stable": true
+      },
+      {
+        "path": "brotli/c/common/dictionary.h",
+        "sha256": "bfb4f010a2279c53a039ec6f095a12ab62c7d49ab138e385a16caf3904341b10",
+        "matches_stable": true
+      },
+      {
+        "path": "brotli/c/common/dictionary_inc.h",
+        "sha256": "55b98973df9dcb353bd78b2b573fb7338ab55d98fb5571ad93939095978768e8",
+        "matches_stable": true
+      },
+      {
+        "path": "brotli/c/common/platform.c",
+        "sha256": "fce95889e6b1d1a91c0baa2ee0f3b83a41b670a4f51a5053185ffbed6bde71fd",
+        "matches_stable": true
+      },
+      {
+        "path": "brotli/c/common/platform.h",
+        "sha256": "e7a9b84f71ffe037472729db11e81bee7092f4af5672b21d5bff20f454e84636",
+        "matches_stable": true
+      },
+      {
+        "path": "brotli/c/common/shared_dictionary.c",
+        "sha256": "0cf405b0155230e060b9e0855bb22379037362948828b98338f203be07923d0e",
+        "matches_stable": true
+      },
+      {
+        "path": "brotli/c/common/shared_dictionary_internal.h",
+        "sha256": "e9e343e5d4ddd0f87a9579aab6796dd82af08639abfda122e874a97e896c6b6a",
+        "matches_stable": true
+      },
+      {
+        "path": "brotli/c/common/static_init.h",
+        "sha256": "be55ce94cace1a6c9dd9460ae30a5b7942834fd8c1003ffdef56df0b35dbcfd7",
+        "matches_stable": true
+      },
+      {
+        "path": "brotli/c/common/transform.c",
+        "sha256": "47f229a79c3542ea57ec07145d7eaf77300a02816d95695332f9911ea19d6ab3",
+        "matches_stable": true
+      },
+      {
+        "path": "brotli/c/common/transform.h",
+        "sha256": "b79dd99d1dcc618c1a4284b74dd04adda099fc3f65f906924991a736e09c125c",
+        "matches_stable": true
+      },
+      {
+        "path": "brotli/c/common/version.h",
+        "sha256": "792d03d8feff8168edf639899f72b71a37e9cbd9f178e3be397ccef29d3346b0",
+        "matches_stable": true
+      },
+      {
+        "path": "brotli/c/dec/bit_reader.c",
+        "sha256": "ad4a7608173afe62bc7b36d83768e4ac73dadc4a6272437340ee46e8a61a0d92",
+        "matches_stable": true
+      },
+      {
+        "path": "brotli/c/dec/bit_reader.h",
+        "sha256": "f23fbb82054c5e4405e2a262df9cf4c4756b3e0e476ac849c0dd8f741018d161",
+        "matches_stable": true
+      },
+      {
+        "path": "brotli/c/dec/decode.c",
+        "sha256": "f7749b1296128c0add4eaa454b9d82ee1c7b0451c1c9ed47d96733e6de6f2d7b",
+        "matches_stable": true
+      },
+      {
+        "path": "brotli/c/dec/huffman.c",
+        "sha256": "b7c973c2918c6765c4eb534c3ae314055d535b6d1fafb021cee5f7eae170aae6",
+        "matches_stable": true
+      },
+      {
+        "path": "brotli/c/dec/huffman.h",
+        "sha256": "09f3a1f7608b09df131342c9759f4a63c19b0e784bda5e474ec01eb72699079d",
+        "matches_stable": true
+      },
+      {
+        "path": "brotli/c/dec/prefix.c",
+        "sha256": "0a31304f440f7bb2017d52b83ae35cb428cbc5ac2fc172c8eec2fea449c2f7cd",
+        "matches_stable": true
+      },
+      {
+        "path": "brotli/c/dec/prefix.h",
+        "sha256": "fe1f3630f78a0ed3f79146a52d8e480c12d130ccfe9781f03d0edc581c3b9e83",
+        "matches_stable": true
+      },
+      {
+        "path": "brotli/c/dec/prefix_inc.h",
+        "sha256": "e1ade26b7b1e1e56b1a91af20ef93f81ef7a4ed83e0543fd6d9eb29f5c6d2983",
+        "matches_stable": true
+      },
+      {
+        "path": "brotli/c/dec/state.c",
+        "sha256": "66a7c3d9c01cda374d33d3693ba45d059ff00b12114a8844ee4f2519ba2af14e",
+        "matches_stable": true
+      },
+      {
+        "path": "brotli/c/dec/state.h",
+        "sha256": "8937c3799c177eacfaf3c0dba8da8c2558f435d6baffa2d787aec3212eaca041",
+        "matches_stable": true
+      },
+      {
+        "path": "brotli/c/dec/static_init.c",
+        "sha256": "a4a308e394fe05a124d919977b3f457a06363615a882dce058f329edcf7dc851",
+        "matches_stable": true
+      },
+      {
+        "path": "brotli/c/dec/static_init.h",
+        "sha256": "a4f13d0e5c770ad92fb2d6b8d4a8f93bfe70b1e97352306636a1119a6f44f270",
+        "matches_stable": true
+      },
+      {
+        "path": "brotli/c/enc/backward_references.c",
+        "sha256": "2e4320bf880dd0e03781fbd56159da069325da73ad47c1fdae46872b1db41463",
+        "matches_stable": true
+      },
+      {
+        "path": "brotli/c/enc/backward_references.h",
+        "sha256": "ab3af6c955add46840b8e920ae2daf5afb971b7c9ad05ad0720bdfc9aabc298b",
+        "matches_stable": true
+      },
+      {
+        "path": "brotli/c/enc/backward_references_hq.c",
+        "sha256": "fd418f50cea8f5a579d20b40ff7040e9ff4029e151095f4eaf9c1b6bcf15c680",
+        "matches_stable": true
+      },
+      {
+        "path": "brotli/c/enc/backward_references_hq.h",
+        "sha256": "6ffa64b045c878600aa694f92b301cf6ff854e0e79959aeb9e124864789e210d",
+        "matches_stable": true
+      },
+      {
+        "path": "brotli/c/enc/backward_references_inc.h",
+        "sha256": "c53d844433d3cd60e4114f9c08c42628c88b3916af39837bf05c59bc85cd433c",
+        "matches_stable": true
+      },
+      {
+        "path": "brotli/c/enc/bit_cost.c",
+        "sha256": "544c6af87753f9e540873c2b7984d73297a53576fc0b352b34121687be2f08e4",
+        "matches_stable": true
+      },
+      {
+        "path": "brotli/c/enc/bit_cost.h",
+        "sha256": "1336cd6c28117921ad0275a39188d17ee91eb96e8b6e362c940df488ab8068a1",
+        "matches_stable": true
+      },
+      {
+        "path": "brotli/c/enc/bit_cost_inc.h",
+        "sha256": "71a2c3736f0039df51ba6b38741356fdbd0792d4f1068adfdaecf0df84f04329",
+        "matches_stable": true
+      },
+      {
+        "path": "brotli/c/enc/block_encoder_inc.h",
+        "sha256": "fa99d29142869d28e6b4c471993e44b989f1350a9cfdbed7342f4b915329b9a8",
+        "matches_stable": true
+      },
+      {
+        "path": "brotli/c/enc/block_splitter.c",
+        "sha256": "34699e570f752cf0bd2643cb8d6a6b17e79add6856bdaf0b6007927fe509c5b1",
+        "matches_stable": true
+      },
+      {
+        "path": "brotli/c/enc/block_splitter.h",
+        "sha256": "f43db7ef733e5c87dd1fe9cef2465e02dde91d0121efae74b2c1c357ed1db267",
+        "matches_stable": true
+      },
+      {
+        "path": "brotli/c/enc/block_splitter_inc.h",
+        "sha256": "4fd9d95ac3fc08992d6fe3d9cc7855a62417326046bb0666b8ad7196abd3c944",
+        "matches_stable": true
+      },
+      {
+        "path": "brotli/c/enc/brotli_bit_stream.c",
+        "sha256": "ea95e71753a6b1b651e5315013900c5d79eb074245be750d1afc3ec5a8b19982",
+        "matches_stable": true
+      },
+      {
+        "path": "brotli/c/enc/brotli_bit_stream.h",
+        "sha256": "747101dc514e7257e06c268bac2de9696fbb36ebc1a05787b67c6a2b52a7376e",
+        "matches_stable": true
+      },
+      {
+        "path": "brotli/c/enc/cluster.c",
+        "sha256": "23d58bc8b628c9d168f8911d9304d4964e0f992f68e6d62daefe7eb837b07cb4",
+        "matches_stable": true
+      },
+      {
+        "path": "brotli/c/enc/cluster.h",
+        "sha256": "fad2c4dea68fa93cfa61fe2234421163b15e0952446c583053a34a4b70b856bc",
+        "matches_stable": true
+      },
+      {
+        "path": "brotli/c/enc/cluster_inc.h",
+        "sha256": "9875a8a2822b029dad7841eea87096b6e059087a066f4b3bc055a402d67f1291",
+        "matches_stable": true
+      },
+      {
+        "path": "brotli/c/enc/command.c",
+        "sha256": "3f72daa062889ce5e662993095da5477f47815896867476b3f7b34d3a67fbd9d",
+        "matches_stable": true
+      },
+      {
+        "path": "brotli/c/enc/command.h",
+        "sha256": "2e64e8b9ff12ae9be4c711ad25534f9c93b0fbac82f5a843ac42cc0a8168e1fb",
+        "matches_stable": true
+      },
+      {
+        "path": "brotli/c/enc/compound_dictionary.c",
+        "sha256": "4046dd0040ad51d4a550a747e5c4643d7cf801de426698e7566e8e2fc0c1c9ae",
+        "matches_stable": true
+      },
+      {
+        "path": "brotli/c/enc/compound_dictionary.h",
+        "sha256": "8a1926225d68075c58259260470fe193115748df5419c27b816f86473426cdd5",
+        "matches_stable": true
+      },
+      {
+        "path": "brotli/c/enc/compress_fragment.c",
+        "sha256": "0e14cfce93c2a461a5d6be626e9ed30340bab980ccc76f502a23d2c112c7c94f",
+        "matches_stable": true
+      },
+      {
+        "path": "brotli/c/enc/compress_fragment.h",
+        "sha256": "3b91f1b14055d1908fcfd03bdc4a7fc52371233bb1c6ff28755f5248f5726a82",
+        "matches_stable": true
+      },
+      {
+        "path": "brotli/c/enc/compress_fragment_two_pass.c",
+        "sha256": "938fc18b7a5f1e41f360a167a31a7297920160f08bff92f04d97788c3d32bfd6",
+        "matches_stable": true
+      },
+      {
+        "path": "brotli/c/enc/compress_fragment_two_pass.h",
+        "sha256": "aae9785aa1003e14b3eeccc263c4e583c48871577a92bf0662de40763c7fb73e",
+        "matches_stable": true
+      },
+      {
+        "path": "brotli/c/enc/dictionary_hash.c",
+        "sha256": "1225337a2bad9cc08d72671757682ec90ab99388f00bfa73cd469a5e6e5e9778",
+        "matches_stable": true
+      },
+      {
+        "path": "brotli/c/enc/dictionary_hash.h",
+        "sha256": "a0b125ef70ac49b0d0006aa30a8d226d5f8d1756c82c3c0d50ce08e9ecf4f4a0",
+        "matches_stable": true
+      },
+      {
+        "path": "brotli/c/enc/dictionary_hash_inc.h",
+        "sha256": "6effa6998dbb024d12766b9240beb549a8ee50fd6fdadf4a61ec8899eb9ac4d4",
+        "matches_stable": true
+      },
+      {
+        "path": "brotli/c/enc/encode.c",
+        "sha256": "79c4bca6f88d3c8725642c01c7a470d768312d573193a600bd13a02d657b06f7",
+        "matches_stable": true
+      },
+      {
+        "path": "brotli/c/enc/encoder_dict.c",
+        "sha256": "2c538ce0bf35bce2f05b270a2f165793661fc7a427d91f355c2722a3dd345b11",
+        "matches_stable": true
+      },
+      {
+        "path": "brotli/c/enc/encoder_dict.h",
+        "sha256": "e300e61e3b464c7e572bf1921547949e3cb0e87f24770ff611c75ef8459f398d",
+        "matches_stable": true
+      },
+      {
+        "path": "brotli/c/enc/entropy_encode.c",
+        "sha256": "ea15125ed036547e57553a56b04ac50eb91a48424ccc5cf29d13433419fa4723",
+        "matches_stable": true
+      },
+      {
+        "path": "brotli/c/enc/entropy_encode.h",
+        "sha256": "d916681f7aa9fe1ed3ec671be2d5b0687e0ac5c67f0f69dd781084746751899e",
+        "matches_stable": true
+      },
+      {
+        "path": "brotli/c/enc/entropy_encode_static.h",
+        "sha256": "ff27cd498408d797baa4cd6750b8282c4d70100b4c000346e2a888102451debf",
+        "matches_stable": true
+      },
+      {
+        "path": "brotli/c/enc/fast_log.c",
+        "sha256": "7e08232d781a8e4a92f59869a492b0a8982cb3e3c51b2d4be808f59f8643dc88",
+        "matches_stable": true
+      },
+      {
+        "path": "brotli/c/enc/fast_log.h",
+        "sha256": "74a76746f3eb2e673411d0563ff22a22575d0be4dcb29da0a5ee2039aed6df43",
+        "matches_stable": true
+      },
+      {
+        "path": "brotli/c/enc/find_match_length.h",
+        "sha256": "d03ef29e28f89b4b74124d0315e173014cbd724dcff4d3020a9b2aad0d8e60b7",
+        "matches_stable": true
+      },
+      {
+        "path": "brotli/c/enc/hash.h",
+        "sha256": "1bcb3021c7e95b0df62f5c183b34b441de7573eb56fa8073eaba69039948e0c7",
+        "matches_stable": true
+      },
+      {
+        "path": "brotli/c/enc/hash_base.h",
+        "sha256": "e51ef6971fe4ab11a58eb524013999645b595779b4519dc6c10af4c333a48d9b",
+        "matches_stable": true
+      },
+      {
+        "path": "brotli/c/enc/hash_composite_inc.h",
+        "sha256": "6b77329089219d157954ae229ce438a127e123dec8aff6ca437d73845055abd4",
+        "matches_stable": true
+      },
+      {
+        "path": "brotli/c/enc/hash_forgetful_chain_inc.h",
+        "sha256": "2812de9033a6778ab0f44be4da4e250d34a5ca4eb8b2da55fc156ea2edc1d67f",
+        "matches_stable": true
+      },
+      {
+        "path": "brotli/c/enc/hash_longest_match64_inc.h",
+        "sha256": "a71bbe70774c94eb46f21574046d1eeb3867052d59ad5fca50d241211a143014",
+        "matches_stable": true
+      },
+      {
+        "path": "brotli/c/enc/hash_longest_match64_simd_inc.h",
+        "sha256": "80bd560c616effa04abcb7575089f07705817289a4919c7abbc5600ba39a13b7",
+        "matches_stable": true
+      },
+      {
+        "path": "brotli/c/enc/hash_longest_match_inc.h",
+        "sha256": "a36d5a3088b1df99da6bfb9ebfcbc4777647ac4f64f845a224119d85061acab2",
+        "matches_stable": true
+      },
+      {
+        "path": "brotli/c/enc/hash_longest_match_quickly_inc.h",
+        "sha256": "0adeeedc0d4b5b2defb841c2f97ad127608a6f94298caa31811f46f38dbd026d",
+        "matches_stable": true
+      },
+      {
+        "path": "brotli/c/enc/hash_longest_match_simd_inc.h",
+        "sha256": "afc8d1d0490ab66007fdcca7538cd2070b524c1878e79576151a63da77a8cd2f",
+        "matches_stable": true
+      },
+      {
+        "path": "brotli/c/enc/hash_rolling_inc.h",
+        "sha256": "4e8e46bf74dfccb32d3cf05c29b0ada93841ea78d42863f4aec255e164332d68",
+        "matches_stable": true
+      },
+      {
+        "path": "brotli/c/enc/hash_to_binary_tree_inc.h",
+        "sha256": "78a8c973f2cdba8085019f7f18c48b5c5d558c797eec5e1104596e452c06d36d",
+        "matches_stable": true
+      },
+      {
+        "path": "brotli/c/enc/histogram.c",
+        "sha256": "cf8cbd4310f9b41a718ca200bfd8f7c07159729e51a5aeda1f2f809a954260bf",
+        "matches_stable": true
+      },
+      {
+        "path": "brotli/c/enc/histogram.h",
+        "sha256": "12a8632ca3b98350bd9aa38a439a21bf63378bcd867ba43076a5bdebf0fb03b6",
+        "matches_stable": true
+      },
+      {
+        "path": "brotli/c/enc/histogram_inc.h",
+        "sha256": "618857bb0d76c2647b26730413ddcf1ddecc63567adb5a1437eb7ff711670a71",
+        "matches_stable": true
+      },
+      {
+        "path": "brotli/c/enc/literal_cost.c",
+        "sha256": "70b9efae900d89ba610087113bea9225debbae5db21825a9bad0051c1ea5451b",
+        "matches_stable": true
+      },
+      {
+        "path": "brotli/c/enc/literal_cost.h",
+        "sha256": "3504da473324e0d2be76c69b5e9d1ce7d97409ff5920bd3928a05c3de2a47009",
+        "matches_stable": true
+      },
+      {
+        "path": "brotli/c/enc/matching_tag_mask.h",
+        "sha256": "3106496cc6baa84f6dab86395002b2638ba64926de7858cd6943afd8b6c7d162",
+        "matches_stable": true
+      },
+      {
+        "path": "brotli/c/enc/memory.c",
+        "sha256": "a491c8110e9e68db26c10e008abfc69c07d6756f2b9c1f56611295aad7a817d2",
+        "matches_stable": true
+      },
+      {
+        "path": "brotli/c/enc/memory.h",
+        "sha256": "01ee4983c81f1b935841d4e2ebe2588cf590ea66dcce493b61c7430da8baaec5",
+        "matches_stable": true
+      },
+      {
+        "path": "brotli/c/enc/metablock.c",
+        "sha256": "8217f29edd2366110cb235e2e3e7e714ba89c256701bfd0b9bb001e83a7b9391",
+        "matches_stable": true
+      },
+      {
+        "path": "brotli/c/enc/metablock.h",
+        "sha256": "f200f4660b5c3670fdde8ed7300bcd7efefdb355e3132bd3b610e3b795061196",
+        "matches_stable": true
+      },
+      {
+        "path": "brotli/c/enc/metablock_inc.h",
+        "sha256": "e68583ed633b96aacfae43c4e7810ebebc09af4414cddc49506fcb2069cbe343",
+        "matches_stable": true
+      },
+      {
+        "path": "brotli/c/enc/params.h",
+        "sha256": "55f3508a6d8019192a43110b62d9284277e19b9d301cebe7bed27855952d1b25",
+        "matches_stable": true
+      },
+      {
+        "path": "brotli/c/enc/prefix.h",
+        "sha256": "706a1973c2229d03eb350dcc2e6909a94175eb8581a9f890d9bda45fcc0f544d",
+        "matches_stable": true
+      },
+      {
+        "path": "brotli/c/enc/quality.h",
+        "sha256": "b6dfb3e8433dfbb97693aa02f551870c7739e7645fcf6d9322631e02ea09c35d",
+        "matches_stable": true
+      },
+      {
+        "path": "brotli/c/enc/ringbuffer.h",
+        "sha256": "f67876b441464cd931fb7db0c84d05fc7ac570c47ca9872751ae9c7c7c4a2455",
+        "matches_stable": true
+      },
+      {
+        "path": "brotli/c/enc/state.h",
+        "sha256": "c7996820e3f166650e2fb9187c0f94a8a5e21bf353dbdd1c783f22e428904f9e",
+        "matches_stable": true
+      },
+      {
+        "path": "brotli/c/enc/static_dict.c",
+        "sha256": "9810eb7f9ab63a5720bb4a7fd089f3cbe787b10875129f1d1ed1021bc2416724",
+        "matches_stable": true
+      },
+      {
+        "path": "brotli/c/enc/static_dict.h",
+        "sha256": "4362117cf788185ead13cd181a0d7db437a05a2cdc619646f93ff3721d53ca3c",
+        "matches_stable": true
+      },
+      {
+        "path": "brotli/c/enc/static_dict_lut.c",
+        "sha256": "c06f693a31fe244858d0ec8268387657800ef42c768571be9e96fef26951d988",
+        "matches_stable": true
+      },
+      {
+        "path": "brotli/c/enc/static_dict_lut.h",
+        "sha256": "be10d9c9481e915424ea79e29c2e18f5dac9cb4e18a5fb07eeb7a7fb9b1637b2",
+        "matches_stable": true
+      },
+      {
+        "path": "brotli/c/enc/static_dict_lut_inc.h",
+        "sha256": "561574bed6ff61709e20a196b611825f239aa79cd1c54c96b96757162edcd3d4",
+        "matches_stable": true
+      },
+      {
+        "path": "brotli/c/enc/static_init.c",
+        "sha256": "c62f0f3c81ea6bd198e5dff2f804e78a94ac10bf78cf5c1dbb72b28ab5a0cddd",
+        "matches_stable": true
+      },
+      {
+        "path": "brotli/c/enc/static_init.h",
+        "sha256": "f853f6739633044ac6acc27e0ba074b315e230a4f99aac46a98b53880af24441",
+        "matches_stable": true
+      },
+      {
+        "path": "brotli/c/enc/utf8_util.c",
+        "sha256": "15c394fe3284863e026511f8ba62dfe75148f286f59e2a8fd2f744bc00c8cda9",
+        "matches_stable": true
+      },
+      {
+        "path": "brotli/c/enc/utf8_util.h",
+        "sha256": "915db224b31b09c311f77776dc5c1a83c73101780349c653551493059212f795",
+        "matches_stable": true
+      },
+      {
+        "path": "brotli/c/enc/write_bits.h",
+        "sha256": "b2af9a0a4da30b47981cc63d29eefb27a85c86e257d7e2c120b7f6ac1efdb060",
+        "matches_stable": true
+      },
+      {
+        "path": "brotli/c/include/brotli/decode.h",
+        "sha256": "027b91e62e85de6955e6334628b2ba0c77901a449e169fd9f95d6ea1cc91f980",
+        "matches_stable": true
+      },
+      {
+        "path": "brotli/c/include/brotli/encode.h",
+        "sha256": "f1842e38da557efac517a35f1b27d288d464a723ef50316d3d20fe03f6046c06",
+        "matches_stable": true
+      },
+      {
+        "path": "brotli/c/include/brotli/port.h",
+        "sha256": "72b484d7a2561f3a9ad35ebd0d4f97f7a2d9863b619782ada5b083a4b6f40df5",
+        "matches_stable": true
+      },
+      {
+        "path": "brotli/c/include/brotli/shared_dictionary.h",
+        "sha256": "86230f0aaf533044d85d92f84b5aec8b7e4e231d4b64b098604083e7866e8097",
+        "matches_stable": true
+      },
+      {
+        "path": "brotli/c/include/brotli/types.h",
+        "sha256": "ebbd136dc411cc8167636d6f54b66ad0c234dc18989265c37a28c242eaae2efd",
+        "matches_stable": true
+      },
+      {
+        "path": "brotli/c/tools/brotli.c",
+        "sha256": "cb6c8ca6668d324d50cd085fc3ddb3f202afe34fb562b5b583c0d7b0cceccd0c",
+        "matches_stable": true
+      }
+    ]
+  },
+  "zlib": {
+    "matched_files": 50,
+    "different": [],
+    "missing": [
+      "zlib/contrib/minizip/crypt.h",
+      "zlib/contrib/minizip/ints.h",
+      "zlib/contrib/minizip/ioapi.c",
+      "zlib/contrib/minizip/ioapi.h",
+      "zlib/contrib/minizip/iowin32.c",
+      "zlib/contrib/minizip/iowin32.h",
+      "zlib/contrib/minizip/miniunz.c",
+      "zlib/contrib/minizip/minizip.c",
+      "zlib/contrib/minizip/mztools.c",
+      "zlib/contrib/minizip/mztools.h",
+      "zlib/contrib/minizip/skipset.h",
+      "zlib/contrib/minizip/unzip.c",
+      "zlib/contrib/minizip/unzip.h",
+      "zlib/contrib/minizip/zip.c",
+      "zlib/contrib/minizip/zip.h",
+      "zlib/contrib/qat/deflate_qat.h",
+      "zlib/contrib/qat/qatzpp/io_buffers.h",
+      "zlib/contrib/tests/infcover.h"
+    ],
+    "files": [
+      {
+        "path": "zlib/adler32.c",
+        "sha256": "e47831f9eaffc530e2f6f9720266d94e74eed9fe5c2082473d3afb9cf8880c13",
+        "matches_stable": true
+      },
+      {
+        "path": "zlib/adler32_simd.c",
+        "sha256": "885047cd158f16a9c386fd1f3f4251ec8e463be22960d60fe2df46c49e61bfbc",
+        "matches_stable": true
+      },
+      {
+        "path": "zlib/adler32_simd.h",
+        "sha256": "8c1362d66be00e4ee75a303b8b67a36b128786666386d090ebd2cac8cbacd9ea",
+        "matches_stable": true
+      },
+      {
+        "path": "zlib/chromeconf.h",
+        "sha256": "f5fff056ec46cf99ae26676e1a16b71d2ad5d96dd56918d3e110fdab13b4d461",
+        "matches_stable": true
+      },
+      {
+        "path": "zlib/compare256.h",
+        "sha256": "735b89db2f0978a781c71f82fbe1564cc4ac2bf1fc4b7c05b22a29b3882e253d",
+        "matches_stable": true
+      },
+      {
+        "path": "zlib/compress.c",
+        "sha256": "5495bc53cd675dc10d9ab07e851e7b21324d43f6b513e759bd2bbd6698b539ab",
+        "matches_stable": true
+      },
+      {
+        "path": "zlib/contrib/optimizations/chunkcopy.h",
+        "sha256": "f43452bb0710645d1360f552a49359d322326fc7b2fbc607b1574fa203cce65e",
+        "matches_stable": true
+      },
+      {
+        "path": "zlib/contrib/optimizations/inffast_chunk.c",
+        "sha256": "f89882677fdcccc2e4048dc60f6789c79208675d37fd2b04d2055b2d0911bc6f",
+        "matches_stable": true
+      },
+      {
+        "path": "zlib/contrib/optimizations/inffast_chunk.h",
+        "sha256": "670f8d05461dbad596e81355f6e218deb8d9e2e6595259465cfb8d2fad6a2315",
+        "matches_stable": true
+      },
+      {
+        "path": "zlib/contrib/optimizations/inflate.c",
+        "sha256": "f47ff3fedab199d4bf59a018808dcaa1b206ce0d6dea06f09f217d375d713366",
+        "matches_stable": true
+      },
+      {
+        "path": "zlib/contrib/optimizations/insert_string.h",
+        "sha256": "ff03fe98a4dcaa22022a44340f8fe62f4820c64cd1f326bd710fa5d37f8a2897",
+        "matches_stable": true
+      },
+      {
+        "path": "zlib/cpu_features.c",
+        "sha256": "7e80a4d297e5eb6e83b8a9c384ecb7b572ccfe63acdd70fd8bc703ce714d3d21",
+        "matches_stable": true
+      },
+      {
+        "path": "zlib/cpu_features.h",
+        "sha256": "48f5b148756771ed44f3ed27a843e16a119ad71efbdf18af96bf53e58374db0a",
+        "matches_stable": true
+      },
+      {
+        "path": "zlib/crc32.c",
+        "sha256": "ca8594f9f859dcc1264ef0e26b052d09f8db2b5b9e16b3a58c687d2878ded901",
+        "matches_stable": true
+      },
+      {
+        "path": "zlib/crc32.h",
+        "sha256": "9a2223575183ac2ee8a247f20bf3ac066e8bd0140369556bdbdffc777435749e",
+        "matches_stable": true
+      },
+      {
+        "path": "zlib/crc32_simd.c",
+        "sha256": "b15894ba217a111236b481f551c985e9375a4bb8dd8db4d2e74e055b1631ace3",
+        "matches_stable": true
+      },
+      {
+        "path": "zlib/crc32_simd.h",
+        "sha256": "80688abed37fbff1b49079050954749f0a694b5b9998abdbf59019f65401208a",
+        "matches_stable": true
+      },
+      {
+        "path": "zlib/crc_folding.c",
+        "sha256": "5ab4e8fda131585fa6d63f7a5d33b928e23017582fcfc639d10c8d0202b07372",
+        "matches_stable": true
+      },
+      {
+        "path": "zlib/deflate.c",
+        "sha256": "6f5ee49848c58ee670fa8077c1cf4803ec63c6d9d4ec0b89e7cf84d4ddc9c72d",
+        "matches_stable": true
+      },
+      {
+        "path": "zlib/deflate.h",
+        "sha256": "21e554884c697b9b7bb2c979c1c9e499487e0817756be01d3a0b4eb18545029f",
+        "matches_stable": true
+      },
+      {
+        "path": "zlib/examples/zpipe.c",
+        "sha256": "ea4753cb67e92a495078c4a45ec47251cca8d2c2ffa171d2bb27890f8f0ecdfa",
+        "matches_stable": true
+      },
+      {
+        "path": "zlib/google/compression_utils.h",
+        "sha256": "9187b675681853e21822511661f1d76c45ecf9505b90cd27593a13d2df84d716",
+        "matches_stable": true
+      },
+      {
+        "path": "zlib/google/compression_utils_portable.h",
+        "sha256": "ad6e83438a781734e0b8873b846b3cafae5ca31e1bf2c56a3d8c7ea2d9dc0c19",
+        "matches_stable": true
+      },
+      {
+        "path": "zlib/google/redact.h",
+        "sha256": "638b81c97444ae6d9ae41aacec587b70bcf9ae2ab406b0801e947cbf0f4c77a0",
+        "matches_stable": true
+      },
+      {
+        "path": "zlib/google/zip.h",
+        "sha256": "4ff2c18a7fac71e97edbaa5a5d9c2d5f9f9d7be2e7d095b5b5c7c6ba15d63b6a",
+        "matches_stable": true
+      },
+      {
+        "path": "zlib/google/zip_internal.h",
+        "sha256": "3954b003b8b97a440d701a3ffc3db722ad9618d6c99dbc771d3b561aac95f273",
+        "matches_stable": true
+      },
+      {
+        "path": "zlib/google/zip_reader.h",
+        "sha256": "5b05473a3665f3da441297b314a219be13ce6eb7120552fc2d5f0b66f5e54f7c",
+        "matches_stable": true
+      },
+      {
+        "path": "zlib/google/zip_writer.h",
+        "sha256": "0324ff99ccc093f4f7efb7dbd92b5ca823a7569f1f7bc0cf0f51ffd112f25994",
+        "matches_stable": true
+      },
+      {
+        "path": "zlib/gzclose.c",
+        "sha256": "35ea6e991a63095f797d8c4cc25817fac7a7155c2ba7dcdbbf648f7871c7ea40",
+        "matches_stable": true
+      },
+      {
+        "path": "zlib/gzguts.h",
+        "sha256": "a8b9589da5bab397a98685eb5cbc97a414aafec61d557f11453e1ac6d5364f2a",
+        "matches_stable": true
+      },
+      {
+        "path": "zlib/gzlib.c",
+        "sha256": "a968a4337aa5743adf00c4088b4e93ada3dba897e2a321f643fe81286b718f82",
+        "matches_stable": true
+      },
+      {
+        "path": "zlib/gzread.c",
+        "sha256": "713edfd883f4230199ddb2b0f5dc90adb7fc96348e228fc38c249e4b4a797c5e",
+        "matches_stable": true
+      },
+      {
+        "path": "zlib/gzwrite.c",
+        "sha256": "2ce783294c688330c716bfe106f43167d3dae5be84994176bc304d205d4f5b04",
+        "matches_stable": true
+      },
+      {
+        "path": "zlib/infback.c",
+        "sha256": "f4c9a2c547e6038b2bcdb1c0c7d979eb7450aa1fa6518107203c3284939ef5fe",
+        "matches_stable": true
+      },
+      {
+        "path": "zlib/inffast.c",
+        "sha256": "ce49de35d2d5c609e3a731db9ff93fa2e131558126f75f87454940c43c06c7d4",
+        "matches_stable": true
+      },
+      {
+        "path": "zlib/inffast.h",
+        "sha256": "8fd2fe697f951e8508b98e8e4017faa0027e47e340cc62b9e4ae1a672af5cd04",
+        "matches_stable": true
+      },
+      {
+        "path": "zlib/inffixed.h",
+        "sha256": "fd7c4b1dbdacb283421d0675744aaecda44e840e183b5131448bac94564f6adb",
+        "matches_stable": true
+      },
+      {
+        "path": "zlib/inflate.c",
+        "sha256": "ea50d23cb98397ccfe4d84ef2ba7b47b71826cc76beb02fa12a80d577c80b5c3",
+        "matches_stable": true
+      },
+      {
+        "path": "zlib/inflate.h",
+        "sha256": "e6a43bd0e24ab2cf5fa1dca630859e9a2f6a721f033f75faf179f5c0299e4fe2",
+        "matches_stable": true
+      },
+      {
+        "path": "zlib/inftrees.c",
+        "sha256": "64fc6aeea744510253a22f8b0611fcefa970458224a41a1649f5e0db340af8fe",
+        "matches_stable": true
+      },
+      {
+        "path": "zlib/inftrees.h",
+        "sha256": "0b60ee1386f860ececdd442cb869a4b8a0920cb1003b7fca853cdb6a91cf390e",
+        "matches_stable": true
+      },
+      {
+        "path": "zlib/slide_hash_simd.h",
+        "sha256": "0524fd845c79ac31bf7e23436e68aa9eb20d21a849088f4ec3250d460214284c",
+        "matches_stable": true
+      },
+      {
+        "path": "zlib/test/minigzip.c",
+        "sha256": "203b1a4623a11021f4b64c5f6b6a4addc1bcefac694cd48cac71ccce35d82c1d",
+        "matches_stable": true
+      },
+      {
+        "path": "zlib/trees.c",
+        "sha256": "13eb6702d12ba96cb43c30d45ce7bde9c522b060d39938986f995606f3e69d8d",
+        "matches_stable": true
+      },
+      {
+        "path": "zlib/trees.h",
+        "sha256": "bb0a9d3ca88ee00c81adb7c636e73b97085f6ef1b52d6d58edbe2b6dc3adeb4d",
+        "matches_stable": true
+      },
+      {
+        "path": "zlib/uncompr.c",
+        "sha256": "953f5381650838d507b01499790bd64524433ea6ea29ea9325bf542af10cfe7d",
+        "matches_stable": true
+      },
+      {
+        "path": "zlib/zconf.h",
+        "sha256": "5ad08c16565403aa7823d165050c5bfac211b8748717eec8a2bb8bc6efd56981",
+        "matches_stable": true
+      },
+      {
+        "path": "zlib/zlib.h",
+        "sha256": "0ff41598d145693759a8322bb90bc4f2c57dcdcb3635fdf5b2195bf13df15b54",
+        "matches_stable": true
+      },
+      {
+        "path": "zlib/zutil.c",
+        "sha256": "04303a4d607958905f0c036aeca43d14218d01752e6c444fdbeb94983912ec38",
+        "matches_stable": true
+      },
+      {
+        "path": "zlib/zutil.h",
+        "sha256": "84fa29c4a8097324a3b747e077507ba6f8de86cd593bf198219478858baf16f4",
+        "matches_stable": true
+      }
+    ]
+  }
+}

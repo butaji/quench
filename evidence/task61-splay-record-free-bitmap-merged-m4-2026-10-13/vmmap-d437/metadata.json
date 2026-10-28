@@ -1,0 +1,60 @@
+{
+  "host": {
+    "platform": "macOS-26.5-arm64-arm-64bit",
+    "machine": "arm64",
+    "logical_cpus": 10,
+    "load_average_before": [
+      7.16064453125,
+      9.1533203125,
+      8.9462890625
+    ]
+  },
+  "binary": "/Users/admin/Code/GitHub/quench-v2/target/pinned/3c9b0c25ecdd939762d86b2e39275e02cd4aab5f20adc97c811b9048a73968bf/quench-node",
+  "binary_sha256": "3c9b0c25ecdd939762d86b2e39275e02cd4aab5f20adc97c811b9048a73968bf",
+  "base_sha256": "ac383759c3cbf5f3a499ade526a4e296f7925733d8c3889b6d5840ce6867ff51",
+  "fixture_sha256": "1f875cec579d03af40d256ceaeb6823f3ef16c883652650ca51d183472a8185d",
+  "work_runs": 300,
+  "capture_stages": [
+    {
+      "stage": "setup",
+      "pid": 4836,
+      "source": "evidence/task61-splay-record-free-bitmap-merged-m4-2026-10-13/vmmap-d437/splay-setup-hold.js",
+      "source_sha256": "36591134de58f2fa1f96c974b6f9a98aee41089a812238763cf08e65d56b0874",
+      "captured_unix_seconds": 1791910252.7115252,
+      "marker": "__quenchMemoryHold:setup",
+      "vmmap_exit": 0,
+      "summary_exit": 0,
+      "process_info_exit": 0,
+      "files": [
+        "evidence/task61-splay-record-free-bitmap-merged-m4-2026-10-13/vmmap-d437/setup.stdout.txt",
+        "evidence/task61-splay-record-free-bitmap-merged-m4-2026-10-13/vmmap-d437/setup.stderr.txt",
+        "evidence/task61-splay-record-free-bitmap-merged-m4-2026-10-13/vmmap-d437/setup.vmmap.txt",
+        "evidence/task61-splay-record-free-bitmap-merged-m4-2026-10-13/vmmap-d437/setup.vmmap-summary.txt",
+        "evidence/task61-splay-record-free-bitmap-merged-m4-2026-10-13/vmmap-d437/setup.process.txt"
+      ]
+    },
+    {
+      "stage": "work",
+      "pid": 4840,
+      "source": "evidence/task61-splay-record-free-bitmap-merged-m4-2026-10-13/vmmap-d437/splay-work-hold.js",
+      "source_sha256": "4d7ec15c106a89795448590ab7a8f65afbe30eec1b2b420f67efca434628ab8a",
+      "captured_unix_seconds": 1791910255.057389,
+      "marker": "__quenchMemoryHold:work",
+      "vmmap_exit": 0,
+      "summary_exit": 0,
+      "process_info_exit": 0,
+      "files": [
+        "evidence/task61-splay-record-free-bitmap-merged-m4-2026-10-13/vmmap-d437/work.stdout.txt",
+        "evidence/task61-splay-record-free-bitmap-merged-m4-2026-10-13/vmmap-d437/work.stderr.txt",
+        "evidence/task61-splay-record-free-bitmap-merged-m4-2026-10-13/vmmap-d437/work.vmmap.txt",
+        "evidence/task61-splay-record-free-bitmap-merged-m4-2026-10-13/vmmap-d437/work.vmmap-summary.txt",
+        "evidence/task61-splay-record-free-bitmap-merged-m4-2026-10-13/vmmap-d437/work.process.txt"
+      ]
+    }
+  ],
+  "method": "Stop the uninstrumented pinned process immediately after setup or 300 run() calls; capture vmmap and ps before teardown.",
+  "limits": [
+    "This is an OS mapping snapshot, not the profile-memory structural counter build.",
+    "The work snapshot is after the final run(), before TearDown(); it may miss a transient intra-run RSS peak."
+  ]
+}

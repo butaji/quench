@@ -1,0 +1,22 @@
+diff --git a/crates/quench-runtime/src/heap.rs b/crates/quench-runtime/src/heap.rs
+index a8a323822..85e64a687 100644
+--- a/crates/quench-runtime/src/heap.rs
++++ b/crates/quench-runtime/src/heap.rs
+@@ -870,10 +870,16 @@ impl Heap {
+             let Some(index) = value.heap_index().map(|value| value as usize) else {
+                 continue;
+             };
++            let Some(mark_word) = self.marks.get(index / 64) else {
++                continue;
++            };
++            if mark_word & (1 << (index % 64)) != 0 {
++                continue;
++            }
+             let Some(slot) = self.slots.get_mut(index) else {
+                 continue;
+             };
+-            if Self::marked(&self.marks, index) || slot.cell.is_none() {
++            if slot.cell.is_none() {
+                 continue;
+             }
+             Self::mark(&mut self.marks, index);

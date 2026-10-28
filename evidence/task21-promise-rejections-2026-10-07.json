@@ -1,0 +1,111 @@
+{
+  "schema": 1,
+  "task": "21",
+  "kind": "official_node_parallel_shared_vm_focused_profile",
+  "reviewed_on": "2026-10-07",
+  "source_revision": "b4b3ca277daf0edb739129fc4315f3ffd5dfb9ac",
+  "source_state": "Dirty shared worktree; listed source and fixture hashes bind this result to the tested bytes.",
+  "build_command": "cargo run --profile iteration -p quench-node-test --bin run-parallel-next -- --profile promise-rejections --timeout-secs 60",
+  "suite": {
+    "path": "tests/node/test/parallel",
+    "submodule_revision": "55e4ca33f3a6dfe364bd9558b726576a6d1a2fba",
+    "manifest": "crates/quench-node-test/node-tests/parallel.txt",
+    "manifest_sha256": "19e9283536638a70e30c96ae0c5c76da9a9d7b8c4ab3c21797cdadc45ea08892",
+    "manifest_entries": 725,
+    "profile": "promise-rejections",
+    "runner": "quench-node-test run-parallel-next / shared NodeHost",
+    "runner_binary": "target/iteration/run-parallel-next",
+    "runner_binary_sha256": "b2980d8d8a36da365b8fcf9eacf9d32e24590f69a3d7f46f4ef531b975f2ab0a",
+    "inventory": "tasks/node-compat-inventory.json",
+    "inventory_sha256": "7e2125f9835b58e0cb6da2a82a04d1cd233f43ad8b2b9c327fae8b1ff20c73ad",
+    "inventory_relationship": "None of the ten selected fixtures has an inventory row; this supplemental Task 21 profile gives no Task 19 membership or Task 22 gate credit."
+  },
+  "shared_vm_run": {
+    "command": "target/iteration/run-parallel-next --profile promise-rejections --timeout-secs 60",
+    "result": {
+      "pass": 10,
+      "skip": 0,
+      "fail": 0,
+      "timeout": 0,
+      "crash": 0,
+      "unclassified": 0,
+      "total": 10
+    },
+    "cases": [
+      {
+        "path": "tests/node/test/parallel/test-promise-unhandled-silent.js",
+        "sha256": "2230cd0175b548512f69b35d53ee3f4c0cc0db2cf3e6a02d71f0fd64eb537351",
+        "status": "pass"
+      },
+      {
+        "path": "tests/node/test/parallel/test-promise-unhandled-silent-no-hook.js",
+        "sha256": "83e0a95b89c4c95a68ababc6fdaed67463069dbe938902427c44d9d07451d1aa",
+        "status": "pass"
+      },
+      {
+        "path": "tests/node/test/parallel/test-promise-unhandled-default.js",
+        "sha256": "14f58a8f39c34e7cc86fe36fc811f8409725667a0ff3001a162e4482e20822c4",
+        "status": "pass"
+      },
+      {
+        "path": "tests/node/test/parallel/test-promise-unhandled-throw-handler.js",
+        "sha256": "0097fead088d551eb758ecf06c5567ce97d3e7acec2475b441632b4a49371d9f",
+        "status": "pass"
+      },
+      {
+        "path": "tests/node/test/parallel/test-promise-unhandled-error.js",
+        "sha256": "03ecef3790c2ccf3a9dc7a6c66d7c025832c0f23c3f523703a4e772006098910",
+        "status": "pass"
+      },
+      {
+        "path": "tests/node/test/parallel/test-promise-unhandled-warn-no-hook.js",
+        "sha256": "a0276f994206d3a807c427f0acde4c7f67f35ee0e3c18131b30dbf2ca8d9a833",
+        "status": "pass"
+      },
+      {
+        "path": "tests/node/test/parallel/test-promise-unhandled-warn.js",
+        "sha256": "f7eee847135c4788e459312b85446b76523d4c78c819db8cb3047b080e68e3f4",
+        "status": "pass"
+      },
+      {
+        "path": "tests/node/test/parallel/test-promises-warning-on-unhandled-rejection.js",
+        "sha256": "c7813e8d7b7ac148a72f323907ecd8d4e3d557c39611e26b4f11890a33316647",
+        "status": "pass"
+      },
+      {
+        "path": "tests/node/test/parallel/test-promises-unhandled-symbol-rejections.js",
+        "sha256": "c92bae53025d3f7d1a740ea9bf060d252599f0e39bb58eee66cacd783de995e4",
+        "status": "pass"
+      },
+      {
+        "path": "tests/node/test/parallel/test-promises-unhandled-proxy-rejections.js",
+        "sha256": "4dd5753f5166da68b21670e444ca42a8d3231da77916205f187e6393adae4c89",
+        "status": "pass"
+      }
+    ]
+  },
+  "local_node_oracle": {
+    "path": "/opt/homebrew/Cellar/node/26.10.0_1/bin/node",
+    "version": "v26.10.0",
+    "status": "pass",
+    "cases": 10,
+    "invocation": "One process per unchanged fixture; header flags were supplied on argv. An external /tmp CommonJS loader used Module._compile with each original absolute fixture path because the workspace root package.json marks .js as ESM. No repository files were changed for the oracle run."
+  },
+  "source_sha256": {
+    "crates/quench-node-test/src/bin/run-parallel-next.rs": "7b4fa402270d313ecdf9286c00719abd63b1f19f3e5fa578c9e08de7cc845e05",
+    "crates/quench-node-test/src/case_process.rs": "c3c22940bebc194360df3329218e7e9e514ca2b8eaa1d845ff7a46d2d37c5317",
+    "crates/quench-node-test/src/parallel_profile.rs": "6d2659e5c805584e43b43ca79d43af3731e29caa5ea81a86350ba1ea48d97564",
+    "crates/quench-node-test/src/reader.rs": "e2fbbbd29b503aa2c7eede923fe2e22ff4a0ba87c9d4d7df80071828c8b4da4b",
+    "crates/quench-node/src/host/shared_vm.rs": "2363cb07a84f38b65b869681e14961a41ae57f1e2cfb0760cb092150f6cc9414",
+    "crates/quench-node/src/modules/event_loop.rs": "5587ebb250f97226ecad2d4765aeb9f91286465509c29c91856c1612ceda2a43",
+    "crates/quench-node/src/modules/process.rs": "9ead21ce5706daf9bf640b41b3622194209abd272edd9b7bbd3c3446dc324aae",
+    "crates/quench-node/src/modules/process/shared_vm.rs": "fad444d1a2397f95a00d4b1bae06806ca577ffb50978aca6529f26b705f7ea28",
+    "crates/quench-runtime-next/src/api.rs": "e0b4e06a8f776c9083df81a10d542fa9ac808783935f085a0986c7c672512fbf",
+    "crates/quench-runtime-next/src/api_embedding.rs": "396185b69635b1c52004bd5e56a0ab0b1ba95b26db2a8b7c71781b1c42fb93e6",
+    "crates/quench-runtime-next/src/vm/embedding.rs": "a38d5c0aac293f6bc9a556bec9a340d2b41fad2beabfb47072d09569549c21fc",
+    "crates/quench-runtime-next/src/vm/gc.rs": "2056ef7bb23b478c3061318c458fc3c71e2930f1db03728e45eb858bdc9fab81",
+    "crates/quench-runtime-next/src/vm/promise.rs": "40078ad69892d0a5a42547f3943326c5fa3f6127579e6e9e436878cd17d2a606",
+    "crates/quench-runtime-next/src/vm/promise_jobs.rs": "9cb3c6e7ebd3c1e78292d560c6988b97e10e2d102b706911bd1099ebfcaf3a54",
+    "crates/quench-runtime-next/src/vm/promise_state.rs": "1807799996a20bd7f716358f875ea8061c38cf4a4c3bdd3062b164d42b4fee95"
+  }
+}

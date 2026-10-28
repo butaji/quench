@@ -1,0 +1,315 @@
+{
+  "schema": 1,
+  "task": "62",
+  "experiment": "Clean M4 all-eight four-engine no-JIT campaign",
+  "decision": "complete; the report is valid and qualification-ready for Task 61 analysis on this host",
+  "source": {
+    "revision": "987b05ed55119441aa937de559501c90536e3fc1",
+    "source_dirty": false,
+    "quench_node_sha256": "78324401e3bf6712f1ca3d7cc71a1a5a9abfb33bd3c57a907e3b2a11bc440faa",
+    "quench_bench_sha256": "7530076292020d65cc1cc9c47fbe90534470144588e8ed17ec0107553c8c44fc"
+  },
+  "corpus": {
+    "pinned_revision": "64e1860c736c1b899708f4cd646721bc71e53d8b",
+    "checkout_revision": "64e1860c736c1b899708f4cd646721bc71e53d8b",
+    "checkout_clean": true,
+    "fixture_set_matches": true
+  },
+  "host": {
+    "platform": "macOS 26.5; Apple M4 (Mac16,10), arm64; 10 logical CPUs; 16 GiB RAM",
+    "kernel": "Darwin mini.local 25.5.0 Darwin Kernel Version 25.5.0: Mon Apr 27 20:41:26 PDT 2026; root:xnu-12377.121.6~2/RELEASE_ARM64_T8132 arm64",
+    "rustc": "rustc 1.99.0 (b940084d7 2026-09-28) (Homebrew)\nbinary: rustc\ncommit-hash: b940084d7eb6a299eb4bfeb8e34901bc051e7ac4\ncommit-date: 2026-09-28\nhost: aarch64-apple-darwin\nrelease: 1.99.0\nLLVM version: 23.1.2",
+    "measurement_backend": "macOS /usr/bin/time -l",
+    "ambient_activity": "A separate Node Playwright worker was active on the shared host; see environment.txt."
+  },
+  "campaign": {
+    "complete": true,
+    "qualification_ready": true,
+    "rounds_requested": 11,
+    "timeout_ms": 300000,
+    "fixtures_valid": 8,
+    "all_fixture_outputs_equal": true,
+    "all_fixture_rounds_valid": true,
+    "engines": [
+      {
+        "name": "quench",
+        "executable_sha256": "78324401e3bf6712f1ca3d7cc71a1a5a9abfb33bd3c57a907e3b2a11bc440faa",
+        "version": "Quench shared-VM interpreter build; package 0.1.0",
+        "argv": [],
+        "jit_mode": "interpreter",
+        "jit_proof": "the measured shared VM executes interpreter bytecode; no guest JIT path is enabled"
+      },
+      {
+        "name": "quickjs",
+        "executable_sha256": "4b0d0da1beae0a88d0724c7a0869797dee7a24c5bc1e74cfb5d2f69d17811c2b",
+        "version": "QuickJS version 2026-06-04",
+        "argv": [],
+        "jit_mode": "interpreter",
+        "jit_proof": "QuickJS qjs executes bytecode in its interpreter; binary version and SHA-256 are recorded"
+      },
+      {
+        "name": "bun",
+        "executable_sha256": "b36d2e9d9bd50e3a3b6a8f2d481839417d6600d4c1753411b094ee0da3222cef",
+        "version": "1.4.2",
+        "argv": [],
+        "jit_mode": "disabled-and-probed",
+        "jit_proof": "command succeeded and reported \"useJIT=false\": 1.4.2\n\nModified JSC options:\n   dumpOptions=1 (default: 0)\n   useJIT=false (default: true)"
+      },
+      {
+        "name": "node",
+        "executable_sha256": "4ca2a42d6d55a834b04d0892c5bc646a6869fcebec57f91c849dac0aa1031610",
+        "version": "v26.10.0",
+        "argv": [
+          "--jitless"
+        ],
+        "jit_mode": "disabled-and-probed",
+        "jit_proof": "command succeeded and reported \"true\": true"
+      }
+    ],
+    "fixtures": {
+      "crypto": {
+        "valid": true,
+        "rounds": 11,
+        "output_equal": true,
+        "engines": {
+          "bun": {
+            "median_score": 4154.0,
+            "median_max_rss_bytes": 27688960,
+            "valid_samples": 11
+          },
+          "node": {
+            "median_score": 2537.0,
+            "median_max_rss_bytes": 45088768,
+            "valid_samples": 11
+          },
+          "quench": {
+            "median_score": 413.0,
+            "median_max_rss_bytes": 25870336,
+            "valid_samples": 11
+          },
+          "quickjs": {
+            "median_score": 2402.0,
+            "median_max_rss_bytes": 3031040,
+            "valid_samples": 11
+          }
+        }
+      },
+      "deltablue": {
+        "valid": true,
+        "rounds": 11,
+        "output_equal": true,
+        "engines": {
+          "bun": {
+            "median_score": 2140.0,
+            "median_max_rss_bytes": 37240832,
+            "valid_samples": 11
+          },
+          "node": {
+            "median_score": 2754.0,
+            "median_max_rss_bytes": 51298304,
+            "valid_samples": 11
+          },
+          "quench": {
+            "median_score": 205.0,
+            "median_max_rss_bytes": 25722880,
+            "valid_samples": 11
+          },
+          "quickjs": {
+            "median_score": 1797.0,
+            "median_max_rss_bytes": 2981888,
+            "valid_samples": 11
+          }
+        }
+      },
+      "earley-boyer": {
+        "valid": true,
+        "rounds": 11,
+        "output_equal": true,
+        "engines": {
+          "bun": {
+            "median_score": 9559.0,
+            "median_max_rss_bytes": 36864000,
+            "valid_samples": 11
+          },
+          "node": {
+            "median_score": 12197.0,
+            "median_max_rss_bytes": 112492544,
+            "valid_samples": 11
+          },
+          "quench": {
+            "median_score": 353.0,
+            "median_max_rss_bytes": 69697536,
+            "valid_samples": 11
+          },
+          "quickjs": {
+            "median_score": 5076.0,
+            "median_max_rss_bytes": 17350656,
+            "valid_samples": 11
+          }
+        }
+      },
+      "navier-stokes": {
+        "valid": true,
+        "rounds": 11,
+        "output_equal": true,
+        "engines": {
+          "bun": {
+            "median_score": 4720.0,
+            "median_max_rss_bytes": 19578880,
+            "valid_samples": 11
+          },
+          "node": {
+            "median_score": 3512.0,
+            "median_max_rss_bytes": 49938432,
+            "valid_samples": 11
+          },
+          "quench": {
+            "median_score": 197.0,
+            "median_max_rss_bytes": 31686656,
+            "valid_samples": 11
+          },
+          "quickjs": {
+            "median_score": 4541.0,
+            "median_max_rss_bytes": 5455872,
+            "valid_samples": 11
+          }
+        }
+      },
+      "raytrace": {
+        "valid": true,
+        "rounds": 11,
+        "output_equal": true,
+        "engines": {
+          "bun": {
+            "median_score": 5988.0,
+            "median_max_rss_bytes": 35979264,
+            "valid_samples": 11
+          },
+          "node": {
+            "median_score": 8288.0,
+            "median_max_rss_bytes": 52183040,
+            "valid_samples": 11
+          },
+          "quench": {
+            "median_score": 481.0,
+            "median_max_rss_bytes": 23691264,
+            "valid_samples": 11
+          },
+          "quickjs": {
+            "median_score": 3956.0,
+            "median_max_rss_bytes": 2621440,
+            "valid_samples": 11
+          }
+        }
+      },
+      "regexp": {
+        "valid": true,
+        "rounds": 11,
+        "output_equal": true,
+        "engines": {
+          "bun": {
+            "median_score": 1685.0,
+            "median_max_rss_bytes": 33701888,
+            "valid_samples": 11
+          },
+          "node": {
+            "median_score": 5989.0,
+            "median_max_rss_bytes": 55377920,
+            "valid_samples": 11
+          },
+          "quench": {
+            "median_score": 56.1,
+            "median_max_rss_bytes": 66748416,
+            "valid_samples": 11
+          },
+          "quickjs": {
+            "median_score": 921.0,
+            "median_max_rss_bytes": 7569408,
+            "valid_samples": 11
+          }
+        }
+      },
+      "richards": {
+        "valid": true,
+        "rounds": 11,
+        "output_equal": true,
+        "engines": {
+          "bun": {
+            "median_score": 3117.0,
+            "median_max_rss_bytes": 20742144,
+            "valid_samples": 11
+          },
+          "node": {
+            "median_score": 2634.0,
+            "median_max_rss_bytes": 44875776,
+            "valid_samples": 11
+          },
+          "quench": {
+            "median_score": 408.0,
+            "median_max_rss_bytes": 21446656,
+            "valid_samples": 11
+          },
+          "quickjs": {
+            "median_score": 1836.0,
+            "median_max_rss_bytes": 2555904,
+            "valid_samples": 11
+          }
+        }
+      },
+      "splay": {
+        "valid": true,
+        "rounds": 11,
+        "output_equal": true,
+        "engines": {
+          "bun": {
+            "median_score": 10032.0,
+            "median_max_rss_bytes": 57704448,
+            "valid_samples": 11
+          },
+          "node": {
+            "median_score": 14970.0,
+            "median_max_rss_bytes": 406192128,
+            "valid_samples": 11
+          },
+          "quench": {
+            "median_score": 2751.0,
+            "median_max_rss_bytes": 314867712,
+            "valid_samples": 11
+          },
+          "quickjs": {
+            "median_score": 8614.0,
+            "median_max_rss_bytes": 151044096,
+            "valid_samples": 11
+          }
+        }
+      }
+    }
+  },
+  "artifacts": {
+    "report": {
+      "path": "target/iteration/task62-m4-2026-10-09/report.json",
+      "sha256": "ffdc0fcf3e7963a043bbb3f7e3030ae3beee6268e8c908d19f0856c1b1c8afcb"
+    },
+    "checkpoint": {
+      "path": "target/iteration/task62-m4-2026-10-09/checkpoint.json",
+      "sha256": "ffdc0fcf3e7963a043bbb3f7e3030ae3beee6268e8c908d19f0856c1b1c8afcb"
+    },
+    "preflight": {
+      "path": "target/iteration/task62-m4-2026-10-09/preflight.json",
+      "sha256": "10dcdc5e76be25f6d77dfbe7c7bca31506b79606fc22f0a039806a416880b48f"
+    },
+    "summary": {
+      "path": "target/iteration/task62-m4-2026-10-09/summary.md",
+      "sha256": "47ebaadba066ee9a9103babf6541496598fed5c7e1a7f519d33144430db8feff"
+    },
+    "commands": [
+      "clean-build.log",
+      "run-command.txt",
+      "preflight.stderr.log",
+      "campaign.stdout.log",
+      "campaign.stderr.log",
+      "environment.txt",
+      "sha256sums.txt"
+    ]
+  }
+}

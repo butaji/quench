@@ -1,0 +1,22 @@
+
+== nojit ==  engine | n | median score [min..max] | median max RSS MB
+quench-static-retrained:nojit 11     2974.6 [2885..3053]    4.00
+quench-static-order:nojit    11     2969.1 [2838..3005]    6.99
+wasmi:nojit                  11     2764.0 [2740..2830]    5.75
+stitch:nojit                 11     2039.7 [2017..2059]    5.02
+wasm3:nojit                  11     1874.4 [1827..1897]    4.12
+wamr:nojit                   11     1777.4 [1725..1793]    4.16
+bars: Score wasmi:nojit 2764.0; RSS wasm3:nojit 4.12 MB
+  quench-static-order:nojit: score 1.074x of bar (WIN, ahead in 11/11 rounds); RSS 1.697x of bar (behind)
+  quench-static-retrained:nojit: score 1.076x of bar (WIN, ahead in 11/11 rounds); RSS 0.971x of bar (WIN)
+
+== jit ==  engine | n | median score [min..max] | median max RSS MB
+node26:jit                   11    19887.3 [19536..20141]   55.29
+bun:jit                      11    19593.8 [19260..19869]   27.14
+quench-static-order:jit      11    19312.5 [18861..19623]    9.48
+quench-static-retrained:jit  11    19311.2 [19002..19729]    7.12
+wasmtime:jit                 11    18652.1 [18377..18749]   15.13
+winch:jit                    11     9696.5 [9429..9884]   13.20
+bars: Score node26:jit 19887.3; RSS winch:jit 13.20 MB
+  quench-static-order:jit: score 0.971x of bar (behind, ahead in 0/11 rounds); RSS 0.719x of bar (WIN)
+  quench-static-retrained:jit: score 0.971x of bar (behind, ahead in 1/11 rounds); RSS 0.539x of bar (WIN)

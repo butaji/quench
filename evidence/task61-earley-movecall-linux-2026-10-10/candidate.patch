@@ -1,0 +1,49 @@
+diff --git a/crates/quench-runtime/src/compile/rewrite.rs b/crates/quench-runtime/src/compile/rewrite.rs
+index 44e54a12a..629ecbb34 100644
+--- a/crates/quench-runtime/src/compile/rewrite.rs
++++ b/crates/quench-runtime/src/compile/rewrite.rs
+@@ -1,5 +1,5 @@
+ use super::*;
+-use crate::bytecode::{ImmediateRole, Superinstruction};
++use crate::bytecode::{ImmediateLayout, ImmediateRole, Superinstruction};
+ 
+ #[derive(Clone, Copy)]
+ struct Rule {
+@@ -106,6 +106,43 @@ fusion_recipes! {
+         first.set_result_register(second.result_register());
+         Some(first)
+     };
++    MoveIntoCall: [Move, Call] =>
++        |first: Instr, mut second: Instr, _: &mut Vec<FieldSite>| {
++            let destination = first.result_register();
++            let source = first.register_b();
++            if destination == second.result_register() {
++                // A throwing call can leave the moved value visible to a handler.
++                return None;
++            }
++            let window = second.call_window();
++            let argument_end = u32::from(window.base) + u32::from(window.count);
++            let is_argument = u32::from(destination) >= u32::from(window.base)
++                && u32::from(destination) < argument_end;
++            if is_argument {
++                if window.count != 1 || window.base != destination {
++                    return None;
++                }
++                second.set_imm(ImmediateLayout::call_immediate(
++                    source,
++                    1,
++                    second.direct_eval(),
++                    second.parameter_eval(),
++                ));
++            }
++            if destination == second.register_b() {
++                second.set_b(source);
++            }
++            if destination == second.register_c() {
++                second.set_c(source);
++            }
++            Some(second)
++        };
+     BinaryJumpFalse: [Binary, JumpFalse] =>
+         |first: Instr, second: Instr, _: &mut Vec<FieldSite>| {
+             if first.result_register() != second.register_a() { return None; }

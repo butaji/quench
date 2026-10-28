@@ -1,0 +1,8 @@
+{"fixture": "test-process-emitwarning.js", "runtime": "node", "exit": 1}
+{"fixture": "test-process-emitwarning.js", "runtime": "quench", "exit": 1}
+{"fixture": "test-process-warning.js", "runtime": "node", "exit": 1}
+{"fixture": "test-process-warning.js", "runtime": "quench", "exit": 1}
+{"fixture": "test-process-redirect-warnings.js", "runtime": "node", "exit": 1}
+{"fixture": "test-process-redirect-warnings.js", "runtime": "quench", "exit": 1}
+{"fixture": "test-promises-warning-on-unhandled-rejection.js", "runtime": "node", "exit": 1}
+{"fixture": "test-promises-warning-on-unhandled-rejection.js", "runtime": "quench", "exit": 1}

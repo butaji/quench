@@ -1,0 +1,17 @@
+fixture        pol  Qscore xNodeJL  xBunNJ  Qworst    best RSSratio
+richards       MF     1609    1.15    1.14    2720    3464     0.98
+richards       TP     1594    1.14    1.17    4900    3528     1.74
+deltablue      MF     1292    0.89    1.34    2812    3912     0.90
+deltablue      TP     1556    1.09    1.70    6744    3908     2.16
+crypto         MF     2610    2.13    1.45    3028    3784     1.00
+crypto         TP     2644    2.15    1.44    7716    3640     2.65
+raytrace       MF     2204    0.69    1.37    3000    3476     1.08
+raytrace       TP     2889    0.94    1.82    6752    3456     2.44
+earley-boyer   MF     3801    0.73    1.88    6272   17792     0.44
+earley-boyer   TP     5457    1.08    2.88   11380   17724     0.80
+regexp         MF     2476    0.90    4.44    5308    7220     0.92
+regexp         TP     3414    1.17    6.00   10820    7140     1.89
+splay          MF     4701    1.25    1.46   31596   61288     0.64
+splay          TP     4543    1.26    1.37   32656   61344     0.67
+navier-stokes  MF     2796    1.75    1.12    3908    5276     0.93
+navier-stokes  TP     2791    1.73    1.10    4576    5280     1.08

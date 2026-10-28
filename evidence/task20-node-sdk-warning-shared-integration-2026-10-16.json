@@ -1,0 +1,170 @@
+{
+  "source_commit": "9fb0f880f35eb000d3b6761f3c4b243e577bf933",
+  "normal_shared_merge": "d9a8931f5",
+  "scope": "Integration qualification of original SDK warning policy and Core prototype index proofs with the native SDK harness",
+  "functional": {
+    "core_passed": 672,
+    "node_api_passed": 415,
+    "framework_passed": 43,
+    "shared_passed": 7,
+    "workspace_all_targets": "pass",
+    "focused_oracles_passed": 9
+  },
+  "test_preservation": {
+    "all_previous_bytes_preserved": true,
+    "added_tests": [
+      "process_warning_policy_preserves_default_listener_removal_suppression_and_startup_descriptors"
+    ],
+    "list_option_authority": "SDK-derived EMPTY_STRING_LIST_OPTIONS retains --disable-warning; removed duplicate manually enumerated list domain",
+    "before_sha256": "6e0ed30b03cd9aed4d62d68690a8ef8ee6f0c5d821c8a0082e88ecfdb7b4a6a2"
+  },
+  "source_files": 726,
+  "frozen_binary_receipt": {
+    "source_commit": "9fb0f880f35eb000d3b6761f3c4b243e577bf933",
+    "source_files": 726,
+    "binary_sha256": {
+      "quench-node": "238974641460f33974cece3e853a1d11aaa5322c4a283461425bd65d74f14c64",
+      "run-parallel": "3f02c58abb2725c56fd653c89cb02a682f275a3dd54fbbe32c33f5d57c284e9e",
+      "openssl-cli": "f4aa15f2822f670af7b5c1043d7aa6ebbbc64229fd2fae382edfc6a4524749c1"
+    },
+    "qualification": "Core672/API415/framework43/shared7/workspace and nine focused oracles passed; remaining native callback async-scope gap captured separately",
+    "openssl_cli_provenance": "Unchanged native OpenSSL tool from previously qualified source1208 bundle; independent of Node host/Core changes",
+    "frozen_utc": "2026-10-16T17:19:24.197790+00:00"
+  },
+  "fixed_work": {
+    "valid_cases": 8,
+    "clean_rounds": 0,
+    "speed_claim": false
+  },
+  "differentials": {
+    "buffer-poison-oracle.diff": 0,
+    "shadow.diff": 0,
+    "buffer-concat-oracle.diff": 0,
+    "buffer-oracle.diff": 0,
+    "buffer-latin1-oracle.diff": 0
+  },
+  "framework_scenarios": [
+    {
+      "scenario": "express",
+      "observations": [
+        {
+          "engine": "node",
+          "exit_code": 0,
+          "stdout": "statuses 200,200,200,200,404\n",
+          "stderr": ""
+        },
+        {
+          "engine": "before",
+          "exit_code": 0,
+          "stdout": "statuses 200,200,200,200,404\n",
+          "stderr": ""
+        },
+        {
+          "engine": "candidate",
+          "exit_code": 0,
+          "stdout": "statuses 200,200,200,200,404\n",
+          "stderr": ""
+        }
+      ],
+      "matches": true
+    },
+    {
+      "scenario": "koa",
+      "observations": [
+        {
+          "engine": "node",
+          "exit_code": 0,
+          "stdout": "statuses 200,200,200,200,404\n",
+          "stderr": ""
+        },
+        {
+          "engine": "before",
+          "exit_code": 0,
+          "stdout": "statuses 200,200,200,200,404\n",
+          "stderr": ""
+        },
+        {
+          "engine": "candidate",
+          "exit_code": 0,
+          "stdout": "statuses 200,200,200,200,404\n",
+          "stderr": ""
+        }
+      ],
+      "matches": true
+    },
+    {
+      "scenario": "fastify",
+      "observations": [
+        {
+          "engine": "node",
+          "exit_code": 0,
+          "stdout": "statuses 200,200,200,200,404\n",
+          "stderr": ""
+        },
+        {
+          "engine": "before",
+          "exit_code": 0,
+          "stdout": "statuses 200,200,200,200,404\n",
+          "stderr": ""
+        },
+        {
+          "engine": "candidate",
+          "exit_code": 0,
+          "stdout": "statuses 200,200,200,200,404\n",
+          "stderr": ""
+        }
+      ],
+      "matches": true
+    }
+  ],
+  "known_remaining_gap": "A stronger native timer/tick context probe identified callbacks not entering their actual resource scope. The failure/hang was retained. Unpublished follow-up now passes three exact Node comparisons for callback contexts, error routing order, mutable TickObject slots and destruction lifecycle. This qualification does not claim that follow-up.",
+  "full_inventory": "Separate frozen dd981 latest-stable audit completed1852/5015,35gains2lost versus1208; pinned still running. This9fb source was not the audited image.",
+  "performance_limit": "No current instruction/wall-time/RSS speed claim. Previous1208 RayTrace software instruction screen+2.50950% failed and remains retained.",
+  "raw": [
+    {
+      "path": "work/sdk-harness-shared/core.log",
+      "bytes": 59302,
+      "sha256": "2ade3cfd2c480829c0c2c731d57f10971f1f136bf2eb438ad47020d32edf5c08"
+    },
+    {
+      "path": "work/sdk-harness-shared/all-api.log",
+      "bytes": 34498,
+      "sha256": "3abecf7e21368ef71d6d37e74579174c018b926924fff54d8684671a585ffd52"
+    },
+    {
+      "path": "work/sdk-harness-shared/framework.log",
+      "bytes": 3798,
+      "sha256": "b41881f94821125815bc87efbbbd7d26b13fd072686394014795864fa55f2ae8"
+    },
+    {
+      "path": "work/sdk-harness-shared/shared.log",
+      "bytes": 882,
+      "sha256": "c869181269731aacf62abb541251a6e97b26a361683a778994492ed7ecf1b960"
+    },
+    {
+      "path": "work/sdk-harness-shared/workspace.log",
+      "bytes": 519,
+      "sha256": "6b1b6128a9c28aeb52c4b065b7415fc79a8a1c7fdc62373c2582065a6f2dea06"
+    },
+    {
+      "path": "work/sdk-harness-shared/fixed-work.json",
+      "bytes": 153999,
+      "sha256": "d784970795745490c8c04e8899ab7054b45be89c5b8a225e36d324be33896ab6"
+    },
+    {
+      "path": "work/sdk-harness-shared/fixed-work.log",
+      "bytes": 1127,
+      "sha256": "93c666133981f2503b5d81e8dea94f7ac858240edc7249b70b9fc8c7415cf76d"
+    },
+    {
+      "path": "work/sdk-harness-shared/context-timer-hang-receipt.json",
+      "bytes": 234,
+      "sha256": "cd47e2be3001afca48e3785fab3ce502387b53b80c0aa1a3cd0fbd2063b4ca72"
+    },
+    {
+      "path": "work/sdk-harness-shared-bin/source-sha256.json",
+      "bytes": 90014,
+      "sha256": "f1f8357d9b852e1d1e52d8e9e632c70efbdae3a2cbfefe7c5659d154ec55efae"
+    }
+  ]
+}

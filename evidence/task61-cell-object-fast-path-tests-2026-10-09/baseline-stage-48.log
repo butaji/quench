@@ -1,0 +1,12 @@
+stage  48 batch   1/6   passed=100 failed=0 total=100
+stage  48 batch   2/6   passed=99 failed=1 total=100
+stage  48 batch   3/6   passed=100 failed=0 total=100
+stage  48 batch   4/6   passed=100 failed=0 total=100
+stage  48 batch   5/6   passed=100 failed=0 total=100
+stage  48 batch   6/6   passed=9 failed=0 total=9
+stage  48: built-ins/Function passed=508 failed=1 total=509
+  failure families=1 cases=1
+  family count=1: quench runtime: Test#Error: string constructor Expected SameValue(«…», «…») to be true
+    tests/test262/test/built-ins/Function/call-bind-this-realm-value.js
+stages=1 passed=508 failed=1 total=509
+FAIL: one or more selected stages failed

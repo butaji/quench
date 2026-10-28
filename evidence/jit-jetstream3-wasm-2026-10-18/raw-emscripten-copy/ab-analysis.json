@@ -1,0 +1,699 @@
+{
+  "schema": 1,
+  "report_kind": "jit_wasm_memcpy_raw_ab_diagnostic",
+  "created_unix_ns": 1792341313562224685,
+  "input_report_path": "evidence/jit-jetstream3-wasm-2026-10-18/raw-emscripten-copy/ab-11-round.json",
+  "input_report_sha256": "4479817c74d224b1fcaa619ec0d9eca2fb88661f1c2d0500acaf0f0a0f98bc1c",
+  "suite": "jet-stream3",
+  "jit_mode": "jit",
+  "quench_bench_binary": {
+    "path": "/workspace/quench/target/production/quench-bench",
+    "size_bytes": 1611088,
+    "modified_unix_ns": 1792341153054968661,
+    "sha256": "19d004cd72616713604dceff3b1de7c88541236cb59d25ffcfc5ef1ad6f2be77"
+  },
+  "source_revision": "bb3d924ac50be782fe8ea2908b535802305148e4",
+  "source_dirty": true,
+  "corpus_revision": "06785cf861ac44855f168cbbe829278c2802e6de",
+  "timeout_ms": 600000,
+  "host": {
+    "uname": "Linux f3da3ef8e0e6 6.18.55 #1 SMP Wed Oct 14 19:45:18 UTC 2026 x86_64 GNU/Linux",
+    "rustc": "rustc 1.99.1 (58cf8f9c3 2026-10-13)\nbinary: rustc\ncommit-hash: 58cf8f9c35b355199727627d07ae34a4e2846d67\ncommit-date: 2026-10-13\nhost: x86_64-unknown-linux-gnu\nrelease: 1.99.1\nLLVM version: 23.1.1",
+    "model": null,
+    "memory_bytes": 18882674688,
+    "memory_limit_bytes": 17179869184,
+    "cpu_quota": "400000 100000",
+    "process_metrics_backend": "Linux wait4 rusage"
+  },
+  "engine_provenance": [
+    {
+      "name": "quench_memcpy_raw_i32_off",
+      "executable": "/workspace/quench/target/production/quench-node",
+      "executable_sha256": "205b8514c6075f2b22ac539c3f5146853270b6f8d4aab613e7d784c7ab2f8537",
+      "version": "Quench shared-VM JIT build; package 0.1.0",
+      "argv": [
+        "--jit"
+      ],
+      "environment": {
+        "HOME": "/home/agent",
+        "LANG": "C.UTF-8",
+        "LC_ALL": "C.UTF-8",
+        "PATH": "/home/agent/.cargo/bin:/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/override:/opt/codex/runtimes/codex-primary-runtime/dependencies/python/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin:/opt/codex/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/fallback",
+        "QUENCH_WASM_EMSCRIPTEN_MEMCPY_DIRECT": "1",
+        "QUENCH_WASM_EMSCRIPTEN_MEMCPY_RAW_I32": "0"
+      },
+      "inherits_environment": false,
+      "jit_mode": "enabled-by-cli-flag",
+      "jit_proof_command": [
+        "/workspace/quench/target/production/quench-node",
+        "--jit"
+      ],
+      "jit_proof": "the measured Quench process is launched with --jit; diagnostic raw-i32 A/B arm with QUENCH_WASM_EMSCRIPTEN_MEMCPY_DIRECT=1 and QUENCH_WASM_EMSCRIPTEN_MEMCPY_RAW_I32=0"
+    },
+    {
+      "name": "quench_memcpy_raw_i32_on",
+      "executable": "/workspace/quench/target/production/quench-node",
+      "executable_sha256": "205b8514c6075f2b22ac539c3f5146853270b6f8d4aab613e7d784c7ab2f8537",
+      "version": "Quench shared-VM JIT build; package 0.1.0",
+      "argv": [
+        "--jit"
+      ],
+      "environment": {
+        "HOME": "/home/agent",
+        "LANG": "C.UTF-8",
+        "LC_ALL": "C.UTF-8",
+        "PATH": "/home/agent/.cargo/bin:/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/override:/opt/codex/runtimes/codex-primary-runtime/dependencies/python/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin:/opt/codex/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/fallback",
+        "QUENCH_WASM_EMSCRIPTEN_MEMCPY_DIRECT": "1",
+        "QUENCH_WASM_EMSCRIPTEN_MEMCPY_RAW_I32": "1"
+      },
+      "inherits_environment": false,
+      "jit_mode": "enabled-by-cli-flag",
+      "jit_proof_command": [
+        "/workspace/quench/target/production/quench-node",
+        "--jit"
+      ],
+      "jit_proof": "the measured Quench process is launched with --jit; diagnostic raw-i32 A/B arm with QUENCH_WASM_EMSCRIPTEN_MEMCPY_DIRECT=1 and QUENCH_WASM_EMSCRIPTEN_MEMCPY_RAW_I32=1"
+    },
+    {
+      "name": "bun",
+      "executable": "/workspace/.local/bench-runtimes/bun-linux-x64/bun",
+      "executable_sha256": "a83d263767d839e4d2649ca8e35d07159c7afc99afdc96d731ced29e056dda0c",
+      "version": "1.4.2",
+      "argv": [],
+      "environment": {
+        "BUN_JSC_useJIT": "1",
+        "HOME": "/home/agent",
+        "LANG": "C.UTF-8",
+        "LC_ALL": "C.UTF-8",
+        "PATH": "/home/agent/.cargo/bin:/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/override:/opt/codex/runtimes/codex-primary-runtime/dependencies/python/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin:/opt/codex/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/fallback"
+      },
+      "inherits_environment": false,
+      "jit_mode": "enabled-and-probed",
+      "jit_proof_command": [
+        "BUN_JSC_useJIT=1",
+        "BUN_JSC_dumpOptions=1",
+        "/workspace/.local/bench-runtimes/bun-linux-x64/bun",
+        "-e",
+        "console.log(Bun.version)"
+      ],
+      "jit_proof": "command succeeded and reported \"useJIT=true\": 1.4.2\n\nModified JSC options:\n   dumpOptions=1 (default: 0)\n   useJIT=true (default: true)"
+    },
+    {
+      "name": "node",
+      "executable": "/workspace/.local/bench-runtimes/node-v26.10.0-linux-x64/bin/node",
+      "executable_sha256": "ab9c8eecf9f82d6693cdc3accced17034065c8d96213b0aa76a7e803d20ae1da",
+      "version": "v26.10.0",
+      "argv": [],
+      "environment": {
+        "HOME": "/home/agent",
+        "LANG": "C.UTF-8",
+        "LC_ALL": "C.UTF-8",
+        "PATH": "/home/agent/.cargo/bin:/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/override:/opt/codex/runtimes/codex-primary-runtime/dependencies/python/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin:/opt/codex/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/fallback"
+      },
+      "inherits_environment": false,
+      "jit_mode": "enabled-and-probed",
+      "jit_proof_command": [
+        "/workspace/.local/bench-runtimes/node-v26.10.0-linux-x64/bin/node",
+        "--trace-opt",
+        "--no-concurrent-recompilation",
+        "-e",
+        "function hot(x) { return x + 1; } for (let i = 0; i < 100000; i++) hot(i);"
+      ],
+      "jit_proof": "command succeeded and reported \"completed compiling\": [marking 0x1f379a2b4d91 <JSFunction hot (sfi = 0x1f379a2b1571)> for optimization to MAGLEV, ConcurrencyMode::kConcurrent, reason: hot and stable]\n[compiling method 0x1f379a2b4d91 <JSFunction hot (sfi = 0x1f379a2b1571)> (target MAGLEV), mode: ConcurrencyMode::kSynchronous]\n[completed compiling 0x1f379a2b4d91 <JSFunction hot (sfi = 0x1f379a2b1571)> (target MAGLEV) - took 0.004, 0.177, 0.002 ms]\n[marking 0x1f379a2b4d21 <JSFunction (sfi = 0x1f379a2b14c9)> for optimization to MAGLEV, ConcurrencyMode::kConcurrent, reason: hot and stable]\n[marking 0x1f379a2b4d91 <JSFunction hot (sfi = 0x1f379a2b1571)> for optimization to TURBOFAN_JS, ConcurrencyMode::kConcurrent, reason: hot and stable]\n[compiling method 0x1f379a2b4d91 <JSFunction hot (sfi = 0x1f379a2b1571)> (target TURBOFAN_JS), mode: ConcurrencyMode::kSynchronous]\n[completed compiling 0x1f379a2b4d91 <JSFunction hot (sfi = 0x1f379a2b1571)> (target TURBOFAN_JS) - took 0.007, 0.790, 0.009 ms]\n[compiling method 0x1f379a2b4d21 <JSFunction (sfi = 0x1f379a2b14c9)> (target MAGLEV) OSR, mode: ConcurrencyMode::kSynchronous]\n[completed compiling 0x1f379a2b4d21 <JSFunction (sfi = 0x1f379a2b14c9)> (target MAGLEV) OSR - took 0.000, 0.143, 0.003 ms]"
+    }
+  ],
+  "rounds_per_fixture": 11,
+  "analysis_runtime": "quench-bench Rust analyzer; rustc 1.99.1 (58cf8f9c3 2026-10-13)\nbinary: rustc\ncommit-hash: 58cf8f9c35b355199727627d07ae34a4e2846d67\ncommit-date: 2026-10-13\nhost: x86_64-unknown-linux-gnu\nrelease: 1.99.1\nLLVM version: 23.1.1",
+  "suite_inputs": [
+    {
+      "path": "quench-bench/jetstream/cli.js",
+      "size_bytes": 5600,
+      "modified_unix_ns": 1792229119091972874,
+      "sha256": "22ee4b987b07940dd7397ed7f88345c71acc415e2549b64bf45ba43f7572e5f0"
+    },
+    {
+      "path": "quench-bench/jetstream/JetStreamDriver.js",
+      "size_bytes": 110633,
+      "modified_unix_ns": 1792229118593919588,
+      "sha256": "f105bddfd402514b2325fe9ea6e1df5ce776a4ad4570a8006c7c8559159440fc"
+    },
+    {
+      "path": "quench-bench/jetstream/utils/params.js",
+      "size_bytes": 8047,
+      "modified_unix_ns": 1792229119770704165,
+      "sha256": "0e9d28c0fd2de5583c64678ffc61307b10d983bcb419fe2e3bb383c8b7ded647"
+    },
+    {
+      "path": "quench-bench/jetstream/utils/shell-config.js",
+      "size_bytes": 2352,
+      "modified_unix_ns": 1792229119770904880,
+      "sha256": "9a83000be5e6526a3c26a414fc3a23043e57ef8e4cd67aaff459066a2c347bca"
+    }
+  ],
+  "bootstrap": {
+    "name": "paired percentile bootstrap of median log-ratios, reported as ratios",
+    "interval_level": 0.95,
+    "replicates": 100000,
+    "base_seed": "0x51a7beefcafe2c31",
+    "resampling": "resample matching round indices jointly for candidate and reference",
+    "statistic": "exp(median(log(candidate / reference)))",
+    "interval": "exponentiated linear-interpolated log-ratio percentiles"
+  },
+  "fixtures": {
+    "gcc-loops-wasm": {
+      "input_sha256": "22e54dd411e29379a6ba08d84e54b890d620f7c1f2ba9b37ff108c4fe3c98c48",
+      "paired_rounds": 11,
+      "raw_rounds": [
+        {
+          "round": 0,
+          "execution_order": [
+            "quench_memcpy_raw_i32_off",
+            "quench_memcpy_raw_i32_on",
+            "bun",
+            "node"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 1139784527,
+              "score": 188.66,
+              "peak_rss_bytes": 57647104
+            },
+            "node": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 1178130222,
+              "score": 187.86,
+              "peak_rss_bytes": 65409024
+            },
+            "quench_memcpy_raw_i32_off": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2628140562,
+              "score": 50.59,
+              "peak_rss_bytes": 50552832
+            },
+            "quench_memcpy_raw_i32_on": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2539854503,
+              "score": 52.1,
+              "peak_rss_bytes": 50544640
+            }
+          }
+        },
+        {
+          "round": 1,
+          "execution_order": [
+            "quench_memcpy_raw_i32_on",
+            "bun",
+            "node",
+            "quench_memcpy_raw_i32_off"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 1254717650,
+              "score": 152.94,
+              "peak_rss_bytes": 55541760
+            },
+            "node": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 1188095343,
+              "score": 185.51,
+              "peak_rss_bytes": 65290240
+            },
+            "quench_memcpy_raw_i32_off": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2724314539,
+              "score": 49.91,
+              "peak_rss_bytes": 50544640
+            },
+            "quench_memcpy_raw_i32_on": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2522237354,
+              "score": 53.99,
+              "peak_rss_bytes": 50552832
+            }
+          }
+        },
+        {
+          "round": 2,
+          "execution_order": [
+            "bun",
+            "node",
+            "quench_memcpy_raw_i32_off",
+            "quench_memcpy_raw_i32_on"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 1227888571,
+              "score": 166.35,
+              "peak_rss_bytes": 55615488
+            },
+            "node": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 1211687526,
+              "score": 181.34,
+              "peak_rss_bytes": 65343488
+            },
+            "quench_memcpy_raw_i32_off": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2528557529,
+              "score": 53.61,
+              "peak_rss_bytes": 50589696
+            },
+            "quench_memcpy_raw_i32_on": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2475133983,
+              "score": 55.12,
+              "peak_rss_bytes": 50561024
+            }
+          }
+        },
+        {
+          "round": 3,
+          "execution_order": [
+            "node",
+            "quench_memcpy_raw_i32_off",
+            "quench_memcpy_raw_i32_on",
+            "bun"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 1152568251,
+              "score": 177.36,
+              "peak_rss_bytes": 57376768
+            },
+            "node": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 1144859230,
+              "score": 196.9,
+              "peak_rss_bytes": 65347584
+            },
+            "quench_memcpy_raw_i32_off": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2539541960,
+              "score": 52.16,
+              "peak_rss_bytes": 50552832
+            },
+            "quench_memcpy_raw_i32_on": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2430379917,
+              "score": 56.5,
+              "peak_rss_bytes": 50573312
+            }
+          }
+        },
+        {
+          "round": 4,
+          "execution_order": [
+            "quench_memcpy_raw_i32_off",
+            "quench_memcpy_raw_i32_on",
+            "bun",
+            "node"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 1157830396,
+              "score": 189.17,
+              "peak_rss_bytes": 60354560
+            },
+            "node": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 1175970606,
+              "score": 192.1,
+              "peak_rss_bytes": 65474560
+            },
+            "quench_memcpy_raw_i32_off": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2460343891,
+              "score": 55.2,
+              "peak_rss_bytes": 50565120
+            },
+            "quench_memcpy_raw_i32_on": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2466431257,
+              "score": 55.5,
+              "peak_rss_bytes": 50556928
+            }
+          }
+        },
+        {
+          "round": 5,
+          "execution_order": [
+            "quench_memcpy_raw_i32_on",
+            "bun",
+            "node",
+            "quench_memcpy_raw_i32_off"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 1164554118,
+              "score": 180.69,
+              "peak_rss_bytes": 57643008
+            },
+            "node": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 1257906115,
+              "score": 175.67,
+              "peak_rss_bytes": 65339392
+            },
+            "quench_memcpy_raw_i32_off": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2510225275,
+              "score": 54.56,
+              "peak_rss_bytes": 50532352
+            },
+            "quench_memcpy_raw_i32_on": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2467154272,
+              "score": 55.54,
+              "peak_rss_bytes": 50556928
+            }
+          }
+        },
+        {
+          "round": 6,
+          "execution_order": [
+            "bun",
+            "node",
+            "quench_memcpy_raw_i32_off",
+            "quench_memcpy_raw_i32_on"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 1243009433,
+              "score": 169.41,
+              "peak_rss_bytes": 55816192
+            },
+            "node": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 1236201889,
+              "score": 160.6,
+              "peak_rss_bytes": 65486848
+            },
+            "quench_memcpy_raw_i32_off": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2562924874,
+              "score": 54.84,
+              "peak_rss_bytes": 50601984
+            },
+            "quench_memcpy_raw_i32_on": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2484851010,
+              "score": 53.82,
+              "peak_rss_bytes": 50544640
+            }
+          }
+        },
+        {
+          "round": 7,
+          "execution_order": [
+            "node",
+            "quench_memcpy_raw_i32_off",
+            "quench_memcpy_raw_i32_on",
+            "bun"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 1241863162,
+              "score": 158.74,
+              "peak_rss_bytes": 56983552
+            },
+            "node": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 1279902094,
+              "score": 165.73,
+              "peak_rss_bytes": 66531328
+            },
+            "quench_memcpy_raw_i32_off": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2632369577,
+              "score": 50.33,
+              "peak_rss_bytes": 50577408
+            },
+            "quench_memcpy_raw_i32_on": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2607070336,
+              "score": 52.8,
+              "peak_rss_bytes": 50540544
+            }
+          }
+        },
+        {
+          "round": 8,
+          "execution_order": [
+            "quench_memcpy_raw_i32_off",
+            "quench_memcpy_raw_i32_on",
+            "bun",
+            "node"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 1202267575,
+              "score": 167.64,
+              "peak_rss_bytes": 56528896
+            },
+            "node": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 1245546908,
+              "score": 177.48,
+              "peak_rss_bytes": 65302528
+            },
+            "quench_memcpy_raw_i32_off": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2686622542,
+              "score": 51.09,
+              "peak_rss_bytes": 50528256
+            },
+            "quench_memcpy_raw_i32_on": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2559676542,
+              "score": 52.17,
+              "peak_rss_bytes": 50548736
+            }
+          }
+        },
+        {
+          "round": 9,
+          "execution_order": [
+            "quench_memcpy_raw_i32_on",
+            "bun",
+            "node",
+            "quench_memcpy_raw_i32_off"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 1234982116,
+              "score": 159.16,
+              "peak_rss_bytes": 55357440
+            },
+            "node": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 1131161091,
+              "score": 188.04,
+              "peak_rss_bytes": 65540096
+            },
+            "quench_memcpy_raw_i32_off": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2501661811,
+              "score": 54.67,
+              "peak_rss_bytes": 50585600
+            },
+            "quench_memcpy_raw_i32_on": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2543704118,
+              "score": 53.17,
+              "peak_rss_bytes": 50561024
+            }
+          }
+        },
+        {
+          "round": 10,
+          "execution_order": [
+            "bun",
+            "node",
+            "quench_memcpy_raw_i32_off",
+            "quench_memcpy_raw_i32_on"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 1231554243,
+              "score": 167.4,
+              "peak_rss_bytes": 55742464
+            },
+            "node": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 1193792454,
+              "score": 188.36,
+              "peak_rss_bytes": 65413120
+            },
+            "quench_memcpy_raw_i32_off": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2422714915,
+              "score": 56.72,
+              "peak_rss_bytes": 50561024
+            },
+            "quench_memcpy_raw_i32_on": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2600087160,
+              "score": 53.12,
+              "peak_rss_bytes": 50544640
+            }
+          }
+        }
+      ],
+      "engine_medians": {
+        "bun": {
+          "score": 167.64,
+          "max_rss_bytes": 56528896.0
+        },
+        "node": {
+          "score": 185.51,
+          "max_rss_bytes": 65409024.0
+        },
+        "quench_memcpy_raw_i32_off": {
+          "score": 53.61,
+          "max_rss_bytes": 50561024.0
+        },
+        "quench_memcpy_raw_i32_on": {
+          "score": 53.82,
+          "max_rss_bytes": 50552832.0
+        }
+      },
+      "comparisons": {
+        "quench_memcpy_raw_i32_on_vs_bun": {
+          "candidate_engine": "quench_memcpy_raw_i32_on",
+          "reference_engine": "bun",
+          "score": {
+            "candidate_median": 53.82,
+            "reference_median": 167.64,
+            "median_ratio": 0.31769080927926335,
+            "paired_ratio_interval_95": [
+              0.30737727599756487,
+              0.33261937759858884
+            ],
+            "interval_excludes_tie": true,
+            "seed": "0xec144763edd7e87e"
+          },
+          "max_rss": {
+            "candidate_median": 50552832.0,
+            "reference_median": 56528896.0,
+            "median_ratio": 0.8942105644518513,
+            "paired_ratio_interval_95": [
+              0.8770695658352874,
+              0.9091176903814995
+            ],
+            "interval_excludes_tie": true,
+            "seed": "0x0c23f3b96dd14525"
+          }
+        },
+        "quench_memcpy_raw_i32_on_vs_node": {
+          "candidate_engine": "quench_memcpy_raw_i32_on",
+          "reference_engine": "node",
+          "score": {
+            "candidate_median": 53.82,
+            "reference_median": 185.51,
+            "median_ratio": 0.29103552369144525,
+            "paired_ratio_interval_95": [
+              0.28275898744947886,
+              0.3161609836625491
+            ],
+            "interval_excludes_tie": true,
+            "seed": "0x4fe653d3fce78c89"
+          },
+          "max_rss": {
+            "candidate_median": 50552832.0,
+            "reference_median": 65409024.0,
+            "median_ratio": 0.7727471976955351,
+            "paired_ratio_interval_95": [
+              0.7718288716537403,
+              0.7739124984329948
+            ],
+            "interval_excludes_tie": true,
+            "seed": "0x078dfa53092ad102"
+          }
+        },
+        "quench_memcpy_raw_i32_on_vs_quench_memcpy_raw_i32_off": {
+          "candidate_engine": "quench_memcpy_raw_i32_on",
+          "reference_engine": "quench_memcpy_raw_i32_off",
+          "score": {
+            "candidate_median": 53.82,
+            "reference_median": 53.61,
+            "median_ratio": 1.0211391661773341,
+            "paired_ratio_interval_95": [
+              0.9814004376367614,
+              1.0490760977548181
+            ],
+            "interval_excludes_tie": false,
+            "seed": "0x47ce9dea152f0087"
+          },
+          "max_rss": {
+            "candidate_median": 50552832.0,
+            "reference_median": 50561024.0,
+            "median_ratio": 0.9998379517096094,
+            "paired_ratio_interval_95": [
+              0.9994332442717189,
+              1.0004051207259763
+            ],
+            "interval_excludes_tie": false,
+            "seed": "0x0cd0bec59e2430e0"
+          }
+        }
+      },
+      "qualified": false
+    }
+  },
+  "qualified": false
+}

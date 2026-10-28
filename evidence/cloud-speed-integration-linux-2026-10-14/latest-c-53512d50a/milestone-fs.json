@@ -1,0 +1,327 @@
+{
+  "schema_version": 2,
+  "inventory_hash": "e6ea54b44c0af934",
+  "timeout_secs": 60,
+  "jobs": 2,
+  "node_version": "v24.19.0",
+  "runtime_commit": "9bfe4eabcb029e30cfc58b60b6488cbd8713ec49",
+  "tests_node_commit": "55e4ca33f3a6dfe364bd9558b726576a6d1a2fba",
+  "platform": "linux-x86_64",
+  "results": [
+    {
+      "fixture": "/tmp/quench-node-fixtures/test/parallel/test-fs-promises-file-handle-aggregate-errors.js",
+      "status": "fail",
+      "observation": {
+        "Ok": {
+          "exit_code": 1,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "fail",
+            "reason": "/tmp/quench-node-fixtures/lib/internal/options.js:33\n  return optionsDict ??= getCLIOptionsValues();\n                         ^\n\nTypeError: value is not callable\n    at getCLIOptionsFromBinding (/tmp/quench-node-fixtures/lib/internal/options.js:33:26)\n    at getOptionValue (/tmp/quench-node-fixtures/lib/internal/options.js:201:10)\n    at /tmp/quench-node-fixtures/lib/internal/fs/promises.js:473:5\n    at /tmp/quench-node-fixtures/test/parallel/test-fs-promises-file-handle-aggregate-errors.js:18:5\n\nNode.js v22.0.0"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/tmp/quench-node-fixtures/test/parallel/test-fs-promises-file-handle-append-file.js",
+      "status": "pass",
+      "observation": {
+        "Ok": {
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "pass"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/tmp/quench-node-fixtures/test/parallel/test-fs-promises-file-handle-chmod.js",
+      "status": "pass",
+      "observation": {
+        "Ok": {
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "pass"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/tmp/quench-node-fixtures/test/parallel/test-fs-promises-file-handle-close-errors.js",
+      "status": "fail",
+      "observation": {
+        "Ok": {
+          "exit_code": 1,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "fail",
+            "reason": "/tmp/quench-node-fixtures/lib/internal/options.js:33\n  return optionsDict ??= getCLIOptionsValues();\n                         ^\n\nTypeError: value is not callable\n    at getCLIOptionsFromBinding (/tmp/quench-node-fixtures/lib/internal/options.js:33:26)\n    at getOptionValue (/tmp/quench-node-fixtures/lib/internal/options.js:201:10)\n    at /tmp/quench-node-fixtures/lib/internal/fs/promises.js:473:5\n    at /tmp/quench-node-fixtures/test/parallel/test-fs-promises-file-handle-close-errors.js:18:5\n\nNode.js v22.0.0"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/tmp/quench-node-fixtures/test/parallel/test-fs-promises-file-handle-dispose.js",
+      "status": "fail",
+      "observation": {
+        "Ok": {
+          "exit_code": 1,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "fail",
+            "reason": "TypeError: value is not callable\n    at explicitCall (/tmp/quench-node-fixtures/test/parallel/test-fs-promises-file-handle-dispose.js:13:9)\n\nNode.js v22.0.0"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/tmp/quench-node-fixtures/test/parallel/test-fs-promises-file-handle-op-errors.js",
+      "status": "fail",
+      "observation": {
+        "Ok": {
+          "exit_code": 1,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "fail",
+            "reason": "/tmp/quench-node-fixtures/lib/internal/options.js:33\n  return optionsDict ??= getCLIOptionsValues();\n                         ^\n\nTypeError: value is not callable\n    at getCLIOptionsFromBinding (/tmp/quench-node-fixtures/lib/internal/options.js:33:26)\n    at getOptionValue (/tmp/quench-node-fixtures/lib/internal/options.js:201:10)\n    at /tmp/quench-node-fixtures/lib/internal/fs/promises.js:473:5\n    at /tmp/quench-node-fixtures/test/parallel/test-fs-promises-file-handle-op-errors.js:18:5\n\nNode.js v22.0.0"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/tmp/quench-node-fixtures/test/parallel/test-fs-promises-file-handle-pull.js",
+      "status": "fail",
+      "observation": {
+        "Ok": {
+          "exit_code": 1,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "fail",
+            "reason": "/tmp/quench-node-fixtures/test/parallel/test-fs-promises-file-handle-pull.js:10\nconst { text, bytes } = require('stream/iter');\n                        ^\n\nError: Cannot find module 'stream/iter'\nRequire stack:\n- /tmp/quench-node-fixtures/test/parallel/test-fs-promises-file-handle-pull.js\n    at /tmp/quench-node-fixtures/test/parallel/test-fs-promises-file-handle-pull.js:10:25\n\nNode.js v22.0.0"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/tmp/quench-node-fixtures/test/parallel/test-fs-promises-file-handle-pullsync.js",
+      "status": "fail",
+      "observation": {
+        "Ok": {
+          "exit_code": 1,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "fail",
+            "reason": "/tmp/quench-node-fixtures/test/parallel/test-fs-promises-file-handle-pullsync.js:15\n} = require('stream/iter');\n    ^\n\nError: Cannot find module 'stream/iter'\nRequire stack:\n- /tmp/quench-node-fixtures/test/parallel/test-fs-promises-file-handle-pullsync.js\n    at /tmp/quench-node-fixtures/test/parallel/test-fs-promises-file-handle-pullsync.js:15:5\n\nNode.js v22.0.0"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/tmp/quench-node-fixtures/test/parallel/test-fs-promises-file-handle-read-worker.js",
+      "status": "fail",
+      "observation": {
+        "Ok": {
+          "exit_code": 1,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "fail",
+            "reason": "Error: Worker threads are unavailable in this runtime\n    at node:worker_threads.js:1:184\n    at /tmp/quench-node-fixtures/test/parallel/test-fs-promises-file-handle-read-worker.js:16:5\n\nNode.js v22.0.0"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/tmp/quench-node-fixtures/test/parallel/test-fs-promises-file-handle-read.js",
+      "status": "pass",
+      "observation": {
+        "Ok": {
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "pass"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/tmp/quench-node-fixtures/test/parallel/test-fs-promises-file-handle-readFile.js",
+      "status": "pass",
+      "observation": {
+        "Ok": {
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "pass"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/tmp/quench-node-fixtures/test/parallel/test-fs-promises-file-handle-readLines.mjs",
+      "status": "fail",
+      "observation": {
+        "Ok": {
+          "exit_code": 1,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "fail",
+            "reason": "TypeError: value is not callable\n    at /tmp/quench-node-fixtures/test/parallel/test-fs-promises-file-handle-readLines.mjs:18:28\n\nNode.js v22.0.0"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/tmp/quench-node-fixtures/test/parallel/test-fs-promises-file-handle-stat.js",
+      "status": "pass",
+      "observation": {
+        "Ok": {
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "pass"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/tmp/quench-node-fixtures/test/parallel/test-fs-promises-file-handle-stream.js",
+      "status": "fail",
+      "observation": {
+        "Ok": {
+          "exit_code": 1,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "fail",
+            "reason": "TypeError: value is not callable\n    at validateWrite (/tmp/quench-node-fixtures/test/parallel/test-fs-promises-file-handle-stream.js:24:18)\n\nNode.js v22.0.0"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/tmp/quench-node-fixtures/test/parallel/test-fs-promises-file-handle-sync.js",
+      "status": "pass",
+      "observation": {
+        "Ok": {
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "pass"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/tmp/quench-node-fixtures/test/parallel/test-fs-promises-file-handle-truncate.js",
+      "status": "fail",
+      "observation": {
+        "Ok": {
+          "exit_code": 1,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "fail",
+            "reason": "TypeError: value is not callable\n    at validateTruncate (/tmp/quench-node-fixtures/test/parallel/test-fs-promises-file-handle-truncate.js:20:9)\n\nNode.js v22.0.0"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/tmp/quench-node-fixtures/test/parallel/test-fs-promises-file-handle-write.js",
+      "status": "pass",
+      "observation": {
+        "Ok": {
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "pass"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/tmp/quench-node-fixtures/test/parallel/test-fs-promises-file-handle-writeFile.js",
+      "status": "pass",
+      "observation": {
+        "Ok": {
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "pass"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/tmp/quench-node-fixtures/test/parallel/test-fs-promises-file-handle-writer.js",
+      "status": "fail",
+      "observation": {
+        "Ok": {
+          "exit_code": 1,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "fail",
+            "reason": "/tmp/quench-node-fixtures/test/parallel/test-fs-promises-file-handle-writer.js:12\n} = require('stream/iter');\n    ^\n\nError: Cannot find module 'stream/iter'\nRequire stack:\n- /tmp/quench-node-fixtures/test/parallel/test-fs-promises-file-handle-writer.js\n    at /tmp/quench-node-fixtures/test/parallel/test-fs-promises-file-handle-writer.js:12:5\n\nNode.js v22.0.0"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,11 @@
+{
+  "type": "measurement-validator-error",
+  "node_and_quench_raw_bytes_match": true,
+  "LF_records": 5121,
+  "python_unicode_splitlines_records": 6791,
+  "last_record": {
+    "complete": true,
+    "cases": 1310720
+  },
+  "correction": "Use LF record boundaries, preserve Unicode line separators inside JSON strings. Resume verifies existing successful command receipts and frozen engine hashes, then revalidates all corpus output."
+}

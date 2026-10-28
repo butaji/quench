@@ -1,0 +1,369 @@
+{
+  "samples": [
+    {
+      "round": 0,
+      "order": [
+        "control",
+        "candidate"
+      ],
+      "samples": {
+        "control": {
+          "status": 0,
+          "wall_ns": 227021271,
+          "user_ns": 193659000,
+          "system_ns": 31548000,
+          "voluntary_switches": 2,
+          "involuntary_switches": 8,
+          "peak_rss_bytes": 43053056,
+          "stdout": "",
+          "stderr": ""
+        },
+        "candidate": {
+          "status": 0,
+          "wall_ns": 174102617,
+          "user_ns": 143125000,
+          "system_ns": 27208000,
+          "voluntary_switches": 2,
+          "involuntary_switches": 0,
+          "peak_rss_bytes": 39219200,
+          "stdout": "",
+          "stderr": ""
+        }
+      }
+    },
+    {
+      "round": 1,
+      "order": [
+        "candidate",
+        "control"
+      ],
+      "samples": {
+        "candidate": {
+          "status": 0,
+          "wall_ns": 271816120,
+          "user_ns": 175256000,
+          "system_ns": 92928000,
+          "voluntary_switches": 2,
+          "involuntary_switches": 4,
+          "peak_rss_bytes": 39219200,
+          "stdout": "",
+          "stderr": ""
+        },
+        "control": {
+          "status": 0,
+          "wall_ns": 239188231,
+          "user_ns": 207326000,
+          "system_ns": 28034000,
+          "voluntary_switches": 2,
+          "involuntary_switches": 0,
+          "peak_rss_bytes": 43053056,
+          "stdout": "",
+          "stderr": ""
+        }
+      }
+    },
+    {
+      "round": 2,
+      "order": [
+        "control",
+        "candidate"
+      ],
+      "samples": {
+        "control": {
+          "status": 0,
+          "wall_ns": 206119324,
+          "user_ns": 176108000,
+          "system_ns": 28409000,
+          "voluntary_switches": 2,
+          "involuntary_switches": 1,
+          "peak_rss_bytes": 42962944,
+          "stdout": "",
+          "stderr": ""
+        },
+        "candidate": {
+          "status": 0,
+          "wall_ns": 251526279,
+          "user_ns": 143458000,
+          "system_ns": 106790000,
+          "voluntary_switches": 2,
+          "involuntary_switches": 1,
+          "peak_rss_bytes": 39219200,
+          "stdout": "",
+          "stderr": ""
+        }
+      }
+    },
+    {
+      "round": 3,
+      "order": [
+        "candidate",
+        "control"
+      ],
+      "samples": {
+        "candidate": {
+          "status": 0,
+          "wall_ns": 177583880,
+          "user_ns": 159052000,
+          "system_ns": 15886000,
+          "voluntary_switches": 2,
+          "involuntary_switches": 1,
+          "peak_rss_bytes": 39219200,
+          "stdout": "",
+          "stderr": ""
+        },
+        "control": {
+          "status": 0,
+          "wall_ns": 276365500,
+          "user_ns": 154748000,
+          "system_ns": 118465000,
+          "voluntary_switches": 2,
+          "involuntary_switches": 0,
+          "peak_rss_bytes": 43053056,
+          "stdout": "",
+          "stderr": ""
+        }
+      }
+    },
+    {
+      "round": 4,
+      "order": [
+        "control",
+        "candidate"
+      ],
+      "samples": {
+        "control": {
+          "status": 0,
+          "wall_ns": 209350466,
+          "user_ns": 165103000,
+          "system_ns": 43522000,
+          "voluntary_switches": 2,
+          "involuntary_switches": 1,
+          "peak_rss_bytes": 43053056,
+          "stdout": "",
+          "stderr": ""
+        },
+        "candidate": {
+          "status": 0,
+          "wall_ns": 176122052,
+          "user_ns": 159163000,
+          "system_ns": 16025000,
+          "voluntary_switches": 2,
+          "involuntary_switches": 1,
+          "peak_rss_bytes": 39219200,
+          "stdout": "",
+          "stderr": ""
+        }
+      }
+    },
+    {
+      "round": 5,
+      "order": [
+        "candidate",
+        "control"
+      ],
+      "samples": {
+        "candidate": {
+          "status": 0,
+          "wall_ns": 175439012,
+          "user_ns": 163447000,
+          "system_ns": 7830000,
+          "voluntary_switches": 2,
+          "involuntary_switches": 0,
+          "peak_rss_bytes": 39219200,
+          "stdout": "",
+          "stderr": ""
+        },
+        "control": {
+          "status": 0,
+          "wall_ns": 214783884,
+          "user_ns": 159322000,
+          "system_ns": 51971000,
+          "voluntary_switches": 2,
+          "involuntary_switches": 3,
+          "peak_rss_bytes": 43053056,
+          "stdout": "",
+          "stderr": ""
+        }
+      }
+    },
+    {
+      "round": 6,
+      "order": [
+        "control",
+        "candidate"
+      ],
+      "samples": {
+        "control": {
+          "status": 0,
+          "wall_ns": 205185693,
+          "user_ns": 166641000,
+          "system_ns": 34435000,
+          "voluntary_switches": 2,
+          "involuntary_switches": 2,
+          "peak_rss_bytes": 43057152,
+          "stdout": "",
+          "stderr": ""
+        },
+        "candidate": {
+          "status": 0,
+          "wall_ns": 177047066,
+          "user_ns": 143584000,
+          "system_ns": 31863000,
+          "voluntary_switches": 2,
+          "involuntary_switches": 1,
+          "peak_rss_bytes": 39219200,
+          "stdout": "",
+          "stderr": ""
+        }
+      }
+    },
+    {
+      "round": 7,
+      "order": [
+        "candidate",
+        "control"
+      ],
+      "samples": {
+        "candidate": {
+          "status": 0,
+          "wall_ns": 183892242,
+          "user_ns": 170131000,
+          "system_ns": 12293000,
+          "voluntary_switches": 2,
+          "involuntary_switches": 1,
+          "peak_rss_bytes": 39219200,
+          "stdout": "",
+          "stderr": ""
+        },
+        "control": {
+          "status": 0,
+          "wall_ns": 211001546,
+          "user_ns": 174327000,
+          "system_ns": 32209000,
+          "voluntary_switches": 2,
+          "involuntary_switches": 3,
+          "peak_rss_bytes": 43053056,
+          "stdout": "",
+          "stderr": ""
+        }
+      }
+    },
+    {
+      "round": 8,
+      "order": [
+        "control",
+        "candidate"
+      ],
+      "samples": {
+        "control": {
+          "status": 0,
+          "wall_ns": 203233516,
+          "user_ns": 195619000,
+          "system_ns": 3869000,
+          "voluntary_switches": 2,
+          "involuntary_switches": 0,
+          "peak_rss_bytes": 43053056,
+          "stdout": "",
+          "stderr": ""
+        },
+        "candidate": {
+          "status": 0,
+          "wall_ns": 175149883,
+          "user_ns": 164623000,
+          "system_ns": 7491000,
+          "voluntary_switches": 2,
+          "involuntary_switches": 3,
+          "peak_rss_bytes": 39219200,
+          "stdout": "",
+          "stderr": ""
+        }
+      }
+    },
+    {
+      "round": 9,
+      "order": [
+        "candidate",
+        "control"
+      ],
+      "samples": {
+        "candidate": {
+          "status": 0,
+          "wall_ns": 176446903,
+          "user_ns": 161071000,
+          "system_ns": 12004000,
+          "voluntary_switches": 2,
+          "involuntary_switches": 0,
+          "peak_rss_bytes": 39219200,
+          "stdout": "",
+          "stderr": ""
+        },
+        "control": {
+          "status": 0,
+          "wall_ns": 196003909,
+          "user_ns": 176438000,
+          "system_ns": 16128000,
+          "voluntary_switches": 2,
+          "involuntary_switches": 0,
+          "peak_rss_bytes": 43053056,
+          "stdout": "",
+          "stderr": ""
+        }
+      }
+    },
+    {
+      "round": 10,
+      "order": [
+        "control",
+        "candidate"
+      ],
+      "samples": {
+        "control": {
+          "status": 0,
+          "wall_ns": 199711116,
+          "user_ns": 176489000,
+          "system_ns": 19993000,
+          "voluntary_switches": 2,
+          "involuntary_switches": 3,
+          "peak_rss_bytes": 43053056,
+          "stdout": "",
+          "stderr": ""
+        },
+        "candidate": {
+          "status": 0,
+          "wall_ns": 175650716,
+          "user_ns": 158434000,
+          "system_ns": 15989000,
+          "voluntary_switches": 2,
+          "involuntary_switches": 1,
+          "peak_rss_bytes": 39219200,
+          "stdout": "",
+          "stderr": ""
+        }
+      }
+    }
+  ],
+  "summaries": {
+    "control": {
+      "median_rss_bytes": 43053056,
+      "median_wall_ns": 209350466,
+      "median_cpu_ns": 206536000
+    },
+    "candidate": {
+      "median_rss_bytes": 39219200,
+      "median_wall_ns": 176446903,
+      "median_cpu_ns": 174938000
+    }
+  },
+  "environment": {
+    "HOME": "/home/agent",
+    "LANG": "C.UTF-8",
+    "LC_ALL": "C.UTF-8",
+    "PATH": "/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/override:/opt/codex/runtimes/codex-primary-runtime/dependencies/python/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin:/opt/codex/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/fallback"
+  },
+  "paired_wall_change_pct": -13.713737341326226,
+  "paired_wall_bootstrap_95ci_pct": [
+    -18.31835390405735,
+    -9.977865288390753
+  ],
+  "note": "Repeat justified by wide jitter in first startup pair. CPU time recorded separately; never substitute summed CPU for Score."
+}

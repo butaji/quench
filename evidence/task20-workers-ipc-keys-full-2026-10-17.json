@@ -1,0 +1,4639 @@
+{
+  "recorded_utc": "2026-10-17T02:15:47.170619+00:00",
+  "source_commit": "fb8df696009fad540f58e75ac3df7a67afa93313",
+  "goal_complete": false,
+  "latest_stable_oracle": "v26.12.0",
+  "inventories": {
+    "stable": {
+      "receipt": {
+        "source_commit": "fb8df696009fad540f58e75ac3df7a67afa93313",
+        "checkout_commit": "fb8df696009fad540f58e75ac3df7a67afa93313",
+        "release": "v26.12.0",
+        "fixture_commit": "26e72d85a611e222e3f06025de8a3c496923bacd",
+        "command": [
+          "/tmp/quench-api472-full-bin/run-parallel",
+          "--all",
+          "--parallel-dir",
+          "/workspace/work/node-stable-release/node-v26.12.0/test/parallel",
+          "--jobs",
+          "4",
+          "--timeout-secs",
+          "30",
+          "--results",
+          "/workspace/quench/work/full-api472-workers-ipc-keys-stable/results.json"
+        ],
+        "binaries_before": {
+          "quench-node": "862b9a8e5a7c856478aaa959c7a9bcdd3e5501e9954d1f256a0ac6e77fc9c274",
+          "run-parallel": "61800ff39892241151158fdce30c81bde94ab5bba8fa1de324360d6ba1d75233",
+          "openssl-cli": "f4aa15f2822f670af7b5c1043d7aa6ebbbc64229fd2fae382edfc6a4524749c1"
+        },
+        "protected_before": {
+          "restored": true,
+          "sha256": "b0e78cd4bb13929391b33a2ad7d80f61d8b2f1d66533aaf31d95807e5f3863eb"
+        },
+        "memory_before": "low 0\nhigh 0\nmax 1288976\noom 2\noom_kill 1\noom_group_kill 0\n",
+        "started_utc": "2026-10-17T01:19:00.506882+00:00",
+        "exit": 1,
+        "changed_sources_after": [],
+        "elapsed_seconds": 3349.4809856300126,
+        "protected_after": {
+          "restored": true,
+          "sha256": "b0e78cd4bb13929391b33a2ad7d80f61d8b2f1d66533aaf31d95807e5f3863eb"
+        },
+        "memory_after": "low 0\nhigh 0\nmax 1296850\noom 2\noom_kill 1\noom_group_kill 0\n",
+        "binaries_after": {
+          "quench-node": "862b9a8e5a7c856478aaa959c7a9bcdd3e5501e9954d1f256a0ac6e77fc9c274",
+          "run-parallel": "61800ff39892241151158fdce30c81bde94ab5bba8fa1de324360d6ba1d75233",
+          "openssl-cli": "f4aa15f2822f670af7b5c1043d7aa6ebbbc64229fd2fae382edfc6a4524749c1"
+        },
+        "finished_utc": "2026-10-17T02:14:50.145889+00:00"
+      },
+      "comparison": {
+        "generated_utc": "2026-10-17T02:15:01.666417+00:00",
+        "source_commit": "fb8df696009fad540f58e75ac3df7a67afa93313",
+        "release": "stable",
+        "total": 5015,
+        "counts_before": {
+          "pass": 1990,
+          "fail": 2278,
+          "timeout": 110,
+          "skip": 637
+        },
+        "counts_after": {
+          "pass": 2145,
+          "fail": 2099,
+          "timeout": 133,
+          "skip": 638
+        },
+        "inventory_hash_before": "a3820c977f97ed07",
+        "inventory_hash_after": "a3820c977f97ed07",
+        "gained_passes": [
+          {
+            "fixture": "test-async-hooks-worker-asyncfn-terminate-1.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-async-hooks-worker-asyncfn-terminate-2.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-async-hooks-worker-asyncfn-terminate-3.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-async-hooks-worker-asyncfn-terminate-4.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-async-wrap-uncaughtexception.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-child-process-fork-dgram.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-child-process-send-returns-boolean.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-child-process-send-type-error.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-cluster-call-and-destroy.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-cluster-cwd.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-cluster-dgram-1.js",
+            "before": "timeout",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-cluster-dgram-2.js",
+            "before": "timeout",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-cluster-dgram-bind-fd.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-cluster-dgram-ipv6only.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-cluster-dgram-reuse.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-cluster-dgram-reuseport.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-cluster-disconnect-exitedAfterDisconnect-race.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-cluster-disconnect-with-no-workers.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-cluster-eaccess.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-cluster-fork-windowsHide.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-cluster-ipc-throw.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-cluster-kill-disconnect.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-cluster-kill-infinite-loop.js",
+            "before": "timeout",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-cluster-listen-pipe-readable-writable.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-cluster-net-reuseport.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-cluster-process-disconnect.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-cluster-rr-handle-close.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-cluster-rr-handle-keep-loop-alive.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-cluster-rr-handle-ref-unref.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-cluster-rr-ref.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-cluster-setup-primary-argv.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-cluster-setup-primary-cumulative.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-cluster-setup-primary-emit.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-cluster-setup-primary-multiple.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-cluster-uncaught-exception.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-cluster-worker-constructor.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-cluster-worker-death.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-cluster-worker-destroy.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-cluster-worker-disconnect-on-error.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-cluster-worker-events.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-cluster-worker-forced-exit.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-cluster-worker-handle-close.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-cluster-worker-init.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-cluster-worker-isconnected.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-crypto-dep0204.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-crypto-eddsa-variants.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-crypto-key-objects-to-crypto-key.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-crypto-keygen-async-dsa-key-object.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-crypto-keygen-async-dsa.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-crypto-keygen-async-elliptic-curve-jwk-ec.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-crypto-keygen-async-elliptic-curve-jwk-rsa.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-crypto-keygen-async-elliptic-curve-jwk.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-crypto-keygen-async-encrypted-private-key.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-crypto-keygen-async-explicit-elliptic-curve-encrypted-p256.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-crypto-keygen-async-explicit-elliptic-curve-encrypted.js.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-crypto-keygen-async-explicit-elliptic-curve.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-crypto-keygen-async-named-elliptic-curve-encrypted-p256.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-crypto-keygen-async-named-elliptic-curve-encrypted.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-crypto-keygen-async-named-elliptic-curve.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-crypto-keygen-bit-length.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-crypto-keygen-dh-classic.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-crypto-keygen-ec-group-names.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-crypto-keygen-eddsa.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-crypto-keygen-empty-passphrase-no-prompt.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-crypto-keygen-no-rsassa-pss-params.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-crypto-keygen-promisify.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-crypto-keygen-rfc8017-9-1.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-crypto-keygen-rfc8017-a-2-3.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-crypto-keyobject-brand-check.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-crypto-keyobject-no-own-symbols.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-crypto-prepare-asymmetric-cryptokey.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-crypto-prepare-asymmetric-key.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-crypto-prime.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-crypto-private-decrypt-gh32240.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-crypto-provider-hashes.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-crypto-publicDecrypt-fails-first-time.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-crypto-randomfill-properties.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-crypto-rsa-oaep-mgf1.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-crypto-rsa-pss-default-salt-length.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-dgram-bind-socket-close-before-cluster-reply.js",
+            "before": "timeout",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-dgram-cluster-bind-error.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-dgram-cluster-close-during-bind.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-dgram-cluster-close-in-listening.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-dgram-exclusive-implicit-bind.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-dgram-unref-in-cluster.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-fs-append-file.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-fs-exists.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-fs-stat-date.mjs",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-http-keep-alive-timeout-race-condition.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-net-listen-exclusive-random-ports.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-net-listen-handle-in-cluster-1.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-net-listen-handle-in-cluster-2.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-permission-net-cluster.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-process-threadCpuUsage-worker-threads.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-unhandled-exception-with-worker-inuse.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-vfs-fs-chmod-callback.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-vfs-fs-chmodSync.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-vfs-fs-fchmod-callback.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-vfs-fs-mkdtempSync.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-vfs-fs-openSync.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-vfs-fs-promises-buffer-encoding.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-vfs-fs-readFile-callback.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-vfs-fs-rmSync.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-vfs-fs-statSync.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-vfs-fs-symlink-callback.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-vfs-fs-symlinkSync.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-vfs-fs-truncate-callback.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-vfs-fs-truncateSync.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-vfs-fs-watch-dispatch.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-vfs-lchown-symlink.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-webcrypto-cryptokey-no-own-symbols.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-webcrypto-internal-slots.mjs",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-webcrypto-raw-format-aliases.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-webcrypto-rsa-exponent-length.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-webcrypto-rsa-jwk-sha3-alg.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-webcrypto-usages-species.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-webcrypto-webidl.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-abort-on-uncaught-exception-terminate.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-abort-on-uncaught-exception.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-arraybuffer-zerofill.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-beforeexit-throw-exit.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-cjs-workerdata.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-cleanexit-with-js.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-cleanexit-with-moduleload.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-cleanup-handles.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-console-listeners.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-crypto-sign-transfer-result.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-dns-terminate-during-query.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-dns-terminate.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-error-primitive.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-error-stack-getter-throws.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-esm-exit.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-esmodule.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-exit-from-uncaught-exception.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-fs-stat-watcher.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-invalid-workerdata.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-load-file-with-extension-other-than-js.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-message-channel-sharedarraybuffer.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-message-port-terminate-transfer-list.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-mjs-workerdata.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-nested-on-process-exit.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-nested-uncaught.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-nexttick-terminate.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-no-sab.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-on-process-exit.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-onmessage-not-a-function.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-parent-port-ref.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-ref-onexit.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-ref.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-relative-path-double-dot.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-relative-path.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-sharedarraybuffer-from-worker-thread.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-stack-overflow.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-syntax-error-file.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-syntax-error.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-terminate-microtask-loop.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-terminate-nested.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-terminate-null-handler.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-terminate-ref-public-port.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-terminate-source-map.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-terminate-timers.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-terminate-unrefed.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-type-check.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-uncaught-exception-async.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-uncaught-exception.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-unref-from-message-during-exit.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-unsupported-eval-on-url.mjs",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-unsupported-path.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-unsupported-things.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-vm-context-terminate.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-voluntarily-exit-followed-by-addition.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-workerdata-sharedarraybuffer.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker.mjs",
+            "before": "fail",
+            "after": "pass"
+          }
+        ],
+        "lost_passes": [
+          {
+            "fixture": "test-cluster-advanced-serialization.js",
+            "before": "pass",
+            "after": "fail"
+          },
+          {
+            "fixture": "test-cluster-disconnect-unshared-tcp.js",
+            "before": "pass",
+            "after": "timeout"
+          },
+          {
+            "fixture": "test-cluster-disconnect.js",
+            "before": "pass",
+            "after": "timeout"
+          },
+          {
+            "fixture": "test-cluster-message.js",
+            "before": "pass",
+            "after": "timeout"
+          },
+          {
+            "fixture": "test-cluster-rr-domain-listen.js",
+            "before": "pass",
+            "after": "timeout"
+          },
+          {
+            "fixture": "test-cluster-worker-disconnect.js",
+            "before": "pass",
+            "after": "timeout"
+          },
+          {
+            "fixture": "test-cluster-worker-kill-signal.js",
+            "before": "pass",
+            "after": "timeout"
+          },
+          {
+            "fixture": "test-cluster-worker-kill.js",
+            "before": "pass",
+            "after": "timeout"
+          },
+          {
+            "fixture": "test-cluster-worker-wait-server-close.js",
+            "before": "pass",
+            "after": "timeout"
+          },
+          {
+            "fixture": "test-crypto-dh-modp2-views.js",
+            "before": "pass",
+            "after": "timeout"
+          },
+          {
+            "fixture": "test-listen-fd-detached-inherit.js",
+            "before": "pass",
+            "after": "fail"
+          },
+          {
+            "fixture": "test-listen-fd-detached.js",
+            "before": "pass",
+            "after": "fail"
+          },
+          {
+            "fixture": "test-net-server-close-before-ipc-response.js",
+            "before": "pass",
+            "after": "timeout"
+          },
+          {
+            "fixture": "test-performance-many-marks.js",
+            "before": "pass",
+            "after": "timeout"
+          },
+          {
+            "fixture": "test-startup-empty-regexp-statics.js",
+            "before": "pass",
+            "after": "fail"
+          },
+          {
+            "fixture": "test-stream-iter-broadcast-waiter-cleanup.js",
+            "before": "pass",
+            "after": "timeout"
+          },
+          {
+            "fixture": "test-stream2-read-sync-stack.js",
+            "before": "pass",
+            "after": "timeout"
+          },
+          {
+            "fixture": "test-string-decoder-utf8-large.js",
+            "before": "pass",
+            "after": "timeout"
+          },
+          {
+            "fixture": "test-tls-close-notify.js",
+            "before": "pass",
+            "after": "fail"
+          }
+        ],
+        "all_status_changes": [
+          {
+            "fixture": "test-async-hooks-worker-asyncfn-terminate-1.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-async-hooks-worker-asyncfn-terminate-2.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-async-hooks-worker-asyncfn-terminate-3.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-async-hooks-worker-asyncfn-terminate-4.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-async-wrap-uncaughtexception.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-child-process-fork-dgram.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-child-process-send-returns-boolean.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-child-process-send-type-error.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-cluster-advanced-serialization.js",
+            "before": "pass",
+            "after": "fail"
+          },
+          {
+            "fixture": "test-cluster-basic.js",
+            "before": "fail",
+            "after": "timeout"
+          },
+          {
+            "fixture": "test-cluster-call-and-destroy.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-cluster-cwd.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-cluster-dgram-1.js",
+            "before": "timeout",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-cluster-dgram-2.js",
+            "before": "timeout",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-cluster-dgram-bind-fd.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-cluster-dgram-ipv6only.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-cluster-dgram-reuse.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-cluster-dgram-reuseport.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-cluster-disconnect-exitedAfterDisconnect-race.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-cluster-disconnect-unshared-tcp.js",
+            "before": "pass",
+            "after": "timeout"
+          },
+          {
+            "fixture": "test-cluster-disconnect-with-no-workers.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-cluster-disconnect.js",
+            "before": "pass",
+            "after": "timeout"
+          },
+          {
+            "fixture": "test-cluster-eaccess.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-cluster-fork-windowsHide.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-cluster-ipc-throw.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-cluster-kill-disconnect.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-cluster-kill-infinite-loop.js",
+            "before": "timeout",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-cluster-listen-pipe-readable-writable.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-cluster-message.js",
+            "before": "pass",
+            "after": "timeout"
+          },
+          {
+            "fixture": "test-cluster-net-listen-backlog.js",
+            "before": "fail",
+            "after": "timeout"
+          },
+          {
+            "fixture": "test-cluster-net-reuseport.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-cluster-net-server-drop-connection.js",
+            "before": "fail",
+            "after": "timeout"
+          },
+          {
+            "fixture": "test-cluster-primary-error.js",
+            "before": "fail",
+            "after": "timeout"
+          },
+          {
+            "fixture": "test-cluster-primary-kill.js",
+            "before": "fail",
+            "after": "timeout"
+          },
+          {
+            "fixture": "test-cluster-process-disconnect.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-cluster-rr-domain-listen.js",
+            "before": "pass",
+            "after": "timeout"
+          },
+          {
+            "fixture": "test-cluster-rr-handle-close.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-cluster-rr-handle-keep-loop-alive.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-cluster-rr-handle-ref-unref.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-cluster-rr-ref.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-cluster-server-restart-none.js",
+            "before": "fail",
+            "after": "timeout"
+          },
+          {
+            "fixture": "test-cluster-server-restart-rr.js",
+            "before": "fail",
+            "after": "timeout"
+          },
+          {
+            "fixture": "test-cluster-setup-primary-argv.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-cluster-setup-primary-cumulative.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-cluster-setup-primary-emit.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-cluster-setup-primary-multiple.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-cluster-shared-handle-bind-privileged-port.js",
+            "before": "timeout",
+            "after": "skip"
+          },
+          {
+            "fixture": "test-cluster-uncaught-exception.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-cluster-worker-constructor.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-cluster-worker-death.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-cluster-worker-destroy.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-cluster-worker-disconnect-on-error.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-cluster-worker-disconnect.js",
+            "before": "pass",
+            "after": "timeout"
+          },
+          {
+            "fixture": "test-cluster-worker-events.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-cluster-worker-forced-exit.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-cluster-worker-handle-close.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-cluster-worker-init.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-cluster-worker-isconnected.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-cluster-worker-kill-signal.js",
+            "before": "pass",
+            "after": "timeout"
+          },
+          {
+            "fixture": "test-cluster-worker-kill.js",
+            "before": "pass",
+            "after": "timeout"
+          },
+          {
+            "fixture": "test-cluster-worker-wait-server-close.js",
+            "before": "pass",
+            "after": "timeout"
+          },
+          {
+            "fixture": "test-crypto-dep0204.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-crypto-dh-modp2-views.js",
+            "before": "pass",
+            "after": "timeout"
+          },
+          {
+            "fixture": "test-crypto-eddsa-variants.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-crypto-key-objects-to-crypto-key.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-crypto-keygen-async-dsa-key-object.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-crypto-keygen-async-dsa.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-crypto-keygen-async-elliptic-curve-jwk-ec.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-crypto-keygen-async-elliptic-curve-jwk-rsa.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-crypto-keygen-async-elliptic-curve-jwk.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-crypto-keygen-async-encrypted-private-key.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-crypto-keygen-async-explicit-elliptic-curve-encrypted-p256.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-crypto-keygen-async-explicit-elliptic-curve-encrypted.js.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-crypto-keygen-async-explicit-elliptic-curve.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-crypto-keygen-async-named-elliptic-curve-encrypted-p256.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-crypto-keygen-async-named-elliptic-curve-encrypted.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-crypto-keygen-async-named-elliptic-curve.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-crypto-keygen-bit-length.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-crypto-keygen-dh-classic.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-crypto-keygen-ec-group-names.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-crypto-keygen-eddsa.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-crypto-keygen-empty-passphrase-no-prompt.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-crypto-keygen-no-rsassa-pss-params.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-crypto-keygen-promisify.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-crypto-keygen-rfc8017-9-1.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-crypto-keygen-rfc8017-a-2-3.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-crypto-keyobject-brand-check.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-crypto-keyobject-no-own-symbols.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-crypto-prepare-asymmetric-cryptokey.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-crypto-prepare-asymmetric-key.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-crypto-prime.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-crypto-private-decrypt-gh32240.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-crypto-provider-hashes.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-crypto-publicDecrypt-fails-first-time.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-crypto-randomfill-properties.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-crypto-rsa-oaep-mgf1.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-crypto-rsa-pss-default-salt-length.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-dgram-bind-socket-close-before-cluster-reply.js",
+            "before": "timeout",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-dgram-cluster-bind-error.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-dgram-cluster-close-during-bind.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-dgram-cluster-close-in-listening.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-dgram-exclusive-implicit-bind.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-dgram-unref-in-cluster.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-dotenv-edge-cases.js",
+            "before": "fail",
+            "after": "timeout"
+          },
+          {
+            "fixture": "test-fs-append-file.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-fs-exists.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-fs-stat-date.mjs",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-http-keep-alive-timeout-race-condition.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-listen-fd-detached-inherit.js",
+            "before": "pass",
+            "after": "fail"
+          },
+          {
+            "fixture": "test-listen-fd-detached.js",
+            "before": "pass",
+            "after": "fail"
+          },
+          {
+            "fixture": "test-net-listen-exclusive-random-ports.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-net-listen-handle-in-cluster-1.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-net-listen-handle-in-cluster-2.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-net-server-close-before-ipc-response.js",
+            "before": "pass",
+            "after": "timeout"
+          },
+          {
+            "fixture": "test-performance-many-marks.js",
+            "before": "pass",
+            "after": "timeout"
+          },
+          {
+            "fixture": "test-permission-net-cluster.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-process-threadCpuUsage-worker-threads.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-runner-flag-propagation.js",
+            "before": "fail",
+            "after": "timeout"
+          },
+          {
+            "fixture": "test-runner-reporters.js",
+            "before": "fail",
+            "after": "timeout"
+          },
+          {
+            "fixture": "test-startup-empty-regexp-statics.js",
+            "before": "pass",
+            "after": "fail"
+          },
+          {
+            "fixture": "test-stream-iter-broadcast-waiter-cleanup.js",
+            "before": "pass",
+            "after": "timeout"
+          },
+          {
+            "fixture": "test-stream2-read-sync-stack.js",
+            "before": "pass",
+            "after": "timeout"
+          },
+          {
+            "fixture": "test-string-decoder-utf8-large.js",
+            "before": "pass",
+            "after": "timeout"
+          },
+          {
+            "fixture": "test-tls-close-notify.js",
+            "before": "pass",
+            "after": "fail"
+          },
+          {
+            "fixture": "test-unhandled-exception-with-worker-inuse.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-vfs-fs-chmod-callback.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-vfs-fs-chmodSync.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-vfs-fs-fchmod-callback.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-vfs-fs-mkdtempSync.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-vfs-fs-openSync.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-vfs-fs-promises-buffer-encoding.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-vfs-fs-readFile-callback.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-vfs-fs-rmSync.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-vfs-fs-statSync.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-vfs-fs-symlink-callback.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-vfs-fs-symlinkSync.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-vfs-fs-truncate-callback.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-vfs-fs-truncateSync.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-vfs-fs-watch-dispatch.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-vfs-lchown-symlink.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-web-locks-query.js",
+            "before": "fail",
+            "after": "timeout"
+          },
+          {
+            "fixture": "test-web-locks.js",
+            "before": "fail",
+            "after": "timeout"
+          },
+          {
+            "fixture": "test-webcrypto-cryptokey-no-own-symbols.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-webcrypto-internal-slots.mjs",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-webcrypto-raw-format-aliases.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-webcrypto-rsa-exponent-length.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-webcrypto-rsa-jwk-sha3-alg.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-webcrypto-usages-species.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-webcrypto-webidl.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-abort-on-uncaught-exception-terminate.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-abort-on-uncaught-exception.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-arraybuffer-zerofill.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-beforeexit-throw-exit.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-cjs-workerdata.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-cleanexit-with-js.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-cleanexit-with-moduleload.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-cleanup-handles.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-console-listeners.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-crypto-sign-transfer-result.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-cwd-race-condition.js",
+            "before": "fail",
+            "after": "timeout"
+          },
+          {
+            "fixture": "test-worker-dns-terminate-during-query.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-dns-terminate.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-error-primitive.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-error-stack-getter-throws.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-esm-exit.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-esmodule.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-exit-from-uncaught-exception.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-fs-stat-watcher.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-init-failure.js",
+            "before": "fail",
+            "after": "timeout"
+          },
+          {
+            "fixture": "test-worker-invalid-workerdata.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-load-file-with-extension-other-than-js.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-message-channel-sharedarraybuffer.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-message-port-terminate-transfer-list.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-mjs-workerdata.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-nested-on-process-exit.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-nested-uncaught.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-nexttick-terminate.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-no-sab.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-on-process-exit.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-onmessage-not-a-function.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-parent-port-ref.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-ref-onexit.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-ref.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-relative-path-double-dot.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-relative-path.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-sharedarraybuffer-from-worker-thread.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-stack-overflow.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-syntax-error-file.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-syntax-error.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-terminate-microtask-loop.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-terminate-nested.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-terminate-null-handler.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-terminate-ref-public-port.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-terminate-source-map.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-terminate-timers.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-terminate-unrefed.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-type-check.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-uncaught-exception-async.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-uncaught-exception.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-unref-from-message-during-exit.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-unsupported-eval-on-url.mjs",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-unsupported-path.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-unsupported-things.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-vm-context-terminate.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-voluntarily-exit-followed-by-addition.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-workerdata-sharedarraybuffer.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker.mjs",
+            "before": "fail",
+            "after": "pass"
+          }
+        ],
+        "memory_event_deltas": {
+          "low": 0,
+          "high": 0,
+          "max": 7874,
+          "oom": 0,
+          "oom_kill": 0,
+          "oom_group_kill": 0
+        },
+        "receipt_exit": 1,
+        "elapsed_seconds": 3349.4809856300126
+      },
+      "raw_results_path": "/workspace/quench/work/full-api472-workers-ipc-keys-stable/results.json",
+      "raw_results_sha256": "5aeb174d8394c03e4f598332542cfd8fbde526b2bab579ea6109a00598d5fd00",
+      "raw_log_path": "/workspace/quench/work/full-api472-workers-ipc-keys-stable/runner.log",
+      "raw_log_sha256": "89cc230a78629c82b14231ca8b698b6f5f608a92565d15566e423625c3804256"
+    },
+    "pinned": {
+      "receipt": {
+        "source_commit": "fb8df696009fad540f58e75ac3df7a67afa93313",
+        "checkout_commit": "fb8df696009fad540f58e75ac3df7a67afa93313",
+        "release": "v27.0.0-nightly20260819c79868f102",
+        "fixture_commit": "55e4ca33f3a6dfe364bd9558b726576a6d1a2fba",
+        "command": [
+          "/tmp/quench-api472-full-bin/run-parallel",
+          "--all",
+          "--parallel-dir",
+          "/workspace/work/node-fixtures/test/parallel",
+          "--jobs",
+          "4",
+          "--timeout-secs",
+          "30",
+          "--results",
+          "/workspace/quench/work/full-api472-workers-ipc-keys-pinned/results.json"
+        ],
+        "binaries_before": {
+          "quench-node": "862b9a8e5a7c856478aaa959c7a9bcdd3e5501e9954d1f256a0ac6e77fc9c274",
+          "run-parallel": "61800ff39892241151158fdce30c81bde94ab5bba8fa1de324360d6ba1d75233",
+          "openssl-cli": "f4aa15f2822f670af7b5c1043d7aa6ebbbc64229fd2fae382edfc6a4524749c1"
+        },
+        "protected_before": {
+          "restored": true,
+          "sha256": "b0e78cd4bb13929391b33a2ad7d80f61d8b2f1d66533aaf31d95807e5f3863eb"
+        },
+        "memory_before": "low 0\nhigh 0\nmax 1288976\noom 2\noom_kill 1\noom_group_kill 0\n",
+        "started_utc": "2026-10-17T01:18:53.899752+00:00",
+        "exit": 1,
+        "changed_sources_after": [],
+        "elapsed_seconds": 3170.304920724011,
+        "protected_after": {
+          "restored": true,
+          "sha256": "b0e78cd4bb13929391b33a2ad7d80f61d8b2f1d66533aaf31d95807e5f3863eb"
+        },
+        "memory_after": "low 0\nhigh 0\nmax 1296850\noom 2\noom_kill 1\noom_group_kill 0\n",
+        "binaries_after": {
+          "quench-node": "862b9a8e5a7c856478aaa959c7a9bcdd3e5501e9954d1f256a0ac6e77fc9c274",
+          "run-parallel": "61800ff39892241151158fdce30c81bde94ab5bba8fa1de324360d6ba1d75233",
+          "openssl-cli": "f4aa15f2822f670af7b5c1043d7aa6ebbbc64229fd2fae382edfc6a4524749c1"
+        },
+        "finished_utc": "2026-10-17T02:11:44.608675+00:00"
+      },
+      "comparison": {
+        "generated_utc": "2026-10-17T02:15:02.132582+00:00",
+        "source_commit": "fb8df696009fad540f58e75ac3df7a67afa93313",
+        "release": "pinned",
+        "total": 4727,
+        "counts_before": {
+          "timeout": 94,
+          "fail": 2069,
+          "pass": 1888,
+          "skip": 676
+        },
+        "counts_after": {
+          "fail": 1861,
+          "pass": 2073,
+          "timeout": 116,
+          "skip": 677
+        },
+        "inventory_hash_before": "1e51ca4121020d14",
+        "inventory_hash_after": "1e51ca4121020d14",
+        "gained_passes": [
+          {
+            "fixture": "test-abortcontroller.js",
+            "before": "timeout",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-async-hooks-worker-asyncfn-terminate-1.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-async-hooks-worker-asyncfn-terminate-2.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-async-hooks-worker-asyncfn-terminate-3.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-async-hooks-worker-asyncfn-terminate-4.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-async-wrap-uncaughtexception.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-c-ares.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-child-process-fork-dgram.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-child-process-send-returns-boolean.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-child-process-send-type-error.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-cluster-call-and-destroy.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-cluster-child-index-dgram.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-cluster-cwd.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-cluster-dgram-1.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-cluster-dgram-2.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-cluster-dgram-bind-fd.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-cluster-dgram-ipv6only.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-cluster-dgram-reuseport.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-cluster-disconnect-exitedAfterDisconnect-race.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-cluster-disconnect-with-no-workers.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-cluster-eaccess.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-cluster-fork-windowsHide.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-cluster-ipc-throw.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-cluster-kill-disconnect.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-cluster-kill-infinite-loop.js",
+            "before": "timeout",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-cluster-listen-pipe-readable-writable.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-cluster-net-reuseport.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-cluster-process-disconnect.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-cluster-rr-handle-close.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-cluster-rr-handle-keep-loop-alive.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-cluster-rr-handle-ref-unref.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-cluster-rr-ref.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-cluster-setup-primary-argv.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-cluster-setup-primary-cumulative.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-cluster-setup-primary-emit.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-cluster-setup-primary-multiple.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-cluster-uncaught-exception.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-cluster-worker-constructor.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-cluster-worker-death.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-cluster-worker-destroy.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-cluster-worker-disconnect-on-error.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-cluster-worker-events.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-cluster-worker-forced-exit.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-cluster-worker-handle-close.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-cluster-worker-init.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-cluster-worker-isconnected.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-crypto-dep0204.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-crypto-eddsa-variants.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-crypto-keygen-async-dsa-key-object.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-crypto-keygen-async-dsa.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-crypto-keygen-async-elliptic-curve-jwk-ec.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-crypto-keygen-async-elliptic-curve-jwk-rsa.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-crypto-keygen-async-encrypted-private-key.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-crypto-keygen-async-explicit-elliptic-curve-encrypted-p256.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-crypto-keygen-async-explicit-elliptic-curve-encrypted.js.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-crypto-keygen-async-explicit-elliptic-curve.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-crypto-keygen-async-named-elliptic-curve-encrypted-p256.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-crypto-keygen-async-named-elliptic-curve-encrypted.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-crypto-keygen-async-named-elliptic-curve.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-crypto-keygen-bit-length.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-crypto-keygen-dh-classic.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-crypto-keygen-empty-passphrase-no-prompt.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-crypto-keygen-no-rsassa-pss-params.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-crypto-keygen-promisify.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-crypto-keygen-rfc8017-9-1.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-crypto-keygen-rfc8017-a-2-3.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-crypto-keyobject-brand-check.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-crypto-keyobject-no-own-symbols.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-crypto-pqc-keygen-ml-dsa.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-crypto-pqc-keygen-ml-kem.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-crypto-pqc-keygen-slh-dsa.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-crypto-prime.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-crypto-private-decrypt-gh32240.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-crypto-publicDecrypt-fails-first-time.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-crypto-random.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-crypto-rsa-oaep-mgf1.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-crypto-rsa-pss-default-salt-length.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-dgram-bind-fd-error.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-dgram-bind-fd.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-dgram-cluster-bind-error.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-dgram-cluster-close-during-bind.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-dgram-cluster-close-in-listening.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-dgram-create-socket-handle-fd.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-dgram-create-socket-handle.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-dgram-custom-lookup.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-dgram-default-lookup-ip.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-dgram-exclusive-implicit-bind.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-dgram-multicast-set-interface.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-dgram-send-callback-recursive.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-dgram-send-cb-quelches-error.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-dgram-udp6-link-local-address.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-dgram-unref-in-cluster.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-diagnostics-channel-udp.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-dns-cancel-reverse-lookup.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-dns-channel-cancel-promise.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-dns-channel-cancel.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-dns-channel-timeout.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-dns-get-server.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-dns-lookup.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-dns-multi-channel.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-dns-negative-zero.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-dns-perf_hooks.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-dns-resolve-promises.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-dns-resolveany-bad-ancount.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-dns-resolveany-ttl-overflow.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-dns-resolveany.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-dns-resolvens-typeerror.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-dns-resolver-max-timeout.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-dns-resolvesrv-econnrefused.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-dns-resolvesrv.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-dns-setlocaladdress.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-dns-setserver-when-querying.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-dns-setservers-type-check.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-fs-append-file.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-fs-exists.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-fs-stat-date.mjs",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-http-keep-alive-timeout-race-condition.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-module-loading-error.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-net-listen-exclusive-random-ports.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-net-listen-handle-in-cluster-1.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-net-listen-handle-in-cluster-2.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-process-threadCpuUsage-worker-threads.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-ref-unref-return.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-tls-canonical-ip.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-trace-events-console.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-unhandled-exception-with-worker-inuse.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-vfs-fs-accessSync.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-vfs-fs-chmod-callback.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-vfs-fs-chmodSync.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-vfs-fs-copyFileSync.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-vfs-fs-fchmod-callback.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-vfs-fs-linkSync.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-vfs-fs-mkdtempSync.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-vfs-fs-openSync.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-vfs-fs-promises-buffer-encoding.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-vfs-fs-readFile-callback.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-vfs-fs-rename-callback.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-vfs-fs-renameSync.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-vfs-fs-rmSync.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-vfs-fs-statSync.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-vfs-fs-symlink-callback.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-vfs-fs-symlinkSync.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-vfs-fs-truncate-callback.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-vfs-fs-truncateSync.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-vfs-fs-watch-dispatch.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-vfs-lchown-symlink.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-vfs-mount-errors.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-webcrypto-constructors.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-webcrypto-cryptokey-brand-check.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-webcrypto-cryptokey-no-own-symbols.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-webcrypto-random.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-webcrypto-webidl.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-abort-on-uncaught-exception-terminate.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-abort-on-uncaught-exception.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-arraybuffer-zerofill.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-beforeexit-throw-exit.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-cjs-workerdata.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-cleanexit-with-js.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-cleanexit-with-moduleload.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-cleanup-handles.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-console-listeners.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-crypto-sign-transfer-result.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-dns-terminate-during-query.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-dns-terminate.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-error-primitive.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-error-stack-getter-throws.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-esm-exit.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-esmodule.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-exit-from-uncaught-exception.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-fs-stat-watcher.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-invalid-workerdata.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-load-file-with-extension-other-than-js.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-message-channel-sharedarraybuffer.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-message-port-multiple-sharedarraybuffers.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-message-port-terminate-transfer-list.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-mjs-workerdata.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-nested-on-process-exit.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-nested-uncaught.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-nexttick-terminate.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-no-sab.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-on-process-exit.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-onmessage-not-a-function.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-parent-port-ref.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-ref-onexit.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-ref.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-relative-path-double-dot.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-relative-path.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-sharedarraybuffer-from-worker-thread.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-stack-overflow.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-syntax-error-file.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-syntax-error.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-terminate-microtask-loop.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-terminate-nested.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-terminate-null-handler.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-terminate-ref-public-port.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-terminate-source-map.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-terminate-timers.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-terminate-unrefed.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-type-check.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-uncaught-exception-async.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-uncaught-exception.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-unref-from-message-during-exit.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-unsupported-eval-on-url.mjs",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-unsupported-path.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-unsupported-things.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-vm-context-terminate.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-voluntarily-exit-followed-by-addition.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-workerdata-sharedarraybuffer.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker.mjs",
+            "before": "fail",
+            "after": "pass"
+          }
+        ],
+        "lost_passes": [
+          {
+            "fixture": "test-abortsignal-any.mjs",
+            "before": "pass",
+            "after": "fail"
+          },
+          {
+            "fixture": "test-child-process-fork-closed-channel-segfault.js",
+            "before": "pass",
+            "after": "fail"
+          },
+          {
+            "fixture": "test-cluster-advanced-serialization.js",
+            "before": "pass",
+            "after": "fail"
+          },
+          {
+            "fixture": "test-cluster-disconnect-unshared-tcp.js",
+            "before": "pass",
+            "after": "timeout"
+          },
+          {
+            "fixture": "test-cluster-disconnect.js",
+            "before": "pass",
+            "after": "timeout"
+          },
+          {
+            "fixture": "test-cluster-message.js",
+            "before": "pass",
+            "after": "timeout"
+          },
+          {
+            "fixture": "test-cluster-rr-domain-listen.js",
+            "before": "pass",
+            "after": "timeout"
+          },
+          {
+            "fixture": "test-cluster-worker-disconnect.js",
+            "before": "pass",
+            "after": "timeout"
+          },
+          {
+            "fixture": "test-cluster-worker-kill-signal.js",
+            "before": "pass",
+            "after": "timeout"
+          },
+          {
+            "fixture": "test-cluster-worker-kill.js",
+            "before": "pass",
+            "after": "timeout"
+          },
+          {
+            "fixture": "test-cluster-worker-wait-server-close.js",
+            "before": "pass",
+            "after": "timeout"
+          },
+          {
+            "fixture": "test-crypto-domain.js",
+            "before": "pass",
+            "after": "fail"
+          },
+          {
+            "fixture": "test-crypto-domains.js",
+            "before": "pass",
+            "after": "fail"
+          },
+          {
+            "fixture": "test-listen-fd-detached-inherit.js",
+            "before": "pass",
+            "after": "fail"
+          },
+          {
+            "fixture": "test-listen-fd-detached.js",
+            "before": "pass",
+            "after": "fail"
+          },
+          {
+            "fixture": "test-net-server-close-before-ipc-response.js",
+            "before": "pass",
+            "after": "timeout"
+          },
+          {
+            "fixture": "test-performance-many-marks.js",
+            "before": "pass",
+            "after": "timeout"
+          },
+          {
+            "fixture": "test-promise-unhandled-issue-43655.js",
+            "before": "pass",
+            "after": "fail"
+          },
+          {
+            "fixture": "test-shadow-realm-gc-module.js",
+            "before": "pass",
+            "after": "timeout"
+          },
+          {
+            "fixture": "test-stream-filter.js",
+            "before": "pass",
+            "after": "fail"
+          },
+          {
+            "fixture": "test-stream-flatMap.js",
+            "before": "pass",
+            "after": "fail"
+          },
+          {
+            "fixture": "test-stream-forEach.js",
+            "before": "pass",
+            "after": "fail"
+          },
+          {
+            "fixture": "test-stream-map.js",
+            "before": "pass",
+            "after": "fail"
+          },
+          {
+            "fixture": "test-stream-some-find-every.mjs",
+            "before": "pass",
+            "after": "fail"
+          },
+          {
+            "fixture": "test-tls-close-notify.js",
+            "before": "pass",
+            "after": "fail"
+          }
+        ],
+        "all_status_changes": [
+          {
+            "fixture": "test-abort-controller-any-timeout.js",
+            "before": "timeout",
+            "after": "fail"
+          },
+          {
+            "fixture": "test-abortcontroller-internal.js",
+            "before": "timeout",
+            "after": "fail"
+          },
+          {
+            "fixture": "test-abortcontroller.js",
+            "before": "timeout",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-abortsignal-any.mjs",
+            "before": "pass",
+            "after": "fail"
+          },
+          {
+            "fixture": "test-abortsignal-drop-settled-signals.mjs",
+            "before": "timeout",
+            "after": "fail"
+          },
+          {
+            "fixture": "test-async-hooks-worker-asyncfn-terminate-1.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-async-hooks-worker-asyncfn-terminate-2.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-async-hooks-worker-asyncfn-terminate-3.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-async-hooks-worker-asyncfn-terminate-4.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-async-wrap-uncaughtexception.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-c-ares.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-child-process-fork-closed-channel-segfault.js",
+            "before": "pass",
+            "after": "fail"
+          },
+          {
+            "fixture": "test-child-process-fork-dgram.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-child-process-send-returns-boolean.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-child-process-send-type-error.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-cluster-advanced-serialization.js",
+            "before": "pass",
+            "after": "fail"
+          },
+          {
+            "fixture": "test-cluster-basic.js",
+            "before": "fail",
+            "after": "timeout"
+          },
+          {
+            "fixture": "test-cluster-call-and-destroy.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-cluster-child-index-dgram.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-cluster-cwd.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-cluster-dgram-1.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-cluster-dgram-2.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-cluster-dgram-bind-fd.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-cluster-dgram-ipv6only.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-cluster-dgram-reuseport.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-cluster-disconnect-exitedAfterDisconnect-race.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-cluster-disconnect-unshared-tcp.js",
+            "before": "pass",
+            "after": "timeout"
+          },
+          {
+            "fixture": "test-cluster-disconnect-with-no-workers.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-cluster-disconnect.js",
+            "before": "pass",
+            "after": "timeout"
+          },
+          {
+            "fixture": "test-cluster-eaccess.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-cluster-fork-windowsHide.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-cluster-ipc-throw.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-cluster-kill-disconnect.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-cluster-kill-infinite-loop.js",
+            "before": "timeout",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-cluster-listen-pipe-readable-writable.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-cluster-message.js",
+            "before": "pass",
+            "after": "timeout"
+          },
+          {
+            "fixture": "test-cluster-net-listen-backlog.js",
+            "before": "fail",
+            "after": "timeout"
+          },
+          {
+            "fixture": "test-cluster-net-reuseport.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-cluster-net-server-drop-connection.js",
+            "before": "fail",
+            "after": "timeout"
+          },
+          {
+            "fixture": "test-cluster-primary-error.js",
+            "before": "fail",
+            "after": "timeout"
+          },
+          {
+            "fixture": "test-cluster-primary-kill.js",
+            "before": "fail",
+            "after": "timeout"
+          },
+          {
+            "fixture": "test-cluster-process-disconnect.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-cluster-rr-domain-listen.js",
+            "before": "pass",
+            "after": "timeout"
+          },
+          {
+            "fixture": "test-cluster-rr-handle-close.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-cluster-rr-handle-keep-loop-alive.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-cluster-rr-handle-ref-unref.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-cluster-rr-ref.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-cluster-server-restart-none.js",
+            "before": "fail",
+            "after": "timeout"
+          },
+          {
+            "fixture": "test-cluster-server-restart-rr.js",
+            "before": "fail",
+            "after": "timeout"
+          },
+          {
+            "fixture": "test-cluster-setup-primary-argv.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-cluster-setup-primary-cumulative.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-cluster-setup-primary-emit.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-cluster-setup-primary-multiple.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-cluster-uncaught-exception.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-cluster-worker-constructor.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-cluster-worker-death.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-cluster-worker-destroy.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-cluster-worker-disconnect-on-error.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-cluster-worker-disconnect.js",
+            "before": "pass",
+            "after": "timeout"
+          },
+          {
+            "fixture": "test-cluster-worker-events.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-cluster-worker-forced-exit.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-cluster-worker-handle-close.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-cluster-worker-init.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-cluster-worker-isconnected.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-cluster-worker-kill-signal.js",
+            "before": "pass",
+            "after": "timeout"
+          },
+          {
+            "fixture": "test-cluster-worker-kill.js",
+            "before": "pass",
+            "after": "timeout"
+          },
+          {
+            "fixture": "test-cluster-worker-wait-server-close.js",
+            "before": "pass",
+            "after": "timeout"
+          },
+          {
+            "fixture": "test-crypto-dep0204.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-crypto-domain.js",
+            "before": "pass",
+            "after": "fail"
+          },
+          {
+            "fixture": "test-crypto-domains.js",
+            "before": "pass",
+            "after": "fail"
+          },
+          {
+            "fixture": "test-crypto-eddsa-variants.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-crypto-keygen-async-dsa-key-object.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-crypto-keygen-async-dsa.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-crypto-keygen-async-elliptic-curve-jwk-ec.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-crypto-keygen-async-elliptic-curve-jwk-rsa.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-crypto-keygen-async-encrypted-private-key.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-crypto-keygen-async-explicit-elliptic-curve-encrypted-p256.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-crypto-keygen-async-explicit-elliptic-curve-encrypted.js.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-crypto-keygen-async-explicit-elliptic-curve.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-crypto-keygen-async-named-elliptic-curve-encrypted-p256.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-crypto-keygen-async-named-elliptic-curve-encrypted.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-crypto-keygen-async-named-elliptic-curve.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-crypto-keygen-bit-length.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-crypto-keygen-dh-classic.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-crypto-keygen-empty-passphrase-no-prompt.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-crypto-keygen-no-rsassa-pss-params.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-crypto-keygen-promisify.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-crypto-keygen-rfc8017-9-1.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-crypto-keygen-rfc8017-a-2-3.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-crypto-keyobject-brand-check.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-crypto-keyobject-no-own-symbols.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-crypto-pqc-keygen-ml-dsa.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-crypto-pqc-keygen-ml-kem.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-crypto-pqc-keygen-slh-dsa.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-crypto-prime.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-crypto-private-decrypt-gh32240.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-crypto-publicDecrypt-fails-first-time.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-crypto-random.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-crypto-rsa-oaep-mgf1.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-crypto-rsa-pss-default-salt-length.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-dgram-bind-fd-error.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-dgram-bind-fd.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-dgram-cluster-bind-error.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-dgram-cluster-close-during-bind.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-dgram-cluster-close-in-listening.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-dgram-create-socket-handle-fd.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-dgram-create-socket-handle.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-dgram-custom-lookup.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-dgram-default-lookup-ip.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-dgram-exclusive-implicit-bind.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-dgram-multicast-set-interface.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-dgram-send-callback-recursive.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-dgram-send-cb-quelches-error.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-dgram-udp6-link-local-address.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-dgram-unref-in-cluster.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-diagnostics-channel-udp.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-dns-cancel-reverse-lookup.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-dns-channel-cancel-promise.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-dns-channel-cancel.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-dns-channel-timeout.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-dns-get-server.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-dns-lookup.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-dns-multi-channel.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-dns-negative-zero.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-dns-perf_hooks.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-dns-resolve-promises.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-dns-resolveany-bad-ancount.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-dns-resolveany-ttl-overflow.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-dns-resolveany.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-dns-resolvens-typeerror.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-dns-resolver-max-timeout.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-dns-resolvesrv-econnrefused.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-dns-resolvesrv.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-dns-setlocaladdress.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-dns-setserver-when-querying.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-dns-setservers-type-check.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-fs-append-file.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-fs-exists.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-fs-stat-date.mjs",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-http-keep-alive-timeout-race-condition.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-listen-fd-detached-inherit.js",
+            "before": "pass",
+            "after": "fail"
+          },
+          {
+            "fixture": "test-listen-fd-detached.js",
+            "before": "pass",
+            "after": "fail"
+          },
+          {
+            "fixture": "test-module-loading-error.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-net-listen-exclusive-random-ports.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-net-listen-handle-in-cluster-1.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-net-listen-handle-in-cluster-2.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-net-server-close-before-ipc-response.js",
+            "before": "pass",
+            "after": "timeout"
+          },
+          {
+            "fixture": "test-performance-many-marks.js",
+            "before": "pass",
+            "after": "timeout"
+          },
+          {
+            "fixture": "test-process-dlopen-error-message-crash.js",
+            "before": "fail",
+            "after": "skip"
+          },
+          {
+            "fixture": "test-process-threadCpuUsage-worker-threads.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-promise-unhandled-issue-43655.js",
+            "before": "pass",
+            "after": "fail"
+          },
+          {
+            "fixture": "test-ref-unref-return.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-runner-flag-propagation.js",
+            "before": "fail",
+            "after": "timeout"
+          },
+          {
+            "fixture": "test-runner-global-setup-teardown.mjs",
+            "before": "fail",
+            "after": "timeout"
+          },
+          {
+            "fixture": "test-runner-reporters.js",
+            "before": "fail",
+            "after": "timeout"
+          },
+          {
+            "fixture": "test-runner-tag-filter-cli.mjs",
+            "before": "fail",
+            "after": "timeout"
+          },
+          {
+            "fixture": "test-shadow-realm-gc-module.js",
+            "before": "pass",
+            "after": "timeout"
+          },
+          {
+            "fixture": "test-stream-filter.js",
+            "before": "pass",
+            "after": "fail"
+          },
+          {
+            "fixture": "test-stream-flatMap.js",
+            "before": "pass",
+            "after": "fail"
+          },
+          {
+            "fixture": "test-stream-forEach.js",
+            "before": "pass",
+            "after": "fail"
+          },
+          {
+            "fixture": "test-stream-map.js",
+            "before": "pass",
+            "after": "fail"
+          },
+          {
+            "fixture": "test-stream-some-find-every.mjs",
+            "before": "pass",
+            "after": "fail"
+          },
+          {
+            "fixture": "test-tls-canonical-ip.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-tls-close-notify.js",
+            "before": "pass",
+            "after": "fail"
+          },
+          {
+            "fixture": "test-tls-tlswrap-segfault.js",
+            "before": "fail",
+            "after": "timeout"
+          },
+          {
+            "fixture": "test-trace-events-console.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-unhandled-exception-with-worker-inuse.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-vfs-fs-accessSync.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-vfs-fs-chmod-callback.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-vfs-fs-chmodSync.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-vfs-fs-copyFileSync.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-vfs-fs-fchmod-callback.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-vfs-fs-linkSync.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-vfs-fs-mkdtempSync.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-vfs-fs-openSync.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-vfs-fs-promises-buffer-encoding.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-vfs-fs-readFile-callback.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-vfs-fs-rename-callback.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-vfs-fs-renameSync.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-vfs-fs-rmSync.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-vfs-fs-statSync.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-vfs-fs-symlink-callback.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-vfs-fs-symlinkSync.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-vfs-fs-truncate-callback.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-vfs-fs-truncateSync.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-vfs-fs-watch-dispatch.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-vfs-lchown-symlink.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-vfs-mount-errors.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-web-locks-query.js",
+            "before": "fail",
+            "after": "timeout"
+          },
+          {
+            "fixture": "test-web-locks.js",
+            "before": "fail",
+            "after": "timeout"
+          },
+          {
+            "fixture": "test-webcrypto-constructors.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-webcrypto-cryptokey-brand-check.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-webcrypto-cryptokey-no-own-symbols.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-webcrypto-random.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-webcrypto-webidl.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-abort-on-uncaught-exception-terminate.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-abort-on-uncaught-exception.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-arraybuffer-zerofill.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-beforeexit-throw-exit.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-cjs-workerdata.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-cleanexit-with-js.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-cleanexit-with-moduleload.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-cleanup-handles.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-console-listeners.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-crypto-sign-transfer-result.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-cwd-race-condition.js",
+            "before": "fail",
+            "after": "timeout"
+          },
+          {
+            "fixture": "test-worker-dns-terminate-during-query.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-dns-terminate.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-error-primitive.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-error-stack-getter-throws.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-esm-exit.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-esmodule.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-exit-from-uncaught-exception.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-fs-stat-watcher.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-init-failure.js",
+            "before": "fail",
+            "after": "timeout"
+          },
+          {
+            "fixture": "test-worker-invalid-workerdata.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-load-file-with-extension-other-than-js.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-message-channel-sharedarraybuffer.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-message-port-multiple-sharedarraybuffers.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-message-port-terminate-transfer-list.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-mjs-workerdata.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-nested-on-process-exit.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-nested-uncaught.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-nexttick-terminate.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-no-sab.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-on-process-exit.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-onmessage-not-a-function.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-parent-port-ref.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-ref-onexit.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-ref.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-relative-path-double-dot.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-relative-path.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-sharedarraybuffer-from-worker-thread.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-stack-overflow.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-syntax-error-file.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-syntax-error.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-terminate-microtask-loop.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-terminate-nested.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-terminate-null-handler.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-terminate-ref-public-port.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-terminate-source-map.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-terminate-timers.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-terminate-unrefed.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-type-check.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-uncaught-exception-async.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-uncaught-exception.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-unref-from-message-during-exit.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-unsupported-eval-on-url.mjs",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-unsupported-path.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-unsupported-things.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-vm-context-terminate.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-voluntarily-exit-followed-by-addition.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker-workerdata-sharedarraybuffer.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker.js",
+            "before": "fail",
+            "after": "pass"
+          },
+          {
+            "fixture": "test-worker.mjs",
+            "before": "fail",
+            "after": "pass"
+          }
+        ],
+        "memory_event_deltas": {
+          "low": 0,
+          "high": 0,
+          "max": 7874,
+          "oom": 0,
+          "oom_kill": 0,
+          "oom_group_kill": 0
+        },
+        "receipt_exit": 1,
+        "elapsed_seconds": 3170.304920724011
+      },
+      "raw_results_path": "/workspace/quench/work/full-api472-workers-ipc-keys-pinned/results.json",
+      "raw_results_sha256": "b5775e07fca5b5f0279043b3f7229849a3d273812aaea9916290af49689093a0",
+      "raw_log_path": "/workspace/quench/work/full-api472-workers-ipc-keys-pinned/runner.log",
+      "raw_log_sha256": "a175d6e13a542e49f48d5765c8c5672b6bc8447e908774fc18922fcc573fc3b8"
+    }
+  },
+  "limits": [
+    "Full runs shared the four-CPU host with serialized compiler work; timing outcomes require quiet controls before assigning causes.",
+    "Original pass/fail/timeout/skip statuses remain unchanged; no loss reclassification.",
+    "Four detached children from already recorded failures were terminated after >20 minutes; exact process cleanup evidence retained.",
+    "Current corrected candidate d2f999538 is separate from these fb8 full results."
+  ]
+}

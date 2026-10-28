@@ -1,0 +1,190 @@
+{
+  "tasks": [
+    "19",
+    "23",
+    "37",
+    "40",
+    "48",
+    "86"
+  ],
+  "source_head": "7e60169df033dd247f34199e084e3e8080a92a29",
+  "source_state": "dirty worktree",
+  "source_hashes": {
+    "crates/quench-runtime-next/src/wasm.rs": "47eefea5c7360deb78088023c34dd207cad6d31b0f114ea3d31649db3921304e",
+    "crates/quench-runtime-next/src/wasm/scalar.rs": "cdd7ee9f2a0ede600ac4fa19437adde41f17b70104f0b92e81f98d2567acb6e0",
+    "crates/quench-runtime-next/src/wasm/constant.rs": "8a1fedf91a4c6da5a8c9fa24bdc9a19110ffec65db1414fa461620abcf1d8449",
+    "crates/quench-runtime-next/src/wasm/memory.rs": "d689fe221da4eea54fe674e67acfbed95ceccf148508cbcb77c8987a8f6b57c2",
+    "crates/quench-runtime-next/src/wasm/simd.rs": "a994d3dc1bb32e69cbec76c494d3e46a5b923044683619e39e84a409bfceea44",
+    "crates/quench-runtime-next/src/host.rs": "bd817c109fd16d1555f831fa583e700e5e3969392613432f73b177379c050e74",
+    "crates/quench-runtime-next/src/heap.rs": "cebc450173ecde04dfcab7500afc89719efd65b644f3aba43a46823f93a166b3",
+    "crates/quench-runtime-next/src/heap/cell.rs": "a2aa2bc4db96a11201a006d3be8f97f98489baf6bda09d2822b48441e567da14",
+    "crates/quench-runtime-next/src/heap/memory_profile.rs": "c2e0d8e568628180cb0c4f29c55297d28e310f8739f97be6ffa39b1fcb3b15ee",
+    "crates/quench-runtime-next/src/compile.rs": "6c264613ec8e117677aebb92eac064f0aae25866dfe11309718ff4a9dc8af508",
+    "crates/quench-runtime-next/src/vm.rs": "3a6ddf5524788a16360947c6e950be5d16b47b738a3ce41a7cde1d49c4c1db37",
+    "crates/quench-runtime-next/src/vm/wasm.rs": "85fd9d8dd1a54cc72a0199ff822900ac40f5278c016848cdaf45a54014992b55",
+    "crates/quench-runtime-next/src/vm/wasm_host.rs": "5490057b64de8095fd5ec35f9625ca16890ed43e283715652789a787e5978826",
+    "crates/quench-runtime-next/src/vm/json.rs": "7725c4b74494e4bbe662323dd29e23063de5f860953fc11888b97e5eb0c9fa5c",
+    "crates/quench-runtime-next/src/vm/promise.rs": "fc7381f48684c8c53db20b902768b78135f680259328864bf5270208b4ff3303",
+    "crates/quench-runtime-next/src/vm/dispatch.rs": "2b864ee849fb308950a55024cd4ddd36cdbf3dc94eaf4bb053bd727275c3f8c6",
+    "crates/quench-runtime-next/src/bytecode.rs": "6883256769bdb0c1f31ab039ffc127f57c1c15d7949c6ab7c43e35ab70a8a928",
+    "crates/quench-runtime-next/src/bytecode/binary.rs": "bc38a02560b27be529d20d31bc9230a0c9df494e84ba1da765b9b8fe81508d29",
+    "crates/quench-runtime-next/src/bytecode/validate.rs": "bff371e18a443b16c4771dfcc498afb4793d48321dd19bec042da6deccac4031",
+    "crates/quench-runtime-next/src/bytecode/disassemble.rs": "481cee76d5344cd1c4cc014a6dabce6481961f6077365e421b68cc6ecd21a972",
+    "crates/quench-wasm/src/wast_exec.rs": "0f14d91453eaa1820a25a76fbc7e1c24a262c09e8436888e13fa3af6de5f9b11"
+  },
+  "suite_head": "67c8b9dc32c47d61c05a1681df349d01c85fa8ff",
+  "suite_clean": true,
+  "host": "macOS-26.5-arm64-arm-64bit",
+  "rustc": "rustc 1.99.0 (b940084d7 2026-09-28) (Homebrew)",
+  "profile": "debug",
+  "residual_format": 54,
+  "obligation": "Carry exact V128 through the one shared VM and execute full-width vector load/store, logical/bitselect, shuffle/swizzle, splat and scalar lane extraction/replacement without a second vector executor or reference namespace.",
+  "representation": "WasmType/WasmValue and ScalarBits own typed V128 transport. Constant::WasmV128 and Cell::WasmV128 store 16 little-endian bytes, avoiding u128 alignment in the shared heap/constant enums. Existing roots/cells/calls/globals/multi-result bundles and typed Host callbacks retain payloads. Constant pooling/keys, serialization, GC/metadata accounting and suite argument/result projections extend their existing authorities; vector NaN/lane matching reuses the shared scorer. Zero locals do not reuse incompatible Bits64 constants. A Rust macro owns each admitted SIMD operator, operand types, selector/lane domain and pure operation; lowering, runtime decoding, validation and disassembly derive from those facts. Bitselect composes admitted logical operations. Shuffles own a checked byte-index constant; malformed selectors/index arrays fail admission. Full-width V128 memory accesses reuse existing scalar load/store descriptors and checked Memory32/64 address/range operations. Residual format54 admits the new raw constant tag and shared SIMD opcodes; old formats are rejected.",
+  "scope": "Previous 151-file resource/host/lifecycle ratchet plus every top-level pinned Wast source containing v128: 209 files. Exact matched input hashes/directive IDs and completed 60-second worker deadlines. Covers all admitted vector families and earlier Memory32/64, Table32/64, globals, imports and calls. No full suite, Test262, Node compat or benchmark run; this qualifies a SIMD port milestone, not complete Stage A or SIMD.",
+  "inventory": {
+    "path": "target/iteration/task37-wasm-v128-files.json",
+    "sha256": "02f701595425dc034e5a79f6a285e4daff3377a8c887e6c5279f035f1779317a"
+  },
+  "qualification": {
+    "files": 209,
+    "total": 61479,
+    "before_passed": 36068,
+    "passed": 36873,
+    "failed": 24606,
+    "gains": 805,
+    "regressions": 0,
+    "gains_by_file": {
+      "crates/quench-wasm-test/testsuite/simd_address.wast": 45,
+      "crates/quench-wasm-test/testsuite/simd_align.wast": 20,
+      "crates/quench-wasm-test/testsuite/simd_bitwise.wast": 140,
+      "crates/quench-wasm-test/testsuite/simd_const.wast": 186,
+      "crates/quench-wasm-test/testsuite/simd_lane.wast": 257,
+      "crates/quench-wasm-test/testsuite/simd_linking.wast": 3,
+      "crates/quench-wasm-test/testsuite/simd_load.wast": 12,
+      "crates/quench-wasm-test/testsuite/simd_select.wast": 6,
+      "crates/quench-wasm-test/testsuite/simd_splat.wast": 117,
+      "crates/quench-wasm-test/testsuite/simd_store.wast": 19
+    },
+    "exact_directive_ids": true,
+    "identical_input_hashes": true,
+    "complete_workers": true
+  },
+  "controls": {
+    "files": 17,
+    "total": 811,
+    "passed": 811,
+    "failed": 0,
+    "new_vector_directives": 24,
+    "same_runner": true,
+    "obligations": "Exact raw/tag-collision bits and function/global aliases, mixed-width zero locals, logical/bitselect/shuffle/swizzle, signed integer/NaN/signed-zero lane projections, Memory64 unaligned/vector boundary writes and trapping stores preserving prior bytes, large address traps, typed import mismatches."
+  },
+  "checks": {
+    "wasm_internal": 35,
+    "bytecode_internal": 19,
+    "heap_related": 21,
+    "frontend": 39,
+    "profile_feature_all_target_check": "passed",
+    "internal_obligations": "Extended serialized multi-result root/GC/raw-bit ownership unit with V128 constants, residual roundtrip, guest calls and vector bundle payloads. Extended typed-host lease/native-guard unit with V128 input/results alongside reference leases and malformed callback recovery. Extended existing bytecode-domain unit with invalid selectors/shuffle arrays and valid controls, so rejection is not merely fall-through invalidity. No new ordinary conformance unit."
+  },
+  "oracle": {
+    "path": "target/iteration/task37-wasm-v128-oracle.json",
+    "source": "target/iteration/task37-wasm-v128-oracle.cjs",
+    "sha256": "71ce0d33500a157193b5322931e55f97f946a63a50eb4184c41a47c813795fe6",
+    "source_sha256": "a680d1cbfffb0247b19435038c52ca289dc1269a28e1231a7e059d046bd9ca48",
+    "result": {
+      "node": "v26.10.0",
+      "flags": [
+        "--no-sparkplug",
+        "--no-maglev",
+        "--no-turbofan",
+        "--wasm-jitless"
+      ],
+      "modules": 2,
+      "checks": 12,
+      "qualification": "Exact shared-Wast modules: raw vector globals/function imports, logical/bitselect/shuffle/swizzle/lane rules, NaN/signed-zero payload projections, Memory64 unaligned/boundary vector accesses and write-before-trap state. JavaScript cannot directly pass/return V128; Wast controls and internal typed-callback/root/bundle checks own that qualification."
+    },
+    "qualification_limit": "Two exact shared-Wast modules agree on 12 scalar observations with local Node JITs disabled, including Memory64 vector effects/traps, raw NaN/signed-zero projections and V128 imports. JS cannot directly pass or return V128; Wast/internal controls qualify that typed boundary. SIMD arithmetic, extended vector loads and lane-memory operations remain unsupported and unqualified.",
+    "module_inputs": {
+      "target/iteration/task37-wasm-v128-oracle-0.wasm": "0fabc40c6e73efb71964cc9b7b5b9b105fcb389fa045fe5bf940dace9173b9ab",
+      "target/iteration/task37-wasm-v128-oracle-0.wat": "c48b2518163293336d39053358c26c8811c3abd46bb673e046cc64378537f745",
+      "target/iteration/task37-wasm-v128-oracle-1.wasm": "f101cbf4dd4cf3625cef436209354c0cfe19af870984fcc6bdd2f1c6d3b4c382",
+      "target/iteration/task37-wasm-v128-oracle-1.wat": "d41d28af2edce1a27e23e1a708acc1e9b677e268933d9a0a19c6d4159264852e"
+    }
+  },
+  "specification": {
+    "vector_execution": "https://webassembly.github.io/spec/core/exec/instructions.html",
+    "vector_numerics": "https://webassembly.github.io/spec/core/exec/numerics.html"
+  },
+  "reports": {
+    "before": {
+      "path": "target/iteration/task37-wasm-v128-before.json",
+      "sha256": "9ca6e86a315c6152267166080c333e609c00a88def29eba30ebd90d1e322f606",
+      "binary_sha256": "b783e5425fd08eff8f3f2479997b5eb22bb5b65df6a1141eda4eeb9f44d4d610",
+      "command_source": "provenance.command in this report"
+    },
+    "after": {
+      "path": "target/iteration/task37-wasm-v128-after.json",
+      "sha256": "00534c7c0a1d57704e4842d04e74633c5c5176934174cd4b836c9459aa6c7529",
+      "binary_sha256": "1b872c10d8fc1c07034ad34eeec485162320c35aebb62c270b8e4c78ac5bc43b",
+      "command_source": "provenance.command in this report"
+    },
+    "controls": {
+      "path": "target/iteration/task37-wasm-v128-controls.json",
+      "sha256": "5eebe0b510ff5ff95d44400a80f19d5c6304a71b2f2f6c13649d06b2d24bf400",
+      "binary_sha256": "1b872c10d8fc1c07034ad34eeec485162320c35aebb62c270b8e4c78ac5bc43b",
+      "command_source": "provenance.command in this report"
+    }
+  },
+  "frozen_runner": {
+    "path": "target/iteration/task37-wasm-v128-runner",
+    "sha256": "1b872c10d8fc1c07034ad34eeec485162320c35aebb62c270b8e4c78ac5bc43b"
+  },
+  "logs": {
+    "runtime": {
+      "path": "target/iteration/task37-wasm-v128-runtime.log",
+      "sha256": "2fa1639755a23adb519aebfa6b5fe5d19feb9a5c7e964d4f303bbcdf3e0e19a3"
+    },
+    "frontend": {
+      "path": "target/iteration/task37-wasm-v128-frontend.log",
+      "sha256": "cdee499ce0679b137506cf450b39ac12adbd36c82623821ee62b5ff70d4bcfc9"
+    },
+    "bytecode": {
+      "path": "target/iteration/task37-wasm-v128-bytecode.log",
+      "sha256": "66bb15a5dfbefdd9a255498b76ed4b1cb78cb456e82d081faab3de17f873c832"
+    },
+    "heap": {
+      "path": "target/iteration/task37-wasm-v128-heap.log",
+      "sha256": "4adeb6c237e50c8c298bba17a2f38209225b6bc5d17f9aecf1566e5c96a7f823"
+    },
+    "build": {
+      "path": "target/iteration/task37-wasm-v128-build.log",
+      "sha256": "7d5b881f5b64a4d512ed6df7b437abbf30f255d8dab4b633311453c6805db1f5"
+    },
+    "check": {
+      "path": "target/iteration/task37-wasm-v128-check.log",
+      "sha256": "8c1d0abb0674326391b76acb2c92d23ae3ffc4401447738d2430bd0fa53603e4"
+    },
+    "compare": {
+      "path": "target/iteration/task37-wasm-v128-compare.log",
+      "sha256": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+    },
+    "after": {
+      "path": "target/iteration/task37-wasm-v128-after.log",
+      "sha256": "680ee2380bedab2fc7946cb0ad83cdc61668906c7f117f1d55e0337e551ddaf1"
+    },
+    "before": {
+      "path": "target/iteration/task37-wasm-v128-before.log",
+      "sha256": "64d974fc1711156bab180d8afb9850c56e3da9c5efab5bccda7f02ef50a74d6a"
+    },
+    "controls": {
+      "path": "target/iteration/task37-wasm-v128-controls.log",
+      "sha256": "9e9fca5aea20b97f92a0402e7f8e45bd7c196e6cb57a9358b1dee1ccd4683260"
+    },
+    "oracle": {
+      "path": "target/iteration/task37-wasm-v128-oracle.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  },
+  "remaining": "SIMD integer/float arithmetic, comparison, conversion and relaxed forms; extended/splat/zero/lane vector memory forms; concrete typed/GC/non-null references, shared resources/threads, remaining proposals, JS/Wasm adapters and embedding reentry. Three-suite qualification, implemented Node inventory/migration, production cutover and cleanup remain open. Stage A stays open; Stage B has not started.",
+  "profile_limit": "Feature builds pass; profile execution attribution remains an independent task68 gap. No profile execution, code-generation speed or RSS claim."
+}

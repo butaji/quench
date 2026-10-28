@@ -1,0 +1,22 @@
+Merge made by the 'ort' strategy.
+ .../test-fs-promises-glob-lazy-policy.js           | 22 +++++++++++++
+ .../node-tests/test-native-caller-location.js      | 25 ++++++++++++++
+ .../node-tests/test-native-protocol-constants.js   | 23 +++++++++++++
+ crates/quench-node-test/tests/child_entry.rs       | 15 +++++++++
+ crates/quench-node/build.rs                        | 38 ++++++++++++++++++++++
+ crates/quench-node/src/host/shared_vm.rs           |  2 ++
+ crates/quench-node/src/host/shared_vm/commonjs.rs  |  4 ++-
+ crates/quench-node/src/modules/fs_shared_vm.rs     | 14 +++++++-
+ crates/quench-node/src/modules/mod.rs              |  1 +
+ .../src/modules/node_errors_shared_vm.rs           |  8 +++++
+ .../src/modules/node_protocol_constants.rs         |  2 ++
+ crates/quench-node/src/modules/trace_shared_vm.rs  | 12 +++++++
+ crates/quench-node/src/modules/util_shared_vm.rs   | 19 +++++++++++
+ crates/quench-runtime/src/api_native.rs            |  2 ++
+ crates/quench-runtime/src/vm/embedding.rs          |  1 +
+ docs/node-host-contracts.md                        | 17 ++++++++++
+ 16 files changed, 203 insertions(+), 2 deletions(-)
+ create mode 100644 crates/quench-node-test/node-tests/test-fs-promises-glob-lazy-policy.js
+ create mode 100644 crates/quench-node-test/node-tests/test-native-caller-location.js
+ create mode 100644 crates/quench-node-test/node-tests/test-native-protocol-constants.js
+ create mode 100644 crates/quench-node/src/modules/node_protocol_constants.rs

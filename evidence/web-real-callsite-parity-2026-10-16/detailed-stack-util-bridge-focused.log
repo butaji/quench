@@ -1,0 +1,6 @@
+
+running 1 test
+test util_call_sites_capture_actual_metadata_without_error_hooks_and_use_node_validation ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 355 filtered out; finished in 0.38s
+

@@ -1,0 +1,91 @@
+{
+  "schema": 1,
+  "task": "27",
+  "kind": "canonical-shared-node-entrypoint",
+  "recorded_at": "2026-10-07",
+  "qualification": "partial-cutover-verified",
+  "source": {
+    "revision": "e1e498f962d1ffb61ed9afec164a1ceb068dcd54",
+    "dirty": true,
+    "platform": "macOS arm64",
+    "rustc": "rustc 1.99.0 (b940084d7 2026-09-28) (Homebrew)",
+    "node": {
+      "version": "v26.10.0",
+      "executable": "/opt/homebrew/bin/node",
+      "tests_node_submodule": "55e4ca33f3a6dfe364bd9558b726576a6d1a2fba"
+    },
+    "source_sha256": {
+      "crates/quench-node/Cargo.toml": "f083d71b4817adb89a44a4311c56a8b816527f0c77ac904a9c59bb030a6121d9",
+      "crates/quench-node/src/bin/quench-node.rs": "ff2296e93c5b91e77a10e605742ec95f2e5a361c22895c643ba2f013a56e42dc",
+      "crates/quench-node/src/shared_run.rs": "9696404e1c94dea08290318b0fe68d45b03c0bde38611e153522010d07c7620a",
+      "crates/quench-node-test/node-tests/parallel.txt": "0209917422a2f0f3fa241d941ec4bc88c9917d5322b69014ab1a662a52e9dfca",
+      "tests/frameworks/README.md": "d6deb2e895314af08a3e037a038cc4de36be43a77e33f3600f21f0d211ed7944",
+      "tests/frameworks/driver.cjs": "e8dd245f9bbfcdcd3a430ff7ed663c3310fdf32fae23cfc5c24d24cbeda96bfb",
+      "tests/frameworks/package-lock.json": "fb752f9a87781cc8132c88ced58a8c17ebaacc1789d244b8b7c4a6c9888d5759",
+      "tests/frameworks/scenarios/express.cjs": "85eebbbc5c9cfaa01f2f16b6c7e181a4c4bc2e308bd1bb179f49c5d9700f8158",
+      "tests/frameworks/scenarios/koa.cjs": "962e4c326df72b30eed4306494e2218475456c7c816220a6e46a898b040185f9",
+      "tests/frameworks/scenarios/fastify.cjs": "1ff4fc87e2a4c792761c286bc0f255d0ab9be27e810dbf98938a1ac717d1ba6a"
+    }
+  },
+  "canonical_binary": {
+    "cargo_target": "quench-node",
+    "source": "crates/quench-node/src/bin/quench-node.rs",
+    "cargo_metadata_has_only_node_binary": true,
+    "build_command": "cargo build --profile iteration -p quench-node --bin quench-node",
+    "build_exit_status": 0,
+    "binary": "target/iteration/quench-node",
+    "binary_sha256": "7cc6606dfa1504e508872f4b5cb120570b23ebf030cb853ed38d97855e10adcf",
+    "smoke": [
+      {
+        "command": "target/iteration/quench-node --version",
+        "exit_status": 0,
+        "stdout": "v22.0.0\n"
+      },
+      {
+        "command": "target/iteration/quench-node -e 'console.log(\"canonical-shared\")'",
+        "exit_status": 0,
+        "stdout": "canonical-shared\n"
+      },
+      {
+        "command": "target/iteration/quench-node -e",
+        "exit_status": 0,
+        "stdout": ""
+      }
+    ]
+  },
+  "framework_core": {
+    "command": "cargo run --profile iteration -p quench-node-test --bin run-parallel-next -- --profile framework-core",
+    "runner_binary": "target/iteration/run-parallel-next",
+    "runner_binary_sha256": "25e64e2ca109e3871cd56cca0d475a2f0bf1b7b979de52dae14e8e7b54f99dfe",
+    "manifest_sha256": "0209917422a2f0f3fa241d941ec4bc88c9917d5322b69014ab1a662a52e9dfca",
+    "selected": 43,
+    "passed": 43,
+    "failed": 0,
+    "skipped": 0,
+    "timeouts": 0,
+    "crashes": 0,
+    "unclassified": 0,
+    "captured_log": "target/iteration/task27-canonical-node-2026-10-07/framework-core.log",
+    "captured_log_sha256": "70c3aa8f551460a42061bf68d581c2a718ab8ae0b295d9df18a5c6719481f4d2"
+  },
+  "framework_packages": {
+    "command_template": "node driver.cjs scenarios/<framework>.cjs versus ../../target/iteration/quench-node driver.cjs scenarios/<framework>.cjs",
+    "raw_comparison": "target/iteration/task27-canonical-node-2026-10-07/framework-scenarios.json",
+    "raw_comparison_sha256": "60b4b3e1c048e8c36a11e172bc9581595b946eaf9fde5390da42b6431e938553",
+    "all_exit_stdout_stderr_byte_match": true,
+    "scenarios": ["express", "koa", "fastify"],
+    "per_scenario": {
+      "exit_status": 0,
+      "stdout": "statuses 200,200,200,200,404\n",
+      "stderr": ""
+    }
+  },
+  "remaining_cutover": {
+    "complete": false,
+    "runtime_packages_in_quench_node": ["quench-runtime", "quench-runtime-next"],
+    "legacy_runtime_consumer_crates": ["quench-node", "quench-node-test", "quench-test262"],
+    "canonical_node_suite_runners_still_legacy": true,
+    "node_host_state_has_legacy_and_shared_representations": true,
+    "next": "Port or remove dual NodeHost state and promote the shared Node and Test262 suite runners before removing the legacy runtime package."
+  }
+}

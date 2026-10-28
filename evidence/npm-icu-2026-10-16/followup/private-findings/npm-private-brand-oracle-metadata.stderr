@@ -1,0 +1,4 @@
+
+thread 'main' (522315) panicked at /workspace/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/oxc_index-5.0.0/src/indexing.rs:38:10:
+index out of bounds: the len is 0 but the index is 61
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace

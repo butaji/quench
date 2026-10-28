@@ -1,0 +1,57 @@
+{
+  "schema": 1,
+  "kind": "task61-regexp-engine-feature-selection",
+  "decision": "retain perf-literal, perf-onepass, and perf-backtrack without perf-dfa",
+  "source": {
+    "revision": "4198902f6914db063e378b6ce22fd823432c2562",
+    "dirty_at_measurement": true,
+    "cargo_manifest_sha256": "a97a9963c9bb3b3af98e11bb4987941b2024b50889914b14307c7b4e64dea45e"
+  },
+  "measurement": {
+    "host": {
+      "os": "macOS 26.5",
+      "build": "25F71",
+      "cpu": "Apple M4",
+      "architecture": "arm64",
+      "logical_cpus": 10,
+      "memory_bytes": 17179869184
+    },
+    "fixture": "/tmp/quench-v8v7-regexp-materialized-2026-10-08.js",
+    "fixture_sha256": "2ec05d15bfdece58aea94cd92b47dcd60ea605787c81f6e50db0c2830f3cbb16",
+    "baseline_binary_sha256": "89a69014c2ddc7fde4f6ff934d666d5376ba57a0aad679d8a58d1ff80185eeaf",
+    "candidate_binary_sha256": "55c5aa95570726a579120baab76704bf3f385c2479459956674cf0d984e3b3c5",
+    "matched_pairs": 11,
+    "invocations": 22,
+    "all_exit_statuses_zero": true,
+    "stdout_equal_within_every_pair": true,
+    "score_delta_percent_mean": 57.58169224043393,
+    "score_delta_percent_median": 57.68115942028984,
+    "score_delta_percent_mean_paired_bootstrap_95_ci": [
+      56.96500855962094,
+      58.13382869128982
+    ],
+    "retired_instructions_delta_percent_median": -44.945727124946735,
+    "elapsed_seconds_delta_percent_median": -36.43617021276595,
+    "maximum_rss_delta_bytes_median": 7798784,
+    "maximum_rss_delta_percent_median": 12.405525149856667,
+    "raw_measurement_summary": "target/production/task61-regex-perf-backtrack-quench-only-11pair-2026-10-08/summary.json"
+  },
+  "test262": {
+    "stages": {
+      "64": 1879,
+      "65": 17,
+      "66": 383,
+      "67": 11,
+      "68": 64,
+      "69": 104,
+      "70": 1223
+    },
+    "passed": 3681,
+    "failed": 0,
+    "submodule_revision": "f2d1435644797268dca1f7988cad5a4e89ccd8d2",
+    "report_sha256": "2f683ee50b224017d321b38c456f23f3539579f3e9fa5a0210b9e9b5cc4b5944",
+    "runner_sha256": "8341340f5b3398c9cff1274ee3a4828d080638f42d6351725654bdd9b1bd5c32",
+    "report": "target/iteration/test262-stages-64-70-regex-perf-2026-10-08.json"
+  },
+  "scope_note": "Focused M4 RegExp evidence only; the measured RSS increase is material and Linux plus the full Task 61 gate remain open."
+}

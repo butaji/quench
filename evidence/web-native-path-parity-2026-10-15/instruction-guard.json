@@ -1,0 +1,90 @@
+{
+  "candidate": "cd4327788",
+  "baseline": "03ea582d2f4f8f2c2788c08d7d929c24861cb66c",
+  "baseline_reuse": true,
+  "identical_baseline_binary_and_input_paths": true,
+  "limit_percent": 1,
+  "qualification": "Iteration instruction guard only; includes merged lanes, not isolated attribution, production throughput or RSS",
+  "rows": [
+    {
+      "fixture": "crypto",
+      "runs": 1,
+      "base_startup": 1118683085,
+      "candidate_startup": 187454041,
+      "base_per_run": 1837517914.0,
+      "candidate_per_run": 1841286707.0,
+      "delta_percent": 0.20510238138553571,
+      "within_limit": true
+    },
+    {
+      "fixture": "deltablue",
+      "runs": 10,
+      "base_startup": 1040493842,
+      "candidate_startup": 113284821,
+      "base_per_run": 271859168.0,
+      "candidate_per_run": 287623711.9,
+      "delta_percent": 5.798790607642834,
+      "within_limit": false
+    },
+    {
+      "fixture": "earley-boyer",
+      "runs": 1,
+      "base_startup": 1306810671,
+      "candidate_startup": 378600639,
+      "base_per_run": 3354021925.0,
+      "candidate_per_run": 3409530907.0,
+      "delta_percent": 1.6549975892003133,
+      "within_limit": false
+    },
+    {
+      "fixture": "navier-stokes",
+      "runs": 1,
+      "base_startup": 1672276165,
+      "candidate_startup": 689845210,
+      "base_per_run": 1517523834.0,
+      "candidate_per_run": 1501739196.0,
+      "delta_percent": -1.0401575017371378,
+      "within_limit": true
+    },
+    {
+      "fixture": "raytrace",
+      "runs": 3,
+      "base_startup": 1055617669,
+      "candidate_startup": 126480750,
+      "base_per_run": 1014872100.0,
+      "candidate_per_run": 965885146.0,
+      "delta_percent": -4.82690912480499,
+      "within_limit": true
+    },
+    {
+      "fixture": "regexp",
+      "runs": 1,
+      "base_startup": 4606133128,
+      "candidate_startup": 3427514536,
+      "base_per_run": 2018009371.0,
+      "candidate_per_run": 1836629820.0,
+      "delta_percent": -8.98804304908255,
+      "within_limit": true
+    },
+    {
+      "fixture": "richards",
+      "runs": 25,
+      "base_startup": 1025002683,
+      "candidate_startup": 99592924,
+      "base_per_run": 127393392.48,
+      "candidate_per_run": 119341593.56,
+      "delta_percent": -6.320421148423449,
+      "within_limit": true
+    },
+    {
+      "fixture": "splay",
+      "runs": 75,
+      "base_startup": 3496444392,
+      "candidate_startup": 2534075684,
+      "base_per_run": 27824311.613333333,
+      "candidate_per_run": 27303004.56,
+      "delta_percent": -1.8735667590910832,
+      "within_limit": true
+    }
+  ]
+}

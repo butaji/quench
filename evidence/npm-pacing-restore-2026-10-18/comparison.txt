@@ -1,0 +1,27 @@
+peak RSS MiB: Score-lane pacing + regex 'perf' (m17, v2-merged 66c7092bf) vs memory-first pacing + lean regex (m18)
+median quench m17 20.5 m18 19.6
+typescript-eslint                          m17   226.4  m18   187.9  node   211.5  bun   146.2
+@typescript-eslint/eslint-plugin           m17   224.4  m18   188.2  node   210.8  bun   145.4
+@testing-library/dom                       m17   144.0  m18   122.4  node   180.3  bun   120.7
+@babel/plugin-syntax-typescript            m17    78.4  m18    60.8  node   101.1  bun    75.2
+semver                                     m17    45.2  m18    27.6  node    69.0  bun    50.8
+@babel/helper-module-transforms            m17    78.7  m18    61.2  node   100.3  bun    73.7
+@babel/core                                m17    77.9  m18    60.5  node   101.0  bun    73.0
+@typescript-eslint/type-utils              m17   240.0  m18   224.2  node   183.9  bun   126.0
+playwright                                 m17   150.9  m18   135.6  node   129.2  bun   102.6
+color-convert                              m17    37.2  m18    23.1  node    74.6  bun    44.6
+@babel/helper-compilation-targets          m17    41.4  m18    27.5  node    75.3  bun    53.3
+eslint-plugin-react-hooks                  m17    82.5  m18    69.0  node   100.2  bun    72.0
+schema-utils                               m17    42.0  m18    30.2  node    80.3  bun    59.3
+browserslist                               m17    33.3  m18    23.4  node    74.8  bun    55.2
+baseline-browser-mapping                   m17    29.6  m18    21.1  node    71.6  bun    48.8
+jsdom                                      m17   118.5  m18   110.5  node   163.3  bun    97.0
+jiti                                       m17    64.7  m18    56.8  node    90.0  bun    42.2
+vitest                                     m17    98.4  m18    90.6  node   117.0  bun   101.8
+ajv-keywords                               m17    33.4  m18    26.4  node    76.2  bun    54.5
+ajv-formats                                m17    32.6  m18    26.5  node    75.6  bun    54.0
+ajv                                        m17    31.4  m18    26.0  node    75.1  bun    52.4
+sharp                                      m17    44.4  m18    39.0  node    74.6  bun    56.6
+@img/sharp-linux-x64                       m17    43.4  m18    38.2  node    74.8  bun    56.4
+@img/sharp-libvips-linux-x64               m17    44.9  m18    39.6  node    74.3  bun    56.3
+whatwg-url                                 m17    33.7  m18    28.9  node    76.6  bun    54.6

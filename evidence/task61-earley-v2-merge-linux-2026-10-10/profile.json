@@ -1,0 +1,6047 @@
+{
+  "kind": "quench-profile",
+  "allocations": 12059499,
+  "allocation_kinds": {
+    "names": [
+      "object",
+      "array",
+      "map",
+      "set",
+      "iterator",
+      "weak_map",
+      "weak_set",
+      "weak_ref",
+      "function",
+      "environment",
+      "string",
+      "bigint",
+      "symbol",
+      "date",
+      "error"
+    ],
+    "size_buckets": [
+      0,
+      7,
+      15,
+      31,
+      63,
+      127,
+      255,
+      null
+    ],
+    "counts": [
+      9341174,
+      679315,
+      0,
+      0,
+      38,
+      4,
+      0,
+      0,
+      197672,
+      192704,
+      1648448,
+      0,
+      38,
+      106,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ],
+    "payload_bytes": [
+      0,
+      15882648,
+      0,
+      0,
+      0,
+      224,
+      0,
+      0,
+      7906880,
+      32528048,
+      18476146,
+      0,
+      703,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ],
+    "bucket_counts": [
+      [
+        9341174,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        7588,
+        0,
+        177130,
+        377495,
+        453,
+        116642,
+        5,
+        2
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        38,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        4,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        197672,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        62,
+        14,
+        313,
+        191766,
+        549
+      ],
+      [
+        196024,
+        5745,
+        1385715,
+        58122,
+        1087,
+        1285,
+        153,
+        317
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        20,
+        16,
+        2,
+        0,
+        0,
+        0
+      ],
+      [
+        106,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ]
+    ]
+  },
+  "collections": 826,
+  "peak_live": 141970,
+  "peak_survivors": 70984,
+  "max_gc_threshold": 70984,
+  "gc": {
+    "roots": 10458095,
+    "work_items": 81289548,
+    "max_worklist": 16324,
+    "marked": 22184889,
+    "freed": 11985164,
+    "sweep_slots": 67330497,
+    "mark_nanos": 1409010927,
+    "sweep_nanos": 623519936,
+    "marked_kinds": [
+      17110952,
+      102153,
+      0,
+      0,
+      13191,
+      3302,
+      0,
+      0,
+      1548464,
+      159148,
+      3215495,
+      0,
+      31361,
+      823,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  },
+  "shape_transitions": {
+    "hits": 1774538,
+    "misses": 2703
+  },
+  "dictionary_transitions": {
+    "names": [
+      "property_count",
+      "deletion_pattern",
+      "prototype_use"
+    ],
+    "counts": [
+      0,
+      0,
+      10
+    ]
+  },
+  "field_cache": {
+    "hits": 80569093,
+    "misses": 453,
+    "tiers": [
+      80569093,
+      0,
+      0
+    ],
+    "depths": [
+      80568637,
+      456,
+      0
+    ]
+  },
+  "method_cache": {
+    "hits": 0,
+    "misses": 0,
+    "tiers": [
+      0,
+      0,
+      0
+    ],
+    "refill_names": [
+      "first",
+      "post_gc",
+      "post_mutation"
+    ],
+    "refills": [
+      0,
+      0,
+      0
+    ],
+    "same_target_names": [
+      "gc",
+      "mutation"
+    ],
+    "same_targets": [
+      0,
+      0
+    ],
+    "invalidation_names": [
+      "gc_candidates",
+      "mutation_cleared"
+    ],
+    "invalidation_entries": [
+      0,
+      0
+    ],
+    "dead_after_gc": 0
+  },
+  "dynamic_atoms": 1762,
+  "dynamic_strings": {
+    "hits": 32,
+    "misses": 14
+  },
+  "string_concats": {
+    "coercing": 0,
+    "both_strings": 46,
+    "cache_hits": 0,
+    "cache_misses": 46,
+    "size_buckets": [
+      0,
+      36,
+      3,
+      0,
+      6,
+      1,
+      0,
+      0
+    ],
+    "max_bytes": 69
+  },
+  "operand_tags": [
+    92575818,
+    37248951,
+    0,
+    2805787
+  ],
+  "binary_ops": [
+    96,
+    30,
+    29506659,
+    13343828,
+    123566,
+    0,
+    2,
+    1002773,
+    527997,
+    416854,
+    4,
+    5,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    17193118
+  ],
+  "numeric_binary_paths": {
+    "names": [
+      "fast_hit",
+      "integer_operator_miss",
+      "type_miss"
+    ],
+    "counts": [
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ]
+    ]
+  },
+  "branch_values": {
+    "names": [
+      "undefined",
+      "null",
+      "boolean",
+      "integer",
+      "double",
+      "heap"
+    ],
+    "outcome_names": [
+      "falsey",
+      "truthy"
+    ],
+    "counts": [
+      [
+        155,
+        9,
+        38567832,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        24398651,
+        0,
+        0,
+        70
+      ]
+    ]
+  },
+  "method_argc": [
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0
+  ],
+  "calls": {
+    "source_names": [
+      "dynamic",
+      "known",
+      "method",
+      "this_method",
+      "construct"
+    ],
+    "sources": [
+      17775438,
+      0,
+      0,
+      0,
+      9149540
+    ],
+    "target_names": [
+      "native",
+      "user",
+      "numeric_user"
+    ],
+    "targets": [
+      17194454,
+      26036468,
+      0
+    ],
+    "target_argc": [
+      [
+        499,
+        17193835,
+        34,
+        86,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        777,
+        7171671,
+        18712102,
+        13820,
+        10224,
+        10896,
+        0,
+        385,
+        116593
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ]
+    ]
+  },
+  "terminal_calls": [
+    882381,
+    0,
+    0
+  ],
+  "indexed_access": {
+    "get_names": [
+      "int_dense",
+      "int_sparse",
+      "int_missing",
+      "wide_dense",
+      "wide_sparse",
+      "wide_missing",
+      "numeric_non_array",
+      "property"
+    ],
+    "gets": [
+      4200452,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ],
+    "set_names": [
+      "int_replace",
+      "int_grow",
+      "int_sparse",
+      "wide_replace",
+      "wide_grow",
+      "wide_sparse",
+      "numeric_non_array",
+      "property"
+    ],
+    "sets": [
+      76996,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ],
+    "dispatch_names": [
+      "get_general",
+      "get_numeric",
+      "set_general",
+      "set_numeric"
+    ],
+    "dispatches": [
+      4200346,
+      0,
+      123580,
+      0
+    ]
+  },
+  "array_writes": {
+    "names": [
+      "unique",
+      "shared"
+    ],
+    "counts": [
+      130877,
+      0
+    ]
+  },
+  "dispatch_classes": [
+    435,
+    1
+  ],
+  "opcodes": {
+    "Nop": 0,
+    "CloneEnv": 127,
+    "Wide": 0,
+    "LoadConst": 64206362,
+    "LoadLocal": 56,
+    "StoreLocal": 51,
+    "StoreVarBinding": 0,
+    "LoadEnvLocal": 2970919,
+    "StoreEnvLocal": 1870506,
+    "LoadCapture": 51877752,
+    "StoreCapture": 7181650,
+    "LoadName": 20596,
+    "LoadNameCall": 15,
+    "LoadNameTypeof": 11,
+    "ResolveName": 0,
+    "LoadResolvedName": 0,
+    "DeleteName": 0,
+    "StoreName": 155,
+    "StoreResolvedName": 0,
+    "LoadThis": 111,
+    "LoadImportMeta": 0,
+    "MakeClosure": 196411,
+    "MakeArray": 3106,
+    "MakeConstArray": 12,
+    "MakeObject": 61,
+    "MakeObject2": 12,
+    "MakeObjectLiteral": 22,
+    "SuperConstArrayObject2": 0,
+    "GetIterator": 37,
+    "GetAsyncIterator": 0,
+    "CreateRegExpLiteral": 0,
+    "IteratorClose": 23,
+    "SpreadToArray": 1,
+    "RequireObjectCoercible": 9,
+    "RequireIteratorResult": 145,
+    "SuperCallCheck": 0,
+    "IteratorCleanupPush": 108,
+    "IteratorCleanupPop": 108,
+    "SetFunctionName": 195651,
+    "SetFunctionNameKey": 4,
+    "InitializeTdz": 178,
+    "Await": 0,
+    "Yield": 0,
+    "YieldStar": 0,
+    "GetField": 62642350,
+    "GetIndex": 4200346,
+    "ToPropertyKey": 4,
+    "ToNumeric": 3590859,
+    "CopyDataProperties": 13,
+    "MarkPrivateName": 0,
+    "SetField": 3,
+    "DefineComputedField": 0,
+    "SetThisField": 0,
+    "SetIndex": 123580,
+    "DefineArrayElement": 6881,
+    "Binary": 53342644,
+    "IncDec": 3590859,
+    "Unary": 17212832,
+    "Delete": 0,
+    "CheckPrivate": 0,
+    "PrivateIn": 0,
+    "Move": 56119779,
+    "Call": 17775438,
+    "CallDirectEvalArray": 0,
+    "CallKnown": 0,
+    "CallMethod": 0,
+    "CallThisMethod": 0,
+    "Construct": 9149540,
+    "Jump": 12050800,
+    "JumpFalse": 62966717,
+    "JumpBinaryFalse": 8772288,
+    "Return": 23842474,
+    "Throw": 0,
+    "NumericAdd": 0,
+    "NumericMultiply": 0,
+    "InitializeThis": 0,
+    "CacheTemplateObject": 0,
+    "LoadCachedTemplateObject": 0,
+    "DefineField": 166,
+    "ValidateClassHeritage": 5,
+    "SetFieldStrict": 111820,
+    "SetThisFieldStrict": 18288475,
+    "WasmI32Binary": 0,
+    "WasmI32Unary": 0,
+    "WasmI64Binary": 0,
+    "WasmI64Unary": 0,
+    "WasmScalarConvert": 0,
+    "WasmF32Binary": 0,
+    "WasmF32Unary": 0,
+    "WasmF64Binary": 0,
+    "WasmF64Unary": 0,
+    "WasmTableInit": 0,
+    "WasmIndirectTarget": 0,
+    "WasmGlobalGet": 0,
+    "WasmGlobalSet": 0,
+    "WasmRefFunc": 0,
+    "WasmRefIsNull": 0,
+    "WasmTableSize": 0,
+    "WasmTableGet": 0,
+    "WasmTableSet": 0,
+    "WasmTableGrow": 0,
+    "WasmTableFill": 0,
+    "WasmTableCopy": 0,
+    "WasmMemoryInit": 0,
+    "WasmMemoryCopy": 0,
+    "WasmMemoryFill": 0,
+    "WasmMemoryAddress": 0,
+    "WasmMemoryLoad": 0,
+    "WasmMemoryStore": 0,
+    "WasmMemorySize": 0,
+    "WasmMemoryGrow": 0,
+    "WasmUnreachable": 0,
+    "WasmSimd": 0,
+    "WasmSimdShuffle": 0,
+    "DefinePropertyRecord": 128,
+    "WasmRefAsNonNull": 0,
+    "WasmI31": 0,
+    "WasmRefTest": 0,
+    "WasmRefCast": 0,
+    "WasmRefEq": 0,
+    "WasmStructNew": 0,
+    "WasmStructNewDefault": 0,
+    "WasmStructGet": 0,
+    "WasmStructGetS": 0,
+    "WasmStructGetU": 0,
+    "WasmStructSet": 0,
+    "WasmArrayNew": 0,
+    "WasmArrayNewDefault": 0,
+    "WasmArrayNewFixed": 0,
+    "WasmArrayLen": 0,
+    "WasmArrayGet": 0,
+    "WasmArrayGetS": 0,
+    "WasmArrayGetU": 0,
+    "WasmArraySet": 0,
+    "WasmExternalConversion": 0,
+    "WasmArrayFill": 0,
+    "WasmArrayCopy": 0,
+    "WasmArrayNewData": 0,
+    "WasmArrayNewElem": 0,
+    "WasmArrayInitData": 0,
+    "WasmArrayInitElem": 0,
+    "WasmExceptionNew": 0,
+    "WasmExceptionMatch": 0,
+    "WasmExceptionPayload": 0,
+    "WasmThrowRef": 0,
+    "WasmStructNewDesc": 0,
+    "WasmStructNewDefaultDesc": 0,
+    "WasmRefGetDesc": 0,
+    "WasmDescriptorTest": 0,
+    "WasmDescriptorCast": 0,
+    "WasmAtomicAccess": 0,
+    "WasmAtomicFence": 0,
+    "LoadLocalPlain": 185744841,
+    "StoreLocalPlain": 79594526
+  },
+  "binary_pair_dependencies": {
+    "names": [
+      "none",
+      "left",
+      "right",
+      "both"
+    ],
+    "counts": [
+      0,
+      32099,
+      0,
+      0
+    ]
+  },
+  "top_pairs": [
+    [
+      "StoreLocalPlain",
+      "LoadLocalPlain",
+      54861036
+    ],
+    [
+      "LoadLocalPlain",
+      "GetField",
+      53987845
+    ],
+    [
+      "LoadLocalPlain",
+      "StoreLocalPlain",
+      46418366
+    ],
+    [
+      "Binary",
+      "JumpFalse",
+      34267593
+    ],
+    [
+      "GetField",
+      "StoreLocalPlain",
+      23588682
+    ],
+    [
+      "Move",
+      "Move",
+      23056570
+    ],
+    [
+      "LoadLocalPlain",
+      "Binary",
+      22742886
+    ],
+    [
+      "LoadCapture",
+      "LoadLocalPlain",
+      21568755
+    ],
+    [
+      "LoadLocalPlain",
+      "LoadCapture",
+      18303942
+    ],
+    [
+      "LoadLocalPlain",
+      "SetThisFieldStrict",
+      18288463
+    ],
+    [
+      "JumpFalse",
+      "LoadLocalPlain",
+      18161644
+    ],
+    [
+      "LoadConst",
+      "LoadCapture",
+      17776377
+    ],
+    [
+      "Move",
+      "Call",
+      17567966
+    ],
+    [
+      "LoadCapture",
+      "Binary",
+      17085876
+    ],
+    [
+      "LoadConst",
+      "Return",
+      16935111
+    ],
+    [
+      "Unary",
+      "JumpFalse",
+      15935839
+    ],
+    [
+      "Binary",
+      "Unary",
+      15935752
+    ],
+    [
+      "StoreLocalPlain",
+      "LoadConst",
+      11774251
+    ],
+    [
+      "GetField",
+      "Move",
+      10500279
+    ],
+    [
+      "LoadConst",
+      "JumpFalse",
+      10260550
+    ]
+  ],
+  "binary_operand_modes": [
+    [
+      2,
+      0,
+      1,
+      22112272
+    ],
+    [
+      21,
+      0,
+      0,
+      17193118
+    ],
+    [
+      3,
+      0,
+      1,
+      13338740
+    ],
+    [
+      2,
+      0,
+      0,
+      4654469
+    ],
+    [
+      2,
+      0,
+      3,
+      2739918
+    ],
+    [
+      7,
+      0,
+      1,
+      848021
+    ],
+    [
+      8,
+      0,
+      1,
+      526898
+    ],
+    [
+      9,
+      0,
+      1,
+      415620
+    ],
+    [
+      7,
+      0,
+      0,
+      154752
+    ],
+    [
+      4,
+      0,
+      3,
+      64676
+    ],
+    [
+      4,
+      0,
+      0,
+      51658
+    ],
+    [
+      4,
+      0,
+      1,
+      7232
+    ],
+    [
+      3,
+      0,
+      0,
+      5088
+    ],
+    [
+      9,
+      0,
+      0,
+      1056
+    ],
+    [
+      8,
+      0,
+      3,
+      1010
+    ],
+    [
+      9,
+      0,
+      3,
+      178
+    ],
+    [
+      0,
+      0,
+      1,
+      96
+    ],
+    [
+      8,
+      0,
+      0,
+      53
+    ],
+    [
+      8,
+      1,
+      0,
+      34
+    ],
+    [
+      1,
+      0,
+      1,
+      30
+    ],
+    [
+      11,
+      0,
+      0,
+      4
+    ],
+    [
+      6,
+      0,
+      1,
+      2
+    ],
+    [
+      8,
+      1,
+      3,
+      2
+    ],
+    [
+      10,
+      0,
+      1,
+      2
+    ],
+    [
+      10,
+      1,
+      3,
+      2
+    ],
+    [
+      11,
+      0,
+      3,
+      1
+    ]
+  ],
+  "top_pair_sites": [
+    {
+      "function": 51,
+      "pc": 4,
+      "first": "LoadLocalPlain",
+      "second": "SetThisFieldStrict",
+      "count": 9144225
+    },
+    {
+      "function": 51,
+      "pc": 7,
+      "first": "SetThisFieldStrict",
+      "second": "LoadConst",
+      "count": 9144225
+    },
+    {
+      "function": 51,
+      "pc": 0,
+      "first": "LoadLocalPlain",
+      "second": "StoreLocalPlain",
+      "count": 9144225
+    },
+    {
+      "function": 51,
+      "pc": 3,
+      "first": "StoreLocalPlain",
+      "second": "LoadLocalPlain",
+      "count": 9144225
+    },
+    {
+      "function": 51,
+      "pc": 6,
+      "first": "LoadLocalPlain",
+      "second": "SetThisFieldStrict",
+      "count": 9144225
+    },
+    {
+      "function": 51,
+      "pc": 2,
+      "first": "LoadLocalPlain",
+      "second": "StoreLocalPlain",
+      "count": 9144225
+    },
+    {
+      "function": 51,
+      "pc": 5,
+      "first": "SetThisFieldStrict",
+      "second": "LoadLocalPlain",
+      "count": 9144225
+    },
+    {
+      "function": 51,
+      "pc": 8,
+      "first": "LoadConst",
+      "second": "Return",
+      "count": 9144225
+    },
+    {
+      "function": 51,
+      "pc": 1,
+      "first": "StoreLocalPlain",
+      "second": "LoadLocalPlain",
+      "count": 9144225
+    },
+    {
+      "function": 388,
+      "pc": 3,
+      "first": "StoreLocalPlain",
+      "second": "LoadLocalPlain",
+      "count": 6907882
+    },
+    {
+      "function": 388,
+      "pc": 1,
+      "first": "StoreLocalPlain",
+      "second": "LoadLocalPlain",
+      "count": 6907882
+    },
+    {
+      "function": 388,
+      "pc": 4,
+      "first": "LoadLocalPlain",
+      "second": "LoadCapture",
+      "count": 6907882
+    },
+    {
+      "function": 388,
+      "pc": 7,
+      "first": "Unary",
+      "second": "JumpFalse",
+      "count": 6907882
+    },
+    {
+      "function": 388,
+      "pc": 2,
+      "first": "LoadLocalPlain",
+      "second": "StoreLocalPlain",
+      "count": 6907882
+    },
+    {
+      "function": 388,
+      "pc": 5,
+      "first": "LoadCapture",
+      "second": "Binary",
+      "count": 6907882
+    },
+    {
+      "function": 388,
+      "pc": 0,
+      "first": "LoadLocalPlain",
+      "second": "StoreLocalPlain",
+      "count": 6907882
+    },
+    {
+      "function": 388,
+      "pc": 6,
+      "first": "Binary",
+      "second": "Unary",
+      "count": 6907882
+    },
+    {
+      "function": 386,
+      "pc": 57,
+      "first": "JumpFalse",
+      "second": "LoadLocalPlain",
+      "count": 5449656
+    },
+    {
+      "function": 386,
+      "pc": 58,
+      "first": "LoadLocalPlain",
+      "second": "Binary",
+      "count": 5449656
+    },
+    {
+      "function": 386,
+      "pc": 56,
+      "first": "LoadConst",
+      "second": "JumpFalse",
+      "count": 5449656
+    }
+  ],
+  "instruction_word_domains": [
+    {
+      "op": "CloneEnv",
+      "count": 1,
+      "max_fields": [
+        0,
+        0,
+        0
+      ],
+      "max_imm": 0,
+      "compound_imm": false,
+      "field_overflow": 0,
+      "immediate_overflow": 0
+    },
+    {
+      "op": "Wide",
+      "count": 5027,
+      "max_fields": [
+        4805,
+        0,
+        0
+      ],
+      "max_imm": 0,
+      "compound_imm": false,
+      "field_overflow": 710,
+      "immediate_overflow": 0
+    },
+    {
+      "op": "LoadConst",
+      "count": 2602,
+      "max_fields": [
+        4094,
+        0,
+        0
+      ],
+      "max_imm": 377,
+      "compound_imm": false,
+      "field_overflow": 0,
+      "immediate_overflow": 0
+    },
+    {
+      "op": "LoadLocal",
+      "count": 147,
+      "max_fields": [
+        58,
+        0,
+        0
+      ],
+      "max_imm": 9,
+      "compound_imm": false,
+      "field_overflow": 0,
+      "immediate_overflow": 0
+    },
+    {
+      "op": "StoreLocal",
+      "count": 62,
+      "max_fields": [
+        46,
+        10,
+        1
+      ],
+      "max_imm": 9,
+      "compound_imm": false,
+      "field_overflow": 0,
+      "immediate_overflow": 0
+    },
+    {
+      "op": "LoadEnvLocal",
+      "count": 1179,
+      "max_fields": [
+        4095,
+        0,
+        0
+      ],
+      "max_imm": 383,
+      "compound_imm": false,
+      "field_overflow": 0,
+      "immediate_overflow": 0
+    },
+    {
+      "op": "StoreEnvLocal",
+      "count": 519,
+      "max_fields": [
+        320,
+        0,
+        1
+      ],
+      "max_imm": 387,
+      "compound_imm": false,
+      "field_overflow": 0,
+      "immediate_overflow": 0
+    },
+    {
+      "op": "LoadCapture",
+      "count": 552,
+      "max_fields": [
+        127,
+        0,
+        0
+      ],
+      "max_imm": 327800,
+      "compound_imm": true,
+      "field_overflow": 0,
+      "immediate_overflow": 0
+    },
+    {
+      "op": "StoreCapture",
+      "count": 16,
+      "max_fields": [
+        9,
+        0,
+        0
+      ],
+      "max_imm": 240,
+      "compound_imm": true,
+      "field_overflow": 0,
+      "immediate_overflow": 0
+    },
+    {
+      "op": "LoadName",
+      "count": 143,
+      "max_fields": [
+        41,
+        0,
+        1225
+      ],
+      "max_imm": 1321,
+      "compound_imm": false,
+      "field_overflow": 0,
+      "immediate_overflow": 0
+    },
+    {
+      "op": "LoadNameCall",
+      "count": 9,
+      "max_fields": [
+        41,
+        40,
+        903
+      ],
+      "max_imm": 829,
+      "compound_imm": false,
+      "field_overflow": 0,
+      "immediate_overflow": 0
+    },
+    {
+      "op": "LoadNameTypeof",
+      "count": 2,
+      "max_fields": [
+        2,
+        0,
+        1218
+      ],
+      "max_imm": 1319,
+      "compound_imm": false,
+      "field_overflow": 0,
+      "immediate_overflow": 0
+    },
+    {
+      "op": "ResolveName",
+      "count": 16,
+      "max_fields": [
+        34,
+        1,
+        875
+      ],
+      "max_imm": 436,
+      "compound_imm": false,
+      "field_overflow": 0,
+      "immediate_overflow": 0
+    },
+    {
+      "op": "LoadResolvedName",
+      "count": 14,
+      "max_fields": [
+        35,
+        34,
+        1
+      ],
+      "max_imm": 436,
+      "compound_imm": false,
+      "field_overflow": 0,
+      "immediate_overflow": 0
+    },
+    {
+      "op": "StoreResolvedName",
+      "count": 16,
+      "max_fields": [
+        37,
+        34,
+        1
+      ],
+      "max_imm": 436,
+      "compound_imm": false,
+      "field_overflow": 0,
+      "immediate_overflow": 0
+    },
+    {
+      "op": "LoadThis",
+      "count": 73,
+      "max_fields": [
+        49,
+        0,
+        0
+      ],
+      "max_imm": 0,
+      "compound_imm": false,
+      "field_overflow": 0,
+      "immediate_overflow": 0
+    },
+    {
+      "op": "MakeClosure",
+      "count": 435,
+      "max_fields": [
+        37,
+        0,
+        0
+      ],
+      "max_imm": 435,
+      "compound_imm": false,
+      "field_overflow": 0,
+      "immediate_overflow": 0
+    },
+    {
+      "op": "MakeArray",
+      "count": 8,
+      "max_fields": [
+        14,
+        0,
+        0
+      ],
+      "max_imm": 11,
+      "compound_imm": false,
+      "field_overflow": 0,
+      "immediate_overflow": 0
+    },
+    {
+      "op": "MakeObject",
+      "count": 7,
+      "max_fields": [
+        2,
+        0,
+        0
+      ],
+      "max_imm": 0,
+      "compound_imm": false,
+      "field_overflow": 0,
+      "immediate_overflow": 0
+    },
+    {
+      "op": "MakeObject2",
+      "count": 1,
+      "max_fields": [
+        32768,
+        1,
+        2
+      ],
+      "max_imm": 0,
+      "compound_imm": false,
+      "field_overflow": 0,
+      "immediate_overflow": 0
+    },
+    {
+      "op": "MakeObjectLiteral",
+      "count": 1,
+      "max_fields": [
+        1,
+        2,
+        43
+      ],
+      "max_imm": 1,
+      "compound_imm": false,
+      "field_overflow": 0,
+      "immediate_overflow": 0
+    },
+    {
+      "op": "GetIterator",
+      "count": 1,
+      "max_fields": [
+        8,
+        7,
+        0
+      ],
+      "max_imm": 0,
+      "compound_imm": false,
+      "field_overflow": 0,
+      "immediate_overflow": 0
+    },
+    {
+      "op": "IteratorClose",
+      "count": 1,
+      "max_fields": [
+        0,
+        0,
+        0
+      ],
+      "max_imm": 0,
+      "compound_imm": false,
+      "field_overflow": 0,
+      "immediate_overflow": 0
+    },
+    {
+      "op": "RequireObjectCoercible",
+      "count": 5,
+      "max_fields": [
+        0,
+        14,
+        0
+      ],
+      "max_imm": 0,
+      "compound_imm": false,
+      "field_overflow": 0,
+      "immediate_overflow": 0
+    },
+    {
+      "op": "RequireIteratorResult",
+      "count": 1,
+      "max_fields": [
+        0,
+        13,
+        0
+      ],
+      "max_imm": 0,
+      "compound_imm": false,
+      "field_overflow": 0,
+      "immediate_overflow": 0
+    },
+    {
+      "op": "SetFunctionName",
+      "count": 58,
+      "max_fields": [
+        37,
+        0,
+        0
+      ],
+      "max_imm": 1288,
+      "compound_imm": false,
+      "field_overflow": 0,
+      "immediate_overflow": 0
+    },
+    {
+      "op": "InitializeTdz",
+      "count": 7,
+      "max_fields": [
+        0,
+        0,
+        0
+      ],
+      "max_imm": 386,
+      "compound_imm": false,
+      "field_overflow": 0,
+      "immediate_overflow": 0
+    },
+    {
+      "op": "GetField",
+      "count": 910,
+      "max_fields": [
+        32774,
+        65535,
+        1226
+      ],
+      "max_imm": 1320,
+      "compound_imm": false,
+      "field_overflow": 0,
+      "immediate_overflow": 0
+    },
+    {
+      "op": "GetIndex",
+      "count": 215,
+      "max_fields": [
+        64,
+        62,
+        63
+      ],
+      "max_imm": 0,
+      "compound_imm": false,
+      "field_overflow": 0,
+      "immediate_overflow": 0
+    },
+    {
+      "op": "ToNumeric",
+      "count": 80,
+      "max_fields": [
+        19,
+        18,
+        0
+      ],
+      "max_imm": 0,
+      "compound_imm": false,
+      "field_overflow": 0,
+      "immediate_overflow": 0
+    },
+    {
+      "op": "SetIndex",
+      "count": 61,
+      "max_fields": [
+        40,
+        36,
+        39
+      ],
+      "max_imm": 1,
+      "compound_imm": false,
+      "field_overflow": 0,
+      "immediate_overflow": 0
+    },
+    {
+      "op": "DefineArrayElement",
+      "count": 23,
+      "max_fields": [
+        15,
+        14,
+        0
+      ],
+      "max_imm": 10,
+      "compound_imm": false,
+      "field_overflow": 0,
+      "immediate_overflow": 0
+    },
+    {
+      "op": "Binary",
+      "count": 600,
+      "max_fields": [
+        32795,
+        16762,
+        49310
+      ],
+      "max_imm": 21,
+      "compound_imm": false,
+      "field_overflow": 0,
+      "immediate_overflow": 0
+    },
+    {
+      "op": "IncDec",
+      "count": 80,
+      "max_fields": [
+        20,
+        19,
+        0
+      ],
+      "max_imm": 1,
+      "compound_imm": false,
+      "field_overflow": 0,
+      "immediate_overflow": 0
+    },
+    {
+      "op": "Unary",
+      "count": 75,
+      "max_fields": [
+        46,
+        45,
+        0
+      ],
+      "max_imm": 4,
+      "compound_imm": false,
+      "field_overflow": 0,
+      "immediate_overflow": 0
+    },
+    {
+      "op": "Delete",
+      "count": 16,
+      "max_fields": [
+        7,
+        5,
+        6
+      ],
+      "max_imm": 1,
+      "compound_imm": false,
+      "field_overflow": 0,
+      "immediate_overflow": 0
+    },
+    {
+      "op": "Move",
+      "count": 2948,
+      "max_fields": [
+        4091,
+        4089,
+        0
+      ],
+      "max_imm": 0,
+      "compound_imm": false,
+      "field_overflow": 0,
+      "immediate_overflow": 0
+    },
+    {
+      "op": "Call",
+      "count": 611,
+      "max_fields": [
+        32810,
+        57,
+        56
+      ],
+      "max_imm": 4063235,
+      "compound_imm": true,
+      "field_overflow": 0,
+      "immediate_overflow": 0
+    },
+    {
+      "op": "Construct",
+      "count": 1057,
+      "max_fields": [
+        32785,
+        4077,
+        4090
+      ],
+      "max_imm": 3,
+      "compound_imm": false,
+      "field_overflow": 0,
+      "immediate_overflow": 0
+    },
+    {
+      "op": "Jump",
+      "count": 510,
+      "max_fields": [
+        0,
+        0,
+        0
+      ],
+      "max_imm": 10715,
+      "compound_imm": false,
+      "field_overflow": 0,
+      "immediate_overflow": 0
+    },
+    {
+      "op": "JumpFalse",
+      "count": 283,
+      "max_fields": [
+        126,
+        0,
+        0
+      ],
+      "max_imm": 10713,
+      "compound_imm": false,
+      "field_overflow": 0,
+      "immediate_overflow": 0
+    },
+    {
+      "op": "JumpBinaryFalse",
+      "count": 321,
+      "max_fields": [
+        21,
+        39,
+        49185
+      ],
+      "max_imm": 365,
+      "compound_imm": false,
+      "field_overflow": 0,
+      "immediate_overflow": 0
+    },
+    {
+      "op": "Return",
+      "count": 769,
+      "max_fields": [
+        54,
+        0,
+        0
+      ],
+      "max_imm": 0,
+      "compound_imm": false,
+      "field_overflow": 0,
+      "immediate_overflow": 0
+    },
+    {
+      "op": "Throw",
+      "count": 25,
+      "max_fields": [
+        13,
+        0,
+        0
+      ],
+      "max_imm": 0,
+      "compound_imm": false,
+      "field_overflow": 0,
+      "immediate_overflow": 0
+    },
+    {
+      "op": "NumericAdd",
+      "count": 7,
+      "max_fields": [
+        4,
+        1,
+        16486
+      ],
+      "max_imm": 8,
+      "compound_imm": false,
+      "field_overflow": 0,
+      "immediate_overflow": 0
+    },
+    {
+      "op": "DefineField",
+      "count": 43,
+      "max_fields": [
+        36,
+        2,
+        0
+      ],
+      "max_imm": 729,
+      "compound_imm": false,
+      "field_overflow": 0,
+      "immediate_overflow": 0
+    },
+    {
+      "op": "SetFieldStrict",
+      "count": 104,
+      "max_fields": [
+        18,
+        10,
+        1212
+      ],
+      "max_imm": 803,
+      "compound_imm": false,
+      "field_overflow": 0,
+      "immediate_overflow": 0
+    },
+    {
+      "op": "SetThisFieldStrict",
+      "count": 37,
+      "max_fields": [
+        5,
+        0,
+        956
+      ],
+      "max_imm": 777,
+      "compound_imm": false,
+      "field_overflow": 0,
+      "immediate_overflow": 0
+    },
+    {
+      "op": "LoadLocalPlain",
+      "count": 2550,
+      "max_fields": [
+        131,
+        0,
+        0
+      ],
+      "max_imm": 56,
+      "compound_imm": false,
+      "field_overflow": 0,
+      "immediate_overflow": 0
+    },
+    {
+      "op": "StoreLocalPlain",
+      "count": 1243,
+      "max_fields": [
+        134,
+        36,
+        1
+      ],
+      "max_imm": 56,
+      "compound_imm": false,
+      "field_overflow": 0,
+      "immediate_overflow": 0
+    }
+  ],
+  "root_maps": {
+    "full_entries": 8830,
+    "full_bytes": 70640,
+    "distinct_masks": 666,
+    "mask_runs": 8443,
+    "observed_sites": 69,
+    "observed_masks": 16,
+    "frame_observations": 24171,
+    "active_observations": 826,
+    "suspended_observations": 23345
+  },
+  "functions": [
+    {
+      "id": 0,
+      "name": "<script>",
+      "count": 5,
+      "instructions": 10734,
+      "registers": 8901,
+      "max_live": null,
+      "dispatch": "General"
+    },
+    {
+      "id": 1,
+      "name": "Benchmark",
+      "count": 10,
+      "instructions": 28,
+      "registers": 5,
+      "max_live": 1,
+      "dispatch": "General"
+    },
+    {
+      "id": 2,
+      "name": "<script>",
+      "count": 10,
+      "instructions": 2,
+      "registers": 1,
+      "max_live": 1,
+      "dispatch": "General"
+    },
+    {
+      "id": 3,
+      "name": "<script>",
+      "count": 5,
+      "instructions": 2,
+      "registers": 1,
+      "max_live": 1,
+      "dispatch": "General"
+    },
+    {
+      "id": 4,
+      "name": "BenchmarkResult",
+      "count": 5,
+      "instructions": 10,
+      "registers": 3,
+      "max_live": 1,
+      "dispatch": "General"
+    },
+    {
+      "id": 5,
+      "name": "BenchmarkSuite",
+      "count": 2,
+      "instructions": 20,
+      "registers": 6,
+      "max_live": 3,
+      "dispatch": "General"
+    },
+    {
+      "id": 6,
+      "name": "sc_print_debug",
+      "count": 0,
+      "instructions": 9,
+      "registers": 7,
+      "max_live": null,
+      "dispatch": "General"
+    },
+    {
+      "id": 7,
+      "name": "sc_alert",
+      "count": 0,
+      "instructions": 32,
+      "registers": 11,
+      "max_live": null,
+      "dispatch": "General"
+    },
+    {
+      "id": 8,
+      "name": "sc_typeof",
+      "count": 0,
+      "instructions": 6,
+      "registers": 3,
+      "max_live": 1,
+      "dispatch": "General"
+    },
+    {
+      "id": 9,
+      "name": "sc_error",
+      "count": 0,
+      "instructions": 30,
+      "registers": 10,
+      "max_live": null,
+      "dispatch": "General"
+    },
+    {
+      "id": 10,
+      "name": "sc_raise",
+      "count": 0,
+      "instructions": 5,
+      "registers": 2,
+      "max_live": 1,
+      "dispatch": "General"
+    },
+    {
+      "id": 11,
+      "name": "sc_withHandlerLambda",
+      "count": 0,
+      "instructions": 23,
+      "registers": 10,
+      "max_live": 3,
+      "dispatch": "General"
+    },
+    {
+      "id": 12,
+      "name": "sc_putpropBang",
+      "count": 0,
+      "instructions": 25,
+      "registers": 6,
+      "max_live": 3,
+      "dispatch": "General"
+    },
+    {
+      "id": 13,
+      "name": "sc_getprop",
+      "count": 0,
+      "instructions": 23,
+      "registers": 6,
+      "max_live": 2,
+      "dispatch": "General"
+    },
+    {
+      "id": 14,
+      "name": "sc_rempropBang",
+      "count": 0,
+      "instructions": 14,
+      "registers": 5,
+      "max_live": 2,
+      "dispatch": "General"
+    },
+    {
+      "id": 15,
+      "name": "sc_any2String",
+      "count": 0,
+      "instructions": 14,
+      "registers": 10,
+      "max_live": null,
+      "dispatch": "General"
+    },
+    {
+      "id": 16,
+      "name": "sc_isEqv",
+      "count": 0,
+      "instructions": 8,
+      "registers": 4,
+      "max_live": 1,
+      "dispatch": "General"
+    },
+    {
+      "id": 17,
+      "name": "sc_isEq",
+      "count": 0,
+      "instructions": 8,
+      "registers": 4,
+      "max_live": 1,
+      "dispatch": "General"
+    },
+    {
+      "id": 18,
+      "name": "sc_isNumber",
+      "count": 1244672,
+      "instructions": 6,
+      "registers": 4,
+      "max_live": 1,
+      "dispatch": "General"
+    },
+    {
+      "id": 19,
+      "name": "sc_isComplex",
+      "count": 0,
+      "instructions": 8,
+      "registers": 6,
+      "max_live": 3,
+      "dispatch": "General"
+    },
+    {
+      "id": 20,
+      "name": "sc_isReal",
+      "count": 0,
+      "instructions": 8,
+      "registers": 6,
+      "max_live": 3,
+      "dispatch": "General"
+    },
+    {
+      "id": 21,
+      "name": "sc_isRational",
+      "count": 0,
+      "instructions": 8,
+      "registers": 6,
+      "max_live": 3,
+      "dispatch": "General"
+    },
+    {
+      "id": 22,
+      "name": "sc_isInteger",
+      "count": 0,
+      "instructions": 9,
+      "registers": 7,
+      "max_live": 3,
+      "dispatch": "General"
+    },
+    {
+      "id": 23,
+      "name": "sc_isExact",
+      "count": 0,
+      "instructions": 6,
+      "registers": 2,
+      "max_live": 1,
+      "dispatch": "General"
+    },
+    {
+      "id": 24,
+      "name": "sc_isInexact",
+      "count": 0,
+      "instructions": 6,
+      "registers": 2,
+      "max_live": 1,
+      "dispatch": "General"
+    },
+    {
+      "id": 25,
+      "name": "sc_equal",
+      "count": 0,
+      "instructions": 24,
+      "registers": 13,
+      "max_live": 3,
+      "dispatch": "General"
+    },
+    {
+      "id": 26,
+      "name": "sc_less",
+      "count": 0,
+      "instructions": 28,
+      "registers": 10,
+      "max_live": 3,
+      "dispatch": "General"
+    },
+    {
+      "id": 27,
+      "name": "sc_greater",
+      "count": 2,
+      "instructions": 30,
+      "registers": 11,
+      "max_live": 3,
+      "dispatch": "General"
+    },
+    {
+      "id": 28,
+      "name": "sc_lessEqual",
+      "count": 0,
+      "instructions": 30,
+      "registers": 11,
+      "max_live": 3,
+      "dispatch": "General"
+    },
+    {
+      "id": 29,
+      "name": "sc_greaterEqual",
+      "count": 0,
+      "instructions": 30,
+      "registers": 11,
+      "max_live": 3,
+      "dispatch": "General"
+    },
+    {
+      "id": 30,
+      "name": "sc_isZero",
+      "count": 0,
+      "instructions": 5,
+      "registers": 3,
+      "max_live": 1,
+      "dispatch": "General"
+    },
+    {
+      "id": 31,
+      "name": "sc_isPositive",
+      "count": 0,
+      "instructions": 5,
+      "registers": 3,
+      "max_live": 1,
+      "dispatch": "General"
+    },
+    {
+      "id": 32,
+      "name": "sc_isNegative",
+      "count": 0,
+      "instructions": 5,
+      "registers": 3,
+      "max_live": 1,
+      "dispatch": "General"
+    },
+    {
+      "id": 33,
+      "name": "sc_isOdd",
+      "count": 0,
+      "instructions": 6,
+      "registers": 4,
+      "max_live": 1,
+      "dispatch": "General"
+    },
+    {
+      "id": 34,
+      "name": "sc_isEven",
+      "count": 0,
+      "instructions": 6,
+      "registers": 4,
+      "max_live": 1,
+      "dispatch": "General"
+    },
+    {
+      "id": 35,
+      "name": "sc_plus",
+      "count": 0,
+      "instructions": 22,
+      "registers": 12,
+      "max_live": 3,
+      "dispatch": "General"
+    },
+    {
+      "id": 36,
+      "name": "sc_multi",
+      "count": 0,
+      "instructions": 22,
+      "registers": 12,
+      "max_live": 3,
+      "dispatch": "General"
+    },
+    {
+      "id": 37,
+      "name": "sc_minus",
+      "count": 0,
+      "instructions": 31,
+      "registers": 12,
+      "max_live": 3,
+      "dispatch": "General"
+    },
+    {
+      "id": 38,
+      "name": "sc_div",
+      "count": 0,
+      "instructions": 29,
+      "registers": 12,
+      "max_live": 3,
+      "dispatch": "General"
+    },
+    {
+      "id": 39,
+      "name": "sc_quotient",
+      "count": 0,
+      "instructions": 11,
+      "registers": 8,
+      "max_live": 3,
+      "dispatch": "General"
+    },
+    {
+      "id": 40,
+      "name": "sc_remainder",
+      "count": 0,
+      "instructions": 8,
+      "registers": 4,
+      "max_live": 1,
+      "dispatch": "General"
+    },
+    {
+      "id": 41,
+      "name": "sc_modulo",
+      "count": 0,
+      "instructions": 16,
+      "registers": 5,
+      "max_live": 1,
+      "dispatch": "General"
+    },
+    {
+      "id": 42,
+      "name": "sc_euclid_gcd",
+      "count": 0,
+      "instructions": 51,
+      "registers": 4,
+      "max_live": 2,
+      "dispatch": "General"
+    },
+    {
+      "id": 43,
+      "name": "sc_gcd",
+      "count": 0,
+      "instructions": 27,
+      "registers": 16,
+      "max_live": 5,
+      "dispatch": "General"
+    },
+    {
+      "id": 44,
+      "name": "sc_lcm",
+      "count": 0,
+      "instructions": 40,
+      "registers": 21,
+      "max_live": 7,
+      "dispatch": "General"
+    },
+    {
+      "id": 45,
+      "name": "sc_exact2inexact",
+      "count": 0,
+      "instructions": 5,
+      "registers": 2,
+      "max_live": 1,
+      "dispatch": "General"
+    },
+    {
+      "id": 46,
+      "name": "sc_inexact2exact",
+      "count": 0,
+      "instructions": 5,
+      "registers": 2,
+      "max_live": 1,
+      "dispatch": "General"
+    },
+    {
+      "id": 47,
+      "name": "sc_number2jsstring",
+      "count": 34,
+      "instructions": 15,
+      "registers": 11,
+      "max_live": 3,
+      "dispatch": "General"
+    },
+    {
+      "id": 48,
+      "name": "sc_jsstring2number",
+      "count": 0,
+      "instructions": 81,
+      "registers": 13,
+      "max_live": 4,
+      "dispatch": "General"
+    },
+    {
+      "id": 49,
+      "name": "sc_not",
+      "count": 0,
+      "instructions": 5,
+      "registers": 3,
+      "max_live": 1,
+      "dispatch": "General"
+    },
+    {
+      "id": 50,
+      "name": "sc_isBoolean",
+      "count": 0,
+      "instructions": 9,
+      "registers": 5,
+      "max_live": 1,
+      "dispatch": "General"
+    },
+    {
+      "id": 51,
+      "name": "sc_Pair",
+      "count": 9144225,
+      "instructions": 10,
+      "registers": 3,
+      "max_live": 1,
+      "dispatch": "General"
+    },
+    {
+      "id": 52,
+      "name": "sc_isPair",
+      "count": 172542,
+      "instructions": 6,
+      "registers": 4,
+      "max_live": 2,
+      "dispatch": "General"
+    },
+    {
+      "id": 53,
+      "name": "sc_isPairEqual",
+      "count": 0,
+      "instructions": 30,
+      "registers": 22,
+      "max_live": 4,
+      "dispatch": "General"
+    },
+    {
+      "id": 54,
+      "name": "sc_cons",
+      "count": 111792,
+      "instructions": 12,
+      "registers": 8,
+      "max_live": 3,
+      "dispatch": "General"
+    },
+    {
+      "id": 55,
+      "name": "sc_consStar",
+      "count": 0,
+      "instructions": 29,
+      "registers": 15,
+      "max_live": 3,
+      "dispatch": "General"
+    },
+    {
+      "id": 56,
+      "name": "sc_car",
+      "count": 0,
+      "instructions": 5,
+      "registers": 3,
+      "max_live": 1,
+      "dispatch": "General"
+    },
+    {
+      "id": 57,
+      "name": "sc_cdr",
+      "count": 0,
+      "instructions": 5,
+      "registers": 3,
+      "max_live": 1,
+      "dispatch": "General"
+    },
+    {
+      "id": 58,
+      "name": "sc_setCarBang",
+      "count": 0,
+      "instructions": 9,
+      "registers": 4,
+      "max_live": 2,
+      "dispatch": "General"
+    },
+    {
+      "id": 59,
+      "name": "sc_setCdrBang",
+      "count": 0,
+      "instructions": 9,
+      "registers": 4,
+      "max_live": 2,
+      "dispatch": "General"
+    },
+    {
+      "id": 60,
+      "name": "sc_caar",
+      "count": 0,
+      "instructions": 6,
+      "registers": 4,
+      "max_live": 1,
+      "dispatch": "General"
+    },
+    {
+      "id": 61,
+      "name": "sc_cadr",
+      "count": 0,
+      "instructions": 6,
+      "registers": 4,
+      "max_live": 1,
+      "dispatch": "General"
+    },
+    {
+      "id": 62,
+      "name": "sc_cdar",
+      "count": 0,
+      "instructions": 6,
+      "registers": 4,
+      "max_live": 1,
+      "dispatch": "General"
+    },
+    {
+      "id": 63,
+      "name": "sc_cddr",
+      "count": 0,
+      "instructions": 6,
+      "registers": 4,
+      "max_live": 1,
+      "dispatch": "General"
+    },
+    {
+      "id": 64,
+      "name": "sc_caaar",
+      "count": 0,
+      "instructions": 7,
+      "registers": 5,
+      "max_live": 1,
+      "dispatch": "General"
+    },
+    {
+      "id": 65,
+      "name": "sc_cadar",
+      "count": 0,
+      "instructions": 7,
+      "registers": 5,
+      "max_live": 1,
+      "dispatch": "General"
+    },
+    {
+      "id": 66,
+      "name": "sc_caadr",
+      "count": 0,
+      "instructions": 7,
+      "registers": 5,
+      "max_live": 1,
+      "dispatch": "General"
+    },
+    {
+      "id": 67,
+      "name": "sc_caddr",
+      "count": 0,
+      "instructions": 7,
+      "registers": 5,
+      "max_live": 1,
+      "dispatch": "General"
+    },
+    {
+      "id": 68,
+      "name": "sc_cdaar",
+      "count": 0,
+      "instructions": 7,
+      "registers": 5,
+      "max_live": 1,
+      "dispatch": "General"
+    },
+    {
+      "id": 69,
+      "name": "sc_cdadr",
+      "count": 0,
+      "instructions": 7,
+      "registers": 5,
+      "max_live": 1,
+      "dispatch": "General"
+    },
+    {
+      "id": 70,
+      "name": "sc_cddar",
+      "count": 0,
+      "instructions": 7,
+      "registers": 5,
+      "max_live": 1,
+      "dispatch": "General"
+    },
+    {
+      "id": 71,
+      "name": "sc_cdddr",
+      "count": 0,
+      "instructions": 7,
+      "registers": 5,
+      "max_live": 1,
+      "dispatch": "General"
+    },
+    {
+      "id": 72,
+      "name": "sc_caaaar",
+      "count": 0,
+      "instructions": 8,
+      "registers": 6,
+      "max_live": 1,
+      "dispatch": "General"
+    },
+    {
+      "id": 73,
+      "name": "sc_caadar",
+      "count": 0,
+      "instructions": 8,
+      "registers": 6,
+      "max_live": 1,
+      "dispatch": "General"
+    },
+    {
+      "id": 74,
+      "name": "sc_caaadr",
+      "count": 0,
+      "instructions": 8,
+      "registers": 6,
+      "max_live": 1,
+      "dispatch": "General"
+    },
+    {
+      "id": 75,
+      "name": "sc_caaddr",
+      "count": 0,
+      "instructions": 8,
+      "registers": 6,
+      "max_live": 1,
+      "dispatch": "General"
+    },
+    {
+      "id": 76,
+      "name": "sc_cdaaar",
+      "count": 0,
+      "instructions": 8,
+      "registers": 6,
+      "max_live": 1,
+      "dispatch": "General"
+    },
+    {
+      "id": 77,
+      "name": "sc_cdadar",
+      "count": 0,
+      "instructions": 8,
+      "registers": 6,
+      "max_live": 1,
+      "dispatch": "General"
+    },
+    {
+      "id": 78,
+      "name": "sc_cdaadr",
+      "count": 0,
+      "instructions": 8,
+      "registers": 6,
+      "max_live": 1,
+      "dispatch": "General"
+    },
+    {
+      "id": 79,
+      "name": "sc_cdaddr",
+      "count": 0,
+      "instructions": 8,
+      "registers": 6,
+      "max_live": 1,
+      "dispatch": "General"
+    },
+    {
+      "id": 80,
+      "name": "sc_cadaar",
+      "count": 0,
+      "instructions": 8,
+      "registers": 6,
+      "max_live": 1,
+      "dispatch": "General"
+    },
+    {
+      "id": 81,
+      "name": "sc_caddar",
+      "count": 0,
+      "instructions": 8,
+      "registers": 6,
+      "max_live": 1,
+      "dispatch": "General"
+    },
+    {
+      "id": 82,
+      "name": "sc_cadadr",
+      "count": 0,
+      "instructions": 8,
+      "registers": 6,
+      "max_live": 1,
+      "dispatch": "General"
+    },
+    {
+      "id": 83,
+      "name": "sc_cadddr",
+      "count": 0,
+      "instructions": 8,
+      "registers": 6,
+      "max_live": 1,
+      "dispatch": "General"
+    },
+    {
+      "id": 84,
+      "name": "sc_cddaar",
+      "count": 0,
+      "instructions": 8,
+      "registers": 6,
+      "max_live": 1,
+      "dispatch": "General"
+    },
+    {
+      "id": 85,
+      "name": "sc_cdddar",
+      "count": 0,
+      "instructions": 8,
+      "registers": 6,
+      "max_live": 1,
+      "dispatch": "General"
+    },
+    {
+      "id": 86,
+      "name": "sc_cddadr",
+      "count": 0,
+      "instructions": 8,
+      "registers": 6,
+      "max_live": 1,
+      "dispatch": "General"
+    },
+    {
+      "id": 87,
+      "name": "sc_cddddr",
+      "count": 0,
+      "instructions": 8,
+      "registers": 6,
+      "max_live": 1,
+      "dispatch": "General"
+    },
+    {
+      "id": 88,
+      "name": "sc_lastPair",
+      "count": 0,
+      "instructions": 31,
+      "registers": 12,
+      "max_live": 3,
+      "dispatch": "General"
+    },
+    {
+      "id": 89,
+      "name": "sc_isNull",
+      "count": 0,
+      "instructions": 5,
+      "registers": 3,
+      "max_live": 1,
+      "dispatch": "General"
+    },
+    {
+      "id": 90,
+      "name": "sc_isList",
+      "count": 0,
+      "instructions": 52,
+      "registers": 23,
+      "max_live": 2,
+      "dispatch": "General"
+    },
+    {
+      "id": 91,
+      "name": "sc_list",
+      "count": 200882,
+      "instructions": 26,
+      "registers": 15,
+      "max_live": 3,
+      "dispatch": "General"
+    },
+    {
+      "id": 92,
+      "name": "sc_iota",
+      "count": 0,
+      "instructions": 32,
+      "registers": 13,
+      "max_live": 3,
+      "dispatch": "General"
+    },
+    {
+      "id": 93,
+      "name": "sc_makeList",
+      "count": 0,
+      "instructions": 26,
+      "registers": 11,
+      "max_live": 3,
+      "dispatch": "General"
+    },
+    {
+      "id": 94,
+      "name": "sc_length",
+      "count": 48,
+      "instructions": 18,
+      "registers": 4,
+      "max_live": 1,
+      "dispatch": "General"
+    },
+    {
+      "id": 95,
+      "name": "sc_remq",
+      "count": 0,
+      "instructions": 35,
+      "registers": 12,
+      "max_live": 5,
+      "dispatch": "General"
+    },
+    {
+      "id": 96,
+      "name": "sc_remqBang",
+      "count": 0,
+      "instructions": 39,
+      "registers": 4,
+      "max_live": 2,
+      "dispatch": "General"
+    },
+    {
+      "id": 97,
+      "name": "sc_delete",
+      "count": 0,
+      "instructions": 44,
+      "registers": 19,
+      "max_live": null,
+      "dispatch": "General"
+    },
+    {
+      "id": 98,
+      "name": "sc_deleteBang",
+      "count": 0,
+      "instructions": 47,
+      "registers": 10,
+      "max_live": null,
+      "dispatch": "General"
+    },
+    {
+      "id": 99,
+      "name": "sc_reverseAppendBang",
+      "count": 79344,
+      "instructions": 22,
+      "registers": 3,
+      "max_live": 2,
+      "dispatch": "General"
+    },
+    {
+      "id": 100,
+      "name": "sc_dualAppend",
+      "count": 79392,
+      "instructions": 26,
+      "registers": 7,
+      "max_live": 4,
+      "dispatch": "General"
+    },
+    {
+      "id": 101,
+      "name": "sc_append",
+      "count": 79392,
+      "instructions": 35,
+      "registers": 16,
+      "max_live": 4,
+      "dispatch": "General"
+    },
+    {
+      "id": 102,
+      "name": "sc_dualAppendBang",
+      "count": 0,
+      "instructions": 28,
+      "registers": 4,
+      "max_live": 2,
+      "dispatch": "General"
+    },
+    {
+      "id": 103,
+      "name": "sc_appendBang",
+      "count": 0,
+      "instructions": 27,
+      "registers": 16,
+      "max_live": 5,
+      "dispatch": "General"
+    },
+    {
+      "id": 104,
+      "name": "sc_reverse",
+      "count": 79728,
+      "instructions": 23,
+      "registers": 9,
+      "max_live": 4,
+      "dispatch": "General"
+    },
+    {
+      "id": 105,
+      "name": "sc_reverseBang",
+      "count": 0,
+      "instructions": 11,
+      "registers": 8,
+      "max_live": 4,
+      "dispatch": "General"
+    },
+    {
+      "id": 106,
+      "name": "sc_listTail",
+      "count": 0,
+      "instructions": 22,
+      "registers": 4,
+      "max_live": 1,
+      "dispatch": "General"
+    },
+    {
+      "id": 107,
+      "name": "sc_listRef",
+      "count": 0,
+      "instructions": 14,
+      "registers": 10,
+      "max_live": 4,
+      "dispatch": "General"
+    },
+    {
+      "id": 108,
+      "name": "sc_memq",
+      "count": 0,
+      "instructions": 19,
+      "registers": 6,
+      "max_live": 1,
+      "dispatch": "General"
+    },
+    {
+      "id": 109,
+      "name": "sc_memv",
+      "count": 0,
+      "instructions": 19,
+      "registers": 6,
+      "max_live": 1,
+      "dispatch": "General"
+    },
+    {
+      "id": 110,
+      "name": "sc_member",
+      "count": 192,
+      "instructions": 25,
+      "registers": 12,
+      "max_live": null,
+      "dispatch": "General"
+    },
+    {
+      "id": 111,
+      "name": "sc_assq",
+      "count": 1739882,
+      "instructions": 20,
+      "registers": 8,
+      "max_live": 1,
+      "dispatch": "General"
+    },
+    {
+      "id": 112,
+      "name": "sc_assv",
+      "count": 0,
+      "instructions": 20,
+      "registers": 8,
+      "max_live": 1,
+      "dispatch": "General"
+    },
+    {
+      "id": 113,
+      "name": "sc_assoc",
+      "count": 0,
+      "instructions": 27,
+      "registers": 14,
+      "max_live": null,
+      "dispatch": "General"
+    },
+    {
+      "id": 114,
+      "name": "sc_isCharStringEqual",
+      "count": 0,
+      "instructions": 11,
+      "registers": 7,
+      "max_live": 2,
+      "dispatch": "General"
+    },
+    {
+      "id": 115,
+      "name": "sc_isCharStringLess",
+      "count": 0,
+      "instructions": 11,
+      "registers": 7,
+      "max_live": 2,
+      "dispatch": "General"
+    },
+    {
+      "id": 116,
+      "name": "sc_isCharStringGreater",
+      "count": 0,
+      "instructions": 11,
+      "registers": 7,
+      "max_live": 2,
+      "dispatch": "General"
+    },
+    {
+      "id": 117,
+      "name": "sc_isCharStringLessEqual",
+      "count": 2,
+      "instructions": 11,
+      "registers": 7,
+      "max_live": 2,
+      "dispatch": "General"
+    },
+    {
+      "id": 118,
+      "name": "sc_isCharStringGreaterEqual",
+      "count": 0,
+      "instructions": 11,
+      "registers": 7,
+      "max_live": 2,
+      "dispatch": "General"
+    },
+    {
+      "id": 119,
+      "name": "sc_isCharStringCIEqual",
+      "count": 0,
+      "instructions": 15,
+      "registers": 11,
+      "max_live": 3,
+      "dispatch": "General"
+    },
+    {
+      "id": 120,
+      "name": "sc_isCharStringCILess",
+      "count": 0,
+      "instructions": 15,
+      "registers": 11,
+      "max_live": 3,
+      "dispatch": "General"
+    },
+    {
+      "id": 121,
+      "name": "sc_isCharStringCIGreater",
+      "count": 0,
+      "instructions": 15,
+      "registers": 11,
+      "max_live": 3,
+      "dispatch": "General"
+    },
+    {
+      "id": 122,
+      "name": "sc_isCharStringCILessEqual",
+      "count": 0,
+      "instructions": 15,
+      "registers": 11,
+      "max_live": 3,
+      "dispatch": "General"
+    },
+    {
+      "id": 123,
+      "name": "sc_isCharStringCIGreaterEqual",
+      "count": 0,
+      "instructions": 15,
+      "registers": 11,
+      "max_live": 3,
+      "dispatch": "General"
+    },
+    {
+      "id": 124,
+      "name": "sc_Char",
+      "count": 0,
+      "instructions": 21,
+      "registers": 5,
+      "max_live": 3,
+      "dispatch": "General"
+    },
+    {
+      "id": 125,
+      "name": "sc_isChar",
+      "count": 0,
+      "instructions": 6,
+      "registers": 4,
+      "max_live": 2,
+      "dispatch": "General"
+    },
+    {
+      "id": 126,
+      "name": "sc_isCharOfClass",
+      "count": 12,
+      "instructions": 12,
+      "registers": 10,
+      "max_live": 3,
+      "dispatch": "General"
+    },
+    {
+      "id": 127,
+      "name": "sc_isCharAlphabetic",
+      "count": 0,
+      "instructions": 22,
+      "registers": 17,
+      "max_live": 4,
+      "dispatch": "General"
+    },
+    {
+      "id": 128,
+      "name": "sc_isCharNumeric",
+      "count": 0,
+      "instructions": 12,
+      "registers": 9,
+      "max_live": 4,
+      "dispatch": "General"
+    },
+    {
+      "id": 129,
+      "name": "sc_isCharWhitespace",
+      "count": 0,
+      "instructions": 26,
+      "registers": 13,
+      "max_live": 2,
+      "dispatch": "General"
+    },
+    {
+      "id": 130,
+      "name": "sc_isCharUpperCase",
+      "count": 0,
+      "instructions": 12,
+      "registers": 9,
+      "max_live": 4,
+      "dispatch": "General"
+    },
+    {
+      "id": 131,
+      "name": "sc_isCharLowerCase",
+      "count": 0,
+      "instructions": 12,
+      "registers": 9,
+      "max_live": 4,
+      "dispatch": "General"
+    },
+    {
+      "id": 132,
+      "name": "sc_char2integer",
+      "count": 0,
+      "instructions": 8,
+      "registers": 7,
+      "max_live": 3,
+      "dispatch": "General"
+    },
+    {
+      "id": 133,
+      "name": "sc_integer2char",
+      "count": 0,
+      "instructions": 11,
+      "registers": 9,
+      "max_live": 4,
+      "dispatch": "General"
+    },
+    {
+      "id": 134,
+      "name": "sc_charUpcase",
+      "count": 0,
+      "instructions": 11,
+      "registers": 8,
+      "max_live": 3,
+      "dispatch": "General"
+    },
+    {
+      "id": 135,
+      "name": "sc_charDowncase",
+      "count": 0,
+      "instructions": 11,
+      "registers": 8,
+      "max_live": 3,
+      "dispatch": "General"
+    },
+    {
+      "id": 136,
+      "name": "sc_makeJSStringOfLength",
+      "count": 0,
+      "instructions": 36,
+      "registers": 7,
+      "max_live": 3,
+      "dispatch": "General"
+    },
+    {
+      "id": 137,
+      "name": "sc_makejsString",
+      "count": 0,
+      "instructions": 20,
+      "registers": 7,
+      "max_live": 4,
+      "dispatch": "General"
+    },
+    {
+      "id": 138,
+      "name": "sc_jsstring2list",
+      "count": 0,
+      "instructions": 32,
+      "registers": 21,
+      "max_live": 6,
+      "dispatch": "General"
+    },
+    {
+      "id": 139,
+      "name": "sc_list2jsstring",
+      "count": 0,
+      "instructions": 27,
+      "registers": 8,
+      "max_live": 4,
+      "dispatch": "General"
+    },
+    {
+      "id": 140,
+      "name": "sc_isVector",
+      "count": 172542,
+      "instructions": 6,
+      "registers": 4,
+      "max_live": 2,
+      "dispatch": "General"
+    },
+    {
+      "id": 141,
+      "name": "sc_isVectorEqual",
+      "count": 0,
+      "instructions": 43,
+      "registers": 20,
+      "max_live": 5,
+      "dispatch": "General"
+    },
+    {
+      "id": 142,
+      "name": "sc_makeVector",
+      "count": 5088,
+      "instructions": 22,
+      "registers": 9,
+      "max_live": 4,
+      "dispatch": "General"
+    },
+    {
+      "id": 143,
+      "name": "sc_vector",
+      "count": 0,
+      "instructions": 25,
+      "registers": 14,
+      "max_live": 4,
+      "dispatch": "General"
+    },
+    {
+      "id": 144,
+      "name": "sc_vectorLength",
+      "count": 0,
+      "instructions": 5,
+      "registers": 3,
+      "max_live": 1,
+      "dispatch": "General"
+    },
+    {
+      "id": 145,
+      "name": "sc_vectorRef",
+      "count": 0,
+      "instructions": 10,
+      "registers": 5,
+      "max_live": 2,
+      "dispatch": "General"
+    },
+    {
+      "id": 146,
+      "name": "sc_vectorSetBang",
+      "count": 0,
+      "instructions": 12,
+      "registers": 6,
+      "max_live": 3,
+      "dispatch": "General"
+    },
+    {
+      "id": 147,
+      "name": "sc_vector2list",
+      "count": 48,
+      "instructions": 28,
+      "registers": 16,
+      "max_live": 4,
+      "dispatch": "General"
+    },
+    {
+      "id": 148,
+      "name": "sc_list2vector",
+      "count": 96,
+      "instructions": 20,
+      "registers": 7,
+      "max_live": 3,
+      "dispatch": "General"
+    },
+    {
+      "id": 149,
+      "name": "sc_vectorFillBang",
+      "count": 5088,
+      "instructions": 21,
+      "registers": 12,
+      "max_live": 3,
+      "dispatch": "General"
+    },
+    {
+      "id": 150,
+      "name": "sc_copyVector",
+      "count": 0,
+      "instructions": 25,
+      "registers": 15,
+      "max_live": 4,
+      "dispatch": "General"
+    },
+    {
+      "id": 151,
+      "name": "sc_vectorCopy",
+      "count": 0,
+      "instructions": 15,
+      "registers": 10,
+      "max_live": 4,
+      "dispatch": "General"
+    },
+    {
+      "id": 152,
+      "name": "sc_vectorCopyBang",
+      "count": 0,
+      "instructions": 75,
+      "registers": 11,
+      "max_live": 4,
+      "dispatch": "General"
+    },
+    {
+      "id": 153,
+      "name": "sc_isProcedure",
+      "count": 0,
+      "instructions": 6,
+      "registers": 4,
+      "max_live": 1,
+      "dispatch": "General"
+    },
+    {
+      "id": 154,
+      "name": "sc_apply",
+      "count": 0,
+      "instructions": 50,
+      "registers": 15,
+      "max_live": 4,
+      "dispatch": "General"
+    },
+    {
+      "id": 155,
+      "name": "sc_map",
+      "count": 0,
+      "instructions": 69,
+      "registers": 13,
+      "max_live": 6,
+      "dispatch": "General"
+    },
+    {
+      "id": 156,
+      "name": "sc_mapBang",
+      "count": 0,
+      "instructions": 61,
+      "registers": 9,
+      "max_live": 5,
+      "dispatch": "General"
+    },
+    {
+      "id": 157,
+      "name": "sc_forEach",
+      "count": 0,
+      "instructions": 55,
+      "registers": 10,
+      "max_live": 4,
+      "dispatch": "General"
+    },
+    {
+      "id": 158,
+      "name": "sc_filter",
+      "count": 0,
+      "instructions": 38,
+      "registers": 16,
+      "max_live": 5,
+      "dispatch": "General"
+    },
+    {
+      "id": 159,
+      "name": "sc_filterBang",
+      "count": 0,
+      "instructions": 39,
+      "registers": 9,
+      "max_live": 4,
+      "dispatch": "General"
+    },
+    {
+      "id": 160,
+      "name": "sc_filterMap1",
+      "count": 0,
+      "instructions": 36,
+      "registers": 8,
+      "max_live": 4,
+      "dispatch": "General"
+    },
+    {
+      "id": 161,
+      "name": "sc_filterMap2",
+      "count": 0,
+      "instructions": 45,
+      "registers": 10,
+      "max_live": 4,
+      "dispatch": "General"
+    },
+    {
+      "id": 162,
+      "name": "sc_filterMap",
+      "count": 0,
+      "instructions": 95,
+      "registers": 24,
+      "max_live": 5,
+      "dispatch": "General"
+    },
+    {
+      "id": 163,
+      "name": "sc_any",
+      "count": 0,
+      "instructions": 25,
+      "registers": 7,
+      "max_live": 3,
+      "dispatch": "General"
+    },
+    {
+      "id": 164,
+      "name": "sc_anyPred",
+      "count": 0,
+      "instructions": 14,
+      "registers": 10,
+      "max_live": 4,
+      "dispatch": "General"
+    },
+    {
+      "id": 165,
+      "name": "sc_every",
+      "count": 0,
+      "instructions": 27,
+      "registers": 7,
+      "max_live": 3,
+      "dispatch": "General"
+    },
+    {
+      "id": 166,
+      "name": "sc_everyPred",
+      "count": 0,
+      "instructions": 19,
+      "registers": 9,
+      "max_live": 4,
+      "dispatch": "General"
+    },
+    {
+      "id": 167,
+      "name": "sc_force",
+      "count": 0,
+      "instructions": 7,
+      "registers": 4,
+      "max_live": 2,
+      "dispatch": "General"
+    },
+    {
+      "id": 168,
+      "name": "sc_makePromise",
+      "count": 0,
+      "instructions": 10,
+      "registers": 2,
+      "max_live": 1,
+      "dispatch": "General"
+    },
+    {
+      "id": 169,
+      "name": "<script>",
+      "count": 0,
+      "instructions": 18,
+      "registers": 5,
+      "max_live": 2,
+      "dispatch": "General"
+    },
+    {
+      "id": 170,
+      "name": "sc_Values",
+      "count": 0,
+      "instructions": 5,
+      "registers": 2,
+      "max_live": 1,
+      "dispatch": "General"
+    },
+    {
+      "id": 171,
+      "name": "sc_values",
+      "count": 0,
+      "instructions": 13,
+      "registers": 9,
+      "max_live": 2,
+      "dispatch": "General"
+    },
+    {
+      "id": 172,
+      "name": "sc_callWithValues",
+      "count": 0,
+      "instructions": 25,
+      "registers": 15,
+      "max_live": 4,
+      "dispatch": "General"
+    },
+    {
+      "id": 173,
+      "name": "sc_dynamicWind",
+      "count": 0,
+      "instructions": 31,
+      "registers": 6,
+      "max_live": 2,
+      "dispatch": "General"
+    },
+    {
+      "id": 174,
+      "name": "sc_Struct",
+      "count": 0,
+      "instructions": 5,
+      "registers": 2,
+      "max_live": 1,
+      "dispatch": "General"
+    },
+    {
+      "id": 175,
+      "name": "sc_makeStruct",
+      "count": 0,
+      "instructions": 7,
+      "registers": 5,
+      "max_live": 2,
+      "dispatch": "General"
+    },
+    {
+      "id": 176,
+      "name": "sc_isStruct",
+      "count": 0,
+      "instructions": 6,
+      "registers": 4,
+      "max_live": 2,
+      "dispatch": "General"
+    },
+    {
+      "id": 177,
+      "name": "sc_isStructNamed",
+      "count": 0,
+      "instructions": 14,
+      "registers": 9,
+      "max_live": 2,
+      "dispatch": "General"
+    },
+    {
+      "id": 178,
+      "name": "sc_getStructField",
+      "count": 0,
+      "instructions": 12,
+      "registers": 6,
+      "max_live": 2,
+      "dispatch": "General"
+    },
+    {
+      "id": 179,
+      "name": "sc_setStructFieldBang",
+      "count": 0,
+      "instructions": 14,
+      "registers": 7,
+      "max_live": 3,
+      "dispatch": "General"
+    },
+    {
+      "id": 180,
+      "name": "sc_bitNot",
+      "count": 0,
+      "instructions": 6,
+      "registers": 3,
+      "max_live": 1,
+      "dispatch": "General"
+    },
+    {
+      "id": 181,
+      "name": "sc_bitAnd",
+      "count": 0,
+      "instructions": 8,
+      "registers": 4,
+      "max_live": 1,
+      "dispatch": "General"
+    },
+    {
+      "id": 182,
+      "name": "sc_bitOr",
+      "count": 0,
+      "instructions": 8,
+      "registers": 4,
+      "max_live": 1,
+      "dispatch": "General"
+    },
+    {
+      "id": 183,
+      "name": "sc_bitXor",
+      "count": 0,
+      "instructions": 8,
+      "registers": 4,
+      "max_live": 1,
+      "dispatch": "General"
+    },
+    {
+      "id": 184,
+      "name": "sc_bitLsh",
+      "count": 0,
+      "instructions": 8,
+      "registers": 4,
+      "max_live": 1,
+      "dispatch": "General"
+    },
+    {
+      "id": 185,
+      "name": "sc_bitRsh",
+      "count": 0,
+      "instructions": 8,
+      "registers": 4,
+      "max_live": 1,
+      "dispatch": "General"
+    },
+    {
+      "id": 186,
+      "name": "sc_bitUrsh",
+      "count": 0,
+      "instructions": 8,
+      "registers": 4,
+      "max_live": 1,
+      "dispatch": "General"
+    },
+    {
+      "id": 187,
+      "name": "sc_jsField",
+      "count": 0,
+      "instructions": 10,
+      "registers": 5,
+      "max_live": 2,
+      "dispatch": "General"
+    },
+    {
+      "id": 188,
+      "name": "sc_setJsFieldBang",
+      "count": 0,
+      "instructions": 13,
+      "registers": 6,
+      "max_live": 3,
+      "dispatch": "General"
+    },
+    {
+      "id": 189,
+      "name": "sc_deleteJsFieldBang",
+      "count": 0,
+      "instructions": 9,
+      "registers": 5,
+      "max_live": 2,
+      "dispatch": "General"
+    },
+    {
+      "id": 190,
+      "name": "sc_jsCall",
+      "count": 0,
+      "instructions": 34,
+      "registers": 13,
+      "max_live": 4,
+      "dispatch": "General"
+    },
+    {
+      "id": 191,
+      "name": "sc_jsMethodCall",
+      "count": 0,
+      "instructions": 36,
+      "registers": 13,
+      "max_live": 4,
+      "dispatch": "General"
+    },
+    {
+      "id": 192,
+      "name": "sc_jsNew",
+      "count": 0,
+      "instructions": 44,
+      "registers": 11,
+      "max_live": null,
+      "dispatch": "General"
+    },
+    {
+      "id": 193,
+      "name": "sc_pregexp",
+      "count": 0,
+      "instructions": 13,
+      "registers": 9,
+      "max_live": null,
+      "dispatch": "General"
+    },
+    {
+      "id": 194,
+      "name": "sc_pregexpMatch",
+      "count": 0,
+      "instructions": 76,
+      "registers": 20,
+      "max_live": null,
+      "dispatch": "General"
+    },
+    {
+      "id": 195,
+      "name": "sc_pregexpReplace",
+      "count": 0,
+      "instructions": 53,
+      "registers": 10,
+      "max_live": null,
+      "dispatch": "General"
+    },
+    {
+      "id": 196,
+      "name": "sc_pregexpReplaceAll",
+      "count": 0,
+      "instructions": 57,
+      "registers": 12,
+      "max_live": null,
+      "dispatch": "General"
+    },
+    {
+      "id": 197,
+      "name": "sc_pregexpSplit",
+      "count": 0,
+      "instructions": 45,
+      "registers": 15,
+      "max_live": null,
+      "dispatch": "General"
+    },
+    {
+      "id": 198,
+      "name": "sc_random",
+      "count": 0,
+      "instructions": 11,
+      "registers": 9,
+      "max_live": 4,
+      "dispatch": "General"
+    },
+    {
+      "id": 199,
+      "name": "sc_currentDate",
+      "count": 0,
+      "instructions": 4,
+      "registers": 2,
+      "max_live": 1,
+      "dispatch": "General"
+    },
+    {
+      "id": 200,
+      "name": "sc_Hashtable",
+      "count": 0,
+      "instructions": 2,
+      "registers": 1,
+      "max_live": 1,
+      "dispatch": "General"
+    },
+    {
+      "id": 201,
+      "name": "sc_HashtableElement",
+      "count": 0,
+      "instructions": 10,
+      "registers": 3,
+      "max_live": 1,
+      "dispatch": "General"
+    },
+    {
+      "id": 202,
+      "name": "sc_makeHashtable",
+      "count": 0,
+      "instructions": 4,
+      "registers": 2,
+      "max_live": 1,
+      "dispatch": "General"
+    },
+    {
+      "id": 203,
+      "name": "sc_hashtablePutBang",
+      "count": 0,
+      "instructions": 22,
+      "registers": 8,
+      "max_live": 5,
+      "dispatch": "General"
+    },
+    {
+      "id": 204,
+      "name": "sc_hashtableGet",
+      "count": 0,
+      "instructions": 19,
+      "registers": 7,
+      "max_live": 3,
+      "dispatch": "General"
+    },
+    {
+      "id": 205,
+      "name": "sc_hashtableForEach",
+      "count": 0,
+      "instructions": 61,
+      "registers": 39,
+      "max_live": 5,
+      "dispatch": "General"
+    },
+    {
+      "id": 206,
+      "name": "sc_hashtableContains",
+      "count": 0,
+      "instructions": 17,
+      "registers": 7,
+      "max_live": 3,
+      "dispatch": "General"
+    },
+    {
+      "id": 207,
+      "name": "sc_hash",
+      "count": 0,
+      "instructions": 45,
+      "registers": 26,
+      "max_live": 3,
+      "dispatch": "General"
+    },
+    {
+      "id": 208,
+      "name": "sc_counterHash",
+      "count": 0,
+      "instructions": 13,
+      "registers": 4,
+      "max_live": 1,
+      "dispatch": "General"
+    },
+    {
+      "id": 209,
+      "name": "sc_Trampoline",
+      "count": 0,
+      "instructions": 14,
+      "registers": 5,
+      "max_live": 3,
+      "dispatch": "General"
+    },
+    {
+      "id": 210,
+      "name": "sc_bindExitLambda",
+      "count": 0,
+      "instructions": 24,
+      "registers": 5,
+      "max_live": 3,
+      "dispatch": "General"
+    },
+    {
+      "id": 211,
+      "name": "<script>",
+      "count": 0,
+      "instructions": 9,
+      "registers": 3,
+      "max_live": 2,
+      "dispatch": "General"
+    },
+    {
+      "id": 212,
+      "name": "sc_BindExitException",
+      "count": 0,
+      "instructions": 4,
+      "registers": 1,
+      "max_live": 1,
+      "dispatch": "General"
+    },
+    {
+      "id": 213,
+      "name": "sc_EOF",
+      "count": 1,
+      "instructions": 2,
+      "registers": 1,
+      "max_live": 1,
+      "dispatch": "General"
+    },
+    {
+      "id": 214,
+      "name": "sc_Port",
+      "count": 2,
+      "instructions": 2,
+      "registers": 1,
+      "max_live": 1,
+      "dispatch": "General"
+    },
+    {
+      "id": 215,
+      "name": "sc_InputPort",
+      "count": 2,
+      "instructions": 2,
+      "registers": 1,
+      "max_live": 1,
+      "dispatch": "General"
+    },
+    {
+      "id": 216,
+      "name": "sc_ErrorInputPort",
+      "count": 1,
+      "instructions": 2,
+      "registers": 1,
+      "max_live": 1,
+      "dispatch": "General"
+    },
+    {
+      "id": 217,
+      "name": "sc_StringInputPort",
+      "count": 0,
+      "instructions": 10,
+      "registers": 5,
+      "max_live": 2,
+      "dispatch": "General"
+    },
+    {
+      "id": 218,
+      "name": "sc_Token",
+      "count": 0,
+      "instructions": 14,
+      "registers": 4,
+      "max_live": 1,
+      "dispatch": "General"
+    },
+    {
+      "id": 219,
+      "name": "sc_Tokenizer",
+      "count": 0,
+      "instructions": 5,
+      "registers": 2,
+      "max_live": 1,
+      "dispatch": "General"
+    },
+    {
+      "id": 220,
+      "name": "sc_Reader",
+      "count": 0,
+      "instructions": 8,
+      "registers": 2,
+      "max_live": 1,
+      "dispatch": "General"
+    },
+    {
+      "id": 221,
+      "name": "sc_read",
+      "count": 0,
+      "instructions": 21,
+      "registers": 7,
+      "max_live": null,
+      "dispatch": "General"
+    },
+    {
+      "id": 222,
+      "name": "sc_readChar",
+      "count": 0,
+      "instructions": 23,
+      "registers": 7,
+      "max_live": null,
+      "dispatch": "General"
+    },
+    {
+      "id": 223,
+      "name": "sc_peekChar",
+      "count": 0,
+      "instructions": 23,
+      "registers": 7,
+      "max_live": null,
+      "dispatch": "General"
+    },
+    {
+      "id": 224,
+      "name": "sc_isCharReady",
+      "count": 0,
+      "instructions": 13,
+      "registers": 4,
+      "max_live": null,
+      "dispatch": "General"
+    },
+    {
+      "id": 225,
+      "name": "sc_closeInputPort",
+      "count": 0,
+      "instructions": 6,
+      "registers": 4,
+      "max_live": 2,
+      "dispatch": "General"
+    },
+    {
+      "id": 226,
+      "name": "sc_isInputPort",
+      "count": 0,
+      "instructions": 6,
+      "registers": 4,
+      "max_live": 2,
+      "dispatch": "General"
+    },
+    {
+      "id": 227,
+      "name": "sc_isEOFObject",
+      "count": 0,
+      "instructions": 6,
+      "registers": 4,
+      "max_live": 2,
+      "dispatch": "General"
+    },
+    {
+      "id": 228,
+      "name": "sc_currentInputPort",
+      "count": 0,
+      "instructions": 4,
+      "registers": 1,
+      "max_live": null,
+      "dispatch": "General"
+    },
+    {
+      "id": 229,
+      "name": "sc_callWithInputFile",
+      "count": 0,
+      "instructions": 8,
+      "registers": 3,
+      "max_live": 1,
+      "dispatch": "General"
+    },
+    {
+      "id": 230,
+      "name": "sc_callWithOutputFile",
+      "count": 0,
+      "instructions": 8,
+      "registers": 3,
+      "max_live": 1,
+      "dispatch": "General"
+    },
+    {
+      "id": 231,
+      "name": "sc_withInputFromFile",
+      "count": 0,
+      "instructions": 8,
+      "registers": 3,
+      "max_live": 1,
+      "dispatch": "General"
+    },
+    {
+      "id": 232,
+      "name": "sc_withOutputToFile",
+      "count": 0,
+      "instructions": 8,
+      "registers": 3,
+      "max_live": 1,
+      "dispatch": "General"
+    },
+    {
+      "id": 233,
+      "name": "sc_openInputFile",
+      "count": 0,
+      "instructions": 6,
+      "registers": 2,
+      "max_live": 1,
+      "dispatch": "General"
+    },
+    {
+      "id": 234,
+      "name": "sc_openOutputFile",
+      "count": 0,
+      "instructions": 6,
+      "registers": 2,
+      "max_live": 1,
+      "dispatch": "General"
+    },
+    {
+      "id": 235,
+      "name": "sc_basename",
+      "count": 0,
+      "instructions": 21,
+      "registers": 11,
+      "max_live": 4,
+      "dispatch": "General"
+    },
+    {
+      "id": 236,
+      "name": "sc_dirname",
+      "count": 0,
+      "instructions": 19,
+      "registers": 9,
+      "max_live": 4,
+      "dispatch": "General"
+    },
+    {
+      "id": 237,
+      "name": "sc_withInputFromPort",
+      "count": 0,
+      "instructions": 26,
+      "registers": 3,
+      "max_live": null,
+      "dispatch": "General"
+    },
+    {
+      "id": 238,
+      "name": "sc_withInputFromString",
+      "count": 0,
+      "instructions": 21,
+      "registers": 16,
+      "max_live": null,
+      "dispatch": "General"
+    },
+    {
+      "id": 239,
+      "name": "sc_withOutputToPort",
+      "count": 0,
+      "instructions": 26,
+      "registers": 3,
+      "max_live": null,
+      "dispatch": "General"
+    },
+    {
+      "id": 240,
+      "name": "sc_withOutputToString",
+      "count": 0,
+      "instructions": 18,
+      "registers": 7,
+      "max_live": null,
+      "dispatch": "General"
+    },
+    {
+      "id": 241,
+      "name": "sc_withOutputToProcedure",
+      "count": 0,
+      "instructions": 20,
+      "registers": 10,
+      "max_live": null,
+      "dispatch": "General"
+    },
+    {
+      "id": 242,
+      "name": "<script>",
+      "count": 0,
+      "instructions": 13,
+      "registers": 10,
+      "max_live": null,
+      "dispatch": "General"
+    },
+    {
+      "id": 243,
+      "name": "sc_openOutputString",
+      "count": 0,
+      "instructions": 5,
+      "registers": 2,
+      "max_live": null,
+      "dispatch": "General"
+    },
+    {
+      "id": 244,
+      "name": "sc_openInputString",
+      "count": 0,
+      "instructions": 13,
+      "registers": 9,
+      "max_live": null,
+      "dispatch": "General"
+    },
+    {
+      "id": 245,
+      "name": "sc_OutputPort",
+      "count": 3,
+      "instructions": 2,
+      "registers": 1,
+      "max_live": 1,
+      "dispatch": "General"
+    },
+    {
+      "id": 246,
+      "name": "sc_StringOutputPort",
+      "count": 0,
+      "instructions": 4,
+      "registers": 1,
+      "max_live": 1,
+      "dispatch": "General"
+    },
+    {
+      "id": 247,
+      "name": "sc_getOutputString",
+      "count": 0,
+      "instructions": 11,
+      "registers": 7,
+      "max_live": null,
+      "dispatch": "General"
+    },
+    {
+      "id": 248,
+      "name": "sc_ErrorOutputPort",
+      "count": 2,
+      "instructions": 2,
+      "registers": 1,
+      "max_live": 1,
+      "dispatch": "General"
+    },
+    {
+      "id": 249,
+      "name": "sc_GenericOutputPort",
+      "count": 1,
+      "instructions": 12,
+      "registers": 3,
+      "max_live": 1,
+      "dispatch": "General"
+    },
+    {
+      "id": 250,
+      "name": "sc_isOutputPort",
+      "count": 0,
+      "instructions": 8,
+      "registers": 4,
+      "max_live": null,
+      "dispatch": "General"
+    },
+    {
+      "id": 251,
+      "name": "sc_closeOutputPort",
+      "count": 0,
+      "instructions": 6,
+      "registers": 4,
+      "max_live": 2,
+      "dispatch": "General"
+    },
+    {
+      "id": 252,
+      "name": "sc_write",
+      "count": 34,
+      "instructions": 20,
+      "registers": 9,
+      "max_live": null,
+      "dispatch": "General"
+    },
+    {
+      "id": 253,
+      "name": "sc_toWriteString",
+      "count": 34,
+      "instructions": 44,
+      "registers": 27,
+      "max_live": 3,
+      "dispatch": "General"
+    },
+    {
+      "id": 254,
+      "name": "sc_escapeWriteString",
+      "count": 0,
+      "instructions": 283,
+      "registers": 47,
+      "max_live": 5,
+      "dispatch": "General"
+    },
+    {
+      "id": 255,
+      "name": "sc_display",
+      "count": 82,
+      "instructions": 20,
+      "registers": 9,
+      "max_live": null,
+      "dispatch": "General"
+    },
+    {
+      "id": 256,
+      "name": "sc_toDisplayString",
+      "count": 82,
+      "instructions": 44,
+      "registers": 27,
+      "max_live": 3,
+      "dispatch": "General"
+    },
+    {
+      "id": 257,
+      "name": "sc_newline",
+      "count": 82,
+      "instructions": 14,
+      "registers": 5,
+      "max_live": null,
+      "dispatch": "General"
+    },
+    {
+      "id": 258,
+      "name": "sc_writeChar",
+      "count": 0,
+      "instructions": 17,
+      "registers": 6,
+      "max_live": null,
+      "dispatch": "General"
+    },
+    {
+      "id": 259,
+      "name": "sc_writeCircle",
+      "count": 0,
+      "instructions": 20,
+      "registers": 9,
+      "max_live": null,
+      "dispatch": "General"
+    },
+    {
+      "id": 260,
+      "name": "sc_toWriteCircleString",
+      "count": 0,
+      "instructions": 33,
+      "registers": 9,
+      "max_live": null,
+      "dispatch": "General"
+    },
+    {
+      "id": 261,
+      "name": "sc_prepWriteCircle",
+      "count": 0,
+      "instructions": 98,
+      "registers": 19,
+      "max_live": null,
+      "dispatch": "General"
+    },
+    {
+      "id": 262,
+      "name": "sc_genToWriteCircleString",
+      "count": 0,
+      "instructions": 30,
+      "registers": 15,
+      "max_live": null,
+      "dispatch": "General"
+    },
+    {
+      "id": 263,
+      "name": "sc_print",
+      "count": 0,
+      "instructions": 37,
+      "registers": 14,
+      "max_live": null,
+      "dispatch": "General"
+    },
+    {
+      "id": 264,
+      "name": "sc_format",
+      "count": 0,
+      "instructions": 371,
+      "registers": 69,
+      "max_live": null,
+      "dispatch": "General"
+    },
+    {
+      "id": 265,
+      "name": "sc_jsstring2string",
+      "count": 0,
+      "instructions": 5,
+      "registers": 2,
+      "max_live": 1,
+      "dispatch": "General"
+    },
+    {
+      "id": 266,
+      "name": "sc_jsstring2symbol",
+      "count": 0,
+      "instructions": 7,
+      "registers": 3,
+      "max_live": null,
+      "dispatch": "General"
+    },
+    {
+      "id": 267,
+      "name": "sc_string2jsstring",
+      "count": 0,
+      "instructions": 5,
+      "registers": 2,
+      "max_live": 1,
+      "dispatch": "General"
+    },
+    {
+      "id": 268,
+      "name": "sc_symbol2jsstring",
+      "count": 0,
+      "instructions": 7,
+      "registers": 6,
+      "max_live": 3,
+      "dispatch": "General"
+    },
+    {
+      "id": 269,
+      "name": "sc_keyword2jsstring",
+      "count": 0,
+      "instructions": 7,
+      "registers": 6,
+      "max_live": 3,
+      "dispatch": "General"
+    },
+    {
+      "id": 270,
+      "name": "sc_jsstring2keyword",
+      "count": 0,
+      "instructions": 7,
+      "registers": 3,
+      "max_live": null,
+      "dispatch": "General"
+    },
+    {
+      "id": 271,
+      "name": "sc_isKeyword",
+      "count": 0,
+      "instructions": 17,
+      "registers": 11,
+      "max_live": null,
+      "dispatch": "General"
+    },
+    {
+      "id": 272,
+      "name": "sc_isEqual",
+      "count": 174992,
+      "instructions": 67,
+      "registers": 48,
+      "max_live": null,
+      "dispatch": "General"
+    },
+    {
+      "id": 273,
+      "name": "sc_number2symbol",
+      "count": 0,
+      "instructions": 16,
+      "registers": 11,
+      "max_live": null,
+      "dispatch": "General"
+    },
+    {
+      "id": 274,
+      "name": "sc_symbol2number",
+      "count": 0,
+      "instructions": 16,
+      "registers": 13,
+      "max_live": 5,
+      "dispatch": "General"
+    },
+    {
+      "id": 275,
+      "name": "sc_string2integer",
+      "count": 0,
+      "instructions": 18,
+      "registers": 7,
+      "max_live": 4,
+      "dispatch": "General"
+    },
+    {
+      "id": 276,
+      "name": "sc_string2real",
+      "count": 0,
+      "instructions": 6,
+      "registers": 3,
+      "max_live": 1,
+      "dispatch": "General"
+    },
+    {
+      "id": 277,
+      "name": "sc_isSymbol",
+      "count": 0,
+      "instructions": 17,
+      "registers": 11,
+      "max_live": null,
+      "dispatch": "General"
+    },
+    {
+      "id": 278,
+      "name": "sc_symbol2string",
+      "count": 0,
+      "instructions": 7,
+      "registers": 6,
+      "max_live": 3,
+      "dispatch": "General"
+    },
+    {
+      "id": 279,
+      "name": "sc_string2symbol",
+      "count": 0,
+      "instructions": 7,
+      "registers": 3,
+      "max_live": null,
+      "dispatch": "General"
+    },
+    {
+      "id": 280,
+      "name": "sc_symbolAppend",
+      "count": 0,
+      "instructions": 27,
+      "registers": 16,
+      "max_live": null,
+      "dispatch": "General"
+    },
+    {
+      "id": 281,
+      "name": "sc_char2string",
+      "count": 0,
+      "instructions": 5,
+      "registers": 3,
+      "max_live": 1,
+      "dispatch": "General"
+    },
+    {
+      "id": 282,
+      "name": "sc_char2symbol",
+      "count": 0,
+      "instructions": 9,
+      "registers": 5,
+      "max_live": null,
+      "dispatch": "General"
+    },
+    {
+      "id": 283,
+      "name": "sc_isString",
+      "count": 0,
+      "instructions": 17,
+      "registers": 11,
+      "max_live": null,
+      "dispatch": "General"
+    },
+    {
+      "id": 284,
+      "name": "sc_string",
+      "count": 0,
+      "instructions": 28,
+      "registers": 13,
+      "max_live": 4,
+      "dispatch": "General"
+    },
+    {
+      "id": 285,
+      "name": "sc_stringLength",
+      "count": 0,
+      "instructions": 5,
+      "registers": 3,
+      "max_live": 1,
+      "dispatch": "General"
+    },
+    {
+      "id": 286,
+      "name": "sc_stringRef",
+      "count": 0,
+      "instructions": 13,
+      "registers": 10,
+      "max_live": 4,
+      "dispatch": "General"
+    },
+    {
+      "id": 287,
+      "name": "sc_isStringEqual",
+      "count": 0,
+      "instructions": 8,
+      "registers": 4,
+      "max_live": 1,
+      "dispatch": "General"
+    },
+    {
+      "id": 288,
+      "name": "sc_isStringLess",
+      "count": 0,
+      "instructions": 8,
+      "registers": 4,
+      "max_live": 1,
+      "dispatch": "General"
+    },
+    {
+      "id": 289,
+      "name": "sc_isStringGreater",
+      "count": 0,
+      "instructions": 8,
+      "registers": 4,
+      "max_live": 1,
+      "dispatch": "General"
+    },
+    {
+      "id": 290,
+      "name": "sc_isStringLessEqual",
+      "count": 0,
+      "instructions": 8,
+      "registers": 4,
+      "max_live": 1,
+      "dispatch": "General"
+    },
+    {
+      "id": 291,
+      "name": "sc_isStringGreaterEqual",
+      "count": 0,
+      "instructions": 8,
+      "registers": 4,
+      "max_live": 1,
+      "dispatch": "General"
+    },
+    {
+      "id": 292,
+      "name": "sc_isStringCIEqual",
+      "count": 0,
+      "instructions": 13,
+      "registers": 9,
+      "max_live": 3,
+      "dispatch": "General"
+    },
+    {
+      "id": 293,
+      "name": "sc_isStringCILess",
+      "count": 0,
+      "instructions": 13,
+      "registers": 9,
+      "max_live": 3,
+      "dispatch": "General"
+    },
+    {
+      "id": 294,
+      "name": "sc_isStringCIGreater",
+      "count": 0,
+      "instructions": 13,
+      "registers": 9,
+      "max_live": 3,
+      "dispatch": "General"
+    },
+    {
+      "id": 295,
+      "name": "sc_isStringCILessEqual",
+      "count": 0,
+      "instructions": 13,
+      "registers": 9,
+      "max_live": 3,
+      "dispatch": "General"
+    },
+    {
+      "id": 296,
+      "name": "sc_isStringCIGreaterEqual",
+      "count": 0,
+      "instructions": 13,
+      "registers": 9,
+      "max_live": 3,
+      "dispatch": "General"
+    },
+    {
+      "id": 297,
+      "name": "sc_substring",
+      "count": 0,
+      "instructions": 15,
+      "registers": 10,
+      "max_live": 4,
+      "dispatch": "General"
+    },
+    {
+      "id": 298,
+      "name": "sc_isSubstring_at",
+      "count": 0,
+      "instructions": 20,
+      "registers": 15,
+      "max_live": 6,
+      "dispatch": "General"
+    },
+    {
+      "id": 299,
+      "name": "sc_stringAppend",
+      "count": 0,
+      "instructions": 10,
+      "registers": 8,
+      "max_live": 4,
+      "dispatch": "General"
+    },
+    {
+      "id": 300,
+      "name": "sc_stringCopy",
+      "count": 0,
+      "instructions": 5,
+      "registers": 2,
+      "max_live": 1,
+      "dispatch": "General"
+    },
+    {
+      "id": 301,
+      "name": "sc_keyword2string",
+      "count": 0,
+      "instructions": 7,
+      "registers": 6,
+      "max_live": 3,
+      "dispatch": "General"
+    },
+    {
+      "id": 302,
+      "name": "sc_string2keyword",
+      "count": 0,
+      "instructions": 7,
+      "registers": 3,
+      "max_live": null,
+      "dispatch": "General"
+    },
+    {
+      "id": 303,
+      "name": "RunBenchmark",
+      "count": 82,
+      "instructions": 33,
+      "registers": 10,
+      "max_live": 3,
+      "dispatch": "General"
+    },
+    {
+      "id": 304,
+      "name": "<script>",
+      "count": 2,
+      "instructions": 3,
+      "registers": 1,
+      "max_live": 1,
+      "dispatch": "General"
+    },
+    {
+      "id": 305,
+      "name": "<script>",
+      "count": 1,
+      "instructions": 6,
+      "registers": 1,
+      "max_live": 1,
+      "dispatch": "General"
+    },
+    {
+      "id": 306,
+      "name": "<script>",
+      "count": 0,
+      "instructions": 47,
+      "registers": 6,
+      "max_live": 2,
+      "dispatch": "Numeric"
+    },
+    {
+      "id": 307,
+      "name": "<script>",
+      "count": 1,
+      "instructions": 22,
+      "registers": 3,
+      "max_live": 2,
+      "dispatch": "General"
+    },
+    {
+      "id": 308,
+      "name": "RunStep",
+      "count": 1,
+      "instructions": 76,
+      "registers": 15,
+      "max_live": 4,
+      "dispatch": "General"
+    },
+    {
+      "id": 309,
+      "name": "<script>",
+      "count": 0,
+      "instructions": 27,
+      "registers": 11,
+      "max_live": 3,
+      "dispatch": "General"
+    },
+    {
+      "id": 310,
+      "name": "<script>",
+      "count": 2,
+      "instructions": 37,
+      "registers": 13,
+      "max_live": 5,
+      "dispatch": "General"
+    },
+    {
+      "id": 311,
+      "name": "<script>",
+      "count": 2,
+      "instructions": 14,
+      "registers": 7,
+      "max_live": 3,
+      "dispatch": "General"
+    },
+    {
+      "id": 312,
+      "name": "<script>",
+      "count": 2,
+      "instructions": 16,
+      "registers": 8,
+      "max_live": 3,
+      "dispatch": "General"
+    },
+    {
+      "id": 313,
+      "name": "<script>",
+      "count": 1,
+      "instructions": 28,
+      "registers": 7,
+      "max_live": 4,
+      "dispatch": "General"
+    },
+    {
+      "id": 314,
+      "name": "<script>",
+      "count": 0,
+      "instructions": 19,
+      "registers": 9,
+      "max_live": 4,
+      "dispatch": "General"
+    },
+    {
+      "id": 315,
+      "name": "<script>",
+      "count": 24,
+      "instructions": 45,
+      "registers": 10,
+      "max_live": 5,
+      "dispatch": "General"
+    },
+    {
+      "id": 316,
+      "name": "Measure",
+      "count": 24,
+      "instructions": 36,
+      "registers": 5,
+      "max_live": 3,
+      "dispatch": "General"
+    },
+    {
+      "id": 317,
+      "name": "<script>",
+      "count": 1,
+      "instructions": 23,
+      "registers": 3,
+      "max_live": 2,
+      "dispatch": "General"
+    },
+    {
+      "id": 318,
+      "name": "RunNextSetup",
+      "count": 3,
+      "instructions": 28,
+      "registers": 8,
+      "max_live": 3,
+      "dispatch": "General"
+    },
+    {
+      "id": 319,
+      "name": "RunNextBenchmark",
+      "count": 24,
+      "instructions": 30,
+      "registers": 10,
+      "max_live": 4,
+      "dispatch": "General"
+    },
+    {
+      "id": 320,
+      "name": "RunNextTearDown",
+      "count": 2,
+      "instructions": 23,
+      "registers": 8,
+      "max_live": 3,
+      "dispatch": "General"
+    },
+    {
+      "id": 321,
+      "name": "<script>",
+      "count": 48,
+      "instructions": 5,
+      "registers": 3,
+      "max_live": null,
+      "dispatch": "General"
+    },
+    {
+      "id": 322,
+      "name": "<script>",
+      "count": 34,
+      "instructions": 5,
+      "registers": 3,
+      "max_live": null,
+      "dispatch": "General"
+    },
+    {
+      "id": 323,
+      "name": "<script>",
+      "count": 0,
+      "instructions": 8,
+      "registers": 5,
+      "max_live": null,
+      "dispatch": "General"
+    },
+    {
+      "id": 324,
+      "name": "<script>",
+      "count": 0,
+      "instructions": 48,
+      "registers": 11,
+      "max_live": 4,
+      "dispatch": "General"
+    },
+    {
+      "id": 325,
+      "name": "<script>",
+      "count": 0,
+      "instructions": 8,
+      "registers": 5,
+      "max_live": null,
+      "dispatch": "General"
+    },
+    {
+      "id": 326,
+      "name": "<script>",
+      "count": 0,
+      "instructions": 8,
+      "registers": 5,
+      "max_live": null,
+      "dispatch": "General"
+    },
+    {
+      "id": 327,
+      "name": "<script>",
+      "count": 0,
+      "instructions": 3,
+      "registers": 1,
+      "max_live": 1,
+      "dispatch": "General"
+    },
+    {
+      "id": 328,
+      "name": "<script>",
+      "count": 0,
+      "instructions": 13,
+      "registers": 4,
+      "max_live": 2,
+      "dispatch": "General"
+    },
+    {
+      "id": 329,
+      "name": "<script>",
+      "count": 0,
+      "instructions": 40,
+      "registers": 16,
+      "max_live": 5,
+      "dispatch": "General"
+    },
+    {
+      "id": 330,
+      "name": "<script>",
+      "count": 0,
+      "instructions": 8,
+      "registers": 5,
+      "max_live": null,
+      "dispatch": "General"
+    },
+    {
+      "id": 331,
+      "name": "<script>",
+      "count": 0,
+      "instructions": 8,
+      "registers": 5,
+      "max_live": null,
+      "dispatch": "General"
+    },
+    {
+      "id": 332,
+      "name": "<script>",
+      "count": 0,
+      "instructions": 9,
+      "registers": 7,
+      "max_live": 3,
+      "dispatch": "General"
+    },
+    {
+      "id": 333,
+      "name": "<script>",
+      "count": 0,
+      "instructions": 4,
+      "registers": 1,
+      "max_live": 1,
+      "dispatch": "General"
+    },
+    {
+      "id": 334,
+      "name": "<script>",
+      "count": 0,
+      "instructions": 31,
+      "registers": 8,
+      "max_live": 4,
+      "dispatch": "General"
+    },
+    {
+      "id": 335,
+      "name": "<script>",
+      "count": 0,
+      "instructions": 11,
+      "registers": 6,
+      "max_live": 2,
+      "dispatch": "General"
+    },
+    {
+      "id": 336,
+      "name": "<script>",
+      "count": 0,
+      "instructions": 11,
+      "registers": 3,
+      "max_live": 2,
+      "dispatch": "General"
+    },
+    {
+      "id": 337,
+      "name": "<script>",
+      "count": 0,
+      "instructions": 4,
+      "registers": 1,
+      "max_live": 1,
+      "dispatch": "General"
+    },
+    {
+      "id": 338,
+      "name": "<script>",
+      "count": 0,
+      "instructions": 2,
+      "registers": 1,
+      "max_live": 1,
+      "dispatch": "General"
+    },
+    {
+      "id": 339,
+      "name": "<script>",
+      "count": 0,
+      "instructions": 4,
+      "registers": 1,
+      "max_live": 1,
+      "dispatch": "General"
+    },
+    {
+      "id": 340,
+      "name": "<script>",
+      "count": 0,
+      "instructions": 4,
+      "registers": 1,
+      "max_live": 1,
+      "dispatch": "General"
+    },
+    {
+      "id": 341,
+      "name": "<script>",
+      "count": 0,
+      "instructions": 16,
+      "registers": 8,
+      "max_live": 4,
+      "dispatch": "General"
+    },
+    {
+      "id": 342,
+      "name": "<script>",
+      "count": 0,
+      "instructions": 12,
+      "registers": 3,
+      "max_live": 2,
+      "dispatch": "General"
+    },
+    {
+      "id": 343,
+      "name": "<script>",
+      "count": 0,
+      "instructions": 11,
+      "registers": 3,
+      "max_live": 2,
+      "dispatch": "General"
+    },
+    {
+      "id": 344,
+      "name": "<script>",
+      "count": 0,
+      "instructions": 137,
+      "registers": 43,
+      "max_live": 3,
+      "dispatch": "General"
+    },
+    {
+      "id": 345,
+      "name": "isNumberChar",
+      "count": 0,
+      "instructions": 10,
+      "registers": 6,
+      "max_live": 2,
+      "dispatch": "General"
+    },
+    {
+      "id": 346,
+      "name": "isIdOrNumberChar",
+      "count": 0,
+      "instructions": 20,
+      "registers": 14,
+      "max_live": 3,
+      "dispatch": "General"
+    },
+    {
+      "id": 347,
+      "name": "isWhitespace",
+      "count": 0,
+      "instructions": 24,
+      "registers": 14,
+      "max_live": 2,
+      "dispatch": "General"
+    },
+    {
+      "id": 348,
+      "name": "isWhitespaceOrEOF",
+      "count": 0,
+      "instructions": 13,
+      "registers": 9,
+      "max_live": 3,
+      "dispatch": "General"
+    },
+    {
+      "id": 349,
+      "name": "readString",
+      "count": 0,
+      "instructions": 249,
+      "registers": 38,
+      "max_live": 5,
+      "dispatch": "General"
+    },
+    {
+      "id": 350,
+      "name": "readIdOrNumber",
+      "count": 0,
+      "instructions": 38,
+      "registers": 18,
+      "max_live": 4,
+      "dispatch": "General"
+    },
+    {
+      "id": 351,
+      "name": "skipWhitespaceAndComments",
+      "count": 0,
+      "instructions": 48,
+      "registers": 10,
+      "max_live": 4,
+      "dispatch": "General"
+    },
+    {
+      "id": 352,
+      "name": "readDot",
+      "count": 0,
+      "instructions": 18,
+      "registers": 16,
+      "max_live": 4,
+      "dispatch": "General"
+    },
+    {
+      "id": 353,
+      "name": "readSharp",
+      "count": 0,
+      "instructions": 304,
+      "registers": 36,
+      "max_live": null,
+      "dispatch": "General"
+    },
+    {
+      "id": 354,
+      "name": "<script>",
+      "count": 0,
+      "instructions": 173,
+      "registers": 55,
+      "max_live": null,
+      "dispatch": "General"
+    },
+    {
+      "id": 355,
+      "name": "readList",
+      "count": 0,
+      "instructions": 108,
+      "registers": 28,
+      "max_live": 4,
+      "dispatch": "General"
+    },
+    {
+      "id": 356,
+      "name": "matchesPeer",
+      "count": 0,
+      "instructions": 30,
+      "registers": 17,
+      "max_live": 2,
+      "dispatch": "General"
+    },
+    {
+      "id": 357,
+      "name": "readQuote",
+      "count": 0,
+      "instructions": 17,
+      "registers": 15,
+      "max_live": 7,
+      "dispatch": "General"
+    },
+    {
+      "id": 358,
+      "name": "readVector",
+      "count": 0,
+      "instructions": 31,
+      "registers": 8,
+      "max_live": 4,
+      "dispatch": "General"
+    },
+    {
+      "id": 359,
+      "name": "storeRefence",
+      "count": 0,
+      "instructions": 14,
+      "registers": 4,
+      "max_live": 3,
+      "dispatch": "General"
+    },
+    {
+      "id": 360,
+      "name": "readReference",
+      "count": 0,
+      "instructions": 13,
+      "registers": 7,
+      "max_live": 2,
+      "dispatch": "General"
+    },
+    {
+      "id": 361,
+      "name": "<script>",
+      "count": 0,
+      "instructions": 4,
+      "registers": 2,
+      "max_live": 1,
+      "dispatch": "General"
+    },
+    {
+      "id": 362,
+      "name": "<script>",
+      "count": 0,
+      "instructions": 2,
+      "registers": 1,
+      "max_live": 1,
+      "dispatch": "General"
+    },
+    {
+      "id": 363,
+      "name": "<script>",
+      "count": 0,
+      "instructions": 9,
+      "registers": 5,
+      "max_live": 2,
+      "dispatch": "General"
+    },
+    {
+      "id": 364,
+      "name": "<script>",
+      "count": 0,
+      "instructions": 8,
+      "registers": 5,
+      "max_live": null,
+      "dispatch": "General"
+    },
+    {
+      "id": 365,
+      "name": "<script>",
+      "count": 0,
+      "instructions": 6,
+      "registers": 2,
+      "max_live": 1,
+      "dispatch": "General"
+    },
+    {
+      "id": 366,
+      "name": "<script>",
+      "count": 0,
+      "instructions": 2,
+      "registers": 1,
+      "max_live": 1,
+      "dispatch": "General"
+    },
+    {
+      "id": 367,
+      "name": "<script>",
+      "count": 0,
+      "instructions": 155,
+      "registers": 17,
+      "max_live": null,
+      "dispatch": "General"
+    },
+    {
+      "id": 368,
+      "name": "<script>",
+      "count": 0,
+      "instructions": 116,
+      "registers": 14,
+      "max_live": null,
+      "dispatch": "General"
+    },
+    {
+      "id": 369,
+      "name": "<script>",
+      "count": 1,
+      "instructions": 6,
+      "registers": 1,
+      "max_live": 1,
+      "dispatch": "General"
+    },
+    {
+      "id": 370,
+      "name": "<script>",
+      "count": 0,
+      "instructions": 20,
+      "registers": 6,
+      "max_live": null,
+      "dispatch": "General"
+    },
+    {
+      "id": 371,
+      "name": "<script>",
+      "count": 34,
+      "instructions": 35,
+      "registers": 26,
+      "max_live": null,
+      "dispatch": "General"
+    },
+    {
+      "id": 372,
+      "name": "<script>",
+      "count": 0,
+      "instructions": 39,
+      "registers": 30,
+      "max_live": null,
+      "dispatch": "General"
+    },
+    {
+      "id": 373,
+      "name": "<script>",
+      "count": 34,
+      "instructions": 56,
+      "registers": 26,
+      "max_live": null,
+      "dispatch": "General"
+    },
+    {
+      "id": 374,
+      "name": "<script>",
+      "count": 34,
+      "instructions": 8,
+      "registers": 5,
+      "max_live": null,
+      "dispatch": "General"
+    },
+    {
+      "id": 375,
+      "name": "<script>",
+      "count": 34,
+      "instructions": 60,
+      "registers": 28,
+      "max_live": 3,
+      "dispatch": "General"
+    },
+    {
+      "id": 376,
+      "name": "<script>",
+      "count": 0,
+      "instructions": 4,
+      "registers": 1,
+      "max_live": 1,
+      "dispatch": "General"
+    },
+    {
+      "id": 377,
+      "name": "<script>",
+      "count": 0,
+      "instructions": 4,
+      "registers": 1,
+      "max_live": 1,
+      "dispatch": "General"
+    },
+    {
+      "id": 378,
+      "name": "<script>",
+      "count": 19856,
+      "instructions": 51,
+      "registers": 39,
+      "max_live": null,
+      "dispatch": "General"
+    },
+    {
+      "id": 379,
+      "name": "<script>",
+      "count": 33354,
+      "instructions": 72,
+      "registers": 56,
+      "max_live": null,
+      "dispatch": "General"
+    },
+    {
+      "id": 380,
+      "name": "<script>",
+      "count": 0,
+      "instructions": 64,
+      "registers": 15,
+      "max_live": null,
+      "dispatch": "General"
+    },
+    {
+      "id": 381,
+      "name": "<script>",
+      "count": 30566,
+      "instructions": 42,
+      "registers": 27,
+      "max_live": null,
+      "dispatch": "General"
+    },
+    {
+      "id": 382,
+      "name": "<script>",
+      "count": 102,
+      "instructions": 88,
+      "registers": 72,
+      "max_live": null,
+      "dispatch": "General"
+    },
+    {
+      "id": 383,
+      "name": "<script>",
+      "count": 323340,
+      "instructions": 70,
+      "registers": 52,
+      "max_live": null,
+      "dispatch": "General"
+    },
+    {
+      "id": 384,
+      "name": "<script>",
+      "count": 193426,
+      "instructions": 57,
+      "registers": 43,
+      "max_live": null,
+      "dispatch": "General"
+    },
+    {
+      "id": 385,
+      "name": "<script>",
+      "count": 510,
+      "instructions": 193,
+      "registers": 135,
+      "max_live": null,
+      "dispatch": "General"
+    },
+    {
+      "id": 386,
+      "name": "<script>",
+      "count": 3230816,
+      "instructions": 104,
+      "registers": 35,
+      "max_live": null,
+      "dispatch": "General"
+    },
+    {
+      "id": 387,
+      "name": "<script>",
+      "count": 2034662,
+      "instructions": 49,
+      "registers": 37,
+      "max_live": null,
+      "dispatch": "General"
+    },
+    {
+      "id": 388,
+      "name": "<script>",
+      "count": 6907882,
+      "instructions": 121,
+      "registers": 33,
+      "max_live": null,
+      "dispatch": "General"
+    },
+    {
+      "id": 389,
+      "name": "<script>",
+      "count": 0,
+      "instructions": 93,
+      "registers": 81,
+      "max_live": null,
+      "dispatch": "General"
+    },
+    {
+      "id": 390,
+      "name": "<script>",
+      "count": 273530,
+      "instructions": 82,
+      "registers": 20,
+      "max_live": null,
+      "dispatch": "General"
+    },
+    {
+      "id": 391,
+      "name": "<script>",
+      "count": 9248,
+      "instructions": 31,
+      "registers": 16,
+      "max_live": null,
+      "dispatch": "General"
+    },
+    {
+      "id": 392,
+      "name": "<script>",
+      "count": 34,
+      "instructions": 179,
+      "registers": 39,
+      "max_live": null,
+      "dispatch": "General"
+    },
+    {
+      "id": 393,
+      "name": "<script>",
+      "count": 34,
+      "instructions": 134,
+      "registers": 34,
+      "max_live": null,
+      "dispatch": "General"
+    },
+    {
+      "id": 394,
+      "name": "<script>",
+      "count": 48,
+      "instructions": 152,
+      "registers": 11,
+      "max_live": 6,
+      "dispatch": "General"
+    },
+    {
+      "id": 395,
+      "name": "<script>",
+      "count": 576,
+      "instructions": 38,
+      "registers": 18,
+      "max_live": null,
+      "dispatch": "General"
+    },
+    {
+      "id": 396,
+      "name": "<script>",
+      "count": 96,
+      "instructions": 54,
+      "registers": 42,
+      "max_live": 7,
+      "dispatch": "General"
+    },
+    {
+      "id": 397,
+      "name": "<script>",
+      "count": 144,
+      "instructions": 60,
+      "registers": 16,
+      "max_live": 4,
+      "dispatch": "General"
+    },
+    {
+      "id": 398,
+      "name": "<script>",
+      "count": 96,
+      "instructions": 28,
+      "registers": 17,
+      "max_live": 4,
+      "dispatch": "General"
+    },
+    {
+      "id": 399,
+      "name": "<script>",
+      "count": 144,
+      "instructions": 44,
+      "registers": 10,
+      "max_live": 4,
+      "dispatch": "General"
+    },
+    {
+      "id": 400,
+      "name": "<script>",
+      "count": 96,
+      "instructions": 32,
+      "registers": 21,
+      "max_live": 5,
+      "dispatch": "General"
+    },
+    {
+      "id": 401,
+      "name": "<script>",
+      "count": 144,
+      "instructions": 142,
+      "registers": 14,
+      "max_live": 6,
+      "dispatch": "General"
+    },
+    {
+      "id": 402,
+      "name": "<script>",
+      "count": 48,
+      "instructions": 356,
+      "registers": 19,
+      "max_live": 9,
+      "dispatch": "General"
+    },
+    {
+      "id": 403,
+      "name": "<script>",
+      "count": 384,
+      "instructions": 38,
+      "registers": 18,
+      "max_live": null,
+      "dispatch": "General"
+    },
+    {
+      "id": 404,
+      "name": "<script>",
+      "count": 96,
+      "instructions": 43,
+      "registers": 12,
+      "max_live": 4,
+      "dispatch": "General"
+    },
+    {
+      "id": 405,
+      "name": "<script>",
+      "count": 13248,
+      "instructions": 53,
+      "registers": 42,
+      "max_live": 4,
+      "dispatch": "General"
+    },
+    {
+      "id": 406,
+      "name": "<script>",
+      "count": 4272,
+      "instructions": 31,
+      "registers": 24,
+      "max_live": 4,
+      "dispatch": "General"
+    },
+    {
+      "id": 407,
+      "name": "<script>",
+      "count": 7104,
+      "instructions": 47,
+      "registers": 32,
+      "max_live": 4,
+      "dispatch": "General"
+    },
+    {
+      "id": 408,
+      "name": "<script>",
+      "count": 384,
+      "instructions": 57,
+      "registers": 17,
+      "max_live": 6,
+      "dispatch": "General"
+    },
+    {
+      "id": 409,
+      "name": "<script>",
+      "count": 10896,
+      "instructions": 69,
+      "registers": 55,
+      "max_live": 6,
+      "dispatch": "General"
+    },
+    {
+      "id": 410,
+      "name": "<script>",
+      "count": 2688,
+      "instructions": 45,
+      "registers": 20,
+      "max_live": 6,
+      "dispatch": "General"
+    },
+    {
+      "id": 411,
+      "name": "<script>",
+      "count": 384,
+      "instructions": 178,
+      "registers": 19,
+      "max_live": 6,
+      "dispatch": "General"
+    },
+    {
+      "id": 412,
+      "name": "<script>",
+      "count": 2544,
+      "instructions": 60,
+      "registers": 12,
+      "max_live": 6,
+      "dispatch": "General"
+    },
+    {
+      "id": 413,
+      "name": "<script>",
+      "count": 0,
+      "instructions": 68,
+      "registers": 22,
+      "max_live": 4,
+      "dispatch": "General"
+    },
+    {
+      "id": 414,
+      "name": "<script>",
+      "count": 116592,
+      "instructions": 75,
+      "registers": 49,
+      "max_live": 7,
+      "dispatch": "General"
+    },
+    {
+      "id": 415,
+      "name": "<script>",
+      "count": 132528,
+      "instructions": 45,
+      "registers": 9,
+      "max_live": 4,
+      "dispatch": "General"
+    },
+    {
+      "id": 416,
+      "name": "<script>",
+      "count": 138336,
+      "instructions": 104,
+      "registers": 48,
+      "max_live": 11,
+      "dispatch": "General"
+    },
+    {
+      "id": 417,
+      "name": "<script>",
+      "count": 130272,
+      "instructions": 59,
+      "registers": 16,
+      "max_live": 5,
+      "dispatch": "General"
+    },
+    {
+      "id": 418,
+      "name": "<script>",
+      "count": 48,
+      "instructions": 103,
+      "registers": 27,
+      "max_live": 13,
+      "dispatch": "General"
+    },
+    {
+      "id": 419,
+      "name": "<script>",
+      "count": 0,
+      "instructions": 53,
+      "registers": 32,
+      "max_live": 5,
+      "dispatch": "General"
+    },
+    {
+      "id": 420,
+      "name": "<script>",
+      "count": 0,
+      "instructions": 128,
+      "registers": 45,
+      "max_live": 10,
+      "dispatch": "General"
+    },
+    {
+      "id": 421,
+      "name": "<script>",
+      "count": 0,
+      "instructions": 93,
+      "registers": 21,
+      "max_live": 10,
+      "dispatch": "General"
+    },
+    {
+      "id": 422,
+      "name": "<script>",
+      "count": 2304,
+      "instructions": 74,
+      "registers": 10,
+      "max_live": 5,
+      "dispatch": "General"
+    },
+    {
+      "id": 423,
+      "name": "<script>",
+      "count": 6672,
+      "instructions": 77,
+      "registers": 33,
+      "max_live": 7,
+      "dispatch": "General"
+    },
+    {
+      "id": 424,
+      "name": "<script>",
+      "count": 0,
+      "instructions": 42,
+      "registers": 28,
+      "max_live": 8,
+      "dispatch": "General"
+    },
+    {
+      "id": 425,
+      "name": "<script>",
+      "count": 48,
+      "instructions": 60,
+      "registers": 43,
+      "max_live": 11,
+      "dispatch": "General"
+    },
+    {
+      "id": 426,
+      "name": "<script>",
+      "count": 0,
+      "instructions": 54,
+      "registers": 38,
+      "max_live": 10,
+      "dispatch": "General"
+    },
+    {
+      "id": 427,
+      "name": "<script>",
+      "count": 48,
+      "instructions": 45,
+      "registers": 38,
+      "max_live": null,
+      "dispatch": "General"
+    },
+    {
+      "id": 428,
+      "name": "<script>",
+      "count": 48,
+      "instructions": 45,
+      "registers": 19,
+      "max_live": 6,
+      "dispatch": "General"
+    },
+    {
+      "id": 429,
+      "name": "<script>",
+      "count": 48,
+      "instructions": 48,
+      "registers": 18,
+      "max_live": null,
+      "dispatch": "General"
+    },
+    {
+      "id": 430,
+      "name": "<script>",
+      "count": 48,
+      "instructions": 8,
+      "registers": 5,
+      "max_live": null,
+      "dispatch": "General"
+    },
+    {
+      "id": 431,
+      "name": "<script>",
+      "count": 48,
+      "instructions": 16,
+      "registers": 12,
+      "max_live": null,
+      "dispatch": "General"
+    },
+    {
+      "id": 432,
+      "name": "<script>",
+      "count": 198,
+      "instructions": 4,
+      "registers": 2,
+      "max_live": 1,
+      "dispatch": "General"
+    },
+    {
+      "id": 433,
+      "name": "<script>",
+      "count": 1,
+      "instructions": 13,
+      "registers": 9,
+      "max_live": null,
+      "dispatch": "General"
+    },
+    {
+      "id": 434,
+      "name": "<script>",
+      "count": 0,
+      "instructions": 15,
+      "registers": 7,
+      "max_live": null,
+      "dispatch": "General"
+    },
+    {
+      "id": 435,
+      "name": "<script>",
+      "count": 1,
+      "instructions": 16,
+      "registers": 7,
+      "max_live": null,
+      "dispatch": "General"
+    }
+  ]
+}

@@ -1,0 +1,121 @@
+{
+  "production_source": "383fcec1750a9eca4673853b2137d3b746c246d3",
+  "baseline_source": "cac5edc64d41ce6e76b0bd800e193fbb14493f4b",
+  "baseline_published_merge": "08a7dfb81d4153a39f4f30e610909ec565461ddb",
+  "engines": {
+    "candidate": {
+      "source": "383fcec1750a9eca4673853b2137d3b746c246d3",
+      "sha256": "6488fa2069243903ac2ba1e3b6f7ca6d025cc9111c9d9aafb964bd44236b88f7"
+    },
+    "baseline": {
+      "source": "cac5edc64d41ce6e76b0bd800e193fbb14493f4b",
+      "published_merge": "08a7dfb81d4153a39f4f30e610909ec565461ddb",
+      "sha256": "3c83e9e92ce727b70f931eddf6f124861f80dda08c824ef968a3b7036e1c6c53"
+    },
+    "node": {
+      "path": "/workspace/shared/node-v26.12.0-linux-x64/bin/node",
+      "version": "v26.12.0",
+      "sha256": "caa24debe02770c92a70677e2a62ca98890150e7ac1c17bcfe31bcc98cc89943"
+    }
+  },
+  "counts": {
+    "scenarios": {
+      "behavior-pass": 273,
+      "declarations-pass": 13,
+      "quench-failed": 13,
+      "oracle-failed": 1
+    },
+    "baseline-scenarios": {
+      "behavior-pass": 273,
+      "declarations-pass": 13,
+      "quench-failed": 13,
+      "oracle-failed": 1
+    },
+    "surface": {
+      "surface-match-unqualified": 221,
+      "surface-diff": 70,
+      "oracle-failed": 9
+    }
+  },
+  "coverage": {
+    "qualified": false,
+    "checked": 1664,
+    "total": 70236
+  },
+  "instruction_guard": [
+    {
+      "fixture": "crypto",
+      "runs": 1,
+      "baseline_per_run": 1760931835.0,
+      "candidate_per_run": 1760793560.0,
+      "delta_percent": -0.007852376636714049
+    },
+    {
+      "fixture": "deltablue",
+      "runs": 10,
+      "baseline_per_run": 235801544.7,
+      "candidate_per_run": 235070894.9,
+      "delta_percent": -0.3098579362274984
+    },
+    {
+      "fixture": "earley-boyer",
+      "runs": 1,
+      "baseline_per_run": 3031468754.0,
+      "candidate_per_run": 3028575535.0,
+      "delta_percent": -0.09543951248656017
+    },
+    {
+      "fixture": "navier-stokes",
+      "runs": 1,
+      "baseline_per_run": 1425014870.0,
+      "candidate_per_run": 1425007309.0,
+      "delta_percent": -0.0005305909544649173
+    },
+    {
+      "fixture": "raytrace",
+      "runs": 3,
+      "baseline_per_run": 905247252.6666666,
+      "candidate_per_run": 904718605.0,
+      "delta_percent": -0.058398152008674195
+    },
+    {
+      "fixture": "regexp",
+      "runs": 1,
+      "baseline_per_run": 1754789098.0,
+      "candidate_per_run": 1732867161.0,
+      "delta_percent": -1.249263345947685
+    },
+    {
+      "fixture": "richards",
+      "runs": 25,
+      "baseline_per_run": 104017620.08,
+      "candidate_per_run": 104017654.28,
+      "delta_percent": 3.2879044893237316e-05
+    },
+    {
+      "fixture": "splay",
+      "runs": 75,
+      "baseline_per_run": 24473409.88,
+      "candidate_per_run": 24462435.733333334,
+      "delta_percent": -0.04484110191621827
+    }
+  ],
+  "exact_guard_completions": 32,
+  "node_api_provenance": {
+    "path": "/workspace/shared/node-v26.12.0-linux-x64/bin/node",
+    "version": "v26.12.0",
+    "sha256": "caa24debe02770c92a70677e2a62ca98890150e7ac1c17bcfe31bcc98cc89943"
+  },
+  "instruction_findings_over_one_percent": [],
+  "total_node_parity": false,
+  "package_performance_phase_started": false,
+  "scenario_gains": [],
+  "scenario_regressions": [],
+  "test_counts": {
+    "fast-core": 639,
+    "opt-core": 639,
+    "node-api": 319,
+    "node-lib": 4,
+    "coverage-unit": 3
+  }
+}

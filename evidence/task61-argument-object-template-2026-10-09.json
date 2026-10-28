@@ -1,0 +1,299 @@
+{
+  "schema": 1,
+  "task": "61",
+  "experiment": "arguments-object template shapes and own-key ordering",
+  "decision": "retain: focused 11-pair production measurements improve both mapped and unmapped argument-object loops and both affected constructor-heavy fixtures; no Task 61 qualification claim",
+  "source": {
+    "revision": "170c43d88c4473b819c5bf7bb2d1da686df69df8",
+    "source_dirty": true,
+    "tracked_source_patch_sha256": "4da046c1574d0a82fe531009dd0977b0e0760d2fd3f1647ec5479e403372937d",
+    "changed_sources": [
+      "crates/quench-runtime/src/api.rs",
+      "crates/quench-runtime/src/heap.rs",
+      "crates/quench-runtime/src/value_vec.rs",
+      "crates/quench-runtime/src/vm.rs",
+      "crates/quench-runtime/src/vm/dispatch_frame.rs",
+      "crates/quench-runtime/src/vm/gc.rs",
+      "crates/quench-runtime/src/vm/object_keys.rs"
+    ],
+    "source_sha256": {
+      "crates/quench-runtime/src/api.rs": "f4e04ccba2f8d8f3cf84bd5be4bfbd60ef5d019cc132ff55e70c0844f6daf185",
+      "crates/quench-runtime/src/heap.rs": "e2913be604f1a0349e661e1154acf0828dcf26ed0fc8e505e123883e38723eec",
+      "crates/quench-runtime/src/value_vec.rs": "bd9762ea47a74a2ae33be0e47cdc6b5ad62bad89f5849dcee11aa45cd55c0ddb",
+      "crates/quench-runtime/src/vm.rs": "4401a89bcee3fde46a0757504573224116af031c355a220efe60a20fb67e85b8",
+      "crates/quench-runtime/src/vm/dispatch_frame.rs": "fec1bfef0dafb5a23ee350511dcbd7e54863b4fcb0794419b5e2174f1c063abf",
+      "crates/quench-runtime/src/vm/gc.rs": "3a9970e2524f8e47a5753f0d6a90f50ea534e18d11c0c93b1ccd7e83ed532fe2",
+      "crates/quench-runtime/src/vm/object_keys.rs": "8d67045e1b5b424aba765a23ab12d80757b04a090cfdac0c4b80ccf530c64af0"
+    },
+    "baseline_binary_sha256": "790acdad8d00bdf4fc6f1db03450914dead2a43119eba3ac99e9ba246c517a4a",
+    "candidate_binary_sha256": "b2602ed749e836b199a42f3477f0725e01a0dd9e6162f12d79bdca0a663547c2"
+  },
+  "host": {
+    "platform": "macOS-26.5-arm64-arm-64bit",
+    "machine": "arm64",
+    "processor": "arm",
+    "logical_cpus": 10,
+    "memory_bytes": 17179869184,
+    "measurement": "/usr/bin/time -l; 11 alternating Quench-only pairs",
+    "rustc": "rustc 1.99.0 (b940084d7 2026-09-28) (Homebrew)\nbinary: rustc\ncommit-hash: b940084d7eb6a299eb4bfeb8e34901bc051e7ac4\ncommit-date: 2026-09-28\nhost: aarch64-apple-darwin\nrelease: 1.99.0\nLLVM version: 23.1.2"
+  },
+  "change": [
+    "Cache each realm\u2019s mapped/unmapped arguments-object final shape and its three fixed property slots.",
+    "Initialize per-call values directly in a fresh property vector; a rooted anchor preserves the template shape and iterator method across GC shape compaction.",
+    "Use the arguments mapping classification for callee exposure; strict and non-simple-parameter unmapped objects retain the poison callee accessor.",
+    "Do not synthesize Array exotic length in ownKeys for arguments objects; their ordinary length property is reported once in string-key order."
+  ],
+  "correctness": {
+    "test262_stages": [
+      {
+        "stage": 1,
+        "passed": 263,
+        "failed": 0,
+        "total": 263,
+        "engine": "quench",
+        "report": "target/iteration/task61-argument-shapes-profile-20261009/test262-stage-1-current.json",
+        "report_sha256": "d2178e9b9d1ca77ea06b6b05f608574ccb0130dd9fc1910cf9c40c6765f9295f",
+        "compare_runs": "0 regressions against the saved same-engine all-pass report"
+      },
+      {
+        "stage": 8,
+        "passed": 347,
+        "failed": 0,
+        "total": 347,
+        "engine": "quench",
+        "report": "target/iteration/task61-argument-shapes-profile-20261009/test262-stage-8-current.json",
+        "report_sha256": "f33db75b494723c6ea0d3938c03213a2c68a603893f76b7295488495362d718b",
+        "compare_runs": "0 regressions against the saved same-engine all-pass report"
+      },
+      {
+        "stage": 11,
+        "passed": 217,
+        "failed": 0,
+        "total": 217,
+        "engine": "quench",
+        "report": "target/iteration/task61-argument-shapes-profile-20261009/test262-stage-11-current.json",
+        "report_sha256": "43b7220c7841b0579e2ef21f70a82c342bb56b61ba277277c64d6a399f04e606",
+        "compare_runs": "0 regressions against the saved same-engine all-pass report"
+      },
+      {
+        "stage": 23,
+        "passed": 11,
+        "failed": 0,
+        "total": 11,
+        "engine": "quench",
+        "report": "target/iteration/task61-argument-shapes-profile-20261009/test262-stage-23-current.json",
+        "report_sha256": "a3ab57ac577a44e3b682e918d0df21796dbdf27ff6def572a2306935549f3e14",
+        "compare_runs": "0 regressions against the saved same-engine all-pass report"
+      }
+    ],
+    "node_oracle": {
+      "node_version": "v26.10.0",
+      "script": "tasks/evidence/task61-argument-object-node-oracle-2026-10-09.cjs",
+      "script_sha256": "37acec375a9bdf399bbb9d7e2cc56631503b6722a9208e5ca1d230bb85055f6a",
+      "candidate_output": "[[9,9,true],[2,9,true,true,false,false],[true,true,false,false],[[\"0\",\"1\",\"length\",\"callee\",\"Symbol(Symbol.iterator)\"],[3,4],false,false],[12,[\"length\",\"callee\"]],[true,[5,6],[\"0\",\"1\",\"length\",\"callee\",\"Symbol(Symbol.iterator)\"]]]",
+      "candidate_matches_node": true,
+      "checks": [
+        "simple sloppy mapped arguments",
+        "non-simple unmapped callee throws",
+        "strict poison descriptor",
+        "iteration",
+        "own-key ordering",
+        "mutation and deletion",
+        "fresh object identity"
+      ]
+    },
+    "unit_test": {
+      "command": "cargo test -p quench-runtime --features profile-memory regression_function_arguments_retain_original_values_after_residual_round_trip -- --nocapture",
+      "result": "passed (1 test)"
+    },
+    "compare_runs_note": "The Oct 7 reports identify engine=next and were rejected before comparison; comparisons used the saved all-pass reports with engine=quench and reported zero regressions."
+  },
+  "measurements": {
+    "microbenchmark": {
+      "raw_report": "tasks/evidence/task61-argument-objects-paired-2026-10-09.json",
+      "runner": "tasks/evidence/task61-argument-objects-paired-2026-10-09.py",
+      "inputs": [
+        "tasks/evidence/task61-argument-objects-plain-2026-10-09.cjs",
+        "tasks/evidence/task61-argument-objects-mapped-2026-10-09.cjs",
+        "tasks/evidence/task61-argument-objects-unmapped-2026-10-09.cjs"
+      ],
+      "summary": {
+        "mapped": {
+          "instructions_retired": {
+            "baseline_median": 5935001483,
+            "candidate_median": 4389228374,
+            "paired_median_delta_percent": -26.065985658957917,
+            "candidate_lower_pairs": 11,
+            "pairs": 11
+          },
+          "cycles_elapsed": {
+            "baseline_median": 1000930283,
+            "candidate_median": 720206213,
+            "paired_median_delta_percent": -28.545085109940988,
+            "candidate_lower_pairs": 11,
+            "pairs": 11
+          },
+          "elapsed_seconds": {
+            "baseline_median": 0.26,
+            "candidate_median": 0.18,
+            "paired_median_delta_percent": -28.571428571428566,
+            "candidate_lower_pairs": 9,
+            "pairs": 11
+          },
+          "maximum_rss_bytes": {
+            "baseline_median": 26034176,
+            "candidate_median": 19841024,
+            "paired_median_delta_percent": -23.580246913580247,
+            "candidate_lower_pairs": 11,
+            "pairs": 11
+          },
+          "stdout_equal": true
+        },
+        "plain": {
+          "instructions_retired": {
+            "baseline_median": 1355020592,
+            "candidate_median": 1354437887,
+            "paired_median_delta_percent": -0.04146645690388629,
+            "candidate_lower_pairs": 9,
+            "pairs": 11
+          },
+          "cycles_elapsed": {
+            "baseline_median": 213189609,
+            "candidate_median": 212823889,
+            "paired_median_delta_percent": -0.16566536962101544,
+            "candidate_lower_pairs": 6,
+            "pairs": 11
+          },
+          "elapsed_seconds": {
+            "baseline_median": 0.05,
+            "candidate_median": 0.05,
+            "paired_median_delta_percent": 0.0,
+            "candidate_lower_pairs": 0,
+            "pairs": 11
+          },
+          "maximum_rss_bytes": {
+            "baseline_median": 19480576,
+            "candidate_median": 18694144,
+            "paired_median_delta_percent": -3.9562289562289563,
+            "candidate_lower_pairs": 11,
+            "pairs": 11
+          },
+          "stdout_equal": true
+        },
+        "unmapped": {
+          "instructions_retired": {
+            "baseline_median": 6462868164,
+            "candidate_median": 3216272199,
+            "paired_median_delta_percent": -50.23995435964177,
+            "candidate_lower_pairs": 11,
+            "pairs": 11
+          },
+          "cycles_elapsed": {
+            "baseline_median": 1372790803,
+            "candidate_median": 516244988,
+            "paired_median_delta_percent": -62.3611160658395,
+            "candidate_lower_pairs": 11,
+            "pairs": 11
+          },
+          "elapsed_seconds": {
+            "baseline_median": 0.34,
+            "candidate_median": 0.13,
+            "paired_median_delta_percent": -63.63636363636363,
+            "candidate_lower_pairs": 11,
+            "pairs": 11
+          },
+          "maximum_rss_bytes": {
+            "baseline_median": 24018944,
+            "candidate_median": 19742720,
+            "paired_median_delta_percent": -17.995910020449898,
+            "candidate_lower_pairs": 11,
+            "pairs": 11
+          },
+          "stdout_equal": true
+        }
+      }
+    },
+    "fixtures": {
+      "raw_report": "tasks/evidence/task61-argument-objects-fixture-paired-2026-10-09.json",
+      "runner": "tasks/evidence/task61-argument-objects-fixture-paired-2026-10-09.py",
+      "rounds_per_fixture": 11,
+      "summary": {
+        "raytrace.js": {
+          "pairs": 11,
+          "stdout_equal_every_pair": true,
+          "candidate_score_higher_pairs": 11,
+          "median_score": {
+            "baseline": 429.0,
+            "candidate": 684.0
+          },
+          "paired_median_score_delta_points": 257.0,
+          "paired_mean_score_delta_points": 243.1818181818182,
+          "paired_mean_score_delta_points_bootstrap_95pct": [
+            209.0909090909091,
+            264.09090909090907
+          ],
+          "paired_median_score_change_percent": 59.353348729792145,
+          "instructions_retired": {
+            "baseline_median": 141119545549,
+            "candidate_median": 123899711984,
+            "paired_median_change_percent": -12.204515241322147,
+            "candidate_lower_pairs": 11
+          },
+          "maximum_rss_bytes": {
+            "baseline_median": 25460736,
+            "candidate_median": 21037056,
+            "paired_median_delta_bytes": -4341760,
+            "paired_mean_delta_bytes_bootstrap_95pct": [
+              -4693271.2727272725,
+              -3619374.5454545454
+            ],
+            "candidate_lower_pairs": 11
+          },
+          "elapsed_seconds": {
+            "paired_median_change_percent": -25.344352617079892,
+            "candidate_faster_pairs": 11
+          }
+        },
+        "earley-boyer.js": {
+          "pairs": 11,
+          "stdout_equal_every_pair": true,
+          "candidate_score_higher_pairs": 11,
+          "median_score": {
+            "baseline": 531.0,
+            "candidate": 620.0
+          },
+          "paired_median_score_delta_points": 88.0,
+          "paired_mean_score_delta_points": 87.72727272727273,
+          "paired_mean_score_delta_points_bootstrap_95pct": [
+            85.27272727272727,
+            89.9090909090909
+          ],
+          "paired_median_score_change_percent": 16.51031894934334,
+          "instructions_retired": {
+            "baseline_median": 354958710698,
+            "candidate_median": 362385826742,
+            "paired_median_change_percent": 2.0942551620517604,
+            "candidate_lower_pairs": 1
+          },
+          "maximum_rss_bytes": {
+            "baseline_median": 68927488,
+            "candidate_median": 65814528,
+            "paired_median_delta_bytes": -3145728,
+            "paired_mean_delta_bytes_bootstrap_95pct": [
+              -3792151.272727273,
+              -2803153.4545454546
+            ],
+            "candidate_lower_pairs": 11
+          },
+          "elapsed_seconds": {
+            "paired_median_change_percent": -0.5582693649685978,
+            "candidate_faster_pairs": 8
+          }
+        }
+      }
+    }
+  },
+  "limitations": [
+    "Focused M4 measurements only; Linux and the full four-engine Task 61 gate remain open."
+  ]
+}

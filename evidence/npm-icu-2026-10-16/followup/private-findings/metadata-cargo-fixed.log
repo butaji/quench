@@ -1,0 +1,7 @@
+     Locking 2 packages to highest Rust 1.99.0 compatible versions
+      Adding oxc_parser v0.153.0 (/workspace/scratch/quench-npm-file-url/vendor/oxc-parser)
+      Adding quench-stack v0.1.0 (/workspace/scratch/quench-npm-file-url/crates/quench-stack)
+error: failed to download `oxc_regular_expression v0.153.0`
+
+Caused by:
+  attempting to make an HTTP request, but --offline was specified

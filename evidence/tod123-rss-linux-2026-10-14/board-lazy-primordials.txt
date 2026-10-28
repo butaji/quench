@@ -1,0 +1,16 @@
+crypto qn-mbase 6944 6936 7072
+crypto qn-mcand 5096 4972 5080
+deltablue qn-mbase 6540 6388 6540
+deltablue qn-mcand 4652 4612 4696
+earley-boyer qn-mbase 13212 13084 13072
+earley-boyer qn-mcand 11284 11192 11168
+navier-stokes qn-mbase 7844 7732 7832
+navier-stokes qn-mcand 5448 5600 5448
+raytrace qn-mbase 6432 6428 6304
+raytrace qn-mcand 4292 4304 4312
+regexp qn-mbase 16888 17016 16728
+regexp qn-mcand 14904 14904 14916
+richards qn-mbase 6076 6080 6080
+richards qn-mcand 4248 4248 4248
+splay qn-mbase 50756 50704 50760
+splay qn-mcand 48996 48988 48996

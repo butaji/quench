@@ -1,0 +1,23 @@
+{
+  "expressions-functions": {
+    "baseline_artifacts": [
+      "evidence/cloud-speed-integration-linux-2026-10-14/merge-test262-expressions-functions.json.gz",
+      "evidence/cloud-speed-integration-linux-2026-10-14/merge-test262-function-code.json"
+    ],
+    "inventory_equal": true,
+    "cases": 11319,
+    "passed": 11304,
+    "failed": 15,
+    "differences": []
+  },
+  "function": {
+    "baseline_artifacts": [
+      "evidence/cloud-speed-integration-linux-2026-10-14/merge-test262-function.json"
+    ],
+    "inventory_equal": true,
+    "cases": 509,
+    "passed": 508,
+    "failed": 1,
+    "differences": []
+  }
+}

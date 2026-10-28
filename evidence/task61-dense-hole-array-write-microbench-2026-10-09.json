@@ -1,0 +1,146 @@
+{
+  "schema": 1,
+  "task": "61",
+  "experiment": "Keep bounded holey arrays in dense storage",
+  "decision": "retain; the focused write-loop and NavierStokes diagnostics both improve, while Task 61 qualification remains outstanding",
+  "source": {
+    "base_revision": "fa14f749a304f350c445471dff272ce4123afc48",
+    "measured_source_diff_sha256": "cea93e97bd3c00910d2615e4f02432eea53e526d5b8ee95c67ec3dd5b9b1d7ec",
+    "files": [
+      "crates/quench-runtime/src/heap.rs",
+      "crates/quench-runtime/src/vm/index.rs"
+    ],
+    "candidate_binary_sha256": "6a6176e2f6240571d78e2c4a61ec2a183faf88c03bc216ce097d7e0273b6d3aa",
+    "baseline_binary_sha256": "d57de12813b4e251b1c4c1f3167bcf1eaa86e67ef0f525e6b518d488cb0a0b41",
+    "quickjs_binary_sha256": "4b0d0da1beae0a88d0724c7a0869797dee7a24c5bc1e74cfb5d2f69d17811c2b",
+    "candidate_build_command": "CARGO_INCREMENTAL=0 cargo build -p quench-node --profile production"
+  },
+  "host": {
+    "platform": "macOS 26.5; Apple M4 (Mac16,10), arm64",
+    "rustc": "rustc 1.99.0 (b940084d7 2026-09-28) (Homebrew)",
+    "measurement_backend": "/usr/bin/time -l"
+  },
+  "measurement": {
+    "kind": "CJS-shaped production instruction-retirement microbenchmark",
+    "script": "(function(){var n=16900;var a=new Array(n);for(var k=0;k<n;k++)a[k]=0;function f(x){for(var t=0;t<100;t++)for(var i=0;i<n;i++)x[i]=i}f(a)})()",
+    "matched_control": "(function(){var n=16900;var a=new Array(n);for(var k=0;k<n;k++)a[k]=0;function f(x){for(var t=0;t<100;t++)for(var i=0;i<n;i++){}}f(a)})()",
+    "array_length": 16900,
+    "measured_store_iterations": 1690000,
+    "normalization": "Subtract each binary's matched empty-loop instruction count, then divide by 1,690,000 indexed stores.",
+    "instructions": {
+      "baseline_total": 21786772068,
+      "baseline_control": 2147901187,
+      "candidate_total": 5408443530,
+      "candidate_control": 2141658972,
+      "quickjs_total": 300652629,
+      "quickjs_control": 174368702,
+      "baseline_per_store": 11620.63,
+      "candidate_per_store": 1933.01,
+      "quickjs_per_store": 74.72,
+      "candidate_change_percent": -83.37,
+      "baseline_to_quickjs_ratio": 155.51,
+      "candidate_to_quickjs_ratio": 25.87
+    },
+    "raw_wall_time_seconds_one_run": {
+      "baseline": 1.19,
+      "candidate": 0.50,
+      "quickjs": 0.02
+    },
+    "scope_limit": "The microbenchmark isolates indexed stores; the separate three-round fixture diagnostic below is not Task 61 qualification."
+  },
+  "implementation": "Heap owns one per-array dense-hole budget of 256 KiB, with the slot limit derived from size_of::<Value>(). Array creation and length changes materialize bounded holes as Value::DELETED; writes into a moderate sparse sidecar promote it once into dense storage. Larger lengths remain in the sparse sidecar. The same heap transition handles construction, Array(length), length writes, and sparse promotion.",
+  "verification": {
+    "runtime_unit_tests": {
+      "command": "cargo test -p quench-runtime --features profile-memory --lib vm::index::tests",
+      "passed": 11,
+      "failed": 0
+    },
+    "test262_before_final_noop_change": [
+      {"filter": "Array stage 31", "passed": 3081, "failed": 0},
+      {"filter": "Object.defineProperty stage 60", "passed": 1133, "failed": 0},
+      {"filter": "Arguments stage 1", "passed": 263, "failed": 0}
+    ],
+    "test262_final_source_slices": [
+      {"filter": "Array holes stage 31", "passed": 8, "failed": 0},
+      {"filter": "Array length stage 31", "passed": 183, "failed": 0},
+      {"filter": "Array push stage 31", "passed": 24, "failed": 0},
+      {"filter": "Array constructors stage 31", "passed": 55, "failed": 0},
+      {"filter": "Array define-own-prop-length stage 31", "passed": 6, "failed": 0}
+    ],
+    "node_oracle": {
+      "matched": true,
+      "final_source_cases": [
+        "sparse shrink and regrow",
+        "same-length assignment",
+        "new Array(1e9)",
+        "Array.prototype indexed getter and setter"
+      ],
+      "earlier_candidate_cases": [
+        "holes and own keys",
+        "forEach and iteration",
+        "length grow and shrink",
+        "own indexed accessor",
+        "blocked shrink at a non-configurable index"
+      ]
+    },
+    "reports": [
+      "target/iteration/task34-dense-hole-array-stage31-20261009.json",
+      "target/iteration/task34-followup-array-hole-20261009.json",
+      "target/iteration/task34-followup-array-length-20261009.json",
+      "target/iteration/task34-followup-array-push-20261009.json",
+      "target/iteration/task34-followup-array-constructor-20261009.json",
+      "target/iteration/task34-followup-array-define-own-length-20261009.json"
+    ]
+  },
+  "fixture_confirmation": {
+    "kind": "diagnostic four-engine NavierStokes comparison",
+    "fixture": "quench-bench/js-engine-benchmark/v8-v7/navier-stokes.js",
+    "fixture_sha256": "ce241465ffeee77b5c4f7119f522aa971fe1fe92c3aed76f7514ea43e07fec84",
+    "rounds_per_build": 3,
+    "round_order_matched": true,
+    "baseline_source_revision": "987b05ed55119441aa937de559501c90536e3fc1",
+    "candidate_source_revision": "fa14f749a304f350c445471dff272ce4123afc48",
+    "source_dirty_in_reports": true,
+    "runner_sha256": "7530076292020d65cc1cc9c47fbe90534470144588e8ed17ec0107553c8c44fc",
+    "reports": {
+      "baseline": {
+        "path": "target/iteration/task61-dense-holes-20261009/old.json",
+        "sha256": "637809ce4fca2cbcd7cbe2fba5e4fbb7a2e9e6e75ab640b02231843e92296c48"
+      },
+      "candidate": {
+        "path": "target/iteration/task61-dense-holes-20261009/dense-hole.json",
+        "sha256": "e49454d661ba529d73821d4d6017bd961d53d2f1f6b60d7299ae5ceca8c5e1d8"
+      }
+    },
+    "valid_rounds": 3,
+    "output_equal": true,
+    "timeouts": 0,
+    "quench_medians": {
+      "baseline_score": 188,
+      "candidate_score": 550,
+      "score_ratio": 2.926,
+      "baseline_wall_seconds": 26.807,
+      "candidate_wall_seconds": 9.763,
+      "wall_speedup": 2.746,
+      "baseline_instructions": 654604298964,
+      "candidate_instructions": 299805758441,
+      "instructions_change_percent": -54.2,
+      "baseline_peak_rss_mib": 31.672,
+      "candidate_peak_rss_mib": 21.656,
+      "peak_rss_change_mib": -10.016,
+      "peak_rss_change_percent": -31.6
+    },
+    "reference_controls": {
+      "quickjs_median_score_baseline": 4548,
+      "quickjs_median_score_candidate": 4559,
+      "quickjs_change_percent": 0.24,
+      "bun_median_score_baseline": 4683,
+      "bun_median_score_candidate": 4730,
+      "bun_change_percent": 1.0,
+      "node_median_score_baseline": 3533,
+      "node_median_score_candidate": 3512,
+      "node_change_percent": -0.59
+    },
+    "scope_limit": "Single-fixture, three-round diagnostic. Both reports mark source_dirty=true and have different docs-only base revisions; exact binary and runner hashes are pinned. This is not a clean all-eight or Linux qualification."
+  }
+}

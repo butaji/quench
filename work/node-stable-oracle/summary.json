@@ -1,0 +1,43 @@
+{
+  "engine": "official Node v26.12.0",
+  "counts": {
+    "pass": 4578,
+    "skip": 417,
+    "fail": 17
+  },
+  "official_harness_total": 5012,
+  "all_parallel_source_count": 5015,
+  "source_stems_without_tap_label": [
+    "test-esm-loader-hooks-inspect-wait.js",
+    "test-fs-read-stream-concurrent-reads.js",
+    "test-shadow-realm-gc-module.js",
+    "test-shadow-realm-gc.js",
+    "test-snapshot-incompatible.js"
+  ],
+  "repeated_tap_labels": {
+    "test-startup-empty-regexp-statics": 2,
+    "test-whatwg-readablestream": 2,
+    "test-worker": 2
+  },
+  "failures": [
+    "test-cluster-primary-error",
+    "test-cluster-primary-kill",
+    "test-net-boundsocket",
+    "test-node-output-console",
+    "test-repl-context",
+    "test-repl-custom-eval-previews",
+    "test-repl-empty",
+    "test-repl-eval-error-after-close",
+    "test-repl-multiline",
+    "test-repl-pretty-stack-custom-writer",
+    "test-repl-underscore",
+    "test-repl-custom-eval",
+    "test-runner-reporters",
+    "test-sqlite-statement",
+    "test-tls-get-ca-certificates-worker-no-use-system-ca",
+    "test-tls-get-ca-certificates-worker-use-system-ca",
+    "test-vfs"
+  ],
+  "source_bytes_equal": true,
+  "elapsed_seconds": 460.1913734889822
+}

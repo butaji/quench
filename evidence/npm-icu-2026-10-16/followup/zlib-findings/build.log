@@ -1,0 +1,21 @@
+   Compiling crc32fast v1.5.2
+   Compiling serde_core v1.0.229
+   Compiling zmij v1.0.23
+   Compiling cfg-if v1.0.4
+   Compiling simd-adler32 v0.3.10
+   Compiling adler2 v2.0.1
+   Compiling serde_json v1.0.151
+   Compiling miniz_oxide v0.9.1
+   Compiling itoa v1.0.18
+   Compiling zlib-rs v0.6.8
+   Compiling memchr v2.8.3
+   Compiling flate2 v1.1.10
+   Compiling npm-zlib-stream-probe v0.0.0 (/workspace/scratch/npm-zlib-draft)
+error[E0599]: no variant, associated function, or constant named `Block` found for enum `FlushCompress` in the current scope
+  --> main.rs:11:191
+   |
+11 | ...:Finish,5=>FlushCompress::Block,_=>panic!()};
+   |                              ^^^^^ variant, associated function, or constant not found in `FlushCompress`
+
+For more information about this error, try `rustc --explain E0599`.
+error: could not compile `npm-zlib-stream-probe` (bin "npm-zlib-stream-probe") due to 1 previous error

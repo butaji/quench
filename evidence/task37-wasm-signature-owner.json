@@ -1,0 +1,66 @@
+{
+  "tasks": [
+    "37",
+    "40"
+  ],
+  "source_head": "7e60169df033dd247f34199e084e3e8080a92a29",
+  "source_state": "dirty worktree",
+  "source_hashes": {
+    "crates/quench-runtime-next/src/wasm.rs": "90cb6f25677416e2d761bf876a1b89e75d590a171fce9adf6443fd1a0f475c73",
+    "crates/quench-runtime-next/src/vm/program_store.rs": "cd3a1554990948b95c10185dcaa9906e72cbcb98764e8c14d30cb8d753405aae",
+    "crates/quench-runtime-next/src/vm/wasm.rs": "c62f4c455b89c826c93c2f373decb584898be070b98beceae677c88bad69ed30"
+  },
+  "suite_head": "67c8b9dc32c47d61c05a1681df349d01c85fa8ff",
+  "suite_clean": true,
+  "host": "macOS-26.5-arm64-arm-64bit",
+  "rustc": "rustc 1.99.0 (b940084d7 2026-09-28) (Homebrew)",
+  "profile": "debug",
+  "obligation": "Preserve one authoritative function signature allocation across module entry views and registered program identity, preparing exact typed indirect-target checks without a second function representation or executable core.",
+  "representation": "ProgramEntry optionally holds the same Rc signature vector owned by WasmModule. Registration attaches that authority idempotently and rejects a different allocation for the same residual identity. Function signatures are looked up by program and function index. Ordinary JS entries have no Wasm signature facts. This registration identity invariant does not define cross-module type compatibility; indirect call types must match structurally.",
+  "runner": {
+    "path": "target/iteration/task37-wasm-signature-owner-runner",
+    "sha256": "342362f2bc0615f7fed5b9a5d5db1416b1b926862832fe33a29a6cfbe0c29c56"
+  },
+  "before": {
+    "path": "target/iteration/task37-wasm-bulk-qualified-after.json",
+    "sha256": "501f7f74bc0e9f8e2c31210e4fbbc9429abeb2583d156db105c68b85fd55e974"
+  },
+  "after": {
+    "path": "target/iteration/task37-wasm-signature-owner-after.json",
+    "sha256": "b1c4ba618a664f76f66cfbbf694b526a90c571a2e266156b97c05107d6f9586d"
+  },
+  "comparison": {
+    "path": "target/iteration/task37-wasm-signature-owner-compare.log",
+    "sha256": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+  },
+  "exact_inventory_match": true,
+  "input_hashes_match": true,
+  "outcomes_unchanged": true,
+  "gains": 0,
+  "regressions": 0,
+  "scope_files": 51,
+  "total": 20359,
+  "passed": 19246,
+  "failed": 1113,
+  "verification": {
+    "runtime_internal": {
+      "passed": 23,
+      "failed": 0,
+      "ignored": 0,
+      "log": {
+        "path": "target/iteration/task37-wasm-signature-owner-runtime.log",
+        "sha256": "b3e71dff78f12016dc4d66644c0d13c065b7e5191a31073c9aef4ab3820f2dfa"
+      },
+      "new_test": "wasm_program_signatures_share_module_authority_and_reject_rebinding"
+    },
+    "all_targets_memory_aggregate_features": {
+      "path": "target/iteration/task37-wasm-signature-owner-check.log",
+      "sha256": "37b4f0fac38263258fef431b25e61a28423b1a7356c5d14a3af8689d59fb9032"
+    }
+  },
+  "scope_rationale": "Program registration is shared by all typed Wasm entry and instance paths, so the existing 51-file affected scope protects each implemented scalar/control/memory lifecycle. The retained internal test checks allocation identity, JS separation, repeated registration, rejected rebinding, collection and active-program restoration; it is not duplicate conformance coverage.",
+  "limits": [
+    "Table/element state and indirect dispatch are still unimplemented; this prerequisite claims no new suite passes.",
+    "The full pinned Wasm suite, implemented Node migration, legacy removal and Stage A remain open. No full Test262 or performance run."
+  ]
+}

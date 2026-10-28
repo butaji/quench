@@ -1,0 +1,41 @@
+verdicts {"behavior-pass":286,"declarations-pass":13,"oracle-failed":1}
+passing 299  fastest wall 261  fastest cpu 279  lowest rss 290
+wall median (ms) quench 48.0 node 107.4 bun 70.7
+cpu median (ms) quench 47.3 node 126.8 bun 75.2
+rss median (MiB) quench 14.3 node 63.3 bun 37.1
+slowest relative to the faster of Node and Bun (wall ms):
+  color-convert                            q     278 n    142 b     79  x3.5
+  jiti                                     q     332 n    262 b     99  x3.4
+  undici                                   q     145 n    153 b     66  x2.2
+  semver                                   q     182 n    165 b    102  x1.8
+  schema-utils                             q     299 n    180 b    187  x1.7
+  playwright                               q     734 n    490 b    444  x1.7
+  axios                                    q     187 n    250 b    122  x1.5
+  ajv-formats                              q     231 n    165 b    162  x1.4
+  baseline-browser-mapping                 q     107 n    133 b     77  x1.4
+  @babel/helper-compilation-targets        q     129 n    144 b     93  x1.4
+  source-map                               q     118 n     90 b     86  x1.4
+  browserslist                             q     160 n    124 b    118  x1.4
+  @babel/core                              q     325 n    323 b    246  x1.3
+  @typescript-eslint/eslint-plugin         q    1212 n   1367 b    944  x1.3
+  ajv                                      q     172 n    188 b    135  x1.3
+  typescript-eslint                        q    1193 n   1056 b    955  x1.2
+  ajv-keywords                             q     213 n    219 b    174  x1.2
+  uuid                                     q      69 n    108 b     57  x1.2
+  ws                                       q      67 n    115 b     56  x1.2
+  @typescript-eslint/type-utils            q     730 n    712 b    616  x1.2
+  @babel/plugin-syntax-typescript          q     262 n    245 b    223  x1.2
+  @babel/helper-module-transforms          q     342 n    294 b    316  x1.2
+  universalify                             q      62 n     95 b     55  x1.1
+  execa                                    q     144 n    285 b    132  x1.1
+  vitest                                   q     646 n    769 b    599  x1.1
+not lowest rss: 9
+  @types/node                              q 72.1 n 71.9 b 72.3
+  type-fest                                q 54.3 n 62.7 b 53.4
+  jiti                                     q 38.3 n 89.9 b 38.2
+  @types/react                             q 54.0 n 62.9 b 53.4
+  @types/react-dom                         q 54.4 n 62.8 b 53.7
+  @eslint/core                             q 45.9 n 62.8 b 45.5
+  @types/chai                              q 45.5 n 62.9 b 45.5
+  @types/yargs                             q 45.8 n 62.9 b 45.7
+  @types/ws                                q 72.1 n 71.2 b 71.8

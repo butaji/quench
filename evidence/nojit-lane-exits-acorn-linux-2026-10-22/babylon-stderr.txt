@@ -1,0 +1,983 @@
+lane exits: 4700888
+       1925070 SetFieldStrict
+       1096767 DefineField
+        979599 Call
+        548817 Return
+         94128 Binary
+         37291 CreateRegExpLiteral
+          4535 GetField
+          4357 LoadEnvLocal
+          2958 LoadName
+          1456 Jump
+          1343 GetIndex
+           821 StoreEnvLocal
+           672 DefinePropertyRecord
+           622 Construct
+           492 SetThisFieldStrict
+           375 Delete
+           336 SetIndex
+           330 ValidateClassHeritage
+           248 CloneEnv
+           233 LoadCapture
+           148 MakeLiteralTemplate
+           147 MakeObjectLiteral
+            66 JumpBinaryFalse
+            26 Await
+            22 LoadNameCall
+             8 CallForwardingArguments
+             8 MakeConstArray
+             6 MakeClosure
+             4 CallArray
+             3 SetField
+        919605 SetFieldStrict in finishNodeAt Some(SourceSpan { start: 76428, end: 76641 }) pc=1 lane=true
+        919605 SetFieldStrict in finishNodeAt Some(SourceSpan { start: 76428, end: 76641 }) pc=0 lane=true
+        547631 Return nested run started by ArrayForEach forEach
+        500172 capture walk in /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js  span=Some(37205) depth=0 frame_run=true (root, dense)=Some((false, true, 4))
+        500171 Return in  Some(SourceSpan { start: 37205, end: 37423 }) pc=20 lane=false
+         94070 Binary op1 int null
+         47321 Return in  Some(SourceSpan { start: 75250, end: 75447 }) pc=10 lane=false
+         47246 capture walk in /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js  span=Some(75250) depth=0 frame_run=true (root, dense)=Some((false, true, 3))
+         26611 resolve parseExprOps span=Some(94275) cross=false known=true
+         25023 resolve parseBindingAtom span=Some(81866) cross=false known=true
+         22116 resolve isValidDirective span=Some(156339) cross=false known=true
+         20563 materializes for native ObjectKeys
+         15304 SetFieldStrict in processComment Some(SourceSpan { start: 28248, end: 34535 }) pc=181 lane=true
+         14340 SetFieldStrict in processComment Some(SourceSpan { start: 28248, end: 34535 }) pc=179 lane=false
+         13305 Call user parseConditional same_program=true pc=28 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 20))
+         12615 Call user parseExprOp same_program=true pc=27 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 21))
+         12476 SetFieldStrict in addExtra Some(SourceSpan { start: 71153, end: 71284 }) pc=8 lane=true
+         12136 Call user parseConditional same_program=true pc=28 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 36))
+         11652 SetFieldStrict in processComment Some(SourceSpan { start: 28248, end: 34535 }) pc=181 lane=false
+         11610 Call user parseConditional same_program=true pc=28 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 53))
+         11581 Call user parseExprOp same_program=true pc=27 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 37))
+         11415 Call user parseConditional same_program=true pc=28 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 29))
+         11370 Call user parseConditional same_program=true pc=28 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 59))
+         10875 Call user parseExprOp same_program=true pc=27 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 60))
+         10620 Call user parseExprOp same_program=true pc=27 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 54))
+         10440 Call user parseConditional same_program=true pc=28 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 52))
+         10260 Call user parseConditional same_program=true pc=28 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 44))
+         10155 Call user parseConditional same_program=true pc=28 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 45))
+          9960 Call user parseConditional same_program=true pc=28 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 27))
+          9855 Call user parseExprOp same_program=true pc=27 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 30))
+          9855 Call user parseExprOp same_program=true pc=27 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 53))
+          9675 Call user parseExprOp same_program=true pc=27 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 28))
+          9570 Call user parseExprOp same_program=true pc=27 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 45))
+          9449 capture walk in /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js  span=Some(75250) depth=2 frame_run=true (root, dense)=None
+          9375 Call user parseConditional same_program=true pc=28 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 28))
+          9211 Call user parseConditional same_program=true pc=28 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 37))
+          8955 Call user parseExprOp same_program=true pc=27 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 46))
+          8805 Call user parseConditional same_program=true pc=28 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 70))
+          8730 Call user parseExprOp same_program=true pc=27 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 29))
+          8655 Call user parseConditional same_program=true pc=28 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 62))
+          8640 Call user parseConditional same_program=true pc=28 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 79))
+          8595 Call user parseConditional same_program=true pc=28 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 46))
+          8431 resolve parseObjPropValue span=Some(126624) cross=false known=true
+          8340 Call user parseConditional same_program=true pc=28 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 43))
+          8254 resolve parseBlockBody span=Some(156537) cross=false known=true
+          8250 Call user parseConditional same_program=true pc=28 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 60))
+          8190 resolve parseExprOp span=Some(95157) cross=false known=true
+          8085 Call user parseExprOp same_program=true pc=27 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 71))
+          8000 resolve parsePropertyName span=Some(127004) cross=false known=true
+          7964 Call user parseConditional same_program=true pc=28 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 68))
+          7935 Call user parseExprOp same_program=true pc=27 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 44))
+          7815 Call user parseConditional same_program=true pc=28 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 54))
+          7741 Call user parseExprOp same_program=true pc=27 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 38))
+          7635 Call user parseExprOp same_program=true pc=27 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 63))
+          7590 Call user parseExprOp same_program=true pc=27 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 80))
+          7500 Call user parseConditional same_program=true pc=28 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 69))
+          7469 Call user parseExprOp same_program=true pc=27 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 69))
+          7350 Call user parseExprOp same_program=true pc=27 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 47))
+          7245 Call user parseConditional same_program=true pc=28 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 35))
+          7200 Call user parseExprOp same_program=true pc=27 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 61))
+          7110 Call user parseConditional same_program=true pc=28 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 78))
+          7033 SetFieldStrict in processComment Some(SourceSpan { start: 28248, end: 34535 }) pc=27 lane=true
+          7005 Call user parseExprOp same_program=true pc=27 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 36))
+          6796 SetFieldStrict in processComment Some(SourceSpan { start: 28248, end: 34535 }) pc=179 lane=true
+          6735 Call user parseConditional same_program=true pc=28 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 61))
+          6735 Call user parseConditional same_program=true pc=28 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 55))
+          6720 Call user parseExprOp same_program=true pc=27 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 55))
+          6675 Call user parseExprOp same_program=true pc=27 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 70))
+          6615 Call user parseConditional same_program=true pc=28 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 71))
+          6600 Call user parseExprOp same_program=true pc=27 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 79))
+          6330 Call user parseConditional same_program=true pc=28 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 21))
+          6300 Call user parseExprOp same_program=true pc=27 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 56))
+          6195 Call user parseExprOp same_program=true pc=27 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 62))
+          6120 Call user parseConditional same_program=true pc=28 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 63))
+          6000 Call user parseConditional same_program=true pc=28 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 39))
+          5970 Call user parseConditional same_program=true pc=28 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 77))
+          5760 Call user parseConditional same_program=true pc=28 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 38))
+          5655 Call user parseExprOp same_program=true pc=27 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 40))
+          5580 capture walk in /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js parseExprAtom span=Some(105692) depth=1 frame_run=true (root, dense)=None
+          5370 Call user parseExprOp same_program=true pc=27 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 72))
+          5321 SetFieldStrict in processComment Some(SourceSpan { start: 28248, end: 34535 }) pc=295 lane=false
+          5280 Call user parseExprOp same_program=true pc=27 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 64))
+          5250 Call user parseExprOp same_program=true pc=27 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 78))
+          5025 Call user parseConditional same_program=true pc=28 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 23))
+          4965 Call user parseExprOp same_program=true pc=27 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 39))
+          4965 Call user parseExprOp same_program=true pc=27 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 24))
+          4905 Call user parseConditional same_program=true pc=28 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 30))
+          4740 Call user parseConditional same_program=true pc=28 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 47))
+          4740 Call user parseConditional same_program=true pc=28 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 40))
+          4679 Call user parseConditional same_program=true pc=28 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 86))
+          4634 SetFieldStrict in addExtra Some(SourceSpan { start: 71153, end: 71284 }) pc=8 lane=false
+          4619 Call user parseConditional same_program=true pc=28 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 33))
+          4560 Call user parseConditional same_program=true pc=28 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 50))
+          4500 Call user parseConditional same_program=true pc=28 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 51))
+          4455 Call user parseExprOp same_program=true pc=27 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 31))
+          4440 Call user parseExprOp same_program=true pc=27 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 48))
+          4380 Call user parseConditional same_program=true pc=28 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 32))
+          4350 Call user parseConditional same_program=true pc=28 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 58))
+          4290 Call user parseConditional same_program=true pc=28 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 48))
+          4289 Call user parseExprOp same_program=true pc=27 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 34))
+          4275 Call user parseConditional same_program=true pc=28 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 87))
+          4260 resolve  span=Some(9594) cross=false known=true
+          4260 Call user parseExprOp same_program=true pc=27 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 41))
+          4214 Call user parseExprOp same_program=true pc=27 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 87))
+          4185 Call user parseExprOp same_program=true pc=27 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 51))
+          4185 Call user parseExprOp same_program=true pc=27 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 59))
+          4170 Call user parseExprOp same_program=true pc=27 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 33))
+          4140 Call user parseConditional same_program=true pc=28 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 49))
+          4110 Call user parseConditional same_program=true pc=28 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 76))
+          4095 Call user parseExprOp same_program=true pc=27 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 52))
+          4080 Call user parseConditional same_program=true pc=28 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 34))
+          4050 Call user parseConditional same_program=true pc=28 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 19))
+          4050 Call user parseConditional same_program=true pc=28 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 85))
+          3990 Call user parseConditional same_program=true pc=28 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 95))
+          3990 Call user parseConditional same_program=true pc=28 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 31))
+          3975 Call user parseExprOp same_program=true pc=27 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 20))
+          3915 Call user parseExprOp same_program=true pc=27 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 88))
+          3900 Call user parseConditional same_program=true pc=28 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 24))
+          3885 Call user parseExprOp same_program=true pc=27 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 77))
+          3885 Call user parseExprOp same_program=true pc=27 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 35))
+          3825 Call user parseExprOp same_program=true pc=27 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 49))
+          3795 Call user parseConditional same_program=true pc=28 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 72))
+          3780 Call user parseExprOp same_program=true pc=27 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 50))
+          3765 Call user parseExprOp same_program=true pc=27 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 86))
+          3690 Call user parseConditional same_program=true pc=28 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 67))
+          3660 Call user parseExprOp same_program=true pc=27 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 25))
+          3615 Call user parseConditional same_program=true pc=28 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 64))
+          3615 Call user parseExprOp same_program=true pc=27 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 96))
+          3572 resolve parseExprOps span=Some(94275) cross=false known=false
+          3570 Call user parseExprOp same_program=true pc=27 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 32))
+          3570 Call user parseExprOp same_program=true pc=27 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 22))
+          3570 Call user parseExprOp same_program=true pc=27 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 73))
+          3555 Call user parseExprOp same_program=true pc=27 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 68))
+          3497 SetFieldStrict in processComment Some(SourceSpan { start: 28248, end: 34535 }) pc=27 lane=false
+          3450 Call user parseConditional same_program=true pc=28 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 94))
+          3420 Call user parseConditional same_program=true pc=28 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 56))
+          3375 Call user parseExprOp same_program=true pc=27 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 65))
+          3360 Call user parseConditional same_program=true pc=28 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 96))
+          3360 Call user parseConditional same_program=true pc=28 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 88))
+          3285 Call user parseConditional same_program=true pc=28 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 57))
+          3240 Call user parseExprOp same_program=true pc=27 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 57))
+          3210 Call user parseConditional same_program=true pc=28 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 11))
+          3150 Call user parseExprOp same_program=true pc=27 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 95))
+          3137 resolve  span=Some(24466) cross=false known=true
+          3120 Call user parseExprOp same_program=true pc=27 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 12))
+          3105 Call user parseExprOp same_program=true pc=27 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 97))
+          3045 Call user parseExprOp same_program=true pc=27 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 58))
+          3000 Call user parseConditional same_program=true pc=28 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 42))
+          2984 Call user parseConditional same_program=true pc=28 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 80))
+          2958 resolve parseExprOp span=Some(95157) cross=false known=false
+          2925 Call user parseExprOp same_program=true pc=27 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 89))
+          2907 resolve readToken_eq_excl span=Some(50016) cross=false known=true
+          2900 SetFieldStrict in processComment Some(SourceSpan { start: 28248, end: 34535 }) pc=295 lane=true
+          2895 Call user parseConditional same_program=true pc=28 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 104))
+          2835 Call user parseExprOp same_program=true pc=27 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 43))
+          2820 Call user parseConditional same_program=true pc=28 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 103))
+          2775 Call user parseConditional same_program=true pc=28 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 41))
+          2745 Call user parseExprOp same_program=true pc=27 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 105))
+          2730 Call user parseConditional same_program=true pc=28 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 73))
+          2730 resolve  span=Some(24666) cross=false known=true
+          2698 resolve finishNodeAt span=Some(76428) cross=false known=true
+          2684 resolve readToken_lt_gt span=Some(49097) cross=false known=true
+          2665 resolve finishNode span=Some(76238) cross=false known=true
+          2655 Call user parseConditional same_program=true pc=28 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 66))
+          2623 resolve parseBlockBody span=Some(156537) cross=false known=false
+          2610 Call user parseExprOp same_program=true pc=27 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 104))
+          2595 Call user parseConditional same_program=true pc=28 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 65))
+          2580 Call user parseExprOp same_program=true pc=27 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 42))
+          2579 Call user parseExprOp same_program=true pc=27 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 81))
+          2497 resolve isValidDirective span=Some(156339) cross=false known=false
+          2492 resolve finishNode span=Some(76238) cross=false known=false
+          2490 Call user parseExprOp same_program=true pc=119 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, true, 0, 23))
+          2475 Call user parseExprOp same_program=true pc=27 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 74))
+          2430 Call user parseExprOp same_program=true pc=27 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 67))
+          2400 Call user parseConditional same_program=true pc=28 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 93))
+          2385 Call user parseConditional same_program=true pc=28 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 84))
+          2385 Call user parseConditional same_program=true pc=28 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 81))
+          2372 resolve finishNodeAt span=Some(76428) cross=false known=false
+          2325 Call user parseExprOp same_program=true pc=27 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 66))
+          2280 Call user parseConditional same_program=true pc=28 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 75))
+          2264 resolve isIdentifierChar span=Some(21054) cross=false known=false
+          2250 Call user parseExprOp same_program=true pc=27 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 85))
+          2250 Call user parseConditional same_program=true pc=28 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 102))
+          2205 Call user parseExprOp same_program=true pc=27 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 76))
+          2190 Call user parseExprOp same_program=true pc=27 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 94))
+          2171 resolve  span=Some(22827) cross=false known=true
+          2149 resolve readToken_eq_excl span=Some(50016) cross=false known=false
+          2145 Call user parseExprOp same_program=true pc=27 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 82))
+          2056 resolve parseBindingAtom span=Some(81866) cross=false known=false
+          2025 Call user parseConditional same_program=true pc=28 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 97))
+          2024 resolve readToken_dot span=Some(46107) cross=false known=false
+          2010 Call user parseExprOp same_program=true pc=27 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 103))
+          1965 Call user parseConditional same_program=true pc=28 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 25))
+          1935 Call user parseConditional same_program=true pc=28 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 18))
+          1935 Call user parseExprOp same_program=true pc=27 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 19))
+          1821 resolve toAssignable span=Some(77446) cross=false known=false
+          1815 Call user parseConditional same_program=true pc=28 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 74))
+          1780 resolve parsePropertyName span=Some(127004) cross=false known=false
+          1770 Call user parseExprOp same_program=true pc=119 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, true, 0, 31))
+          1740 Call user parseConditional same_program=true pc=28 registers_only=true async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 92))
+function census: 1455297689 instructions, 4851618 general
+     131484300 lane=  131484300 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f109 readWord1 @Some(68089)
+     116174100 lane=  116174100 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f87 skipSpace @Some(44033)
+     113325196 lane=  113325196 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f61 processComment @Some(28248)
+      85646065 lane=   85646065 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f81 nextToken @Some(41091)
+      77500125 lane=   77500125 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f83 fullCharCodeAtPos @Some(41978)
+      46158504 lane=   46158504 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f74 next @Some(39394)
+      45621570 lane=   45621570 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f10 isIdentifierChar @Some(21054)
+      42486375 lane=   42486375 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f86 skipLineComment @Some(43361)
+      41765295 lane=   41765295 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f88 finishToken @Some(45546)
+      41325150 lane=   41325150 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f133 Node @Some(74803)
+      40462274 lane=   40462274 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f174 parseSubscript @Some(99681)
+      40233615 lane=   40233615 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f181 parseExprAtom @Some(105692)
+      35981300 lane=   35981300 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f75 eat @Some(39772)
+      34171242 lane=   34171242 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f112 updateContext @Some(70500)
+      31365383 lane=   31365383 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f68 curPosition @Some(36980)
+      29737605 lane=   29737605 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f98 getTokenFromCode @Some(51028)
+      27449391 lane=   27449391 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f82 readToken @Some(41650)
+      26888790 lane=   26888790 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f166 parseMaybeAssign @Some(90929)
+      23443786 lane=   23443786 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f76 match @Some(39930)
+      22706600 lane=   22706600 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f13 last @Some(27709)
+      18866205 lane=   18866205 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f216 checkReservedWord @Some(135407)
+      18675915 lane=   18675915 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f224 parseStatementContent @Some(139612)
+      18403770 lane=   18403770 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f215 parseIdentifierName @Some(134811)
+      17510285 lane=   17510285 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f142 finishNodeAt @Some(76428)
+      16327213 lane=   16327213 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f45  @Some(23300)
+      14904189 lane=   14904189 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f110 readWord @Some(69382)
+      14015340 lane=   14015340 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f80 curContext @Some(40893)
+      11968245 lane=   11968245 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f171 parseMaybeUnary @Some(96727)
+      11569320 lane=   11569320 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f172 parseExprSubscripts @Some(98770)
+      11203515 lane=   11203515 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f7  @Some(9594)
+      10727755 lane=   10727755 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f214 parseIdentifier @Some(134537)
+      10532790 lane=   10532790 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f167 parseMaybeConditional @Some(93127)
+      10532790 lane=   10532790 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f169 parseExprOps @Some(94275)
+      10252920 lane=   10252920 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f170 parseExprOp @Some(95157)
+       9548904 lane=    9548904 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f141 finishNode @Some(76238)
+       9283050 lane=    9283050 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f173 parseSubscripts @Some(99314)
+       9180150 lane=    9180150 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f9 isIdentifierStart @Some(20649)
+       8197635 lane=    8197635 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f106 readTmplToken @Some(63233)
+       7992865 lane=    7992865 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f138 startNode @Some(75738)
+       7569255 lane=    7569255 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f70  @Some(37205)
+       7076558 lane=    7076558 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f123 canInsertSemicolon @Some(72624)
+       6457200 lane=    6457200 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f177 parseCallExpressionArguments @Some(103845)
+       6419700 lane=    6419700 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f105 readString @Some(62389)
+       6379105 lane=    6379105 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f44  @Some(22827)
+       5886630 lane=    5886630 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f248 parseBlockOrModuleBlockBody @Some(156885)
+       5435595 lane=    5435595 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f11 isNewLine @Some(21696)
+       5430749 lane=    5430749 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f48  @Some(24068)
+       5068050 lane=    5068050 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f152 shouldAllowYieldIdentifier @Some(81525)
+       4024800 lane=    4024800 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f168 parseConditional @Some(93713)
+       3952800 lane=    3952800 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f56 isReservedWord @Some(26057)
+       3574090 lane=    3574090 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f89 readToken_dot @Some(46107)
+       3174000 lane=    3174000 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f127 expect @Some(73433)
+       3120596 lane=    3120596 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f124 hasPrecedingLineBreak @Some(72789)
+       2961116 lane=    2961116 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f99 finishOp @Some(55277)
+       2870535 lane=    2870535 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f197 parseObj @Some(120106)
+       2846250 lane=    2846250 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f96 readToken_eq_excl @Some(50016)
+       2659605 lane=    2659605 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f77 isKeyword$$1 @Some(40026)
+       2646720 lane=    2646720 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f213 parseExprListItem @Some(133802)
+       2564340 lane=    2564340 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f159 checkLVal @Some(84530)
+       2493345 lane=    2493345 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f111 braceIsBlock @Some(69716)
+       2491260 lane=    2491260 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f165 parseExpression @Some(90210)
+       2445900 lane=    2445900 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f223 parseStatement @Some(139389)
+       2320875 lane=    2320875 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f101 readInt @Some(56863)
+       2250622 lane=    2250622 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f187 parseLiteral @Some(113291)
+       2226990 lane=    2226990 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f103 readNumber @Some(59452)
+       2099310 lane=    2099310 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f155 parseBindingList @Some(82409)
+       2086845 lane=    2086845 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f189 parseParenAndDistinguishExpression @Some(113935)
+       1924995 lane=    1924995 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f251 parseVar @Some(159135)
+       1839614 lane=          0 general=   1839614 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js finishNodeAt @Some(76428)
+       1828232 lane=    1828232 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f139 startNodeAt @Some(75876)
+       1792370 lane=    1792370 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f115 addExtra @Some(71153)
+       1772760 lane=    1772760 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f245 parseBlock @Some(156081)
+       1692073 lane=    1692073 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f211 checkFunctionNameAndParams @Some(131939)
+       1558391 lane=    1558391 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f210 parseFunctionBody @Some(130780)
+       1542268 lane=    1542268 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f46  @Some(23737)
+       1476245 lane=    1476245 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f183 parseMaybePrivateName @Some(111175)
+       1433725 lane=    1433725 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f253 parseFunction @Some(160438)
+       1407535 lane=    1407535 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f158 parseMaybeDefault @Some(84019)
+       1352100 lane=    1352100 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f125 isLineTerminator @Some(72953)
+       1240662 lane=    1240662 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f247 parseBlockBody @Some(156537)
+       1218825 lane=    1218825 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f85 skipBlockComment @Some(42704)
+       1144608 lane=    1144608 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f203 parsePropertyName @Some(127004)
+       1097875 lane=    1097875 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f234 parseIfStatement @Some(149794)
+       1085850 lane=    1085850 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f175 atPossibleAsync @Some(103144)
+        975720 lane=     975720 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f84 pushComment @Some(42249)
+        921930 lane=     921930 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f154 parseBindingAtom @Some(81866)
+        868074 lane=     868074 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f57 hasPlugin @Some(26228)
+        795150 lane=     795150 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f126 semicolon @Some(73197)
+        765480 lane=     765480 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f100 readRegexp @Some(55469)
+        749230 lane=     749230 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f201 parseObjectProperty @Some(125562)
+        749040 lane=     749040 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f176 finishCallExpression @Some(103355)
+        723492 lane=     723492 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f146 toAssignable @Some(77446)
+        696990 lane=     696990 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f449 readToken @Some(285695)
+        687120 lane=     687120 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f188 parseParenExpression @Some(113733)
+        673620 lane=     673620 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f235 parseReturnStatement @Some(150107)
+        667080 lane=     667080 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f156 parseAssignableListItem @Some(83502)
+        636660 lane=     636660 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f244 parseExpressionStatement @Some(155744)
+        635697 lane=     635697 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f252 parseVarHead @Some(160175)
+        609075 lane=     609075 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f450 updateContext @Some(286636)
+        595350 lane=     595350 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f153 parseBindingIdentifier @Some(81691)
+        587775 lane=     587775 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f239 parseVarStatement @Some(153457)
+        582570 lane=     582570 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f92 readToken_pipe_amp @Some(47499)
+        572339 lane=     572339 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f254 parseFunctionParams @Some(162147)
+        569475 lane=     569475 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f198 isGetterOrSetterMethod @Some(123787)
+        553575 lane=     553575 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f200 parseObjectMethod @Some(124776)
+        551925 lane=          0 general=    551925 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js parseSubscripts @Some(99314)
+        520231 lane=     520231 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f135  @Some(75250)
+        505620 lane=     505620 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f60 addComment @Some(28031)
+        500232 lane=          0 general=    500232 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js  @Some(37205)
+        470670 lane=     470670 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f202 parseObjPropValue @Some(126624)
+        462976 lane=          0 general=    462976 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js parseMaybeConditional @Some(93127)
+        434119 lane=          0 general=    434119 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js parseMaybeAssign @Some(90929)
+        421081 lane=          0 general=    421081 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js parseExprOps @Some(94275)
+        380248 lane=     380248 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f163 checkPropClash @Some(88714)
+        366767 lane=     366767 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f204 initFunction @Some(127801)
+        329820 lane=     329820 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f232 parseForStatement @Some(147935)
+        321475 lane=     321475 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f206 parseArrowExpression @Some(128828)
+        297495 lane=     297495 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f94 readToken_plus_min @Some(48442)
+        289755 lane=     289755 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f208 isStrictBody @Some(130048)
+        287805 lane=     287805 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f148 toAssignableList @Some(79954)
+        279853 lane=     279853 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f50  @Some(24466)
+        270945 lane=     270945 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f97 readToken_question @Some(50493)
+        257395 lane=     257395 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f195 parseTemplateElement @Some(118893)
+        254520 lane=     254520 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f212 parseExprList @Some(133389)
+        248846 lane=     248846 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f209 parseFunctionBodyAndFinish @Some(130483)
+        236520 lane=     236520 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f182 parseBooleanLiteral @Some(110959)
+        221865 lane=     221865 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f431 jsxReadToken @Some(271872)
+        210555 lane=     210555 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f119 isContextual @Some(71887)
+        207360 lane=     207360 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f196 parseTemplate @Some(119538)
+        197415 lane=     197415 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f246 isValidDirective @Some(156339)
+        176085 lane=     176085 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f95 readToken_lt_gt @Some(49097)
+        171749 lane=     171749 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f192 parseParenItem @Some(117350)
+        166725 lane=     166725 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f69 clone @Some(37094)
+        166719 lane=     166719 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f78 lookahead @Some(40120)
+        166320 lane=     166320 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f184 parseFunctionExpression @Some(111616)
+        153077 lane=          0 general=    153077 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js parseExprOp @Some(95157)
+        149715 lane=     149715 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f249 parseFor @Some(158032)
+        148365 lane=     148365 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f435 jsxReadWord @Some(276089)
+        147180 lane=     147180 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f285 parseExportSpecifiers @Some(181521)
+        146008 lane=     146008 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f51  @Some(24666)
+        141750 lane=     141750 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f134 __clone @Some(75129)
+        126355 lane=     126355 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f205 parseMethod @Some(128008)
+        102855 lane=     102855 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f149 toReferencedList @Some(80950)
+        101490 lane=     101490 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f448 parseExprAtom @Some(285296)
+         92415 lane=          0 general=     92415 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js parseSubscript @Some(99681)
+         89280 lane=      89280 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f236 parseSwitchStatement @Some(150719)
+         88275 lane=      88275 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f191 parseArrow @Some(117232)
+         87840 lane=      87840 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f233 parseFunctionStatement @Some(149660)
+         86615 lane=      86615 general=         0 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f193 parseNew @Some(117791)
+         85550 lane=          0 general=     85550 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js addExtra @Some(71153)
+record census:
+      11721893 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f76 match @Some(39930) @1
+      11721893 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f76 match @Some(39930) @0
+       8611125 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f83 fullCharCodeAtPos @Some(41978) @9
+       8611125 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f83 fullCharCodeAtPos @Some(41978) @8
+       8611125 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f83 fullCharCodeAtPos @Some(41978) @6
+       8611125 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f83 fullCharCodeAtPos @Some(41978) @5
+       8611125 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f83 fullCharCodeAtPos @Some(41978) @4
+       8611125 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f83 fullCharCodeAtPos @Some(41978) @3
+       8611125 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f83 fullCharCodeAtPos @Some(41978) @2
+       8611125 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f83 fullCharCodeAtPos @Some(41978) @1
+       8611125 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f83 fullCharCodeAtPos @Some(41978) @0
+       6408900 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f10 isIdentifierChar @Some(21054) @0
+       6400185 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f109 readWord1 @Some(68089) @15
+       6400185 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f109 readWord1 @Some(68089) @14
+       6400185 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f109 readWord1 @Some(68089) @13
+       6400185 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f109 readWord1 @Some(68089) @12
+       6400185 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f109 readWord1 @Some(68089) @11
+       6400185 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f109 readWord1 @Some(68089) @10
+       6400185 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f109 readWord1 @Some(68089) @9
+       6400185 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f109 readWord1 @Some(68089) @8
+       6400185 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f109 readWord1 @Some(68089) @7
+       6400185 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f109 readWord1 @Some(68089) @6
+       5676650 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f13 last @Some(27709) @3
+       5676650 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f13 last @Some(27709) @2
+       5676650 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f13 last @Some(27709) @1
+       5676650 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f13 last @Some(27709) @0
+       5641605 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f10 isIdentifierChar @Some(21054) @2
+       5628675 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f10 isIdentifierChar @Some(21054) @5
+       5556705 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f10 isIdentifierChar @Some(21054) @8
+       5530035 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f109 readWord1 @Some(68089) @79
+       5530035 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f109 readWord1 @Some(68089) @78
+       5530035 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f109 readWord1 @Some(68089) @24
+       5530035 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f109 readWord1 @Some(68089) @23
+       5530035 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f109 readWord1 @Some(68089) @22
+       5530035 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f109 readWord1 @Some(68089) @20
+       5530035 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f109 readWord1 @Some(68089) @19
+       5530035 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f109 readWord1 @Some(68089) @18
+       5530035 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f109 readWord1 @Some(68089) @17
+       5530035 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f109 readWord1 @Some(68089) @16
+       5217000 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f10 isIdentifierChar @Some(21054) @11
+       5163885 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f10 isIdentifierChar @Some(21054) @13
+       5160180 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f10 isIdentifierChar @Some(21054) @15
+       5160180 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f10 isIdentifierChar @Some(21054) @14
+       5108790 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f87 skipSpace @Some(44033) @2
+       5108790 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f87 skipSpace @Some(44033) @1
+       5108790 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f87 skipSpace @Some(44033) @0
+       5108490 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f87 skipSpace @Some(44033) @8
+       5108490 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f87 skipSpace @Some(44033) @7
+       5108490 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f87 skipSpace @Some(44033) @6
+       5108490 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f87 skipSpace @Some(44033) @5
+       5108490 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f87 skipSpace @Some(44033) @4
+       5108490 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f87 skipSpace @Some(44033) @3
+       4711935 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f75 eat @Some(39772) @4
+       4711935 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f75 eat @Some(39772) @3
+       4711935 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f75 eat @Some(39772) @2
+       4711935 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f75 eat @Some(39772) @1
+       4711935 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f75 eat @Some(39772) @0
+       4480769 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f68 curPosition @Some(36980) @6
+       4480769 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f68 curPosition @Some(36980) @5
+       4480769 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f68 curPosition @Some(36980) @4
+       4480769 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f68 curPosition @Some(36980) @3
+       4480769 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f68 curPosition @Some(36980) @2
+       4480769 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f68 curPosition @Some(36980) @1
+       4480769 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f68 curPosition @Some(36980) @0
+       3712680 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f75 eat @Some(39772) @12
+       3712680 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f75 eat @Some(39772) @11
+       2999340 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f87 skipSpace @Some(44033) @11
+       2999340 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f87 skipSpace @Some(44033) @10
+       2999340 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f87 skipSpace @Some(44033) @9
+       2580015 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f87 skipSpace @Some(44033) @14
+       2580015 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f87 skipSpace @Some(44033) @13
+       2580015 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f87 skipSpace @Some(44033) @12
+       2535810 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f87 skipSpace @Some(44033) @80
+       2535810 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f87 skipSpace @Some(44033) @68
+       2535810 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f87 skipSpace @Some(44033) @67
+       2535810 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f87 skipSpace @Some(44033) @66
+       2535810 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f87 skipSpace @Some(44033) @65
+       2535810 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f87 skipSpace @Some(44033) @64
+       2535810 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f87 skipSpace @Some(44033) @63
+       2535810 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f87 skipSpace @Some(44033) @15
+       2385345 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f61 processComment @Some(28248) @71
+       2385345 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f61 processComment @Some(28248) @64
+       2385345 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f61 processComment @Some(28248) @63
+       2385345 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f61 processComment @Some(28248) @62
+       2385345 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f61 processComment @Some(28248) @61
+       2384730 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f61 processComment @Some(28248) @70
+       2384730 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f61 processComment @Some(28248) @69
+       2384730 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f61 processComment @Some(28248) @68
+       2384730 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f61 processComment @Some(28248) @67
+       2384730 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f61 processComment @Some(28248) @66
+       2384730 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f61 processComment @Some(28248) @65
+       2335890 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f80 curContext @Some(40893) @5
+       2335890 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f80 curContext @Some(40893) @4
+       2335890 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f80 curContext @Some(40893) @3
+       2335890 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f80 curContext @Some(40893) @2
+       2335890 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f80 curContext @Some(40893) @1
+       2335890 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f80 curContext @Some(40893) @0
+       2240703 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f7  @Some(9594) @4
+       2240703 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f7  @Some(9594) @3
+       2240703 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f7  @Some(9594) @2
+       2240703 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f7  @Some(9594) @1
+       2240703 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f7  @Some(9594) @0
+       2211105 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f9 isIdentifierStart @Some(20649) @0
+       2198175 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f88 finishToken @Some(45546) @12
+       2198175 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f88 finishToken @Some(45546) @11
+       2198175 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f88 finishToken @Some(45546) @10
+       2198175 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f88 finishToken @Some(45546) @9
+       2198175 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f88 finishToken @Some(45546) @8
+       2198175 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f88 finishToken @Some(45546) @7
+       2198175 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f88 finishToken @Some(45546) @6
+       2198175 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f88 finishToken @Some(45546) @5
+       2198175 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f88 finishToken @Some(45546) @4
+       2198175 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f88 finishToken @Some(45546) @3
+       2198175 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f88 finishToken @Some(45546) @2
+       2198175 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f88 finishToken @Some(45546) @1
+       2198175 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f88 finishToken @Some(45546) @0
+       2198175 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f81 nextToken @Some(41091) @28
+       2198175 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f81 nextToken @Some(41091) @27
+       2198175 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f81 nextToken @Some(41091) @26
+       2198175 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f81 nextToken @Some(41091) @25
+       2198175 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f81 nextToken @Some(41091) @24
+       2198175 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f81 nextToken @Some(41091) @23
+       2198175 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f81 nextToken @Some(41091) @22
+       2198175 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f81 nextToken @Some(41091) @21
+       2198175 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f81 nextToken @Some(41091) @20
+       2198175 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f81 nextToken @Some(41091) @19
+       2198175 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f81 nextToken @Some(41091) @18
+       2198175 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f81 nextToken @Some(41091) @17
+       2198175 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f81 nextToken @Some(41091) @16
+       2198175 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f81 nextToken @Some(41091) @15
+       2198175 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f81 nextToken @Some(41091) @14
+       2198175 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f81 nextToken @Some(41091) @13
+       2198175 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f81 nextToken @Some(41091) @12
+       2198175 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f81 nextToken @Some(41091) @8
+       2198175 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f81 nextToken @Some(41091) @7
+       2198175 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f81 nextToken @Some(41091) @6
+       2198175 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f81 nextToken @Some(41091) @5
+       2198175 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f81 nextToken @Some(41091) @4
+       2198175 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f81 nextToken @Some(41091) @3
+       2198175 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f81 nextToken @Some(41091) @2
+       2198175 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f81 nextToken @Some(41091) @1
+       2198175 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f81 nextToken @Some(41091) @0
+       2198174 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f88 finishToken @Some(45546) @16
+       2198174 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f88 finishToken @Some(45546) @15
+       2198174 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f88 finishToken @Some(45546) @14
+       2198174 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f88 finishToken @Some(45546) @13
+       2198162 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f88 finishToken @Some(45546) @18
+       2198162 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f88 finishToken @Some(45546) @17
+       2198025 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f74 next @Some(39394) @23
+       2198025 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f74 next @Some(39394) @22
+       2198025 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f74 next @Some(39394) @21
+       2198025 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f74 next @Some(39394) @20
+       2198025 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f74 next @Some(39394) @19
+       2198025 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f74 next @Some(39394) @18
+       2198025 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f74 next @Some(39394) @17
+       2198025 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f74 next @Some(39394) @16
+       2198025 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f74 next @Some(39394) @15
+       2198025 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f74 next @Some(39394) @14
+       2198025 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f74 next @Some(39394) @13
+       2198025 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f74 next @Some(39394) @12
+       2198025 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f74 next @Some(39394) @5
+       2198025 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f74 next @Some(39394) @2
+       2198025 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f74 next @Some(39394) @1
+       2198025 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f74 next @Some(39394) @0
+       2198024 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f74 next @Some(39394) @26
+       2198024 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f74 next @Some(39394) @25
+       2198024 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f74 next @Some(39394) @24
+       2198016 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f74 next @Some(39394) @28
+       2198016 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f74 next @Some(39394) @27
+       2197875 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f81 nextToken @Some(41091) @38
+       2197875 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f81 nextToken @Some(41091) @37
+       2197865 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f81 nextToken @Some(41091) @50
+       2197865 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f81 nextToken @Some(41091) @49
+       2197274 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f112 updateContext @Some(70500) @13
+       2197274 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f112 updateContext @Some(70500) @3
+       2197274 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f112 updateContext @Some(70500) @2
+       2197274 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f112 updateContext @Some(70500) @1
+       2197274 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f112 updateContext @Some(70500) @0
+       2197263 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f112 updateContext @Some(70500) @31
+       2197263 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f112 updateContext @Some(70500) @30
+       2196299 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f112 updateContext @Some(70500) @20
+       2196299 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f112 updateContext @Some(70500) @19
+       2196299 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f112 updateContext @Some(70500) @18
+       2182275 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f81 nextToken @Some(41091) @48
+       2182275 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f81 nextToken @Some(41091) @47
+       2182275 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f81 nextToken @Some(41091) @46
+       2182275 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f81 nextToken @Some(41091) @45
+       2182275 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f81 nextToken @Some(41091) @44
+       2182275 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f81 nextToken @Some(41091) @43
+       2181195 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f87 skipSpace @Some(44033) @89
+       2181195 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f87 skipSpace @Some(44033) @88
+       2181195 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f81 nextToken @Some(41091) @11
+       2181195 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f81 nextToken @Some(41091) @10
+       2181195 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f81 nextToken @Some(41091) @9
+       2178825 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f87 skipSpace @Some(44033) @86
+       2178825 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f87 skipSpace @Some(44033) @79
+       2178825 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f87 skipSpace @Some(44033) @71
+       2178825 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f87 skipSpace @Some(44033) @70
+       2178825 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f87 skipSpace @Some(44033) @69
+       2178315 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f82 readToken @Some(41650) @6
+       2178315 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f82 readToken @Some(41650) @4
+       2178315 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f82 readToken @Some(41650) @3
+       2178315 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f82 readToken @Some(41650) @2
+       2178315 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f82 readToken @Some(41650) @1
+       2178315 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f82 readToken @Some(41650) @0
+       2178312 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f82 readToken @Some(41650) @16
+       2178312 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f82 readToken @Some(41650) @15
+       2109150 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f87 skipSpace @Some(44033) @20
+       2109150 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f87 skipSpace @Some(44033) @19
+       2109150 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f87 skipSpace @Some(44033) @18
+       2109150 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f87 skipSpace @Some(44033) @17
+       2109150 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f87 skipSpace @Some(44033) @16
+       2067675 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f133 Node @Some(74803) @27
+       2067675 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f133 Node @Some(74803) @26
+       2067675 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f133 Node @Some(74803) @22
+       2067675 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f133 Node @Some(74803) @20
+       2067675 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f133 Node @Some(74803) @19
+       2067675 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f133 Node @Some(74803) @13
+       2067675 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f133 Node @Some(74803) @10
+       2067675 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f133 Node @Some(74803) @9
+       2067675 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f133 Node @Some(74803) @8
+       2067675 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f133 Node @Some(74803) @7
+       2067675 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f133 Node @Some(74803) @6
+       2067675 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f133 Node @Some(74803) @5
+       2067675 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f133 Node @Some(74803) @4
+       2067675 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f133 Node @Some(74803) @3
+       2067675 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f133 Node @Some(74803) @2
+       2067675 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f133 Node @Some(74803) @1
+       2067675 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f133 Node @Some(74803) @0
+       2058225 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f133 Node @Some(74803) @21
+       2058225 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f133 Node @Some(74803) @12
+       2058225 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f133 Node @Some(74803) @11
+       1745100 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f86 skipLineComment @Some(43361) @33
+       1745100 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f86 skipLineComment @Some(43361) @26
+       1745100 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f86 skipLineComment @Some(43361) @25
+       1745100 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f86 skipLineComment @Some(43361) @23
+       1745100 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f86 skipLineComment @Some(43361) @22
+       1745100 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f86 skipLineComment @Some(43361) @20
+       1745100 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f86 skipLineComment @Some(43361) @19
+       1745100 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f86 skipLineComment @Some(43361) @17
+       1745100 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f86 skipLineComment @Some(43361) @16
+       1745100 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f86 skipLineComment @Some(43361) @15
+       1709595 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f86 skipLineComment @Some(43361) @32
+       1709595 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f86 skipLineComment @Some(43361) @31
+       1709595 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f86 skipLineComment @Some(43361) @30
+       1709595 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f86 skipLineComment @Some(43361) @29
+       1709595 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f86 skipLineComment @Some(43361) @28
+       1709595 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f86 skipLineComment @Some(43361) @27
+       1709595 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f86 skipLineComment @Some(43361) @24
+       1709595 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f86 skipLineComment @Some(43361) @21
+       1709595 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f86 skipLineComment @Some(43361) @18
+       1709580 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f86 skipLineComment @Some(43361) @38
+       1709580 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f86 skipLineComment @Some(43361) @37
+       1709580 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f86 skipLineComment @Some(43361) @36
+       1709580 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f86 skipLineComment @Some(43361) @35
+       1709580 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f86 skipLineComment @Some(43361) @34
+       1598573 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f138 startNode @Some(75738) @4
+       1598573 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f138 startNode @Some(75738) @3
+       1598573 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f138 startNode @Some(75738) @2
+       1598573 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f138 startNode @Some(75738) @1
+       1598573 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f138 startNode @Some(75738) @0
+       1591845 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f142 finishNodeAt @Some(76428) @13
+       1591845 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f61 processComment @Some(28248) @7
+       1591845 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f61 processComment @Some(28248) @3
+       1591845 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f61 processComment @Some(28248) @2
+       1591845 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f61 processComment @Some(28248) @1
+       1591845 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f61 processComment @Some(28248) @0
+       1591844 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f142 finishNodeAt @Some(76428) @12
+       1591844 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f142 finishNodeAt @Some(76428) @11
+       1591844 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f142 finishNodeAt @Some(76428) @10
+       1591844 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f142 finishNodeAt @Some(76428) @9
+       1591844 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f142 finishNodeAt @Some(76428) @5
+       1591844 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f142 finishNodeAt @Some(76428) @4
+       1591844 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f142 finishNodeAt @Some(76428) @3
+       1591844 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f142 finishNodeAt @Some(76428) @2
+       1591844 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f142 finishNodeAt @Some(76428) @1
+       1591844 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f142 finishNodeAt @Some(76428) @0
+       1591695 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f61 processComment @Some(28248) @300
+       1591695 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f61 processComment @Some(28248) @299
+       1591695 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f61 processComment @Some(28248) @298
+       1591695 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f61 processComment @Some(28248) @297
+       1591695 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f61 processComment @Some(28248) @296
+       1591695 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f61 processComment @Some(28248) @275
+       1591695 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f61 processComment @Some(28248) @274
+       1591695 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f61 processComment @Some(28248) @273
+       1591695 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f61 processComment @Some(28248) @159
+       1591695 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f61 processComment @Some(28248) @86
+       1591695 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f61 processComment @Some(28248) @82
+       1591695 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f61 processComment @Some(28248) @79
+       1591695 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f61 processComment @Some(28248) @77
+       1591695 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f61 processComment @Some(28248) @76
+       1591695 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f61 processComment @Some(28248) @75
+       1591695 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f61 processComment @Some(28248) @58
+       1591695 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f61 processComment @Some(28248) @51
+       1591695 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f61 processComment @Some(28248) @50
+       1591695 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f61 processComment @Some(28248) @49
+       1591695 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f61 processComment @Some(28248) @48
+       1591695 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f61 processComment @Some(28248) @13
+       1591695 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f61 processComment @Some(28248) @12
+       1591695 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f61 processComment @Some(28248) @11
+       1591695 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f61 processComment @Some(28248) @10
+       1591545 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f61 processComment @Some(28248) @57
+       1591545 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f61 processComment @Some(28248) @56
+       1591545 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f61 processComment @Some(28248) @55
+       1591545 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f61 processComment @Some(28248) @54
+       1591545 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f61 processComment @Some(28248) @53
+       1591545 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f61 processComment @Some(28248) @52
+       1591484 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f141 finishNode @Some(76238) @6
+       1591484 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f141 finishNode @Some(76238) @4
+       1591484 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f141 finishNode @Some(76238) @3
+       1591484 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f141 finishNode @Some(76238) @2
+       1591484 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f141 finishNode @Some(76238) @1
+       1591484 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f141 finishNode @Some(76238) @0
+       1563990 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f61 processComment @Some(28248) @30
+       1563990 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f61 processComment @Some(28248) @29
+       1563945 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f61 processComment @Some(28248) @43
+       1563945 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f61 processComment @Some(28248) @36
+       1563945 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f61 processComment @Some(28248) @35
+       1563945 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f61 processComment @Some(28248) @34
+       1563945 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f61 processComment @Some(28248) @33
+       1563945 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f61 processComment @Some(28248) @32
+       1563945 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f61 processComment @Some(28248) @31
+       1346325 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f61 processComment @Some(28248) @81
+       1309755 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f98 getTokenFromCode @Some(51028) @2
+       1309755 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f98 getTokenFromCode @Some(51028) @1
+       1309755 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f98 getTokenFromCode @Some(51028) @0
+       1309620 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f82 readToken @Some(41650) @14
+       1309620 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f82 readToken @Some(41650) @13
+       1309620 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f82 readToken @Some(41650) @12
+       1309620 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f82 readToken @Some(41650) @11
+       1309620 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f82 readToken @Some(41650) @5
+       1267484 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f112 updateContext @Some(70500) @25
+       1267484 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f112 updateContext @Some(70500) @24
+       1267484 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f112 updateContext @Some(70500) @23
+       1267484 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f112 updateContext @Some(70500) @22
+       1267484 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f112 updateContext @Some(70500) @21
+       1267474 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f112 updateContext @Some(70500) @26
+       1190700 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f98 getTokenFromCode @Some(51028) @3
+       1137090 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f9 isIdentifierStart @Some(20649) @2
+       1118475 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f9 isIdentifierStart @Some(20649) @5
+       1074015 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f9 isIdentifierStart @Some(20649) @1
+       1040280 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f9 isIdentifierStart @Some(20649) @7
+       1039170 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f61 processComment @Some(28248) @78
+       1004340 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f98 getTokenFromCode @Some(51028) @4
+        999255 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f75 eat @Some(39772) @7
+        999255 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f75 eat @Some(39772) @6
+        999255 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f75 eat @Some(39772) @5
+        999250 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f75 eat @Some(39772) @9
+        999250 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f75 eat @Some(39772) @8
+        928815 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f112 updateContext @Some(70500) @29
+        928815 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f112 updateContext @Some(70500) @28
+        928815 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f112 updateContext @Some(70500) @27
+        886535 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f77 isKeyword$$1 @Some(40026) @2
+        886535 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f77 isKeyword$$1 @Some(40026) @1
+        886535 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f77 isKeyword$$1 @Some(40026) @0
+        870150 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f109 readWord1 @Some(68089) @85
+        870150 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f109 readWord1 @Some(68089) @84
+        870150 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f109 readWord1 @Some(68089) @83
+        870150 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f109 readWord1 @Some(68089) @82
+        870150 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f109 readWord1 @Some(68089) @81
+        870150 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f109 readWord1 @Some(68089) @80
+        870150 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f109 readWord1 @Some(68089) @77
+        870150 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f109 readWord1 @Some(68089) @25
+        870150 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f109 readWord1 @Some(68089) @5
+        870150 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f109 readWord1 @Some(68089) @4
+        870150 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f109 readWord1 @Some(68089) @3
+        870150 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f109 readWord1 @Some(68089) @2
+        870150 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f109 readWord1 @Some(68089) @1
+        870150 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f109 readWord1 @Some(68089) @0
+        868695 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f110 readWord @Some(69382) @27
+        868695 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f110 readWord @Some(69382) @25
+        868695 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f110 readWord @Some(69382) @24
+        868695 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f110 readWord @Some(69382) @23
+        868695 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f110 readWord @Some(69382) @9
+        868695 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f110 readWord @Some(69382) @8
+        868695 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f110 readWord @Some(69382) @7
+        868695 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f110 readWord @Some(69382) @6
+        868695 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f110 readWord @Some(69382) @5
+        868695 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f110 readWord @Some(69382) @4
+        868695 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f110 readWord @Some(69382) @3
+        868695 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f110 readWord @Some(69382) @2
+        868695 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f110 readWord @Some(69382) @1
+        868695 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f110 readWord @Some(69382) @0
+        868695 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f82 readToken @Some(41650) @9
+        868695 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f82 readToken @Some(41650) @8
+        868695 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f82 readToken @Some(41650) @7
+        868692 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f110 readWord @Some(69382) @29
+        868692 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f110 readWord @Some(69382) @28
+        868692 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f82 readToken @Some(41650) @10
+        838680 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f9 isIdentifierStart @Some(20649) @9
+        838680 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f9 isIdentifierStart @Some(20649) @8
+        817980 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f98 getTokenFromCode @Some(51028) @5
+        797895 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f61 processComment @Some(28248) @161
+        797895 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f61 processComment @Some(28248) @160
+        797895 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f61 processComment @Some(28248) @85
+        797895 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f61 processComment @Some(28248) @84
+        797895 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f61 processComment @Some(28248) @83
+        797895 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f61 processComment @Some(28248) @60
+        797895 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f61 processComment @Some(28248) @59
+        793800 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f61 processComment @Some(28248) @204
+        793800 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f61 processComment @Some(28248) @203
+        793800 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f61 processComment @Some(28248) @202
+        793650 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f61 processComment @Some(28248) @74
+        793650 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f61 processComment @Some(28248) @73
+        793650 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f61 processComment @Some(28248) @72
+        786150 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f174 parseSubscript @Some(99681) @143
+        786150 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f174 parseSubscript @Some(99681) @142
+        786150 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f174 parseSubscript @Some(99681) @141
+        786150 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f174 parseSubscript @Some(99681) @140
+        786150 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f174 parseSubscript @Some(99681) @139
+        786150 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f174 parseSubscript @Some(99681) @138
+        786150 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f174 parseSubscript @Some(99681) @40
+        786150 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f174 parseSubscript @Some(99681) @39
+        786150 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f174 parseSubscript @Some(99681) @38
+        786150 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f174 parseSubscript @Some(99681) @37
+        786150 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f174 parseSubscript @Some(99681) @36
+        786150 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f174 parseSubscript @Some(99681) @35
+        786150 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f174 parseSubscript @Some(99681) @34
+        786150 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f174 parseSubscript @Some(99681) @9
+        786150 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f174 parseSubscript @Some(99681) @2
+        786150 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f174 parseSubscript @Some(99681) @1
+        786150 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f174 parseSubscript @Some(99681) @0
+        786150 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f173 parseSubscripts @Some(99314) @13
+        786150 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f173 parseSubscripts @Some(99314) @12
+        786150 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f173 parseSubscripts @Some(99314) @11
+        786150 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f173 parseSubscripts @Some(99314) @10
+        786150 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f173 parseSubscripts @Some(99314) @8
+        786150 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f173 parseSubscripts @Some(99314) @6
+        786150 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f173 parseSubscripts @Some(99314) @5
+        786150 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f173 parseSubscripts @Some(99314) @4
+        783345 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f174 parseSubscript @Some(99681) @8
+        783345 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f174 parseSubscript @Some(99681) @7
+        783345 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f174 parseSubscript @Some(99681) @6
+        783345 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f174 parseSubscript @Some(99681) @5
+        783345 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f174 parseSubscript @Some(99681) @4
+        783345 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f174 parseSubscript @Some(99681) @3
+        767295 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f10 isIdentifierChar @Some(21054) @1
+        746160 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f61 processComment @Some(28248) @201
+        677580 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f98 getTokenFromCode @Some(51028) @6
+        670485 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f215 parseIdentifierName @Some(134811) @46
+        670485 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f215 parseIdentifierName @Some(134811) @45
+        670485 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f215 parseIdentifierName @Some(134811) @44
+        670485 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f215 parseIdentifierName @Some(134811) @43
+        670485 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f215 parseIdentifierName @Some(134811) @37
+        670485 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f215 parseIdentifierName @Some(134811) @35
+        670485 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f215 parseIdentifierName @Some(134811) @34
+        670485 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f215 parseIdentifierName @Some(134811) @32
+        670485 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f215 parseIdentifierName @Some(134811) @31
+        670485 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f215 parseIdentifierName @Some(134811) @30
+        670485 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f215 parseIdentifierName @Some(134811) @16
+        670485 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f215 parseIdentifierName @Some(134811) @15
+        670485 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f215 parseIdentifierName @Some(134811) @14
+        670485 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f215 parseIdentifierName @Some(134811) @13
+        670485 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f215 parseIdentifierName @Some(134811) @12
+        670485 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f215 parseIdentifierName @Some(134811) @11
+        670485 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f215 parseIdentifierName @Some(134811) @0
+        670485 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f214 parseIdentifier @Some(134537) @10
+        670485 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f214 parseIdentifier @Some(134537) @9
+        670485 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f214 parseIdentifier @Some(134537) @8
+        670485 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f214 parseIdentifier @Some(134537) @7
+        670485 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f214 parseIdentifier @Some(134537) @6
+        670485 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f214 parseIdentifier @Some(134537) @5
+        670485 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f214 parseIdentifier @Some(134537) @4
+        670485 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f214 parseIdentifier @Some(134537) @3
+        670485 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f214 parseIdentifier @Some(134537) @2
+        670485 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f214 parseIdentifier @Some(134537) @1
+        670485 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f214 parseIdentifier @Some(134537) @0
+        670484 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f214 parseIdentifier @Some(134537) @15
+        670484 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f214 parseIdentifier @Some(134537) @14
+        670484 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f214 parseIdentifier @Some(134537) @13
+        670484 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f214 parseIdentifier @Some(134537) @12
+        670484 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f214 parseIdentifier @Some(134537) @11
+        668595 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f174 parseSubscript @Some(99681) @168
+        668595 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f174 parseSubscript @Some(99681) @167
+        668595 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f174 parseSubscript @Some(99681) @166
+        668595 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f174 parseSubscript @Some(99681) @165
+        668595 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f174 parseSubscript @Some(99681) @164
+        668595 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f174 parseSubscript @Some(99681) @163
+        668595 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f174 parseSubscript @Some(99681) @162
+        667680 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f45  @Some(23300) @10
+        667680 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f45  @Some(23300) @3
+        667680 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f45  @Some(23300) @2
+        667680 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f45  @Some(23300) @1
+        667680 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f45  @Some(23300) @0
+        667395 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f45  @Some(23300) @33
+        667395 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f45  @Some(23300) @29
+        667395 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f45  @Some(23300) @28
+        667395 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f45  @Some(23300) @24
+        667395 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f45  @Some(23300) @23
+        667395 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f45  @Some(23300) @22
+        667395 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f45  @Some(23300) @21
+        667395 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f45  @Some(23300) @20
+        667395 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f45  @Some(23300) @19
+        667395 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f45  @Some(23300) @18
+        667395 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f45  @Some(23300) @17
+        667394 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f45  @Some(23300) @46
+        667394 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f45  @Some(23300) @45
+        662145 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f45  @Some(23300) @27
+        662145 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f45  @Some(23300) @26
+        662145 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f45  @Some(23300) @25
+        658800 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f56 isReservedWord @Some(26057) @8
+        658800 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f56 isReservedWord @Some(26057) @7
+        658800 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f56 isReservedWord @Some(26057) @6
+        658800 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f56 isReservedWord @Some(26057) @5
+        658800 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f56 isReservedWord @Some(26057) @4
+        658800 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f56 isReservedWord @Some(26057) @0
+        658800 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f216 checkReservedWord @Some(135407) @53
+        658800 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f216 checkReservedWord @Some(135407) @52
+        658800 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f216 checkReservedWord @Some(135407) @46
+        658800 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f216 checkReservedWord @Some(135407) @45
+        658800 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f216 checkReservedWord @Some(135407) @40
+        658800 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f216 checkReservedWord @Some(135407) @39
+        658800 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f216 checkReservedWord @Some(135407) @38
+        658800 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f216 checkReservedWord @Some(135407) @37
+        658800 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f216 checkReservedWord @Some(135407) @36
+        658800 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f216 checkReservedWord @Some(135407) @35
+        658800 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f216 checkReservedWord @Some(135407) @34
+        658800 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f216 checkReservedWord @Some(135407) @33
+        658800 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f216 checkReservedWord @Some(135407) @27
+        658800 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f216 checkReservedWord @Some(135407) @25
+        658800 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f216 checkReservedWord @Some(135407) @24
+        658800 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f216 checkReservedWord @Some(135407) @23
+        658800 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f216 checkReservedWord @Some(135407) @17
+        658800 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f216 checkReservedWord @Some(135407) @2
+        658800 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f216 checkReservedWord @Some(135407) @1
+        658800 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f216 checkReservedWord @Some(135407) @0
+        656310 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f215 parseIdentifierName @Some(134811) @18
+        656310 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f215 parseIdentifierName @Some(134811) @17
+        645555 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f174 parseSubscript @Some(99681) @202
+        645555 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f174 parseSubscript @Some(99681) @195
+        645555 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f174 parseSubscript @Some(99681) @194
+        645555 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f174 parseSubscript @Some(99681) @193
+        644160 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f45  @Some(23300) @32
+        644160 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f45  @Some(23300) @31
+        644160 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f45  @Some(23300) @30
+        642930 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f174 parseSubscript @Some(99681) @201
+        642930 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f174 parseSubscript @Some(99681) @200
+        642930 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f174 parseSubscript @Some(99681) @199
+        642930 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f174 parseSubscript @Some(99681) @198
+        642930 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f174 parseSubscript @Some(99681) @197
+        642930 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f174 parseSubscript @Some(99681) @196
+        625485 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f170 parseExprOp @Some(95157) @17
+        625485 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f170 parseExprOp @Some(95157) @5
+        625485 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f170 parseExprOp @Some(95157) @4
+        625485 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f170 parseExprOp @Some(95157) @3
+        625485 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f170 parseExprOp @Some(95157) @2
+        625485 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f170 parseExprOp @Some(95157) @1
+        625485 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f170 parseExprOp @Some(95157) @0
+        604215 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f11 isNewLine @Some(21696) @7
+        604215 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f11 isNewLine @Some(21696) @5
+        604215 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f11 isNewLine @Some(21696) @4
+        604215 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f11 isNewLine @Some(21696) @2
+        604215 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f11 isNewLine @Some(21696) @1
+        604215 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f11 isNewLine @Some(21696) @0
+        603045 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f11 isNewLine @Some(21696) @9
+        603045 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f11 isNewLine @Some(21696) @6
+        603045 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f11 isNewLine @Some(21696) @3
+        582030 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f171 parseMaybeUnary @Some(96727) @2
+        582030 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f171 parseMaybeUnary @Some(96727) @1
+        582030 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f171 parseMaybeUnary @Some(96727) @0
+        565185 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f216 checkReservedWord @Some(135407) @15
+        565185 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f216 checkReservedWord @Some(135407) @10
+        565185 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f216 checkReservedWord @Some(135407) @9
+        565185 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f216 checkReservedWord @Some(135407) @8
+        565185 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f216 checkReservedWord @Some(135407) @7
+        565185 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f216 checkReservedWord @Some(135407) @6
+        565185 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f216 checkReservedWord @Some(135407) @5
+        565185 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f216 checkReservedWord @Some(135407) @4
+        565185 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f216 checkReservedWord @Some(135407) @3
+        562020 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f171 parseMaybeUnary @Some(96727) @125
+        562020 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f171 parseMaybeUnary @Some(96727) @120
+        562020 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f171 parseMaybeUnary @Some(96727) @119
+        562020 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f171 parseMaybeUnary @Some(96727) @118
+        562020 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f171 parseMaybeUnary @Some(96727) @117
+        561885 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f181 parseExprAtom @Some(105692) @9
+        561885 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f181 parseExprAtom @Some(105692) @8
+        561885 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f181 parseExprAtom @Some(105692) @7
+        561885 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f181 parseExprAtom @Some(105692) @6
+        561885 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f181 parseExprAtom @Some(105692) @5
+        561885 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f181 parseExprAtom @Some(105692) @4
+        561885 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f181 parseExprAtom @Some(105692) @3
+        561885 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f181 parseExprAtom @Some(105692) @2
+        561885 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f181 parseExprAtom @Some(105692) @1
+        561885 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f181 parseExprAtom @Some(105692) @0
+        561825 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f181 parseExprAtom @Some(105692) @17
+        561825 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f181 parseExprAtom @Some(105692) @16
+        561825 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f181 parseExprAtom @Some(105692) @15
+        561825 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f181 parseExprAtom @Some(105692) @14
+        561825 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f181 parseExprAtom @Some(105692) @13
+        561825 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f181 parseExprAtom @Some(105692) @12
+        561825 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f181 parseExprAtom @Some(105692) @11
+        561825 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f181 parseExprAtom @Some(105692) @10
+        557760 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f172 parseExprSubscripts @Some(98770) @13
+        557760 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f172 parseExprSubscripts @Some(98770) @10
+        557760 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f172 parseExprSubscripts @Some(98770) @9
+        557760 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f172 parseExprSubscripts @Some(98770) @8
+        557760 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f172 parseExprSubscripts @Some(98770) @7
+        557760 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f172 parseExprSubscripts @Some(98770) @6
+        557760 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f172 parseExprSubscripts @Some(98770) @5
+        557760 /workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/babylon.bundle.js f172 parseExprSubscripts @Some(98770) @4

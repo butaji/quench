@@ -1,0 +1,563 @@
+{
+  "task": "20",
+  "source_head": "7e60169df033dd247f34199e084e3e8080a92a29",
+  "source_state": "dirty worktree",
+  "suite_head": "6eec1ac9ee144dafd8f344d73a21f36bfc9f6755",
+  "suite_clean": true,
+  "profile": "release",
+  "timeout_ms": 10000,
+  "rustc": "rustc 1.99.0 (b940084d7 2026-09-28) (Homebrew)",
+  "host": "macOS-26.5-arm64-arm-64bit",
+  "producer_owners": [
+    "17",
+    "18"
+  ],
+  "obligation": "Return completion after an inner finally must execute remaining outer cleanup, including generator.return, dynamic compilation, async suspension and finally blocks that yield.",
+  "representation": "Both try-finally and try-catch-finally use the existing emit_return operation after their cleanup. FinallyContext remains the one static routing authority; no runtime completion stack, side table, opcode or residual format change. Return values already prepared by async lowering are not awaited again.",
+  "source_hashes": {
+    "crates/quench-runtime-next/src/vm/generator.rs": "41600cabe855d2c0afb8744b943db8a5ab01ff5797440a5d51dd2015a9e82df2",
+    "crates/quench-runtime-next/src/compile/ast/try_statement.rs": "dc5b9bfe5a4fd7488086f15c508e5815d9f9e56c7102ddef512c207294580429",
+    "crates/quench-runtime-next/src/compile/ast/statement.rs": "97c365289e7b57fdfd9132a44ff8b12bd5cfd71448254e0e070f5b45e4b8cb68"
+  },
+  "source_note": "After the compiled source was verified, rustfmt only reflowed the existing is_undefined emit_binary call in statement.rs. No tokens or runtime behavior changed; current file hashes include that whitespace-only formatting.",
+  "runners": {
+    "before": {
+      "path": "target/iteration/task20-generator-program-owner-run-stages-next",
+      "sha256": "db04888164b3608fc77346229072639909ef586ff8fd702367cc81e7e1c71e85"
+    },
+    "after": {
+      "path": "target/iteration/task20-nested-finally-return-run-stages-next",
+      "sha256": "377faacc7fe74e3f2ee245b822f7a34af1ba12b81cf0532dd3d16a8726e74e2d"
+    }
+  },
+  "scopes": [
+    {
+      "name": "async-generator",
+      "stage": 38,
+      "filter": null,
+      "cases": 48,
+      "before_passed": 48,
+      "after_passed": 48,
+      "regressions": 0,
+      "before": {
+        "path": "target/iteration/task20-nested-finally-return-before-async-generator.json",
+        "sha256": "4a2bb83eda2c8a66954e784e79f277d1080a963c4340dcfdc35efd4b5226954d"
+      },
+      "after": {
+        "path": "target/iteration/task20-nested-finally-return-after-async-generator.json",
+        "sha256": "7f4fc2b46a6444f6e91234560fcb7dccb5b4e5bd886e8112929f39e5e1fd6aaa"
+      },
+      "comparison": {
+        "path": "target/iteration/task20-nested-finally-return-compare-async-generator.log",
+        "sha256": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+      }
+    },
+    {
+      "name": "async-generator-function",
+      "stage": 37,
+      "filter": null,
+      "cases": 23,
+      "before_passed": 23,
+      "after_passed": 23,
+      "regressions": 0,
+      "before": {
+        "path": "target/iteration/task20-nested-finally-return-before-async-generator-function.json",
+        "sha256": "ad57220da572dd33b42136727699ce1ae1d2aa4e8abced3a90edecbba69e6fba"
+      },
+      "after": {
+        "path": "target/iteration/task20-nested-finally-return-after-async-generator-function.json",
+        "sha256": "a84c5a8dc00182600e78f6a0a1ef417909080458d2a4248f15e5f5506cdf8ac0"
+      },
+      "comparison": {
+        "path": "target/iteration/task20-nested-finally-return-compare-async-generator-function.log",
+        "sha256": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+      }
+    },
+    {
+      "name": "generator",
+      "stage": 50,
+      "filter": null,
+      "cases": 61,
+      "before_passed": 61,
+      "after_passed": 61,
+      "regressions": 0,
+      "before": {
+        "path": "target/iteration/task20-nested-finally-return-before-generator.json",
+        "sha256": "0cd9fddf66ca177a067944c6ca4680d6790007be5d83afc9222d0a81e99c556b"
+      },
+      "after": {
+        "path": "target/iteration/task20-nested-finally-return-after-generator.json",
+        "sha256": "706eeb86121487e2b418ec75b7b8d0b097be8de70fe073c6341c0b4aea8aea85"
+      },
+      "comparison": {
+        "path": "target/iteration/task20-nested-finally-return-compare-generator.log",
+        "sha256": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+      }
+    },
+    {
+      "name": "async-iterator",
+      "stage": 39,
+      "filter": null,
+      "cases": 13,
+      "before_passed": 13,
+      "after_passed": 13,
+      "regressions": 0,
+      "before": {
+        "path": "target/iteration/task20-nested-finally-return-before-async-iterator.json",
+        "sha256": "d3b54009c77af7632ddf67f5d700e0bd909358cb666f0e70b65661096a94b30f"
+      },
+      "after": {
+        "path": "target/iteration/task20-nested-finally-return-after-async-iterator.json",
+        "sha256": "4985492b156d731cc973fefe1a5ec276e61e45c1ea5c1c209977233fbe2adb61"
+      },
+      "comparison": {
+        "path": "target/iteration/task20-nested-finally-return-compare-async-iterator.log",
+        "sha256": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+      }
+    },
+    {
+      "name": "async-from-sync",
+      "stage": 35,
+      "filter": null,
+      "cases": 38,
+      "before_passed": 38,
+      "after_passed": 38,
+      "regressions": 0,
+      "before": {
+        "path": "target/iteration/task20-nested-finally-return-before-async-from-sync.json",
+        "sha256": "1119e918e47a500aca2392db06304502507868eb082936cb2ab68e915ec0355a"
+      },
+      "after": {
+        "path": "target/iteration/task20-nested-finally-return-after-async-from-sync.json",
+        "sha256": "4f1c7f46326c7bf5171386e4119d264ffa43e01684db139112f22f76fd8ec26d"
+      },
+      "comparison": {
+        "path": "target/iteration/task20-nested-finally-return-compare-async-from-sync.log",
+        "sha256": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+      }
+    },
+    {
+      "name": "async-generator-expressions",
+      "stage": 10,
+      "filter": "async-generator",
+      "cases": 663,
+      "before_passed": 663,
+      "after_passed": 663,
+      "regressions": 0,
+      "before": {
+        "path": "target/iteration/task20-nested-finally-return-before-async-generator-expressions.json",
+        "sha256": "d6c8c462b14d1f3caeea989dacf2b1c8f00531470a0d344ab9ab95bf76dc82a6"
+      },
+      "after": {
+        "path": "target/iteration/task20-nested-finally-return-after-async-generator-expressions.json",
+        "sha256": "dc4a398a6864629031ee5989c88ffb3a62740432b6fb7bbf854aadf5576da748"
+      },
+      "comparison": {
+        "path": "target/iteration/task20-nested-finally-return-compare-async-generator-expressions.log",
+        "sha256": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+      }
+    },
+    {
+      "name": "async-generator-statements",
+      "stage": 26,
+      "filter": "async-generator",
+      "cases": 357,
+      "before_passed": 357,
+      "after_passed": 357,
+      "regressions": 0,
+      "before": {
+        "path": "target/iteration/task20-nested-finally-return-before-async-generator-statements.json",
+        "sha256": "6375cc2588342098a7761c4fcba4f3d9073c3893e14b25fa428f216e3a1675c1"
+      },
+      "after": {
+        "path": "target/iteration/task20-nested-finally-return-after-async-generator-statements.json",
+        "sha256": "62b37beb80ea4f4dad291f9f75584b23c752cac9bceec8e83da3ab8e79c3e991"
+      },
+      "comparison": {
+        "path": "target/iteration/task20-nested-finally-return-compare-async-generator-statements.log",
+        "sha256": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+      }
+    },
+    {
+      "name": "yield-expressions",
+      "stage": 10,
+      "filter": "yield/",
+      "cases": 63,
+      "before_passed": 63,
+      "after_passed": 63,
+      "regressions": 0,
+      "before": {
+        "path": "target/iteration/task20-nested-finally-return-before-yield-expressions.json",
+        "sha256": "977a62ef86d31af90c780f8ade2390d56d7ac0b086e80cdff9e0f992906b682b"
+      },
+      "after": {
+        "path": "target/iteration/task20-nested-finally-return-after-yield-expressions.json",
+        "sha256": "f161f477a36e792ff36d6e851440216dce05db438ce21d87424c32083355c19d"
+      },
+      "comparison": {
+        "path": "target/iteration/task20-nested-finally-return-compare-yield-expressions.log",
+        "sha256": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+      }
+    },
+    {
+      "name": "promise",
+      "stage": 61,
+      "filter": null,
+      "cases": 729,
+      "before_passed": 728,
+      "after_passed": 728,
+      "regressions": 0,
+      "before": {
+        "path": "target/iteration/task20-nested-finally-return-before-promise.json",
+        "sha256": "b2af0a1000532c0af3a6916a5c13b8b3664d221dab305f3076aa6ef262d10c58"
+      },
+      "after": {
+        "path": "target/iteration/task20-nested-finally-return-after-promise.json",
+        "sha256": "b8e529125a2a678be025715e1c26f533eb869adbce797dd72ceaca40bce641e4"
+      },
+      "comparison": {
+        "path": "target/iteration/task20-nested-finally-return-compare-promise.log",
+        "sha256": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+      }
+    },
+    {
+      "name": "array-from-async",
+      "stage": 31,
+      "filter": "fromAsync/",
+      "cases": 95,
+      "before_passed": 95,
+      "after_passed": 95,
+      "regressions": 0,
+      "before": {
+        "path": "target/iteration/task20-nested-finally-return-before-array-from-async.json",
+        "sha256": "23c0a83566fbe0ecf74748ace1929c74dafa7a37a194e478cbc9efcb57cd3838"
+      },
+      "after": {
+        "path": "target/iteration/task20-nested-finally-return-after-array-from-async.json",
+        "sha256": "3920fe60bfe7aebe566d269eceb03661b60180ea57b5e17327cc71a01b2d6a16"
+      },
+      "comparison": {
+        "path": "target/iteration/task20-nested-finally-return-compare-array-from-async.log",
+        "sha256": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+      }
+    },
+    {
+      "name": "disposal",
+      "stage": 34,
+      "filter": null,
+      "cases": 104,
+      "before_passed": 104,
+      "after_passed": 104,
+      "regressions": 0,
+      "before": {
+        "path": "target/iteration/task20-nested-finally-return-before-disposal.json",
+        "sha256": "a18d7965f41b41a3c271864145a1385902feda7a40f51011e7925f2bfe5dc4d7"
+      },
+      "after": {
+        "path": "target/iteration/task20-nested-finally-return-after-disposal.json",
+        "sha256": "03f8f7556b13c6f9899747130787f4558fdc77c7fe7c45c07bf4fb6e1b68adc3"
+      },
+      "comparison": {
+        "path": "target/iteration/task20-nested-finally-return-compare-disposal.log",
+        "sha256": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+      }
+    },
+    {
+      "name": "generator-expressions",
+      "stage": 10,
+      "filter": "expressions/generators/",
+      "cases": 290,
+      "before_passed": 290,
+      "after_passed": 290,
+      "regressions": 0,
+      "before": {
+        "path": "target/iteration/task20-nested-finally-return-before-generator-expressions.json",
+        "sha256": "159862f4fe92dfd61f933b6a1e804ad91b0c0a59b0c791ffd722db5f6d83aa3b"
+      },
+      "after": {
+        "path": "target/iteration/task20-nested-finally-return-after-generator-expressions.json",
+        "sha256": "92ca6938e3fea3d01b3b52518aeea59691e4bd8e9380b9a7fae30973e1da5efb"
+      },
+      "comparison": {
+        "path": "target/iteration/task20-nested-finally-return-compare-generator-expressions.log",
+        "sha256": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+      }
+    },
+    {
+      "name": "generator-statements",
+      "stage": 26,
+      "filter": "statements/generators/",
+      "cases": 266,
+      "before_passed": 266,
+      "after_passed": 266,
+      "regressions": 0,
+      "before": {
+        "path": "target/iteration/task20-nested-finally-return-before-generator-statements.json",
+        "sha256": "fd5b9ecfed51ba45948632501566bf290b95fe24a54dd96672ee784f9b4d4141"
+      },
+      "after": {
+        "path": "target/iteration/task20-nested-finally-return-after-generator-statements.json",
+        "sha256": "8ea9eb2cb48ad1c6bfb0c061a2559f3dc716ecfc23168d6cde79e7580fe7d13e"
+      },
+      "comparison": {
+        "path": "target/iteration/task20-nested-finally-return-compare-generator-statements.log",
+        "sha256": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+      }
+    },
+    {
+      "name": "generator-function",
+      "stage": 49,
+      "filter": null,
+      "cases": 23,
+      "before_passed": 23,
+      "after_passed": 23,
+      "regressions": 0,
+      "before": {
+        "path": "target/iteration/task20-nested-finally-return-before-generator-function.json",
+        "sha256": "e33ddaa27d009f525869046d45a8ee201647be5d2a4ca84b0f5db708ed07c54a"
+      },
+      "after": {
+        "path": "target/iteration/task20-nested-finally-return-after-generator-function.json",
+        "sha256": "be371a913e71597e5cc509c7df4ccdf63bf1bd80898d80cbdc6ac0c159e4b348"
+      },
+      "comparison": {
+        "path": "target/iteration/task20-nested-finally-return-compare-generator-function.log",
+        "sha256": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+      }
+    },
+    {
+      "name": "eval",
+      "stage": 8,
+      "filter": null,
+      "cases": 347,
+      "before_passed": 347,
+      "after_passed": 347,
+      "regressions": 0,
+      "before": {
+        "path": "target/iteration/task20-nested-finally-return-before-eval.json",
+        "sha256": "a18068944901d2fb21ed8614de4cdb23b383433ef2887cecd4ad182acdaefa58"
+      },
+      "after": {
+        "path": "target/iteration/task20-nested-finally-return-after-eval.json",
+        "sha256": "127e9d3b06725291de25282e147d5ea3a1c2fd985848f1da2efc47bf8af18d27"
+      },
+      "comparison": {
+        "path": "target/iteration/task20-nested-finally-return-compare-eval.log",
+        "sha256": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+      }
+    },
+    {
+      "name": "module",
+      "stage": 20,
+      "filter": null,
+      "cases": 599,
+      "before_passed": 599,
+      "after_passed": 599,
+      "regressions": 0,
+      "before": {
+        "path": "target/iteration/task20-nested-finally-return-before-module.json",
+        "sha256": "531df277e215de0927197051f3e56c74df94a9cc26a08eaa61c89921ef01bbfe"
+      },
+      "after": {
+        "path": "target/iteration/task20-nested-finally-return-after-module.json",
+        "sha256": "732c7293ee2684b3add037a1ddb116ee0d22aa9626fb393979729003fc3ab556"
+      },
+      "comparison": {
+        "path": "target/iteration/task20-nested-finally-return-compare-module.log",
+        "sha256": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+      }
+    },
+    {
+      "name": "dynamic-import",
+      "stage": 10,
+      "filter": "dynamic-import/",
+      "cases": 1004,
+      "before_passed": 1004,
+      "after_passed": 1004,
+      "regressions": 0,
+      "before": {
+        "path": "target/iteration/task20-nested-finally-return-before-dynamic-import.json",
+        "sha256": "93b32decb0baa8858b28191cee9b22fb0af7d7a4cce09e1006d6de980efdacdd"
+      },
+      "after": {
+        "path": "target/iteration/task20-nested-finally-return-after-dynamic-import.json",
+        "sha256": "daa556a5c71eac55023cdca83193cd9bb25b63a1e86312e867df2f73c46db237"
+      },
+      "comparison": {
+        "path": "target/iteration/task20-nested-finally-return-compare-dynamic-import.log",
+        "sha256": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+      }
+    },
+    {
+      "name": "try-statements",
+      "stage": 26,
+      "filter": "statements/try/",
+      "cases": 201,
+      "before_passed": 201,
+      "after_passed": 201,
+      "regressions": 0,
+      "before": {
+        "path": "target/iteration/task20-nested-finally-return-before-try-statements.json",
+        "sha256": "bc9705d01c472f4bd8a6c6648bf2fb1dd5e801719ec11ec49c3c1ca8a20eab2c"
+      },
+      "after": {
+        "path": "target/iteration/task20-nested-finally-return-after-try-statements.json",
+        "sha256": "99500c79a4cf267bcff811394d06337ef9f63a2adbb5d81fafd7ed206272ce84"
+      },
+      "comparison": {
+        "path": "target/iteration/task20-nested-finally-return-compare-try-statements.log",
+        "sha256": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+      }
+    },
+    {
+      "name": "return-statements",
+      "stage": 26,
+      "filter": "statements/return/",
+      "cases": 16,
+      "before_passed": 16,
+      "after_passed": 16,
+      "regressions": 0,
+      "before": {
+        "path": "target/iteration/task20-nested-finally-return-before-return-statements.json",
+        "sha256": "d7cb4989ba1d16eb51d770f46464781417c10db5a4ab9e08eea160858089d86a"
+      },
+      "after": {
+        "path": "target/iteration/task20-nested-finally-return-after-return-statements.json",
+        "sha256": "56f05654bcaa71ce3cf9c423f06f4e2a56dd87608d159c6838966482155ef73c"
+      },
+      "comparison": {
+        "path": "target/iteration/task20-nested-finally-return-compare-return-statements.log",
+        "sha256": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+      }
+    }
+  ],
+  "total": 4940,
+  "passed": 4939,
+  "regressions": 0,
+  "inventory_sha256": "116260a46c8784492e02e6fc9a95a8aafca63c9dd688da240c5dc3a2db24779a",
+  "fixture_and_harness_sha256": "1b0e02364693b175f08ad94200153da51691cb1fa550151358ffb452ea248f54",
+  "fixture_hash_rule": "Sorted suite-relative test paths from exact affected inventories plus every harness file: path UTF-8 NUL file bytes NUL.",
+  "failures": [
+    {
+      "outcome": "failed",
+      "path": "built-ins/Promise/allSettledKeyed/result-property-descriptors.js",
+      "reason": "next runtime async: TypeError: cannot convert null or undefined to object",
+      "stage": "61"
+    }
+  ],
+  "known_failure_evidence": "tasks/evidence/task20-all-settled-keyed-conflict.json",
+  "units": {
+    "library_passed": 463,
+    "integration_passed": 6,
+    "failed": 0,
+    "ignored": 0,
+    "log": {
+      "path": "target/iteration/task20-nested-finally-return-units.log",
+      "sha256": "fd6c973eeeae8d97f74a30c4731d48b272c34a7ea94ab18ef46754babe63ea6d"
+    },
+    "new_conformance_units": 0
+  },
+  "features": {
+    "passed": true,
+    "log": {
+      "path": "target/iteration/task20-nested-finally-return-features.log",
+      "sha256": "aefc4992612052ded4e5c5feced039274af92a3e48d36f25727bb18a8ab55577"
+    }
+  },
+  "build": {
+    "path": "target/iteration/task20-nested-finally-return-build.log",
+    "sha256": "4fbd662e122afebf9468da931197c14aae16c29e8358b81f88e243a49fb508dd"
+  },
+  "node_controls": {
+    "script_comparisons": 132,
+    "script_matches": 132,
+    "module_comparisons": 10,
+    "module_matches": 10,
+    "node_version": "v26.10.0",
+    "modes": [
+      "normal",
+      "generic"
+    ],
+    "sources": {
+      "path": "target/iteration/task20-nested-finally-return-controls.json",
+      "sha256": "0925647938a7eef8afadc9763cc30854a691d10f9ad1b73688d2ccbbdbf95e6d"
+    },
+    "results": {
+      "path": "target/iteration/task20-nested-finally-return-node-results.json",
+      "sha256": "4e4e6d7351283177d0da3469dc3bdf0989f43b47a0ae8ee1123027072b5cd9c1"
+    },
+    "module_results": {
+      "path": "target/iteration/task20-nested-finally-return-module-node-results.json",
+      "sha256": "e7d2f467f3bc43e47bb6db0c3e81e238618cf00bd58bd1bafa711fa6989312f6"
+    },
+    "module_sources": [
+      {
+        "path": "target/iteration/task20-generator-program-owner-modules/async-delegate-return/export.mjs",
+        "sha256": "9956daade813deb9a3b77488a8ece4fd538c753e620529d3178876eca4dcb262"
+      },
+      {
+        "path": "target/iteration/task20-generator-program-owner-modules/async-delegate-return/main.mjs",
+        "sha256": "a33cf5a4f311761601b7926b26db0450f95c951c66683ce7bec8caab1f84c743"
+      },
+      {
+        "path": "target/iteration/task20-generator-program-owner-modules/async-delegate-throw/export.mjs",
+        "sha256": "9956daade813deb9a3b77488a8ece4fd538c753e620529d3178876eca4dcb262"
+      },
+      {
+        "path": "target/iteration/task20-generator-program-owner-modules/async-delegate-throw/main.mjs",
+        "sha256": "b45fb56e9cd9b228b1af2255346ed32f116b789f4f6cf50645c240559b1773fb"
+      },
+      {
+        "path": "target/iteration/task20-generator-program-owner-modules/async-finally/export.mjs",
+        "sha256": "ccd74224509c7bb646380322ccf82550a92ae8e0153940319c5038c0269727e7"
+      },
+      {
+        "path": "target/iteration/task20-generator-program-owner-modules/async-finally/main.mjs",
+        "sha256": "242b670690bca8a9b9ec5aaf2a077f77efb41d85a14abb0b039135c1484510ff"
+      },
+      {
+        "path": "target/iteration/task20-generator-program-owner-modules/setup.mjs",
+        "sha256": "98d196af641eb365e7118175628e9e4bd75f0e5425dfadca880bc58e5329ef70"
+      },
+      {
+        "path": "target/iteration/task20-generator-program-owner-modules/sync-delegate/export.mjs",
+        "sha256": "935e8316d05d1406ee96ef0903975453ae98ca9ee75f97a4acb36d1b67bd5413"
+      },
+      {
+        "path": "target/iteration/task20-generator-program-owner-modules/sync-delegate/main.mjs",
+        "sha256": "643792e5756203d01546a54bb46bc7f34912b8b94fca2821f76fb3894f230a78"
+      },
+      {
+        "path": "target/iteration/task20-generator-program-owner-modules/sync-finally/export.mjs",
+        "sha256": "48c1ecbeb35d59dc12f7d76032874507da0eb0e9969e491bf56ac465502f3895"
+      },
+      {
+        "path": "target/iteration/task20-generator-program-owner-modules/sync-finally/main.mjs",
+        "sha256": "d0b4d857722c2067d6a600082409076741e21aa10a0a9ae99f2024b60e16a956"
+      }
+    ],
+    "hosts": {
+      "script": {
+        "path": "target/iteration/task20-nested-finally-return-script-host",
+        "sha256": "c62110063da7512284ea0b5d3e0711f5516c966de03d4b4246c03d44d311734d"
+      },
+      "module": {
+        "path": "target/iteration/task20-nested-finally-return-module-host",
+        "sha256": "be6f42c3c6457218935b341733788fe8b40d5f33e890b9fd09c78e2f7d1deee1"
+      }
+    },
+    "previous_snapshot": "tasks/evidence/task20-generator-program-owner.json",
+    "previous_nested_finally_mismatches": 2,
+    "current_nested_finally_mismatches": 0
+  },
+  "commands": {
+    "suite": "TEST262_REPORT=<report> TEST262_TEST_TIMEOUT_MS=10000 <runner> <stage> <stage> [filter]",
+    "compare": "target/debug/compare-runs --reports <before> <after>",
+    "units": "cargo test -p quench-runtime-next --lib --test subset",
+    "features": "cargo check -p quench-runtime-next --features profile-memory,profile-aggregate",
+    "node_script": "node --jitless --expose-gc -e <print/$262 setup + source>",
+    "node_module": "node --jitless --expose-gc --import <setup.mjs> <main.mjs>",
+    "control_replay": "python3 target/iteration/task20-nested-finally-return-node-check.py"
+  },
+  "limits": "Closes the nested-finally mismatch exposed by program-owner qualification. The unchanged keyed-Promise corpus conflict remains a failure. No full-suite run, Stage A closure, producer/realm/host audit completion or performance claim."
+}

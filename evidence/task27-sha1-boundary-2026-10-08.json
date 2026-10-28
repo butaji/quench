@@ -1,0 +1,70 @@
+{
+  "schema": 1,
+  "task": "27",
+  "kind": "shared_crypto_primitive_boundary",
+  "recorded_on": "2026-10-08",
+  "source": {
+    "revision": "6820fd582",
+    "worktree_dirty": true,
+    "platform": "Darwin arm64",
+    "node": "v26.10.0",
+    "rustc": "rustc 1.99.0 (b940084d7 2026-09-28) (Homebrew)",
+    "files_sha256": {
+      "crates/quench-node/src/modules/crypto_sha1.rs": "b58f10b9358ba0773b8f68cd502fdd8d9c3d233a385ad4b87f7335bd3bd26bef",
+      "crates/quench-node/src/modules/crypto.rs": "a4944a7ea9d75ab614e76fac56467d67e80665c189ecbc793b2880ae866b86b0",
+      "crates/quench-node/src/modules/crypto/shared_vm.rs": "8cfa83192d66b84ce2f99aefd188e954a99e2c9ca85cded365d046658b04f1fa",
+      "crates/quench-node/src/modules/mod.rs": "e9e2477842905d0cb9bb598cbba021525ff10c8e5e20ae5be5f4c2df9027cd1a"
+    },
+    "binaries_sha256": {
+      "target/iteration/quench-node": "dfe23430b80c8b3dbc9983d0415b0c4c472ad6af74676dac4a06ebb6f37ee5ec",
+      "target/iteration/run-parallel": "9a34645fd957d6019898967857e8f570208d232c4dc7c9bae5fd4e591e75c83d"
+    }
+  },
+  "change": {
+    "shared_owner": "crates/quench-node/src/modules/crypto_sha1.rs",
+    "behavior": "Legacy and shared crypto adapters call the same SHA-1 primitive; the shared adapter no longer references the legacy crypto module.",
+    "legacy_package_dependency_removed": false
+  },
+  "verification": {
+    "cargo_check_workspace_iteration": "passed",
+    "cargo_build_node_iteration": "passed",
+    "framework_core": {
+      "command": "cargo run --profile iteration -p quench-node-test --bin run-parallel -- --profile framework-core --timeout-secs 60",
+      "manifest_sha256": "0209917422a2f0f3fa241d941ec4bc88c9917d5322b69014ab1a662a52e9dfca",
+      "cases": 43,
+      "passed": 43,
+      "skipped": 0,
+      "failed": 0,
+      "timeouts": 0,
+      "crashes": 0,
+      "unclassified": 0
+    },
+    "framework_scenarios": {
+      "comparison": "Local Node and target/iteration/quench-node, exact exit status/stdout/stderr",
+      "driver_sha256": "e8dd245f9bbfcdcd3a430ff7ed663c3310fdf32fae23cfc5c24d24cbeda96bfb",
+      "stdout": "statuses 200,200,200,200,404\n",
+      "stdout_sha256": "6a8388b87cdb9dc7618e136828b626c2213b937ea1645882ef0c33bedf95b54d",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "scenarios": {
+        "express": {
+          "result": "MATCH",
+          "status": [0, 0],
+          "input_sha256": "85eebbbc5c9cfaa01f2f16b6c7e181a4c4bc2e308bd1bb179f49c5d9700f8158"
+        },
+        "koa": {
+          "result": "MATCH",
+          "status": [0, 0],
+          "input_sha256": "962e4c326df72b30eed4306494e2218475456c7c816220a6e46a898b040185f9"
+        },
+        "fastify": {
+          "result": "MATCH",
+          "status": [0, 0],
+          "input_sha256": "1ff4fc87e2a4c792761c286bc0f255d0ab9be27e810dbf98938a1ac717d1ba6a"
+        }
+      }
+    },
+    "test262_dependency_check": "cargo tree -p quench-test262 contains no quench-node package",
+    "wasm_dependency_check": "cargo tree -p quench-wasm-test contains no quench-node package",
+    "unit_tests": "not run"
+  }
+}

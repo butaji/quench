@@ -1,0 +1,6 @@
+{
+  "path": "target/debug/deps/quench_runtime-faba0c2c63dca90b",
+  "bytes": 548902080,
+  "sha256": "b4860f3cd2100d7c8e2c378183dc7bdf70c8641ccd7b8c3dd736f3e6ff7c4a63",
+  "reason": "Completed qualified Core659 test cache; retain receipt and rebuild changed Core source. Frozen bundles and sources untouched."
+}

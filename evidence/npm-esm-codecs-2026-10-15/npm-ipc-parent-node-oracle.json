@@ -1,0 +1,71 @@
+[
+  {
+    "methods": [
+      "unrefCounted"
+    ],
+    "expected_kept": true,
+    "code": 0,
+    "stdout": "setup\nkept\n",
+    "stderr": "",
+    "passed": true
+  },
+  {
+    "methods": [
+      "refCounted",
+      "unrefCounted"
+    ],
+    "expected_kept": false,
+    "code": 0,
+    "stdout": "setup\n",
+    "stderr": "",
+    "passed": true
+  },
+  {
+    "methods": [
+      "refCounted",
+      "refCounted",
+      "unrefCounted"
+    ],
+    "expected_kept": true,
+    "code": 0,
+    "stdout": "setup\nkept\n",
+    "stderr": "",
+    "passed": true
+  },
+  {
+    "methods": [
+      "unref",
+      "refCounted",
+      "refCounted"
+    ],
+    "expected_kept": false,
+    "code": 0,
+    "stdout": "setup\n",
+    "stderr": "",
+    "passed": true
+  },
+  {
+    "methods": [
+      "ref",
+      "unrefCounted"
+    ],
+    "expected_kept": true,
+    "code": 0,
+    "stdout": "setup\nkept\n",
+    "stderr": "",
+    "passed": true
+  },
+  {
+    "methods": [
+      "unrefCounted",
+      "refCounted",
+      "refCounted",
+      "unrefCounted"
+    ],
+    "expected_kept": false,
+    "code": 0,
+    "stdout": "setup\n",
+    "stderr": "",
+    "passed": true
+  }
+]

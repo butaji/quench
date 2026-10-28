@@ -1,0 +1,5 @@
+{
+  "completed": false,
+  "reason": "Stopped before completion after the existing Node VM reuse unit exposed a stale startup-intrinsic snapshot; a Core lifecycle fix and regression must be included before rerunning.",
+  "source": "095acab52a0f22911401e3c8f6beec8783545b4c"
+}

@@ -1,0 +1,22 @@
+{
+  "base_source": "e88823fb4a9137431371912f153702dbd8ccae1a",
+  "patch": "work/fused-field-source-source.patch",
+  "patch_sha256": "40408fce381ac6dbafae371a3c7490bd1bbf280226e2d689cd0fc55d6e97a7d9",
+  "extra_fixture_sha256": {
+    "test-fused-field-source-positions.js": "6de0b8d10fcef502e858273f6b30d19e1715b6d65d3fffcf90b8304fefc46e1f"
+  },
+  "binaries": {
+    "cli": {
+      "path": "work/quench-fused-field-source-qualified",
+      "sha256": "dd83efcd2d6a3621da64546cf943bcb675aab5f564aef4a2c8f7d4532450c34d"
+    },
+    "runner": {
+      "path": "work/host-build/iteration/run-parallel",
+      "sha256": "b53a53633afd5db442f8306657cf2477b5eddef3ac1fabd2433b1be1ecff3c21"
+    },
+    "api_tests": {
+      "path": "work/host-build/iteration/deps/child_entry-70660f0a4dee9e77",
+      "sha256": "34c2fabc89f1fef434870c7c12bb47a1c1bb5e6999423ed78accfbf737f3b0d8"
+    }
+  }
+}

@@ -1,0 +1,28 @@
+{
+  "candidate_source": "f17dbe4c068bb350e2a400b65e5af1746e594030",
+  "status": "",
+  "binaries": {
+    "cli": {
+      "path": "work/quench-class-initializer-qualified",
+      "sha256": "132153513afcaf10fff8ac3e2bc2a75cdcc94c507bc0c7b82b3bb9bf0f7a9401"
+    },
+    "host_cli": {
+      "path": "work/host-build/iteration/quench-node",
+      "sha256": "132153513afcaf10fff8ac3e2bc2a75cdcc94c507bc0c7b82b3bb9bf0f7a9401"
+    },
+    "runner": {
+      "path": "work/host-build/iteration/run-parallel",
+      "sha256": "aa35ea3859050791e98473b143599ec8ac8f37c55db4488901e7ad293a8374e0"
+    },
+    "api_tests": {
+      "path": "work/host-build/iteration/deps/child_entry-bd3128b9292fce1f",
+      "sha256": "37df700c4e420e89f54455a8cb95dab3d2c2774e9e2c12786e320f79dc0a9941"
+    },
+    "node": {
+      "path": "work/node-v26.12.0-linux-x64/bin/node",
+      "sha256": "caa24debe02770c92a70677e2a62ca98890150e7ac1c17bcfe31bcc98cc89943"
+    }
+  },
+  "bytecode_format": 93,
+  "node_version": "v26.12.0"
+}

@@ -1,0 +1,357 @@
+{
+  "schema": 1,
+  "kind": "node_shared_entry_globals_and_inactive_formatter_removal",
+  "date": "2026-10-04",
+  "source_revision": "7e60169df033dd247f34199e084e3e8080a92a29",
+  "dirty_source": true,
+  "source_files": {
+    "crates/quench-node/src/run.rs": "b3947c62084af744510d8978e99740a90980e787f026cf799219810d42ba29a4",
+    "crates/quench-node/src/polyfills/bootstrap.rs": "902b38eb2396cee6119fa417b7148cf46a883f8d2308691d7d1dbb7303a88798",
+    "crates/quench-node/src/polyfills/bootstrap/performance.rs": "3de0d19f06295ce7be0ea967d48fa9521fb5b854063d8e1730e79fbd9aab4208",
+    "crates/quench-node-test/src/reader.rs": "17d531efd7dedbb750d5abd8addb6bca941e791b0455d8789abd35217b621558"
+  },
+  "before_source_files": {
+    "crates/quench-node/src/run.rs": "89a07e9f9b197da2931cb0475005b16fcfb3c1288d616c9a9d6094e3f6efd651",
+    "crates/quench-node/src/polyfills/bootstrap.rs": "9bd38567aeb9e85c8015fc9687ecaea4246d1a48c09d03fa5ba042a1467df12c",
+    "crates/quench-node-test/src/reader.rs": "0688bb0f94b4b14aa66d9a3ae1b3aa4901b463c5111b4f75ab23e2645ba91771"
+  },
+  "binaries": {
+    "target/iteration/task19-node-entry-globals/before-run-compat": "230e0f17780497ea611470a49c5e05443aa3d54c74c1815eaff26674248f7c45",
+    "target/iteration/task19-node-entry-globals/before-quench-node": "55c08f5c7675721d4974bc4293a59a088355bdc691184db7cb105fcb1e4b73a9",
+    "target/iteration/run-compat": "5343592aa995c9bf53479b2d62d0ec7e2d4e356f5e2d2fcd495521ef75439cd9",
+    "target/iteration/run-parallel": "0b7bb1b3b00c4fc9e8d797f0cf569d6d989db28d99f5a456866fa5c86cb8fda5",
+    "target/iteration/quench-node": "58fde0a7bf373e0ed708fd46425bff1c8b981a9174c90188f6ffe7ecd953b918"
+  },
+  "upstream_sources": {
+    "tests/node/lib/perf_hooks.js": "4464d395ecde3d4ef16607b57b36d007af764190203ec3f1b905427d2f25f234",
+    "tests/node/lib/internal/bootstrap/web/exposed-window-or-worker.js": "71be83894cb75264ca62839408c575ac8acd2c91765ff3e0ecc3d27765f2c810"
+  },
+  "inventory": {
+    "path": "tasks/node-compat-inventory.json",
+    "sha256": "edb2409a70f5fda6b02347dc7a678ec09659590986697c65c3f4917c8f022142",
+    "state": "input_sources_classified_capability_audit_pending"
+  },
+  "affected_scope": {
+    "reason": "The entry globals are composed for every Node entry. Recheck all 20 reviewed local implemented cases and focused embedding/output controls, plus identical guest observations across file/eval/worker entry paths. This is not full inventory qualification.",
+    "cases": [
+      {
+        "path": "crates/quench-node-test/node-tests/test-assert.js",
+        "sha256": "abdbd4a951150107ed1b3e79cf7512676dd8c574871897eece2840e58fabaca9",
+        "before_exit": 1,
+        "after_exit": 1,
+        "before_outcome": "fail",
+        "after_outcome": "fail",
+        "same_stdout": true,
+        "same_stderr": true
+      },
+      {
+        "path": "crates/quench-node-test/node-tests/test-buffer.js",
+        "sha256": "b938f18167bda2b4b1086ce3dde62567f2b88d3956e428c7ac868d53eaee9b9e",
+        "before_exit": 0,
+        "after_exit": 0,
+        "before_outcome": "pass",
+        "after_outcome": "pass",
+        "same_stdout": true,
+        "same_stderr": true
+      },
+      {
+        "path": "crates/quench-node-test/node-tests/test-console.js",
+        "sha256": "8baa711a561337ba9876d5abb5dbaffda4c51a0f290fec1b55ac97ede3e832e6",
+        "before_exit": 0,
+        "after_exit": 0,
+        "before_outcome": "pass",
+        "after_outcome": "pass",
+        "same_stdout": true,
+        "same_stderr": true
+      },
+      {
+        "path": "crates/quench-node-test/node-tests/test-events.js",
+        "sha256": "b28edc595758bbec1c36d68a42d5997088c06567fe302a40f42266333d3dd0f6",
+        "before_exit": 0,
+        "after_exit": 0,
+        "before_outcome": "pass",
+        "after_outcome": "pass",
+        "same_stdout": true,
+        "same_stderr": true
+      },
+      {
+        "path": "crates/quench-node-test/node-tests/test-fs.js",
+        "sha256": "c491c4d6c778e42be8b7b686b5eb972402f91c1121414ac088859b4dc540eb21",
+        "before_exit": 0,
+        "after_exit": 0,
+        "before_outcome": "pass",
+        "after_outcome": "pass",
+        "same_stdout": true,
+        "same_stderr": true
+      },
+      {
+        "path": "crates/quench-node-test/node-tests/test-npm-ms.js",
+        "sha256": "bfb26f1533344a28ed40185d3837a11082429bef60537d8fe41d012874f9ecda",
+        "before_exit": 0,
+        "after_exit": 0,
+        "before_outcome": "pass",
+        "after_outcome": "pass",
+        "same_stdout": true,
+        "same_stderr": true
+      },
+      {
+        "path": "crates/quench-node-test/node-tests/test-npm-require.js",
+        "sha256": "c2569287eafbef543cf860f6f213296057461d11a55d4d9113c39d2221d19aac",
+        "before_exit": 0,
+        "after_exit": 0,
+        "before_outcome": "pass",
+        "after_outcome": "pass",
+        "same_stdout": true,
+        "same_stderr": true
+      },
+      {
+        "path": "crates/quench-node-test/node-tests/test-os.js",
+        "sha256": "c7f43025a6c951ba537cfbcb639d406e8be40c00577503c0ad4380fcc7e4cae5",
+        "before_exit": 0,
+        "after_exit": 0,
+        "before_outcome": "pass",
+        "after_outcome": "pass",
+        "same_stdout": true,
+        "same_stderr": true
+      },
+      {
+        "path": "crates/quench-node-test/node-tests/test-path.js",
+        "sha256": "d3f37e452511acd7a7d2a9cd9690eac4de62e8cdefb4ea44fb926184d52a10cf",
+        "before_exit": 0,
+        "after_exit": 0,
+        "before_outcome": "pass",
+        "after_outcome": "pass",
+        "same_stdout": true,
+        "same_stderr": true
+      },
+      {
+        "path": "crates/quench-node-test/node-tests/test-process.js",
+        "sha256": "3ff97a65faa729f43bad07f2f9ad652526d9645938a7ca2db0883e6ea6eb8300",
+        "before_exit": 0,
+        "after_exit": 0,
+        "before_outcome": "pass",
+        "after_outcome": "pass",
+        "same_stdout": false,
+        "same_stderr": true
+      },
+      {
+        "path": "crates/quench-node-test/node-tests/test-querystring.js",
+        "sha256": "1577798d2efee1255a81fea075411ef443bb102f904103f1a783df466ab52f9f",
+        "before_exit": 0,
+        "after_exit": 0,
+        "before_outcome": "pass",
+        "after_outcome": "pass",
+        "same_stdout": true,
+        "same_stderr": true
+      },
+      {
+        "path": "crates/quench-node-test/node-tests/test-string-replace.js",
+        "sha256": "d55ebf6c8286cd46bd06d32155c1847be995153ee15cdb904b89e6359bd260d0",
+        "before_exit": 0,
+        "after_exit": 0,
+        "before_outcome": "pass",
+        "after_outcome": "pass",
+        "same_stdout": true,
+        "same_stderr": true
+      },
+      {
+        "path": "crates/quench-node-test/node-tests/test-timers-interval-promises.js",
+        "sha256": "a95b18b34e7926ee0f99f94fb13a7078808ed1dda4f6a52a4229319775a77196",
+        "before_exit": 0,
+        "after_exit": 0,
+        "before_outcome": "pass",
+        "after_outcome": "pass",
+        "same_stdout": true,
+        "same_stderr": true
+      },
+      {
+        "path": "crates/quench-node-test/node-tests/test-timers-promises.js",
+        "sha256": "19e76797a68ad8bbacd8eec146034d76b52c359190c2a815e5912ef6143b29c3",
+        "before_exit": 0,
+        "after_exit": 0,
+        "before_outcome": "pass",
+        "after_outcome": "pass",
+        "same_stdout": true,
+        "same_stderr": true
+      },
+      {
+        "path": "crates/quench-node-test/node-tests/test-timers.js",
+        "sha256": "006c3be6938a3b30c116e67b0537a32e7954816974b90b4b86138dba8ec8f785",
+        "before_exit": 0,
+        "after_exit": 0,
+        "before_outcome": "pass",
+        "after_outcome": "pass",
+        "same_stdout": true,
+        "same_stderr": true
+      },
+      {
+        "path": "crates/quench-node-test/node-tests/test-url.js",
+        "sha256": "844f79fedb3cdf67dd55acb8e941ad57dcaf583699325205b473b4a667201152",
+        "before_exit": 0,
+        "after_exit": 0,
+        "before_outcome": "pass",
+        "after_outcome": "pass",
+        "same_stdout": true,
+        "same_stderr": true
+      },
+      {
+        "path": "crates/quench-node-test/node-tests/test-util.js",
+        "sha256": "35d4374b10c6bae1e8a9097ed621b44877c4c7cfb52623f40801227330080d3f",
+        "before_exit": 0,
+        "after_exit": 0,
+        "before_outcome": "pass",
+        "after_outcome": "pass",
+        "same_stdout": true,
+        "same_stderr": true
+      },
+      {
+        "path": "crates/quench-node-test/node-tests/test-vm.js",
+        "sha256": "c6c8c738d71dcf63566e63455f05942196f9f3c78f0eb06c39013e36be8b51dc",
+        "before_exit": 0,
+        "after_exit": 0,
+        "before_outcome": "pass",
+        "after_outcome": "pass",
+        "same_stdout": true,
+        "same_stderr": true
+      },
+      {
+        "path": "crates/quench-node-test/node-tests/test-zlib-sync.js",
+        "sha256": "0a1fb4dc500489590926af26759f7224b3dc5624ce86e5ceffdb82154561984a",
+        "before_exit": 0,
+        "after_exit": 0,
+        "before_outcome": "pass",
+        "after_outcome": "pass",
+        "same_stdout": true,
+        "same_stderr": true
+      },
+      {
+        "path": "crates/quench-node-test/node-tests/test-zlib.js",
+        "sha256": "f9e0b16e140ba00b7f2755dcbf0f8685ee8108d0acb8acdd574cdbb90a2e5801",
+        "before_exit": 1,
+        "after_exit": 0,
+        "before_outcome": "fail",
+        "after_outcome": "pass",
+        "same_stdout": false,
+        "same_stderr": true
+      }
+    ]
+  },
+  "checks": {
+    "previous_completed_zero_exits_preserved": 18,
+    "gained_case": "crates/quench-node-test/node-tests/test-zlib.js",
+    "lost_passes": 0,
+    "focused_node_observations": 14,
+    "matching_entry_modes": [
+      "file",
+      "eval",
+      "diagnostic_worker"
+    ],
+    "runner_internal_tests": 8,
+    "output_sink_internal_test": 1,
+    "runner_only_clippy": "passed",
+    "rustfmt": "passed",
+    "full_suites_run": false,
+    "guest_unit_tests_added": 0
+  },
+  "consumer_audit": {
+    "inactive_file": "crates/quench-node/src/polyfills/bootstrap/formatting_tail.rs",
+    "removed_lines": 367,
+    "active_consumers": 0,
+    "live_bootstrap_registry": "crates/quench-node/src/polyfills/bootstrap.rs",
+    "removed_hook_state": [
+      "__nodePrototypeNames",
+      "__nodeSetPrototypeOf"
+    ],
+    "remaining_code_references": 0,
+    "surviving_formatting_authority": "crates/quench-node/src/modules/util.rs"
+  },
+  "raw_artifacts": {
+    "target/iteration/task19-node-entry-globals/before.json": "5d288398f9a21121393161320befd735bb7208a7d98ca1634cb81d0b4eed8547",
+    "target/iteration/task19-node-entry-globals/test-assert.js-after-result.json": "2fcf21934d1318be1725bcf92fe6ff725ca8005bb43b80ab532a57f8379ce50d",
+    "target/iteration/task19-node-entry-globals/test-path.js-final-result.json": "012a741f19e31f706e6949ce9be051a2cd210391e6b6e225dc21cb07867f1c4b",
+    "target/iteration/task19-node-entry-globals/test-vm.js-final-result.json": "012a741f19e31f706e6949ce9be051a2cd210391e6b6e225dc21cb07867f1c4b",
+    "target/iteration/task19-node-entry-globals/test-zlib.js-after-result.json": "012a741f19e31f706e6949ce9be051a2cd210391e6b6e225dc21cb07867f1c4b",
+    "target/iteration/task19-node-entry-globals/test-events.js-after-result.json": "012a741f19e31f706e6949ce9be051a2cd210391e6b6e225dc21cb07867f1c4b",
+    "target/iteration/task19-node-entry-globals/test-util.js-before-result.json": "012a741f19e31f706e6949ce9be051a2cd210391e6b6e225dc21cb07867f1c4b",
+    "target/iteration/task19-node-entry-globals/test-npm-ms.js-final-result.json": "012a741f19e31f706e6949ce9be051a2cd210391e6b6e225dc21cb07867f1c4b",
+    "target/iteration/task19-node-entry-globals/test-npm-require.js-after-result.json": "012a741f19e31f706e6949ce9be051a2cd210391e6b6e225dc21cb07867f1c4b",
+    "target/iteration/task19-node-entry-globals/test-zlib-sync.js-after-result.json": "012a741f19e31f706e6949ce9be051a2cd210391e6b6e225dc21cb07867f1c4b",
+    "target/iteration/task19-node-entry-globals/test-string-replace.js-after-result.json": "012a741f19e31f706e6949ce9be051a2cd210391e6b6e225dc21cb07867f1c4b",
+    "target/iteration/task19-node-entry-globals/test-url.js-before-result.json": "012a741f19e31f706e6949ce9be051a2cd210391e6b6e225dc21cb07867f1c4b",
+    "target/iteration/task19-node-entry-globals/test-os.js-final-result.json": "012a741f19e31f706e6949ce9be051a2cd210391e6b6e225dc21cb07867f1c4b",
+    "target/iteration/task19-node-entry-globals/test-zlib.js-before-result.json": "2354b2edba5987aa98611e8c302767de0e134484e3af900fcb21eb58575cd629",
+    "target/iteration/task19-node-entry-globals/test-console.js-before-result.json": "012a741f19e31f706e6949ce9be051a2cd210391e6b6e225dc21cb07867f1c4b",
+    "target/iteration/task19-node-entry-globals/test-timers-interval-promises.js-final-result.json": "012a741f19e31f706e6949ce9be051a2cd210391e6b6e225dc21cb07867f1c4b",
+    "target/iteration/task19-node-entry-globals/test-timers-promises.js-before-result.json": "012a741f19e31f706e6949ce9be051a2cd210391e6b6e225dc21cb07867f1c4b",
+    "target/iteration/task19-node-entry-globals/test-zlib-sync.js-before-result.json": "012a741f19e31f706e6949ce9be051a2cd210391e6b6e225dc21cb07867f1c4b",
+    "target/iteration/task19-node-entry-globals/test-buffer.js-final-result.json": "012a741f19e31f706e6949ce9be051a2cd210391e6b6e225dc21cb07867f1c4b",
+    "target/iteration/task19-node-entry-globals/test-console.js-final-result.json": "012a741f19e31f706e6949ce9be051a2cd210391e6b6e225dc21cb07867f1c4b",
+    "target/iteration/task19-node-entry-globals/test-url.js-final-result.json": "012a741f19e31f706e6949ce9be051a2cd210391e6b6e225dc21cb07867f1c4b",
+    "target/iteration/task19-node-entry-globals/test-querystring.js-before-result.json": "012a741f19e31f706e6949ce9be051a2cd210391e6b6e225dc21cb07867f1c4b",
+    "target/iteration/task19-node-entry-globals/test-util.js-final-result.json": "012a741f19e31f706e6949ce9be051a2cd210391e6b6e225dc21cb07867f1c4b",
+    "target/iteration/task19-node-entry-globals/test-process.js-final-result.json": "012a741f19e31f706e6949ce9be051a2cd210391e6b6e225dc21cb07867f1c4b",
+    "target/iteration/task19-node-entry-globals/test-buffer.js-before-result.json": "012a741f19e31f706e6949ce9be051a2cd210391e6b6e225dc21cb07867f1c4b",
+    "target/iteration/task19-node-entry-globals/test-timers-promises.js-final-result.json": "012a741f19e31f706e6949ce9be051a2cd210391e6b6e225dc21cb07867f1c4b",
+    "target/iteration/task19-node-entry-globals/test-timers.js-final-result.json": "012a741f19e31f706e6949ce9be051a2cd210391e6b6e225dc21cb07867f1c4b",
+    "target/iteration/task19-node-entry-globals/test-events.js-before-result.json": "012a741f19e31f706e6949ce9be051a2cd210391e6b6e225dc21cb07867f1c4b",
+    "target/iteration/task19-node-entry-globals/test-process.js-before-result.json": "012a741f19e31f706e6949ce9be051a2cd210391e6b6e225dc21cb07867f1c4b",
+    "target/iteration/task19-node-entry-globals/test-timers-interval-promises.js-before-result.json": "012a741f19e31f706e6949ce9be051a2cd210391e6b6e225dc21cb07867f1c4b",
+    "target/iteration/task19-node-entry-globals/test-querystring.js-final-result.json": "012a741f19e31f706e6949ce9be051a2cd210391e6b6e225dc21cb07867f1c4b",
+    "target/iteration/task19-node-entry-globals/sources-pre-reduction.json": "b9ee631aeac964a7afdae5a163bbebc75204778fd28f1acf643f6cbe0da049cd",
+    "target/iteration/task19-node-entry-globals/test-fs.js-after-result.json": "012a741f19e31f706e6949ce9be051a2cd210391e6b6e225dc21cb07867f1c4b",
+    "target/iteration/task19-node-entry-globals/after.json": "09c2d9ff0b0745733bd033f0f9feb13c209a5590302d084b5e4ddd6ebc100a00",
+    "target/iteration/task19-node-entry-globals/test-os.js-before-result.json": "012a741f19e31f706e6949ce9be051a2cd210391e6b6e225dc21cb07867f1c4b",
+    "target/iteration/task19-node-entry-globals/test-timers-promises.js-after-result.json": "012a741f19e31f706e6949ce9be051a2cd210391e6b6e225dc21cb07867f1c4b",
+    "target/iteration/task19-node-entry-globals/test-timers.js-after-result.json": "012a741f19e31f706e6949ce9be051a2cd210391e6b6e225dc21cb07867f1c4b",
+    "target/iteration/task19-node-entry-globals/test-path.js-before-result.json": "012a741f19e31f706e6949ce9be051a2cd210391e6b6e225dc21cb07867f1c4b",
+    "target/iteration/task19-node-entry-globals/test-url.js-after-result.json": "012a741f19e31f706e6949ce9be051a2cd210391e6b6e225dc21cb07867f1c4b",
+    "target/iteration/task19-node-entry-globals/test-util.js-after-result.json": "012a741f19e31f706e6949ce9be051a2cd210391e6b6e225dc21cb07867f1c4b",
+    "target/iteration/task19-node-entry-globals/test-process.js-after-result.json": "012a741f19e31f706e6949ce9be051a2cd210391e6b6e225dc21cb07867f1c4b",
+    "target/iteration/task19-node-entry-globals/entry-controls.json": "11f14ae08f9ca1c2b3d904318ee36896466a7d3b5fcb5c5dfc025994065b5855",
+    "target/iteration/task19-node-entry-globals/sources-before.json": "bb1d2746d05950ed4440828418118607cd846ec88ba75af746b168f216e0c9b3",
+    "target/iteration/task19-node-entry-globals/test-fs.js-final-result.json": "012a741f19e31f706e6949ce9be051a2cd210391e6b6e225dc21cb07867f1c4b",
+    "target/iteration/task19-node-entry-globals/test-querystring.js-after-result.json": "012a741f19e31f706e6949ce9be051a2cd210391e6b6e225dc21cb07867f1c4b",
+    "target/iteration/task19-node-entry-globals/test-fs.js-before-result.json": "012a741f19e31f706e6949ce9be051a2cd210391e6b6e225dc21cb07867f1c4b",
+    "target/iteration/task19-node-entry-globals/test-npm-ms.js-before-result.json": "012a741f19e31f706e6949ce9be051a2cd210391e6b6e225dc21cb07867f1c4b",
+    "target/iteration/task19-node-entry-globals/test-npm-require.js-final-result.json": "012a741f19e31f706e6949ce9be051a2cd210391e6b6e225dc21cb07867f1c4b",
+    "target/iteration/task19-node-entry-globals/test-npm-ms.js-after-result.json": "012a741f19e31f706e6949ce9be051a2cd210391e6b6e225dc21cb07867f1c4b",
+    "target/iteration/task19-node-entry-globals/test-vm.js-before-result.json": "012a741f19e31f706e6949ce9be051a2cd210391e6b6e225dc21cb07867f1c4b",
+    "target/iteration/task19-node-entry-globals/test-vm.js-after-result.json": "012a741f19e31f706e6949ce9be051a2cd210391e6b6e225dc21cb07867f1c4b",
+    "target/iteration/task19-node-entry-globals/test-zlib.js-final-result.json": "012a741f19e31f706e6949ce9be051a2cd210391e6b6e225dc21cb07867f1c4b",
+    "target/iteration/task19-node-entry-globals/final.json": "42fc495678eb8492fc40b839d4e550d89a45171f5ab354b2994dcd66ced15ff4",
+    "target/iteration/task19-node-entry-globals/test-events.js-final-result.json": "012a741f19e31f706e6949ce9be051a2cd210391e6b6e225dc21cb07867f1c4b",
+    "target/iteration/task19-node-entry-globals/test-assert.js-final-result.json": "c399166119085ca4af666dae97eaf96cb3af440954a682c58b2cb7f8a82243a8",
+    "target/iteration/task19-node-entry-globals/test-path.js-after-result.json": "012a741f19e31f706e6949ce9be051a2cd210391e6b6e225dc21cb07867f1c4b",
+    "target/iteration/task19-node-entry-globals/test-timers.js-before-result.json": "012a741f19e31f706e6949ce9be051a2cd210391e6b6e225dc21cb07867f1c4b",
+    "target/iteration/task19-node-entry-globals/entry-globals-worker-result.json": "012a741f19e31f706e6949ce9be051a2cd210391e6b6e225dc21cb07867f1c4b",
+    "target/iteration/task19-node-entry-globals/test-buffer.js-after-result.json": "012a741f19e31f706e6949ce9be051a2cd210391e6b6e225dc21cb07867f1c4b",
+    "target/iteration/task19-node-entry-globals/test-console.js-after-result.json": "012a741f19e31f706e6949ce9be051a2cd210391e6b6e225dc21cb07867f1c4b",
+    "target/iteration/task19-node-entry-globals/test-timers-interval-promises.js-after-result.json": "012a741f19e31f706e6949ce9be051a2cd210391e6b6e225dc21cb07867f1c4b",
+    "target/iteration/task19-node-entry-globals/test-assert.js-before-result.json": "bbf66dd07a91f99fdff89b759f506374d28dda574b44a2b0d99f7242bc27fa2d",
+    "target/iteration/task19-node-entry-globals/test-string-replace.js-final-result.json": "012a741f19e31f706e6949ce9be051a2cd210391e6b6e225dc21cb07867f1c4b",
+    "target/iteration/task19-node-entry-globals/test-os.js-after-result.json": "012a741f19e31f706e6949ce9be051a2cd210391e6b6e225dc21cb07867f1c4b",
+    "target/iteration/task19-node-entry-globals/test-string-replace.js-before-result.json": "012a741f19e31f706e6949ce9be051a2cd210391e6b6e225dc21cb07867f1c4b",
+    "target/iteration/task19-node-entry-globals/test-npm-require.js-before-result.json": "012a741f19e31f706e6949ce9be051a2cd210391e6b6e225dc21cb07867f1c4b",
+    "target/iteration/task19-node-entry-globals/test-zlib-sync.js-final-result.json": "012a741f19e31f706e6949ce9be051a2cd210391e6b6e225dc21cb07867f1c4b",
+    "target/iteration/task19-node-entry-globals/final-build.log": "28cea6c2bad7975d568a4b120fd1586870855c4132e59a637c507dbfeab5a6a5",
+    "target/iteration/task19-node-entry-globals/runner-units.log": "470c8cbc52eb7ba72abcd26213c699a32fb5d09c512f09d323f9a7174f87d4fd",
+    "target/iteration/task19-node-entry-globals/runner-clippy.log": "7e95282b2b5a4f684bd0ccceb4cec917e0e2433991274cdf4bac850dc10dcac6",
+    "target/iteration/task19-node-entry-globals/output-boundary-unit.log": "32d46e4e23cd8561adc54c9fe4e1641c54c4573fb545c85b0b789a0ff1fb894e",
+    "target/iteration/task19-node-entry-globals/build.log": "a1e937e7bc543522c803f5b42a05a56fe7e9152bf0c80d4618243b93641deecc",
+    "target/iteration/task19-node-entry-globals/entry-globals-control.js": "d87b898a9766cfe6f4d832d62fc4af2ace75750ca17205f3950827facd916e75"
+  },
+  "qualification_limits": [
+    "Shared-VM Node migration and frozen implemented membership remain open; evidence uses legacy production and diagnostic development entries.",
+    "Existing assert fixture conflict and console trace mismatch remain unchanged. A completed zero exit in an observation case is not qualification.",
+    "This checks installation, identity, callable shape and original Object.setPrototypeOf metadata; it does not qualify all Performance methods/descriptors or their clock precision.",
+    "Node-library/workspace lint remains open; runner-only lint is not a workspace lint pass.",
+    "No Test262, Wasm or complete Node suite gate is claimed."
+  ],
+  "before_reduction_sources": {
+    "crates/quench-node/src/polyfills/bootstrap/performance.rs": "7d6a016ea034d3e2c98f9f94efcc31da00c594f1255116e489daaa8a013d8c4a",
+    "crates/quench-node/src/polyfills/bootstrap/formatting_tail.rs": "4829256b186fb8646f7317f01243460add21382d35cce3893d609ae3651b79ad"
+  },
+  "removed_sources": {
+    "crates/quench-node/src/polyfills/bootstrap/formatting_tail.rs": "4829256b186fb8646f7317f01243460add21382d35cce3893d609ae3651b79ad"
+  }
+}

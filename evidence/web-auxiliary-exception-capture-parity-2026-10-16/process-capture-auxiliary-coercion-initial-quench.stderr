@@ -1,0 +1,9 @@
+/workspace/quench/work/process-capture-auxiliary-coercion-fixture.cjs:12
+  process.nextTick(()=>{throw new Error('auxiliary');});
+                        ^
+
+Error: auxiliary
+    at /workspace/quench/work/process-capture-auxiliary-coercion-fixture.cjs:12:31
+    at process.processTicksAndRejections (native)
+
+Node.js v26.12.0

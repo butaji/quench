@@ -1,0 +1,25 @@
+{
+  "candidate_source": "cc7ccbdb29e9e7dfda25f0d9d7fbd9fffa407da7",
+  "later_constructor_work_excluded": true,
+  "binaries": {
+    "cli": {
+      "path": "/workspace/quench/work/quench-inspection-shared-qualified",
+      "sha256": "a9b3fe440110a8a61107c6095ae75c5baff4f992051bc61e204b014e12686db6"
+    },
+    "runner": {
+      "path": "/workspace/quench/work/host-build/iteration/run-parallel",
+      "sha256": "8b2dee5f3dd5f4f9db9972f6a7d87b46efc09a052172e7c9161fc00ea4e9cf6c"
+    },
+    "api_tests": {
+      "path": "/workspace/quench/work/host-build/iteration/deps/child_entry-7867450a38a5862c",
+      "sha256": "b72092c5db64771583b83ee131073faddccb2173075ce9b5a1e5a9f8c639ccb6"
+    }
+  },
+  "runtime_tests": 639,
+  "api_tests": 320,
+  "framework_fixtures": 43,
+  "web_correctness_targets": 9,
+  "total_node_parity": false,
+  "benchmark_win": false,
+  "candidate_sha256_after": "a9b3fe440110a8a61107c6095ae75c5baff4f992051bc61e204b014e12686db6"
+}

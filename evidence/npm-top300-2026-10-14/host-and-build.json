@@ -1,0 +1,20 @@
+{
+  "base_commit": "053afbcffbd4a9ff4ca11b6ac58b0cb4b0c22810",
+  "candidate_source_commit": "83242b53adddc6cc7a1c0b0e63f6ffcdcd0819a6",
+  "candidate_dirty": true,
+  "host": "Linux 3e67e86749eb 6.18.44 #1 SMP Sat Sep 26 20:02:31 UTC 2026 x86_64 GNU/Linux",
+  "cpu_max": "400000 100000",
+  "memory_max": "17179869184",
+  "profile": "iteration; LLVM -align-all-functions=6; configured static OpenSSL ssl:crypto:z; distinct base/candidate Cargo targets",
+  "executables": {
+    "/workspace/scratch/npm300-latest-base": "707f056d21af0dfb1544cceae9057fe69db9719bf5d6cc6bfa7ea1d6f9ff74f0",
+    "/workspace/scratch/npm300-latest-candidate": "da56ae42a43474c01416001933a749847a582d9a6a3cc8e87cb033020fe7c6bc",
+    "/workspace/scratch/npm300-final-base": "707f056d21af0dfb1544cceae9057fe69db9719bf5d6cc6bfa7ea1d6f9ff74f0",
+    "/workspace/scratch/npm300-final-candidate": "da56ae42a43474c01416001933a749847a582d9a6a3cc8e87cb033020fe7c6bc",
+    "/workspace/shared/node-v26.11.1-linux-x64/bin/node": "5a7b8a3cf5ccb57d297519754fd73238f64cf560afd0ef19a2f9bf7384cbb657"
+  },
+  "guard_measured_base_commit": "9bfffee76ef43151af1b4f9ef8f815663c0bf04d",
+  "guard_measured_candidate_commit": "8a1cc805cfaff6b504b2404c4c144179f529a187",
+  "symbol_order_applied": false,
+  "symbol_order_note": "ld.lld is absent; build.rs applies no ordering flag. Final rebuilt baseline and candidate are each byte-identical to their measured predecessors. Duplicate guard stopped after equality verification."
+}

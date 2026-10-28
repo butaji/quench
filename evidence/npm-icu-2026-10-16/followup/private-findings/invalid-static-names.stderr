@@ -1,0 +1,15 @@
+/workspace/scratch/npm-private-brand-draft/extended.cjs:6
+ static #field=1;static #method(){return 2};static get #accessor(){return this.#field};static set #accessor(x){this.#field=x};
+                ^
+
+SyntaxError: Identifier '#field' has already been declared
+    at wrapSafe (node:internal/modules/cjs/loader:1900:18)
+    at Module._compile (node:internal/modules/cjs/loader:1942:20)
+    at Object..js (node:internal/modules/cjs/loader:2108:10)
+    at Module.load (node:internal/modules/cjs/loader:1690:32)
+    at Module._load (node:internal/modules/cjs/loader:1480:12)
+    at wrapModuleLoad (node:internal/modules/cjs/loader:261:19)
+    at Module.executeUserEntryPoint [as runMain] (node:internal/modules/run_main:173:5)
+    at node:internal/main/run_main_module:33:47
+
+Node.js v26.12.0

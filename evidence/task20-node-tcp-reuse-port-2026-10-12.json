@@ -1,0 +1,49 @@
+{
+  "scope": "OS-backed TCP reuse-port listener binding",
+  "parent_commit": "363ae815b8cee502d910d7ec32391f4c0c668906",
+  "branch": "v2-cloud-node",
+  "validation": {
+    "node_oracle_tests": 50,
+    "node_oracle_log": "work/tcp-reuse-all-oracles.log",
+    "cross_process_oracle": "IPv4 and IPv6 parent/child simultaneous binds to the same OS port",
+    "framework_summary": "parallel: pass=43 skip=0 fail=0 timeout=0 crash=0 unclassified=0 total=43",
+    "framework_log": "work/tcp-reuse-framework.log"
+  },
+  "results": [
+    {
+      "fixture": "test-net-reuseport.js",
+      "status": "pass",
+      "metadata": {
+        "node_version": "v27.0.0-nightly20260819c79868f102",
+        "tests_node_commit": "55e4ca33f3a6dfe364bd9558b726576a6d1a2fba",
+        "inventory_hash": "cebd34fb4be69613",
+        "jobs": 1,
+        "timeout_secs": 30,
+        "platform": "linux-x86_64"
+      },
+      "raw_sha256": "e837e60bdb0ea83a81cced3d13042b994a51787823b7c8c373b8c94e9401972d"
+    },
+    {
+      "fixture": "test-child-process-net-reuseport.js",
+      "status": "pass",
+      "metadata": {
+        "node_version": "v27.0.0-nightly20260819c79868f102",
+        "tests_node_commit": "55e4ca33f3a6dfe364bd9558b726576a6d1a2fba",
+        "inventory_hash": "51d303d7f9bb6039",
+        "jobs": 1,
+        "timeout_secs": 30,
+        "platform": "linux-x86_64"
+      },
+      "raw_sha256": "6f9ab055106ed48ce2f9fddad4590e40dfd1efc8d16a67c744a8f17315723b22"
+    }
+  ],
+  "memory_events_after": "low 0\nhigh 0\nmax 4864178\noom 177\noom_kill 47\noom_group_kill 0\n",
+  "source_contract": "crates/quench-node/README.md",
+  "qualifications": [
+    "No new OOM kill since environment normalization repair.",
+    "Only Linux is validated; other supported OS socket-option branches are not qualified here.",
+    "Solaris reuse-port, general async listen error projection and explicit backlog handling remain incomplete.",
+    "Existing UDP bridge remains an in-process registry and is not covered by this TCP repair.",
+    "Latest actual full sweep remains 1265 pass / 685 skip / 2652 fail / 125 timeout of 4727. All-case passing goal remains open."
+  ]
+}

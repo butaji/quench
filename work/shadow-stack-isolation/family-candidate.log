@@ -1,0 +1,10 @@
+Fail /workspace/work/node-stable-release/node-v26.12.0/test/parallel/test-shadow-realm-custom-loaders.js
+Fail /workspace/work/node-stable-release/node-v26.12.0/test/parallel/test-shadow-realm-allowed-builtin-modules.js
+Fail /workspace/work/node-stable-release/node-v26.12.0/test/parallel/test-shadow-realm-gc.js
+Fail /workspace/work/node-stable-release/node-v26.12.0/test/parallel/test-shadow-realm-import-value-resolve.js
+Fail /workspace/work/node-stable-release/node-v26.12.0/test/parallel/test-shadow-realm-globals.js
+Fail /workspace/work/node-stable-release/node-v26.12.0/test/parallel/test-shadow-realm-module.js
+Pass /workspace/work/node-stable-release/node-v26.12.0/test/parallel/test-shadow-realm-prepare-stack-trace.js
+Pass /workspace/work/node-stable-release/node-v26.12.0/test/parallel/test-shadow-realm-preload-module.js
+Pass /workspace/work/node-stable-release/node-v26.12.0/test/parallel/test-shadow-realm-gc-module.js
+all: pass=3 skip=0 fail=6 timeout=0 crash=0 unclassified=0 total=9 inventory_hash=a18dc5317b43584f

@@ -1,0 +1,171 @@
+{
+  "schema": 1,
+  "tasks": [
+    "16",
+    "20"
+  ],
+  "baseline_source_head": "843db57ff9e65931a79b884ef4deff970be0f0ac",
+  "qualification": "Isolated conditional weak marking and borrowed proxy-field projection. Pending object-root/Promise storage, Wasm, Node and parser changes excluded. Main-tree adaptations preserve those pending changes; the committed source is the exact isolated qualified slice.",
+  "source_sha256": {
+    "crates/quench-runtime-next/src/heap.rs": "6645b2e7b9628246fcf354d6f1605c2de2668ec46b33f18e756cc942e9a18590",
+    "crates/quench-runtime-next/src/heap/weak.rs": "50de037d2d64c365753cc3fbd22c03730e14f71c8474079b5a1eb270979492d8",
+    "crates/quench-runtime-next/src/heap/tests.rs": "26c80cf7aa44a06b4efe9d8d1d22f07efa73b3143cd3214d74e9f058e809fb5f",
+    "crates/quench-runtime-next/src/vm/object_get.rs": "01d39d1b5b34de47b11bd1a977240dd6d4b29226c9fb8dd4324427aa05fe65b3"
+  },
+  "suite_pin": "6eec1ac9ee144dafd8f344d73a21f36bfc9f6755",
+  "representation": {
+    "authority": "Heap mark bits own reachability. WeakMapEntries owns map contents; a collection-local pending-edge index derives eligibility from newly marked maps and keys.",
+    "invariant": "A weak value is traced only after both its map and its key are marked. Newly marked keys release waiting values; newly marked maps activate their entries. Unreachable maps and rootless cycles cannot bootstrap marking.",
+    "lifecycle": "Conditional edges join the existing strong mark worklist on the unmarked-to-marked transition. Pending heads and flat value links are discarded before weak pruning and sweeping. No persistent side map or second reachability bitset.",
+    "cost": "Removed the repeated whole-heap/whole-entry fixed-point scans. Flat pending links avoid a separate allocation for every waiting key; no temporary graph allocation occurs without unresolved weak edges.",
+    "property_lookup": "String and Symbol proxy checks borrow the cell and copy only target/handler handles. Removed full Cell clones that copied growing WeakMap entry tables during ordinary lookup. Shared proxy_get retains receiver and rooted callback semantics."
+  },
+  "contracts": [
+    "https://tc39.es/ecma262/multipage/managing-memory.html#sec-processing-model-of-weakref-and-finalizationregistry-targets",
+    "https://tc39.es/ecma262/multipage/keyed-collections.html#sec-weakmap-objects"
+  ],
+  "upstream_node_source": {
+    "tests/node/deps/v8/src/heap/mark-compact.cc": "7ba86f196f6afdea0a38c10764e80964e62e672d448a1240b639767d2f1941c9"
+  },
+  "build": {
+    "profile": "release; correctness only, no Score/RSS claim",
+    "log": "target/iteration/task20-weak-marking/build.log",
+    "binaries": {
+      "before-quench-next": "37c9e4c1fb4cbf58c1ec2db2ed919b2875d09cd5e35f8a8e14b7c6376da8cb0d",
+      "before-run-stages-next": "b0bf85a34d54293bb512f1a04dc222fc5b4921edc2020bd1be4f5abb96c099c5",
+      "after-quench-next": "b988669fc05b9fb940840ff4e4b0e0b7b5eec0e12fb9ad927bf751503f55dcde",
+      "after-run-stages-next": "814d452bbad8fa35e8a33eaecd9ab596d36e6bb84eeccc9f45407f9cd3689cca"
+    }
+  },
+  "affected_test262": {
+    "full_suite_run": false,
+    "jobs_per_scope": 2,
+    "timeout_ms": 10000,
+    "distinct_cases": 627,
+    "passed_before": 626,
+    "passed_after": 627,
+    "gained": [
+      "staging/sm/regress/regress-1507322-deep-weakmap.js"
+    ],
+    "regressions": [],
+    "remaining": [],
+    "scopes": [
+      {
+        "scope": "weak-map",
+        "before_report": "target/iteration/task20-weak-marking/before-weak-map.json",
+        "after_report": "target/iteration/task20-weak-marking/after-weak-map.json",
+        "passed_before": 141,
+        "passed_after": 141,
+        "failed_after": 0
+      },
+      {
+        "scope": "weak-ref",
+        "before_report": "target/iteration/task20-weak-marking/before-weak-ref.json",
+        "after_report": "target/iteration/task20-weak-marking/after-weak-ref.json",
+        "passed_before": 29,
+        "passed_after": 29,
+        "failed_after": 0
+      },
+      {
+        "scope": "weak-set",
+        "before_report": "target/iteration/task20-weak-marking/before-weak-set.json",
+        "after_report": "target/iteration/task20-weak-marking/after-weak-set.json",
+        "passed_before": 85,
+        "passed_after": 85,
+        "failed_after": 0
+      },
+      {
+        "scope": "finalization",
+        "before_report": "target/iteration/task20-weak-marking/before-finalization.json",
+        "after_report": "target/iteration/task20-weak-marking/after-finalization.json",
+        "passed_before": 47,
+        "passed_after": 47,
+        "failed_after": 0
+      },
+      {
+        "scope": "deep-chain",
+        "before_report": "target/iteration/task20-weak-marking/before-deep-chain.json",
+        "after_report": "target/iteration/task20-weak-marking/after-deep-chain.json",
+        "passed_before": 0,
+        "passed_after": 1,
+        "failed_after": 0
+      },
+      {
+        "scope": "weak-symbols",
+        "before_report": "target/iteration/task20-weak-marking/before-weak-symbols.json",
+        "after_report": "target/iteration/task20-weak-marking/after-weak-symbols.json",
+        "passed_before": 1,
+        "passed_after": 1,
+        "failed_after": 0
+      },
+      {
+        "scope": "weak-extension",
+        "before_report": "target/iteration/task20-weak-marking/before-weak-extension.json",
+        "after_report": "target/iteration/task20-weak-marking/after-weak-extension.json",
+        "passed_before": 1,
+        "passed_after": 1,
+        "failed_after": 0
+      },
+      {
+        "scope": "proxy",
+        "before_report": "target/iteration/task20-weak-marking/before-proxy.json",
+        "after_report": "target/iteration/task20-weak-marking/after-proxy.json",
+        "passed_before": 311,
+        "passed_after": 311,
+        "failed_after": 0
+      },
+      {
+        "scope": "reflect-get",
+        "before_report": "target/iteration/task20-weak-marking/before-reflect-get.json",
+        "after_report": "target/iteration/task20-weak-marking/after-reflect-get.json",
+        "passed_before": 11,
+        "passed_after": 11,
+        "failed_after": 0
+      }
+    ],
+    "comparison": "compare-runs --reports for every matching inventory"
+  },
+  "internal_checks": {
+    "profile": "iteration; correctness only",
+    "weak_map_tests_passed": 5,
+    "heap_tests_passed": 19,
+    "new_tests": 4,
+    "logs": [
+      "target/iteration/task20-weak-marking/internal-tests.log",
+      "target/iteration/task20-weak-marking/heap-tests.log"
+    ],
+    "coverage": [
+      "live key cannot activate an unreachable map",
+      "rootless cyclic weak dependencies do not self-mark",
+      "maps discovered after keys and before keys produce the same closure",
+      "fan-in releases every pending value and resets on the next collection",
+      "existing weak reachability, weak handles, finalization, traced properties and heap lifecycle checks"
+    ],
+    "scope": "Deterministic heap-internal reachability checks, not duplicates of guest suite behavior. Heap source bytes tested here are the same as the final release slice; proxy projection also checked by final release suite/GC controls."
+  },
+  "node_controls": {
+    "node_version": "v26.10.0",
+    "summary": {
+      "sources": 13,
+      "before_matches": 13,
+      "after_matches": 13,
+      "losses": 0
+    },
+    "report": "target/iteration/task20-weak-marking/node-controls.json",
+    "mode": "Existing module/GC worker embedding, normal execution; Node --expose-gc oracle. No collection-timing assertion for unreachable guest values.",
+    "coverage": [
+      "forward/reverse weak chains",
+      "nested reachable maps",
+      "fan-in and symbol keys",
+      "strong property edges to weak keys",
+      "getOrInsertComputed callback GC",
+      "String/Symbol proxy getter GC and inherited receiver identity"
+    ]
+  },
+  "limits": [
+    "Bounded qualification; no full suite or Stage A closure.",
+    "Map/Set and WeakSet indexing gaps remain separate from weak marking.",
+    "Wasm, frozen implemented Node compatibility and production single-VM cutover remain unqualified; Stage B has not started.",
+    "Pins, inputs, guest harness, expectations, exclusions and deadlines unchanged."
+  ]
+}

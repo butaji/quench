@@ -1,0 +1,70 @@
+{
+  "experiment": "EarleyBoyer LoadLocalPlain -> LoadCapture fusion",
+  "baseline_sha256": "e46537823eb25a37cf5646af793e6873ceaeff1069fb878a96813cae3a86ab32",
+  "candidate_sha256": "58c9ce67f325386a500e65481c80130356968efe863c8da3e062a449766230ea",
+  "fixture_sha256": "aa379c1d54f5d13de32ebf2b50729d0cbc64bb23de5e524256c7b2270213cc0b",
+  "node_oracle_sha256": "b9720a10aacb3413d9ddf46f13d748d0286046172da8ef0c7488917bbcf37762",
+  "node_oracle_match": true,
+  "pairs": [
+    {
+      "pair": 1,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "baseline_score": 420.0,
+      "candidate_score": 424.0,
+      "score_delta": 4.0,
+      "baseline_rss_bytes": 41787392,
+      "candidate_rss_bytes": 41652224,
+      "rss_delta_bytes": -135168,
+      "output_equal": true,
+      "baseline_exit": 0,
+      "candidate_exit": 0,
+      "valid": true
+    },
+    {
+      "pair": 2,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "baseline_score": 426.0,
+      "candidate_score": 422.0,
+      "score_delta": -4.0,
+      "baseline_rss_bytes": 41590784,
+      "candidate_rss_bytes": 41709568,
+      "rss_delta_bytes": 118784,
+      "output_equal": true,
+      "baseline_exit": 0,
+      "candidate_exit": 0,
+      "valid": true
+    },
+    {
+      "pair": 3,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "baseline_score": 427.0,
+      "candidate_score": 413.0,
+      "score_delta": -14.0,
+      "baseline_rss_bytes": 41766912,
+      "candidate_rss_bytes": 41783296,
+      "rss_delta_bytes": 16384,
+      "output_equal": true,
+      "baseline_exit": 0,
+      "candidate_exit": 0,
+      "valid": true
+    }
+  ],
+  "baseline_score_median": 426.0,
+  "candidate_score_median": 422.0,
+  "score_delta_median": -4.0,
+  "baseline_maximum_rss_median_bytes": 41766912,
+  "candidate_maximum_rss_median_bytes": 41709568,
+  "maximum_rss_delta_median_bytes": 16384,
+  "valid": true,
+  "output_equal": true,
+  "qualification_ready": false
+}

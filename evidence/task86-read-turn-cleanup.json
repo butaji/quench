@@ -1,0 +1,147 @@
+{
+  "schema": 1,
+  "task": "86",
+  "kind": "read_turn_and_bigint_lint_cleanup",
+  "timestamp_utc": "2026-10-05T01:56:29.644561+00:00",
+  "git_head": "7e60169df033dd247f34199e084e3e8080a92a29",
+  "worktree": "uncommitted; cleanup slice, not Stage A closure",
+  "sources": {
+    "crates/quench-node/src/modules/net/pump.rs": "0a4c178d3b1a932e864ce099bd908f0cc1438aeb132bca77602896dbb1a86416",
+    "crates/quench-node/src/modules/net/pump_read_tests.rs": "2b295014b7abf3ff5f17d81a8949b1b9f887fbb81873c629c36836ff20f167e8",
+    "crates/quench-runtime-next/src/vm/error.rs": "2079599c8bcd3edeb8d4bb996dd9ca26293af970d26d784e82b08a004dab320d"
+  },
+  "baseline_sources": {
+    "target/iteration/task86-read-turn-cleanup/pump-before.rs": "ae5bdc27bf5e05d7674247fc576ccd38abe4eceedca68415064ad3b7d370f06b",
+    "target/iteration/task86-read-turn-cleanup/error-before.rs": "c873f0b9a606543b8e36d6fc89ac93e5b5c3b1e76d3fbefb24dd5baae8ce5d62"
+  },
+  "reduction": [
+    "Remove a loop that exited on every read outcome and its derived had_eof variable. One kernel read precedes observer delivery.",
+    "Preserve data byte accounting and event queue identity; WouldBlock remains no event, and EOF/terminal errors share the existing read-side closing transition.",
+    "Keep the write side available to pending data/end observers. This refactor does not change existing terminal-error-to-EOF policy.",
+    "Pass host_string directly to the BigInt parser, removing an immediately dereferenced borrow without changing conversion semantics."
+  ],
+  "internal_check": {
+    "command": "cargo test -p quench-node --lib modules::net::pump::read_tests -- --nocapture",
+    "exit": 0,
+    "passed": 1,
+    "failed": 0,
+    "ignored": 0,
+    "raw": "target/iteration/task86-read-turn-cleanup/read-tests.log",
+    "obligations": [
+      "WouldBlock leaves the queue empty and socket open.",
+      "Each turn queues at most one bounded chunk with the original socket identity; reassembled bytes and counters preserve order.",
+      "EOF transitions the read side to Closing while the peer still receives a write from a pending observer.",
+      "Repeated polling after EOF produces no new event."
+    ],
+    "necessity": "Guest cases abort before reaching I/O. This unit exercises the hidden host queue/turn/half-close boundary rather than duplicating ordinary Node assertions."
+  },
+  "affected_test262": {
+    "pin": "6eec1ac9ee144dafd8f344d73a21f36bfc9f6755",
+    "stage": 41,
+    "scope": "built-ins/BigInt",
+    "jobs": 2,
+    "timeout_ms": 10000,
+    "total": 77,
+    "before_passed": 77,
+    "after_passed": 77,
+    "regressions": 0,
+    "before_binary": "target/iteration/task21-shared-process/run-stages-next-qualified",
+    "before_binary_sha256": "0b8b346f3a89b3c7719fb730c8cbc18473d5bc54a223336008740b77ee3b6f83",
+    "after_binary": "target/iteration/task86-read-turn-cleanup/run-stages-next-qualified",
+    "after_binary_sha256": "0b8b346f3a89b3c7719fb730c8cbc18473d5bc54a223336008740b77ee3b6f83",
+    "before_report": "target/iteration/task86-read-turn-cleanup/before-bigint.json",
+    "after_report": "target/iteration/task86-read-turn-cleanup/after-bigint.json",
+    "compare": "target/iteration/task86-read-turn-cleanup/compare-bigint.log"
+  },
+  "node": {
+    "pin": "55e4ca33f3a6dfe364bd9558b726576a6d1a2fba",
+    "upstream_contract": "tests/node/lib/internal/stream_base_commons.js:166-231 delivers a read to observers, respects readStop/backpressure and defers close until end; terminal errors differ from EOF.",
+    "unchanged_cases": [
+      {
+        "fixture": "tests/node/test/parallel/test-net-bytes-read.js",
+        "sha256": "4f9d92ba1a9f55f779611beca317ab0f6bd701bf8bbc3f6076c64a0e0c82e4a5",
+        "node_exit": 0,
+        "before_exit": -6,
+        "after_exit": -6
+      },
+      {
+        "fixture": "tests/node/test/parallel/test-net-pause-resume-connecting.js",
+        "sha256": "f3e6e9daa127de395d69c6acacf2114b2a01fb705446602604f4ec94f8251952",
+        "node_exit": 0,
+        "before_exit": -6,
+        "after_exit": -6
+      },
+      {
+        "fixture": "tests/node/test/parallel/test-net-connect-options-allowhalfopen.js",
+        "sha256": "f4bd9281bbf560d1896ff97e33beb06c7536a7debb9ca2c490078c0ad50c84cb",
+        "node_exit": 0,
+        "before_exit": -6,
+        "after_exit": -6
+      }
+    ],
+    "raw": "target/iteration/task86-read-turn-cleanup/node-cases-qualified.json",
+    "before_binary": "target/iteration/task21-shared-process/quench-node-qualified",
+    "before_binary_sha256": "b814e31054100dc4628ff9d853919ddd00b909d7308d3ac3bd771377ac6e1b9b",
+    "after_binary": "target/iteration/task86-read-turn-cleanup/quench-node-qualified",
+    "after_binary_sha256": "92cc68770b7a2c566aa0e028f5faa9922c5f6659112373a0b9e62a79c13523ae",
+    "socket_control": "target/iteration/task86-read-turn-cleanup/socket-control-qualified.json",
+    "functional_node_io_qualified": false,
+    "limits": [
+      "Three unchanged upstream cases and a smaller loopback control abort in the legacy parser before I/O, on both binaries.",
+      "The local Node control verifies pause, byte count, EOF ordering and a reply after read-side EOF. Initial control reporting raced the pause observer; the corrected control waits for that observation.",
+      "Existing terminal read errors are still treated as EOF rather than Node error/close events; this remains a compatibility gap."
+    ]
+  },
+  "lint": {
+    "runtime": {
+      "exit": 101,
+      "diagnostics": 152,
+      "levels": {
+        "error": 152
+      },
+      "raw": "target/iteration/task86-read-turn-cleanup/runtime-clippy.jsonl"
+    },
+    "node_default": {
+      "exit": 0,
+      "diagnostics": 312,
+      "levels": {
+        "warning": 312
+      },
+      "raw": "target/iteration/task86-read-turn-cleanup/node-clippy.jsonl"
+    },
+    "node_strict": {
+      "exit": 101,
+      "diagnostics": 312,
+      "levels": {
+        "error": 312
+      },
+      "raw": "target/iteration/task86-read-turn-cleanup/node-clippy-strict.jsonl"
+    }
+  },
+  "scope": {
+    "full_suites_run": false,
+    "performance_campaign_run": false,
+    "suite_inputs_expectations_or_inventories_changed": false,
+    "node_inventory_sha256": "6990d2397d7f5d1bd2d3edcf66f45368ed3a74ab76880baf67d2d6b0227c5aa6",
+    "new_units": "One internal read-turn queue/identity/half-close regression; no duplicate guest conformance units."
+  },
+  "qualification_limits": [
+    "Stage A and task 86 remain open.",
+    "Strict lint still fails on 152 runtime and 312 Node diagnostics; no suppressions were added.",
+    "Node production still uses legacy; parser aborts remain suite failures, and shared host migration remains incomplete."
+  ],
+  "raw_artifacts": {
+    "target/iteration/task86-read-turn-cleanup/read-tests.log": "1b20232eb6120c7ed84d1539a51ecc543301b185c18e306bf636c19bd3b77bce",
+    "target/iteration/task86-read-turn-cleanup/node-build-qualified.log": "517ecb27df3bba95213a43c13757c755b3589fbbcc0a9959ba7b45b6132fe9c5",
+    "target/iteration/task86-read-turn-cleanup/release-build.log": "edae0f6f532d880fd71c44296e627bc4e6dba0b8da6aa871c64eaf7e7ea29a16",
+    "target/iteration/task86-read-turn-cleanup/before-bigint.json": "f12dd7e97c83889ac858f598381b313a9d237139d01381ea7e8f4c6a16067f46",
+    "target/iteration/task86-read-turn-cleanup/after-bigint.json": "81c43c3aa08317634a90baf1c680e8a2fb387d72c2f263d8900475700dd688ba",
+    "target/iteration/task86-read-turn-cleanup/compare-bigint.log": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd",
+    "target/iteration/task86-read-turn-cleanup/node-clippy.jsonl": "537cd2cd01f4e28bf25ec986208bbaf088a280a9bf080e00b5f915b52bc0e70c",
+    "target/iteration/task86-read-turn-cleanup/node-clippy-strict.jsonl": "db78a72fd66b37d95ab987a44ff0b54dc5da42f27c408f34c4a51508de25ea81",
+    "target/iteration/task86-read-turn-cleanup/runtime-clippy.jsonl": "33d4c4476ceb9e5ff7399de91c31c60921577b1f8119fd4c00695a4def9855ef",
+    "target/iteration/task86-read-turn-cleanup/node-cases-qualified.json": "6490fa0a41729a59ab67ec1935542008c4ac6a82a52472b53495768099867178",
+    "target/iteration/task86-read-turn-cleanup/socket-control-qualified.json": "8f5a13154973909625692887276894bd0a3e89a3e7a50b1ed9d3374e92a5e4b4",
+    "target/iteration/task86-read-turn-cleanup/socket-control.cjs": "a677428d365d4d0abad6df9eafdd0c8d8ed36d05fbbd395f368e281aa588c583"
+  }
+}

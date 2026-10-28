@@ -1,0 +1,2 @@
+[false,"StatFs",8,["constructor"],true,false,true,["type","bsize","frsize","blocks","bfree","bavail","files","ffree"],"number"]
+[true,"StatFs",8,["constructor"],true,false,true,["type","bsize","frsize","blocks","bfree","bavail","files","ffree"],"bigint"]

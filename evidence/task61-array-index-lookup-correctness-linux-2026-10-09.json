@@ -1,0 +1,76 @@
+{
+  "schema": 1,
+  "task": "61",
+  "kind": "array-index lookup focused correctness evidence",
+  "recorded_at": "2026-10-09",
+  "source_revision": "8fece3b35c2f4b586cde387584b987876c0d144b",
+  "candidate_source_dirty": true,
+  "candidate_source_diff_sha256_after_test_cleanup": "c28b8a67a2a80b59c0db1b2255474b37079e5d08da0455b913e87b76bb0b05c9",
+  "test262": {
+    "selection": "Stage 31",
+    "baseline": {
+      "path": "target/iteration/task61-array-index-lookup-baseline-stage31.json",
+      "sha256": "5d92a350efb448762f325722456c2f1756de24c467cb99b48f176c2aa4553ef6",
+      "stages": {
+        "31": {
+          "failed": 0,
+          "passed": 3081,
+          "total": 3081
+        }
+      },
+      "total": 3081,
+      "passed": 3081,
+      "failed": 0,
+      "source_revision": "8fece3b35c2f4b586cde387584b987876c0d144b",
+      "source_dirty": true
+    },
+    "candidate": {
+      "path": "target/iteration/task61-array-index-lookup-candidate-stage31.json",
+      "sha256": "5d92a350efb448762f325722456c2f1756de24c467cb99b48f176c2aa4553ef6",
+      "stages": {
+        "31": {
+          "failed": 0,
+          "passed": 3081,
+          "total": 3081
+        }
+      },
+      "total": 3081,
+      "passed": 3081,
+      "failed": 0,
+      "source_revision": "8fece3b35c2f4b586cde387584b987876c0d144b",
+      "source_dirty": true
+    },
+    "compare_runs_command": "TEST262_TEST_TIMEOUT_MS=30000 cargo run --profile iteration -p quench-test262 --bin compare-runs -- --reports target/iteration/task61-array-index-lookup-baseline-stage31.json target/iteration/task61-array-index-lookup-candidate-stage31.json",
+    "compare_runs_regressions": 0
+  },
+  "node_framework_core": {
+    "command": "cargo run --profile iteration -p quench-node-test --bin run-parallel -- --profile framework-core --timeout-secs 60",
+    "passed": 43,
+    "failed": 0,
+    "skip": 0,
+    "timeout": 0,
+    "crash": 0
+  },
+  "focused_runtime_unit_tests": {
+    "passed": [
+      "vm::index::tests::deleting_an_uninterned_present_index_does_not_create_an_atom",
+      "vm::index::tests::array_index_atom_lookup_uses_canonical_decimal_text"
+    ],
+    "all_passed": true
+  },
+  "broader_runtime_unit_suite_snapshot": {
+    "command": "cargo test -p quench-runtime",
+    "result_before_removing_duplicate_semantic_test_helpers": {
+      "passed": 459,
+      "failed": 56,
+      "total": 515
+    },
+    "baseline_reproduction": {
+      "test": "api::tests::regression_aggregate_error_preserves_effect_order",
+      "command": "cargo test -p quench-runtime regression_aggregate_error_preserves_effect_order -- --nocapture",
+      "failure": "assertion in crates/quench-runtime/src/bytecode/instruction.rs:655: LayoutEncoded != LocalSlot",
+      "source_state": "clean HEAD 8fece3b35, with array candidate reverted"
+    },
+    "note": "The broad unit command is not a Stage A gate; the representative failure reproduces on the pre-candidate source. The two retained tests are internal atom-table checks."
+  }
+}

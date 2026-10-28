@@ -1,0 +1,26 @@
+// node load.cjs SERVER_BIN SCENARIO TOTAL STEP CONCURRENCY : drives the framework request mix
+// against a server process and samples its VmRSS/VmHWM every STEP requests.
+const { spawn } = require('node:child_process'); const http = require('node:http'); const fs = require('node:fs');
+const [bin, scenario, total, step, conc] = [process.argv[2], process.argv[3], +process.argv[4], +process.argv[5], +process.argv[6]];
+const mix = [['GET', '/'], ['POST', '/echo', JSON.stringify({ a: 1, s: 'x'.repeat(2048) })], ['GET', '/stream'], ['GET', '/asset.txt'], ['GET', '/missing']];
+const agent = new http.Agent({ keepAlive: true, maxSockets: conc });
+const send = (port, [method, path, body]) => new Promise((res, rej) => {
+  const req = http.request({ port, path, method, agent, headers: { 'accept-encoding': 'gzip', ...(body ? { 'content-type': 'application/json', 'content-length': Buffer.byteLength(body) } : {}) } },
+    r => { r.resume(); r.on('end', () => res(r.statusCode)); });
+  req.on('error', rej); req.end(body);
+});
+const child = spawn(bin, [__dirname + '/serve.cjs', scenario], { cwd: require('node:path').dirname(scenario) + '/..', stdio: ['ignore', 'pipe', 'inherit'] });
+const regions = () => { const out = {}; let cur = null; for (const l of fs.readFileSync(`/proc/${child.pid}/smaps`, 'utf8').split('\n')) {
+  const m = /^([0-9a-f]+)-([0-9a-f]+) \S+ \S+ \S+ \S+\s*(.*)$/.exec(l);
+  if (m) { const size = (parseInt(m[2], 16) - parseInt(m[1], 16)) / 1048576; const name = m[3] || (size === 64 ? 'anon64M' : size > 64 ? 'anonBig' : 'anon'); cur = /\.so|quench-node/.test(name) ? 'file' : name; continue; }
+  const r = /^Rss:\s+(\d+)/.exec(l); if (r && cur) out[cur] = +((out[cur] || 0) + +r[1] / 1024).toFixed(1); }
+  return out; };
+const status = () => Object.fromEntries(fs.readFileSync(`/proc/${child.pid}/status`, 'utf8').split('\n').filter(l => /^(VmRSS|VmHWM|RssAnon|RssFile)/.test(l)).map(l => { const [k, v] = l.split(/:\s+/); return [k, (parseInt(v) / 1024).toFixed(1)]; }).concat([['cpu_ms', (() => { const f = fs.readFileSync(`/proc/${child.pid}/stat`, 'utf8').split(') ')[1].split(' '); return (+f[11] + +f[12]) * 10; })()]]));
+child.stdout.on('data', async d => {
+  const m = /PORT (\d+)/.exec(String(d)); if (!m) return; const port = +m[1];
+  let done = 0, bad = 0; const t0 = Date.now();
+  console.log(JSON.stringify({ requests: 0, ...status() }));
+  const worker = async () => { while (done < total) { const i = done++; const s = await send(port, mix[i % mix.length]); if (s !== (i % 5 === 4 ? 404 : 200)) bad++; if ((i + 1) % step === 0) { console.log(JSON.stringify({ requests: i + 1, ...status() })); require('node:child_process').execFileSync('gdb', ['-batch', '-p', String(child.pid), '-ex', 'call (void)malloc_stats()'], { stdio: 'ignore' }); }; } };
+  await Promise.all(Array.from({ length: conc }, worker));
+  child.kill('SIGKILL'); agent.destroy();
+});

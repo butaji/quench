@@ -1,0 +1,10 @@
+{
+  "base_source": "73bd7e8695fec839efab958000613dcfd19e74ea",
+  "patch": "work/boxed-slots-published-source.patch",
+  "patch_sha256": "12f837bc41cbc9ba13655c4c4724719aa9691901eddde5b9eec1c102dd815122",
+  "extra_fixture_sha256": "f4ebedc52aa29ba2d9f3aebbe32674eaad15fdec41c25f887760b399fd947127",
+  "sdk_provenance": [
+    "work/brotli-node/provenance.json",
+    "work/zlib-node/provenance.json"
+  ]
+}

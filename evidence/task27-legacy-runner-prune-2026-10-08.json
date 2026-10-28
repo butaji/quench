@@ -1,0 +1,45 @@
+{
+  "schema": "quench-stage-a-legacy-runner-prune-v1",
+  "date": "2026-10-08",
+  "source_revision": "ff01072a485c2ce65620145d904c9d6893eb9c45",
+  "worktree_dirty": true,
+  "change": {
+    "removed": [
+      "crates/quench-node/src/run.rs",
+      "legacy NodeHost install/setup functions",
+      "legacy child_process print-eval and source-matching shims"
+    ],
+    "entrypoint": "quench-node and suite workers continue to use shared_run"
+  },
+  "inputs": {
+    "node_version": "v26.10.0",
+    "node_submodule_revision": "55e4ca33f3a6dfe364bd9558b726576a6d1a2fba",
+    "parallel_manifest": "crates/quench-node-test/node-tests/parallel.txt",
+    "parallel_manifest_sha256": "0209917422a2f0f3fa241d941ec4bc88c9917d5322b69014ab1a662a52e9dfca"
+  },
+  "source_sha256": {
+    "crates/quench-node/src/lib.rs": "bf7a59efb4e6ed523190e975d459e3fa64d575165680edb9b5301b01c4902110",
+    "crates/quench-node/src/host.rs": "4c8f7a563adcd60994a6c047bb4e0a5394107cd64624df2e4b6ed0471145beed",
+    "crates/quench-node/src/modules/child_process.rs": "c0b79ef6919e852ee81f486709e3a7dcdf89708612d840f796235d53b4014aae",
+    "crates/quench-node-test/src/shared_runner.rs": "064b75795a91d24135713442f25645fe6d59639ca472fb98be86ad79730dbfad"
+  },
+  "verification": {
+    "compile": {
+      "command": "cargo check --profile iteration --workspace --all-targets",
+      "result": "passed"
+    },
+    "node_framework_core": {
+      "command": "cargo run --profile iteration -p quench-node-test --bin run-parallel -- --profile framework-core",
+      "result": "passed",
+      "passed": 43,
+      "skipped": 0,
+      "failed": 0,
+      "timed_out": 0,
+      "crashed": 0,
+      "unclassified": 0,
+      "total": 43
+    },
+    "unit_tests": "not run"
+  },
+  "remaining_stage_a_gap": "quench-node still compiles and depends on quench-runtime through legacy dispatch and module code"
+}

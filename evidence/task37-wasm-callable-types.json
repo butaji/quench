@@ -1,0 +1,192 @@
+{
+  "tasks": [
+    "19",
+    "23",
+    "37",
+    "40",
+    "48"
+  ],
+  "source_head": "7e60169df033dd247f34199e084e3e8080a92a29",
+  "source_state": "dirty worktree",
+  "source_hashes": {
+    "crates/quench-wasm/src/shared.rs": "d135ad1cfa2d4c353e9fda4ab51adc1d3285636d124854ce8ed4c3755f585179",
+    "crates/quench-runtime-next/src/wasm.rs": "59f9a7cde0a13531bd9c4ae25d379f8fec9f93cdb559fd76261ead790785dad2",
+    "crates/quench-runtime-next/src/wasm/types.rs": "3e8237a1c3b7141c49249834bdbba6bd49c399abf1260f8ea6d05afbb594bbf6",
+    "crates/quench-runtime-next/src/wasm/scalar.rs": "9b0bc2d0fc8fc59573f61494aaddf76ec9025915ab6d4058a03dd54e70b9d60d",
+    "crates/quench-runtime-next/src/wasm/table.rs": "eafc712cb631db6330b449b8886780fb2c0a4196bcefee24685a59935b6197fc",
+    "crates/quench-runtime-next/src/lib.rs": "dad459de783e75ac198b53765fb39d93700ac753cb9ed60a50ee57ab7a1387fb",
+    "crates/quench-runtime-next/src/vm/wasm.rs": "32721d3ea33bb10ab80b4eab42be2323b5cd9ef1dc8f675d37ab6208450272c8",
+    "crates/quench-runtime-next/src/vm/wasm_host.rs": "a436e1f73ab83bff6a3a845bdd5dae8ed380bd71b270786f4c6e0a7be3fc3db0",
+    "crates/quench-runtime-next/src/vm/wasm_table.rs": "bc63783ddb0ba89ac16e10652bae004874e0a104901b3397aed8cc4f58a41240",
+    "crates/quench-runtime-next/src/vm/program_store.rs": "e3f52f5d34c75e7f61d488e4569aa539cf6ff1f0d9a440546504a30be399db2f"
+  },
+  "suite_head": "67c8b9dc32c47d61c05a1681df349d01c85fa8ff",
+  "suite_clean": true,
+  "host": "Darwin arm64",
+  "rustc": "rustc 1.99.0 (b940084d7 2026-09-28) (Homebrew)",
+  "profile": "debug",
+  "residual_format": 54,
+  "obligation": "Bind binary functions/imports/indirect-call expectations to declared type identity and compare actual callable types by recursive equivalence and declared ancestry across original instance/program owners.",
+  "representation": "WasmCallableType is Declared(source type index) or Embedded(explicit signature). The pool retains declaration identity and memoizes its supported machine-value signature once. Declared entries intern by whole-group equivalence, not shape equality; embedding signatures model final singleton function types. Imported/native function matching and indirect target matching share wasm_callable_matches and the same pool operations. Function cells retain their original program, function index and captured environment through imports/re-exports; no forwarding or retagging. Non-final/grouped scalar callable types now execute with identity retained. Shared/descriptor/continuation types and concrete/non-null value types remain explicitly unsupported. The frontend duplicate signature conversion and unused ProgramStore projection are removed; lowering derives one temporary signature per body instead of copying every signature into another table. No opcode, Value/cell, executor or format change. Rust embedding fixtures now name their explicit Embedded input; pinned guest cases/expectations are unchanged.",
+  "scope": "The previous exact 210-file affected inventory plus previous 3231 controls and 58 new callable-type directives. No full pinned suite replay or Test262 replay; OXC semantics and dispatch operators are unchanged.",
+  "reports": {
+    "before": {
+      "path": "target/iteration/task37-wasm-type-equivalence-after.json",
+      "sha256": "9a7c6db53a9e927339eea85cc1889b177aa4e6101199cad6878ce2f8c1c33f6f",
+      "binary_sha256": "5e575e7840d3118b74bc6dcc88740d3a5431c5b5c96913c085d5738235c6881e"
+    },
+    "after": {
+      "path": "target/iteration/task37-wasm-callable-types-after.json",
+      "sha256": "9550d1421c0723746ef96fbb391da14867bf74b620dc0b36c6f7225d2e66ff4d",
+      "binary_sha256": "63a0352424db218723001b81710e9383e66ea82f3fa15279a9e4b75486fea3ac"
+    },
+    "controls_before": {
+      "path": "target/iteration/task37-wasm-callable-types-controls-before.json",
+      "sha256": "997c4c7841c26b20c16fe6ad79efa91b7c225f34d56433fb224766623155ad37",
+      "binary_sha256": "5e575e7840d3118b74bc6dcc88740d3a5431c5b5c96913c085d5738235c6881e"
+    },
+    "controls": {
+      "path": "target/iteration/task37-wasm-callable-types-controls.json",
+      "sha256": "c42cf6393dd871f5a51a41965761b95e0b3ce7b7bb574540b38810dd9aa81b56",
+      "binary_sha256": "63a0352424db218723001b81710e9383e66ea82f3fa15279a9e4b75486fea3ac"
+    }
+  },
+  "runner": {
+    "path": "target/iteration/task37-wasm-callable-types-runner",
+    "sha256": "63a0352424db218723001b81710e9383e66ea82f3fa15279a9e4b75486fea3ac"
+  },
+  "qualification": {
+    "files": 210,
+    "total": 61588,
+    "passed": 60643,
+    "failed": 945,
+    "before_passed": 60619,
+    "gains": 24,
+    "gains_by_file": {
+      "crates/quench-wasm-test/testsuite/type-rec.wast": 9,
+      "crates/quench-wasm-test/testsuite/type-subtyping.wast": 15
+    },
+    "regressions": 0,
+    "identical_input_hashes": true,
+    "identical_directive_ids": true,
+    "complete_workers": true
+  },
+  "controls": {
+    "files": 26,
+    "total": 3289,
+    "before_passed": 3232,
+    "before_failed": 57,
+    "passed": 3289,
+    "failed": 0,
+    "gains": 57,
+    "regressions": 0,
+    "new_directives": 58,
+    "obligations": "Base/derived/non-final and grouped scalar callables; shifted cross-module declaration domains; derived-to-base imports and indirect calls; reverse or unrelated same-shape targets trap/link-fail; imported subtype references keep original identity and type; scalar signed wrapping boundaries. Previous numeric/resource/ABI/root controls retain all passes."
+  },
+  "checks": {
+    "wasm_internal": 33,
+    "frontend_internal": 31,
+    "profile_feature_all_target_check": "passed",
+    "internal_obligations": "Existing canonical-group/ancestry oracle, serialized declaration/resource/capture/root ownership and malformed metadata registration tests pass. No ordinary conformance unit is added."
+  },
+  "oracle": {
+    "path": "target/iteration/task37-wasm-callable-types-oracle.json",
+    "sha256": "4084a926cb1c52abe156e699af5c5ce002cb581a9f4212c5ff688ede810be1f6",
+    "result": {
+      "node": "v26.10.0",
+      "flags": [
+        "--no-sparkplug",
+        "--no-maglev",
+        "--no-turbofan",
+        "--wasm-jitless"
+      ],
+      "checks": 55,
+      "matched": 49,
+      "mismatched": 6,
+      "traps": 18,
+      "link_errors": 1,
+      "fully_matches": false,
+      "mismatches": [
+        {
+          "module": "b",
+          "name": "retained-child",
+          "input": 0,
+          "expected": 7,
+          "error": "RuntimeError: function signature mismatch"
+        },
+        {
+          "module": "b",
+          "name": "retained-child",
+          "input": 1,
+          "expected": 8,
+          "error": "RuntimeError: function signature mismatch"
+        },
+        {
+          "module": "b",
+          "name": "retained-child",
+          "input": -1,
+          "expected": 6,
+          "error": "RuntimeError: function signature mismatch"
+        },
+        {
+          "module": "b",
+          "name": "retained-child",
+          "input": 2147483647,
+          "expected": -2147483642,
+          "error": "RuntimeError: function signature mismatch"
+        },
+        {
+          "module": "b",
+          "name": "retained-child",
+          "input": -2147483648,
+          "expected": -2147483641,
+          "error": "RuntimeError: function signature mismatch"
+        },
+        {
+          "module": "b",
+          "name": "retained-child",
+          "input": 37,
+          "expected": 44,
+          "error": "RuntimeError: function signature mismatch"
+        }
+      ]
+    },
+    "source": "target/iteration/task37-wasm-callable-types-oracle.cjs",
+    "source_sha256": "382e2d2533ef665d0f69f3c270cbe8f06d4133605bd983d461b10b2b7150550c",
+    "qualification": "Node matches 49/55 observations (including 18 traps and one nominal import LinkError). Six imported-as-base table calls to the original child type trap in local Node but return the specified child values on Quench. These are recorded mismatches, not Node passes or relaxed allowed alternatives. Expectations remain unchanged; reference interpreter import/object/type rules support the Quench contract. No end-to-end reference-interpreter execution is claimed."
+  },
+  "primary_reference": {
+    "commit": "970c4116e644e2bf7acb39aab8b733db14ccdf28",
+    "url": "https://raw.githubusercontent.com/WebAssembly/spec/970c4116e644e2bf7acb39aab8b733db14ccdf28/interpreter/exec/eval.ml",
+    "path": "target/iteration/task37-wasm-callable-types-spec-eval.ml",
+    "sha256": "c83974bfbe76185382a951d00088a4765f16e5db5aff584ffa572e1c8ab90136",
+    "reviewed_rules": [
+      "Imported ExternFunc is appended as the same function object.",
+      "RefFunc returns that instance function object.",
+      "CallIndirect checks the referenced function object type against the expected declared type via match_deftype."
+    ],
+    "qualification_limit": "Source-level contract inspection, not an executed interpreter comparison."
+  },
+  "fixtures": {
+    "target/iteration/task37-wasm-callable-types-controls.wast": "08ff6903e3e03d155335bf5cb3d42f3df05b1f2d20c77434113e6cb0d983392f",
+    "target/iteration/task37-wasm-callable-types-a.wat": "4196bc885d4a80827434795b2d2b9cf2c8d49696fcc95be3fab6f0746761c36c",
+    "target/iteration/task37-wasm-callable-types-a.wasm": "7332830f31db86b07d6d8b5ffc8305b914a06715ce93f1e106290461c69c8166",
+    "target/iteration/task37-wasm-callable-types-b.wat": "0395811b93b014acf86ca2a320959c9b70f0f26dca95fa576afcbf1ef795a3fd",
+    "target/iteration/task37-wasm-callable-types-b.wasm": "6cbf9f49a77d617a64f22f999f2663aef424f71de08c5fe9460e8fc40ca214b8",
+    "target/iteration/task37-wasm-callable-types-bad.wat": "549496d68aaa097dc8bda2a260561ef633ebb7bbc263a178d55e2c5ab036cc99",
+    "target/iteration/task37-wasm-callable-types-bad.wasm": "ec2d8f87a9586f8bba9e052ab866a60b75a411ae26590cfa3ca82e7e9aa5e86c",
+    "target/iteration/task37-wasm-callable-types-oracle-cases.json": "9bcace740098b019159c8374f71ae49d0700d7808c8ae8949fb25708690ada02"
+  },
+  "logs": {
+    "target/iteration/task37-wasm-callable-types-frontend.log": "f66665db2448bcc6643c9d5a3c7f70e56f98d10340a04c6d69aa609ebbe8322f",
+    "target/iteration/task37-wasm-callable-types-runtime.log": "d4789152a00deea5c495861f397353f9572608973095521331074da260e3ea01",
+    "target/iteration/task37-wasm-callable-types-check.log": "e65adf43d0b124e70b744cb25e15f4140ae15b7d11a48ffa07782e1484add36f",
+    "target/iteration/task37-wasm-callable-types-build.log": "ad2d80dfe310ed787a3ff4c1445da61a6ef3fd6ddba81de42466196e067e0ba7",
+    "target/iteration/task37-wasm-callable-types-after.log": "61b3dd5def4146a0326b70323d4dd5b0ab806554999e4f3abd04752362888c87",
+    "target/iteration/task37-wasm-callable-types-controls.log": "c866e2f348e301a697400119c2d39588bae73b9853e5eff573b47a85f27e4747",
+    "target/iteration/task37-wasm-callable-types-controls-before.log": "d051efc12d73301c74f4be55a5d7628fe2dccf448fadeb5af790b183f1d3ac5f",
+    "target/iteration/task37-wasm-callable-types-compare.log": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd",
+    "target/iteration/task37-wasm-callable-types-controls-compare.log": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+  },
+  "limitations": "This closes supported scalar/nullable-abstract callable declaration identity, not complete typed references or GC. Concrete and non-null value guards, GC allocation/operators, reference/tail-call operators, exceptions and broader full-inventory gaps remain. The affected scope retains 945 failures. Stage A final cutover/cleanup/three-suite qualification remains open; no performance claim."
+}

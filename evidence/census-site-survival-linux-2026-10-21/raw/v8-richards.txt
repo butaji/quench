@@ -1,0 +1,13 @@
+{"kind":"quench-site-survival","kind_names":["object", "array", "map", "set", "iterator", "weak_map", "weak_set", "weak_ref", "function", "environment", "string", "bigint", "symbol", "date", "error", "regexp", "array_from_async", "await_state", "temporal_duration", "temporal_plain_date", "temporal_plain_date_time", "temporal_plain_month_day", "temporal_plain_year_month", "temporal_zoned_date_time", "temporal_instant", "wasm_global", "wasm_memory", "wasm_table", "wasm_elements", "wasm_bits64", "wasm_host_function", "wasm_v128", "wasm_gc", "wasm_extern", "wasm_tag", "wasm_exception"],"died_young_died_old_live_by_kind":[[6524, 363, 2238], [2782, 154, 234], [0, 0, 1], [0, 0, 1], [0, 0, 0], [0, 0, 2], [0, 0, 0], [0, 0, 3], [30, 6, 0], [0, 0, 0], [0, 0, 0], [0, 0, 0], [0, 0, 0], [328, 1, 22], [0, 0, 0], [0, 0, 0], [0, 0, 0], [0, 0, 0], [0, 0, 0], [0, 0, 0], [0, 0, 0], [0, 0, 0], [0, 0, 0], [0, 0, 0], [0, 0, 0], [0, 0, 0], [0, 0, 0], [0, 0, 0], [0, 0, 0], [0, 0, 0], [0, 0, 0], [0, 0, 0], [0, 0, 0], [0, 0, 0], [0, 0, 0], [0, 0, 0]],"sites":207,"survivors":3025,"survivors_from_pretenurable_sites":1347}
+{"kind":"quench-site-survival-row","program":null,"function":null,"pc":null,"cell_kind":"object","died_young":5,"died_old":1,"live":1346}
+{"kind":"quench-site-survival-row","program":18,"function":14,"pc":7,"cell_kind":"array","died_young":2472,"died_old":136,"live":184}
+{"kind":"quench-site-survival-row","program":18,"function":37,"pc":6,"cell_kind":"object","died_young":1855,"died_old":101,"live":138}
+{"kind":"quench-site-survival-row","program":18,"function":34,"pc":4,"cell_kind":"object","died_young":618,"died_old":34,"live":46}
+{"kind":"quench-site-survival-row","program":18,"function":35,"pc":4,"cell_kind":"object","died_young":620,"died_old":32,"live":46}
+{"kind":"quench-site-survival-row","program":14,"function":1,"pc":35,"cell_kind":"object","died_young":1,"died_old":0,"live":51}
+{"kind":"quench-site-survival-row","program":18,"function":7,"pc":1,"cell_kind":"object","died_young":308,"died_old":18,"live":23}
+{"kind":"quench-site-survival-row","program":18,"function":8,"pc":6,"cell_kind":"array","died_young":308,"died_old":18,"live":23}
+{"kind":"quench-site-survival-row","program":18,"function":32,"pc":6,"cell_kind":"object","died_young":308,"died_old":18,"live":23}
+{"kind":"quench-site-survival-row","program":18,"function":7,"pc":12,"cell_kind":"object","died_young":309,"died_old":17,"live":23}
+{"kind":"quench-site-survival-row","program":18,"function":7,"pc":17,"cell_kind":"object","died_young":309,"died_old":17,"live":23}
+{"kind":"quench-site-survival-row","program":18,"function":33,"pc":6,"cell_kind":"object","died_young":309,"died_old":17,"live":23}

@@ -1,0 +1,54 @@
+warning: constant `MAX_UTF16_UNITS_PER_SCALAR` is never used
+  --> /workspace/scratch/npm-decoder-production-draft/text_decoder_icu.rs:11:7
+   |
+11 | const MAX_UTF16_UNITS_PER_SCALAR: usize = 2;
+   |       ^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: fields `ignore_bom` and `bom_seen` are never read
+  --> /workspace/scratch/npm-decoder-production-draft/text_decoder_icu.rs:61:5
+   |
+57 | pub(crate) struct Converter {
+   |                   --------- fields in this struct
+...
+61 |     ignore_bom: bool,
+   |     ^^^^^^^^^^
+62 |     bom_seen: bool,
+   |     ^^^^^^^^
+
+warning: method `decode` is never used
+   --> /workspace/scratch/npm-decoder-production-draft/text_decoder_icu.rs:113:19
+    |
+ 69 | impl Converter {
+    | -------------- method in this implementation
+...
+113 |     pub(crate) fn decode(&mut self, bytes: &[u8], flush: bool) -> Result<Vec<u16>, ()> {
+    |                   ^^^^^^
+
+warning: function `decode` is never used
+   --> /workspace/scratch/npm-decoder-production-draft/text_decoder_icu.rs:173:15
+    |
+173 | pub(crate) fn decode(encoding: &str, bytes: &[u8], fatal: bool) -> Result<String, ()> {
+    |               ^^^^^^
+
+warning: function `pending` is never used
+  --> /workspace/scratch/npm-decoder-production-draft/text_decoder_icu.rs:42:8
+   |
+42 |     fn pending(converter: *const c_void, status: *mut i32) -> i32;
+   |        ^^^^^^^
+
+warning: function `reset` is never used
+  --> /workspace/scratch/npm-decoder-production-draft/text_decoder_icu.rs:44:8
+   |
+44 |     fn reset(converter: *mut c_void);
+   |        ^^^^^
+
+warning: function `to_unicode` is never used
+  --> /workspace/scratch/npm-decoder-production-draft/text_decoder_icu.rs:46:8
+   |
+46 |     fn to_unicode(
+   |        ^^^^^^^^^^
+
+warning: 7 warnings emitted
+

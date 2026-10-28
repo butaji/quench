@@ -1,0 +1,514 @@
+Auto-merging crates/quench-node-test/tests/child_entry.rs
+Auto-merging crates/quench-runtime/src/vm/error.rs
+Merge made by the 'ort' strategy.
+ .../node-tests/test-callsite-eval-origin.js        |  21 +
+ crates/quench-node-test/tests/child_entry.rs       |   5 +
+ crates/quench-runtime/src/heap/cell.rs             |   1 +
+ crates/quench-runtime/src/vm/error.rs              |   6 +-
+ crates/quench-runtime/src/vm/eval.rs               |  11 +-
+ crates/quench-runtime/src/vm/program_store.rs      |  15 +
+ docs/node-host-contracts.md                        |  10 +-
+ .../web-eval-origin-parity-2026-10-16/README.md    |  22 +
+ .../callsite-eval-classification-node.stderr       |   0
+ .../callsite-eval-classification-node.stdout       |   1 +
+ .../callsite-eval-classification-probe.cjs         |   4 +
+ .../callsite-eval-classification-quench.stderr     |   0
+ .../callsite-eval-classification-quench.stdout     |   1 +
+ ...llsite-eval-classification-repaired-quench.exit |   1 +
+ ...site-eval-classification-repaired-quench.stderr |   0
+ ...site-eval-classification-repaired-quench.stdout |   1 +
+ .../callsite-location-methods-node.stderr          |   0
+ .../callsite-location-methods-node.stdout          |   4 +
+ .../callsite-location-methods-probe.cjs            |   8 +
+ .../callsite-prototype-surface-node.stderr         |   0
+ .../callsite-prototype-surface-node.stdout         |   1 +
+ .../callsite-prototype-surface-probe.cjs           |   1 +
+ .../eval-callsite-identity-node.stderr             |   0
+ .../eval-callsite-identity-node.stdout             |   3 +
+ .../eval-callsite-identity-probe.cjs               |   6 +
+ .../eval-callsite-identity-quench.stderr           |   0
+ .../eval-callsite-identity-quench.stdout           |   3 +
+ .../eval-origin-api-build.exit                     |   1 +
+ .../eval-origin-api-build.log                      |   6 +
+ .../eval-origin-api-rebuild.exit                   |   1 +
+ .../eval-origin-api-rebuild.log                    |   3 +
+ .../eval-origin-api.exit                           |   1 +
+ .../eval-origin-api.log                            | 369 ++++++++++++
+ .../eval-origin-cli-build.exit                     |   1 +
+ .../eval-origin-cli-build.log                      |   5 +
+ .../eval-origin-focused.exit                       |   1 +
+ .../eval-origin-focused.log                        |   8 +
+ .../eval-origin-framework.exit                     |   1 +
+ .../eval-origin-framework.log                      |  44 ++
+ .../eval-origin-paired-callgrind.exit              |   1 +
+ .../eval-origin-paired-callgrind.log               |   1 +
+ .../0-crypto-0.callgrind.log                       |  17 +
+ .../eval-origin-paired-callgrind/0-crypto-0.stderr |   0
+ .../eval-origin-paired-callgrind/0-crypto-0.stdout |   1 +
+ .../0-crypto-1.callgrind.log                       |  17 +
+ .../eval-origin-paired-callgrind/0-crypto-1.stderr |   0
+ .../eval-origin-paired-callgrind/0-crypto-1.stdout |   1 +
+ .../0-deltablue-0.callgrind.log                    |  17 +
+ .../0-deltablue-0.stderr                           |   0
+ .../0-deltablue-0.stdout                           |   1 +
+ .../0-deltablue-10.callgrind.log                   |  17 +
+ .../0-deltablue-10.stderr                          |   0
+ .../0-deltablue-10.stdout                          |   1 +
+ .../0-earley-boyer-0.callgrind.log                 |  17 +
+ .../0-earley-boyer-0.stderr                        |   0
+ .../0-earley-boyer-0.stdout                        |   1 +
+ .../0-earley-boyer-1.callgrind.log                 |  17 +
+ .../0-earley-boyer-1.stderr                        |   0
+ .../0-earley-boyer-1.stdout                        |   1 +
+ .../0-navier-stokes-0.callgrind.log                |  17 +
+ .../0-navier-stokes-0.stderr                       |   0
+ .../0-navier-stokes-0.stdout                       |   1 +
+ .../0-navier-stokes-1.callgrind.log                |  17 +
+ .../0-navier-stokes-1.stderr                       |   0
+ .../0-navier-stokes-1.stdout                       |   1 +
+ .../0-raytrace-0.callgrind.log                     |  17 +
+ .../0-raytrace-0.stderr                            |   0
+ .../0-raytrace-0.stdout                            |   1 +
+ .../0-raytrace-3.callgrind.log                     |  17 +
+ .../0-raytrace-3.stderr                            |   0
+ .../0-raytrace-3.stdout                            |   1 +
+ .../0-regexp-0.callgrind.log                       |  17 +
+ .../eval-origin-paired-callgrind/0-regexp-0.stderr |   0
+ .../eval-origin-paired-callgrind/0-regexp-0.stdout |   1 +
+ .../0-regexp-1.callgrind.log                       |  17 +
+ .../eval-origin-paired-callgrind/0-regexp-1.stderr |   0
+ .../eval-origin-paired-callgrind/0-regexp-1.stdout |   1 +
+ .../0-richards-0.callgrind.log                     |  17 +
+ .../0-richards-0.stderr                            |   0
+ .../0-richards-0.stdout                            |   1 +
+ .../0-richards-25.callgrind.log                    |  17 +
+ .../0-richards-25.stderr                           |   0
+ .../0-richards-25.stdout                           |   1 +
+ .../0-splay-0.callgrind.log                        |  17 +
+ .../eval-origin-paired-callgrind/0-splay-0.stderr  |   0
+ .../eval-origin-paired-callgrind/0-splay-0.stdout  |   1 +
+ .../0-splay-75.callgrind.log                       |  17 +
+ .../eval-origin-paired-callgrind/0-splay-75.stderr |   0
+ .../eval-origin-paired-callgrind/0-splay-75.stdout |   1 +
+ .../1-crypto-0.callgrind.log                       |  17 +
+ .../eval-origin-paired-callgrind/1-crypto-0.stderr |   0
+ .../eval-origin-paired-callgrind/1-crypto-0.stdout |   1 +
+ .../1-crypto-1.callgrind.log                       |  17 +
+ .../eval-origin-paired-callgrind/1-crypto-1.stderr |   0
+ .../eval-origin-paired-callgrind/1-crypto-1.stdout |   1 +
+ .../1-deltablue-0.callgrind.log                    |  17 +
+ .../1-deltablue-0.stderr                           |   0
+ .../1-deltablue-0.stdout                           |   1 +
+ .../1-deltablue-10.callgrind.log                   |  17 +
+ .../1-deltablue-10.stderr                          |   0
+ .../1-deltablue-10.stdout                          |   1 +
+ .../1-earley-boyer-0.callgrind.log                 |  17 +
+ .../1-earley-boyer-0.stderr                        |   0
+ .../1-earley-boyer-0.stdout                        |   1 +
+ .../1-earley-boyer-1.callgrind.log                 |  17 +
+ .../1-earley-boyer-1.stderr                        |   0
+ .../1-earley-boyer-1.stdout                        |   1 +
+ .../1-navier-stokes-0.callgrind.log                |  17 +
+ .../1-navier-stokes-0.stderr                       |   0
+ .../1-navier-stokes-0.stdout                       |   1 +
+ .../1-navier-stokes-1.callgrind.log                |  17 +
+ .../1-navier-stokes-1.stderr                       |   0
+ .../1-navier-stokes-1.stdout                       |   1 +
+ .../1-raytrace-0.callgrind.log                     |  17 +
+ .../1-raytrace-0.stderr                            |   0
+ .../1-raytrace-0.stdout                            |   1 +
+ .../1-raytrace-3.callgrind.log                     |  17 +
+ .../1-raytrace-3.stderr                            |   0
+ .../1-raytrace-3.stdout                            |   1 +
+ .../1-regexp-0.callgrind.log                       |  17 +
+ .../eval-origin-paired-callgrind/1-regexp-0.stderr |   0
+ .../eval-origin-paired-callgrind/1-regexp-0.stdout |   1 +
+ .../1-regexp-1.callgrind.log                       |  17 +
+ .../eval-origin-paired-callgrind/1-regexp-1.stderr |   0
+ .../eval-origin-paired-callgrind/1-regexp-1.stdout |   1 +
+ .../1-richards-0.callgrind.log                     |  17 +
+ .../1-richards-0.stderr                            |   0
+ .../1-richards-0.stdout                            |   1 +
+ .../1-richards-25.callgrind.log                    |  17 +
+ .../1-richards-25.stderr                           |   0
+ .../1-richards-25.stdout                           |   1 +
+ .../1-splay-0.callgrind.log                        |  17 +
+ .../eval-origin-paired-callgrind/1-splay-0.stderr  |   0
+ .../eval-origin-paired-callgrind/1-splay-0.stdout  |   1 +
+ .../1-splay-75.callgrind.log                       |  17 +
+ .../eval-origin-paired-callgrind/1-splay-75.stderr |   0
+ .../eval-origin-paired-callgrind/1-splay-75.stdout |   1 +
+ .../eval-origin-paired-callgrind/report.json       | 622 +++++++++++++++++++
+ .../eval-origin-qualification-after-api.json       |  32 +
+ .../eval-origin-qualification-before.json          |  22 +
+ .../eval-origin-runtime.exit                       |   1 +
+ .../eval-origin-runtime.log                        | 663 +++++++++++++++++++++
+ .../eval-origin-source-commit.log                  |   3 +
+ .../eval-origin-source.patch                       | 208 +++++++
+ .../eval-origin-stash.log                          |   1 +
+ .../eval-origin-web.exit                           |   1 +
+ .../eval-origin-web.log                            |   9 +
+ .../eval-origin-web/final.json                     | 442 ++++++++++++++
+ .../eval-origin-web/report.json                    | 442 ++++++++++++++
+ .../eval-origin-web/round-0-bun-elysia/body.body   |   1 +
+ .../round-0-bun-elysia/body.headers                |   5 +
+ .../eval-origin-web/round-0-bun-elysia/ping.body   |   1 +
+ .../round-0-bun-elysia/ping.headers                |   6 +
+ .../round-0-bun-elysia/query-dynamic.body          |   1 +
+ .../round-0-bun-elysia/query-dynamic.headers       |   6 +
+ .../eval-origin-web/round-0-bun-elysia/query.body  |   1 +
+ .../round-0-bun-elysia/query.headers               |   6 +
+ .../round-0-bun-elysia/server.stderr               |   0
+ .../round-0-bun-elysia/server.stdout               |   0
+ .../round-0-bun-elysia/video.headers               |   8 +
+ .../eval-origin-web/round-0-bun-fastify/body.body  |   1 +
+ .../round-0-bun-fastify/body.headers               |   7 +
+ .../eval-origin-web/round-0-bun-fastify/ping.body  |   1 +
+ .../round-0-bun-fastify/ping.headers               |   7 +
+ .../round-0-bun-fastify/query-dynamic.body         |   1 +
+ .../round-0-bun-fastify/query-dynamic.headers      |   8 +
+ .../eval-origin-web/round-0-bun-fastify/query.body |   1 +
+ .../round-0-bun-fastify/query.headers              |   8 +
+ .../round-0-bun-fastify/server.stderr              |   0
+ .../round-0-bun-fastify/server.stdout              |   0
+ .../round-0-bun-fastify/video.headers              |   7 +
+ .../eval-origin-web/round-0-bun-hono/body.body     |   1 +
+ .../eval-origin-web/round-0-bun-hono/body.headers  |   5 +
+ .../eval-origin-web/round-0-bun-hono/ping.body     |   1 +
+ .../eval-origin-web/round-0-bun-hono/ping.headers  |   5 +
+ .../round-0-bun-hono/query-dynamic.body            |   1 +
+ .../round-0-bun-hono/query-dynamic.headers         |   6 +
+ .../eval-origin-web/round-0-bun-hono/query.body    |   1 +
+ .../eval-origin-web/round-0-bun-hono/query.headers |   6 +
+ .../eval-origin-web/round-0-bun-hono/server.stderr |   0
+ .../eval-origin-web/round-0-bun-hono/server.stdout |   1 +
+ .../eval-origin-web/round-0-bun-hono/video.headers |   5 +
+ .../eval-origin-web/round-0-node-express/body.body |   1 +
+ .../round-0-node-express/body.headers              |   7 +
+ .../eval-origin-web/round-0-node-express/ping.body |   1 +
+ .../round-0-node-express/ping.headers              |   7 +
+ .../round-0-node-express/query-dynamic.body        |   1 +
+ .../round-0-node-express/query-dynamic.headers     |   8 +
+ .../round-0-node-express/query.body                |   1 +
+ .../round-0-node-express/query.headers             |   8 +
+ .../round-0-node-express/server.stderr             |   0
+ .../round-0-node-express/server.stdout             |   0
+ .../round-0-node-express/video.headers             |   7 +
+ .../eval-origin-web/round-0-node-fastify/body.body |   1 +
+ .../round-0-node-fastify/body.headers              |   7 +
+ .../eval-origin-web/round-0-node-fastify/ping.body |   1 +
+ .../round-0-node-fastify/ping.headers              |   7 +
+ .../round-0-node-fastify/query-dynamic.body        |   1 +
+ .../round-0-node-fastify/query-dynamic.headers     |   8 +
+ .../round-0-node-fastify/query.body                |   1 +
+ .../round-0-node-fastify/query.headers             |   8 +
+ .../round-0-node-fastify/server.stderr             |   0
+ .../round-0-node-fastify/server.stdout             |   0
+ .../round-0-node-fastify/video.headers             |   7 +
+ .../eval-origin-web/round-0-node-hono/body.body    |   1 +
+ .../eval-origin-web/round-0-node-hono/body.headers |   7 +
+ .../eval-origin-web/round-0-node-hono/ping.body    |   1 +
+ .../eval-origin-web/round-0-node-hono/ping.headers |   7 +
+ .../round-0-node-hono/query-dynamic.body           |   1 +
+ .../round-0-node-hono/query-dynamic.headers        |   8 +
+ .../eval-origin-web/round-0-node-hono/query.body   |   1 +
+ .../round-0-node-hono/query.headers                |   8 +
+ .../round-0-node-hono/server.stderr                |   0
+ .../round-0-node-hono/server.stdout                |   0
+ .../round-0-node-hono/video.headers                |   7 +
+ .../round-0-quench-express/body.body               |   1 +
+ .../round-0-quench-express/body.headers            |   6 +
+ .../round-0-quench-express/ping.body               |   1 +
+ .../round-0-quench-express/ping.headers            |   6 +
+ .../round-0-quench-express/query-dynamic.body      |   1 +
+ .../round-0-quench-express/query-dynamic.headers   |   7 +
+ .../round-0-quench-express/query.body              |   1 +
+ .../round-0-quench-express/query.headers           |   7 +
+ .../round-0-quench-express/server.stderr           |   0
+ .../round-0-quench-express/server.stdout           |   0
+ .../round-0-quench-express/video.headers           |   6 +
+ .../round-0-quench-fastify/body.body               |   1 +
+ .../round-0-quench-fastify/body.headers            |   6 +
+ .../round-0-quench-fastify/ping.body               |   1 +
+ .../round-0-quench-fastify/ping.headers            |   6 +
+ .../round-0-quench-fastify/query-dynamic.body      |   1 +
+ .../round-0-quench-fastify/query-dynamic.headers   |   7 +
+ .../round-0-quench-fastify/query.body              |   1 +
+ .../round-0-quench-fastify/query.headers           |   7 +
+ .../round-0-quench-fastify/server.stderr           |   0
+ .../round-0-quench-fastify/server.stdout           |   0
+ .../round-0-quench-fastify/video.headers           |   6 +
+ .../eval-origin-web/round-0-quench-hono/body.body  |   1 +
+ .../round-0-quench-hono/body.headers               |   6 +
+ .../eval-origin-web/round-0-quench-hono/ping.body  |   1 +
+ .../round-0-quench-hono/ping.headers               |   6 +
+ .../round-0-quench-hono/query-dynamic.body         |   1 +
+ .../round-0-quench-hono/query-dynamic.headers      |   7 +
+ .../eval-origin-web/round-0-quench-hono/query.body |   1 +
+ .../round-0-quench-hono/query.headers              |   7 +
+ .../round-0-quench-hono/server.stderr              |   0
+ .../round-0-quench-hono/server.stdout              |   0
+ .../round-0-quench-hono/video.headers              |   6 +
+ .../eval-origin-workspace.exit                     |   1 +
+ .../eval-origin-workspace.log                      |   7 +
+ .../eval-syntax-policy-node.stderr                 |   0
+ .../eval-syntax-policy-node.stdout                 |   1 +
+ .../eval-syntax-policy-probe.cjs                   |   2 +
+ .../eval-syntax-policy-quench.stderr               |   0
+ .../eval-syntax-policy-quench.stdout               |   1 +
+ .../package-evidence.py                            |  39 ++
+ .../qualification.json                             |  39 ++
+ .../source-change.patch                            | 235 ++++++++
+ 258 files changed, 4247 insertions(+), 7 deletions(-)
+ create mode 100644 crates/quench-node-test/node-tests/test-callsite-eval-origin.js
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/README.md
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/callsite-eval-classification-node.stderr
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/callsite-eval-classification-node.stdout
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/callsite-eval-classification-probe.cjs
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/callsite-eval-classification-quench.stderr
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/callsite-eval-classification-quench.stdout
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/callsite-eval-classification-repaired-quench.exit
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/callsite-eval-classification-repaired-quench.stderr
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/callsite-eval-classification-repaired-quench.stdout
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/callsite-location-methods-node.stderr
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/callsite-location-methods-node.stdout
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/callsite-location-methods-probe.cjs
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/callsite-prototype-surface-node.stderr
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/callsite-prototype-surface-node.stdout
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/callsite-prototype-surface-probe.cjs
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-callsite-identity-node.stderr
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-callsite-identity-node.stdout
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-callsite-identity-probe.cjs
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-callsite-identity-quench.stderr
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-callsite-identity-quench.stdout
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-api-build.exit
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-api-build.log
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-api-rebuild.exit
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-api-rebuild.log
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-api.exit
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-api.log
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-cli-build.exit
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-cli-build.log
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-focused.exit
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-focused.log
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-framework.exit
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-framework.log
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-paired-callgrind.exit
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-paired-callgrind.log
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-paired-callgrind/0-crypto-0.callgrind.log
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-paired-callgrind/0-crypto-0.stderr
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-paired-callgrind/0-crypto-0.stdout
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-paired-callgrind/0-crypto-1.callgrind.log
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-paired-callgrind/0-crypto-1.stderr
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-paired-callgrind/0-crypto-1.stdout
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-paired-callgrind/0-deltablue-0.callgrind.log
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-paired-callgrind/0-deltablue-0.stderr
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-paired-callgrind/0-deltablue-0.stdout
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-paired-callgrind/0-deltablue-10.callgrind.log
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-paired-callgrind/0-deltablue-10.stderr
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-paired-callgrind/0-deltablue-10.stdout
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-paired-callgrind/0-earley-boyer-0.callgrind.log
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-paired-callgrind/0-earley-boyer-0.stderr
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-paired-callgrind/0-earley-boyer-0.stdout
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-paired-callgrind/0-earley-boyer-1.callgrind.log
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-paired-callgrind/0-earley-boyer-1.stderr
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-paired-callgrind/0-earley-boyer-1.stdout
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-paired-callgrind/0-navier-stokes-0.callgrind.log
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-paired-callgrind/0-navier-stokes-0.stderr
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-paired-callgrind/0-navier-stokes-0.stdout
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-paired-callgrind/0-navier-stokes-1.callgrind.log
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-paired-callgrind/0-navier-stokes-1.stderr
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-paired-callgrind/0-navier-stokes-1.stdout
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-paired-callgrind/0-raytrace-0.callgrind.log
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-paired-callgrind/0-raytrace-0.stderr
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-paired-callgrind/0-raytrace-0.stdout
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-paired-callgrind/0-raytrace-3.callgrind.log
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-paired-callgrind/0-raytrace-3.stderr
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-paired-callgrind/0-raytrace-3.stdout
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-paired-callgrind/0-regexp-0.callgrind.log
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-paired-callgrind/0-regexp-0.stderr
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-paired-callgrind/0-regexp-0.stdout
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-paired-callgrind/0-regexp-1.callgrind.log
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-paired-callgrind/0-regexp-1.stderr
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-paired-callgrind/0-regexp-1.stdout
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-paired-callgrind/0-richards-0.callgrind.log
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-paired-callgrind/0-richards-0.stderr
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-paired-callgrind/0-richards-0.stdout
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-paired-callgrind/0-richards-25.callgrind.log
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-paired-callgrind/0-richards-25.stderr
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-paired-callgrind/0-richards-25.stdout
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-paired-callgrind/0-splay-0.callgrind.log
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-paired-callgrind/0-splay-0.stderr
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-paired-callgrind/0-splay-0.stdout
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-paired-callgrind/0-splay-75.callgrind.log
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-paired-callgrind/0-splay-75.stderr
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-paired-callgrind/0-splay-75.stdout
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-paired-callgrind/1-crypto-0.callgrind.log
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-paired-callgrind/1-crypto-0.stderr
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-paired-callgrind/1-crypto-0.stdout
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-paired-callgrind/1-crypto-1.callgrind.log
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-paired-callgrind/1-crypto-1.stderr
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-paired-callgrind/1-crypto-1.stdout
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-paired-callgrind/1-deltablue-0.callgrind.log
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-paired-callgrind/1-deltablue-0.stderr
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-paired-callgrind/1-deltablue-0.stdout
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-paired-callgrind/1-deltablue-10.callgrind.log
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-paired-callgrind/1-deltablue-10.stderr
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-paired-callgrind/1-deltablue-10.stdout
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-paired-callgrind/1-earley-boyer-0.callgrind.log
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-paired-callgrind/1-earley-boyer-0.stderr
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-paired-callgrind/1-earley-boyer-0.stdout
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-paired-callgrind/1-earley-boyer-1.callgrind.log
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-paired-callgrind/1-earley-boyer-1.stderr
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-paired-callgrind/1-earley-boyer-1.stdout
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-paired-callgrind/1-navier-stokes-0.callgrind.log
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-paired-callgrind/1-navier-stokes-0.stderr
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-paired-callgrind/1-navier-stokes-0.stdout
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-paired-callgrind/1-navier-stokes-1.callgrind.log
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-paired-callgrind/1-navier-stokes-1.stderr
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-paired-callgrind/1-navier-stokes-1.stdout
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-paired-callgrind/1-raytrace-0.callgrind.log
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-paired-callgrind/1-raytrace-0.stderr
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-paired-callgrind/1-raytrace-0.stdout
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-paired-callgrind/1-raytrace-3.callgrind.log
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-paired-callgrind/1-raytrace-3.stderr
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-paired-callgrind/1-raytrace-3.stdout
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-paired-callgrind/1-regexp-0.callgrind.log
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-paired-callgrind/1-regexp-0.stderr
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-paired-callgrind/1-regexp-0.stdout
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-paired-callgrind/1-regexp-1.callgrind.log
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-paired-callgrind/1-regexp-1.stderr
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-paired-callgrind/1-regexp-1.stdout
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-paired-callgrind/1-richards-0.callgrind.log
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-paired-callgrind/1-richards-0.stderr
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-paired-callgrind/1-richards-0.stdout
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-paired-callgrind/1-richards-25.callgrind.log
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-paired-callgrind/1-richards-25.stderr
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-paired-callgrind/1-richards-25.stdout
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-paired-callgrind/1-splay-0.callgrind.log
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-paired-callgrind/1-splay-0.stderr
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-paired-callgrind/1-splay-0.stdout
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-paired-callgrind/1-splay-75.callgrind.log
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-paired-callgrind/1-splay-75.stderr
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-paired-callgrind/1-splay-75.stdout
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-paired-callgrind/report.json
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-qualification-after-api.json
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-qualification-before.json
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-runtime.exit
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-runtime.log
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-source-commit.log
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-source.patch
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-stash.log
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-web.exit
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-web.log
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-web/final.json
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-web/report.json
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-web/round-0-bun-elysia/body.body
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-web/round-0-bun-elysia/body.headers
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-web/round-0-bun-elysia/ping.body
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-web/round-0-bun-elysia/ping.headers
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-web/round-0-bun-elysia/query-dynamic.body
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-web/round-0-bun-elysia/query-dynamic.headers
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-web/round-0-bun-elysia/query.body
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-web/round-0-bun-elysia/query.headers
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-web/round-0-bun-elysia/server.stderr
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-web/round-0-bun-elysia/server.stdout
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-web/round-0-bun-elysia/video.headers
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-web/round-0-bun-fastify/body.body
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-web/round-0-bun-fastify/body.headers
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-web/round-0-bun-fastify/ping.body
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-web/round-0-bun-fastify/ping.headers
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-web/round-0-bun-fastify/query-dynamic.body
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-web/round-0-bun-fastify/query-dynamic.headers
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-web/round-0-bun-fastify/query.body
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-web/round-0-bun-fastify/query.headers
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-web/round-0-bun-fastify/server.stderr
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-web/round-0-bun-fastify/server.stdout
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-web/round-0-bun-fastify/video.headers
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-web/round-0-bun-hono/body.body
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-web/round-0-bun-hono/body.headers
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-web/round-0-bun-hono/ping.body
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-web/round-0-bun-hono/ping.headers
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-web/round-0-bun-hono/query-dynamic.body
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-web/round-0-bun-hono/query-dynamic.headers
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-web/round-0-bun-hono/query.body
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-web/round-0-bun-hono/query.headers
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-web/round-0-bun-hono/server.stderr
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-web/round-0-bun-hono/server.stdout
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-web/round-0-bun-hono/video.headers
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-web/round-0-node-express/body.body
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-web/round-0-node-express/body.headers
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-web/round-0-node-express/ping.body
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-web/round-0-node-express/ping.headers
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-web/round-0-node-express/query-dynamic.body
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-web/round-0-node-express/query-dynamic.headers
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-web/round-0-node-express/query.body
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-web/round-0-node-express/query.headers
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-web/round-0-node-express/server.stderr
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-web/round-0-node-express/server.stdout
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-web/round-0-node-express/video.headers
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-web/round-0-node-fastify/body.body
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-web/round-0-node-fastify/body.headers
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-web/round-0-node-fastify/ping.body
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-web/round-0-node-fastify/ping.headers
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-web/round-0-node-fastify/query-dynamic.body
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-web/round-0-node-fastify/query-dynamic.headers
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-web/round-0-node-fastify/query.body
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-web/round-0-node-fastify/query.headers
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-web/round-0-node-fastify/server.stderr
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-web/round-0-node-fastify/server.stdout
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-web/round-0-node-fastify/video.headers
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-web/round-0-node-hono/body.body
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-web/round-0-node-hono/body.headers
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-web/round-0-node-hono/ping.body
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-web/round-0-node-hono/ping.headers
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-web/round-0-node-hono/query-dynamic.body
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-web/round-0-node-hono/query-dynamic.headers
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-web/round-0-node-hono/query.body
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-web/round-0-node-hono/query.headers
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-web/round-0-node-hono/server.stderr
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-web/round-0-node-hono/server.stdout
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-web/round-0-node-hono/video.headers
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-web/round-0-quench-express/body.body
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-web/round-0-quench-express/body.headers
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-web/round-0-quench-express/ping.body
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-web/round-0-quench-express/ping.headers
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-web/round-0-quench-express/query-dynamic.body
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-web/round-0-quench-express/query-dynamic.headers
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-web/round-0-quench-express/query.body
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-web/round-0-quench-express/query.headers
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-web/round-0-quench-express/server.stderr
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-web/round-0-quench-express/server.stdout
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-web/round-0-quench-express/video.headers
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-web/round-0-quench-fastify/body.body
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-web/round-0-quench-fastify/body.headers
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-web/round-0-quench-fastify/ping.body
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-web/round-0-quench-fastify/ping.headers
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-web/round-0-quench-fastify/query-dynamic.body
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-web/round-0-quench-fastify/query-dynamic.headers
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-web/round-0-quench-fastify/query.body
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-web/round-0-quench-fastify/query.headers
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-web/round-0-quench-fastify/server.stderr
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-web/round-0-quench-fastify/server.stdout
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-web/round-0-quench-fastify/video.headers
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-web/round-0-quench-hono/body.body
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-web/round-0-quench-hono/body.headers
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-web/round-0-quench-hono/ping.body
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-web/round-0-quench-hono/ping.headers
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-web/round-0-quench-hono/query-dynamic.body
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-web/round-0-quench-hono/query-dynamic.headers
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-web/round-0-quench-hono/query.body
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-web/round-0-quench-hono/query.headers
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-web/round-0-quench-hono/server.stderr
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-web/round-0-quench-hono/server.stdout
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-web/round-0-quench-hono/video.headers
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-workspace.exit
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-origin-workspace.log
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-syntax-policy-node.stderr
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-syntax-policy-node.stdout
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-syntax-policy-probe.cjs
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-syntax-policy-quench.stderr
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/eval-syntax-policy-quench.stdout
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/package-evidence.py
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/qualification.json
+ create mode 100644 evidence/web-eval-origin-parity-2026-10-16/source-change.patch

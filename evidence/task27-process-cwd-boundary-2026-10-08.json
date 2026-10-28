@@ -1,0 +1,113 @@
+{
+  "schema": 1,
+  "task": "27",
+  "kind": "shared_process_cwd_state_boundary",
+  "recorded_on": "2026-10-08",
+  "source": {
+    "revision": "aa23d6f9e5fc5012946ad42bf943ba1724052e00",
+    "worktree_dirty": true,
+    "platform": "Darwin arm64",
+    "node": "v26.10.0",
+    "rustc": "rustc 1.99.0 (b940084d7 2026-09-28) (Homebrew)",
+    "binaries_sha256": {
+      "target/iteration/quench-node": "87cc2408f5127b5517a96fc74bcaca372cec265d1b83e2794f82ac58e40e37cb",
+      "target/iteration/run-parallel": "ce6d230be9ef54df42f4be34b0e842ff79a04c84442092c5308ddbc69d1e2e78"
+    },
+    "files_sha256": {
+      "crates/quench-node/src/dispatch_handlers.rs": "78391f69f8c38525724fc489bc7242e0779dd8e37a3cedd3337d71561c4426a7",
+      "crates/quench-node/src/host.rs": "6e8f115c63c7948c064e7092167b5343a9e0ddb085fee01186f6dc8f708afcf4",
+      "crates/quench-node/src/modules/child_process.rs": "36f93a9393c55072d1263bcaf9bfb918857198902116dead9e81e7d64b14f004",
+      "crates/quench-node/src/modules/fs/shared_vm.rs": "1637c8352829313b0278818f0a3f243b1a31fadf4f3edd871b9dab97a2da225a",
+      "crates/quench-node/src/modules/path.rs": "b82f8db716ac0bc867b37d8ec87f333c67e40d59c6d2635f06f89ded82226fce",
+      "crates/quench-node/src/modules/path/shared_vm.rs": "db7bffae08f8f22b7082ce43abfe0965a7b12180866a2db590d5727f0edb174b",
+      "crates/quench-node/src/modules/process.rs": "0dd565612459d8f14fd2af03f0e1e26397f5738bfaf301e33f9ce00091f15cae",
+      "crates/quench-node/src/modules/process/shared_vm.rs": "737da6fe5029399976deacb543f99cbffb035a83ccbc132163e4146b543f978e",
+      "crates/quench-node/src/modules/require.rs": "ab567cb4e1843272564d6ecdb8efd5a52bf32282cf011517a338d6b5e911a243",
+      "crates/quench-node-test/node-tests/parallel.txt": "0209917422a2f0f3fa241d941ec4bc88c9917d5322b69014ab1a662a52e9dfca",
+      "tests/frameworks/driver.cjs": "e8dd245f9bbfcdcd3a430ff7ed663c3310fdf32fae23cfc5c24d24cbeda96bfb",
+      "tests/frameworks/scenarios/express.cjs": "85eebbbc5c9cfaa01f2f16b6c7e181a4c4bc2e308bd1bb179f49c5d9700f8158",
+      "tests/frameworks/scenarios/koa.cjs": "962e4c326df72b30eed4306494e2218475456c7c816220a6e46a898b040185f9",
+      "tests/frameworks/scenarios/fastify.cjs": "1ff4fc87e2a4c792761c286bc0f255d0ab9be27e810dbf98938a1ac717d1ba6a",
+      "tests/node/test/parallel/test-path-resolve.js": "0154a0781d8a3ba011e629d04b224aafe0b95af6cff8afdb7ba4a1e68d79b1e2",
+      "tests/node/test/parallel/test-process-chdir.js": "8278bee65285675b34cd86f790aff25d141b77e6f97dbc2555c5419533f15b09",
+      "tests/node/test/parallel/test-process-chdir-errormessage.js": "6b75aad4a6b30451795a2d221fb21fad01fbe37e6334412c8eec051dc4d78ef8",
+      "tests/node/test/parallel/test-fs-read-stream-resume.js": "10a15e6f5519a5d656112baa16f78d1d5c0c93e66321fa6dd138e3b8576c49b0"
+    }
+  },
+  "change": {
+    "authority": "ProcessCwd(Rc<RefCell<PathBuf>>) is created once by ProcessState and its shallow handle is stored in SharedNodeState; both adapters and all host path consumers observe the same logical cwd.",
+    "preserved_semantics": [
+      "shared process.chdir validates and updates logical cwd without changing the host process cwd",
+      "legacy process.chdir calls set_current_dir before publishing its lexical logical cwd",
+      "shared path.resolve still calls the live guest process.cwd function before its native fallback"
+    ],
+    "runtime_dependency_removed": false
+  },
+  "verification": {
+    "checks": [
+      {
+        "command": "cargo check -p quench-node",
+        "exit_code": 0,
+        "result": "passed; only pre-existing deprecated Atomic::fetch_update warnings in quench-runtime"
+      },
+      {
+        "command": "cargo build --profile iteration -p quench-node-test --bin run-parallel",
+        "exit_code": 0,
+        "result": "passed"
+      },
+      {
+        "command": "cargo build --profile iteration -p quench-node --bin quench-node",
+        "exit_code": 0,
+        "result": "passed"
+      },
+      {
+        "command": "rustfmt --edition 2021 --check crates/quench-node/src/dispatch_handlers.rs crates/quench-node/src/host.rs crates/quench-node/src/modules/child_process.rs crates/quench-node/src/modules/fs/shared_vm.rs crates/quench-node/src/modules/path.rs crates/quench-node/src/modules/path/shared_vm.rs crates/quench-node/src/modules/process.rs crates/quench-node/src/modules/process/shared_vm.rs crates/quench-node/src/modules/require.rs",
+        "exit_code": 0
+      },
+      {
+        "command": "git diff --check",
+        "exit_code": 0
+      },
+      {
+        "command": "target/iteration/run-parallel --profile framework-core",
+        "exit_code": 0,
+        "result": {
+          "pass": 43,
+          "skip": 0,
+          "fail": 0,
+          "timeout": 0,
+          "crash": 0,
+          "unclassified": 0,
+          "total": 43
+        }
+      },
+      {
+        "command": "target/iteration/run-parallel --one tests/node/test/parallel/<fixture> for the four named fixtures",
+        "exit_code": 0,
+        "result": [
+          "test-path-resolve.js PASS",
+          "test-process-chdir.js PASS",
+          "test-process-chdir-errormessage.js PASS",
+          "test-fs-read-stream-resume.js PASS"
+        ]
+      },
+      {
+        "command": "temporary CommonJS Module._compile driver with local Node v26.10.0 on the same four upstream fixtures",
+        "exit_code": 0,
+        "result": "all four passed"
+      }
+    ],
+    "framework_scenarios": {
+      "comparison": "Fresh target/iteration/quench-node versus local Node, exact process status/stdout/stderr",
+      "stdout": "statuses 200,200,200,200,404\n",
+      "stdout_sha256": "6a8388b87cdb9dc7618e136828b626c2213b937ea1645882ef0c33bedf95b54d",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "scenarios": {
+        "express": {"result": "MATCH", "status": [0, 0]},
+        "koa": {"result": "MATCH", "status": [0, 0]},
+        "fastify": {"result": "MATCH", "status": [0, 0]}
+      }
+    },
+    "unit_tests": "not run"
+  }
+}

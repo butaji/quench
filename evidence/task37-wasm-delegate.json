@@ -1,0 +1,163 @@
+{
+  "schema": 1,
+  "source_head": "7e60169df033dd247f34199e084e3e8080a92a29",
+  "dirty_worktree": true,
+  "source_hashes": {
+    "crates/quench-runtime-next/src/wasm.rs": "7f02dccdcca24f7beee090f845c4425db53ed3b53b568caac70d58d113983ee8",
+    "crates/quench-runtime-next/src/wasm/control.rs": "79da2819de684fcc224d1d8fa725fc099f633e6dc24b9917435070d04dc83d80",
+    "crates/quench-runtime-next/src/wasm/tag.rs": "33160f6585224921a875a1e5f7d4113919daf7d808d17b493a73c5824b4b3b27",
+    "crates/quench-runtime-next/src/wasm/scalar.rs": "24a16656e3b67bcf6e05387bfd8aa31f95deec17ee76ea558650de58b57d94f3",
+    "crates/quench-runtime-next/src/wasm/types.rs": "55d9ca4f433dd93b31fb630af626b7aeddc4e1ab60fc8350f028096ee932c044",
+    "crates/quench-runtime-next/src/wasm/reference.rs": "fd31a76373489e43b1d4b9a6852ebc5ccfec35ac2c7c8a5f9d3aebed08f875fb",
+    "crates/quench-runtime-next/src/bytecode.rs": "6083e7d036b51c35a6d656a274fd9cc40a7478de0e13415ffd499120b1ce3e84",
+    "crates/quench-runtime-next/src/bytecode/validate.rs": "6e703b3c8f9172695eab75c4463df40e9cd16a3b55a93896fc5893c1b3e524a8",
+    "crates/quench-runtime-next/src/bytecode/disassemble.rs": "2006b8f6ff91bbbabce25b53813f6fb99c1c8e61b5c4aff4b95196ef619a4721",
+    "crates/quench-runtime-next/src/bytecode/tests.rs": "6a44ebff70c1b48d568e0b8118139d672c9f504fc88b4dee538bcf7593739c47",
+    "crates/quench-runtime-next/src/compile/liveness.rs": "19d8fb9ee20fb8cd4252d7dcdf0ec6b21b7f8eee60de18c1690f7712e1b19b8b",
+    "crates/quench-runtime-next/src/heap.rs": "cc6935da8a13deb5f6b518094cc42f434189649b2fb76249be890e17f29470f1",
+    "crates/quench-runtime-next/src/heap/cell.rs": "fa5d1c8e9d87c28bcef1081f79304439bdd01d2140e5c17c423956b6c1750fae",
+    "crates/quench-runtime-next/src/heap/memory_profile.rs": "37a75b4772267318b39402fbbd86e6417cc07b95bd9724d88790ac9e6701a14d",
+    "crates/quench-runtime-next/src/heap/tests.rs": "522377682aa9ba2c8ade4d6f455a868857947b20498be61e9589e7f78cfb2a08",
+    "crates/quench-runtime-next/src/vm.rs": "04c8bd31941e645344783ac826e98850f102e679582ac99faae2c892996ea1f7",
+    "crates/quench-runtime-next/src/vm/wasm_exception.rs": "8a4a40d03b3f13d3191251a35b796c90d66e6eda97be5c4823c6af39416f196e",
+    "crates/quench-runtime-next/src/vm/wasm_table.rs": "e07a32893482739679b4f018680690c5bab3da0633b70bcac88bd61b68eb0004",
+    "crates/quench-runtime-next/src/vm/json.rs": "2af173b4980b930be17d1cea41758907f6d2de990b81b056f1a74254b34dfd08",
+    "crates/quench-runtime-next/src/vm/error.rs": "7d6125479875c707e54a166bf77f20ae4071e308b8c48828098f58c5d6421d4c",
+    "crates/quench-runtime-next/src/vm/dispatch.rs": "bd6047018bf83e516ed64ca52882cbe03391b6525f5952ebd2425165dba5098c",
+    "crates/quench-runtime-next/src/vm/dispatch_frame.rs": "97c3d34787abc4ded210adc5541ba8a18e139a57721e3dbd346b40dbf0ab68da",
+    "crates/quench-wasm/src/shared_wast.rs": "1650162b70e070148e22563b30e94131bfcd3e1d02c1b5b77d3a4db9e4b5fe0d",
+    "crates/quench-wasm/src/wast_exec.rs": "6faf936f92051eb0b3da52e4a28a1ffca39b499e60b9a77a6ddfccce32e475c2"
+  },
+  "suite_head": "67c8b9dc32c47d61c05a1681df349d01c85fa8ff",
+  "suite_dirty": false,
+  "residual_format": 67,
+  "obligation": "Resolve legacy delegate labels into shared residual handlers and lexical exceptional continuations, preserving identity, payload, tail-frame lifetime and exact skipped-handler scope.",
+  "representation": "Each lexical destination owns a temporary Delegation record with one exception frame slot and forward jump sites. Delegated protected regions write the original exception directly to that slot. Existing handler and jump operations route to a LoadLocal/WasmThrowRef continuation at the destination boundary. Normal completion bypasses it; nested outgoing delegation includes incoming continuations in its region. Boundaries resolve and discard fixups; caught-arm boundaries propagate outside that catch, body boundaries retain the target handler and function boundaries propagate to the caller. PC-bounded handlers cease to apply after branches and tail frame replacement. All destinations use existing checked local allocation, jump patching and protected-region construction. No runtime handler metadata, cell, opcode, residual format or executor is added.",
+  "scope": "Fourteen matching pinned files in disjoint exception and structured-control groups, thirteen focused directives and fourteen Node observations. Only affected runtime/frontend checks and all-target profile checks ran; no full suites, expectations, skips or inventory changes.",
+  "affected": {
+    "before": {
+      "path": "target/iteration/task37-wasm-delegate-before.json",
+      "sha256": "1fef650732a8ee7968ba051ed5e0210f7abc88474d0fba417602558f9b93274a"
+    },
+    "after": {
+      "path": "target/iteration/task37-wasm-delegate-after.json",
+      "sha256": "609b68966d3d4bbee09ad569c775f0ab76086320c7ad31e3261974e236e545bf"
+    },
+    "binary_sha256": {
+      "before": "9e758efe207c05d995c654a908f6429f66773d0c7791308c0b073596c8bc358f",
+      "after": "9a83f3d8cebe5a8fb5ce1c6e2bfd67c469a317ce19b163abd81d031a1c4c6b0a"
+    },
+    "files": 7,
+    "total": 191,
+    "before_passed": 170,
+    "passed": 191,
+    "failed": 0,
+    "gains": 21,
+    "gains_by_file": {
+      "crates/quench-wasm-test/testsuite/legacy/try_delegate.wast": 21
+    },
+    "regressions": 0,
+    "same_ids_and_input_hashes": true,
+    "all_workers_completed": true
+  },
+  "structured_control": {
+    "before": {
+      "path": "target/iteration/task37-wasm-delegate-structured-before.json",
+      "sha256": "ff52cb16efe1c13a7a59a8106e355021c96666d5ee9aae2e3663f3320a56b800"
+    },
+    "after": {
+      "path": "target/iteration/task37-wasm-delegate-structured-after.json",
+      "sha256": "1793f75295ed699bf0d88256b3d33174b829b6b1342b7b562667fc5f0d1facd8"
+    },
+    "binary_sha256": {
+      "before": "9e758efe207c05d995c654a908f6429f66773d0c7791308c0b073596c8bc358f",
+      "after": "9a83f3d8cebe5a8fb5ce1c6e2bfd67c469a317ce19b163abd81d031a1c4c6b0a"
+    },
+    "files": 7,
+    "total": 1071,
+    "before_passed": 1071,
+    "passed": 1071,
+    "failed": 0,
+    "gains": 0,
+    "gains_by_file": {},
+    "regressions": 0,
+    "same_ids_and_input_hashes": true,
+    "all_workers_completed": true
+  },
+  "controls": {
+    "before": {
+      "path": "target/iteration/task37-wasm-delegate-controls-before.json",
+      "sha256": "8014706c8bd4a2e1e30eedc1d06988079bffe8b542a38c21af18bf681e736386"
+    },
+    "after": {
+      "path": "target/iteration/task37-wasm-delegate-controls-after.json",
+      "sha256": "22908d452e6480b6eecb8054a860bc94974ae08184c916ab99ff95982d7a78a4"
+    },
+    "binary_sha256": {
+      "before": "9e758efe207c05d995c654a908f6429f66773d0c7791308c0b073596c8bc358f",
+      "after": "9a83f3d8cebe5a8fb5ce1c6e2bfd67c469a317ce19b163abd81d031a1c4c6b0a"
+    },
+    "files": 1,
+    "total": 13,
+    "before_passed": 0,
+    "passed": 13,
+    "failed": 0,
+    "gains": 13,
+    "gains_by_file": {
+      "target/iteration/legacy/task37-wasm-delegate-controls.wast": 13
+    },
+    "regressions": 0,
+    "same_ids_and_input_hashes": true,
+    "all_workers_completed": true
+  },
+  "runner": {
+    "path": "target/iteration/task37-wasm-delegate-runner",
+    "sha256": "9a83f3d8cebe5a8fb5ce1c6e2bfd67c469a317ce19b163abd81d031a1c4c6b0a"
+  },
+  "checks": {
+    "runtime": {
+      "path": "target/iteration/task37-wasm-delegate-runtime.log",
+      "sha256": "93855cb9ec26b6e780193ab47113a46490814a2c3a5f8ab5ef3e06fed0cfd7d1",
+      "passed": 35
+    },
+    "frontend": {
+      "path": "target/iteration/task37-wasm-delegate-frontend.log",
+      "sha256": "941ad0c3a92f3d8cf699657cfed39ec7c84f1b9099920070647d7130225beadc",
+      "passed": 19
+    },
+    "check": {
+      "path": "target/iteration/task37-wasm-delegate-check.log",
+      "sha256": "01195d6fab2f12d48229bff7a1cc794f370ac598e4c47b95c6f1d1c93b2cb1a6",
+      "passed": null
+    },
+    "build": {
+      "path": "target/iteration/task37-wasm-delegate-build.log",
+      "sha256": "578dd3a384d5a4d4a68127be0badfd74e2cc4a02208c32ffb5655439525b1d55",
+      "passed": null
+    }
+  },
+  "oracle": {
+    "path": "target/iteration/task37-wasm-delegate-oracle.json",
+    "sha256": "d4b9d56216c101802623de8c9511d246083dc2325e7d8ddc91d03abeb90e1055",
+    "node": "v26.10.0",
+    "observations": 14,
+    "flags": [
+      "--no-sparkplug",
+      "--no-maglev",
+      "--no-turbofan",
+      "--wasm-jitless",
+      "--experimental-wasm-custom-descriptors"
+    ],
+    "inputs": {
+      "target/iteration/task37-wasm-delegate-controls.wasm": "886efc8494b6d6be1a1e811beff6515d07f6fc87deb4da094533fbb02ae32e34",
+      "target/iteration/task37-wasm-delegate-controls.wat": "f36db82b49426c4889232ed894ea6bd151d981297f1e7fafde5e74a961c99330",
+      "target/iteration/task37-wasm-delegate-oracle.cjs": "52be50cb65ddba1020e5602ea6a71d13242005021d9119723abf0c3223fcdef3"
+    },
+    "limit": "Node reflection/getArg observations are embedding comparison contracts. Wast qualifies core values and classification, not the unfinished JavaScript exception facade. Node rejects mixing legacy and modern exception instructions within one module; this qualification uses separate pinned modules and does not claim mixed-module embedding support."
+  },
+  "javascript_scope": "Only Wasm lowering changed. Every other source hash in prior exception qualification is unchanged, including JavaScript compilation and VM error routing. Prior JavaScript qualification retains its original scope; no new Test262 run was necessary.",
+  "sources": [
+    "https://webassembly.github.io/exception-handling/legacy/exceptions/core/exec.html"
+  ],
+  "limits": "Shared types/tags, descriptor proposals, JS/foreign-host exception embedding and complete suite inventories remain open. Production cutover and Stage A closure remain open."
+}

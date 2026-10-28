@@ -1,0 +1,116 @@
+{
+  "schema": 1,
+  "source_revision": "024b0e4388c8fd687b2e77b59046f460c7cd7acd",
+  "source_dirty": false,
+  "corpus_revision": "06785cf861ac44855f168cbbe829278c2802e6de",
+  "host": {
+    "uname": "Linux f3da3ef8e0e6 6.18.55 #1 SMP Wed Oct 14 19:45:18 UTC 2026 x86_64 GNU/Linux",
+    "rustc": "",
+    "model": null,
+    "memory_bytes": 18882674688,
+    "memory_limit_bytes": 17179869184,
+    "cpu_quota": "400000 100000",
+    "logical_cpus": 4,
+    "process_metrics_backend": "Linux wait4 rusage"
+  },
+  "fixture": "quench-bench/jetstream/web-ssr",
+  "rounds_per_mode": 11,
+  "valid_and_output_equal": true,
+  "fixture_coverage": {
+    "run": 1,
+    "total": 30
+  },
+  "qualification_ready": false,
+  "report_sha256": {
+    "jit": "a8b26f6effceceafbc53aa52c74f738544c65888978169d72f09896a9ae962a5",
+    "interpreter": "47b48029a5958aecaa7ba5910b303e0ddef947091b835721a23a6cea8787f893"
+  },
+  "median": {
+    "jit": {
+      "quench": {
+        "score": 14.84,
+        "max_rss_bytes": 131399680
+      },
+      "bun": {
+        "score": 134.34,
+        "max_rss_bytes": 243310592
+      },
+      "node": {
+        "score": 128.13,
+        "max_rss_bytes": 226451456
+      }
+    },
+    "interpreter": {
+      "quench": {
+        "score": 14.69,
+        "max_rss_bytes": 130490368
+      },
+      "bun": {
+        "score": 91.09,
+        "max_rss_bytes": 123236352
+      },
+      "node": {
+        "score": 90.75,
+        "max_rss_bytes": 191008768
+      }
+    }
+  },
+  "paired_jit_vs_engines": {
+    "bun": {
+      "score": {
+        "median_ratio": 0.11359873866771782,
+        "ci95": [
+          0.10331070203681667,
+          0.11832875876791704
+        ]
+      },
+      "peak_rss_bytes": {
+        "median_ratio": 0.5389241675906327,
+        "ci95": [
+          0.5238498355745124,
+          0.5488041481379736
+        ]
+      }
+    },
+    "node": {
+      "score": {
+        "median_ratio": 0.11643784229874708,
+        "ci95": [
+          0.1124801572303273,
+          0.12850028573761121
+        ]
+      },
+      "peak_rss_bytes": {
+        "median_ratio": 0.58180370008327,
+        "ci95": [
+          0.5796897800356698,
+          0.5885644279471192
+        ]
+      }
+    }
+  },
+  "independent_jit_vs_interpreter_quench": {
+    "score": {
+      "median_ratio": 1.010211027910143,
+      "ci95": [
+        0.9516441005802708,
+        1.0578397212543553
+      ]
+    },
+    "peak_rss_bytes": {
+      "median_ratio": 1.0069684223742859,
+      "ci95": [
+        1.0034143591028692,
+        1.0103934436524633
+      ]
+    }
+  },
+  "bootstrap": {
+    "replicates": 100000,
+    "paired_statistic": "median of per-round log ratios, exponentiated",
+    "jit_vs_interpreter": "independent resampling of JIT and interpreter round samples; ratio of medians",
+    "interval": "percentile 95%"
+  },
+  "build_rustc": "rustc 1.99.1 (58cf8f9c3 2026-10-13)",
+  "host_rustc_capture": "empty in the raw report because rustc was not on the benchmark shell PATH"
+}

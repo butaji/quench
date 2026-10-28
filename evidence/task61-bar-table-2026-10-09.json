@@ -1,0 +1,214 @@
+{
+  "schema": 1,
+  "date": "2026-10-09",
+  "kind": "task61-reference-bars-diagnostic",
+  "qualification_ready": false,
+  "rounds": 1,
+  "bar_definition": {
+    "score": "highest median Score among QuickJS, Bun with JIT disabled, and Node --jitless",
+    "rss": "lowest median maximum RSS among QuickJS, Bun with JIT disabled, and Node --jitless",
+    "score_gap": "score_bar.median_score / quench.median_score; larger than 1 means Quench is behind"
+  },
+  "source_report": {
+    "path": "tasks/evidence/task61-dispatch-code-cursor-all-eight-diagnostic-2026-10-09.json",
+    "sha256": "8bbacf9db97ae78e1229d2c0a474403394fe2245e3ff8b8ad892c6dc6f71440d",
+    "source_revision": "db3aeaab0755e629e3bb53645d793c5bfd7f8331",
+    "source_dirty": true,
+    "created_unix_ns": 1791550179639471000,
+    "host": {
+      "uname": "Darwin mini.local 25.5.0 Darwin Kernel Version 25.5.0: Mon Apr 27 20:41:26 PDT 2026; root:xnu-12377.121.6~2/RELEASE_ARM64_T8132 arm64",
+      "rustc": "rustc 1.99.0 (b940084d7 2026-09-28) (Homebrew)\nbinary: rustc\ncommit-hash: b940084d7eb6a299eb4bfeb8e34901bc051e7ac4\ncommit-date: 2026-09-28\nhost: aarch64-apple-darwin\nrelease: 1.99.0\nLLVM version: 23.1.2",
+      "model": "Mac16,10",
+      "memory_bytes": 17179869184,
+      "memory_limit_bytes": null,
+      "cpu_quota": null,
+      "process_metrics_backend": "macOS /usr/bin/time -l"
+    }
+  },
+  "fixtures_ranked_by_score_gap": [
+    {
+      "fixture": "regexp",
+      "input": "quench-bench/js-engine-benchmark/v8-v7/regexp.js",
+      "quench": {
+        "median_score": 132.0,
+        "median_max_rss_bytes": 43745280,
+        "valid_samples": 1
+      },
+      "score_bar": {
+        "engine": "node",
+        "median_score": 6019.0,
+        "valid_samples": 1,
+        "gap_ratio_bar_over_quench": 45.5985
+      },
+      "rss_bar": {
+        "engine": "quickjs",
+        "median_max_rss_bytes": 7569408,
+        "valid_samples": 1,
+        "quench_over_bar_ratio": 5.7792,
+        "quench_minus_bar_bytes": 36175872
+      },
+      "output_equal": true
+    },
+    {
+      "fixture": "earley-boyer",
+      "input": "quench-bench/js-engine-benchmark/v8-v7/earley-boyer.js",
+      "quench": {
+        "median_score": 421.0,
+        "median_max_rss_bytes": 61800448,
+        "valid_samples": 1
+      },
+      "score_bar": {
+        "engine": "node",
+        "median_score": 12347.0,
+        "valid_samples": 1,
+        "gap_ratio_bar_over_quench": 29.3278
+      },
+      "rss_bar": {
+        "engine": "quickjs",
+        "median_max_rss_bytes": 17285120,
+        "valid_samples": 1,
+        "quench_over_bar_ratio": 3.5754,
+        "quench_minus_bar_bytes": 44515328
+      },
+      "output_equal": true
+    },
+    {
+      "fixture": "deltablue",
+      "input": "quench-bench/js-engine-benchmark/v8-v7/deltablue.js",
+      "quench": {
+        "median_score": 208.0,
+        "median_max_rss_bytes": 20807680,
+        "valid_samples": 1
+      },
+      "score_bar": {
+        "engine": "node",
+        "median_score": 2705.0,
+        "valid_samples": 1,
+        "gap_ratio_bar_over_quench": 13.0048
+      },
+      "rss_bar": {
+        "engine": "quickjs",
+        "median_max_rss_bytes": 2981888,
+        "valid_samples": 1,
+        "quench_over_bar_ratio": 6.978,
+        "quench_minus_bar_bytes": 17825792
+      },
+      "output_equal": true
+    },
+    {
+      "fixture": "raytrace",
+      "input": "quench-bench/js-engine-benchmark/v8-v7/raytrace.js",
+      "quench": {
+        "median_score": 713.0,
+        "median_max_rss_bytes": 21315584,
+        "valid_samples": 1
+      },
+      "score_bar": {
+        "engine": "node",
+        "median_score": 8296.0,
+        "valid_samples": 1,
+        "gap_ratio_bar_over_quench": 11.6353
+      },
+      "rss_bar": {
+        "engine": "quickjs",
+        "median_max_rss_bytes": 2621440,
+        "valid_samples": 1,
+        "quench_over_bar_ratio": 8.1312,
+        "quench_minus_bar_bytes": 18694144
+      },
+      "output_equal": true
+    },
+    {
+      "fixture": "crypto",
+      "input": "quench-bench/js-engine-benchmark/v8-v7/crypto.js",
+      "quench": {
+        "median_score": 436.0,
+        "median_max_rss_bytes": 22577152,
+        "valid_samples": 1
+      },
+      "score_bar": {
+        "engine": "bun",
+        "median_score": 4187.0,
+        "valid_samples": 1,
+        "gap_ratio_bar_over_quench": 9.6032
+      },
+      "rss_bar": {
+        "engine": "quickjs",
+        "median_max_rss_bytes": 2965504,
+        "valid_samples": 1,
+        "quench_over_bar_ratio": 7.6133,
+        "quench_minus_bar_bytes": 19611648
+      },
+      "output_equal": true
+    },
+    {
+      "fixture": "navier-stokes",
+      "input": "quench-bench/js-engine-benchmark/v8-v7/navier-stokes.js",
+      "quench": {
+        "median_score": 576.0,
+        "median_max_rss_bytes": 21692416,
+        "valid_samples": 1
+      },
+      "score_bar": {
+        "engine": "bun",
+        "median_score": 4730.0,
+        "valid_samples": 1,
+        "gap_ratio_bar_over_quench": 8.2118
+      },
+      "rss_bar": {
+        "engine": "quickjs",
+        "median_max_rss_bytes": 5472256,
+        "valid_samples": 1,
+        "quench_over_bar_ratio": 3.9641,
+        "quench_minus_bar_bytes": 16220160
+      },
+      "output_equal": true
+    },
+    {
+      "fixture": "richards",
+      "input": "quench-bench/js-engine-benchmark/v8-v7/richards.js",
+      "quench": {
+        "median_score": 439.0,
+        "median_max_rss_bytes": 20299776,
+        "valid_samples": 1
+      },
+      "score_bar": {
+        "engine": "bun",
+        "median_score": 3054.0,
+        "valid_samples": 1,
+        "gap_ratio_bar_over_quench": 6.9567
+      },
+      "rss_bar": {
+        "engine": "quickjs",
+        "median_max_rss_bytes": 2572288,
+        "valid_samples": 1,
+        "quench_over_bar_ratio": 7.8917,
+        "quench_minus_bar_bytes": 17727488
+      },
+      "output_equal": true
+    },
+    {
+      "fixture": "splay",
+      "input": "quench-bench/js-engine-benchmark/v8-v7/splay.js",
+      "quench": {
+        "median_score": 2880.0,
+        "median_max_rss_bytes": 342573056,
+        "valid_samples": 1
+      },
+      "score_bar": {
+        "engine": "node",
+        "median_score": 14646.0,
+        "valid_samples": 1,
+        "gap_ratio_bar_over_quench": 5.0854
+      },
+      "rss_bar": {
+        "engine": "bun",
+        "median_max_rss_bytes": 57835520,
+        "valid_samples": 1,
+        "quench_over_bar_ratio": 5.9232,
+        "quench_minus_bar_bytes": 284737536
+      },
+      "output_equal": true
+    }
+  ]
+}

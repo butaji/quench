@@ -1,0 +1,11 @@
+doxbee-promise  x1.029 wins 3/5 RSS 65.8->65.9
+crypto         x0.985 wins 1/3 RSS 4.9->4.9
+deltablue      x1.048 wins 2/3 RSS 4.2->4.3
+earley-boyer   x1.024 wins 2/3 RSS 10.1->10.2
+navier-stokes  x0.931 wins 1/3 RSS 5.1->5.2
+raytrace       x1.040 wins 3/3 RSS 4.3->4.3
+regexp         x0.992 wins 1/3 RSS 7.6->7.7
+richards       x0.999 wins 1/3 RSS 4.2->4.3
+splay          x1.020 wins 2/3 RSS 39.0->39.1
+v8 geomean 1.004
+

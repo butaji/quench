@@ -1,0 +1,26 @@
+diff --git a/crates/quench-runtime/src/heap/cell_access.rs b/crates/quench-runtime/src/heap/cell_access.rs
+index 773e8d342..1366d1504 100644
+--- a/crates/quench-runtime/src/heap/cell_access.rs
++++ b/crates/quench-runtime/src/heap/cell_access.rs
+@@ -9,6 +9,10 @@ impl Cell {
+     }
+ 
+     pub(crate) fn object(&self) -> Option<&Object> {
++        if let Self::Object(object) | Self::Array { object, .. } = self {
++            return Some(object);
++        }
++
+         match self {
+             Self::Object(object)
+             | Self::Array { object, .. }
+@@ -39,6 +43,10 @@ impl Cell {
+     }
+ 
+     pub(crate) fn object_mut(&mut self) -> Option<&mut Object> {
++        if let Self::Object(object) | Self::Array { object, .. } = self {
++            return Some(object);
++        }
++
+         match self {
+             Self::Object(object)
+             | Self::Array { object, .. }

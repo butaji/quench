@@ -1,0 +1,26 @@
+{
+  "candidate_source": "41e9b9f03b78fc2e22aa2532415f127694fe84a6",
+  "binaries": {
+    "cli": {
+      "path": "work/quench-callsite-qualified",
+      "sha256": "fa9ed45f1a8550f4c28bad1f527d93e0a3a90b1f5014e0cfd1bbe6b6b99d7ca5",
+      "sha256_after": "fa9ed45f1a8550f4c28bad1f527d93e0a3a90b1f5014e0cfd1bbe6b6b99d7ca5"
+    },
+    "runner": {
+      "path": "work/host-build/iteration/run-parallel",
+      "sha256": "2402f6a05a14188b4d4e61632685c9704879f45c7dd47a1150169a953d9c551e",
+      "sha256_after": "2402f6a05a14188b4d4e61632685c9704879f45c7dd47a1150169a953d9c551e"
+    },
+    "api_tests": {
+      "path": "work/host-build/iteration/deps/child_entry-a67896ab5b9c716a",
+      "sha256": "b39cf153a01c3c88c2a6dffb25d2d334481d6b35e947a0f4fefe00971644d513",
+      "sha256_after": "b39cf153a01c3c88c2a6dffb25d2d334481d6b35e947a0f4fefe00971644d513"
+    }
+  },
+  "identity_checks": {
+    "cli": true,
+    "runner": true,
+    "api_tests": true
+  },
+  "api_exit_code": 101
+}

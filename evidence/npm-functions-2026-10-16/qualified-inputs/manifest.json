@@ -1,0 +1,38 @@
+[
+  {
+    "path": "tests/npm-top300/inventory.json",
+    "sha256": "d75fd451e8fe84c11eb1e1c0522745ae99a3deed4e03841a3567e147a933e303",
+    "bytes": 176152,
+    "compressed": "tests__npm-top300__inventory.json.gz"
+  },
+  {
+    "path": "tests/npm-top300/package-lock.json",
+    "sha256": "62e8fa517a95fd709da2c1ed7bca2ff63cb7b9133d8444ec590f08b680634d4d",
+    "bytes": 387717,
+    "compressed": "tests__npm-top300__package-lock.json.gz"
+  },
+  {
+    "path": "tests/npm-top300/scenario.mjs",
+    "sha256": "2e3d7ed66d05eb4f88209f00647093b30de256ed421f9a2f31f4758c501e401b",
+    "bytes": 55603,
+    "compressed": "tests__npm-top300__scenario.mjs.gz"
+  },
+  {
+    "path": "tests/npm-top300/surface.mjs",
+    "sha256": "1c84e7ad8124edebae130476c74b1f05fa0eb486e7d67b2c771b6e063b9a6595",
+    "bytes": 6725,
+    "compressed": "tests__npm-top300__surface.mjs.gz"
+  },
+  {
+    "path": "crates/quench-node-test/src/bin/npm-coverage.rs",
+    "sha256": "4bf533ae2f99817e75d2610aff43eb433bf6dd074b7bbaa977c8d74ed511045c",
+    "bytes": 9067,
+    "compressed": "crates__quench-node-test__src__bin__npm-coverage.rs.gz"
+  },
+  {
+    "path": "crates/quench-node-test/tests/child_entry.rs",
+    "sha256": "d5d42c49c803de51cebb08c11c4873773bfc3d372e3b4a463ef2e9fe69c78a89",
+    "bytes": 533892,
+    "compressed": "crates__quench-node-test__tests__child_entry.rs.gz"
+  }
+]

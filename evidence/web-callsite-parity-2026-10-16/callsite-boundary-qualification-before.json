@@ -1,0 +1,17 @@
+{
+  "candidate_source": "53ba17cbd2053ee868281b66aa67706b4551a5d4",
+  "binaries": {
+    "cli": {
+      "path": "work/quench-callsite-boundary-qualified",
+      "sha256": "684ba88efe2fc0641d019a137e137a07b8e9138c6ea613edf8ee93b07bc6e395"
+    },
+    "runner": {
+      "path": "work/host-build/iteration/run-parallel",
+      "sha256": "b1ffe8645c6f08cc98cd47dd3298e87cb49fa682f2b16340b320d231f186feb7"
+    },
+    "api_tests": {
+      "path": "work/host-build/iteration/deps/child_entry-a67896ab5b9c716a",
+      "sha256": "e529800103c69fa05bf145848f15a8c2a74e30bfaae74fe4ebcab941b25d0015"
+    }
+  }
+}

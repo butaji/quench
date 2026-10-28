@@ -1,0 +1,30 @@
+    Finished `production` profile [optimized] target(s) in 5m 14s
+== memory-first--jit
+richards       rss A 4440-4504  B 4144-4396   score med A 1202 B 1145
+deltablue      rss A 5496-5500  B 4420-4540   score med A 1117 B 1047
+crypto         rss A 6836-6840  B 4988-5276   score med A 4188 B 4533
+raytrace       rss A 4368-4760  B 4396-4396   score med A 2093 B 2045
+earley-boyer   rss A 8088-8308  B 8116-8184   score med A 3071 B 3106
+regexp         rss A 7336-7576  B 7540-7564   score med A 2364 B 2155
+splay          rss A 32488-32560  B 32476-32492   score med A 3431 B 3181
+navier-stokes  rss A 10772-10976  B 8696-8904   score med A 18182 B 18334
+== throughput--jit
+richards       rss A 5388-6028  B 5052-5308   score med A 1208 B 1205
+deltablue      rss A 9104-9240  B 7792-7792   score med A 1048 B 1200
+crypto         rss A 11636-13172  B 9232-9660   score med A 4433 B 4452
+raytrace       rss A 8144-8144  B 7452-7456   score med A 2258 B 2574
+earley-boyer   rss A 12440-12580  B 11768-12296   score med A 3857 B 4012
+regexp         rss A 13032-13048  B 12260-12296   score med A 2386 B 2466
+splay          rss A 34420-34452  B 33560-33560   score med A 3429 B 3504
+navier-stokes  rss A 11112-11240  B 9052-9124   score med A 18214 B 17487
+== memory-first
+richards       rss A 4188-4268  B 4268-4272   score med A 1125 B 1366
+deltablue      rss A 4272-4360  B 4272-4272   score med A 1021 B 1093
+crypto         rss A 4924-4960  B 4796-4808   score med A 2171 B 2402
+raytrace       rss A 4396-4400  B 4372-4396   score med A 1966 B 2019
+earley-boyer   rss A 7908-8180  B 7936-8120   score med A 3067 B 3208
+regexp         rss A 7408-7440  B 7328-7540   score med A 2354 B 2261
+splay          rss A 32424-32440  B 32216-32436   score med A 3673 B 3624
+navier-stokes  rss A 5652-5656  B 5524-5652   score med A 2669 B 2660
+
+[exited with code 0]

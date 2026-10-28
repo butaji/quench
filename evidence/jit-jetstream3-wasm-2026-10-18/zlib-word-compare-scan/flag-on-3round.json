@@ -1,0 +1,995 @@
+{
+  "schema": 13,
+  "suite": "jet-stream3",
+  "jit_mode": "jit",
+  "jit_diagnostics": false,
+  "jit_wasm_root": null,
+  "jit_wasm_root_only": false,
+  "jit_wasm_root_first": false,
+  "jit_wasm_selective": true,
+  "jit_wasm_memcpy_ab": false,
+  "jit_wasm_memcpy_raw_ab": false,
+  "jit_wasm_memcpy_early_ab": false,
+  "jit_wasm_compare_branch_ab": false,
+  "created_unix_ns": 1792359356045472373,
+  "rounds_requested": 3,
+  "timeout_ms": 600000,
+  "source_revision": "ab37930e6c1fa8cb22b8458197ca9f9afdd4e6da",
+  "source_dirty": false,
+  "corpus": {
+    "pinned_revision": "06785cf861ac44855f168cbbe829278c2802e6de",
+    "checkout_revision": "06785cf861ac44855f168cbbe829278c2802e6de",
+    "checkout_clean": true,
+    "fixture_set_matches": false
+  },
+  "host": {
+    "uname": "Linux f3da3ef8e0e6 6.18.55 #1 SMP Wed Oct 14 19:45:18 UTC 2026 x86_64 GNU/Linux",
+    "rustc": "rustc 1.99.1 (58cf8f9c3 2026-10-13)\nbinary: rustc\ncommit-hash: 58cf8f9c35b355199727627d07ae34a4e2846d67\ncommit-date: 2026-10-13\nhost: x86_64-unknown-linux-gnu\nrelease: 1.99.1\nLLVM version: 23.1.1",
+    "model": null,
+    "memory_bytes": 18882674688,
+    "memory_limit_bytes": 17179869184,
+    "cpu_quota": "400000 100000",
+    "logical_cpus": 4,
+    "process_metrics_backend": "Linux wait4 rusage"
+  },
+  "engines": [
+    {
+      "name": "quench",
+      "executable": "/tmp/quench-node-production-wordscan-wrapper",
+      "executable_sha256": "48616543739748f25363d3d240a930a60d2cef79a793824c9f47fbc51d91336b",
+      "version": "Quench shared-VM JIT build; package 0.1.0",
+      "argv": [
+        "--jit"
+      ],
+      "environment": {
+        "HOME": "/home/agent",
+        "LANG": "C.UTF-8",
+        "LC_ALL": "C.UTF-8",
+        "PATH": "/home/agent/.cargo/bin:/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/override:/opt/codex/runtimes/codex-primary-runtime/dependencies/python/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin:/opt/codex/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/fallback",
+        "QUENCH_WASM_JIT_SELECTIVE": "1"
+      },
+      "inherits_environment": false,
+      "jit_mode": "enabled-by-cli-flag",
+      "jit_proof_command": [
+        "/tmp/quench-node-production-wordscan-wrapper",
+        "--jit"
+      ],
+      "jit_proof": "the measured Quench process is launched with --jit; opt-in selective Wasm hot-root tiering enabled with QUENCH_WASM_JIT_SELECTIVE=1; not qualification mode",
+      "webassembly": true
+    },
+    {
+      "name": "bun",
+      "executable": "/workspace/.local/bench-runtimes/bun-v1.4.3/bun-linux-x64/bun",
+      "executable_sha256": "7ce7d6b654eddeec20afddf2396317fba6dc19ab52788a27e894e1806bf8f24b",
+      "version": "1.4.3",
+      "argv": [],
+      "environment": {
+        "BUN_JSC_useJIT": "1",
+        "HOME": "/home/agent",
+        "LANG": "C.UTF-8",
+        "LC_ALL": "C.UTF-8",
+        "PATH": "/home/agent/.cargo/bin:/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/override:/opt/codex/runtimes/codex-primary-runtime/dependencies/python/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin:/opt/codex/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/fallback"
+      },
+      "inherits_environment": false,
+      "jit_mode": "enabled-and-probed",
+      "jit_proof_command": [
+        "BUN_JSC_useJIT=1",
+        "BUN_JSC_dumpOptions=1",
+        "/workspace/.local/bench-runtimes/bun-v1.4.3/bun-linux-x64/bun",
+        "-e",
+        "console.log(Bun.version)"
+      ],
+      "jit_proof": "command succeeded and reported \"useJIT=true\": 1.4.3\n\nModified JSC options:\n   dumpOptions=1 (default: 0)\n   useJIT=true (default: true)",
+      "webassembly": true
+    },
+    {
+      "name": "node",
+      "executable": "/workspace/.local/bench-runtimes/node-v26.12.0-linux-x64/bin/node",
+      "executable_sha256": "caa24debe02770c92a70677e2a62ca98890150e7ac1c17bcfe31bcc98cc89943",
+      "version": "v26.12.0",
+      "argv": [],
+      "environment": {
+        "HOME": "/home/agent",
+        "LANG": "C.UTF-8",
+        "LC_ALL": "C.UTF-8",
+        "PATH": "/home/agent/.cargo/bin:/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/override:/opt/codex/runtimes/codex-primary-runtime/dependencies/python/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin:/opt/codex/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/fallback"
+      },
+      "inherits_environment": false,
+      "jit_mode": "enabled-and-probed",
+      "jit_proof_command": [
+        "/workspace/.local/bench-runtimes/node-v26.12.0-linux-x64/bin/node",
+        "--trace-opt",
+        "--no-concurrent-recompilation",
+        "-e",
+        "function hot(x) { return x + 1; } for (let i = 0; i < 100000; i++) hot(i);"
+      ],
+      "jit_proof": "command succeeded and reported \"completed compiling\": [marking 0x0ef104db7a31 <JSFunction hot (sfi = 0xef104db4211)> for optimization to MAGLEV, ConcurrencyMode::kConcurrent, reason: hot and stable]\n[compiling method 0x0ef104db7a31 <JSFunction hot (sfi = 0xef104db4211)> (target MAGLEV), mode: ConcurrencyMode::kSynchronous]\n[completed compiling 0x0ef104db7a31 <JSFunction hot (sfi = 0xef104db4211)> (target MAGLEV) - took 0.000, 0.102, 0.001 ms]\n[marking 0x0ef104db79c1 <JSFunction (sfi = 0xef104db4169)> for optimization to MAGLEV, ConcurrencyMode::kConcurrent, reason: hot and stable]\n[marking 0x0ef104db7a31 <JSFunction hot (sfi = 0xef104db4211)> for optimization to TURBOFAN_JS, ConcurrencyMode::kConcurrent, reason: hot and stable]\n[compiling method 0x0ef104db7a31 <JSFunction hot (sfi = 0xef104db4211)> (target TURBOFAN_JS), mode: ConcurrencyMode::kSynchronous]\n[completed compiling 0x0ef104db7a31 <JSFunction hot (sfi = 0xef104db4211)> (target TURBOFAN_JS) - took 0.002, 0.325, 0.006 ms]\n[compiling method 0x0ef104db79c1 <JSFunction (sfi = 0xef104db4169)> (target MAGLEV) OSR, mode: ConcurrencyMode::kSynchronous]\n[completed compiling 0x0ef104db79c1 <JSFunction (sfi = 0xef104db4169)> (target MAGLEV) OSR - took 0.001, 0.131, 0.002 ms]",
+      "webassembly": true
+    }
+  ],
+  "suite_inputs": [
+    {
+      "path": "quench-bench/jetstream/cli.js",
+      "size_bytes": 5600,
+      "modified_unix_ns": 1792229119091972874,
+      "sha256": "22ee4b987b07940dd7397ed7f88345c71acc415e2549b64bf45ba43f7572e5f0"
+    },
+    {
+      "path": "quench-bench/jetstream/JetStreamDriver.js",
+      "size_bytes": 110633,
+      "modified_unix_ns": 1792229118593919588,
+      "sha256": "f105bddfd402514b2325fe9ea6e1df5ce776a4ad4570a8006c7c8559159440fc"
+    },
+    {
+      "path": "quench-bench/jetstream/utils/params.js",
+      "size_bytes": 8047,
+      "modified_unix_ns": 1792229119770704165,
+      "sha256": "0e9d28c0fd2de5583c64678ffc61307b10d983bcb419fe2e3bb383c8b7ded647"
+    },
+    {
+      "path": "quench-bench/jetstream/utils/shell-config.js",
+      "size_bytes": 2352,
+      "modified_unix_ns": 1792229119770904880,
+      "sha256": "9a83000be5e6526a3c26a414fc3a23043e57ef8e4cd67aaff459066a2c347bca"
+    }
+  ],
+  "selected_fixtures": [
+    "quench-bench/jetstream/zlib-wasm"
+  ],
+  "fixtures": {
+    "quench-bench/jetstream/zlib-wasm": {
+      "source": {
+        "path": "quench-bench/jetstream/zlib-wasm",
+        "size_bytes": 4096,
+        "modified_unix_ns": 1792229120207823858,
+        "sha256": "811132ae4026d7290d20a94fcd055745462d4f9d338360ef32f38bd0197583e1"
+      },
+      "valid": true,
+      "output_equal": true,
+      "summaries": {
+        "bun": {
+          "median_score": 83.85,
+          "median_max_rss_bytes": 119648256,
+          "valid_samples": 3
+        },
+        "node": {
+          "median_score": 88.8,
+          "median_max_rss_bytes": 118628352,
+          "valid_samples": 3
+        },
+        "quench": {
+          "median_score": 13.46,
+          "median_max_rss_bytes": 118337536,
+          "valid_samples": 3
+        }
+      },
+      "unsupported_engines": {},
+      "rounds": [
+        {
+          "round": 0,
+          "execution_order": [
+            "quench",
+            "bun",
+            "node"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 1991789363,
+              "peak_rss_bytes": 120029184,
+              "score": 90.88,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 24988,
+              "page_reclaims": 24988,
+              "involuntary_context_switches": 52,
+              "host_before": {
+                "captured_unix_ns": 1792359369817891919,
+                "load_average": {
+                  "one_minute": 1.21,
+                  "five_minutes": 1.51,
+                  "fifteen_minutes": 1.29
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 596329,
+                    "cpu_percent": 1.1,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 200,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.0,
+                    "command": "containerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792359371814171137,
+                "load_average": {
+                  "one_minute": 1.19,
+                  "five_minutes": 1.5,
+                  "fifteen_minutes": 1.29
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 596329,
+                    "cpu_percent": 1.1,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 200,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.0,
+                    "command": "containerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "Starting JetStream3\nRunning zlib-wasm:\nzlib-wasm First-Score                           77.50 pts\nzlib-wasm Worst-Score                           94.41 pts\nzlib-wasm Average-Score                        102.59 pts\nzlib-wasm Score                                 90.88 pts\nzlib-wasm First-Time                            64.52 ms \nzlib-wasm Worst-Time                            52.96 ms \nzlib-wasm Average-Time                          48.74 ms \nzlib-wasm Total-Time                           166.22 ms \nzlib-wasm Wall-Time                           1972.79 ms \n\nOverall:\nOverall First-Score                             77.50 pts\nOverall Worst-Score                             94.41 pts\nOverall Average-Score                          102.59 pts\nOverall First-Time                              64.52 ms \nOverall Worst-Time                              52.96 ms \nOverall Average-Time                            48.74 ms \n\nOverall Score                                   90.88 pts\nOverall Wall-Time                             1973.84 ms \n\n",
+              "stderr": ""
+            },
+            "node": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2130807622,
+              "peak_rss_bytes": 119783424,
+              "score": 88.8,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 11957,
+              "page_reclaims": 11957,
+              "involuntary_context_switches": 16,
+              "host_before": {
+                "captured_unix_ns": 1792359371818901687,
+                "load_average": {
+                  "one_minute": 1.19,
+                  "five_minutes": 1.5,
+                  "fifteen_minutes": 1.29
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 596329,
+                    "cpu_percent": 1.1,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 200,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.0,
+                    "command": "containerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792359373954197652,
+                "load_average": {
+                  "one_minute": 1.19,
+                  "five_minutes": 1.5,
+                  "fifteen_minutes": 1.29
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 596329,
+                    "cpu_percent": 1.1,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 200,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.0,
+                    "command": "containerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "Starting JetStream3\nRunning zlib-wasm:\nzlib-wasm First-Score                           86.09 pts\nzlib-wasm Worst-Score                           84.65 pts\nzlib-wasm Average-Score                         96.10 pts\nzlib-wasm Score                                 88.80 pts\nzlib-wasm First-Time                            58.08 ms \nzlib-wasm Worst-Time                            59.07 ms \nzlib-wasm Average-Time                          52.03 ms \nzlib-wasm Total-Time                           169.18 ms \nzlib-wasm Wall-Time                           2099.42 ms \n\nOverall:\nOverall First-Score                             86.09 pts\nOverall Worst-Score                             84.65 pts\nOverall Average-Score                           96.10 pts\nOverall First-Time                              58.08 ms \nOverall Worst-Time                              59.07 ms \nOverall Average-Time                            52.03 ms \n\nOverall Score                                   88.80 pts\nOverall Wall-Time                             2101.37 ms \n\n",
+              "stderr": ""
+            },
+            "quench": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 13659420282,
+              "peak_rss_bytes": 118321152,
+              "score": 13.46,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 3331773,
+              "page_reclaims": 3331773,
+              "involuntary_context_switches": 19,
+              "host_before": {
+                "captured_unix_ns": 1792359356147941510,
+                "load_average": {
+                  "one_minute": 1.25,
+                  "five_minutes": 1.53,
+                  "fifteen_minutes": 1.29
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 596329,
+                    "cpu_percent": 0.9,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 200,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.0,
+                    "command": "containerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792359369812621353,
+                "load_average": {
+                  "one_minute": 1.21,
+                  "five_minutes": 1.51,
+                  "fifteen_minutes": 1.29
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 596329,
+                    "cpu_percent": 1.1,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 200,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.0,
+                    "command": "containerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "Starting JetStream3\nRunning zlib-wasm:\nzlib-wasm First-Score                           11.42 pts\nzlib-wasm Worst-Score                           14.06 pts\nzlib-wasm Average-Score                         15.19 pts\nzlib-wasm Score                                 13.46 pts\nzlib-wasm First-Time                           437.82 ms \nzlib-wasm Worst-Time                           355.64 ms \nzlib-wasm Average-Time                         329.24 ms \nzlib-wasm Total-Time                          1122.70 ms \nzlib-wasm Wall-Time                           13344.89 ms \n\nOverall:\nOverall First-Score                             11.42 pts\nOverall Worst-Score                             14.06 pts\nOverall Average-Score                           15.19 pts\nOverall First-Time                             437.82 ms \nOverall Worst-Time                             355.64 ms \nOverall Average-Time                           329.24 ms \n\nOverall Score                                   13.46 pts\nOverall Wall-Time                             13348.25 ms \n\n",
+              "stderr": ""
+            }
+          }
+        },
+        {
+          "round": 1,
+          "execution_order": [
+            "bun",
+            "node",
+            "quench"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2170132195,
+              "peak_rss_bytes": 119648256,
+              "score": 81.76,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 25171,
+              "page_reclaims": 25171,
+              "involuntary_context_switches": 57,
+              "host_before": {
+                "captured_unix_ns": 1792359373958564976,
+                "load_average": {
+                  "one_minute": 1.19,
+                  "five_minutes": 1.5,
+                  "fifteen_minutes": 1.29
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 596329,
+                    "cpu_percent": 1.1,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 200,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.0,
+                    "command": "containerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792359376133878448,
+                "load_average": {
+                  "one_minute": 1.18,
+                  "five_minutes": 1.49,
+                  "fifteen_minutes": 1.28
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 596329,
+                    "cpu_percent": 1.1,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 200,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.0,
+                    "command": "containerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "Starting JetStream3\nRunning zlib-wasm:\nzlib-wasm First-Score                           77.60 pts\nzlib-wasm Worst-Score                           75.10 pts\nzlib-wasm Average-Score                         93.78 pts\nzlib-wasm Score                                 81.76 pts\nzlib-wasm First-Time                            64.43 ms \nzlib-wasm Worst-Time                            66.58 ms \nzlib-wasm Average-Time                          53.31 ms \nzlib-wasm Total-Time                           184.32 ms \nzlib-wasm Wall-Time                           2150.92 ms \n\nOverall:\nOverall First-Score                             77.60 pts\nOverall Worst-Score                             75.10 pts\nOverall Average-Score                           93.78 pts\nOverall First-Time                              64.43 ms \nOverall Worst-Time                              66.58 ms \nOverall Average-Time                            53.31 ms \n\nOverall Score                                   81.76 pts\nOverall Wall-Time                             2152.07 ms \n\n",
+              "stderr": ""
+            },
+            "node": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2141320388,
+              "peak_rss_bytes": 118628352,
+              "score": 86.89,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 11822,
+              "page_reclaims": 11822,
+              "involuntary_context_switches": 18,
+              "host_before": {
+                "captured_unix_ns": 1792359376139927847,
+                "load_average": {
+                  "one_minute": 1.18,
+                  "five_minutes": 1.49,
+                  "fifteen_minutes": 1.28
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 596329,
+                    "cpu_percent": 1.1,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 200,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.0,
+                    "command": "containerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792359378286679971,
+                "load_average": {
+                  "one_minute": 1.18,
+                  "five_minutes": 1.49,
+                  "fifteen_minutes": 1.28
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 596329,
+                    "cpu_percent": 1.2,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 200,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.0,
+                    "command": "containerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "Starting JetStream3\nRunning zlib-wasm:\nzlib-wasm First-Score                           79.11 pts\nzlib-wasm Worst-Score                           86.41 pts\nzlib-wasm Average-Score                         95.98 pts\nzlib-wasm Score                                 86.89 pts\nzlib-wasm First-Time                            63.20 ms \nzlib-wasm Worst-Time                            57.86 ms \nzlib-wasm Average-Time                          52.09 ms \nzlib-wasm Total-Time                           173.16 ms \nzlib-wasm Wall-Time                           2105.12 ms \n\nOverall:\nOverall First-Score                             79.11 pts\nOverall Worst-Score                             86.41 pts\nOverall Average-Score                           95.98 pts\nOverall First-Time                              63.20 ms \nOverall Worst-Time                              57.86 ms \nOverall Average-Time                            52.09 ms \n\nOverall Score                                   86.89 pts\nOverall Wall-Time                             2107.25 ms \n\n",
+              "stderr": ""
+            },
+            "quench": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 13516524607,
+              "peak_rss_bytes": 118337536,
+              "score": 13.16,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 3331742,
+              "page_reclaims": 3331742,
+              "involuntary_context_switches": 745,
+              "host_before": {
+                "captured_unix_ns": 1792359378291116144,
+                "load_average": {
+                  "one_minute": 1.18,
+                  "five_minutes": 1.49,
+                  "fifteen_minutes": 1.28
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 596329,
+                    "cpu_percent": 1.2,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 200,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.0,
+                    "command": "containerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792359391812043841,
+                "load_average": {
+                  "one_minute": 1.14,
+                  "five_minutes": 1.47,
+                  "fifteen_minutes": 1.28
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 596329,
+                    "cpu_percent": 1.2,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 200,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.0,
+                    "command": "containerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "Starting JetStream3\nRunning zlib-wasm:\nzlib-wasm First-Score                           10.43 pts\nzlib-wasm Worst-Score                           14.19 pts\nzlib-wasm Average-Score                         15.40 pts\nzlib-wasm Score                                 13.16 pts\nzlib-wasm First-Time                           479.18 ms \nzlib-wasm Worst-Time                           352.29 ms \nzlib-wasm Average-Time                         324.59 ms \nzlib-wasm Total-Time                          1156.06 ms \nzlib-wasm Wall-Time                           13202.44 ms \n\nOverall:\nOverall First-Score                             10.43 pts\nOverall Worst-Score                             14.19 pts\nOverall Average-Score                           15.40 pts\nOverall First-Time                             479.18 ms \nOverall Worst-Time                             352.29 ms \nOverall Average-Time                           324.59 ms \n\nOverall Score                                   13.16 pts\nOverall Wall-Time                             13205.67 ms \n\n",
+              "stderr": ""
+            }
+          }
+        },
+        {
+          "round": 2,
+          "execution_order": [
+            "node",
+            "quench",
+            "bun"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2083419242,
+              "peak_rss_bytes": 119513088,
+              "score": 83.85,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 24577,
+              "page_reclaims": 24577,
+              "involuntary_context_switches": 68,
+              "host_before": {
+                "captured_unix_ns": 1792359407683469115,
+                "load_average": {
+                  "one_minute": 1.1,
+                  "five_minutes": 1.44,
+                  "fifteen_minutes": 1.27
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 596329,
+                    "cpu_percent": 1.2,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 200,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.0,
+                    "command": "containerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792359409778866212,
+                "load_average": {
+                  "one_minute": 1.1,
+                  "five_minutes": 1.44,
+                  "fifteen_minutes": 1.27
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 596329,
+                    "cpu_percent": 1.2,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 200,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.0,
+                    "command": "containerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "Starting JetStream3\nRunning zlib-wasm:\nzlib-wasm First-Score                           78.23 pts\nzlib-wasm Worst-Score                           75.71 pts\nzlib-wasm Average-Score                         99.55 pts\nzlib-wasm Score                                 83.85 pts\nzlib-wasm First-Time                            63.92 ms \nzlib-wasm Worst-Time                            66.04 ms \nzlib-wasm Average-Time                          50.23 ms \nzlib-wasm Total-Time                           180.18 ms \nzlib-wasm Wall-Time                           2041.25 ms \n\nOverall:\nOverall First-Score                             78.23 pts\nOverall Worst-Score                             75.71 pts\nOverall Average-Score                           99.55 pts\nOverall First-Time                              63.92 ms \nOverall Worst-Time                              66.04 ms \nOverall Average-Time                            50.23 ms \n\nOverall Score                                   83.85 pts\nOverall Wall-Time                             2048.43 ms \n\n",
+              "stderr": ""
+            },
+            "node": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2100081583,
+              "peak_rss_bytes": 116662272,
+              "score": 89.83,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 11845,
+              "page_reclaims": 11845,
+              "involuntary_context_switches": 37,
+              "host_before": {
+                "captured_unix_ns": 1792359391816831269,
+                "load_average": {
+                  "one_minute": 1.14,
+                  "five_minutes": 1.47,
+                  "fifteen_minutes": 1.28
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 596329,
+                    "cpu_percent": 1.2,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 200,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.0,
+                    "command": "containerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792359393921472855,
+                "load_average": {
+                  "one_minute": 1.14,
+                  "five_minutes": 1.47,
+                  "fifteen_minutes": 1.28
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 596329,
+                    "cpu_percent": 1.2,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 200,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.0,
+                    "command": "containerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "Starting JetStream3\nRunning zlib-wasm:\nzlib-wasm First-Score                           84.52 pts\nzlib-wasm Worst-Score                           87.90 pts\nzlib-wasm Average-Score                         97.56 pts\nzlib-wasm Score                                 89.83 pts\nzlib-wasm First-Time                            59.16 ms \nzlib-wasm Worst-Time                            56.88 ms \nzlib-wasm Average-Time                          51.25 ms \nzlib-wasm Total-Time                           167.29 ms \nzlib-wasm Wall-Time                           2064.65 ms \n\nOverall:\nOverall First-Score                             84.52 pts\nOverall Worst-Score                             87.90 pts\nOverall Average-Score                           97.56 pts\nOverall First-Time                              59.16 ms \nOverall Worst-Time                              56.88 ms \nOverall Average-Time                            51.25 ms \n\nOverall Score                                   89.83 pts\nOverall Wall-Time                             2066.59 ms \n\n",
+              "stderr": ""
+            },
+            "quench": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 13748103223,
+              "peak_rss_bytes": 118382592,
+              "score": 13.46,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 3331807,
+              "page_reclaims": 3331807,
+              "involuntary_context_switches": 43,
+              "host_before": {
+                "captured_unix_ns": 1792359393925768035,
+                "load_average": {
+                  "one_minute": 1.14,
+                  "five_minutes": 1.47,
+                  "fifteen_minutes": 1.28
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 596329,
+                    "cpu_percent": 1.2,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 200,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.0,
+                    "command": "containerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792359407679225052,
+                "load_average": {
+                  "one_minute": 1.1,
+                  "five_minutes": 1.44,
+                  "fifteen_minutes": 1.27
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 596329,
+                    "cpu_percent": 1.2,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 200,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.0,
+                    "command": "containerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "Starting JetStream3\nRunning zlib-wasm:\nzlib-wasm First-Score                           11.65 pts\nzlib-wasm Worst-Score                           13.90 pts\nzlib-wasm Average-Score                         15.06 pts\nzlib-wasm Score                                 13.46 pts\nzlib-wasm First-Time                           429.31 ms \nzlib-wasm Worst-Time                           359.70 ms \nzlib-wasm Average-Time                         331.93 ms \nzlib-wasm Total-Time                          1120.94 ms \nzlib-wasm Wall-Time                           13438.51 ms \n\nOverall:\nOverall First-Score                             11.65 pts\nOverall Worst-Score                             13.90 pts\nOverall Average-Score                           15.06 pts\nOverall First-Time                             429.31 ms \nOverall Worst-Time                             359.70 ms \nOverall Average-Time                           331.93 ms \n\nOverall Score                                   13.46 pts\nOverall Wall-Time                             13441.67 ms \n\n",
+              "stderr": ""
+            }
+          }
+        }
+      ]
+    }
+  },
+  "complete": true,
+  "qualification_ready": false
+}

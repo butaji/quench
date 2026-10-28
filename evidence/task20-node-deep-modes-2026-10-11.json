@@ -1,0 +1,24 @@
+{
+  "scope": "Shared Rust assert/util comparison modes; foundational semantics, not full deep-comparison coverage.",
+  "node_oracle": "v24.19.0",
+  "oracle_regression": "15 value pairs across deepEqual/notDeepEqual/deepStrictEqual/notDeepStrictEqual/util.isDeepStrictEqual and skipPrototype, plus missing arguments, NaN equality, and poisoned guest Object/Array methods. Includes cycles, distinct functions/Symbols, enumerable Symbol identity/value, array holes/length and prototypes.",
+  "validation": "All 6 child-entry integration tests pass.",
+  "upstream_assert_subset": {
+    "before": {
+      "pass": 4,
+      "fail": 9,
+      "timeout": 1
+    },
+    "after": {
+      "pass": 4,
+      "fail": 9,
+      "timeout": 1
+    },
+    "total": 14,
+    "timeout_secs": 10,
+    "jobs": 2,
+    "inventory_hash": "8ea2039d6ae15ebb"
+  },
+  "next": "Intrinsic boxed/Date/RegExp/collection/binary payload comparison and large typed-array timeout.",
+  "performance_claim": false
+}

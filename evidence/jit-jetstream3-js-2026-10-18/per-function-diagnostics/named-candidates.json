@@ -1,0 +1,753 @@
+{
+  "schema": 13,
+  "suite": "jet-stream3",
+  "jit_mode": "jit",
+  "jit_diagnostics": true,
+  "jit_wasm_root": null,
+  "jit_wasm_root_only": false,
+  "jit_wasm_root_first": false,
+  "jit_wasm_selective": false,
+  "jit_wasm_memcpy_ab": false,
+  "jit_wasm_memcpy_raw_ab": false,
+  "jit_wasm_memcpy_early_ab": false,
+  "jit_wasm_compare_branch_ab": false,
+  "created_unix_ns": 1792355254832355185,
+  "rounds_requested": 1,
+  "timeout_ms": 600000,
+  "source_revision": "02690d842c0078290df53d613da2f26da50b82f1",
+  "source_dirty": true,
+  "corpus": {
+    "pinned_revision": "06785cf861ac44855f168cbbe829278c2802e6de",
+    "checkout_revision": "06785cf861ac44855f168cbbe829278c2802e6de",
+    "checkout_clean": true,
+    "fixture_set_matches": false
+  },
+  "host": {
+    "uname": "Linux f3da3ef8e0e6 6.18.55 #1 SMP Wed Oct 14 19:45:18 UTC 2026 x86_64 GNU/Linux",
+    "rustc": "rustc 1.99.1 (58cf8f9c3 2026-10-13)\nbinary: rustc\ncommit-hash: 58cf8f9c35b355199727627d07ae34a4e2846d67\ncommit-date: 2026-10-13\nhost: x86_64-unknown-linux-gnu\nrelease: 1.99.1\nLLVM version: 23.1.1",
+    "model": null,
+    "memory_bytes": 18882674688,
+    "memory_limit_bytes": 17179869184,
+    "cpu_quota": "400000 100000",
+    "logical_cpus": 4,
+    "process_metrics_backend": "Linux wait4 rusage"
+  },
+  "engines": [
+    {
+      "name": "quench",
+      "executable": "/workspace/quench/target/iteration/quench-node",
+      "executable_sha256": "ffeddbf045c337a4d6cd0fdaa0ecabdec3226a4d1eeac310b1d895fe4bee9c60",
+      "version": "Quench shared-VM JIT build; package 0.1.0",
+      "argv": [
+        "--jit"
+      ],
+      "environment": {
+        "HOME": "/home/agent",
+        "LANG": "C.UTF-8",
+        "LC_ALL": "C.UTF-8",
+        "PATH": "/home/agent/.cargo/bin:/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/override:/opt/codex/runtimes/codex-primary-runtime/dependencies/python/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin:/opt/codex/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/fallback",
+        "QUENCH_JS_JIT_STATS": "1",
+        "QUENCH_WASM_JIT_STATS": "1"
+      },
+      "inherits_environment": false,
+      "jit_mode": "enabled-by-cli-flag",
+      "jit_proof_command": [
+        "/workspace/quench/target/iteration/quench-node",
+        "--jit"
+      ],
+      "jit_proof": "the measured Quench process is launched with --jit and opt-in JavaScript/WebAssembly JIT counters; diagnostic-only, not for qualification",
+      "webassembly": true
+    },
+    {
+      "name": "bun",
+      "executable": "/workspace/.local/bench-runtimes/bun-linux-x64/bun",
+      "executable_sha256": "a83d263767d839e4d2649ca8e35d07159c7afc99afdc96d731ced29e056dda0c",
+      "version": "1.4.2",
+      "argv": [],
+      "environment": {
+        "BUN_JSC_useJIT": "1",
+        "HOME": "/home/agent",
+        "LANG": "C.UTF-8",
+        "LC_ALL": "C.UTF-8",
+        "PATH": "/home/agent/.cargo/bin:/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/override:/opt/codex/runtimes/codex-primary-runtime/dependencies/python/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin:/opt/codex/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/fallback"
+      },
+      "inherits_environment": false,
+      "jit_mode": "enabled-and-probed",
+      "jit_proof_command": [
+        "BUN_JSC_useJIT=1",
+        "BUN_JSC_dumpOptions=1",
+        "/workspace/.local/bench-runtimes/bun-linux-x64/bun",
+        "-e",
+        "console.log(Bun.version)"
+      ],
+      "jit_proof": "command succeeded and reported \"useJIT=true\": 1.4.2\n\nModified JSC options:\n   dumpOptions=1 (default: 0)\n   useJIT=true (default: true)",
+      "webassembly": true
+    },
+    {
+      "name": "node",
+      "executable": "/workspace/.local/bench-runtimes/node-v26.10.0-linux-x64/bin/node",
+      "executable_sha256": "ab9c8eecf9f82d6693cdc3accced17034065c8d96213b0aa76a7e803d20ae1da",
+      "version": "v26.10.0",
+      "argv": [],
+      "environment": {
+        "HOME": "/home/agent",
+        "LANG": "C.UTF-8",
+        "LC_ALL": "C.UTF-8",
+        "PATH": "/home/agent/.cargo/bin:/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/override:/opt/codex/runtimes/codex-primary-runtime/dependencies/python/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin:/opt/codex/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/fallback"
+      },
+      "inherits_environment": false,
+      "jit_mode": "enabled-and-probed",
+      "jit_proof_command": [
+        "/workspace/.local/bench-runtimes/node-v26.10.0-linux-x64/bin/node",
+        "--trace-opt",
+        "--no-concurrent-recompilation",
+        "-e",
+        "function hot(x) { return x + 1; } for (let i = 0; i < 100000; i++) hot(i);"
+      ],
+      "jit_proof": "command succeeded and reported \"completed compiling\": [marking 0x1482bf9b4d91 <JSFunction hot (sfi = 0x1482bf9b1571)> for optimization to MAGLEV, ConcurrencyMode::kConcurrent, reason: hot and stable]\n[compiling method 0x1482bf9b4d91 <JSFunction hot (sfi = 0x1482bf9b1571)> (target MAGLEV), mode: ConcurrencyMode::kSynchronous]\n[completed compiling 0x1482bf9b4d91 <JSFunction hot (sfi = 0x1482bf9b1571)> (target MAGLEV) - took 0.004, 0.215, 0.002 ms]\n[marking 0x1482bf9b4d21 <JSFunction (sfi = 0x1482bf9b14c9)> for optimization to MAGLEV, ConcurrencyMode::kConcurrent, reason: hot and stable]\n[marking 0x1482bf9b4d91 <JSFunction hot (sfi = 0x1482bf9b1571)> for optimization to TURBOFAN_JS, ConcurrencyMode::kConcurrent, reason: hot and stable]\n[compiling method 0x1482bf9b4d91 <JSFunction hot (sfi = 0x1482bf9b1571)> (target TURBOFAN_JS), mode: ConcurrencyMode::kSynchronous]\n[completed compiling 0x1482bf9b4d91 <JSFunction hot (sfi = 0x1482bf9b1571)> (target TURBOFAN_JS) - took 0.006, 0.739, 0.008 ms]\n[compiling method 0x1482bf9b4d21 <JSFunction (sfi = 0x1482bf9b14c9)> (target MAGLEV) OSR, mode: ConcurrencyMode::kSynchronous]\n[completed compiling 0x1482bf9b4d21 <JSFunction (sfi = 0x1482bf9b14c9)> (target MAGLEV) OSR - took 0.001, 0.166, 0.003 ms]",
+      "webassembly": true
+    }
+  ],
+  "suite_inputs": [
+    {
+      "path": "quench-bench/jetstream/cli.js",
+      "size_bytes": 5600,
+      "modified_unix_ns": 1792229119091972874,
+      "sha256": "22ee4b987b07940dd7397ed7f88345c71acc415e2549b64bf45ba43f7572e5f0"
+    },
+    {
+      "path": "quench-bench/jetstream/JetStreamDriver.js",
+      "size_bytes": 110633,
+      "modified_unix_ns": 1792229118593919588,
+      "sha256": "f105bddfd402514b2325fe9ea6e1df5ce776a4ad4570a8006c7c8559159440fc"
+    },
+    {
+      "path": "quench-bench/jetstream/utils/params.js",
+      "size_bytes": 8047,
+      "modified_unix_ns": 1792229119770704165,
+      "sha256": "0e9d28c0fd2de5583c64678ffc61307b10d983bcb419fe2e3bb383c8b7ded647"
+    },
+    {
+      "path": "quench-bench/jetstream/utils/shell-config.js",
+      "size_bytes": 2352,
+      "modified_unix_ns": 1792229119770904880,
+      "sha256": "9a83000be5e6526a3c26a414fc3a23043e57ef8e4cd67aaff459066a2c347bca"
+    }
+  ],
+  "selected_fixtures": [
+    "quench-bench/jetstream/validatorjs",
+    "quench-bench/jetstream/postcss-wtb"
+  ],
+  "fixtures": {
+    "quench-bench/jetstream/postcss-wtb": {
+      "source": {
+        "path": "quench-bench/jetstream/postcss-wtb",
+        "size_bytes": 4096,
+        "modified_unix_ns": 1792229120285895845,
+        "sha256": "4311c39dd7f2d2e7dac6bcc09189098605edde278c3f6eb1849ae72cac716de0"
+      },
+      "valid": true,
+      "output_equal": true,
+      "summaries": {
+        "bun": {
+          "median_score": 22.81,
+          "median_max_rss_bytes": 317599744,
+          "valid_samples": 1
+        },
+        "node": {
+          "median_score": 22.01,
+          "median_max_rss_bytes": 259518464,
+          "valid_samples": 1
+        },
+        "quench": {
+          "median_score": 0.58,
+          "median_max_rss_bytes": 172339200,
+          "valid_samples": 1
+        }
+      },
+      "unsupported_engines": {},
+      "rounds": [
+        {
+          "round": 0,
+          "execution_order": [
+            "quench",
+            "bun",
+            "node"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2941249505,
+              "peak_rss_bytes": 317599744,
+              "score": 22.81,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 78865,
+              "page_reclaims": 78865,
+              "involuntary_context_switches": 1358,
+              "host_before": {
+                "captured_unix_ns": 1792355429502256544,
+                "load_average": {
+                  "one_minute": 0.99,
+                  "five_minutes": 0.98,
+                  "fifteen_minutes": 1.0
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 571956,
+                    "cpu_percent": 1.3,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 200,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.0,
+                    "command": "containerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792355432448409598,
+                "load_average": {
+                  "one_minute": 0.99,
+                  "five_minutes": 0.98,
+                  "fifteen_minutes": 1.0
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 571956,
+                    "cpu_percent": 1.3,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 200,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.0,
+                    "command": "containerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "Starting JetStream3\nRunning postcss-wtb:\npostcss-wtb First-Score                         18.47 pts\npostcss-wtb Worst-Score                         23.56 pts\npostcss-wtb Average-Score                       27.28 pts\npostcss-wtb Score                               22.81 pts\npostcss-wtb First-Time                         270.76 ms \npostcss-wtb Worst-Time                         212.20 ms \npostcss-wtb Average-Time                       183.32 ms \npostcss-wtb Total-Time                         666.27 ms \npostcss-wtb Wall-Time                         2910.07 ms \n\nOverall:\nOverall First-Score                             18.47 pts\nOverall Worst-Score                             23.56 pts\nOverall Average-Score                           27.28 pts\nOverall First-Time                             270.76 ms \nOverall Worst-Time                             212.20 ms \nOverall Average-Time                           183.32 ms \n\nOverall Score                                   22.81 pts\nOverall Wall-Time                             2911.52 ms \n\n",
+              "stderr": ""
+            },
+            "node": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2897862213,
+              "peak_rss_bytes": 259518464,
+              "score": 22.01,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 62585,
+              "page_reclaims": 62585,
+              "involuntary_context_switches": 274,
+              "host_before": {
+                "captured_unix_ns": 1792355432452520815,
+                "load_average": {
+                  "one_minute": 0.99,
+                  "five_minutes": 0.98,
+                  "fifteen_minutes": 1.0
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 571956,
+                    "cpu_percent": 1.3,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 200,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.0,
+                    "command": "containerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792355435354858809,
+                "load_average": {
+                  "one_minute": 1.0,
+                  "five_minutes": 0.99,
+                  "fifteen_minutes": 1.0
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 571956,
+                    "cpu_percent": 1.3,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 200,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.0,
+                    "command": "containerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "Starting JetStream3\nRunning postcss-wtb:\npostcss-wtb First-Score                         15.20 pts\npostcss-wtb Worst-Score                         24.41 pts\npostcss-wtb Average-Score                       28.72 pts\npostcss-wtb Score                               22.01 pts\npostcss-wtb First-Time                         328.93 ms \npostcss-wtb Worst-Time                         204.79 ms \npostcss-wtb Average-Time                       174.11 ms \npostcss-wtb Total-Time                         707.84 ms \npostcss-wtb Wall-Time                         2841.23 ms \n\nOverall:\nOverall First-Score                             15.20 pts\nOverall Worst-Score                             24.41 pts\nOverall Average-Score                           28.72 pts\nOverall First-Time                             328.93 ms \nOverall Worst-Time                             204.79 ms \nOverall Average-Time                           174.11 ms \n\nOverall Score                                   22.01 pts\nOverall Wall-Time                             2844.08 ms \n\n",
+              "stderr": ""
+            },
+            "quench": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 126418932390,
+              "peak_rss_bytes": 172339200,
+              "score": 0.58,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 242569,
+              "page_reclaims": 242569,
+              "involuntary_context_switches": 140,
+              "host_before": {
+                "captured_unix_ns": 1792355303073765413,
+                "load_average": {
+                  "one_minute": 0.93,
+                  "five_minutes": 0.97,
+                  "fifteen_minutes": 0.99
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 571956,
+                    "cpu_percent": 1.4,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 200,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.0,
+                    "command": "containerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792355429497425022,
+                "load_average": {
+                  "one_minute": 0.99,
+                  "five_minutes": 0.98,
+                  "fifteen_minutes": 1.0
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 571956,
+                    "cpu_percent": 1.3,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 200,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.0,
+                    "command": "containerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "Starting JetStream3\nRunning postcss-wtb:\npostcss-wtb First-Score                          0.57 pts\npostcss-wtb Worst-Score                          0.58 pts\npostcss-wtb Average-Score                        0.60 pts\npostcss-wtb Score                                0.58 pts\npostcss-wtb First-Time                        8797.29 ms \npostcss-wtb Worst-Time                        8553.68 ms \npostcss-wtb Average-Time                      8299.52 ms \npostcss-wtb Total-Time                        25650.49 ms \npostcss-wtb Wall-Time                         125963.75 ms \n\nOverall:\nOverall First-Score                              0.57 pts\nOverall Worst-Score                              0.58 pts\nOverall Average-Score                            0.60 pts\nOverall First-Time                            8797.29 ms \nOverall Worst-Time                            8553.68 ms \nOverall Average-Time                          8299.52 ms \n\nOverall Score                                    0.58 pts\nOverall Wall-Time                             125969.17 ms \n\n",
+              "stderr": "QUENCH_JS_JIT_STATS {\"program\":15,\"function\":2,\"function_name\":\"get performance\",\"source_name\":\"node:bootstrap/performance-global.js\",\"status\":\"hot\",\"entries\":14,\"numeric_entries\":14,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":37,\"function\":42,\"function_name\":\"getExpectedArgumentLength\",\"source_name\":\"/workspace/quench/target/iteration/node/lib/internal/errors.js\",\"status\":\"unsupported\",\"entries\":263,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":38,\"function\":3,\"function_name\":\"assert\",\"source_name\":\"/workspace/quench/target/iteration/node/lib/internal/assert.js\",\"status\":\"hot\",\"entries\":9,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":41,\"function\":4,\"function_name\":\"parseFileMode\",\"source_name\":\"/workspace/quench/target/iteration/node/lib/internal/validators.js\",\"status\":\"hot\",\"entries\":1,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":42,\"function\":19,\"function_name\":\"normalizeEncoding\",\"source_name\":\"/workspace/quench/target/iteration/node/lib/internal/util.js\",\"status\":\"hot\",\"entries\":28,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":76,\"function\":23,\"function_name\":\"ownMember\",\"source_name\":\"/workspace/quench/target/iteration/node/lib/internal/webidl.js\",\"status\":\"hot\",\"entries\":2,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":80,\"function\":10,\"function_name\":\"allocate\",\"source_name\":\"/workspace/quench/target/iteration/node/lib/buffer.js\",\"status\":\"hot\",\"entries\":1,\"numeric_entries\":1,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":80,\"function\":12,\"function_name\":\"fromStringFast\",\"source_name\":\"/workspace/quench/target/iteration/node/lib/buffer.js\",\"status\":\"hot\",\"entries\":1,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":80,\"function\":14,\"function_name\":\"fromString\",\"source_name\":\"/workspace/quench/target/iteration/node/lib/buffer.js\",\"status\":\"hot\",\"entries\":1,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":80,\"function\":43,\"function_name\":\"get\",\"source_name\":\"/workspace/quench/target/iteration/node/lib/buffer.js\",\"status\":\"hot\",\"entries\":1,\"numeric_entries\":1,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":83,\"function\":102,\"function_name\":\"markAsUntransferable\",\"source_name\":\"/workspace/quench/target/iteration/node/lib/internal/buffer.js\",\"status\":\"hot\",\"entries\":1,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":83,\"function\":104,\"function_name\":\"createUnsafeBuffer\",\"source_name\":\"/workspace/quench/target/iteration/node/lib/internal/buffer.js\",\"status\":\"hot\",\"entries\":1,\"numeric_entries\":1,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":83,\"function\":106,\"function_name\":\"createUnsafeAlignedBuffer\",\"source_name\":\"/workspace/quench/target/iteration/node/lib/internal/buffer.js\",\"status\":\"hot\",\"entries\":1,\"numeric_entries\":1,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":85,\"function\":2,\"function_name\":\"isBuildingSnapshot\",\"source_name\":\"/workspace/quench/target/iteration/node/lib/internal/v8/startup_snapshot.js\",\"status\":\"hot\",\"entries\":1,\"numeric_entries\":1,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":143,\"function\":3,\"function_name\":\"assertEncoding\",\"source_name\":\"/workspace/quench/target/iteration/node/lib/internal/fs/utils.js\",\"status\":\"hot\",\"entries\":28,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":144,\"function\":27,\"function_name\":\"toPathIfFileURL\",\"source_name\":\"/workspace/quench/target/iteration/node/lib/internal/url.js\",\"status\":\"hot\",\"entries\":29,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":162,\"function\":24,\"function_name\":\"get\",\"source_name\":\"/workspace/quench/target/iteration/node/lib/internal/console/constructor.js\",\"status\":\"unsupported\",\"entries\":63,\"numeric_entries\":63,\"promotions\":1,\"compile_attempts\":1,\"compile_successes\":0,\"compile_ns\":28432,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":162,\"function\":30,\"function_name\":\"\",\"source_name\":\"/workspace/quench/target/iteration/node/lib/internal/console/constructor.js\",\"status\":\"hot\",\"entries\":17,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":169,\"function\":23,\"function_name\":\"_parseStringParam\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/utils/params.js\",\"status\":\"hot\",\"entries\":2,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":169,\"function\":24,\"function_name\":\"_parseBooleanParam\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/utils/params.js\",\"status\":\"hot\",\"entries\":9,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":170,\"function\":3,\"function_name\":\"mean\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/JetStreamDriver.js\",\"status\":\"hot\",\"entries\":2,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":170,\"function\":10,\"function_name\":\"uiFriendlyNumber\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/JetStreamDriver.js\",\"status\":\"hot\",\"entries\":8,\"numeric_entries\":8,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":170,\"function\":145,\"function_name\":\"get prepareForNextIterationCode\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/JetStreamDriver.js\",\"status\":\"hot\",\"entries\":1,\"numeric_entries\":1,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":177,\"function\":2,\"function_name\":\"__webpack_require__\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/postcss.bundle.js\",\"status\":\"hot\",\"entries\":141,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":177,\"function\":4,\"function_name\":\"browsersSort\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/postcss.bundle.js\",\"status\":\"unsupported\",\"entries\":45489,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":177,\"function\":121,\"function_name\":\"check\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/postcss.bundle.js\",\"status\":\"unsupported\",\"entries\":1335,\"numeric_entries\":1335,\"promotions\":1,\"compile_attempts\":1,\"compile_successes\":0,\"compile_ns\":32218,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":177,\"function\":129,\"function_name\":\"normalize\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/postcss.bundle.js\",\"status\":\"unsupported\",\"entries\":444615,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":177,\"function\":132,\"function_name\":\"prefixed\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/postcss.bundle.js\",\"status\":\"unsupported\",\"entries\":492,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":177,\"function\":139,\"function_name\":\"normalize\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/postcss.bundle.js\",\"status\":\"unsupported\",\"entries\":1770,\"numeric_entries\":1770,\"promotions\":1,\"compile_attempts\":1,\"compile_successes\":0,\"compile_ns\":4256,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":177,\"function\":144,\"function_name\":\"normalize\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/postcss.bundle.js\",\"status\":\"unsupported\",\"entries\":6930,\"numeric_entries\":6930,\"promotions\":1,\"compile_attempts\":1,\"compile_successes\":0,\"compile_ns\":34541,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":177,\"function\":151,\"function_name\":\"normalize\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/postcss.bundle.js\",\"status\":\"unsupported\",\"entries\":2805,\"numeric_entries\":2805,\"promotions\":1,\"compile_attempts\":1,\"compile_successes\":0,\"compile_ns\":13429,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":177,\"function\":178,\"function_name\":\"prefixed\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/postcss.bundle.js\",\"status\":\"hot\",\"entries\":12,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":177,\"function\":189,\"function_name\":\"normalize\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/postcss.bundle.js\",\"status\":\"hot\",\"entries\":180,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":177,\"function\":216,\"function_name\":\"normalize\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/postcss.bundle.js\",\"status\":\"unsupported\",\"entries\":2310,\"numeric_entries\":2310,\"promotions\":1,\"compile_attempts\":1,\"compile_successes\":0,\"compile_ns\":33539,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":177,\"function\":223,\"function_name\":\"normalize\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/postcss.bundle.js\",\"status\":\"unsupported\",\"entries\":13080,\"numeric_entries\":13080,\"promotions\":1,\"compile_attempts\":1,\"compile_successes\":0,\"compile_ns\":31377,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":177,\"function\":232,\"function_name\":\"normalize\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/postcss.bundle.js\",\"status\":\"unsupported\",\"entries\":1890,\"numeric_entries\":1890,\"promotions\":1,\"compile_attempts\":1,\"compile_successes\":0,\"compile_ns\":35112,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":177,\"function\":236,\"function_name\":\"normalize\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/postcss.bundle.js\",\"status\":\"unsupported\",\"entries\":810,\"numeric_entries\":810,\"promotions\":1,\"compile_attempts\":1,\"compile_successes\":0,\"compile_ns\":35182,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":177,\"function\":240,\"function_name\":\"\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/postcss.bundle.js\",\"status\":\"hot\",\"entries\":96,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":177,\"function\":246,\"function_name\":\"normalize\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/postcss.bundle.js\",\"status\":\"unsupported\",\"entries\":20220,\"numeric_entries\":20220,\"promotions\":1,\"compile_attempts\":1,\"compile_successes\":0,\"compile_ns\":32328,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":177,\"function\":281,\"function_name\":\"prefixed\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/postcss.bundle.js\",\"status\":\"hot\",\"entries\":2,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":177,\"function\":291,\"function_name\":\"prefixed\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/postcss.bundle.js\",\"status\":\"hot\",\"entries\":2,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":177,\"function\":410,\"function_name\":\"normalize\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/postcss.bundle.js\",\"status\":\"unsupported\",\"entries\":75,\"numeric_entries\":75,\"promotions\":1,\"compile_attempts\":1,\"compile_successes\":0,\"compile_ns\":30175,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":177,\"function\":419,\"function_name\":\"normalize\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/postcss.bundle.js\",\"status\":\"unsupported\",\"entries\":450,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":177,\"function\":420,\"function_name\":\"prefixed\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/postcss.bundle.js\",\"status\":\"hot\",\"entries\":24,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":177,\"function\":431,\"function_name\":\"normalize\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/postcss.bundle.js\",\"status\":\"unsupported\",\"entries\":7620,\"numeric_entries\":7620,\"promotions\":1,\"compile_attempts\":1,\"compile_successes\":0,\"compile_ns\":18878,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":177,\"function\":446,\"function_name\":\"normalize\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/postcss.bundle.js\",\"status\":\"unsupported\",\"entries\":8715,\"numeric_entries\":8715,\"promotions\":1,\"compile_attempts\":1,\"compile_successes\":0,\"compile_ns\":6690,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":177,\"function\":452,\"function_name\":\"prefixed\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/postcss.bundle.js\",\"status\":\"hot\",\"entries\":2,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":177,\"function\":471,\"function_name\":\"normalize\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/postcss.bundle.js\",\"status\":\"unsupported\",\"entries\":585,\"numeric_entries\":585,\"promotions\":1,\"compile_attempts\":1,\"compile_successes\":0,\"compile_ns\":32558,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":177,\"function\":472,\"function_name\":\"prefixed\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/postcss.bundle.js\",\"status\":\"hot\",\"entries\":6,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":177,\"function\":510,\"function_name\":\"check\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/postcss.bundle.js\",\"status\":\"hot\",\"entries\":5,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":177,\"function\":526,\"function_name\":\"decl\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/postcss.bundle.js\",\"status\":\"hot\",\"entries\":2,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":177,\"function\":529,\"function_name\":\"down\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/postcss.bundle.js\",\"status\":\"unsupported\",\"entries\":10770,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":177,\"function\":602,\"function_name\":\"possible\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/postcss.bundle.js\",\"status\":\"unsupported\",\"entries\":138,\"numeric_entries\":138,\"promotions\":1,\"compile_attempts\":1,\"compile_successes\":0,\"compile_ns\":31466,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":177,\"function\":666,\"function_name\":\"\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/postcss.bundle.js\",\"status\":\"unsupported\",\"entries\":52838,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":177,\"function\":667,\"function_name\":\"\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/postcss.bundle.js\",\"status\":\"hot\",\"entries\":60,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":177,\"function\":681,\"function_name\":\"check\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/postcss.bundle.js\",\"status\":\"unsupported\",\"entries\":95985,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":177,\"function\":682,\"function_name\":\"old\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/postcss.bundle.js\",\"status\":\"hot\",\"entries\":34,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":177,\"function\":687,\"function_name\":\"prefix\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/postcss.bundle.js\",\"status\":\"unsupported\",\"entries\":1845,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":177,\"function\":688,\"function_name\":\"unprefixed\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/postcss.bundle.js\",\"status\":\"hot\",\"entries\":2,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":177,\"function\":690,\"function_name\":\"noop\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/postcss.bundle.js\",\"status\":\"unsupported\",\"entries\":90,\"numeric_entries\":90,\"promotions\":1,\"compile_attempts\":1,\"compile_successes\":0,\"compile_ns\":5699,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":177,\"function\":704,\"function_name\":\"\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/postcss.bundle.js\",\"status\":\"unsupported\",\"entries\":5453,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":177,\"function\":710,\"function_name\":\"uniq\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/postcss.bundle.js\",\"status\":\"hot\",\"entries\":2,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":177,\"function\":713,\"function_name\":\"parseLatestFloat\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/postcss.bundle.js\",\"status\":\"hot\",\"entries\":1,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":177,\"function\":715,\"function_name\":\"\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/postcss.bundle.js\",\"status\":\"hot\",\"entries\":1,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":177,\"function\":717,\"function_name\":\"\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/postcss.bundle.js\",\"status\":\"hot\",\"entries\":18,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":177,\"function\":724,\"function_name\":\"compare\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/postcss.bundle.js\",\"status\":\"hot\",\"entries\":95,\"numeric_entries\":14,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":177,\"function\":751,\"function_name\":\"\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/postcss.bundle.js\",\"status\":\"hot\",\"entries\":19,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":177,\"function\":752,\"function_name\":\"\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/postcss.bundle.js\",\"status\":\"hot\",\"entries\":46,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":177,\"function\":813,\"function_name\":\"select\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/postcss.bundle.js\",\"status\":\"hot\",\"entries\":1,\"numeric_entries\":1,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":177,\"function\":826,\"function_name\":\"select\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/postcss.bundle.js\",\"status\":\"hot\",\"entries\":1,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":177,\"function\":838,\"function_name\":\"\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/postcss.bundle.js\",\"status\":\"hot\",\"entries\":10,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":177,\"function\":991,\"function_name\":\"create\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/postcss.bundle.js\",\"status\":\"hot\",\"entries\":1,\"numeric_entries\":1,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":177,\"function\":1036,\"function_name\":\"getSource\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/postcss.bundle.js\",\"status\":\"hot\",\"entries\":1,\"numeric_entries\":1,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":177,\"function\":1302,\"function_name\":\"\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/postcss.bundle.js\",\"status\":\"hot\",\"entries\":135,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":177,\"function\":1373,\"function_name\":\"\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/postcss.bundle.js\",\"status\":\"compiled\",\"entries\":45,\"numeric_entries\":45,\"promotions\":1,\"compile_attempts\":1,\"compile_successes\":1,\"compile_ns\":355415,\"native_entries\":14,\"code_bytes\":4096}\nQUENCH_JS_JIT_STATS {\"program\":177,\"function\":1517,\"function_name\":\"get processor\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/postcss.bundle.js\",\"status\":\"unsupported\",\"entries\":90,\"numeric_entries\":90,\"promotions\":1,\"compile_attempts\":1,\"compile_successes\":0,\"compile_ns\":31246,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":177,\"function\":1595,\"function_name\":\"get proxyOf\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/postcss.bundle.js\",\"status\":\"unsupported\",\"entries\":11389845,\"numeric_entries\":11389845,\"promotions\":1,\"compile_attempts\":1,\"compile_successes\":0,\"compile_ns\":52057,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":177,\"function\":1649,\"function_name\":\"precheckMissedSemicolon\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/web-tooling-benchmark/dist/postcss.bundle.js\",\"status\":\"unsupported\",\"entries\":300420,\"numeric_entries\":300420,\"promotions\":1,\"compile_attempts\":1,\"compile_successes\":0,\"compile_ns\":4066,\"native_entries\":0,\"code_bytes\":0}\n"
+            }
+          }
+        }
+      ]
+    },
+    "quench-bench/jetstream/validatorjs": {
+      "source": {
+        "path": "quench-bench/jetstream/validatorjs",
+        "size_bytes": 4096,
+        "modified_unix_ns": 1792229119773903242,
+        "sha256": "6429e53491f6fdb80dd9ba6bedf5bf06537cafef8f1d64ceeb242b0affa0ff83"
+      },
+      "valid": true,
+      "output_equal": true,
+      "summaries": {
+        "bun": {
+          "median_score": 242.93,
+          "median_max_rss_bytes": 97685504,
+          "valid_samples": 1
+        },
+        "node": {
+          "median_score": 218.89,
+          "median_max_rss_bytes": 79654912,
+          "valid_samples": 1
+        },
+        "quench": {
+          "median_score": 12.32,
+          "median_max_rss_bytes": 74321920,
+          "valid_samples": 1
+        }
+      },
+      "unsupported_engines": {},
+      "rounds": [
+        {
+          "round": 0,
+          "execution_order": [
+            "quench",
+            "bun",
+            "node"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 1156612456,
+              "peak_rss_bytes": 97685504,
+              "score": 242.93,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 18686,
+              "page_reclaims": 18686,
+              "involuntary_context_switches": 522,
+              "host_before": {
+                "captured_unix_ns": 1792355300564146975,
+                "load_average": {
+                  "one_minute": 0.93,
+                  "five_minutes": 0.97,
+                  "fifteen_minutes": 0.99
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 571956,
+                    "cpu_percent": 1.4,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 200,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.0,
+                    "command": "containerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792355301725066280,
+                "load_average": {
+                  "one_minute": 0.93,
+                  "five_minutes": 0.97,
+                  "fifteen_minutes": 0.99
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 571956,
+                    "cpu_percent": 1.4,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 200,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.0,
+                    "command": "containerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "Starting JetStream3\nRunning validatorjs:\nvalidatorjs First-Score                         85.63 pts\nvalidatorjs Worst-Score                        298.36 pts\nvalidatorjs Average-Score                      561.12 pts\nvalidatorjs Score                              242.93 pts\nvalidatorjs First-Time                          58.39 ms \nvalidatorjs Worst-Time                          16.76 ms \nvalidatorjs Average-Time                         8.91 ms \nvalidatorjs Total-Time                          84.06 ms \nvalidatorjs Wall-Time                         1134.00 ms \n\nOverall:\nOverall First-Score                             85.63 pts\nOverall Worst-Score                            298.36 pts\nOverall Average-Score                          561.12 pts\nOverall First-Time                              58.39 ms \nOverall Worst-Time                              16.76 ms \nOverall Average-Time                             8.91 ms \n\nOverall Score                                  242.93 pts\nOverall Wall-Time                             1135.26 ms \n\n",
+              "stderr": ""
+            },
+            "node": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 1329997054,
+              "peak_rss_bytes": 79654912,
+              "score": 218.89,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 13261,
+              "page_reclaims": 13261,
+              "involuntary_context_switches": 76,
+              "host_before": {
+                "captured_unix_ns": 1792355301728363727,
+                "load_average": {
+                  "one_minute": 0.93,
+                  "five_minutes": 0.97,
+                  "fifteen_minutes": 0.99
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 571956,
+                    "cpu_percent": 1.4,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 200,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.0,
+                    "command": "containerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792355303062832935,
+                "load_average": {
+                  "one_minute": 0.93,
+                  "five_minutes": 0.97,
+                  "fifteen_minutes": 0.99
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 571956,
+                    "cpu_percent": 1.4,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 200,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.0,
+                    "command": "containerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "Starting JetStream3\nRunning validatorjs:\nvalidatorjs First-Score                         64.96 pts\nvalidatorjs Worst-Score                        324.38 pts\nvalidatorjs Average-Score                      497.69 pts\nvalidatorjs Score                              218.89 pts\nvalidatorjs First-Time                          76.97 ms \nvalidatorjs Worst-Time                          15.41 ms \nvalidatorjs Average-Time                        10.05 ms \nvalidatorjs Total-Time                         102.43 ms \nvalidatorjs Wall-Time                         1293.56 ms \n\nOverall:\nOverall First-Score                             64.96 pts\nOverall Worst-Score                            324.38 pts\nOverall Average-Score                          497.69 pts\nOverall First-Time                              76.97 ms \nOverall Worst-Time                              15.41 ms \nOverall Average-Time                            10.05 ms \n\nOverall Score                                  218.89 pts\nOverall Wall-Time                             1295.47 ms \n\n",
+              "stderr": ""
+            },
+            "quench": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 45531303689,
+              "peak_rss_bytes": 74321920,
+              "score": 12.32,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 57835,
+              "page_reclaims": 57835,
+              "involuntary_context_switches": 183,
+              "host_before": {
+                "captured_unix_ns": 1792355255022849665,
+                "load_average": {
+                  "one_minute": 0.85,
+                  "five_minutes": 0.96,
+                  "fifteen_minutes": 0.99
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 571956,
+                    "cpu_percent": 0.6,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 200,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.0,
+                    "command": "containerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792355300559450378,
+                "load_average": {
+                  "one_minute": 0.93,
+                  "five_minutes": 0.97,
+                  "fifteen_minutes": 0.99
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 571956,
+                    "cpu_percent": 1.4,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 200,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.0,
+                    "command": "containerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "Starting JetStream3\nRunning validatorjs:\nvalidatorjs First-Score                         12.24 pts\nvalidatorjs Worst-Score                         11.45 pts\nvalidatorjs Average-Score                       13.35 pts\nvalidatorjs Score                               12.32 pts\nvalidatorjs First-Time                         408.56 ms \nvalidatorjs Worst-Time                         436.70 ms \nvalidatorjs Average-Time                       374.67 ms \nvalidatorjs Total-Time                        1219.93 ms \nvalidatorjs Wall-Time                         45099.45 ms \n\nOverall:\nOverall First-Score                             12.24 pts\nOverall Worst-Score                             11.45 pts\nOverall Average-Score                           13.35 pts\nOverall First-Time                             408.56 ms \nOverall Worst-Time                             436.70 ms \nOverall Average-Time                           374.67 ms \n\nOverall Score                                   12.32 pts\nOverall Wall-Time                             45104.62 ms \n\n",
+              "stderr": "QUENCH_JS_JIT_STATS {\"program\":15,\"function\":2,\"function_name\":\"get performance\",\"source_name\":\"node:bootstrap/performance-global.js\",\"status\":\"hot\",\"entries\":14,\"numeric_entries\":14,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":37,\"function\":42,\"function_name\":\"getExpectedArgumentLength\",\"source_name\":\"/workspace/quench/target/iteration/node/lib/internal/errors.js\",\"status\":\"unsupported\",\"entries\":263,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":38,\"function\":3,\"function_name\":\"assert\",\"source_name\":\"/workspace/quench/target/iteration/node/lib/internal/assert.js\",\"status\":\"hot\",\"entries\":9,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":42,\"function\":19,\"function_name\":\"normalizeEncoding\",\"source_name\":\"/workspace/quench/target/iteration/node/lib/internal/util.js\",\"status\":\"hot\",\"entries\":6,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":76,\"function\":23,\"function_name\":\"ownMember\",\"source_name\":\"/workspace/quench/target/iteration/node/lib/internal/webidl.js\",\"status\":\"hot\",\"entries\":2,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":80,\"function\":12,\"function_name\":\"fromStringFast\",\"source_name\":\"/workspace/quench/target/iteration/node/lib/buffer.js\",\"status\":\"hot\",\"entries\":1,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":80,\"function\":14,\"function_name\":\"fromString\",\"source_name\":\"/workspace/quench/target/iteration/node/lib/buffer.js\",\"status\":\"hot\",\"entries\":1,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":80,\"function\":43,\"function_name\":\"get\",\"source_name\":\"/workspace/quench/target/iteration/node/lib/buffer.js\",\"status\":\"hot\",\"entries\":1,\"numeric_entries\":1,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":83,\"function\":102,\"function_name\":\"markAsUntransferable\",\"source_name\":\"/workspace/quench/target/iteration/node/lib/internal/buffer.js\",\"status\":\"hot\",\"entries\":1,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":83,\"function\":106,\"function_name\":\"createUnsafeAlignedBuffer\",\"source_name\":\"/workspace/quench/target/iteration/node/lib/internal/buffer.js\",\"status\":\"hot\",\"entries\":1,\"numeric_entries\":1,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":85,\"function\":2,\"function_name\":\"isBuildingSnapshot\",\"source_name\":\"/workspace/quench/target/iteration/node/lib/internal/v8/startup_snapshot.js\",\"status\":\"hot\",\"entries\":1,\"numeric_entries\":1,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":143,\"function\":3,\"function_name\":\"assertEncoding\",\"source_name\":\"/workspace/quench/target/iteration/node/lib/internal/fs/utils.js\",\"status\":\"hot\",\"entries\":6,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":144,\"function\":27,\"function_name\":\"toPathIfFileURL\",\"source_name\":\"/workspace/quench/target/iteration/node/lib/internal/url.js\",\"status\":\"hot\",\"entries\":6,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":162,\"function\":24,\"function_name\":\"get\",\"source_name\":\"/workspace/quench/target/iteration/node/lib/internal/console/constructor.js\",\"status\":\"unsupported\",\"entries\":63,\"numeric_entries\":63,\"promotions\":1,\"compile_attempts\":1,\"compile_successes\":0,\"compile_ns\":27160,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":162,\"function\":30,\"function_name\":\"\",\"source_name\":\"/workspace/quench/target/iteration/node/lib/internal/console/constructor.js\",\"status\":\"hot\",\"entries\":17,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":169,\"function\":23,\"function_name\":\"_parseStringParam\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/utils/params.js\",\"status\":\"hot\",\"entries\":2,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":169,\"function\":24,\"function_name\":\"_parseBooleanParam\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/utils/params.js\",\"status\":\"hot\",\"entries\":9,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":170,\"function\":3,\"function_name\":\"mean\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/JetStreamDriver.js\",\"status\":\"hot\",\"entries\":2,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":170,\"function\":10,\"function_name\":\"uiFriendlyNumber\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/JetStreamDriver.js\",\"status\":\"hot\",\"entries\":8,\"numeric_entries\":8,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":170,\"function\":90,\"function_name\":\"get prerunCode\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/JetStreamDriver.js\",\"status\":\"hot\",\"entries\":1,\"numeric_entries\":1,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":170,\"function\":92,\"function_name\":\"get prepareForNextIterationCode\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/JetStreamDriver.js\",\"status\":\"hot\",\"entries\":1,\"numeric_entries\":1,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":176,\"function\":2,\"function_name\":\"i\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/validatorjs/dist/bundle.es6.min.js\",\"status\":\"hot\",\"entries\":16,\"numeric_entries\":16,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":176,\"function\":19,\"function_name\":\"cs-CZ\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/validatorjs/dist/bundle.es6.min.js\",\"status\":\"unsupported\",\"entries\":1920,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":176,\"function\":20,\"function_name\":\"de-DE\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/validatorjs/dist/bundle.es6.min.js\",\"status\":\"unsupported\",\"entries\":5400,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":176,\"function\":21,\"function_name\":\"de-LI\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/validatorjs/dist/bundle.es6.min.js\",\"status\":\"unsupported\",\"entries\":840,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":176,\"function\":22,\"function_name\":\"en-IN\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/validatorjs/dist/bundle.es6.min.js\",\"status\":\"unsupported\",\"entries\":1440,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":176,\"function\":23,\"function_name\":\"en-SG\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/validatorjs/dist/bundle.es6.min.js\",\"status\":\"unsupported\",\"entries\":960,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":176,\"function\":24,\"function_name\":\"es-AR\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/validatorjs/dist/bundle.es6.min.js\",\"status\":\"unsupported\",\"entries\":1440,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":176,\"function\":25,\"function_name\":\"fi-FI\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/validatorjs/dist/bundle.es6.min.js\",\"status\":\"unsupported\",\"entries\":3000,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":176,\"function\":26,\"function_name\":\"hu-HU\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/validatorjs/dist/bundle.es6.min.js\",\"status\":\"unsupported\",\"entries\":7440,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":176,\"function\":27,\"function_name\":\"pt-BR\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/validatorjs/dist/bundle.es6.min.js\",\"status\":\"unsupported\",\"entries\":1680,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":176,\"function\":28,\"function_name\":\"pt-PT\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/validatorjs/dist/bundle.es6.min.js\",\"status\":\"unsupported\",\"entries\":4200,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":176,\"function\":29,\"function_name\":\"sq-AL\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/validatorjs/dist/bundle.es6.min.js\",\"status\":\"unsupported\",\"entries\":600,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":176,\"function\":30,\"function_name\":\"sv-SE\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/validatorjs/dist/bundle.es6.min.js\",\"status\":\"unsupported\",\"entries\":3600,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":176,\"function\":44,\"function_name\":\"\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/validatorjs/dist/bundle.es6.min.js\",\"status\":\"unsupported\",\"entries\":22800,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":176,\"function\":51,\"function_name\":\"\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/validatorjs/dist/bundle.es6.min.js\",\"status\":\"hot\",\"entries\":1,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":176,\"function\":63,\"function_name\":\"\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/validatorjs/dist/bundle.es6.min.js\",\"status\":\"unsupported\",\"entries\":1560,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":176,\"function\":85,\"function_name\":\"\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/validatorjs/dist/bundle.es6.min.js\",\"status\":\"unsupported\",\"entries\":12240,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":176,\"function\":109,\"function_name\":\"\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/validatorjs/dist/bundle.es6.min.js\",\"status\":\"unsupported\",\"entries\":34800,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":176,\"function\":111,\"function_name\":\"\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/validatorjs/dist/bundle.es6.min.js\",\"status\":\"unsupported\",\"entries\":1560,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":176,\"function\":114,\"function_name\":\"\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/validatorjs/dist/bundle.es6.min.js\",\"status\":\"unsupported\",\"entries\":14400,\"numeric_entries\":14400,\"promotions\":1,\"compile_attempts\":1,\"compile_successes\":0,\"compile_ns\":75281,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":176,\"function\":115,\"function_name\":\"IR\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/validatorjs/dist/bundle.es6.min.js\",\"status\":\"unsupported\",\"entries\":2245,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":176,\"function\":116,\"function_name\":\"IT\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/validatorjs/dist/bundle.es6.min.js\",\"status\":\"unsupported\",\"entries\":720,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":176,\"function\":117,\"function_name\":\"NO\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/validatorjs/dist/bundle.es6.min.js\",\"status\":\"unsupported\",\"entries\":9960,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":176,\"function\":118,\"function_name\":\"TH\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/validatorjs/dist/bundle.es6.min.js\",\"status\":\"unsupported\",\"entries\":1320,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":176,\"function\":119,\"function_name\":\"LK\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/validatorjs/dist/bundle.es6.min.js\",\"status\":\"unsupported\",\"entries\":1680,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":176,\"function\":120,\"function_name\":\"he-IL\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/validatorjs/dist/bundle.es6.min.js\",\"status\":\"unsupported\",\"entries\":3360,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":176,\"function\":121,\"function_name\":\"ar-LY\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/validatorjs/dist/bundle.es6.min.js\",\"status\":\"unsupported\",\"entries\":1320,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":176,\"function\":122,\"function_name\":\"ar-TN\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/validatorjs/dist/bundle.es6.min.js\",\"status\":\"unsupported\",\"entries\":2640,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":176,\"function\":125,\"function_name\":\"d\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/validatorjs/dist/bundle.es6.min.js\",\"status\":\"hot\",\"entries\":14,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":176,\"function\":126,\"function_name\":\"\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/validatorjs/dist/bundle.es6.min.js\",\"status\":\"unsupported\",\"entries\":720,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":176,\"function\":130,\"function_name\":\"zh-HK\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/validatorjs/dist/bundle.es6.min.js\",\"status\":\"unsupported\",\"entries\":1920,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":176,\"function\":132,\"function_name\":\"\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/validatorjs/dist/bundle.es6.min.js\",\"status\":\"unsupported\",\"entries\":25200,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":176,\"function\":133,\"function_name\":\"PK\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/validatorjs/dist/bundle.es6.min.js\",\"status\":\"unsupported\",\"entries\":1800,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":176,\"function\":146,\"function_name\":\"\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/validatorjs/dist/bundle.es6.min.js\",\"status\":\"unsupported\",\"entries\":88420,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":176,\"function\":163,\"function_name\":\"\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/validatorjs/dist/bundle.es6.min.js\",\"status\":\"unsupported\",\"entries\":6720,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":176,\"function\":165,\"function_name\":\"\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/validatorjs/dist/bundle.es6.min.js\",\"status\":\"unsupported\",\"entries\":22560,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":176,\"function\":166,\"function_name\":\"\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/validatorjs/dist/bundle.es6.min.js\",\"status\":\"unsupported\",\"entries\":28440,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":176,\"function\":191,\"function_name\":\"\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/validatorjs/dist/bundle.es6.min.js\",\"status\":\"unsupported\",\"entries\":721,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":176,\"function\":193,\"function_name\":\"\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/validatorjs/dist/bundle.es6.min.js\",\"status\":\"unsupported\",\"entries\":7680,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":176,\"function\":194,\"function_name\":\"\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/validatorjs/dist/bundle.es6.min.js\",\"status\":\"compiled\",\"entries\":7680,\"numeric_entries\":7680,\"promotions\":1,\"compile_attempts\":1,\"compile_successes\":1,\"compile_ns\":241307,\"native_entries\":7649,\"code_bytes\":4096}\nQUENCH_JS_JIT_STATS {\"program\":176,\"function\":195,\"function_name\":\"\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/validatorjs/dist/bundle.es6.min.js\",\"status\":\"unsupported\",\"entries\":960,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":176,\"function\":196,\"function_name\":\"\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/validatorjs/dist/bundle.es6.min.js\",\"status\":\"hot\",\"entries\":240,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":176,\"function\":201,\"function_name\":\"\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/validatorjs/dist/bundle.es6.min.js\",\"status\":\"unsupported\",\"entries\":9000,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":176,\"function\":211,\"function_name\":\"AT\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/validatorjs/dist/bundle.es6.min.js\",\"status\":\"unsupported\",\"entries\":480,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":176,\"function\":212,\"function_name\":\"BE\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/validatorjs/dist/bundle.es6.min.js\",\"status\":\"unsupported\",\"entries\":480,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":176,\"function\":213,\"function_name\":\"BG\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/validatorjs/dist/bundle.es6.min.js\",\"status\":\"unsupported\",\"entries\":720,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":176,\"function\":214,\"function_name\":\"HR\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/validatorjs/dist/bundle.es6.min.js\",\"status\":\"unsupported\",\"entries\":480,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":176,\"function\":215,\"function_name\":\"CY\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/validatorjs/dist/bundle.es6.min.js\",\"status\":\"unsupported\",\"entries\":480,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":176,\"function\":216,\"function_name\":\"CZ\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/validatorjs/dist/bundle.es6.min.js\",\"status\":\"unsupported\",\"entries\":960,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":176,\"function\":217,\"function_name\":\"DK\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/validatorjs/dist/bundle.es6.min.js\",\"status\":\"unsupported\",\"entries\":480,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":176,\"function\":218,\"function_name\":\"EE\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/validatorjs/dist/bundle.es6.min.js\",\"status\":\"unsupported\",\"entries\":480,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":176,\"function\":219,\"function_name\":\"FI\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/validatorjs/dist/bundle.es6.min.js\",\"status\":\"unsupported\",\"entries\":480,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":176,\"function\":220,\"function_name\":\"FR\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/validatorjs/dist/bundle.es6.min.js\",\"status\":\"unsupported\",\"entries\":480,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":176,\"function\":221,\"function_name\":\"DE\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/validatorjs/dist/bundle.es6.min.js\",\"status\":\"unsupported\",\"entries\":480,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":176,\"function\":222,\"function_name\":\"EL\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/validatorjs/dist/bundle.es6.min.js\",\"status\":\"unsupported\",\"entries\":480,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":176,\"function\":223,\"function_name\":\"HU\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/validatorjs/dist/bundle.es6.min.js\",\"status\":\"unsupported\",\"entries\":480,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":176,\"function\":224,\"function_name\":\"IE\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/validatorjs/dist/bundle.es6.min.js\",\"status\":\"unsupported\",\"entries\":480,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":176,\"function\":225,\"function_name\":\"IT\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/validatorjs/dist/bundle.es6.min.js\",\"status\":\"unsupported\",\"entries\":840,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":176,\"function\":226,\"function_name\":\"LV\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/validatorjs/dist/bundle.es6.min.js\",\"status\":\"unsupported\",\"entries\":480,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":176,\"function\":227,\"function_name\":\"LT\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/validatorjs/dist/bundle.es6.min.js\",\"status\":\"unsupported\",\"entries\":1200,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":176,\"function\":228,\"function_name\":\"LU\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/validatorjs/dist/bundle.es6.min.js\",\"status\":\"unsupported\",\"entries\":480,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":176,\"function\":229,\"function_name\":\"MT\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/validatorjs/dist/bundle.es6.min.js\",\"status\":\"unsupported\",\"entries\":480,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":176,\"function\":230,\"function_name\":\"NL\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/validatorjs/dist/bundle.es6.min.js\",\"status\":\"unsupported\",\"entries\":840,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":176,\"function\":231,\"function_name\":\"PL\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/validatorjs/dist/bundle.es6.min.js\",\"status\":\"unsupported\",\"entries\":960,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":176,\"function\":233,\"function_name\":\"\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/validatorjs/dist/bundle.es6.min.js\",\"status\":\"unsupported\",\"entries\":2880,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":176,\"function\":234,\"function_name\":\"RO\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/validatorjs/dist/bundle.es6.min.js\",\"status\":\"unsupported\",\"entries\":720,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":176,\"function\":235,\"function_name\":\"SK\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/validatorjs/dist/bundle.es6.min.js\",\"status\":\"unsupported\",\"entries\":480,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":176,\"function\":236,\"function_name\":\"SI\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/validatorjs/dist/bundle.es6.min.js\",\"status\":\"unsupported\",\"entries\":480,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":176,\"function\":237,\"function_name\":\"ES\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/validatorjs/dist/bundle.es6.min.js\",\"status\":\"unsupported\",\"entries\":480,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":176,\"function\":238,\"function_name\":\"SE\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/validatorjs/dist/bundle.es6.min.js\",\"status\":\"unsupported\",\"entries\":480,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":176,\"function\":239,\"function_name\":\"AL\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/validatorjs/dist/bundle.es6.min.js\",\"status\":\"unsupported\",\"entries\":480,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":176,\"function\":240,\"function_name\":\"MK\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/validatorjs/dist/bundle.es6.min.js\",\"status\":\"unsupported\",\"entries\":480,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":176,\"function\":241,\"function_name\":\"AU\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/validatorjs/dist/bundle.es6.min.js\",\"status\":\"unsupported\",\"entries\":2160,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":176,\"function\":242,\"function_name\":\"BY\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/validatorjs/dist/bundle.es6.min.js\",\"status\":\"unsupported\",\"entries\":480,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":176,\"function\":243,\"function_name\":\"CA\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/validatorjs/dist/bundle.es6.min.js\",\"status\":\"unsupported\",\"entries\":480,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":176,\"function\":244,\"function_name\":\"IS\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/validatorjs/dist/bundle.es6.min.js\",\"status\":\"unsupported\",\"entries\":480,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":176,\"function\":245,\"function_name\":\"IN\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/validatorjs/dist/bundle.es6.min.js\",\"status\":\"unsupported\",\"entries\":480,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":176,\"function\":246,\"function_name\":\"ID\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/validatorjs/dist/bundle.es6.min.js\",\"status\":\"unsupported\",\"entries\":720,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":176,\"function\":247,\"function_name\":\"IL\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/validatorjs/dist/bundle.es6.min.js\",\"status\":\"unsupported\",\"entries\":480,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":176,\"function\":248,\"function_name\":\"KZ\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/validatorjs/dist/bundle.es6.min.js\",\"status\":\"unsupported\",\"entries\":480,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":176,\"function\":249,\"function_name\":\"NZ\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/validatorjs/dist/bundle.es6.min.js\",\"status\":\"unsupported\",\"entries\":480,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":176,\"function\":250,\"function_name\":\"NG\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/validatorjs/dist/bundle.es6.min.js\",\"status\":\"unsupported\",\"entries\":720,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":176,\"function\":251,\"function_name\":\"NO\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/validatorjs/dist/bundle.es6.min.js\",\"status\":\"unsupported\",\"entries\":480,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":176,\"function\":252,\"function_name\":\"PH\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/validatorjs/dist/bundle.es6.min.js\",\"status\":\"unsupported\",\"entries\":720,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":176,\"function\":253,\"function_name\":\"RU\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/validatorjs/dist/bundle.es6.min.js\",\"status\":\"unsupported\",\"entries\":720,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":176,\"function\":254,\"function_name\":\"SM\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/validatorjs/dist/bundle.es6.min.js\",\"status\":\"unsupported\",\"entries\":480,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":176,\"function\":255,\"function_name\":\"SA\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/validatorjs/dist/bundle.es6.min.js\",\"status\":\"unsupported\",\"entries\":480,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":176,\"function\":256,\"function_name\":\"RS\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/validatorjs/dist/bundle.es6.min.js\",\"status\":\"unsupported\",\"entries\":480,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":176,\"function\":258,\"function_name\":\"\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/validatorjs/dist/bundle.es6.min.js\",\"status\":\"unsupported\",\"entries\":17280,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":176,\"function\":259,\"function_name\":\"\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/validatorjs/dist/bundle.es6.min.js\",\"status\":\"unsupported\",\"entries\":15360,\"numeric_entries\":15360,\"promotions\":1,\"compile_attempts\":1,\"compile_successes\":0,\"compile_ns\":41301,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":176,\"function\":260,\"function_name\":\"TR\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/validatorjs/dist/bundle.es6.min.js\",\"status\":\"unsupported\",\"entries\":480,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":176,\"function\":261,\"function_name\":\"UA\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/validatorjs/dist/bundle.es6.min.js\",\"status\":\"unsupported\",\"entries\":480,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":176,\"function\":262,\"function_name\":\"GB\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/validatorjs/dist/bundle.es6.min.js\",\"status\":\"unsupported\",\"entries\":2520,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":176,\"function\":263,\"function_name\":\"UZ\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/validatorjs/dist/bundle.es6.min.js\",\"status\":\"unsupported\",\"entries\":480,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":176,\"function\":264,\"function_name\":\"AR\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/validatorjs/dist/bundle.es6.min.js\",\"status\":\"unsupported\",\"entries\":480,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":176,\"function\":265,\"function_name\":\"BO\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/validatorjs/dist/bundle.es6.min.js\",\"status\":\"unsupported\",\"entries\":480,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":176,\"function\":266,\"function_name\":\"BR\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/validatorjs/dist/bundle.es6.min.js\",\"status\":\"unsupported\",\"entries\":720,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":176,\"function\":267,\"function_name\":\"CL\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/validatorjs/dist/bundle.es6.min.js\",\"status\":\"unsupported\",\"entries\":480,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":176,\"function\":268,\"function_name\":\"CO\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/validatorjs/dist/bundle.es6.min.js\",\"status\":\"unsupported\",\"entries\":480,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":176,\"function\":269,\"function_name\":\"CR\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/validatorjs/dist/bundle.es6.min.js\",\"status\":\"unsupported\",\"entries\":720,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":176,\"function\":270,\"function_name\":\"EC\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/validatorjs/dist/bundle.es6.min.js\",\"status\":\"unsupported\",\"entries\":480,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":176,\"function\":271,\"function_name\":\"SV\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/validatorjs/dist/bundle.es6.min.js\",\"status\":\"unsupported\",\"entries\":480,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":176,\"function\":272,\"function_name\":\"GT\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/validatorjs/dist/bundle.es6.min.js\",\"status\":\"unsupported\",\"entries\":480,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":176,\"function\":273,\"function_name\":\"HN\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/validatorjs/dist/bundle.es6.min.js\",\"status\":\"hot\",\"entries\":240,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":176,\"function\":274,\"function_name\":\"MX\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/validatorjs/dist/bundle.es6.min.js\",\"status\":\"unsupported\",\"entries\":720,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":176,\"function\":275,\"function_name\":\"NI\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/validatorjs/dist/bundle.es6.min.js\",\"status\":\"unsupported\",\"entries\":480,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":176,\"function\":276,\"function_name\":\"PA\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/validatorjs/dist/bundle.es6.min.js\",\"status\":\"hot\",\"entries\":240,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":176,\"function\":277,\"function_name\":\"PY\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/validatorjs/dist/bundle.es6.min.js\",\"status\":\"unsupported\",\"entries\":720,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":176,\"function\":278,\"function_name\":\"PE\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/validatorjs/dist/bundle.es6.min.js\",\"status\":\"unsupported\",\"entries\":480,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":176,\"function\":279,\"function_name\":\"DO\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/validatorjs/dist/bundle.es6.min.js\",\"status\":\"unsupported\",\"entries\":1200,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":176,\"function\":280,\"function_name\":\"UY\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/validatorjs/dist/bundle.es6.min.js\",\"status\":\"unsupported\",\"entries\":480,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":176,\"function\":281,\"function_name\":\"VE\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/validatorjs/dist/bundle.es6.min.js\",\"status\":\"unsupported\",\"entries\":720,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":176,\"function\":284,\"function_name\":\"\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/validatorjs/dist/bundle.es6.min.js\",\"status\":\"hot\",\"entries\":1,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":176,\"function\":289,\"function_name\":\"\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/validatorjs/dist/bundle.es6.min.js\",\"status\":\"hot\",\"entries\":1,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":176,\"function\":301,\"function_name\":\"\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/validatorjs/dist/bundle.es6.min.js\",\"status\":\"hot\",\"entries\":2,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":176,\"function\":306,\"function_name\":\"\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/validatorjs/dist/bundle.es6.min.js\",\"status\":\"hot\",\"entries\":2,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":176,\"function\":326,\"function_name\":\"\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/validatorjs/dist/bundle.es6.min.js\",\"status\":\"hot\",\"entries\":24,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":176,\"function\":335,\"function_name\":\"\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/validatorjs/dist/bundle.es6.min.js\",\"status\":\"hot\",\"entries\":1,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":176,\"function\":342,\"function_name\":\"\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/validatorjs/dist/bundle.es6.min.js\",\"status\":\"unsupported\",\"entries\":86760,\"numeric_entries\":86760,\"promotions\":1,\"compile_attempts\":1,\"compile_successes\":0,\"compile_ns\":42243,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":176,\"function\":343,\"function_name\":\"\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/validatorjs/dist/bundle.es6.min.js\",\"status\":\"unsupported\",\"entries\":77160,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":176,\"function\":356,\"function_name\":\"\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/validatorjs/dist/bundle.es6.min.js\",\"status\":\"unsupported\",\"entries\":21000,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":176,\"function\":375,\"function_name\":\"\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/validatorjs/dist/bundle.es6.min.js\",\"status\":\"unsupported\",\"entries\":15600,\"numeric_entries\":15600,\"promotions\":1,\"compile_attempts\":1,\"compile_successes\":0,\"compile_ns\":1142,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":176,\"function\":376,\"function_name\":\"\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/validatorjs/dist/bundle.es6.min.js\",\"status\":\"compiled\",\"entries\":15600,\"numeric_entries\":15600,\"promotions\":1,\"compile_attempts\":1,\"compile_successes\":1,\"compile_ns\":351349,\"native_entries\":15569,\"code_bytes\":4096}\nQUENCH_JS_JIT_STATS {\"program\":176,\"function\":383,\"function_name\":\"\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/validatorjs/dist/bundle.es6.min.js\",\"status\":\"unsupported\",\"entries\":18720,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":176,\"function\":387,\"function_name\":\"s\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/validatorjs/dist/bundle.es6.min.js\",\"status\":\"unsupported\",\"entries\":18720,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":176,\"function\":393,\"function_name\":\"\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/validatorjs/dist/bundle.es6.min.js\",\"status\":\"unsupported\",\"entries\":7200,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":176,\"function\":397,\"function_name\":\"\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/validatorjs/dist/bundle.es6.min.js\",\"status\":\"unsupported\",\"entries\":11880,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":176,\"function\":398,\"function_name\":\"\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/validatorjs/dist/bundle.es6.min.js\",\"status\":\"unsupported\",\"entries\":10800,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":176,\"function\":399,\"function_name\":\"\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/validatorjs/dist/bundle.es6.min.js\",\"status\":\"unsupported\",\"entries\":1080,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":176,\"function\":401,\"function_name\":\"\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/validatorjs/dist/bundle.es6.min.js\",\"status\":\"unsupported\",\"entries\":10800,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":176,\"function\":403,\"function_name\":\"\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/validatorjs/dist/bundle.es6.min.js\",\"status\":\"unsupported\",\"entries\":3840,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":176,\"function\":405,\"function_name\":\"\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/validatorjs/dist/bundle.es6.min.js\",\"status\":\"unsupported\",\"entries\":4320,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":176,\"function\":407,\"function_name\":\"\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/validatorjs/dist/bundle.es6.min.js\",\"status\":\"unsupported\",\"entries\":20520,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":176,\"function\":408,\"function_name\":\"\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/validatorjs/dist/bundle.es6.min.js\",\"status\":\"unsupported\",\"entries\":9120,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":176,\"function\":409,\"function_name\":\"\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/validatorjs/dist/bundle.es6.min.js\",\"status\":\"unsupported\",\"entries\":20520,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":176,\"function\":410,\"function_name\":\"\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/validatorjs/dist/bundle.es6.min.js\",\"status\":\"unsupported\",\"entries\":24840,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":176,\"function\":411,\"function_name\":\"\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/validatorjs/dist/bundle.es6.min.js\",\"status\":\"compiled\",\"entries\":22560,\"numeric_entries\":22560,\"promotions\":1,\"compile_attempts\":1,\"compile_successes\":1,\"compile_ns\":262308,\"native_entries\":22529,\"code_bytes\":4096}\nQUENCH_JS_JIT_STATS {\"program\":176,\"function\":413,\"function_name\":\"\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/validatorjs/dist/bundle.es6.min.js\",\"status\":\"unsupported\",\"entries\":5880,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":176,\"function\":417,\"function_name\":\"es-ES\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/validatorjs/dist/bundle.es6.min.js\",\"status\":\"unsupported\",\"entries\":720,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":176,\"function\":419,\"function_name\":\"\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/validatorjs/dist/bundle.es6.min.js\",\"status\":\"unsupported\",\"entries\":7920,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":176,\"function\":422,\"function_name\":\"fr-FR\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/validatorjs/dist/bundle.es6.min.js\",\"status\":\"hot\",\"entries\":4,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":176,\"function\":426,\"function_name\":\"\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/validatorjs/dist/bundle.es6.min.js\",\"status\":\"unsupported\",\"entries\":3600,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":176,\"function\":429,\"function_name\":\"mt-MT\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/validatorjs/dist/bundle.es6.min.js\",\"status\":\"unsupported\",\"entries\":840,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":176,\"function\":431,\"function_name\":\"\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/validatorjs/dist/bundle.es6.min.js\",\"status\":\"unsupported\",\"entries\":960,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":176,\"function\":435,\"function_name\":\"\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/validatorjs/dist/bundle.es6.min.js\",\"status\":\"unsupported\",\"entries\":1920,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":176,\"function\":437,\"function_name\":\"\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/validatorjs/dist/bundle.es6.min.js\",\"status\":\"unsupported\",\"entries\":9360,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":176,\"function\":440,\"function_name\":\"\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/validatorjs/dist/bundle.es6.min.js\",\"status\":\"unsupported\",\"entries\":1680,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":176,\"function\":443,\"function_name\":\"\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/validatorjs/dist/bundle.es6.min.js\",\"status\":\"unsupported\",\"entries\":6000,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":176,\"function\":455,\"function_name\":\"\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/validatorjs/dist/bundle.es6.min.js\",\"status\":\"unsupported\",\"entries\":1800,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":176,\"function\":472,\"function_name\":\"\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/validatorjs/dist/bundle.es6.min.js\",\"status\":\"unsupported\",\"entries\":120600,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":176,\"function\":479,\"function_name\":\"\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/validatorjs/dist/bundle.es6.min.js\",\"status\":\"unsupported\",\"entries\":65040,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":176,\"function\":485,\"function_name\":\"\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/validatorjs/dist/bundle.es6.min.js\",\"status\":\"unsupported\",\"entries\":27960,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":176,\"function\":486,\"function_name\":\"\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/validatorjs/dist/bundle.es6.min.js\",\"status\":\"unsupported\",\"entries\":32040,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":176,\"function\":487,\"function_name\":\"\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/validatorjs/dist/bundle.es6.min.js\",\"status\":\"unsupported\",\"entries\":27960,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":176,\"function\":508,\"function_name\":\"\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/validatorjs/dist/bundle.es6.min.js\",\"status\":\"hot\",\"entries\":7,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":176,\"function\":513,\"function_name\":\"\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/validatorjs/dist/bundle.es6.min.js\",\"status\":\"hot\",\"entries\":52,\"numeric_entries\":1,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":176,\"function\":516,\"function_name\":\"\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/validatorjs/dist/bundle.es6.min.js\",\"status\":\"unsupported\",\"entries\":2400,\"numeric_entries\":2400,\"promotions\":1,\"compile_attempts\":1,\"compile_successes\":0,\"compile_ns\":43173,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":176,\"function\":543,\"function_name\":\"r\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/validatorjs/dist/bundle.es6.min.js\",\"status\":\"unsupported\",\"entries\":1920,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":176,\"function\":544,\"function_name\":\"o\",\"source_name\":\"/workspace/quench/quench-bench/jetstream/validatorjs/dist/bundle.es6.min.js\",\"status\":\"unsupported\",\"entries\":29040,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\n"
+            }
+          }
+        }
+      ]
+    }
+  },
+  "complete": true,
+  "qualification_ready": false
+}

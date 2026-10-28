@@ -1,0 +1,36 @@
+{
+  "left": {
+    "metadata": [
+      [
+        "value",
+        "writable",
+        "enumerable",
+        "configurable"
+      ],
+      "function",
+      "undefined",
+      "onWarning",
+      1,
+      true
+    ],
+    "source_length": 1546,
+    "source_prefix": "function onWarning(warning) {\n  if (!disableWarningSet) {\n    disableWarningSet = new SafeSet();\n   "
+  },
+  "right": {
+    "metadata": [
+      [
+        "value",
+        "writable",
+        "enumerable",
+        "configurable"
+      ],
+      "function",
+      "undefined",
+      "onWarning",
+      1,
+      true
+    ],
+    "source_length": 55,
+    "source_prefix": "function onWarning(warning) { return load()(warning); }"
+  }
+}

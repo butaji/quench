@@ -1,0 +1,47 @@
+diff --git a/crates/quench-runtime/src/vm/relational.rs b/crates/quench-runtime/src/vm/relational.rs
+index 4ede5f8ae..2d0a42414 100644
+--- a/crates/quench-runtime/src/vm/relational.rs
++++ b/crates/quench-runtime/src/vm/relational.rs
+@@ -162,6 +162,9 @@ impl<H: Host> Vm<H> {
+                 return Err(vm.type_error(p, "right-hand side of 'instanceof' is not an object".into()));
+             }
+             if let Some(has_instance) = vm.well_known_symbols.get("hasInstance").copied() {
++                if vm.has_builtin_has_instance(constructor, has_instance) {
++                    return vm.ordinary_has_instance(p, constructor, value);
++                }
+                 let method = vm.get_index(p, constructor, has_instance)?;
+                 if !method.is_undefined() && !method.is_null() {
+                     if !vm.is_function(method) {
+@@ -178,6 +181,32 @@ impl<H: Host> Vm<H> {
+         })
+     }
+ 
++    fn has_builtin_has_instance(&self, constructor: Value, symbol: Value) -> bool {
++        let Some(Cell::Function { object, .. }) = self.heap.get(constructor) else {
++            return false;
++        };
++        if object.proto != self.function_proto || self.symbol_property(constructor, symbol).is_some()
++        {
++            return false;
++        }
++        let Some(method) = self.symbol_property(self.function_proto, symbol) else {
++            return false;
++        };
++        let Some(attributes) =
++            self.property_attributes(self.function_proto, PropertyKey::symbol(symbol))
++        else {
++            return false;
++        };
++        !attributes.accessor
++            && matches!(
++                self.heap.get(method),
++                Some(Cell::Function {
++                    kind: FunctionKind::Native(Native::FunctionPrototypeHasInstance),
++                    ..
++                })
++            )
++    }
++
+     pub(super) fn ordinary_has_instance(
+         &mut self,
+         p: &ResidualProgram,

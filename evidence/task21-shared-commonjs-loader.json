@@ -1,0 +1,242 @@
+{
+  "schema": 1,
+  "tasks": [
+    "21",
+    "22",
+    "43"
+  ],
+  "baseline_source_head": "ac171f0b8415a5a866a00605f9c3285450509499",
+  "qualification": "Isolated source changes on the committed baseline; broader pending main-tree work is preserved and excluded from this source qualification.",
+  "source_sha256": {
+    "crates/quench-node/src/bin/quench-node-next.rs": "988d98ed96710c0130b614cc9dadf769855611eb6298e65e6cc6eee995caa57a",
+    "crates/quench-node/src/host.rs": "8190b1b7aa69ba8dbdce28371686e5429423b57c87a165ed9e107e9e85186d47",
+    "crates/quench-node/src/host/shared_vm.rs": "06dfa1d3eccf8e30c8a41e9b3141ea265159e541061f340072eb9634c3738d31",
+    "crates/quench-node/src/modules/process/shared_vm.rs": "f9c5c138151a8cab94a47c44628b6d89a4298ec181ef3f49e7f7b5345811ecc5",
+    "crates/quench-node/src/modules/process/shared_vm_tests.rs": "0f5988b1814920b1909e62ef736f6923ac09ee06aa3695beedb4edeb9b7bfe2c",
+    "crates/quench-runtime-next/src/api.rs": "0adeb2dc7742478b1681a0fb1305ee896f395a92c2661f7ae2c468ea975ef59e",
+    "crates/quench-runtime-next/src/api_native.rs": "57b2d6a15951ea7afd79ff5e74d369cc2a8b3dac3b9ea1f1af91275b83bcd722",
+    "crates/quench-runtime-next/src/api_native_tests.rs": "b78fa0d627944214940a1531a7f80df15d15fe2a2edc39fbc46b37ac886f65b7",
+    "crates/quench-runtime-next/src/vm/embedding.rs": "6467dc877ad2140aac23c06478b76860a3606dc221f1b0321f2401ae7c98520b",
+    "crates/quench-runtime-next/src/vm/eval.rs": "39880507d1111dc384cbf3c22dfea7daa10301928fe6a656c1bbc60f9639b02e",
+    "crates/quench-runtime-next/src/vm/host_function.rs": "55e3a363b3c1a39d86835f7c885809b1a59e92aa58be836236805cac287041bc",
+    "crates/quench-runtime-next/src/vm/promise.rs": "7ad32c81ecf0c9e831bf3d607c622be639152aa32a709435f033a36bb1534f6f",
+    "crates/quench-node/src/host/shared_vm/commonjs.rs": "c05b97609d488da5d3dee93e6373e14e1954ff73bdc86d1a63da741781846ef5"
+  },
+  "pins": {
+    "test262": "6eec1ac9ee144dafd8f344d73a21f36bfc9f6755",
+    "node": "55e4ca33f3a6dfe364bd9558b726576a6d1a2fba"
+  },
+  "platform": "Apple M4, Darwin arm64",
+  "build_profile": "release; correctness only, no performance claim",
+  "build_log": "target/iteration/task21-shared-loader-release-build.log",
+  "representation": {
+    "node_policy": "Existing NodeHost owns file/package resolution, real source reads and CommonJS module lifecycle. OXC and the shared VM own parsing, execution, guest objects, intrinsic JSON parsing and exception construction.",
+    "module_cache": "One active-engine cache, with legacy exports or shared rooted module records. Shared cache inserts before execution, reads current exports on hits, and evicts failures. Children and require.main project the module lifecycle; mainModule lives on the canonical process object.",
+    "native_capture": "Private native environment uses the existing traced Environment cell with named operation/data slots; no callback side map or new heap cell. Uncaptured callbacks retain the compact numeric operation environment.",
+    "entry": "CommonJS files execute during host initialization through the standard Node wrapper. .mjs and package type:module .js use OXC Module. Eval uses the existing realm with CommonJS globals; Script re-entry preserves roots and excludes caller lexical scope.",
+    "removed": "Duplicate descriptor validation during captured callback creation; no retained original-argument snapshots or wrapper registry added."
+  },
+  "node_controls": {
+    "count": 27,
+    "exact_exit_stdout_stderr_matches": 26,
+    "exit_stdout_matches": 27,
+    "report": "target/iteration/task21-shared-loader/report.json",
+    "report_sha256": "da6092dc38a2d0743b43a8a00cac00692fdf8f97f6d51b7cfd4885a54a9eca7b",
+    "remaining_difference": "Node emits an unsettled top-level-await warning; both return status 13.",
+    "scope": "Process identity; captured/deferred require origin; real local/package/conditional exports resolution; JSON and primitive exports; cycles/current exports; failure eviction and child cleanup; wrapper arguments/receiver/scopes/return; BOM/hashbang; main/parent/paths/children; primitive argument and missing-module errors; module parse goals; job drain; tampered eval/Function/JSON globals."
+  },
+  "frozen_cases": {
+    "report": "target/iteration/task21-shared-loader/frozen-isolated-cases.json",
+    "report_sha256": "b7e5da1376cb7c4a642211df9440fdee5a2bb6761e60e113dba1a46633a1d9d2",
+    "cases": [
+      {
+        "case": "tests/node-compat/stage-2782/process-uptime-shape.js",
+        "source_sha256": "4cb8e53af95293d652cdc60a13a8615211567695e7ca8a8b923be4dc6cdae08b",
+        "node": {
+          "exit": 0,
+          "stdout": "",
+          "stderr": ""
+        },
+        "quench": {
+          "exit": 1,
+          "stdout": "",
+          "stderr": "quench-node-next: Error: Cannot find module 'assert'\nRequire stack:\n- /private/tmp/quench-node-fixtures-m87mta4y/test/parallel/process-uptime-shape.js\n"
+        }
+      },
+      {
+        "case": "tests/node-compat/stage-2070/require-missing-package-error.js",
+        "source_sha256": "b9047862f087e487ff90c60bf276ec5ea829261340dfbf67e329a4e7954be462",
+        "node": {
+          "exit": 0,
+          "stdout": "",
+          "stderr": ""
+        },
+        "quench": {
+          "exit": 1,
+          "stdout": "",
+          "stderr": "quench-node-next: Error: Cannot find module 'assert'\nRequire stack:\n- /private/tmp/quench-node-fixtures-m87mta4y/test/parallel/require-missing-package-error.js\n"
+        }
+      },
+      {
+        "case": "tests/node-compat/stage-2042/esm-top-level-await.mjs",
+        "source_sha256": "04fbc3ec2d31d55d5209312b26d071055ffd033bc2213bcea38115f7581d4210",
+        "node": {
+          "exit": 0,
+          "stdout": "esm top-level await passed\n",
+          "stderr": ""
+        },
+        "quench": {
+          "exit": 0,
+          "stdout": "esm top-level await passed\n",
+          "stderr": ""
+        }
+      },
+      {
+        "case": "tests/node/test/parallel/test-process-uptime.js",
+        "source_sha256": "d625dd216c8d8b38240629601c08fff69edd6f3abf89ec8fa692ed3ff309fb30",
+        "node": {
+          "exit": 0,
+          "stdout": "",
+          "stderr": "0.056707792\n"
+        },
+        "quench": {
+          "exit": 1,
+          "stdout": "",
+          "stderr": "quench-node-next: Error: Cannot find module 'assert'\nRequire stack:\n- /private/tmp/quench-node-fixtures-m87mta4y/test/common/index.js\n- /private/tmp/quench-node-fixtures-m87mta4y/test/parallel/test-process-uptime.js\n"
+        }
+      }
+    ],
+    "invocation": "Byte-identical cases and actual upstream common support tree copied outside the application package; no source edits, pin changes, exclusions, expectation changes or inventory changes. Direct repository invocations, which inherit type:module, are recorded separately.",
+    "status": "One tracked TLA case matches; three CommonJS cases still fail on the unmigrated assert builtin. The upstream uptime case now reaches assert through the real common module."
+  },
+  "internal_checks": {
+    "passed": 8,
+    "native": {
+      "passed": 6,
+      "log": "target/iteration/task21-shared-loader-native-tests.log"
+    },
+    "node": {
+      "passed": 2,
+      "log": "target/iteration/task21-shared-loader-node-tests.log"
+    },
+    "scope": "Scoped/promoted/foreign roots, exception identity, typed failures, native construction/re-entry, captured environment GC and lexical isolation, canonical process root and module-cache root refresh."
+  },
+  "affected_test262": {
+    "jobs": 2,
+    "timeout_ms": 10000,
+    "full_suite_run": false,
+    "total": 1706,
+    "passed_before": 1706,
+    "passed_after": 1706,
+    "regressions": 0,
+    "scopes": [
+      {
+        "scope": "eval",
+        "stages": [
+          8,
+          8
+        ],
+        "filter": "",
+        "before_total": 347,
+        "before_passed": 347,
+        "after_total": 347,
+        "after_passed": 347,
+        "run_exit": 0,
+        "compare_exit": 0,
+        "matched_cases": 347,
+        "regressions": 0,
+        "before_report": "target/iteration/task21-shared-loader/before-eval.json",
+        "before_sha256": "e1fa7219f6e1b1612117ef3ed246f5dc95741ccfdacf781f1ab571138f2e47a1",
+        "after_report": "target/iteration/task21-shared-loader/after-eval.json",
+        "after_sha256": "4b0cfd59b8cea7f78ccee0241d0349f3a20f8bdf0b0e868b972edd5550572f0e",
+        "comparison": "target/iteration/task21-shared-loader/compare-eval.log"
+      },
+      {
+        "scope": "functions",
+        "stages": [
+          26,
+          26
+        ],
+        "filter": "/function/",
+        "before_total": 451,
+        "before_passed": 451,
+        "after_total": 451,
+        "after_passed": 451,
+        "run_exit": 0,
+        "compare_exit": 0,
+        "matched_cases": 451,
+        "regressions": 0,
+        "before_report": "target/iteration/task21-shared-loader/before-functions.json",
+        "before_sha256": "be5a1157808a65c7c103d1fbe4be5bb4133a43d47bbd0948aaa7ec2f51f53177",
+        "after_report": "target/iteration/task21-shared-loader/after-functions.json",
+        "after_sha256": "6922822f7f2faaa9104ed5795f1262829ec387f57fff0486044f7738a02c1a63",
+        "comparison": "target/iteration/task21-shared-loader/compare-functions.log"
+      },
+      {
+        "scope": "modules",
+        "stages": [
+          20,
+          20
+        ],
+        "filter": "",
+        "before_total": 599,
+        "before_passed": 599,
+        "after_total": 599,
+        "after_passed": 599,
+        "run_exit": 0,
+        "compare_exit": 0,
+        "matched_cases": 599,
+        "regressions": 0,
+        "before_report": "target/iteration/task21-shared-loader/before-modules.json",
+        "before_sha256": "331d37f5f4e7416fef09b999fa87cb6c80a4808aef7640549ed14ea215b6d8c1",
+        "after_report": "target/iteration/task21-shared-loader/after-modules.json",
+        "after_sha256": "4462fbaf665c41c2902a77ddd495dcac114120065810cf22eb5160a161bc8803",
+        "comparison": "target/iteration/task21-shared-loader/compare-modules.log"
+      },
+      {
+        "scope": "function-prototype",
+        "stages": [
+          48,
+          48
+        ],
+        "filter": "built-ins/Function/prototype/",
+        "before_total": 309,
+        "before_passed": 309,
+        "after_total": 309,
+        "after_passed": 309,
+        "run_exit": 0,
+        "compare_exit": 0,
+        "matched_cases": 309,
+        "regressions": 0,
+        "before_report": "target/iteration/task21-shared-loader/before-function-prototype.json",
+        "before_sha256": "bdc93aabf7ffdff9cc5bf3acf3988503737c2c3a01e1137c5743c1c33740fe4e",
+        "after_report": "target/iteration/task21-shared-loader/after-function-prototype.json",
+        "after_sha256": "b2b0836835015acb7c06363acb8be898b6656cd8634140452efa04fe3e68b9a5",
+        "comparison": "target/iteration/task21-shared-loader/compare-function-prototype.log"
+      }
+    ]
+  },
+  "upstream_sources": [
+    {
+      "path": "tests/node/lib/internal/modules/cjs/loader.js",
+      "sha256": "fba20852a85b70d726b4d87f20aba2fc3634d132a93aa108c9780d9a61677824"
+    },
+    {
+      "path": "tests/node/lib/internal/modules/helpers.js",
+      "sha256": "1eb3696df840256ff4e6e2ea293897cd012bdd1fd8f712f34cf70ba29f9efe45"
+    },
+    {
+      "path": "tests/node/lib/internal/errors.js",
+      "sha256": "871d2ad94bbacb53fe239d12cb95d855fc778dff99422b8bc910da50f4442e46"
+    }
+  ],
+  "binary_sha256": {
+    "node": "720ef6ca78e0b757f2e4dbe50ce55f3b49c2d2e5b7956d16fa6d4c3abd0b288c",
+    "test262": "b09daa632053eeaf56cb8108ddffec1c0359023f901d99acbc63181910edf83f"
+  },
+  "limits": [
+    "Production entry and remaining implemented Node APIs still use legacy paths pending migration and task 27.",
+    "Public require.cache/extensions, complete module prototype/descriptors, resolve options, synchronous ESM require, advanced error descriptions/codes/diagnostics and Node host scheduling remain unqualified.",
+    "The implemented inventory is unchanged and Stage A is not complete. No Wasm/full Test262/complete Node gate or speed/RSS claim is made."
+  ]
+}

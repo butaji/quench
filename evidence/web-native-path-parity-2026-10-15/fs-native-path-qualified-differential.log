@@ -1,0 +1,15 @@
+   Compiling quench-runtime v0.1.0 (/workspace/quench/crates/quench-runtime)
+   Compiling quench-wasm v0.1.0 (/workspace/quench/crates/quench-wasm)
+   Compiling quench-node v0.1.0 (/workspace/quench/crates/quench-node)
+   Compiling quench-node-test v0.1.0 (/workspace/quench/crates/quench-node-test)
+    Finished `iteration` profile [optimized] target(s) in 36.35s
+     Running tests/child_entry.rs (work/host-build/iteration/deps/child_entry-0c4d472d0248eb46)
+
+running 4 tests
+test filesystem_metadata_paths_preserve_bytes_validation_and_option_getter_order ... ok
+test filesystem_metadata_file_urls_validate_scheme_host_and_encoded_separators ... ok
+test filesystem_metadata_relative_paths_follow_directory_identity_after_rename_and_unlink ... ok
+test filesystem_metadata_callback_exceptions_escape_without_second_delivery ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 263 filtered out; finished in 1.18s
+

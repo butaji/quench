@@ -1,0 +1,7 @@
+34 tests complete
+geomean score ratios: qjit/bunJIT 0.099  qjit/nodeJIT 0.125  qjit/interp 0.907  interp/bunJIT 0.109
+geomean maxrss ratios: qjit/bunJIT 0.367  qjit/nodeJIT 0.262
+RSS wins vs both JITs: 33/34
+jit slower than interpreter (<0.95): typescript-lib 0.77, babylon-wtb 0.80, chai-wtb 0.86, doxbee-promise 0.94, async-fs 0.76, sync-fs 0.77, js-tokens 0.94, json-stringify-inspector 0.73, validatorjs 0.91, hash-map 0.74, stanford-crypto-sha256 0.88, bigint-noble-ed25519 0.94, sqlite3-wasm 0.17, HashSet-wasm 0.40, tsf-wasm 0.62
+jit faster than interpreter (>1.10): espree-wtb 1.10, esprima-next-wtb 1.17, prettier-wtb 1.12, json-parse-inspector 1.25, gcc-loops-wasm 2.08, quicksort-wasm 1.93
+best qjit/bestJIT: quicksort-wasm 0.63, json-parse-inspector 0.40, zlib-wasm 0.29, babel-wtb 0.27, json-stringify-inspector 0.25, gcc-loops-wasm 0.23

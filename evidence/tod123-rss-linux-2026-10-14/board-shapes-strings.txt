@@ -1,0 +1,16 @@
+crypto qn-g3base 4816 4844 4740
+crypto qn-g3cand 4552 4652 4676
+deltablue qn-g3base 4520 4216 4388
+deltablue qn-g3cand 4220 4172 4252
+earley-boyer qn-g3base 10980 10892 11236
+earley-boyer qn-g3cand 10828 10592 10856
+navier-stokes qn-g3base 5412 5364 5308
+navier-stokes qn-g3cand 5292 5276 5284
+raytrace qn-g3base 4172 4300 4208
+raytrace qn-g3cand 3992 4140 4136
+regexp qn-g3base 14768 14768 14768
+regexp qn-g3cand 13656 13576 13716
+richards qn-g3base 3948 3832 3832
+richards qn-g3cand 3728 3812 3728
+splay qn-g3base 48720 48720 48720
+splay qn-g3cand 48288 48344 48288

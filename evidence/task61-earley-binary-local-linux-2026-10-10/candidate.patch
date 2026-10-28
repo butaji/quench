@@ -1,0 +1,332 @@
+diff --git a/crates/quench-runtime/src/bytecode.rs b/crates/quench-runtime/src/bytecode.rs
+index 3aec0fab5..88434defd 100644
+--- a/crates/quench-runtime/src/bytecode.rs
++++ b/crates/quench-runtime/src/bytecode.rs
+@@ -560,6 +560,8 @@ opcodes!(
+     SetIndex => WRITE_THROW; layout Scalar; meaning BooleanFlag, @ Register, @ fields(Register, Register, Register),
+     DefineArrayElement => WRITE_THROW; layout Scalar; meaning ArrayIndex, @ Register, @ fields(Register, Register, Unused),
+     Binary => READ_THROW; layout Scalar; meaning BinaryOperator, @ NumericReturnable, @ fields(ResultRegister, Operand, Operand),
++    BinaryLocalLeft => READ_THROW; layout Scalar; meaning BinaryOperator, @ NumericReturnable, @ fields(ResultRegister, LocalSlot, Operand),
++    BinaryLocalRight => READ_THROW; layout Scalar; meaning BinaryOperator, @ NumericReturnable, @ fields(ResultRegister, Operand, LocalSlot),
+     IncDec => READ_THROW; layout Scalar; meaning BooleanFlag, @ Register, @ fields(ResultRegister, Register, Unused),
+     Unary => READ_THROW; layout Scalar; meaning UnaryOperator, @ Register, @ fields(ResultRegister, Register, Unused),
+     Delete => READ_THROW; layout Scalar; meaning BooleanFlag, @ Register, @ fields(ResultRegister, Register, Register),
+@@ -1351,29 +1353,25 @@ pub struct ResidualProgram {
+ #[cold]
+ #[inline(never)]
+ fn local_loads_in_bounds(code: &[Instr], wide: &[WideInstruction], locals: u16) -> bool {
+-    code.iter().all(|instruction| {
+-        !matches!(
+-            instruction.op(),
+-            Op::LoadLocal
+-                | Op::LoadLocalPlain
+-                | Op::LoadEnvLocal
+-                | Op::StoreEnvLocal
+-                | Op::CopyLocalPlain
+-        ) || instruction.local_slot() < usize::from(locals)
+-    }) && wide.iter().all(|instruction| {
+-        !matches!(
+-            instruction.op(),
+-            Op::LoadLocal
+-                | Op::LoadLocalPlain
+-                | Op::LoadEnvLocal
+-                | Op::StoreEnvLocal
+-                | Op::CopyLocalPlain
+-        ) || instruction.local_slot() < usize::from(locals)
++    code.iter().all(|instruction| match instruction.op() {
++        Op::LoadLocal | Op::LoadLocalPlain | Op::LoadEnvLocal | Op::StoreEnvLocal
++        | Op::CopyLocalPlain => instruction.local_slot() < usize::from(locals),
++        Op::BinaryLocalLeft | Op::BinaryLocalRight => {
++            instruction.local_binary_slot() < usize::from(locals)
++        }
++        _ => true,
++    }) && wide.iter().all(|instruction| match instruction.op() {
++        Op::LoadLocal | Op::LoadLocalPlain | Op::LoadEnvLocal | Op::StoreEnvLocal
++        | Op::CopyLocalPlain => instruction.local_slot() < usize::from(locals),
++        Op::BinaryLocalLeft | Op::BinaryLocalRight => {
++            instruction.local_binary_slot() < usize::from(locals)
++        }
++        _ => true,
+     })
+ }
+
+ impl ResidualProgram {
+-    pub const FORMAT_VERSION: u8 = 81;
++    pub const FORMAT_VERSION: u8 = 82;
+     pub const RUNTIME_ABI_FINGERPRINT: u64 = {
+         const ABI_SIGNATURE: u64 = 0x5251_4a00_0000_0000;
+         const FORMAT_VERSION_SHIFT: u32 = 16;
+diff --git a/crates/quench-runtime/src/bytecode/disassemble.rs b/crates/quench-runtime/src/bytecode/disassemble.rs
+index 281fd6e8b..f8dd94e0d 100644
+--- a/crates/quench-runtime/src/bytecode/disassemble.rs
++++ b/crates/quench-runtime/src/bytecode/disassemble.rs
+@@ -150,6 +150,9 @@ fn write_scalar_field(
+         (InstructionField::B, FieldLayout::LocalSlot) => {
+             write!(output, " b-local={}", instruction.field_value(field))
+         }
++        (InstructionField::C, FieldLayout::LocalSlot) => {
++            write!(output, " c-local={}", instruction.field_value(field))
++        }
+         (InstructionField::B, FieldLayout::ElementCount) => {
+             write!(output, " elements={}", instruction.element_count())
+         }
+diff --git a/crates/quench-runtime/src/bytecode/instruction.rs b/crates/quench-runtime/src/bytecode/instruction.rs
+index 8426ad852..8c16daf94 100644
+--- a/crates/quench-runtime/src/bytecode/instruction.rs
++++ b/crates/quench-runtime/src/bytecode/instruction.rs
+@@ -561,6 +561,17 @@ macro_rules! layout_accessors {
+                 self.imm() as usize
+             }
+
++            pub(crate) fn local_binary_slot(self) -> usize {
++                debug_assert!(matches!(self.op(), Op::BinaryLocalLeft | Op::BinaryLocalRight));
++                let field = if self.op() == Op::BinaryLocalLeft {
++                    InstructionField::B
++                } else {
++                    InstructionField::C
++                };
++                debug_assert_eq!(self.op().field_layout(field), FieldLayout::LocalSlot);
++                usize::from(self.field_value(field))
++            }
++
+             #[allow(dead_code)]
+             pub(crate) fn copy_local_source_slot(self) -> usize {
+                 debug_assert_eq!(self.op(), Op::CopyLocalPlain);
+diff --git a/crates/quench-runtime/src/bytecode/validate.rs b/crates/quench-runtime/src/bytecode/validate.rs
+index d47ea75f5..122a9e579 100644
+--- a/crates/quench-runtime/src/bytecode/validate.rs
++++ b/crates/quench-runtime/src/bytecode/validate.rs
+@@ -613,8 +613,17 @@ impl ResidualProgram {
+                     super::Op::LoadLocalPlain
+                         | super::Op::StoreLocalPlain
+                         | super::Op::CopyLocalPlain
++                        | super::Op::BinaryLocalLeft
++                        | super::Op::BinaryLocalRight
+                 ) && !plain_local_slots
+-                    .get(instruction.local_slot())
++                    .get(if matches!(
++                        instruction.op(),
++                        super::Op::BinaryLocalLeft | super::Op::BinaryLocalRight
++                    ) {
++                        instruction.local_binary_slot()
++                    } else {
++                        instruction.local_slot()
++                    })
+                     .copied()
+                     .unwrap_or(false)
+                 {
+@@ -641,8 +650,19 @@ impl ResidualProgram {
+                             | super::Op::StoreLocalPlain
+                             | super::Op::LoadEnvLocal
+                             | super::Op::StoreEnvLocal
++                            | super::Op::BinaryLocalLeft
++                            | super::Op::BinaryLocalRight
+                     )
+-                    .then(|| instruction.local_slot());
++                    .then(|| {
++                        if matches!(
++                            instruction.op(),
++                            super::Op::BinaryLocalLeft | super::Op::BinaryLocalRight
++                        ) {
++                            instruction.local_binary_slot()
++                        } else {
++                            instruction.local_slot()
++                        }
++                    });
+                     let slot_is_captured = local_slot.is_some_and(|slot| {
+                         u16::try_from(slot).is_ok_and(|slot| captured.binary_search(&slot).is_ok())
+                     });
+@@ -677,7 +697,12 @@ impl ResidualProgram {
+                         ));
+                     }
+                 }
+-                if instruction.op() == super::Op::Binary
++                if matches!(
++                    instruction.op(),
++                    super::Op::Binary
++                        | super::Op::BinaryLocalLeft
++                        | super::Op::BinaryLocalRight
++                )
+                     && instruction.numeric_local_target().is_some_and(|slot| {
+                         function.dispatch != super::DispatchClass::Numeric
+                             && !plain_local_slots
+diff --git a/crates/quench-runtime/src/compile.rs b/crates/quench-runtime/src/compile.rs
+index c58cd5045..6c8ece922 100644
+--- a/crates/quench-runtime/src/compile.rs
++++ b/crates/quench-runtime/src/compile.rs
+@@ -2170,6 +2170,14 @@ impl<'a> Compiler<'a> {
+                 numeric::apply_plain_local_stores(function, live.as_deref());
+             }
+         }
++        if self.mode == SpecializationMode::Enabled {
++            Self::apply_rewrites(
++                &mut functions,
++                &self.method_sites,
++                &mut self.field_sites,
++                &mut self.superinstructions,
++            );
++        }
+         let register_roots = liveness::derive(
+             &mut functions,
+             &self.method_sites,
+diff --git a/crates/quench-runtime/src/compile/rewrite.rs b/crates/quench-runtime/src/compile/rewrite.rs
+index 7f68d1058..a47e9300b 100644
+--- a/crates/quench-runtime/src/compile/rewrite.rs
++++ b/crates/quench-runtime/src/compile/rewrite.rs
+@@ -70,6 +70,36 @@ fusion_recipes! {
+             let destination = u16::try_from(second.local_slot()).ok()?;
+             Instr::try_new(Op::CopyLocalPlain, source, 0, 0, u32::from(destination))
+         };
++    LoadLocalBinary: [LoadLocalPlain, Binary] =>
++        |first: Instr, second: Instr, _: &mut Vec<FieldSite>| {
++            if first.is_wide()
++                || second.is_wide()
++                || first.numeric_local_store_target().is_some()
++            {
++                return None;
++            }
++            let source = u16::try_from(first.local_slot()).ok()?;
++            let register = first.result_register();
++            if second.operand_b().register_index() == Some(register) {
++                Instr::try_new(
++                    Op::BinaryLocalLeft,
++                    second.a(),
++                    source,
++                    second.c(),
++                    second.imm(),
++                )
++            } else if second.operand_c().register_index() == Some(register) {
++                Instr::try_new(
++                    Op::BinaryLocalRight,
++                    second.a(),
++                    second.b(),
++                    source,
++                    second.imm(),
++                )
++            } else {
++                None
++            }
++        };
+     ProducerMove: [
+         LoadConst, Move; LoadLocal, Move; LoadEnvLocal, Move; LoadCapture, Move;
+         LoadName, Move; Binary, Move; Unary, Move; GetField, Move; Move, Move
+diff --git a/crates/quench-runtime/src/profile/regional.rs b/crates/quench-runtime/src/profile/regional.rs
+index 74f7549c0..4d7651043 100644
+--- a/crates/quench-runtime/src/profile/regional.rs
++++ b/crates/quench-runtime/src/profile/regional.rs
+@@ -141,7 +141,11 @@ fn binary_count(function: &crate::bytecode::Function, counts: &[u64]) -> u64 {
+         .filter(|(_, instruction)| {
+             matches!(
+                 instruction.op(),
+-                Op::Binary | Op::NumericAdd | Op::NumericMultiply
++                Op::Binary
++                    | Op::BinaryLocalLeft
++                    | Op::BinaryLocalRight
++                    | Op::NumericAdd
++                    | Op::NumericMultiply
+             )
+         })
+         .map(|(pc, _)| counts.get(pc).copied().unwrap_or(0))
+diff --git a/crates/quench-runtime/src/vm/dispatch.rs b/crates/quench-runtime/src/vm/dispatch.rs
+index d8253580f..b9e18f7e6 100644
+--- a/crates/quench-runtime/src/vm/dispatch.rs
++++ b/crates/quench-runtime/src/vm/dispatch.rs
+@@ -795,14 +795,16 @@ impl<H: Host> Vm<H> {
+                 self.read(f, i.register_a()),
+             )?,
+             Op::Move => self.write(f, i.result_register(), self.read(f, i.register_b())),
+-            Op::Binary | Op::NumericAdd | Op::NumericMultiply => {
++            Op::Binary
++            | Op::BinaryLocalLeft
++            | Op::BinaryLocalRight
++            | Op::NumericAdd
++            | Op::NumericMultiply => {
+                 let operator = i.binary_operator();
+-                let left_operand = i.operand_b();
+-                let right_operand = i.operand_c();
++                let (left_operand, right_operand) = Self::binary_profile_operand_tags(i);
+                 self.profile
+-                    .binary(operator as usize, left_operand.0, right_operand.0);
+-                let left = self.resolve_operand(p, f, left_operand)?;
+-                let right = self.resolve_operand(p, f, right_operand)?;
++                    .binary(operator as usize, left_operand, right_operand);
++                let (left, right) = self.resolve_binary_operands(p, f, i)?;
+                 let site_pc = *pc - 1;
+                 let armed = self.profile_regional_binary(f, site_pc, operator, left, right);
+                 let v = if armed {
+@@ -1890,6 +1892,50 @@ impl<H: Host> Vm<H> {
+         }
+         Ok(StepResult::Continue)
+     }
++    #[inline(always)]
++    pub(super) fn binary_profile_operand_tags(instruction: WideInstruction) -> (u16, u16) {
++        let plain_local = crate::bytecode::Operand::local(0).0;
++        match instruction.op() {
++            Op::BinaryLocalLeft => (plain_local, instruction.operand_c().0),
++            Op::BinaryLocalRight => (instruction.operand_b().0, plain_local),
++            _ => (instruction.operand_b().0, instruction.operand_c().0),
++        }
++    }
++
++    #[inline(always)]
++    pub(super) fn resolve_binary_operands(
++        &mut self,
++        p: &ResidualProgram,
++        frame: usize,
++        instruction: WideInstruction,
++    ) -> Result<(Value, Value), JsError> {
++        match instruction.op() {
++            Op::BinaryLocalLeft => {
++                let local = instruction.local_binary_slot();
++                self.profile
++                    .operand(crate::bytecode::OperandKind::Local as usize);
++                // SAFETY: validation proves this is an in-bounds plain local.
++                let left = unsafe { self.read_validated_local(frame, local) };
++                let right = self.resolve_operand(p, frame, instruction.operand_c())?;
++                Ok((left, right))
++            }
++            Op::BinaryLocalRight => {
++                let left = self.resolve_operand(p, frame, instruction.operand_b())?;
++                let local = instruction.local_binary_slot();
++                self.profile
++                    .operand(crate::bytecode::OperandKind::Local as usize);
++                // SAFETY: validation proves this is an in-bounds plain local.
++                let right = unsafe { self.read_validated_local(frame, local) };
++                Ok((left, right))
++            }
++            _ => {
++                let left = self.resolve_operand(p, frame, instruction.operand_b())?;
++                let right = self.resolve_operand(p, frame, instruction.operand_c())?;
++                Ok((left, right))
++            }
++        }
++    }
++
+     #[inline(always)]
+     pub(super) fn resolve_operand(
+         &mut self,
+diff --git a/crates/quench-runtime/src/vm/dispatch_numeric.rs b/crates/quench-runtime/src/vm/dispatch_numeric.rs
+index 261dc8d26..ede81db9e 100644
+--- a/crates/quench-runtime/src/vm/dispatch_numeric.rs
++++ b/crates/quench-runtime/src/vm/dispatch_numeric.rs
+@@ -179,14 +179,14 @@ impl<H: Host> Vm<H> {
+                         ins.array_index() as usize,
+                         self.read(frame, ins.register_a()),
+                     )?,
+-                    Op::Binary => {
++                    Op::Binary | Op::BinaryLocalLeft | Op::BinaryLocalRight => {
+                         let operator = ins.binary_operator();
+-                        let left_operand = ins.operand_b();
+-                        let right_operand = ins.operand_c();
++                        let (left_operand, right_operand) =
++                            Self::binary_profile_operand_tags(ins.as_wide());
+                         self.profile
+-                            .binary(operator as usize, left_operand.0, right_operand.0);
+-                        let left = self.resolve_operand(p, frame, left_operand)?;
+-                        let right = self.resolve_operand(p, frame, right_operand)?;
++                            .binary(operator as usize, left_operand, right_operand);
++                        let (left, right) =
++                            self.resolve_binary_operands(p, frame, ins.as_wide())?;
+                         let fast = self.numeric_binary(operator, left, right);
+                         #[cfg(feature = "profile-aggregate")]
+                         self.profile.numeric_binary_path(

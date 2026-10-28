@@ -1,0 +1,47 @@
+{
+  "schema": 1,
+  "fixture": "quench-bench/js-engine-benchmark/v8-v7/regexp.js",
+  "host": "Apple M4 arm64 macOS 25.5, Mac16,10, 10 logical CPUs, 16 GiB",
+  "candidate_source": "b72da593ef2b878292834e696cb13527cd287034",
+  "candidate_binary_sha256": "6e14719d1a33cb3d1c968f0bb8d92a4feb7a52a253545035bcec32d0f7ba5f31",
+  "candidate_aa": {
+    "valid_pairs": 11,
+    "clean_pairs": 11,
+    "median_paired_peak_rss_delta_percent": 0.6825938566553003,
+    "min_percent": -1.966652415562209,
+    "max_percent": 3.59333917616127,
+    "bootstrap_95_percentile_interval_percent": [
+      0.0,
+      2.145359019264448
+    ]
+  },
+  "candidate_vs_trunk": {
+    "valid_pairs": 11,
+    "clean_pairs": 11,
+    "median_paired_peak_rss_delta_percent": 0.8620689655172376,
+    "min_percent": -1.8819503849443975,
+    "max_percent": 2.0725388601036343,
+    "bootstrap_95_percentile_interval_percent": [
+      -0.5972696245733822,
+      1.080847384349326
+    ]
+  },
+  "policy": {
+    "uniform_rss_budget_percent": 0.5,
+    "measured_candidate_aa_budget_percent": 2.145359019264448,
+    "applied_budget_percent": 2.145359019264448,
+    "classification": "within_noise_adjusted_budget"
+  },
+  "bootstrap": {
+    "replicates": 20000,
+    "seed_hex": "0x61f17ed520261010",
+    "quantiles": [
+      0.025,
+      0.975
+    ]
+  },
+  "raw_reports": [
+    "all-eight-fixed-work-11.json",
+    "regexp-candidate-aa-11.json"
+  ]
+}

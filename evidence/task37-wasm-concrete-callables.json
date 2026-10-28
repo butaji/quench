@@ -1,0 +1,133 @@
+{
+  "tasks": [
+    "23",
+    "37",
+    "48"
+  ],
+  "source_head": "7e60169df033dd247f34199e084e3e8080a92a29",
+  "source_dirty": true,
+  "source_hashes": {
+    "crates/quench-runtime-next/src/wasm/scalar.rs": "f80199165074922fb52fee18df2e7a0a048d786e30374b1ba5a5c01e953a8731",
+    "crates/quench-runtime-next/src/wasm/types.rs": "28af3bc1508ca7e48c7219897b63de557bdd04a594c5b9d3614903a4dad88ed6",
+    "crates/quench-runtime-next/src/vm/wasm.rs": "1ba51b16a69a0b0ca4d46dab585c3032291cb62d7004a00d13bd2b7deb390102",
+    "crates/quench-runtime-next/src/vm/wasm_host.rs": "af431e8bd19a92495253c1d774c1e7ec549970d16171964d69c28a4c8d4381d5"
+  },
+  "suite_head": "67c8b9dc32c47d61c05a1681df349d01c85fa8ff",
+  "residual_format": 55,
+  "obligation": "Admit concrete function-reference callable arguments/results with explicit owning declaration context.",
+  "representation": "DeclaredFunction retains source index, exactness and nullability in the canonical signature pool. Only unshared concrete function types are admitted; from_wasm still restricts ownerless/resource projections. Invocation validates reference arguments against the function module graph. Single and multi-result decoding receive that same graph explicitly after execution restores active-program state. Original foreign user functions compare their owning pool declarations through recursive equivalence or declared ancestry; exact expectations require equivalence. Native embedding functions match exact implicit singleton types. Ownerless concrete embedding/host signatures reject before allocation. Existing Value, function identity and captured environment remain unchanged. No new opcode, executor, signature authority or format change.",
+  "sources": [
+    "https://webassembly.github.io/spec/core/valid/matching.html#match-deftype"
+  ],
+  "scope": "230 affected pinned files plus34 focused control files. No full suite.",
+  "reports": {
+    "affected": {
+      "before": {
+        "path": "target/iteration/task37-wasm-concrete-callables-before.json",
+        "sha256": "e3aa5fde4bb13b0ab465dfb4e66c30ab101535a1a3dd9a983b89f7c9487dace5",
+        "binary_sha256": "139e1f2a71de9801cff450bf74a6f1d94cb3126dff378c2c7924947f198671a6"
+      },
+      "after": {
+        "path": "target/iteration/task37-wasm-concrete-callables-after.json",
+        "sha256": "0f54f0dca4009b0c7a0a166596c505134e3ae71f3f49678e16201e99c352f9bc",
+        "binary_sha256": "6b19b8bea337bdfc1173f0453924daf813271de33b13bcb95b216b81b12e72fb"
+      }
+    },
+    "controls": {
+      "before": {
+        "path": "target/iteration/task37-wasm-concrete-callables-controls-before.json",
+        "sha256": "4d0b668f07933cb7096430ceaec39859924e3d9bb98a8a5b2a853aeb6007461a",
+        "binary_sha256": "139e1f2a71de9801cff450bf74a6f1d94cb3126dff378c2c7924947f198671a6"
+      },
+      "after": {
+        "path": "target/iteration/task37-wasm-concrete-callables-controls-after.json",
+        "sha256": "53f0ca1b15a90b5a3a38372294254c0022b1c1e706f5e46db2cda383eb39f52f",
+        "binary_sha256": "6b19b8bea337bdfc1173f0453924daf813271de33b13bcb95b216b81b12e72fb"
+      }
+    }
+  },
+  "results": {
+    "affected": {
+      "files": 230,
+      "total": 62758,
+      "before_passed": 61082,
+      "passed": 61209,
+      "failed": 1549,
+      "gains": 127,
+      "gains_by_file": {
+        "crates/quench-wasm-test/testsuite/br_on_non_null.wast": 10,
+        "crates/quench-wasm-test/testsuite/br_on_null.wast": 8,
+        "crates/quench-wasm-test/testsuite/ref_as_non_null.wast": 5,
+        "crates/quench-wasm-test/testsuite/return_call.wast": 35,
+        "crates/quench-wasm-test/testsuite/return_call_indirect.wast": 51,
+        "crates/quench-wasm-test/testsuite/type-equivalence.wast": 12,
+        "crates/quench-wasm-test/testsuite/type-subtyping.wast": 6
+      },
+      "regressions": 0,
+      "all_workers_completed": true,
+      "same_ids_and_input_hashes": true
+    },
+    "controls": {
+      "files": 34,
+      "total": 3540,
+      "before_passed": 3530,
+      "passed": 3540,
+      "failed": 0,
+      "gains": 10,
+      "gains_by_file": {
+        "target/iteration/task37-wasm-concrete-callables-controls.wast": 10
+      },
+      "regressions": 0,
+      "all_workers_completed": true,
+      "same_ids_and_input_hashes": true
+    }
+  },
+  "runner": {
+    "path": "target/iteration/task37-wasm-concrete-callables-runner",
+    "sha256": "6b19b8bea337bdfc1173f0453924daf813271de33b13bcb95b216b81b12e72fb"
+  },
+  "checks": {
+    "runtime": {
+      "path": "target/iteration/task37-wasm-concrete-callables-runtime.log",
+      "sha256": "5745d3f6bb997d49d827d864995bcfd63aa661df2ab5da4f7862b7ed6ec7f2f5",
+      "passed": 33
+    },
+    "frontend": {
+      "path": "target/iteration/task37-wasm-concrete-callables-frontend.log",
+      "sha256": "804222401f33aa75b2629f01c156634e60858f0313853bc9098f10a787846916",
+      "passed": 31
+    },
+    "bytecode": {
+      "path": "target/iteration/task37-wasm-concrete-callables-bytecode.log",
+      "sha256": "c98ebcf4964f30db15b658126bddd58c73619ec140900bf1133e66ff18078b0c",
+      "passed": 19
+    },
+    "check": {
+      "path": "target/iteration/task37-wasm-concrete-callables-check.log",
+      "sha256": "0b7dccb24c68ffbb42c34410521cf86451a585ef7dd6863c2b211ad298653fd7",
+      "passed": null
+    }
+  },
+  "limits": "GC struct/array/abstract and shared callable types, concrete resource types, casts, exceptions and embedding JS adapters remain open. Earlier six subtype table-call Node discrepancies remain in prior evidence. This is affected qualification, not a full suite or Stage A closure.",
+  "internal_obligation": "Existing serialized import/capture/GC test returns the original foreign reference through a concrete result, accepts it through a concrete parameter after GC and rejects null/wrong-signature arguments. No ordinary conformance unit added.",
+  "oracle": {
+    "path": "target/iteration/task37-wasm-concrete-callables-oracle.json",
+    "sha256": "14522b69837afa7779cc1c62c45d51f6eb0ae482dee5750f0bc7c897fe3c159f",
+    "input_hashes": {
+      "target/iteration/task37-wasm-concrete-callables-a.wat": "4c54ad132f40e86c38ff929da2c5dcbea3c7acb3ac62a325816e8034060e9c25",
+      "target/iteration/task37-wasm-concrete-callables-a.wasm": "1c496bea45c888f43f1a89788592ff13255396a5070f98f35f7cc86c14f459cb",
+      "target/iteration/task37-wasm-concrete-callables-b.wat": "2140de3b12ffe1c5e7d552c484da4608723b9643fe9dbed49a80559fa247dc9b",
+      "target/iteration/task37-wasm-concrete-callables-b.wasm": "8959f6f2fc53d70815e3783ba6b911215fdad63b02f127d73630296779977bbc"
+    },
+    "node": "v26.10.0",
+    "flags": [
+      "--no-sparkplug",
+      "--no-maglev",
+      "--no-turbofan",
+      "--wasm-jitless"
+    ],
+    "guest_assertions_matched": 9,
+    "additional_node_observations": 2,
+    "note": "Additional Node observations check exported function identity and direct JS invocation; they are not claimed as two matched shared JS embedding cases."
+  }
+}

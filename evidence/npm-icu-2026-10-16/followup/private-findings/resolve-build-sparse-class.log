@@ -1,0 +1,9 @@
+error[E0463]: can't find crate for `oxc_ast_visit`
+ --> /workspace/scratch/npm-private-brand-draft/resolve.rs:2:5
+  |
+2 | use oxc_ast_visit::Visit;
+  |     ^^^^^^^^^^^^^ can't find crate
+
+error: aborting due to 1 previous error
+
+For more information about this error, try `rustc --explain E0463`.

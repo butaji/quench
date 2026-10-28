@@ -1,0 +1,108 @@
+{
+  "schema": 1,
+  "task": "84 / 61",
+  "experiment": "Linux production build with rustc target-cpu=native",
+  "decision": "reject for the current production policy: Richards maximum RSS regressed significantly; Splay's paired Score and RSS intervals both include a tie",
+  "source": {
+    "branch": "v2-cloud",
+    "revision": "907e89dd4eeaf915498317b3b6522ec46faed101",
+    "dirty": false,
+    "baseline_binary_sha256": "4141420eb899e0fb5f1d8a214bfbb6cba9b66f8e0145e12e3da003c3efe13f74",
+    "candidate_binary_sha256": "04a05a0ca332f62206f104465f6e17bbfde5a4bba488422f2fcabce2443fb402",
+    "candidate_binary_path": "target/stageb-candidates/cpu-native/native-quench-node",
+    "candidate_build": "RUSTFLAGS=-D warnings -C target-cpu=native; cargo build --profile production -p quench-node; isolated CARGO_TARGET_DIR=target/stageb-native",
+    "candidate_source_dirty_during_build_and_measurement": false
+  },
+  "research": {
+    "url": "https://doc.rust-lang.org/rustc/codegen-options/index.html#target-cpu",
+    "accessed": "2026-10-08",
+    "finding": "Rust documents target-cpu=native as generating code for the host processor; the default is compiler-selected. This Linux candidate uses the AMD EPYC host ISA and is not a portable Apple M4 candidate."
+  },
+  "measurement": {
+    "kind": "alternating production-binary Score and maximum-RSS comparison",
+    "fixtures": [
+      "richards.js",
+      "splay.js"
+    ],
+    "pairs_per_fixture": 11,
+    "order": "alternating baseline/candidate",
+    "bootstrap": {
+      "method": "paired percentile bootstrap of the difference between medians",
+      "replicates": 100000,
+      "interval": "95%",
+      "resampling": "same pair indices jointly resampled for baseline and candidate"
+    },
+    "host": {
+      "platform": "Linux x86_64 KVM",
+      "cpu_model": "AMD EPYC 9V74 80-Core Processor",
+      "cpu_quota": "400000 100000",
+      "memory_limit_bytes": 17179869184,
+      "rss_backend": "Linux wait4 rusage"
+    },
+    "engines": {
+      "quickjs": "2026-06-04, interpreter",
+      "bun": "1.4.2, JSC useJIT=false probed",
+      "node": "v24.19.0, --jitless probed"
+    },
+    "richards": {
+      "score": {
+        "baseline_median": 113,
+        "candidate_median": 112,
+        "paired_delta_median": 0,
+        "paired_delta_95_ci": [
+          -4,
+          1
+        ]
+      },
+      "max_rss": {
+        "baseline_median_bytes": 18894848,
+        "candidate_median_bytes": 20664320,
+        "paired_delta_median_bytes": 1794048,
+        "paired_delta_95_ci_bytes": [
+          1232896,
+          1966080
+        ],
+        "candidate_lower_pairs": 0
+      },
+      "summary_path": "target/stageb-candidates/cpu-native/richards-paired-summary.json",
+      "summary_sha256": "966e6e3ef2c1b7d1cbc2e2a1f852aa2e3986268ad1edf09bd1b37471f4486c70"
+    },
+    "splay": {
+      "score": {
+        "baseline_median": 815,
+        "candidate_median": 854,
+        "paired_delta_median": 33,
+        "paired_delta_95_ci": [
+          -43,
+          67
+        ]
+      },
+      "max_rss": {
+        "baseline_median_bytes": 255705088,
+        "candidate_median_bytes": 255569920,
+        "paired_delta_median_bytes": -307200,
+        "paired_delta_95_ci_bytes": [
+          -761856,
+          118784
+        ],
+        "candidate_lower_pairs": 7
+      },
+      "summary_path": "target/stageb-candidates/cpu-native/splay-paired-summary.json",
+      "summary_sha256": "21475ffb16126aef6b782af1a6c51628fc7e57e19887d329e0aea8383f8afbcb"
+    },
+    "raw_reports": "target/stageb-candidates/cpu-native/{richards,splay}-pairNN-{baseline,candidate}.json",
+    "runner_sha256": "89067d2fa81e57f11e3bbb568a2920e88e7fa7a062b76ec328eac7e191b1cd90",
+    "paired_runner_script_sha256": "5620374c2791dd0cd3667237bb6fbb653598d37ae3dcd0ff4aadce626cbb33c2"
+  },
+  "correctness": {
+    "node_oracle": {
+      "engine": "Node.js v24.19.0",
+      "script": "work/frame-rooted-call-oracle.js",
+      "script_sha256": "6b455a63be8ad0a5efb1ee8fe38248d2bb8cb3cdc79c28ec80b1b89a845c6cb1",
+      "stdout_sha256": "b9829e48bedf0f3799f75c6542d94eff18953bb8391a00015595ada6fd249e03",
+      "baseline_and_candidate_match_node": true
+    },
+    "all_44_four_engine_reports_valid_and_output_equal": true
+  },
+  "stage_b_status": "target-cpu=native not promoted; full all-eight Linux campaign and Apple M4 qualification remain open"
+}

@@ -1,0 +1,1 @@
+{"freshFunctionIdentity":true,"sameSourceText":true,"sameFunctionName":true,"firstName":"inner","secondName":"inner","source":"function inner(value) {\n    return value + 1;\n  }","firstResult":5,"secondResult":10}

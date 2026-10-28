@@ -1,0 +1,210 @@
+{
+  "schema": 1,
+  "task": "20",
+  "kind": "affected_test262_stage114_owner_subset",
+  "captured_date": "2026-10-06",
+  "scope": {
+    "stage": 114,
+    "stage_path": "staging",
+    "selected_count": 48,
+    "stage_total": 1482,
+    "stage_complete": false,
+    "reason": "Owner audit found direct changed-path coverage within Stage 114; select those exact fixtures rather than rerunning the whole stage."
+  },
+  "source": {
+    "revision": "62109e265221b718a2b0c4680e057453d0f3941a",
+    "dirty": true,
+    "host": "macos-aarch64",
+    "runner": "/Users/admin/Code/GitHub/quench-v2/target/iteration/run-stages-next",
+    "runner_sha256": "de8daf8d76003292ef62ed1830ba5daa89ee253de16e635ed0b5faab400eb439",
+    "timeout_ms": 900000,
+    "jobs": 1,
+    "stages_definition": "docs/STAGES.md",
+    "stages_definition_sha256": "4cb13c366db7ed8d7ae0a1b7fe63eb18f93def77fd09231630ba5050f7d7d3d2",
+    "parallel_processes": 4
+  },
+  "corpus": {
+    "root": "tests/test262",
+    "revision": "f2d1435644797268dca1f7988cad5a4e89ccd8d2",
+    "baseline_revision": "6eec1ac9ee144dafd8f344d73a21f36bfc9f6755",
+    "selected_fixture_hashes": {
+      "staging/sm/Promise/bug-1287334.js": "fb73b86dd5fb63ae5ebecb3abfac0c0841622e2820832c79500587fcb4aef470",
+      "staging/sm/Promise/bug-1288382.js": "386672f90a218d1456bea8028cf7a519b06cc6fcdff52b3977c291d1d3bb6e6c",
+      "staging/sm/Promise/bug-1289040.js": "a77ba5243eb879aa3653a7209e8f67893a1e83e2e9306191f4915fc0437e2f10",
+      "staging/sm/Promise/for-of-iterator-uses-getv.js": "5bff31858b4102d369a82d94da87060409dd1b613e8f670923c10ed36713b7d2",
+      "staging/top-level-await/tla-hang-entry.js": "f365d4074f98306fb0ae7dbfaccb60f2b9df2821570e8d3fc0575e45d2ed75d2",
+      "staging/source-phase-imports/import-source-source-text-module.js": "324bb2dad79e40239e00f716666f4e39d6f10cf7d6cfe6c99ef84578c3ce4b10",
+      "staging/sm/expressions/optional-chain-first-expression-module.js": "1cd86136f633276b8d37d99fb98bbba45b892dd9b8605d2477a2f0d97b3c0179",
+      "staging/sm/AsyncGenerators/async-generator-declaration-in-modules.js": "616b110b303a61cba5a783dcc02e111fdb677d1380b8f6f6ebfcdb9a86b6ada1",
+      "staging/sm/generators/yield-iterator-close.js": "b41a753589cd5dd506db695688aa64cde35b33fabb49856a439327d326f4f6dc",
+      "staging/sm/generators/yield-star-iterator-close.js": "7f337d323183b2cc5c9c209091da8e1a57ca9a89884a98f1ab3c227590399654",
+      "staging/sm/Iterator/prototype/flatMap/inner-generator.js": "18f1708bc955c244eff97a52eedd3e96f71254ddd1927dd881d9086c382250b1",
+      "staging/explicit-resource-management/async-disposable-stack-adopt-on-disposed-stack.js": "a77d146ec4ec12cf759c128ce5f35f0bd49c35dd7f6ca69003d8b65cf5520222",
+      "staging/explicit-resource-management/async-disposable-stack-adopt.js": "093525d3299e299f78ab8c6d94128969389eef254b6f8d9ad964357ad2620f4f",
+      "staging/explicit-resource-management/async-disposable-stack-async-dispose-symbol-throws.js": "ddbd74688e2216d384e9bb8cd435e184e63d0eb1e2d75690c3747fb19d5a816a",
+      "staging/explicit-resource-management/async-disposable-stack-defer-on-disposed-stack.js": "9c65fd5656aff08e512f9eb3c21e218c8432ec905bb03e0190fc81cffd63527a",
+      "staging/explicit-resource-management/async-disposable-stack-defer.js": "97cb7ab2e94bc32f2439b74a625a8581b0c800cb3a8941c61095bb1f2d47786d",
+      "staging/explicit-resource-management/async-disposable-stack-dispose-async-resolved-by-undefined.js": "58f8b911b94b15183d052a206b73cf49d6d5cbbbaf99bb7d0a8d862741aedd52",
+      "staging/explicit-resource-management/async-disposable-stack-dispose-on-disposed-stack.js": "8e00b269669ac1409823c675ad0c334aea6d230d4485a90b9b39bee77e42d150",
+      "staging/explicit-resource-management/async-disposable-stack-dispose-sync-calls.js": "527f025ff2421d3552267a4e489496ba91723fbd855447e05ce7de23c7f61a35",
+      "staging/explicit-resource-management/async-disposable-stack-dispose-throws-suppressed-error.js": "25aea04730af07b7d340bea8569c9b0a80c7dacd2f1e31cd6af609c2ff8916c0",
+      "staging/explicit-resource-management/async-disposable-stack-dispose.js": "925a5d58b0418316adb576793221ac2a5dd21ec45ade5f0f29adb9087f54e19a",
+      "staging/explicit-resource-management/async-disposable-stack-move-on-disposed-stack.js": "8fd512da6939e2de10b63f036d6cea39edead3c1ea0ab5804dc4cc60176f0d20",
+      "staging/explicit-resource-management/async-disposable-stack-use-on-disposed-stack.js": "b6e0eecb181f31c1dd546646a00b757338b25758ede445124b29d69ed3bcb565",
+      "staging/explicit-resource-management/async-disposal-from-sync-method-returning-a-promise.js": "32a4155bd7869194c4827c3b9088fbf18fe6ab5c91399089ed47dde5c2820f86",
+      "staging/explicit-resource-management/await-using-dispose-method-throws-after-await.js": "0677e2c618f09cd050f1f42ebeeb7152d97f7f29ad30e58d54c2d37ff43bff3f",
+      "staging/explicit-resource-management/await-using-dispose-method-throws.js": "1e193e83b015716d320996f7958ca3539def74d016e137d808fea1309764bc46",
+      "staging/explicit-resource-management/await-using-in-async-function-call-with-await.js": "231717d3dd0c975d2b49c8d4b976abdf6dfedf9d30712ea6ec6aef9793a337e4",
+      "staging/explicit-resource-management/await-using-in-async-function-call-without-await.js": "93d97458b15049041cfb945e042b118efa6c6afceb2feaa6dbadb3bd4e7255c1",
+      "staging/explicit-resource-management/await-using-in-async-generator-body.js": "cf0fb912cc3c72fd7ef77b6717263e462d4ae6785502af40702870646f4fd5a6",
+      "staging/explicit-resource-management/await-using-in-block.js": "904faa6ed92c64f72add7c14859f830c9189b97f12592763730513eb9c838a38",
+      "staging/explicit-resource-management/await-using-in-for-in-statement.js": "b504b5d96acfcd443a27f49b81afb2d39153b97d56fe7dcd34d69add88e03b31",
+      "staging/explicit-resource-management/await-using-in-for-of-statement.js": "2c51a9d94f5de18bb69875f729c44d53f6f8b75eb40dfe4b7643de5adcb7a3a5",
+      "staging/explicit-resource-management/await-using-in-for-statement.js": "a52f82ed40c6c96c38cd05d9962d5006bba511caa735ecd8411e5a34bc5096c6",
+      "staging/explicit-resource-management/await-using-in-top-level-module.js": "4339527405448f72b1bee9ec3922ac923d695bc8169284d087e209b37215f8d4",
+      "staging/explicit-resource-management/await-using-mixed-async-throws.js": "a94c8133175fb02a368cb1ee73622bd03fbe130685a86ed97fd1dd76552bcc15",
+      "staging/explicit-resource-management/await-using-mixed-sync-throws.js": "47a5940950ccc639d91062e4de55832a70f732b7007772f0453c57a49c739b8d",
+      "staging/explicit-resource-management/await-using-mixed-throws-suppressed-error-from-sync-and-async-disposals.js": "4f299ce2e5a16214983d2e7b107b168b1e69f86ba737258a215daabf0c7c09e8",
+      "staging/explicit-resource-management/await-using-mixed-throws-suppressed-error.js": "e316c61d78ae0a5fad2040613a432f00d70f3455da80ed093786cfdecb8c6e67",
+      "staging/explicit-resource-management/await-using-throws-from-symbol-dispose.js": "f8a83ef02c0a761490892c807dc32300fe2242808163951734de70f7747fdf70",
+      "staging/explicit-resource-management/await-using-throws-suppressed-error-from-disposals.js": "0e1754d4fc779ad58d96ba694d45a6da03725a0828428bc7323cff0aed2624e3",
+      "staging/explicit-resource-management/await-using-throws-suppressed-error-from-try-and-disposal.js": "14f9bad4c01289a6507d94a00ec48bd4b4ee6321d7f68847f286d8aa19239928",
+      "staging/explicit-resource-management/await-using-throws-suppressed-error-of-undefined.js": "8186487a04f355d7f49121b206517743556803e13e7e283e9d7aed2c9abbaf88",
+      "staging/explicit-resource-management/await-using-user-code-throws-after.js": "45af40fb6fc482153b83e16003007b590dc051182e98d2966a53bcd288e85dcd",
+      "staging/explicit-resource-management/await-using-user-code-throws-before.js": "69aa79d8cf43f2861917f375fe04b31789d14807e38faeb0227a099681509ff1",
+      "staging/explicit-resource-management/await-using-with-no-async-dispose-method.js": "b04baee4c84ef94f91dbfa46e8ef6d2e9f615717692854d5875754bdcc2562ca",
+      "staging/explicit-resource-management/await-using-with-sync-dispose-method.js": "3e88d139adbed96a7f2575ef0e3ab36070f7cf2cb5aee73078303a816978180b",
+      "staging/explicit-resource-management/mixed-call-dispose-methods.js": "eed8d214cb32fb6c408394f9ad65c9d30a772e731167e053776eb235a533f272",
+      "staging/sm/Symbol/surfaces.js": "9afe9b6e3910326a846beb1cc5e149fe799dbbd733ce92c04a3cda1aad7be1cf"
+    },
+    "changed_harness_or_staging_paths_between_revisions": []
+  },
+  "owner_groups": [
+    {
+      "owner": "Promise reaction/aggregate and job paths",
+      "paths": [
+        "staging/sm/Promise/bug-1287334.js",
+        "staging/sm/Promise/bug-1288382.js",
+        "staging/sm/Promise/bug-1289040.js",
+        "staging/sm/Promise/for-of-iterator-uses-getv.js"
+      ]
+    },
+    {
+      "owner": "dynamic-import/module-promise settlement paths",
+      "paths": [
+        "staging/top-level-await/tla-hang-entry.js",
+        "staging/source-phase-imports/import-source-source-text-module.js",
+        "staging/sm/expressions/optional-chain-first-expression-module.js"
+      ]
+    },
+    {
+      "owner": "async-generator and iterator/generator continuation paths",
+      "paths": [
+        "staging/sm/AsyncGenerators/async-generator-declaration-in-modules.js",
+        "staging/sm/generators/yield-iterator-close.js",
+        "staging/sm/generators/yield-star-iterator-close.js",
+        "staging/sm/Iterator/prototype/flatMap/inner-generator.js"
+      ]
+    },
+    {
+      "owner": "Promise-backed async-disposal integration paths",
+      "paths": [
+        "staging/explicit-resource-management/async-disposable-stack-adopt-on-disposed-stack.js",
+        "staging/explicit-resource-management/async-disposable-stack-adopt.js",
+        "staging/explicit-resource-management/async-disposable-stack-async-dispose-symbol-throws.js",
+        "staging/explicit-resource-management/async-disposable-stack-defer-on-disposed-stack.js",
+        "staging/explicit-resource-management/async-disposable-stack-defer.js",
+        "staging/explicit-resource-management/async-disposable-stack-dispose-async-resolved-by-undefined.js",
+        "staging/explicit-resource-management/async-disposable-stack-dispose-on-disposed-stack.js",
+        "staging/explicit-resource-management/async-disposable-stack-dispose-sync-calls.js",
+        "staging/explicit-resource-management/async-disposable-stack-dispose-throws-suppressed-error.js",
+        "staging/explicit-resource-management/async-disposable-stack-dispose.js",
+        "staging/explicit-resource-management/async-disposable-stack-move-on-disposed-stack.js",
+        "staging/explicit-resource-management/async-disposable-stack-use-on-disposed-stack.js",
+        "staging/explicit-resource-management/async-disposal-from-sync-method-returning-a-promise.js",
+        "staging/explicit-resource-management/await-using-dispose-method-throws-after-await.js",
+        "staging/explicit-resource-management/await-using-dispose-method-throws.js",
+        "staging/explicit-resource-management/await-using-in-async-function-call-with-await.js",
+        "staging/explicit-resource-management/await-using-in-async-function-call-without-await.js",
+        "staging/explicit-resource-management/await-using-in-async-generator-body.js",
+        "staging/explicit-resource-management/await-using-in-block.js",
+        "staging/explicit-resource-management/await-using-in-for-in-statement.js",
+        "staging/explicit-resource-management/await-using-in-for-of-statement.js",
+        "staging/explicit-resource-management/await-using-in-for-statement.js",
+        "staging/explicit-resource-management/await-using-in-top-level-module.js",
+        "staging/explicit-resource-management/await-using-mixed-async-throws.js",
+        "staging/explicit-resource-management/await-using-mixed-sync-throws.js",
+        "staging/explicit-resource-management/await-using-mixed-throws-suppressed-error-from-sync-and-async-disposals.js",
+        "staging/explicit-resource-management/await-using-mixed-throws-suppressed-error.js",
+        "staging/explicit-resource-management/await-using-throws-from-symbol-dispose.js",
+        "staging/explicit-resource-management/await-using-throws-suppressed-error-from-disposals.js",
+        "staging/explicit-resource-management/await-using-throws-suppressed-error-from-try-and-disposal.js",
+        "staging/explicit-resource-management/await-using-throws-suppressed-error-of-undefined.js",
+        "staging/explicit-resource-management/await-using-user-code-throws-after.js",
+        "staging/explicit-resource-management/await-using-user-code-throws-before.js",
+        "staging/explicit-resource-management/await-using-with-no-async-dispose-method.js",
+        "staging/explicit-resource-management/await-using-with-sync-dispose-method.js",
+        "staging/explicit-resource-management/mixed-call-dispose-methods.js"
+      ]
+    },
+    {
+      "owner": "Symbol.prototype descriptor",
+      "paths": [
+        "staging/sm/Symbol/surfaces.js"
+      ]
+    }
+  ],
+  "result": {
+    "total": 48,
+    "passed": 48,
+    "failed": 0,
+    "all_selected_passed": true
+  },
+  "comparison": {
+    "command": "target/iteration/compare-runs --reports target/iteration/task20-stage114-affected/baseline.json target/iteration/task20-stage114-affected/current.json",
+    "exit_code": 0,
+    "verdict": "regressions=0",
+    "baseline_source_revision": "d31adb9274a8156c395082fb7dba745bf39d9d11",
+    "baseline_suite_revision": "6eec1ac9ee144dafd8f344d73a21f36bfc9f6755",
+    "baseline_total_selected": 48,
+    "baseline_passed": 48,
+    "baseline_failed": 0,
+    "baseline_projection_source": "target/iteration/task20-stage114-herdr-current.json (complete Stage 114 report projected by exact path)",
+    "baseline_projection_sha256": "bd0c21e03c99817d10aa07d88e301778a1b6e14bc2b3c4e019d5e36f22595e6d",
+    "current_report": "target/iteration/task20-stage114-current-refresh/current.json",
+    "current_report_sha256": "d91d0f49d6272fa8f84b78ada788c273f7ed35887c65dd79d8f2d3473e37eb94",
+    "inventory_equal": true,
+    "selected_inputs_unchanged_between_baseline_and_current_corpus": true
+  },
+  "limitations": [
+    "Only 48 owner-selected Stage 114 fixtures were run; the remaining Stage 114 cases are not qualified by this report.",
+    "The comparison baseline is a projection of a complete prior Stage 114 run on revision 6eec; all current staging and harness paths are byte-identical across the 6eec-to-f2d corpus revision.",
+    "This evidence does not close Task 20 or the complete pinned Test262 gate."
+  ],
+  "current_requalification": {
+    "source_revision": "d69f95b73270dc07652064192fe0c6ffa66ed53b",
+    "worktree_dirty": true,
+    "host": "macos-aarch64",
+    "runner": "target/iteration/run-stages-next",
+    "runner_sha256": "4cedd2892fe38a37968065355f8d5ffdbfdc0ddf6cc4b5c521680c43e923b27e",
+    "timeout_ms": 60000,
+    "execution": "One run-stages-next invocation per exact selected path; four outer workers, TEST262_JOBS=1 per invocation. No other Stage 114 fixtures selected.",
+    "selected_count": 48,
+    "passed": 48,
+    "failed": 0,
+    "selected_input_sha256_matches": 48,
+    "report": "target/iteration/task20-stage114-current-refresh/current.json",
+    "report_sha256": "d91d0f49d6272fa8f84b78ada788c273f7ed35887c65dd79d8f2d3473e37eb94",
+    "comparison": {
+      "command": "TEST262_TEST_TIMEOUT_MS=60000 target/iteration/compare-runs --reports target/iteration/task20-stage114-affected/baseline.json target/iteration/task20-stage114-current-refresh/current.json",
+      "baseline_report": "target/iteration/task20-stage114-affected/baseline.json",
+      "baseline_report_sha256": "bd0c21e03c99817d10aa07d88e301778a1b6e14bc2b3c4e019d5e36f22595e6d",
+      "exit_code": 0,
+      "verdict": "regressions=0"
+    },
+    "owner_source_evidence_sha256": {
+      "tasks/evidence/task20-current-affected-stages-2026-10-06.json": "0e3eb354be0c8c224cef685aa7edf3d2a672116e859843d1b4772e4f5a0d52d6",
+      "tasks/evidence/task20-promise-affected-stages-2026-10-06.json": "d921b884f82a04548098d6ed28e4807e9ea36382f3970ce664a8829b45a8f0f7"
+    }
+  }
+}

@@ -1,0 +1,211 @@
+{
+  "engine": "official Node v26.12.0",
+  "counts": {
+    "pass": 4578,
+    "skip": 417,
+    "fail": 17
+  },
+  "official_harness_total": 5012,
+  "all_parallel_source_count": 5015,
+  "source_stems_without_tap_label": [
+    "test-esm-loader-hooks-inspect-wait.js",
+    "test-fs-read-stream-concurrent-reads.js",
+    "test-shadow-realm-gc-module.js",
+    "test-shadow-realm-gc.js",
+    "test-snapshot-incompatible.js"
+  ],
+  "repeated_tap_labels": {
+    "test-startup-empty-regexp-statics": 2,
+    "test-whatwg-readablestream": 2,
+    "test-worker": 2
+  },
+  "failures": [
+    "test-cluster-primary-error",
+    "test-cluster-primary-kill",
+    "test-net-boundsocket",
+    "test-node-output-console",
+    "test-repl-context",
+    "test-repl-custom-eval-previews",
+    "test-repl-empty",
+    "test-repl-eval-error-after-close",
+    "test-repl-multiline",
+    "test-repl-pretty-stack-custom-writer",
+    "test-repl-underscore",
+    "test-repl-custom-eval",
+    "test-runner-reporters",
+    "test-sqlite-statement",
+    "test-tls-get-ca-certificates-worker-no-use-system-ca",
+    "test-tls-get-ca-certificates-worker-use-system-ca",
+    "test-vfs"
+  ],
+  "source_bytes_equal": true,
+  "elapsed_seconds": 460.1913734889822,
+  "receipt": {
+    "engine": "official Node v26.12.0",
+    "node_sha256": "caa24debe02770c92a70677e2a62ca98890150e7ac1c17bcfe31bcc98cc89943",
+    "runner": "unchanged official Node tools/test.py and stock platform status rules",
+    "command": [
+      "python3",
+      "/workspace/work/node-stable-release/node-v26.12.0/tools/test.py",
+      "--shell",
+      "/workspace/quench/work/node-v26.12.0-linux-x64/bin/node",
+      "--test-root",
+      "/workspace/work/node-stable-oracle-copy/test",
+      "--mode",
+      "release",
+      "--timeout",
+      "30",
+      "-j",
+      "4",
+      "-p",
+      "tap",
+      "parallel"
+    ],
+    "isolated_test_root": "/workspace/work/node-stable-oracle-copy/test",
+    "cwd": "/workspace/work/node-stable-oracle-copy",
+    "package_boundary": "Pristine test copy outside Quench package scope; upstream default module detection, no added package type",
+    "parallel_source_count": 5015,
+    "started_utc": "2026-10-16T08:25:25.942791+00:00",
+    "limitations": [
+      "Official harness selection/status rules and timeout multipliers differ from the raw Quench inventory; retain results as an independent oracle baseline, not a replacement Quench score."
+    ],
+    "exit": 1,
+    "protected_restored": true,
+    "elapsed_seconds": 460.1913734889822,
+    "finished_utc": "2026-10-16T08:33:06.134420+00:00",
+    "changed_parallel_sources": []
+  },
+  "raw": [
+    {
+      "path": "work/node-stable-oracle/check-exec-scope.py",
+      "bytes": 1891,
+      "sha256": "1d2d7bf8726cb54233a985207c65dae06baa8fab38368fc41c616e745ac45ec9"
+    },
+    {
+      "path": "work/node-stable-oracle/exec-outside-control.tap",
+      "bytes": 20900,
+      "sha256": "e3686f8978baca106910887d4f20928b914eb1e173df5a13a7110d818ba3d933"
+    },
+    {
+      "path": "work/node-stable-oracle/exec-outside-receipt.json",
+      "bytes": 1529,
+      "sha256": "545e8ed8eae35c49c9b6ba741e0f99c94158688a79ae7ddf45a3bc79fdbe9a20"
+    },
+    {
+      "path": "work/node-stable-oracle/fixture-sha256.json",
+      "bytes": 580987,
+      "sha256": "7a64452810ad42f8218a70b1f120db078a9f614af732b91780bcf1e86bf3be00"
+    },
+    {
+      "path": "work/node-stable-oracle/full.tap",
+      "bytes": 681655,
+      "sha256": "bd236cb38e30aeec13d771e41cf4dcc60c507f933de6eb6692ec8b7beca849ba"
+    },
+    {
+      "path": "work/node-stable-oracle/invalid-forced-commonjs-fixture-sha256.json",
+      "bytes": 580987,
+      "sha256": "7a64452810ad42f8218a70b1f120db078a9f614af732b91780bcf1e86bf3be00"
+    },
+    {
+      "path": "work/node-stable-oracle/invalid-forced-commonjs-full.tap",
+      "bytes": 505801,
+      "sha256": "3be6a7ba6c7caae3f63d759a1d07f1a22c8aab21d1142482d680d9ca8932c800"
+    },
+    {
+      "path": "work/node-stable-oracle/invalid-forced-commonjs-receipt-before.json",
+      "bytes": 1128,
+      "sha256": "22b715d3014433be5694f89e31c003be19195f72f5e505f3565593be9e7b4bce"
+    },
+    {
+      "path": "work/node-stable-oracle/invalid-forced-commonjs-receipt.json",
+      "bytes": 1302,
+      "sha256": "e8d1e692fc9797bf9895fe510962cce69c929b8b3d88b5ee1a63520fed07395a"
+    },
+    {
+      "path": "work/node-stable-oracle/invalid-package-boundary-fixture-sha256.json",
+      "bytes": 580987,
+      "sha256": "7a64452810ad42f8218a70b1f120db078a9f614af732b91780bcf1e86bf3be00"
+    },
+    {
+      "path": "work/node-stable-oracle/invalid-package-boundary-full.tap",
+      "bytes": 3528868,
+      "sha256": "20a2c76e3e086b265c9ee62b4e75b27f958608866b55953e3b0ecc012178810c"
+    },
+    {
+      "path": "work/node-stable-oracle/invalid-package-boundary-receipt-before.json",
+      "bytes": 963,
+      "sha256": "5028ee67a3fc7d7b62c6ee2d9605c84d814ebef14eba5cb23f44ea40b4b87567"
+    },
+    {
+      "path": "work/node-stable-oracle/invalid-package-boundary-receipt.json",
+      "bytes": 1136,
+      "sha256": "467461aa00ce997bf06a430e6d145116de67fae914a6c19c374d5d5ec9f5c5cc"
+    },
+    {
+      "path": "work/node-stable-oracle/receipt-before.json",
+      "bytes": 1132,
+      "sha256": "f71dd2ee8cd4e287d29790387ff29cfeaa6c385306d5e3dc4815da5f84927963"
+    },
+    {
+      "path": "work/node-stable-oracle/receipt.json",
+      "bytes": 1303,
+      "sha256": "655962dd4def6894f2bbe4a864c0e1e2458bca1aef4679f30e00892c46db1c4f"
+    },
+    {
+      "path": "work/node-stable-oracle/results.json",
+      "bytes": 396248,
+      "sha256": "f34ba4147e20c2a45a9cef96a5a3deda3d6b64f4767d8f46aede90ad1c8d5d6b"
+    },
+    {
+      "path": "work/node-stable-oracle/retain.py",
+      "bytes": 2868,
+      "sha256": "e99bf18c5c7d1f2eef56fde4c7bd2ac2067f378cd7d36a6a451f97a9d0bf39bb"
+    },
+    {
+      "path": "work/node-stable-oracle/run.py",
+      "bytes": 2667,
+      "sha256": "8b6cf6c5ec05cfd9be6cc120780e51373d99eeb05fe592a8c7f50be934b076c9"
+    },
+    {
+      "path": "work/node-stable-oracle/smoke-commonjs.log",
+      "bytes": 1668,
+      "sha256": "32aa2ea1d7ae439726d0a612377eea83ebc2d88637a3b010de7f5afa8709a287"
+    },
+    {
+      "path": "work/node-stable-oracle/smoke-final.log",
+      "bytes": 284,
+      "sha256": "4720b80bdffdd7248b06c3a2a2463627d7663407bcb61cb0908d71305a383fe0"
+    },
+    {
+      "path": "work/node-stable-oracle/smoke-outside-package-cwd.log",
+      "bytes": 400,
+      "sha256": "7152e3966dda72c05557a4dfc3b005fa693e5925889015161c0ede0e02968ad7"
+    },
+    {
+      "path": "work/node-stable-oracle/smoke-outside-package.log",
+      "bytes": 1777,
+      "sha256": "cfd707e6d4cfb69459423619eb4aeb51620b394e6ca3f427a5c498e2b486ed4a"
+    },
+    {
+      "path": "work/node-stable-oracle/smoke.log",
+      "bytes": 160,
+      "sha256": "d453f89bb7ae8148c30f9c44703186928765572880e5d199d72ed7958bb0ed4d"
+    },
+    {
+      "path": "work/node-stable-oracle/source-parity.json",
+      "bytes": 282,
+      "sha256": "68aebc951300ccb174907c73dab4d1efa3890b2236d68ab24a2132fee808b0c2"
+    },
+    {
+      "path": "work/node-stable-oracle/summary.json",
+      "bytes": 1217,
+      "sha256": "daab41ee7e0fd5921c146867b66303603e2558f8fb24a1d9087100d01689c7d9"
+    }
+  ],
+  "limitations": [
+    "Independent official-harness oracle baseline. Stock status exclusions and timeout multipliers differ from raw Quench5015; do not combine these scores.",
+    "TAP labels omit extensions and can repeat; no one-to-one raw-inventory membership claim. All17 actual official failures and all skips retained. No Quench failure is excused or converted to a pass by this baseline.",
+    "Two package-boundary-invalid attempts were stopped and retained with actual exit -15; only final outside-package full run supplies this result.",
+    "Compilation and Quench pinned/stable audits overlapped; no speed claim."
+  ]
+}

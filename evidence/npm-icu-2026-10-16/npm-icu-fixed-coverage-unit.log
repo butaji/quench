@@ -1,0 +1,14 @@
+   Compiling quench-runtime v0.1.0 (/workspace/scratch/quench-npm-file-url/crates/quench-runtime)
+   Compiling quench-wasm v0.1.0 (/workspace/scratch/quench-npm-file-url/crates/quench-wasm)
+   Compiling quench-node v0.1.0 (/workspace/scratch/quench-npm-file-url/crates/quench-node)
+   Compiling quench-node-test v0.1.0 (/workspace/scratch/quench-npm-file-url/crates/quench-node-test)
+    Finished `test` profile [unoptimized] target(s) in 27.71s
+     Running unittests src/bin/npm-coverage.rs (/workspace/quench/target/npm-file-url/debug/deps/npm_coverage-9dd6a131393ee799)
+
+running 3 tests
+test tests::receipts_do_not_project_import_calls_onto_an_unexecuted_require_branch ... ok
+test tests::root_and_accessor_identifiers_remain_stable ... ok
+test tests::verified_symbols_are_distinct_from_lookalike_private_symbols ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

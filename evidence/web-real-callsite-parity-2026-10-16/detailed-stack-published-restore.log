@@ -1,0 +1,25 @@
+Auto-merging crates/quench-node/src/host/shared_vm.rs
+Auto-merging crates/quench-node/src/host/shared_vm/commonjs.rs
+On branch v2-web
+Your branch is up to date with 'origin/v2-web'.
+
+Changes not staged for commit:
+  (use "git add <file>..." to update what will be committed)
+  (use "git restore <file>..." to discard changes in working directory)
+	modified:   crates/quench-node-test/tests/child_entry.rs
+	modified:   crates/quench-node/src/host/shared_vm.rs
+	modified:   crates/quench-node/src/host/shared_vm/commonjs.rs
+	modified:   crates/quench-node/src/modules/util_shared_vm.rs
+	modified:   crates/quench-runtime/src/api.rs
+	modified:   crates/quench-runtime/src/api_native.rs
+	modified:   crates/quench-runtime/src/compile/ast/expression.rs
+	modified:   crates/quench-runtime/src/lib.rs
+	modified:   crates/quench-runtime/src/vm/embedding.rs
+	modified:   crates/quench-runtime/src/vm/error.rs
+
+Untracked files:
+  (use "git add <file>..." to include in what will be committed)
+	crates/quench-node-test/node-tests/test-callsite-call-columns.js
+	crates/quench-node-test/node-tests/test-util-real-call-sites.js
+
+no changes added to commit (use "git add" and/or "git commit -a")

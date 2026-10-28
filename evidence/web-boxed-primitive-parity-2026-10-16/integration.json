@@ -1,0 +1,8 @@
+{
+  "publication_source_parent": "608c69798c424716614109c93c1da6d64f26b44d",
+  "additional_shared_source": "e7b71691bc576c37e3e141d5b95f146f218c6eef",
+  "workspace_check_exit": 0,
+  "frozen_qualified_parent": "217e80460",
+  "broader_merged_verification": "pending; parent qualification is not proof of later lazy-library/shape-index source",
+  "detailed_stack_followup_excluded": true
+}

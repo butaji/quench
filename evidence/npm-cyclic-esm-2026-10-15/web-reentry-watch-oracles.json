@@ -1,0 +1,20 @@
+[
+  {
+    "engine": "node",
+    "exit_code": 0,
+    "stdout": "[[\"paths\",[\"\",\"link\",\"sub\"]],[\"meta\",\"FSWatcher\",[\"_events\",\"_eventsCount\",\"_maxListeners\"],[\"Symbol(kFSWatchStart)\",\"Symbol(Symbol.asyncIterator)\"],[[\"close\",0,false],[\"ref\",0,false],[\"unref\",0,false]]],[\"references\",[[\"\",\"ref\"],[\"link\",\"ref\"],[\"sub\",\"ref\"],[\"\",\"unref\"],[\"link\",\"unref\"],[\"sub\",\"unref\"]]],\"close\"]\n",
+    "stderr": ""
+  },
+  {
+    "engine": "integration_base",
+    "exit_code": 0,
+    "stdout": "[[\"paths\",[]],[\"meta\",\"FSWatcher\",[\"_events\",\"_eventsCount\",\"_maxListeners\"],[\"Symbol(kFSWatchStart)\",\"Symbol(Symbol.asyncIterator)\"],[[\"close\",0,false],[\"ref\",0,false],[\"unref\",0,false]]],[\"references\",[]],\"close\"]\n",
+    "stderr": ""
+  },
+  {
+    "engine": "npm_candidate",
+    "exit_code": 0,
+    "stdout": "[[\"paths\",[]],[\"meta\",\"FSWatcher\",[\"_events\",\"_eventsCount\",\"_maxListeners\"],[\"Symbol(kFSWatchStart)\",\"Symbol(Symbol.asyncIterator)\"],[[\"close\",0,false],[\"ref\",0,false],[\"unref\",0,false]]],[\"references\",[]],\"close\"]\n",
+    "stderr": ""
+  }
+]

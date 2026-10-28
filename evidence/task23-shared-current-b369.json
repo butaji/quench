@@ -1,0 +1,62 @@
+{
+  "task": "23",
+  "scope": "Complete pinned shared-VM WebAssembly specification suite, including proposals; excludes integrated task24 and production task27 gates.",
+  "command": "WASM_FILE_TIMEOUT_MS=60000 cargo run --profile iteration -p quench-wasm-test --bin run-shared -- --report target/iteration/task23-shared-current-b369.json crates/quench-wasm-test/testsuite",
+  "repeat_command": "WASM_FILE_TIMEOUT_MS=60000 target/iteration/run-shared --report target/iteration/task23-shared-current-b369-repeat2.json crates/quench-wasm-test/testsuite",
+  "source": {
+    "revision": "b36992c7d7e7d9a009b8cceaca0bf0eea02127e0",
+    "dirty": true
+  },
+  "suite": {
+    "revision": "67c8b9dc32c47d61c05a1681df349d01c85fa8ff",
+    "clean": true,
+    "files": 288,
+    "directives": 67124
+  },
+  "runner": {
+    "path": "/Users/admin/Code/GitHub/quench-v2/target/iteration/run-shared",
+    "sha256": "5838205c2dba17401c595829344188e532a7e02bcb86445fa50349df8778d087",
+    "host": "macOS Apple M4 (arm64)",
+    "file_timeout_ms": 60000
+  },
+  "result": {
+    "files": 288,
+    "directives": 67124,
+    "passed": 67124,
+    "failed": 0,
+    "file_errors": 0,
+    "inventory_complete": true
+  },
+  "manifest_algorithm": "sha256 of canonical JSON (sorted object keys, compact UTF-8) over the ordered arrays described below.",
+  "input_manifest": {
+    "algorithm": "ordered [path, sha256] pairs sorted by path",
+    "sha256": "fe78577922f7360f39f0d66cb4ec33218ac3b43b4193e7016f6a2799952e424d"
+  },
+  "outcome_manifest": {
+    "algorithm": "ordered per-directive outcome objects exactly as emitted by run-shared",
+    "sha256": "050f1d5f40681f49e26cf870acf8cf6da0b4eb7d0512d9a49d4d7375705d50b2"
+  },
+  "reports": {
+    "current": {
+      "path": "target/iteration/task23-shared-current-b369.json",
+      "sha256": "e0e3f3ea74f1266948b50a68d2c5868c987678f2d8e377693651d23b13ef7f7e"
+    },
+    "same_binary_repeat": {
+      "path": "target/iteration/task23-shared-current-b369-repeat2.json",
+      "sha256": "cc4a95f22a9c9229d62d48b8b1122c77e8f2bcdc4f9ed2c07144ed275cb71df2"
+    },
+    "previous_complete": {
+      "path": "target/iteration/task23-shared-current.json",
+      "sha256": "c8e73cec7b720f4c31805b7447663ad3b22c3a4326b148a114ed3dfede07c75c"
+    }
+  },
+  "comparison": {
+    "same_binary_repeat_identical": true,
+    "previous_complete_identical": true,
+    "same_288_input_path_hash_pairs": true,
+    "same_288_per_file_execution_records": true,
+    "same_67124_directive_records": true,
+    "previous_evidence": "tasks/evidence/task23-shared-current-54dc.json"
+  },
+  "limitations": "Both current runs use the same shared-VM binary and match the prior complete report, but the source worktree is dirty. This does not qualify the integrated task24 build, production runner promotion, legacy removal, or task27 cutover. Task23 remains pending its task37/task40 architecture obligations."
+}

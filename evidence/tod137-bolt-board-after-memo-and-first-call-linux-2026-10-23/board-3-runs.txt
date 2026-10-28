@@ -1,0 +1,86 @@
+richards: LOSS (Quench worst 3828 KiB, best other 3600 KiB)
+  quench             3364    3492    3828 KiB
+  quench --jit       3316    3316    3316 KiB
+  qjs                3600    3600    3628 KiB
+  node --jitless    45328   45388   45528 KiB
+  node              53256   53716   53772 KiB
+  bun no-JIT        21464   21664   21852 KiB
+  bun               37744   38008   38020 KiB
+deltablue: WIN (Quench worst 3576 KiB, best other 3820 KiB)
+  quench             3248    3432    3576 KiB
+  quench --jit       3424    3448    3496 KiB
+  qjs                3820    3948    3956 KiB
+  node --jitless    47456   47504   47528 KiB
+  node              68556   83432   83576 KiB
+  bun no-JIT        21644   21712   21920 KiB
+  bun               42620   42784   43064 KiB
+crypto: LOSS (Quench worst 4012 KiB, best other 3688 KiB)
+  quench             3348    3652    3708 KiB
+  quench --jit       3636    3752    4012 KiB
+  qjs                3688    3828    3860 KiB
+  node --jitless    45624   45648   45676 KiB
+  node              54976   55528   55704 KiB
+  bun no-JIT        21860   22304   22392 KiB
+  bun               45872   47104   47440 KiB
+raytrace: LOSS (Quench worst 3700 KiB, best other 3468 KiB)
+  quench             3364    3696    3700 KiB
+  quench --jit       3244    3304    3320 KiB
+  qjs                3468    3544    3560 KiB
+  node --jitless    47740   47880   51968 KiB
+  node              65564   68916   69020 KiB
+  bun no-JIT        22264   22308   22440 KiB
+  bun               52048   53220   54500 KiB
+earley-boyer: WIN (Quench worst 7248 KiB, best other 17692 KiB)
+  quench             6740    6776    7248 KiB
+  quench --jit       6716    6728    6888 KiB
+  qjs               17692   17832   17924 KiB
+  node --jitless    76712   76728   76856 KiB
+  node              86228   88164  100596 KiB
+  bun no-JIT        25920   26060   26176 KiB
+  bun               68996   70068   72488 KiB
+regexp: WIN (Quench worst 6696 KiB, best other 6944 KiB)
+  quench             6664    6672    6696 KiB
+  quench --jit       6548    6564    6564 KiB
+  qjs                6944    7152    7152 KiB
+  node --jitless    55176   55248   55308 KiB
+  node              64396   66176   67368 KiB
+  bun no-JIT        29796   29820   30072 KiB
+  bun               52044   52048   52388 KiB
+splay: WIN (Quench worst 31472 KiB, best other 61580 KiB)
+  quench            31392   31396   31472 KiB
+  quench --jit      31328   31376   31432 KiB
+  qjs              160024  160268  160416 KiB
+  node --jitless   335112  351124  361428 KiB
+  node             427604  450168  480096 KiB
+  bun no-JIT        61580   61624   61648 KiB
+  bun              189592  190288  192840 KiB
+navier-stokes: LOSS (Quench worst 7552 KiB, best other 5260 KiB)
+  quench             4280    4396    5228 KiB
+  quench --jit       7360    7552    7552 KiB
+  qjs                5260    5276    5296 KiB
+  node --jitless    49836   49856   49868 KiB
+  node              56900   57404   57940 KiB
+  bun no-JIT        21820   21948   22092 KiB
+  bun               35444   35528   35628 KiB
+node:fs:560
+  return binding.open(
+                 ^
+
+Error: EEXIST: file already exists, open '/tmp/claude-0/-home-user-quench/7b48bd7e-c8b8-513f-8fda-df3008a36a8f/scratchpad/board6-memory-first.json'
+    at Object.openSync (node:fs:560:18)
+    at Object.writeFileSync (node:fs:2451:35)
+    at Object.<anonymous> (/home/user/quench/quench-bench/v8-v7-rss.cjs:160:13)
+    at Module._compile (node:internal/modules/cjs/loader:1706:14)
+    at Object..js (node:internal/modules/cjs/loader:1839:10)
+    at Module.load (node:internal/modules/cjs/loader:1441:32)
+    at Function._load (node:internal/modules/cjs/loader:1263:12)
+    at TracingChannel.traceSync (node:diagnostics_channel:328:14)
+    at wrapModuleLoad (node:internal/modules/cjs/loader:237:24)
+    at Function.executeUserEntryPoint [as runMain] (node:internal/modules/run_main:171:5) {
+  errno: -17,
+  code: 'EEXIST',
+  syscall: 'open',
+  path: '/tmp/claude-0/-home-user-quench/7b48bd7e-c8b8-513f-8fda-df3008a36a8f/scratchpad/board6-memory-first.json'
+}
+
+Node.js v22.22.0

@@ -1,0 +1,184 @@
+{
+  "tasks": [
+    "19",
+    "23",
+    "37",
+    "40",
+    "86"
+  ],
+  "source_head": "7e60169df033dd247f34199e084e3e8080a92a29",
+  "source_state": "dirty worktree",
+  "source_hashes": {
+    "crates/quench-runtime-next/src/wasm.rs": "08392b9f78b915612f15cc770b54ee9c8d1be0ab62c058e02638285986ef2f71",
+    "crates/quench-runtime-next/src/wasm/scalar.rs": "24f5c8727aea2f491ff0622b70ae72bbce5fcea5ce3249346d3666646ee6f52b",
+    "crates/quench-runtime-next/src/wasm/constant.rs": "d586a3772e76b71fb98c58d225c128e2db440c5a59837eadeb8c1302e18885a4",
+    "crates/quench-runtime-next/src/wasm/control.rs": "1a7e60c56950a5d545185d52b7f24dfcc8fdbc1bb6a7292b5c0276188dfbf409",
+    "crates/quench-runtime-next/src/wasm/memory.rs": "dd74f5bc0f2a5834ebf2fc454aef04ed86a92aacd619b9db9ccd9f5e5d0f550c",
+    "crates/quench-runtime-next/src/wasm/table.rs": "f0a9fb6799b22a1af257adac7520184902a2dd3d279acee75ff1230e73918a70",
+    "crates/quench-runtime-next/src/bytecode.rs": "d2ab0a90229c18b656ec140fb6309a1b57be25bb57c03508193b1b73f53e79bf",
+    "crates/quench-runtime-next/src/heap.rs": "e39871840017853e0ae60dfaa38f7f3f171a48e9d11738af1520a7c20ee6a700",
+    "crates/quench-runtime-next/src/heap/cell.rs": "a920cc1001217d6eb4ab2d1cb4de53129e9e488dc4396d2c9d4d657fc116e405",
+    "crates/quench-runtime-next/src/heap/memory_profile.rs": "59191e1a108861bb28a20e933b4bfb364c0d920368efc1df56297ea30d89af90",
+    "crates/quench-runtime-next/src/vm.rs": "10cd27eedfa709ffe949d27a6f9066c981333d126346b557eaab80dcd84e0481",
+    "crates/quench-runtime-next/src/vm/dispatch.rs": "d083812b1693c1ac4dd146f9f71d24430d768b29430cc1ab1eef804eff3513a8",
+    "crates/quench-runtime-next/src/vm/json.rs": "95e8d589a8d80c8a3990a5d3899924982bc79ec4c057459fdf5368ef5d657a13",
+    "crates/quench-runtime-next/src/vm/wasm.rs": "2e85707e2d056727bf9f03a6ebb3088f60ae4828511bf586b4656879fdf7fe9e",
+    "crates/quench-runtime-next/src/vm/wasm_table.rs": "d9f1e2fa9a3b89a4dec49108766f48c7af305022afbfb4121c70b0b2d9aa955a",
+    "crates/quench-wasm/src/shared.rs": "6fe869d8bcf0095619cbc64d46d47fecd15590b19268ea6ab61b9edcaf3cb96f",
+    "crates/quench-wasm/src/shared_wast.rs": "24dd5a19ecac4b9f873e87b0a464cf647cd051817a9103929cd67007a9577f93",
+    "crates/quench-wasm/src/wast_exec.rs": "231f0dff6a525165c897a9fa6165ff9ff581b2540b602ed902a9901e1e4d5a9f",
+    "crates/quench-wasm/src/shared/scalar_tests.rs": "820d277989233882d5bd9c5ce257384b9f3c0db6c5c80f76f71a9a65242b8131"
+  },
+  "suite_head": "67c8b9dc32c47d61c05a1681df349d01c85fa8ff",
+  "suite_clean": true,
+  "host": "macOS-26.5-arm64-arm-64bit",
+  "rustc": "rustc 1.99.0 (b940084d7 2026-09-28) (Homebrew)",
+  "profile": "debug",
+  "residual_format": 49,
+  "obligation": "Port Table32 state and nullable references to the single VM, preserving table/reference identity, checked atomic mutations and tracing ownership across instance boundaries.",
+  "representation": "WasmModule holds canonical TableType declarations. Captured instance bindings own internal WasmTable cells containing ordinary Values, element type and growth limit. RefFunc uses existing Function cells and the existing weak function cache per program/function/environment. Globals, memories, data and tables occupy derived binding domains. No table-specific executor, reference Value encoding, strong function side map or table64 flag is introduced. Grow and bulk operands reuse the existing register-pair layout; validation, liveness and serialization derive from opcodes!.",
+  "runner": {
+    "path": "target/iteration/task37-wasm-tables-qualified-runner",
+    "sha256": "f3e253c9831d65a21aa2651125b0f48ce6a9c289f45fe1a03944fdf333410608"
+  },
+  "before": {
+    "path": "target/iteration/task37-wasm-tables-before.json",
+    "sha256": "8b45009532d60a07b810dfacb3b01c85d002b9804db91414946829ed5b802623"
+  },
+  "after": {
+    "path": "target/iteration/task37-wasm-tables-after.json",
+    "sha256": "a073d41071a33bc32784a70defa6b07c9ac880eef859110c86234345987b1948"
+  },
+  "comparison": {
+    "path": "target/iteration/task37-wasm-tables-compare.log",
+    "sha256": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+  },
+  "exact_inventory_match": true,
+  "input_hashes_match": true,
+  "workers_complete": true,
+  "gains": 144,
+  "regressions": 0,
+  "scope_files": 64,
+  "total": 23337,
+  "passed": 19551,
+  "failed": 3786,
+  "gains_by_file": {
+    "crates/quench-wasm-test/testsuite/elem.wast": 15,
+    "crates/quench-wasm-test/testsuite/table.wast": 10,
+    "crates/quench-wasm-test/testsuite/table_fill.wast": 36,
+    "crates/quench-wasm-test/testsuite/table_grow.wast": 46,
+    "crates/quench-wasm-test/testsuite/table_size.wast": 37
+  },
+  "complete_new_files": {
+    "crates/quench-wasm-test/testsuite/table_fill.wast": {
+      "passed": 45,
+      "failed": 0,
+      "gains": 36
+    },
+    "crates/quench-wasm-test/testsuite/table_size.wast": {
+      "passed": 39,
+      "failed": 0,
+      "gains": 37
+    }
+  },
+  "table_grow_remaining": {
+    "count": 5,
+    "owner": "unimplemented imports and imported-table lifecycle"
+  },
+  "verification": {
+    "runtime_internal": {
+      "passed": 26,
+      "failed": 0,
+      "ignored": 0,
+      "log": {
+        "path": "target/iteration/task37-wasm-tables-runtime-final.log",
+        "sha256": "71f09f9d419c2c24e4f9b1719986ceb7b70ae8ce5d2ad7504a02263e364fa136"
+      }
+    },
+    "frontend_internal": {
+      "passed": 39,
+      "failed": 0,
+      "ignored": 0,
+      "log": {
+        "path": "target/iteration/task37-wasm-tables-frontend-final.log",
+        "sha256": "6c0e5f750768c1e9504a19264a081a8dc0ac893042d10a9408acf3f66288f3f1"
+      }
+    },
+    "all_targets_memory_aggregate_features": {
+      "path": "target/iteration/task37-wasm-tables-check-final.log",
+      "sha256": "0ab988ced4160aa415665ac2b3b01b83090ab4c904e1d1da2850db5640015040"
+    },
+    "controls": {
+      "total": 34,
+      "passed": 34,
+      "failed": 0,
+      "input": {
+        "path": "target/iteration/task37-wasm-tables-controls.wast",
+        "sha256": "7ae56f9b03ec6aa48e92e5cfb165243d06c3b7e4cf80d20c9fcb44fc0a4eae4d"
+      },
+      "report": {
+        "path": "target/iteration/task37-wasm-tables-controls.json",
+        "sha256": "bd98948550e0fee5ba26191fc3e1069adce6eb96309cf4fb8dc558a8523a78d8"
+      }
+    },
+    "node_oracle": {
+      "report": {
+        "path": "target/iteration/task37-wasm-tables-oracle.json",
+        "sha256": "075372d4b8dfa9dc8c255b6c96c7e06907fb8877d47dd790f95168e9d77d9eee"
+      },
+      "script": {
+        "path": "target/iteration/task37-wasm-tables-oracle.cjs",
+        "sha256": "aaff9386796d205cef06825786a1e86b053f2fbfc6ba789fe5ffc436f4c25bb6"
+      },
+      "input": {
+        "path": "target/iteration/task37-wasm-tables-oracle.wat",
+        "sha256": "10f9a1c127d7c00fa8b716bb45d435a622a620c8bb2b9d573fb2c02476fd08a9"
+      },
+      "binary": {
+        "path": "target/iteration/task37-wasm-tables-oracle.wasm",
+        "sha256": "8fdf1cd5fd4152522119f539a1afe025a9b41425dff9ac33925231251e32d64d"
+      }
+    },
+    "optional_profile_runtime": {
+      "features": [
+        "profile-memory",
+        "profile-aggregate"
+      ],
+      "passed": 420,
+      "failed": 57,
+      "ignored": 0,
+      "log": {
+        "path": "target/iteration/task37-wasm-tables-runtime-all-final.log",
+        "sha256": "9c354d0027be54d12e332ba5e15a6b59c3ee4bd8c2388d66ca019a54ffb99750"
+      },
+      "finding": "Physical dispatch counts and semantic opcode counts cannot be reconciled by the current reporter in multi-program/eval cases. This execution check failed; the feature-enabled build check passed. No profiling result from this failed run is qualification evidence."
+    },
+    "runtime_library_default": {
+      "passed": 474,
+      "failed": 0,
+      "ignored": 0,
+      "log": {
+        "path": "target/iteration/task37-wasm-tables-runtime-default-final.log",
+        "sha256": "bff9cfdff6dcaa1aac2a25cec84bd4df4b397550c7223a7f16b2500b83a2e67f"
+      }
+    }
+  },
+  "retained_unit_rationale": {
+    "table_function_identity_and_cross_instance_edges_survive_collection_then_release": "Serialized residual rows, canonical function identity, captured cross-instance table/environment cycles, forced collection and root release are internal representation obligations not covered by guest conformance cases.",
+    "external_heap_reference_is_owned_by_table_and_function_boundary_checks_reference_kind": "Host heap reference ownership, table tracing/release and rejection of an external string as a function reference test the Runtime boundary and collector rather than duplicate guest assertions."
+  },
+  "removed_unit": {
+    "path": "crates/quench-wasm/src/shared/scalar_tests.rs",
+    "name": "reference_types_fail_explicitly",
+    "reason": "Obsolete unsupported-path assertion; nullable reference conformance now belongs to the pinned suite inventory."
+  },
+  "scope_rationale": "The previous 51-file scalar/control/memory scope protects shared residual and instance callers. Thirteen pinned table/element/nullable-reference files cover newly admitted declarations, transitions and transport, including remaining unsupported paths. Exact input hashes and directive IDs match; no skips, inventory edits, worker errors, timeouts or empty discovery. Common heap/bytecode invariants are checked by library tests. No JavaScript semantics or Node host/API operation changed; no full Test262, Wasm or Node run.",
+  "limits": [
+    "3,786 directives in this affected scope still fail; the full pinned Wasm inventory has not been qualified.",
+    "Imports, active/passive elements, indirect calls, typed/non-null/GC references, SIMD, table64, other memory forms and remaining proposals remain open.",
+    "The function-reference result matcher only accepts unindexed ref.func expectations; it does not claim indexed expected-target matching.",
+    "Host-held heap references must be rooted by the owning Runtime. Full JS WebAssembly host interoperation is not proved.",
+    "Single-VM production cutover, legacy removal, implemented Node closure and Stage A remain open. No performance claim or Stage B run.",
+    "Optional profile-aggregate/profile-memory execution has 57 library failures in accounting reports; these remain open and must be resolved before relying on those counters. This is separate from the frozen default-runtime conformance comparison."
+  ]
+}

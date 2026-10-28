@@ -1,0 +1,227 @@
+{
+  "task": "07",
+  "obligation": "Promise record result/reaction edges follow the reachable Promise owner, including ephemeron marking; transfer temporary Promise ownership to scoped roots across guest execution and job dequeue.",
+  "source_head": "7e60169df033dd247f34199e084e3e8080a92a29",
+  "source_state": "dirty worktree",
+  "source_hashes": {
+    "crates/quench-runtime-next/src/vm/gc.rs": "0e7bfb6c10294fdc87c2af58732f3cfdb05be8bf523c75cba94bd4c912ce03fe",
+    "crates/quench-runtime-next/src/vm/promise.rs": "b78577abc65acfe30a6f7a65aa4a521b97eef1acdc49c6eb1181fe34477a1b97",
+    "crates/quench-runtime-next/src/vm/promise_async.rs": "d9bb0db17478019c218964f35815959f8477be0a5c426b296d1f84150dff537f",
+    "crates/quench-runtime-next/src/vm/promise_jobs.rs": "2fd354edce24e4958c34bcaccc0d9decbce73e4ea9dae3e50d12e9e551684411",
+    "crates/quench-runtime-next/src/vm/array_modern.rs": "3bae1f1b0f8e99d058b6539cc4a4ba4c7adb357ff4e6b1d90e017931ef7bf454",
+    "crates/quench-runtime-next/src/vm/generator.rs": "2199c65718bd308c3294ca9a502942fd94f424b03d8a83690ecf1fb979461875",
+    "crates/quench-runtime-next/src/vm/tests.rs": "2da561499e852194d038657eb5050813bcd5893ee1c0776d368b23e61a0b8dbb"
+  },
+  "suite_head": "6eec1ac9ee144dafd8f344d73a21f36bfc9f6755",
+  "suite_clean": true,
+  "fixture_content_sha256": "f1c29462acb6737e3a3562fb76c08cfed7ba61b2f0e15df84ea4ed92cfb94290",
+  "harness_content_sha256": "ccdcb17a61f58a601c5ee12d0c540ac4c62a687ef4b519e2fad09ab2a12c1cb6",
+  "inventory_sha256": "4760a43ab2e10927705cd7c78ce98153eb4c8cefb1d6b496bcae9cf6fa3a5bf1",
+  "profile": "release",
+  "timeout_ms": 10000,
+  "rustc": "rustc 1.99.0 (b940084d7 2026-09-28) (Homebrew)",
+  "host": "macOS-26.5-arm64-arm-64bit",
+  "cpu": "Apple M4",
+  "runners": {
+    "before": {
+      "path": "target/iteration/task07-descriptor-owner-run-stages-next",
+      "sha256": "834f48a50b789790aa7c4b228f60996914393ad5c88dbe5611a5123d8238bc78"
+    },
+    "after": {
+      "path": "target/iteration/task07-promise-record-owner-run-stages-next",
+      "sha256": "5729c3db57f7b2a21597efce3c00831fcefd996de4563fbab61ca2d28f45b614"
+    }
+  },
+  "commands": {
+    "suite": "TEST262_REPORT=<report> TEST262_TEST_TIMEOUT_MS=10000 <runner> <stage> <stage> [filter]",
+    "compare": "target/debug/compare-runs --reports <before> <after>",
+    "units": "cargo test -p quench-runtime-next --lib --test subset",
+    "features": "cargo check -p quench-runtime-next --features profile-memory,profile-aggregate"
+  },
+  "scopes": [
+    {
+      "name": "promise",
+      "stage": 61,
+      "filter": null,
+      "cases": 729,
+      "before_passed": 728,
+      "after_passed": 728,
+      "regressions": 0,
+      "before_report_sha256": "d51107270973bf24e96ca03342ccb69de15c53109e77467aaf3ddcbccf872483",
+      "after_report_sha256": "a2ead780321dd2a5d04374365f71eb1bda2c32769489f38eff82a0da7413b0c8"
+    },
+    {
+      "name": "async-function",
+      "stage": 36,
+      "filter": null,
+      "cases": 18,
+      "before_passed": 18,
+      "after_passed": 18,
+      "regressions": 0,
+      "before_report_sha256": "394066fed4860667411a2eea5e2feb4077735b37ea7d1b3266bd211222a08698",
+      "after_report_sha256": "6a5f031b0c34f253488c2302a71d8eba053ca9681e28b3487f37bc63bf0d22a2"
+    },
+    {
+      "name": "async-generator",
+      "stage": 38,
+      "filter": null,
+      "cases": 48,
+      "before_passed": 48,
+      "after_passed": 48,
+      "regressions": 0,
+      "before_report_sha256": "71ba5c2fb54f2b6a82ff6d92bf1eea1c58e7de1eeb8eff3654ebda322fe9cd23",
+      "after_report_sha256": "a9ec26becbceade52d6e7feeddaefa048d08bfbadbcf4a0133933d7ba8a5b1a7"
+    },
+    {
+      "name": "generator",
+      "stage": 50,
+      "filter": null,
+      "cases": 61,
+      "before_passed": 61,
+      "after_passed": 61,
+      "regressions": 0,
+      "before_report_sha256": "1218533cca5d0a824ea47c438fac45cd9653937154ed547fccde15c6906e8aa9",
+      "after_report_sha256": "e39fa6b2a9748f47edc7531044c1c4b134bcfb95311d0149c03d8a54701c75ba"
+    },
+    {
+      "name": "async-iterator",
+      "stage": 39,
+      "filter": null,
+      "cases": 13,
+      "before_passed": 13,
+      "after_passed": 13,
+      "regressions": 0,
+      "before_report_sha256": "10cd03204d8537e5cc6112da37163f7d1b1d88580885808fc3632dbd2b584538",
+      "after_report_sha256": "658900c992f2667d39cf99d2468282e943f4710ba82e0e0e901b15738db4e109"
+    },
+    {
+      "name": "disposal",
+      "stage": 34,
+      "filter": null,
+      "cases": 104,
+      "before_passed": 104,
+      "after_passed": 104,
+      "regressions": 0,
+      "before_report_sha256": "fd5d80f7bb7ebdee5a60859bb4016ef2cd596867c4bd163a2af665dab78fd0fa",
+      "after_report_sha256": "6a9935b7083382025628d59933d6c9649365b69fa089a68aac4231fd987fe1af"
+    },
+    {
+      "name": "import",
+      "stage": 16,
+      "filter": null,
+      "cases": 127,
+      "before_passed": 127,
+      "after_passed": 127,
+      "regressions": 0,
+      "before_report_sha256": "51fadd3eaeda1fa2c2f14f77835cb9ee0afad79ce7ba7a4eaae61b3d9a5d8d11",
+      "after_report_sha256": "80b82813db5c7c761b61e46f522afacbce95351a8a68f9bb6ef192568e5b5ff3"
+    },
+    {
+      "name": "module",
+      "stage": 20,
+      "filter": null,
+      "cases": 599,
+      "before_passed": 599,
+      "after_passed": 599,
+      "regressions": 0,
+      "before_report_sha256": "5ab127f7fcf3a95c526c34c4a34f6849a80da5e9b8e87ed97d5e41e395d06f85",
+      "after_report_sha256": "baf0b7e46780f37f45cc738af01b7f127a328d633de55fe8d86db59c92ce8bf2"
+    },
+    {
+      "name": "async-from-sync",
+      "stage": 35,
+      "filter": null,
+      "cases": 38,
+      "before_passed": 38,
+      "after_passed": 38,
+      "regressions": 0,
+      "before_report_sha256": "0987e43c23e0a01d2cd35f11eb31113d985024815fb7410a87c2315ca602742b",
+      "after_report_sha256": "4154d2b331d374db35c53e34b91c66fe33ceb5e702920e3e4f8ca330e21da058"
+    },
+    {
+      "name": "array-from-async",
+      "stage": 31,
+      "filter": "fromAsync/",
+      "cases": 95,
+      "before_passed": 95,
+      "after_passed": 95,
+      "regressions": 0,
+      "before_report_sha256": "22c7a86f28a7e46d8998954a1bb8177b78577f5809fe7894538660ef59044dac",
+      "after_report_sha256": "ee85cfd2bd2289c0b4ecc816890e0f8a45c0f26a7ba23db925bee7d8ae73ccd2"
+    },
+    {
+      "name": "dynamic-import",
+      "stage": 10,
+      "filter": "dynamic-import/",
+      "cases": 1004,
+      "before_passed": 1004,
+      "after_passed": 1004,
+      "regressions": 0,
+      "before_report_sha256": "7a1d86f754f73baf09a164cb5b41efea0fb633e0cce49d50c76228a0135bb767",
+      "after_report_sha256": "47ee3d8eba1a4cd85b2a2f1b9fe26dc6d3539566516ee159e16eb92d48a59832"
+    },
+    {
+      "name": "async-arrow",
+      "stage": 10,
+      "filter": "async-arrow-function/",
+      "cases": 60,
+      "before_passed": 60,
+      "after_passed": 60,
+      "regressions": 0,
+      "before_report_sha256": "fba2a4f38003efffdae7520d99d9c4e04edbdea12de0b21e3cd70b6e87893b78",
+      "after_report_sha256": "d43a3856102621cb059d6fe48ac36eb2008a29bed12421e9766c525035c0f16c"
+    },
+    {
+      "name": "async-statements",
+      "stage": 26,
+      "filter": "async-function/",
+      "cases": 74,
+      "before_passed": 74,
+      "after_passed": 74,
+      "regressions": 0,
+      "before_report_sha256": "1b0afd9121e398b3fcfe99dbcbb866d430bb6c93315ca7c60a2697bbffce31fb",
+      "after_report_sha256": "9b8b5ef3eee43e9db2905fafc7bce3bfbee47412d78c7f53c51b28f9f29b6487"
+    }
+  ],
+  "distinct_cases": 2970,
+  "before_passed": 2969,
+  "after_passed": 2969,
+  "regressions": 0,
+  "remaining": [
+    "built-ins/Promise/allSettledKeyed/result-property-descriptors.js"
+  ],
+  "remaining_owner": "task20-all-settled-keyed-conflict.json",
+  "internal_regression": {
+    "name": "promise_record_edges_follow_promise_and_resolver_lifetime",
+    "before": "Fails: unreachable Promise/result cycle retained",
+    "after": "Passes: rooted Promise and rooted resolver retain result; releasing both collects cycle and prunes record",
+    "retention_reason": "Forced collection, resolving-state ownership and metadata cleanup are internal obligations beyond suite assertions."
+  },
+  "runtime_library": {
+    "passed": 459,
+    "failed": 0,
+    "ignored": 0
+  },
+  "integration": {
+    "passed": 6,
+    "failed": 0,
+    "ignored": 0
+  },
+  "feature_check": "passed",
+  "raw_artifact_prefix": "target/iteration/task07-promise-record-owner",
+  "stage_a_closed": false,
+  "node_controls": {
+    "matched": 30,
+    "failed": 0,
+    "modes": [
+      "specialized",
+      "generic"
+    ],
+    "node_version": "v26.10.0",
+    "node_command": "node --jitless --expose-gc -e <gc-capability-adapter-and-control>",
+    "quench_command": "target/iteration/task07-promise-record-owner-control-host <control> [generic]",
+    "controls_sha256": "7de1d0fca459dc517d3d930b6b594330cbc98c01add552e551dcce79cbb17548",
+    "results_sha256": "1534f54c8b16f3e34cf15c15f9f24affe736a59577c54606fcc97067ed000f03",
+    "host_binary_sha256": "088ca7d0a14fae1abd697a8153217156e5a4659d6baa4546a2d232cb1366fcd9"
+  }
+}

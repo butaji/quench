@@ -1,0 +1,60 @@
+{
+  "schema": 1,
+  "task": "21",
+  "kind": "affected_shared_vm_filesystem_and_cwd_fixtures",
+  "reviewed_on": "2026-10-07",
+  "source_revision": "b4b3ca277daf0edb739129fc4315f3ffd5dfb9ac",
+  "source_state": "Dirty shared worktree; changed-owner hashes below bind this focused run to the current bytes.",
+  "platform": "macOS-arm64",
+  "runtime_versions": {
+    "rustc": "rustc 1.99.0 (b940084d7 2026-09-28) (Homebrew)",
+    "local_node": "v26.10.0"
+  },
+  "runner": {
+    "path": "target/iteration/run-parallel-next",
+    "sha256": "6aeafc801e3004786081489a845a51816ca4f6db6dc5051a03b7a962d5488b61",
+    "parallel_manifest": "crates/quench-node-test/node-tests/parallel.txt",
+    "parallel_manifest_sha256": "0a280c1aa6c6ed5b2185046d443442ae18d8100f2728950013f5ad7b27444ed5"
+  },
+  "focused_upstream_fixtures": [
+    {
+      "path": "tests/node/test/parallel/test-process-chdir.js",
+      "sha256": "8278bee65285675b34cd86f790aff25d141b77e6f97dbc2555c5419533f15b09",
+      "obligation": "Relative and absolute cwd transitions, cwd observation, and invalid argument type.",
+      "shared_vm": "pass",
+      "shared_command": "target/iteration/run-parallel-next --filter test-process-chdir --timeout-secs 60",
+      "local_node": "pass",
+      "local_node_method": "Executed the exact fixture bytes with a CommonJS Module._compile adapter, NODE_TEST_KNOWN_GLOBALS=0, and an isolated NODE_TEST_DIR; each fixture ran in a separate Node process."
+    },
+    {
+      "path": "tests/node/test/parallel/test-process-chdir-errormessage.js",
+      "sha256": "6b75aad4a6b30451795a2d221fb21fad01fbe37e6334412c8eec051dc4d78ef8",
+      "obligation": "ENOENT code, message, path, syscall, and destination for a missing chdir target.",
+      "shared_vm": "pass",
+      "shared_command": "target/iteration/run-parallel-next --filter test-process-chdir --timeout-secs 60",
+      "local_node": "pass",
+      "local_node_method": "Executed the exact fixture bytes with a CommonJS Module._compile adapter, NODE_TEST_KNOWN_GLOBALS=0, and an isolated NODE_TEST_DIR; each fixture ran in a separate Node process."
+    },
+    {
+      "path": "tests/node/test/parallel/test-fs-write-file-buffer.js",
+      "sha256": "074bb935b3e8b0ab775f5483cdc55eb68ed05f68b577e389fd5549767b6adacd",
+      "obligation": "Shared common/tmpdir recursive setup/cleanup and writeFileSync of Buffer bytes without an exception.",
+      "shared_vm": "pass",
+      "shared_command": "target/iteration/run-parallel-next --filter test-fs-write-file-buffer.js --timeout-secs 60",
+      "local_node": "pass",
+      "local_node_method": "Executed the exact fixture bytes with a CommonJS Module._compile adapter, NODE_TEST_KNOWN_GLOBALS=0, and an isolated NODE_TEST_DIR. The fixture does not read the written bytes back."
+    }
+  ],
+  "changed_owner_sha256": {
+    "crates/quench-node/src/host/shared_vm.rs": "8275cc286b24f2d85264b81e9411e7753e6c5a4746c2810b20f9c5c7e0af4000",
+    "crates/quench-node/src/modules/fs/ops.rs": "5516f8fd64e5cefc431a2ad0f2d2ff4799e344d9e61d2746354315b539e4b470",
+    "crates/quench-node/src/modules/fs/shared_vm.rs": "3ab19b95f5201a8bb1a9432a94af2b92cfb47f8c7904ed8014a0c5124944f3a0",
+    "crates/quench-node/src/modules/fs/shared_vm/stat.rs": "d52e38b7257a342ee19017740d1fe91b4f2aff41f9e69c8c9cb0ee773d838913",
+    "crates/quench-node/src/modules/fs/shared_vm/sync.rs": "5e281694033549b65fa7f2526662ae2926e56178a18a21d6bd7752e9e74ed191",
+    "crates/quench-node/src/modules/fs_error.rs": "7104e2dd85ed547668918432e4efaac3f57217b039564043581dbe70af73c88a",
+    "crates/quench-node/src/modules/fs_sync.rs": "7295050e5f7e7bc053e2f74fc3e8c8fdc9f797d6e7fed86f74c8b13484621625",
+    "crates/quench-node/src/modules/process.rs": "9972324de7032f49348031dc9733992d1a1dca4726e6fea56c1709f640992c97",
+    "crates/quench-node/src/modules/process/shared_vm.rs": "a48968eab8cd42ceffa8e9e3c6b85d68ca26c3f0dcf75bc08c36bfd15b64528b"
+  },
+  "qualification_limit": "These three selected upstream fixtures pass on the shared VM and local Node. They qualify cwd transition/error behavior and the common tmpdir plus Buffer-write path only. They do not establish general fs path conversion, rm/mkdir/write option validation, mode/umask semantics, SystemError shape, or the broader test-stream-pipeline.js result. No unit tests or full Test262 run were performed."
+}

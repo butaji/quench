@@ -1,0 +1,32 @@
+{
+  "schema": 1,
+  "task": "61",
+  "experiment": "direct instanceof immediate-prototype path on EarleyBoyer",
+  "source_revision": "1d90d41ee598bca5787fdb4eb579bfce2b255075",
+  "baseline_sha256": "e83200ec7666a02f8e4807fdb476eeb4dcef449ef469d15eefce1413f11369d5",
+  "candidate_sha256": "dd0f51e8e765e08d30accb128e5e3bb3cef857a67006e501f8cd3fdef03dd2b9",
+  "fixture_sha256": "aa379c1d54f5d13de32ebf2b50729d0cbc64bb23de5e524256c7b2270213cc0b",
+  "corpus_revision": "64e1860c736c1b899708f4cd646721bc71e53d8b",
+  "rounds": 11,
+  "bootstrap_replicates": 100000,
+  "valid": true,
+  "output_equal": true,
+  "baseline_score_median": 210.0,
+  "candidate_score_median": 211.0,
+  "score_delta_median": 1.0,
+  "score_delta_95_ci": [
+    -3.0,
+    7.0
+  ],
+  "baseline_maximum_rss_median_bytes": 50585600,
+  "candidate_maximum_rss_median_bytes": 50216960,
+  "maximum_rss_delta_median_bytes": -299008,
+  "maximum_rss_delta_95_ci_bytes": [
+    -1753088,
+    245760
+  ],
+  "candidate_score_worse_pairs": 4,
+  "candidate_rss_lower_pairs": 7,
+  "qualification_ready": false,
+  "decision_limit": "Single-fixture Quench-only pairs do not establish Task 61 engine leadership."
+}

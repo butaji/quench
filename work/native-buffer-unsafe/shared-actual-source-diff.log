@@ -1,0 +1,15 @@
+ .../node-tests/test-native-buffer-concat-pool.js   |   7 +
+ .../node-tests/test-native-buffer-latin1.js        |   3 +
+ .../test-native-buffer-policy-captures.js          |   5 +
+ .../test-native-buffer-unsafe-alignment.js         |  23 +++
+ crates/quench-node-test/tests/child_entry.rs       |  32 +++
+ crates/quench-node/src/host/shared_vm.rs           |   5 +
+ crates/quench-node/src/host/shared_vm/commonjs.rs  |   1 +
+ .../src/modules/buffer_alloc_shared_vm.rs          |   5 +
+ .../src/modules/buffer_from_shared_vm.rs           |   7 +-
+ .../src/modules/buffer_latin1_shared_vm.rs         |  45 +++++
+ .../src/modules/buffer_policy_shared_vm.rs         |  57 ++++++
+ .../src/modules/buffer_pool_shared_vm.rs           | 222 +++++++++++++++++++++
+ crates/quench-node/src/modules/buffer_shared_vm.rs |   1 +
+ crates/quench-node/src/modules/mod.rs              |   2 +
+ 14 files changed, 413 insertions(+), 2 deletions(-)

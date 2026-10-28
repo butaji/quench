@@ -1,0 +1,22 @@
+packages 300  quench lowest 280  not lowest 20
+  @typescript-eslint/type-utils            behavior-pass      quench   224.4  node   190.0  bun 122.8 
+  @typescript-eslint/tsconfig-utils        behavior-pass      quench   152.2  node   125.8  bun 80.6 
+  @typescript-eslint/project-service       behavior-pass      quench   132.7  node   108.8  bun 76.1 
+  @typescript-eslint/scope-manager         behavior-pass      quench   137.4  node   130.5  bun 90.9 
+  @typescript-eslint/eslint-plugin         behavior-pass      quench   187.7  node   218.3  bun 144.6 
+  typescript-eslint                        behavior-pass      quench   188.0  node   211.3  bun 146.4 
+  @typescript-eslint/typescript-estree     behavior-pass      quench   132.9  node   128.9  bun 93.7 
+  @typescript-eslint/parser                behavior-pass      quench   132.6  node   130.4  bun 94.7 
+  playwright                               behavior-pass      quench   137.0  node   126.6  bun 103.1 
+  jiti                                     behavior-pass      quench    57.0  node    89.8  bun 38.4 
+  jsdom                                    behavior-pass      quench   110.5  node   171.3  bun 96.8 
+  @testing-library/dom                     behavior-pass      quench   123.2  node   179.5  bun 121.0 
+  undici                                   behavior-pass      quench    34.5  node    75.5  bun 32.8 
+  @types/node                              declarations-pass  quench    71.5  node    70.8  bun 71.1 
+  @types/ws                                declarations-pass  quench    72.1  node    72.1  bun 71.4 
+  @types/json-schema                       declarations-pass  quench    45.1  node    63.0  bun 44.5 
+  type-fest                                declarations-pass  quench    53.5  node    62.8  bun 53.0 
+  @types/react                             declarations-pass  quench    53.6  node    62.8  bun 53.3 
+  @types/babel__traverse                   declarations-pass  quench    55.3  node    63.0  bun 55.0 
+  @types/ms                                declarations-pass  quench    44.4  node    62.8  bun 44.2 
+median MiB quench 19.9 node 63.4 bun 36.7

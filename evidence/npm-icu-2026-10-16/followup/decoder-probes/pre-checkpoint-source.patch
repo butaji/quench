@@ -1,0 +1,951 @@
+diff --git a/crates/quench-node-test/tests/child_entry.rs b/crates/quench-node-test/tests/child_entry.rs
+index 368c39aed..f2f12799e 100644
+--- a/crates/quench-node-test/tests/child_entry.rs
++++ b/crates/quench-node-test/tests/child_entry.rs
+@@ -8695,3 +8695,48 @@ out[2]=target[0];console.log(JSON.stringify(out));
+ "#,
+     );
+ }
++
++#[test]
++fn text_decoder_stream_boundaries_and_repeated_flush_match_node() {
++    compare_node_stream_source(r#"
++const inputs=[['utf-8',[239,187,191,226,130,172,240,159,152,128,65]],['utf-16le',[255,254,61,216,0,222,65,0]],['utf-16be',[254,255,216,61,222,0,0,65]],['shift_jis',[130,160,65]],['big5',[164,164,65]],['euc-kr',[176,161,65]],['gb18030',[144,48,129,48,65]],['iso-2022-jp',[27,36,66,36,34,27,40,66,65]]];
++const rows=[];
++for(const [encoding,bytes]of inputs)for(const fatal of [false,true])for(const ignoreBOM of [false,true])for(let cut=0;cut<=bytes.length;cut++){
++ const decoder=new TextDecoder(encoding,{fatal,ignoreBOM});
++ try {const first=decoder.decode(Uint8Array.from(bytes.slice(0,cut)),{stream:true});const second=decoder.decode(Uint8Array.from(bytes.slice(cut)));const flushed=decoder.decode();rows.push([encoding,fatal,ignoreBOM,cut,[first,second,flushed]]);}
++ catch(e){rows.push([encoding,fatal,ignoreBOM,cut,{name:e.name,code:e.code??null,message:e.message}]);}
++}
++console.log(JSON.stringify({complete:true,cases:rows.length,rows}));
++"#);
++}
++
++#[test]
++fn text_decoder_descriptors_validation_and_utf8_encoding_match_node() {
++    compare_node_stream_source(r#"
++const rows=[];
++function capture(name,fn){try{rows.push({name,result:fn()});}catch(error){rows.push({name,error:{name:error.name,code:error.code??null,message:error.message}});}}
++function descriptors(object){return Reflect.ownKeys(object).map(key=>{const d=Object.getOwnPropertyDescriptor(object,key);return {key:String(key),enumerable:d.enumerable,configurable:d.configurable,...('writable'in d?{writable:d.writable}:{}),...('value'in d?{value:typeof d.value==='function'?[d.value.name,d.value.length]:typeof d.value==='symbol'?String(d.value):d.value}:{}),...(d.get?{get:[d.get.name,d.get.length]}:{}),...(d.set?{set:[d.set.name,d.set.length]}:{})};});}
++capture('decoder-prototype',()=>descriptors(TextDecoder.prototype));
++capture('encoder-prototype',()=>descriptors(TextEncoder.prototype));
++capture('decoder-instance-symbols',()=>Reflect.ownKeys(new TextDecoder()).map(String));
++capture('encoder-instance-symbols',()=>Reflect.ownKeys(new TextEncoder()).map(String));
++capture('decoder-label-symbol',()=>new TextDecoder(Symbol('encoding')).encoding);
++for(const options of [null,3,true,'x',()=>{}])capture('decoder-options-'+String(options),()=>{const d=new TextDecoder('utf-8',options);return[d.encoding,d.fatal,d.ignoreBOM];});
++capture('decoder-options-observation-order',()=>{const calls=[];const label={toString(){calls.push('label');return'utf-8';}};const options={get fatal(){calls.push('fatal');return true;},get ignoreBOM(){calls.push('ignoreBOM');return false;}};const d=new TextDecoder(label,options);return[calls,d.encoding,d.fatal,d.ignoreBOM];});
++capture('decoder-label-versus-options-error-priority',()=>new TextDecoder('not-an-encoding',3).encoding);
++for(const key of ['encoding','fatal','ignoreBOM'])capture('decoder-getter-brand-'+key,()=>Object.getOwnPropertyDescriptor(TextDecoder.prototype,key).get.call({}));
++capture('decoder-decode-brand',()=>TextDecoder.prototype.decode.call({}));
++for(const options of [null,3,true,'x',()=>{}])capture('decode-options-'+String(options),()=>new TextDecoder().decode(new Uint8Array([65]),options));
++capture('decode-options-getter',()=>{const calls=[];const d=new TextDecoder();const out=d.decode(new Uint8Array([65]),{get stream(){calls.push('stream');return true;}});return[calls,out,d.decode()];});
++capture('decode-shared-buffer',()=>{const b=new SharedArrayBuffer(2);new Uint8Array(b).set([65,66]);return new TextDecoder().decode(b);});
++capture('decode-view-offset',()=>new TextDecoder().decode(new DataView(new Uint8Array([0,65,66,0]).buffer,1,2)));
++capture('decode-detached-buffer',()=>{const b=new ArrayBuffer(2);structuredClone(b,{transfer:[b]});return new TextDecoder().decode(b);});
++capture('encoder-symbol',()=>Array.from(new TextEncoder().encode(Symbol('text'))));
++capture('encoder-encodeInto-invalid-destination',()=>new TextEncoder().encodeInto('x',[]));
++capture('encoder-encodeInto-symbol',()=>new TextEncoder().encodeInto(Symbol('text'),new Uint8Array(30)));
++capture('encoder-encodeInto-coercion-order',()=>{const calls=[];let error;try{new TextEncoder().encodeInto({toString(){calls.push('string');return'x';}},[]);}catch(e){error={name:e.name,code:e.code??null,message:e.message};}return[calls,error];});
++capture('encoder-partial-codepoint',()=>{const out=[];for(let length=0;length<=5;length++){const b=new Uint8Array(length).fill(255);out.push([new TextEncoder().encodeInto('😀x',b),Array.from(b)]);}return out;});
++console.log(JSON.stringify({complete:true,cases:rows.length,rows}));
++"#);
++}
++
+diff --git a/crates/quench-node/src/host/node_host.rs b/crates/quench-node/src/host/node_host.rs
+index 7c7106c1d..c7b3b27f2 100644
+--- a/crates/quench-node/src/host/node_host.rs
++++ b/crates/quench-node/src/host/node_host.rs
+@@ -65,6 +65,8 @@ pub(crate) struct SharedNodeState {
+     pub(crate) fs: crate::modules::fs_state::FsState,
+     pub(crate) fs_watch: crate::modules::fs_watch_shared_vm::State,
+     pub(crate) tls_contexts: crate::modules::tls_shared_vm::contexts::State,
++    #[cfg(quench_icu)]
++    pub(crate) icu_converters: crate::modules::icu_binding_shared_vm::State,
+     pub(crate) fs_stats: crate::modules::fs_shared_vm::stat::types::State,
+     pub(crate) fs_policy: crate::modules::fs_policy_shared_vm::State,
+     pub(crate) fs_stat_watch: crate::modules::fs_stat_watch_shared_vm::State,
+@@ -199,6 +201,8 @@ impl SharedNodeState {
+         self.net_handle_close_callbacks.clear();
+         self.fs_watch = crate::modules::fs_watch_shared_vm::State::default();
+         self.tls_contexts = crate::modules::tls_shared_vm::contexts::State::default();
++        #[cfg(quench_icu)]
++        { self.icu_converters = crate::modules::icu_binding_shared_vm::State::default(); }
+         self.fs_stats = crate::modules::fs_shared_vm::stat::types::State::default();
+         self.fs_policy = crate::modules::fs_policy_shared_vm::State::default();
+         self.fs_stat_watch = crate::modules::fs_stat_watch_shared_vm::State::default();
+@@ -219,6 +223,8 @@ impl SharedNodeState {
+             fs,
+             fs_watch: crate::modules::fs_watch_shared_vm::State::default(),
+             tls_contexts: crate::modules::tls_shared_vm::contexts::State::default(),
++            #[cfg(quench_icu)]
++            icu_converters: crate::modules::icu_binding_shared_vm::State::default(),
+             fs_stats: crate::modules::fs_shared_vm::stat::types::State::default(),
+             fs_policy: crate::modules::fs_policy_shared_vm::State::default(),
+             fs_stat_watch: crate::modules::fs_stat_watch_shared_vm::State::default(),
+diff --git a/crates/quench-node/src/host/shared_vm.rs b/crates/quench-node/src/host/shared_vm.rs
+index d1660acf9..e73c7cf2d 100644
+--- a/crates/quench-node/src/host/shared_vm.rs
++++ b/crates/quench-node/src/host/shared_vm.rs
+@@ -496,6 +496,16 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
+         method "perfHooksCompareEntries" (2) => crate::modules::perf_timeline_query::compare,
+         method "perfHooksNow" (0) => crate::modules::perf_hooks::now,
+         method "dnsLookup" (3) => crate::modules::dns_shared_vm::lookup,
++        #[cfg(quench_icu)]
++        method "icuGetConverter" (2) => crate::modules::icu_binding_shared_vm::get_converter,
++        #[cfg(quench_icu)]
++        method "icuDecode" (4) => crate::modules::icu_binding_shared_vm::decode,
++        #[cfg(quench_icu)]
++        method "icuStringWidth" (3) => crate::modules::icu_binding_shared_vm::string_width,
++        #[cfg(quench_icu)]
++        method "icuTranscode" (3) => crate::modules::icu_binding_shared_vm::transcode,
++        #[cfg(quench_icu)]
++        method "icuErrorName" (1) => crate::modules::icu_binding_shared_vm::error_name,
+         method "zlibStreamOpen" (4) => crate::modules::zlib_stream_shared_vm::open,
+         method "zlibPrepare" (2) => crate::modules::zlib_options_shared_vm::prepare,
+         method "zlibStreamSync" (1) => crate::modules::zlib_stream_shared_vm::sync,
+diff --git a/crates/quench-node/src/host/shared_vm/commonjs.rs b/crates/quench-node/src/host/shared_vm/commonjs.rs
+index c6e315b14..da7494c6f 100644
+--- a/crates/quench-node/src/host/shared_vm/commonjs.rs
++++ b/crates/quench-node/src/host/shared_vm/commonjs.rs
+@@ -1290,7 +1290,7 @@ pub(crate) fn node_library_export(
+     get(context, library, name)
+ }
+ 
+-fn node_library_module(context: &mut Context<'_>, owner: &str, relative: &str) -> Result<RootId, RootedError> {
++pub(crate) fn node_library_module(context: &mut Context<'_>, owner: &str, relative: &str) -> Result<RootId, RootedError> {
+     let root = context.host_mut().node_library_root.clone();
+     let parent = module_record(context, &root.join("lib").join(owner), None, false)?;
+     load(context, &root.join("lib").join(relative), Some(parent), EntryGoal::CommonJs)
+@@ -2118,11 +2118,13 @@ const getLinkedBinding = () => ({});
+                 } else if in_node_internal {
+                     r#"const internalBinding = (name) => {
+   switch (String(name)) {
++    case "config":
++    case "icu":
+     case "encoding_binding":
+     case "symbols":
+     case "http2":
+     case "fs_event_wrap": return __nativeInternalBinding(name);
+-    case "util": return Object.assign({}, require("util"), {
++    case "util": return Object.assign({}, __nativeInternalBinding("util"), {
+       privateSymbols: __nativeInternalBinding("util").privateSymbols,
+       constants: __nativeInternalBinding("util").constants,
+       getOwnNonIndexProperties: __nativeInternalBinding("util").getOwnNonIndexProperties,
+@@ -2275,6 +2277,13 @@ const getLinkedBinding = () => ({});
+             }
+         }
+     }
++    if library_relative == Some(Path::new("lib/internal/buffer.js")) {
++        if let Ok(exports) = &result {
++            let fast = roots.borrow().builtin_cache.get("\0intrinsic:buffer:FastBuffer").copied()
++                .ok_or_else(|| RootedError::host("native FastBuffer constructor is not initialized"))?;
++            set(context, *exports, "FastBuffer", fast)?;
++        }
++    }
+     let is_fs_utilities = library_relative == Some(Path::new("lib/internal/fs/utils.js"));
+     if is_fs_utilities {
+         if let Ok(exports) = &result {
+diff --git a/crates/quench-node/src/modules/buffer_constructor_shared_vm.rs b/crates/quench-node/src/modules/buffer_constructor_shared_vm.rs
+index bef7d13cf..cf9ea81bc 100644
+--- a/crates/quench-node/src/modules/buffer_constructor_shared_vm.rs
++++ b/crates/quench-node/src/modules/buffer_constructor_shared_vm.rs
+@@ -69,6 +69,14 @@ pub(crate) fn install(context: &mut Context<'_>, fast: RootId) -> Result<RootId,
+     context.define_data_property_rooted(constructor, key, prototype, true, false, false)?;
+     set(context, prototype, "constructor", constructor)?;
+     name(context, fast, "FastBuffer")?;
++    // Canonical internal/buffer and all native Buffer results share this
++    // constructor rather than creating a second Uint8Array subclass.
++    let shared = context.host_mut().shared_state();
++    const FAST_BUFFER: &str = "\0intrinsic:buffer:FastBuffer";
++    if !shared.borrow().builtin_cache.contains_key(FAST_BUFFER) {
++        let retained = context.retain(fast)?;
++        shared.borrow_mut().builtin_cache.insert(FAST_BUFFER.to_owned(), retained);
++    }
+     let is_buffer = context.host_constructor_with_data(
+         crate::host::shared_vm::operation("bufferIsBuffer"),
+         constructor,
+diff --git a/crates/quench-node/src/modules/mod.rs b/crates/quench-node/src/modules/mod.rs
+index a557c6adc..22be66ae4 100644
+--- a/crates/quench-node/src/modules/mod.rs
++++ b/crates/quench-node/src/modules/mod.rs
+@@ -96,6 +96,8 @@ pub(crate) mod test_shared_vm;
+ pub(crate) mod text_decoder_codec;
+ #[cfg(quench_icu)]
+ pub(crate) mod text_decoder_icu;
++#[cfg(quench_icu)]
++pub(crate) mod icu_binding_shared_vm;
+ pub(crate) mod text_decoder_shared_vm;
+ pub(crate) mod timers_shared_vm;
+ pub(crate) mod tls_shared_vm;
+diff --git a/crates/quench-node/src/modules/process_shared_vm.rs b/crates/quench-node/src/modules/process_shared_vm.rs
+index d6710356d..bdc3ddf1a 100644
+--- a/crates/quench-node/src/modules/process_shared_vm.rs
++++ b/crates/quench-node/src/modules/process_shared_vm.rs
+@@ -1898,6 +1898,8 @@ pub(crate) fn finish_requested_exit(
+     cleanup_environment(runtime, &shared_state);
+     if process_control.exit_without_event() {
+         super::tls_shared_vm::contexts::cleanup(runtime);
++        #[cfg(quench_icu)]
++        super::icu_binding_shared_vm::cleanup(runtime);
+         super::buffer_shared_vm::cleanup(runtime);
+         return Ok(());
+     }
+@@ -2474,6 +2476,8 @@ fn drain_shared_jobs(
+             crate::modules::zlib_stream_shared_vm::prune(runtime);
+             super::fs_watch_shared_vm::prune(runtime);
+             super::tls_shared_vm::contexts::prune(runtime);
++            #[cfg(quench_icu)]
++            super::icu_binding_shared_vm::prune(runtime);
+             super::net_reference_shared_vm::prune(runtime);
+             super::fs_stat_watch_shared_vm::prune(runtime);
+             return Ok(());
+@@ -2985,6 +2989,8 @@ fn emit_exit(
+ ) -> Result<(), String> {
+     let result = emit_exit_inner(runtime, program, code);
+     super::tls_shared_vm::contexts::cleanup(runtime);
++    #[cfg(quench_icu)]
++    super::icu_binding_shared_vm::cleanup(runtime);
+     super::buffer_shared_vm::cleanup(runtime);
+     result
+ }
+diff --git a/crates/quench-node/src/modules/text_decoder_icu.rs b/crates/quench-node/src/modules/text_decoder_icu.rs
+index 615eb3148..2db01705b 100644
+--- a/crates/quench-node/src/modules/text_decoder_icu.rs
++++ b/crates/quench-node/src/modules/text_decoder_icu.rs
+@@ -1,25 +1,31 @@
+-//! ICU's legacy converter tables and error consumption differ from WHATWG
+-//! replacements for Big5, Shift-JIS and EUC. Use the same stable C API as Node.
++//! ICU converters with Node's streaming, error and BOM lifecycle.
++//! Converter ownership stays in Rust; each successful open is closed exactly once.
+ use std::{
+     ffi::{c_char, c_void, CString},
+     ptr,
+ };
+-
+-type ToUnicodeCallback =
+-    unsafe extern "C" fn(*const c_void, *mut c_void, *const c_char, i32, i32, *mut i32);
+-const BUFFER_OVERFLOW: i32 = 15; // U_BUFFER_OVERFLOW_ERROR, utypes.h.
+-
++type Callback = unsafe extern "C" fn(*const c_void, *mut c_void, *const c_char, i32, i32, *mut i32);
++const UCNV_UTF8: i32 = 4;
++const UCNV_UTF16_BIG_ENDIAN: i32 = 5;
++const UCNV_UTF16_LITTLE_ENDIAN: i32 = 6;
++const MAX_UTF16_UNITS_PER_SCALAR: usize = 2;
+ extern "C" {
+     #[link_name = concat!("ucnv_open_", env!("QUENCH_ICU_MAJOR"))]
+     fn open(name: *const c_char, status: *mut i32) -> *mut c_void;
+     #[link_name = concat!("ucnv_close_", env!("QUENCH_ICU_MAJOR"))]
+     fn close(converter: *mut c_void);
++    #[link_name = concat!("ucnv_getType_", env!("QUENCH_ICU_MAJOR"))]
++    fn kind(converter: *const c_void) -> i32;
++    #[link_name = concat!("ucnv_getMinCharSize_", env!("QUENCH_ICU_MAJOR"))]
++    fn min_char_size(converter: *const c_void) -> i8;
++    #[link_name = concat!("ucnv_setSubstChars_", env!("QUENCH_ICU_MAJOR"))]
++    fn substitute(converter: *mut c_void, bytes: *const c_char, length: i8, status: *mut i32);
+     #[link_name = concat!("ucnv_setToUCallBack_", env!("QUENCH_ICU_MAJOR"))]
+-    fn set_callback(
++    fn callback(
+         converter: *mut c_void,
+-        callback: Option<ToUnicodeCallback>,
++        action: Option<Callback>,
+         context: *const c_void,
+-        old: *mut Option<ToUnicodeCallback>,
++        old: *mut Option<Callback>,
+         old_context: *mut *const c_void,
+         status: *mut i32,
+     );
+@@ -32,111 +38,367 @@ extern "C" {
+         reason: i32,
+         status: *mut i32,
+     );
+-    #[link_name = concat!("ucnv_getMinCharSize_", env!("QUENCH_ICU_MAJOR"))]
+-    fn min_char_size(converter: *const c_void) -> i8;
+-    #[link_name = concat!("ucnv_setSubstChars_", env!("QUENCH_ICU_MAJOR"))]
+-    fn set_substitution(converter: *mut c_void, bytes: *const c_char, length: i8, status: *mut i32);
+-    #[link_name = concat!("ucnv_toUChars_", env!("QUENCH_ICU_MAJOR"))]
+-    fn to_utf16(
++    #[link_name = concat!("ucnv_toUCountPending_", env!("QUENCH_ICU_MAJOR"))]
++    fn pending(converter: *const c_void, status: *mut i32) -> i32;
++    #[link_name = concat!("ucnv_reset_", env!("QUENCH_ICU_MAJOR"))]
++    fn reset(converter: *mut c_void);
++    #[link_name = concat!("ucnv_toUnicode_", env!("QUENCH_ICU_MAJOR"))]
++    fn to_unicode(
+         converter: *mut c_void,
+-        output: *mut u16,
+-        capacity: i32,
+-        source: *const c_char,
+-        length: i32,
++        target: *mut *mut u16,
++        target_limit: *const u16,
++        source: *mut *const c_char,
++        source_limit: *const c_char,
++        offsets: *mut i32,
++        flush: i8,
+         status: *mut i32,
+-    ) -> i32;
++    );
++}
++pub(crate) struct Converter {
++    raw: ptr::NonNull<c_void>,
++    minimum: usize,
++    unicode: bool,
++    ignore_bom: bool,
++    bom_seen: bool,
+ }
+-
+-struct Converter(*mut c_void);
+ impl Drop for Converter {
+     fn drop(&mut self) {
+-        // SAFETY: this guard uniquely owns a successful ucnv_open result.
+-        unsafe { close(self.0) }
++        unsafe { close(self.raw.as_ptr()) }
+     }
+ }
+-
+-pub(crate) fn decode(encoding: &str, bytes: &[u8], fatal: bool) -> Result<String, ()> {
+-    let name = CString::new(encoding).map_err(|_| ())?;
+-    let length = i32::try_from(bytes.len()).map_err(|_| ())?;
+-    let mut status = 0;
+-    // SAFETY: name is NUL-terminated; ICU writes only the supplied status slot.
+-    let raw = unsafe { open(name.as_ptr(), &mut status) };
+-    if raw.is_null() {
+-        return Err(());
++impl Converter {
++    pub(crate) fn new(name: &str, fatal: bool, ignore_bom: bool) -> Result<Self, ()> {
++        let name = CString::new(name).map_err(|_| ())?;
++        let mut status = 0;
++        let raw = ptr::NonNull::new(unsafe { open(name.as_ptr(), &mut status) }).ok_or(())?;
++        let mut value = Self {
++            raw,
++            minimum: 0,
++            unicode: false,
++            ignore_bom,
++            bom_seen: false,
++        };
++        if status > 0 {
++            return Err(());
++        }
++        if fatal {
++            unsafe {
++                callback(
++                    raw.as_ptr(),
++                    Some(stop),
++                    ptr::null(),
++                    ptr::null_mut(),
++                    ptr::null_mut(),
++                    &mut status,
++                )
++            };
++            if status > 0 {
++                return Err(());
++            }
++        }
++        let minimum = unsafe { min_char_size(raw.as_ptr()) };
++        if minimum <= 0 {
++            return Err(());
++        }
++        value.minimum = usize::try_from(minimum).map_err(|_| ())?;
++        let bytes = vec![b'?'; value.minimum];
++        status = 0;
++        unsafe { substitute(raw.as_ptr(), bytes.as_ptr().cast(), minimum, &mut status) };
++        if status > 0 {
++            return Err(());
++        }
++        value.unicode = matches!(
++            unsafe { kind(raw.as_ptr()) },
++            UCNV_UTF8 | UCNV_UTF16_BIG_ENDIAN | UCNV_UTF16_LITTLE_ENDIAN
++        );
++        Ok(value)
+     }
+-    let converter = Converter(raw);
+-    if status > 0 {
+-        return Err(());
++    pub(crate) fn decode(&mut self, bytes: &[u8], flush: bool) -> Result<Vec<u16>, ()> {
++        let result = self.decode_chunk(bytes, flush);
++        // Node resets a flushed converter even when decoding fails. Streaming
++        // failures retain converter/BOM state until a later explicit flush.
++        if flush {
++            self.bom_seen = false;
++            // SAFETY: this converter exclusively owns the live ICU handle.
++            unsafe { reset(self.raw.as_ptr()) };
++        }
++        result
+     }
+-    if fatal {
+-        // SAFETY: converter is live. The ICU callback has the declared C ABI;
+-        // no callback context or previous-action outputs are requested.
++
++    fn decode_chunk(&mut self, bytes: &[u8], flush: bool) -> Result<Vec<u16>, ()> {
++        let mut status = 0;
++        let pending = if flush {
++            usize::try_from(unsafe { pending(self.raw.as_ptr(), &mut status) }).map_err(|_| ())?
++        } else {
++            0
++        };
++        if status > 0 {
++            return Err(());
++        }
++        let limit = MAX_UTF16_UNITS_PER_SCALAR
++            .checked_mul(self.minimum)
++            .and_then(|n| n.checked_mul(bytes.len().max(pending)))
++            .ok_or(())?;
++        let mut output = vec![0_u16; limit];
++        let mut empty = [0_u16; 1];
++        let begin = if limit == 0 {
++            empty.as_mut_ptr()
++        } else {
++            output.as_mut_ptr()
++        };
++        let mut target = begin;
++        let mut source = bytes.as_ptr().cast();
++        status = 0;
+         unsafe {
+-            set_callback(
+-                converter.0,
+-                Some(stop),
+-                ptr::null(),
+-                ptr::null_mut(),
++            to_unicode(
++                self.raw.as_ptr(),
++                &mut target,
++                begin.add(limit),
++                &mut source,
++                bytes.as_ptr().add(bytes.len()).cast(),
+                 ptr::null_mut(),
++                i8::from(flush),
++                &mut status,
++            )
++        };
++        let result = if status <= 0 {
++            let written = unsafe { target.offset_from(begin) };
++            if written < 0 || written as usize > limit {
++                Err(())
++            } else {
++                output.truncate(written as usize);
++                if !output.is_empty() && self.unicode && !self.ignore_bom && !self.bom_seen {
++                    self.bom_seen = true;
++                    if output[0] == 0xfeff {
++                        output.remove(0);
++                    }
++                }
++                Ok(output)
++            }
++        } else {
++            Err(())
++        };
++        result
++    }
++}
++
++/// A complete conversion uses the same converter configuration as streaming.
++/// BOM handling belongs to the caller for this legacy complete-input entry.
++pub(crate) fn decode(encoding: &str, bytes: &[u8], fatal: bool) -> Result<String, ()> {
++    let units = Converter::new(encoding, fatal, true)?.decode(bytes, true)?;
++    String::from_utf16(&units).map_err(|_| ())
++}
++
++// Unicode property values from ICU's public uchar.h, shared with Node's
++// GetColumnWidth policy in src/node_i18n.cc.
++const EAST_ASIAN_WIDTH: i32 = 0x1004;
++const EMOJI_PRESENTATION: i32 = 58;
++const EMOJI_MODIFIER: i32 = 59;
++const SOFT_HYPHEN: u32 = 0x00ad;
++const ZERO_WIDTH_JOINER: u32 = 0x200d;
++const NONSPACING_MARK: i8 = 6;
++const ENCLOSING_MARK: i8 = 7;
++const CONTROL: i8 = 15;
++const FORMAT: i8 = 16;
++const AMBIGUOUS: i32 = 1;
++const FULLWIDTH: i32 = 3;
++const WIDE: i32 = 5;
++extern "C" {
++    #[link_name = concat!("u_getIntPropertyValue_", env!("QUENCH_ICU_MAJOR"))]
++    fn property(codepoint: i32, property: i32) -> i32;
++    #[link_name = concat!("u_hasBinaryProperty_", env!("QUENCH_ICU_MAJOR"))]
++    fn binary_property(codepoint: i32, property: i32) -> i8;
++    #[link_name = concat!("u_charType_", env!("QUENCH_ICU_MAJOR"))]
++    fn category(codepoint: i32) -> i8;
++}
++
++pub(crate) fn string_width(units: &[u16], ambiguous: bool, expand_emoji: bool) -> u32 {
++    let mut previous = 0;
++    let mut width = 0;
++    // Lone surrogates remain code points, as in ICU's U16_NEXT macro.
++    for decoded in char::decode_utf16(units.iter().copied()) {
++        let codepoint = decoded.map_or_else(|e| u32::from(e.unpaired_surrogate()), u32::from);
++        // SAFETY: the public ICU property APIs accept every Unicode code point,
++        // including surrogate values, and all property selectors are uchar.h enums.
++        let (east_asian, emoji, modifier, category) = unsafe {
++            (
++                property(codepoint as i32, EAST_ASIAN_WIDTH),
++                binary_property(codepoint as i32, EMOJI_PRESENTATION) != 0,
++                binary_property(codepoint as i32, EMOJI_MODIFIER) != 0,
++                category(codepoint as i32),
++            )
++        };
++        if expand_emoji || previous != ZERO_WIDTH_JOINER || !(emoji || modifier) {
++            width += match east_asian {
++                FULLWIDTH | WIDE => 2,
++                AMBIGUOUS if ambiguous => 2,
++                0 | AMBIGUOUS if emoji => 2,
++                _ if codepoint != SOFT_HYPHEN
++                    && (matches!(
++                        category,
++                        NONSPACING_MARK | ENCLOSING_MARK | CONTROL | FORMAT
++                    ) || modifier) =>
++                {
++                    0
++                }
++                _ => 1,
++            };
++        }
++        previous = codepoint;
++    }
++    width
++}
++
++const ILLEGAL_ARGUMENT: i32 = 1; // U_ILLEGAL_ARGUMENT_ERROR, utypes.h.
++const INVALID_CHARACTER: i32 = 10; // U_INVALID_CHAR_FOUND, utypes.h.
++extern "C" {
++    #[link_name = concat!("ucnv_getMaxCharSize_", env!("QUENCH_ICU_MAJOR"))]
++    fn max_char_size(converter: *const c_void) -> i8;
++    #[link_name = concat!("ucnv_convertEx_", env!("QUENCH_ICU_MAJOR"))]
++    fn convert_ex(
++        to: *mut c_void,
++        from: *mut c_void,
++        target: *mut *mut c_char,
++        target_limit: *const c_char,
++        source: *mut *const c_char,
++        source_limit: *const c_char,
++        pivot_start: *mut u16,
++        pivot_source: *mut *mut u16,
++        pivot_target: *mut *mut u16,
++        pivot_limit: *const u16,
++        reset: i8,
++        flush: i8,
++        status: *mut i32,
++    );
++    #[link_name = concat!("ucnv_fromUChars_", env!("QUENCH_ICU_MAJOR"))]
++    fn from_units(
++        converter: *mut c_void,
++        target: *mut c_char,
++        capacity: i32,
++        source: *const u16,
++        length: i32,
++        status: *mut i32,
++    ) -> i32;
++    #[link_name = concat!("u_errorName_", env!("QUENCH_ICU_MAJOR"))]
++    fn error_name(status: i32) -> *const c_char;
++}
++
++pub(crate) fn status_name(status: i32) -> String {
++    // SAFETY: ICU returns a static NUL-terminated name for every status value.
++    unsafe { std::ffi::CStr::from_ptr(error_name(status)) }
++        .to_string_lossy()
++        .into_owned()
++}
++
++pub(crate) fn transcode(bytes: &[u8], from: &str, to: &str) -> Result<Vec<u8>, i32> {
++    let encoding = |name| match name {
++        "ascii" => Some("us-ascii"),
++        "latin1" => Some("iso8859-1"),
++        "utf8" => Some("utf-8"),
++        "utf16le" => Some("utf16le"),
++        _ => None,
++    };
++    let from_name = encoding(from).ok_or(ILLEGAL_ARGUMENT)?;
++    let to_name = encoding(to).ok_or(ILLEGAL_ARGUMENT)?;
++    if matches!(from, "ascii" | "latin1") && to == "utf16le" {
++        // Node's SIMD Latin-1 path preserves all eight bits even for ASCII input.
++        return Ok(bytes.iter().flat_map(|b| [*b, 0]).collect());
++    }
++    if from == "utf8" && to == "utf16le" {
++        let text = std::str::from_utf8(bytes).map_err(|_| INVALID_CHARACTER)?;
++        if text.is_empty() {
++            return Err(INVALID_CHARACTER);
++        }
++        return Ok(text.encode_utf16().flat_map(u16::to_le_bytes).collect());
++    }
++    if from == "utf16le" && to == "utf8" {
++        let units = bytes
++            .chunks_exact(2)
++            .map(|b| u16::from_le_bytes([b[0], b[1]]))
++            .collect::<Vec<_>>();
++        let text = String::from_utf16(&units).map_err(|_| INVALID_CHARACTER)?;
++        if text.is_empty() {
++            return Err(INVALID_CHARACTER);
++        }
++        return Ok(text.into_bytes());
++    }
++    let target_converter = Converter::new(to_name, false, true).map_err(|_| ILLEGAL_ARGUMENT)?;
++    let mut status = 0;
++    if from == "utf16le" && to != "utf16le" {
++        let units = bytes
++            .chunks_exact(2)
++            .map(|b| u16::from_le_bytes([b[0], b[1]]))
++            .collect::<Vec<_>>();
++        let length = i32::try_from(units.len()).map_err(|_| ILLEGAL_ARGUMENT)?;
++        let mut output = vec![0_u8; units.len()];
++        // SAFETY: all buffers cover the checked lengths; the uniquely owned
++        // destination converter remains live for the complete conversion.
++        let written = unsafe {
++            from_units(
++                target_converter.raw.as_ptr(),
++                output.as_mut_ptr().cast(),
++                length,
++                units.as_ptr(),
++                length,
+                 &mut status,
+             )
+         };
+         if status > 0 {
+-            return Err(());
++            return Err(status);
+         }
++        output.truncate(written as usize);
++        return Ok(output);
+     }
+-    // Node configures '?' as the converter's byte substitution. ICU also uses
+-    // this setting to choose U+FFFD rather than a table's legacy SUB character
+-    // for invalid input on its Unicode side.
+-    // SAFETY: converter is live; ICU's minimum byte width is a positive int8.
+-    let minimum = unsafe { min_char_size(converter.0) };
+-    let substitution = vec![b'?'; usize::try_from(minimum).map_err(|_| ())?];
+-    status = 0;
+-    // SAFETY: substitution stays live for its exact, ICU-derived byte count.
+-    unsafe {
+-        set_substitution(
+-            converter.0,
+-            substitution.as_ptr().cast(),
+-            minimum,
+-            &mut status,
+-        )
++    // Node leaves the source converter at ICU's default substitution policy.
++    let name = CString::new(from_name).map_err(|_| ILLEGAL_ARGUMENT)?;
++    // SAFETY: the name is NUL-terminated and the status output is live.
++    let raw = unsafe { open(name.as_ptr(), &mut status) };
++    let raw = ptr::NonNull::new(raw).ok_or(status)?;
++    let source_converter = Converter {
++        raw,
++        minimum: 0,
++        unicode: false,
++        ignore_bom: true,
++        bom_seen: false,
+     };
+     if status > 0 {
+-        return Err(());
++        return Err(status);
+     }
++    // SAFETY: the target converter is live; ICU's maximum width is positive.
++    let maximum = unsafe { max_char_size(target_converter.raw.as_ptr()) };
++    let capacity = bytes
++        .len()
++        .checked_mul(maximum as usize)
++        .ok_or(ILLEGAL_ARGUMENT)?;
++    let mut output = vec![0_u8; capacity.max(1)];
++    let begin = output.as_mut_ptr().cast::<c_char>();
++    let mut target = begin;
++    let mut source = bytes.as_ptr().cast();
+     status = 0;
+-    // SAFETY: ICU's documented preflight accepts a null destination at capacity
+-    // zero; source stays live for the exact checked byte count.
+-    let needed = unsafe {
+-        to_utf16(
+-            converter.0,
++    // SAFETY: both converters are uniquely owned, all bounds refer to live
++    // allocations, and null pivot pointers request ICU's internal pivot buffer.
++    unsafe {
++        convert_ex(
++            target_converter.raw.as_ptr(),
++            source_converter.raw.as_ptr(),
++            &mut target,
++            begin.add(capacity),
++            &mut source,
++            bytes.as_ptr().add(bytes.len()).cast(),
++            ptr::null_mut(),
++            ptr::null_mut(),
+             ptr::null_mut(),
+-            0,
+-            bytes.as_ptr().cast(),
+-            length,
++            ptr::null(),
++            1,
++            1,
+             &mut status,
+-        )
+-    };
+-    if status > 0 && status != BUFFER_OVERFLOW {
+-        return Err(());
++        );
+     }
+-    let mut output = vec![0_u16; usize::try_from(needed).map_err(|_| ())?];
+-    status = 0;
+-    // SAFETY: preflight supplies the capacity; toUChars resets converter state
+-    // for each complete conversion and respects the supplied destination size.
+-    let written = unsafe {
+-        to_utf16(
+-            converter.0,
+-            output.as_mut_ptr(),
+-            needed,
+-            bytes.as_ptr().cast(),
+-            length,
+-            &mut status,
+-        )
+-    };
+-    if status > 0 || written < 0 || written > needed {
+-        return Err(());
++    if status > 0 {
++        return Err(status);
+     }
+-    output.truncate(written as usize);
+-    String::from_utf16(&output).map_err(|_| ())
++    // SAFETY: successful ICU conversion leaves target within this allocation.
++    let written = unsafe { target.offset_from(begin) } as usize;
++    output.truncate(written);
++    Ok(output)
+ }
+diff --git a/crates/quench-node/src/modules/text_decoder_shared_vm.rs b/crates/quench-node/src/modules/text_decoder_shared_vm.rs
+index cb7081e85..563ec907e 100644
+--- a/crates/quench-node/src/modules/text_decoder_shared_vm.rs
++++ b/crates/quench-node/src/modules/text_decoder_shared_vm.rs
+@@ -3,6 +3,7 @@
+ use crate::host::NodeHost;
+ use quench_runtime::{NativeContext, RootId, RootedError};
+ 
++#[cfg(not(quench_icu))]
+ const FACTORY: &str = quench_js_check::checked_js!(
+     r#"(canonicalEncoding, decodeBytes) => {
+   const decoders = new WeakMap();
+@@ -100,13 +101,22 @@ pub(crate) fn initialize(
+     _: RootId,
+     _: &[RootId],
+ ) -> Result<RootId, RootedError> {
+-    let canonical = context.host_function(crate::host::shared_vm::operation(
+-        "textDecoderCanonicalEncoding",
+-    ))?;
+-    let decode = context.host_function(crate::host::shared_vm::operation("textDecoderDecode"))?;
+-    let factory = context.evaluate_script_rooted(FACTORY, "node:text-decoder/shared-vm.js")?;
++    #[cfg(quench_icu)]
++    let constructors = crate::host::shared_vm::commonjs::node_library_module(
++        context, "util.js", "internal/encoding.js"
++    )?;
++    #[cfg(not(quench_icu))]
++    let constructors = {
++        let canonical = context.host_function(crate::host::shared_vm::operation(
++            "textDecoderCanonicalEncoding",
++        ))?;
++        let decode = context.host_function(crate::host::shared_vm::operation("textDecoderDecode"))?;
++        let factory = context.evaluate_script_rooted(FACTORY, "node:text-decoder/shared-vm.js")?;
++        let undefined = context.undefined();
++        let constructors = context.call_rooted(factory, undefined, &[canonical, decode])?;
++        constructors
++    };
+     let undefined = context.undefined();
+-    let constructors = context.call_rooted(factory, undefined, &[canonical, decode])?;
+     let decoder_key = context.string_rooted("TextDecoder");
+     let constructor = context.get_property_rooted(constructors, decoder_key)?;
+     let encoder_key = context.string_rooted("TextEncoder");
+diff --git a/crates/quench-node/src/modules/trace_shared_vm.rs b/crates/quench-node/src/modules/trace_shared_vm.rs
+index 2b86f655d..81a0f1717 100644
+--- a/crates/quench-node/src/modules/trace_shared_vm.rs
++++ b/crates/quench-node/src/modules/trace_shared_vm.rs
+@@ -363,6 +363,12 @@ pub(crate) fn internal_binding(
+         "types" => return super::util_shared_vm::types_binding(context),
+         "util" => return super::util_shared_vm::key_binding(context),
+         "encoding_binding" => return super::encoding_binding_shared_vm::binding(context),
++        #[cfg(quench_icu)]
++        "icu" => return super::icu_binding_shared_vm::binding(context),
++        "config" => {
++            let has_intl = context.boolean(cfg!(quench_icu));
++            put(context, binding, "hasIntl", has_intl)?;
++        }
+         "symbols" => return super::util_shared_vm::symbols_binding(context),
+         "http2" => return crate::host::shared_vm::commonjs::http2_binding(context),
+         "buffer" => return super::buffer_fill_shared_vm::binding(context),
+diff --git a/crates/quench-node/src/modules/util_shared_vm.rs b/crates/quench-node/src/modules/util_shared_vm.rs
+index 4e2613760..0501a7e99 100644
+--- a/crates/quench-node/src/modules/util_shared_vm.rs
++++ b/crates/quench-node/src/modules/util_shared_vm.rs
+@@ -440,54 +440,11 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
+     context.set_property_rooted(module, parse_args_key, parse_args, module)?;
+     let callbackify_key = context.string_rooted("callbackify");
+     context.set_property_rooted(module, callbackify_key, callbackify, module)?;
++    let native_types = types_binding(context)?;
+     let types = context.object_rooted()?;
+-    for (index, &(name, brand)) in TYPE_PREDICATES.iter().enumerate() {
+-        let data = context.number(index as f64);
+-        let predicate = context
+-            .host_function_with_data(crate::host::shared_vm::operation("utilTypeCheck"), data)?;
+-        let name_key = context.string_rooted("name");
+-        let (function_name, length) = match brand {
+-            BuiltinBrand::ArrayBufferView => ("isView", 1),
+-            BuiltinBrand::Date
+-            | BuiltinBrand::RegExp
+-            | BuiltinBrand::NativeError
+-            | BuiltinBrand::Promise
+-            | BuiltinBrand::Map
+-            | BuiltinBrand::Set
+-            | BuiltinBrand::WeakMap
+-            | BuiltinBrand::WeakSet
+-            | BuiltinBrand::Proxy
+-            | BuiltinBrand::ArrayBuffer
+-            | BuiltinBrand::SharedArrayBuffer
+-            | BuiltinBrand::AnyArrayBuffer
+-            | BuiltinBrand::ArgumentsObject
+-            | BuiltinBrand::AsyncFunction
+-            | BuiltinBrand::GeneratorFunction
+-            | BuiltinBrand::GeneratorObject
+-            | BuiltinBrand::MapIterator
+-            | BuiltinBrand::SetIterator
+-            | BuiltinBrand::ModuleNamespaceObject
+-            | BuiltinBrand::BooleanObject
+-            | BuiltinBrand::NumberObject
+-            | BuiltinBrand::StringObject
+-            | BuiltinBrand::SymbolObject
+-            | BuiltinBrand::BigIntObject
+-            | BuiltinBrand::BoxedPrimitive => ("", 0),
+-            _ => (name, 1),
+-        };
+-        let name_value = context.string_rooted(function_name);
+-        context.define_data_property_rooted(predicate, name_key, name_value, false, false, true)?;
+-        let length_key = context.string_rooted("length");
+-        let length_value = context.number(f64::from(length));
+-        context.define_data_property_rooted(
+-            predicate,
+-            length_key,
+-            length_value,
+-            false,
+-            false,
+-            true,
+-        )?;
++    for &(name, _) in TYPE_PREDICATES {
+         let key = context.string_rooted(name);
++        let predicate = context.get_property_rooted(native_types, key)?;
+         context.set_property_rooted(types, key, predicate, types)?;
+     }
+     let key = context.string_rooted("types");
+@@ -495,14 +452,6 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
+     // Retain original identities before publishing mutable util exports. Console
+     // can request these lazily without observing later public export replacement.
+     let formatters = context.null_object_rooted()?;
+-    let native_types = context.object_rooted()?;
+-    for &(name, _) in TYPE_PREDICATES {
+-        let key = context.string_rooted(name);
+-        let predicate = context.get_property_rooted(types, key)?;
+-        context.define_data_property_rooted(native_types, key, predicate, true, true, true)?;
+-    }
+-    let key = context.string_rooted("nativeTypes");
+-    context.define_data_property_rooted(formatters, key, native_types, false, false, false)?;
+     for name in ["format", "formatWithOptions"] {
+         let key = context.string_rooted(name);
+         let function = context.get_property_rooted(module, key)?;
+@@ -1126,12 +1075,14 @@ pub(crate) fn mark_promise_handled(
+     Ok(context.undefined())
+ }
+ 
+-/// Cache the genuine internal key binding in Core-owned private formatter data.
++/// The native binding can initialize while internal/errors is still evaluating.
++/// Keep its identity independent of the public util module and its decoder exports.
+ pub(crate) fn key_binding(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
+-    let data = internal_formatters(context)?;
+-    let cache_key = context.string_rooted("nativeKeyBinding");
+-    let cached = context.own_property_descriptor_rooted(data, cache_key)?;
+-    if context.is_object_rooted(cached)? { return get(context, cached, "value"); }
++    const CACHE_KEY: &str = "\0binding:util";
++    let shared = context.host_mut().shared_state();
++    if let Some(binding) = shared.borrow().builtin_cache.get(CACHE_KEY).copied() {
++        return Ok(binding);
++    }
+     let binding = context.object_rooted()?;
+     let function = context.host_function(crate::host::shared_vm::operation("utilOwnNonIndexProperties"))?;
+     let key = context.string_rooted("name");
+@@ -1177,7 +1128,8 @@ pub(crate) fn key_binding(context: &mut NativeContext<'_, NodeHost>) -> Result<R
+     }
+     let key = context.string_rooted("constants");
+     context.define_data_property_rooted(binding, key, constants, true, true, true)?;
+-    context.define_data_property_rooted(data, cache_key, binding, false, false, false)?;
++    let retained = context.retain(binding)?;
++    shared.borrow_mut().builtin_cache.insert(CACHE_KEY.to_owned(), retained);
+     Ok(binding)
+ }
+ 
+@@ -1198,6 +1150,62 @@ pub(crate) fn symbols_binding(context: &mut NativeContext<'_, NodeHost>) -> Resu
+ }
+ 
+ pub(crate) fn types_binding(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
+-    let data = internal_formatters(context)?;
+-    get(context, data, "nativeTypes")
++    const CACHE_KEY: &str = "\0binding:types";
++    let shared = context.host_mut().shared_state();
++    if let Some(types) = shared.borrow().builtin_cache.get(CACHE_KEY).copied() {
++        return Ok(types);
++    }
++    let types = context.object_rooted()?;
++    for (index, &(name, brand)) in TYPE_PREDICATES.iter().enumerate() {
++        let data = context.number(index as f64);
++        let predicate = context
++            .host_function_with_data(crate::host::shared_vm::operation("utilTypeCheck"), data)?;
++        let name_key = context.string_rooted("name");
++        let (function_name, length) = match brand {
++            BuiltinBrand::ArrayBufferView => ("isView", 1),
++            BuiltinBrand::Date
++            | BuiltinBrand::RegExp
++            | BuiltinBrand::NativeError
++            | BuiltinBrand::Promise
++            | BuiltinBrand::Map
++            | BuiltinBrand::Set
++            | BuiltinBrand::WeakMap
++            | BuiltinBrand::WeakSet
++            | BuiltinBrand::Proxy
++            | BuiltinBrand::ArrayBuffer
++            | BuiltinBrand::SharedArrayBuffer
++            | BuiltinBrand::AnyArrayBuffer
++            | BuiltinBrand::ArgumentsObject
++            | BuiltinBrand::AsyncFunction
++            | BuiltinBrand::GeneratorFunction
++            | BuiltinBrand::GeneratorObject
++            | BuiltinBrand::MapIterator
++            | BuiltinBrand::SetIterator
++            | BuiltinBrand::ModuleNamespaceObject
++            | BuiltinBrand::BooleanObject
++            | BuiltinBrand::NumberObject
++            | BuiltinBrand::StringObject
++            | BuiltinBrand::SymbolObject
++            | BuiltinBrand::BigIntObject
++            | BuiltinBrand::BoxedPrimitive => ("", 0),
++            _ => (name, 1),
++        };
++        let name_value = context.string_rooted(function_name);
++        context.define_data_property_rooted(predicate, name_key, name_value, false, false, true)?;
++        let length_key = context.string_rooted("length");
++        let length_value = context.number(f64::from(length));
++        context.define_data_property_rooted(
++            predicate,
++            length_key,
++            length_value,
++            false,
++            false,
++            true,
++        )?;
++        let key = context.string_rooted(name);
++        context.set_property_rooted(types, key, predicate, types)?;
++    }
++    let retained = context.retain(types)?;
++    shared.borrow_mut().builtin_cache.insert(CACHE_KEY.to_owned(), retained);
++    Ok(types)
+ }
+diff --git a/crates/quench-runtime/src/api_native.rs b/crates/quench-runtime/src/api_native.rs
+index c191131cf..708649a8c 100644
+--- a/crates/quench-runtime/src/api_native.rs
++++ b/crates/quench-runtime/src/api_native.rs
+@@ -134,8 +134,8 @@ pub struct HostFunction<H: Host> {
+ /// Declare global and module-owned native descriptors from one binding table.
+ #[macro_export]
+ macro_rules! host_functions {
+-    ($( $scope:ident $name:literal ($length:literal) => $callback:path ),* $(,)?) => {
+-        &[$($crate::HostFunction {
++    ($( $(#[$attribute:meta])* $scope:ident $name:literal ($length:literal) => $callback:path ),* $(,)?) => {
++        &[$($(#[$attribute])* $crate::HostFunction {
+             name: $name,
+             length: $length,
+             global: $crate::host_functions!(@global $scope $name),

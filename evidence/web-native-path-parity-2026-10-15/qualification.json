@@ -1,0 +1,23 @@
+{
+  "integration_source": "cd4327788e122d25eaa8368d5f6798226b63c562",
+  "repair_source": "cd4327788e122d25eaa8368d5f6798226b63c562",
+  "runtime_check_source": "4a952c16cc0ea84ccc8cbd883e4db49fa72a6dc2",
+  "oracle": "Node v26.12.0",
+  "total_node_parity": false,
+  "benchmark_win": false,
+  "binaries": {
+    "baseline": {
+      "path": "work/quench-http-blockers-integrated",
+      "sha256": "700cb9c953c1ebbbefb0931d1cc48421d32f29399b7f9d13f0f59bd1f4b39352"
+    },
+    "integration": {
+      "path": "work/quench-fs-native-path-repaired",
+      "sha256": "4a52f8629a248287598aac16415acddd1a228838f0f2f2c6b2d52f23074784fa"
+    },
+    "node": {
+      "path": "work/node-v26.12.0-linux-x64/bin/node",
+      "sha256": "caa24debe02770c92a70677e2a62ca98890150e7ac1c17bcfe31bcc98cc89943"
+    }
+  },
+  "production_changes_after_frozen_binary": ""
+}

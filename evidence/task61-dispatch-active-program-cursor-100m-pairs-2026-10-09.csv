@@ -1,0 +1,12 @@
+fixture,pair,order,candidate_instructions,candidate_elapsed_seconds,candidate_user_seconds,candidate_system_seconds,candidate_max_rss_bytes,baseline_instructions,baseline_elapsed_seconds,baseline_user_seconds,baseline_system_seconds,baseline_max_rss_bytes
+task61-dispatch-active-program-cursor-local-store-100m-2026-10-09.cjs,1,candidate>baseline,84837683653,2.63,2.61,0.0,17956864,88831516655,2.44,2.43,0.0,17907712
+task61-dispatch-active-program-cursor-local-store-100m-2026-10-09.cjs,2,baseline>candidate,84835773031,2.67,2.65,0.0,18087936,88833264904,2.43,2.42,0.0,17907712
+task61-dispatch-active-program-cursor-local-store-100m-2026-10-09.cjs,3,candidate>baseline,84839530216,2.62,2.61,0.0,17956864,88828421447,2.41,2.4,0.0,17858560
+task61-dispatch-active-program-cursor-local-store-100m-2026-10-09.cjs,4,baseline>candidate,84836816011,2.67,2.66,0.0,17924096,88834114838,2.43,2.42,0.0,17776640
+task61-dispatch-active-program-cursor-local-store-100m-2026-10-09.cjs,5,candidate>baseline,84834996101,2.75,2.74,0.0,17940480,88830639751,2.42,2.41,0.0,17924096
+task61-dispatch-active-program-cursor-local-store-100m-2026-10-09.cjs,6,baseline>candidate,84837746091,2.63,2.62,0.0,18153472,88832364868,2.44,2.43,0.0,17874944
+task61-dispatch-active-program-cursor-local-store-100m-2026-10-09.cjs,7,candidate>baseline,84839547849,2.69,2.67,0.0,18071552,88837736723,2.47,2.46,0.0,17825792
+task61-dispatch-active-program-cursor-local-store-100m-2026-10-09.cjs,8,baseline>candidate,84837582277,2.57,2.56,0.0,18071552,88831808301,2.43,2.41,0.0,17891328
+task61-dispatch-active-program-cursor-local-store-100m-2026-10-09.cjs,9,candidate>baseline,84834915309,2.67,2.66,0.0,17956864,88843839311,2.47,2.45,0.0,17924096
+task61-dispatch-active-program-cursor-local-store-100m-2026-10-09.cjs,10,baseline>candidate,84831473270,2.58,2.56,0.0,17924096,88834219485,2.44,2.43,0.0,17907712
+task61-dispatch-active-program-cursor-local-store-100m-2026-10-09.cjs,11,candidate>baseline,84840848764,2.69,2.68,0.0,17858560,88830021473,2.43,2.42,0.0,17907712

@@ -1,0 +1,46 @@
+    Finished `iteration` profile [optimized] target(s) in 0.53s
+     Running `target/iteration/run-parallel --profile framework-core --timeout-secs 30`
+PASS  /workspace/quench/tests/node/test/parallel/test-http-methods.js
+PASS  /workspace/quench/tests/node/test/parallel/test-stream-auto-destroy.js
+PASS  /workspace/quench/tests/node/test/parallel/test-readable-from.js
+PASS  /workspace/quench/tests/node/test/parallel/test-path-extname.js
+PASS  /workspace/quench/tests/node/test/parallel/test-path-join.js
+PASS  /workspace/quench/tests/node/test/parallel/test-path-normalize.js
+PASS  /workspace/quench/tests/node/test/parallel/test-path-resolve.js
+PASS  /workspace/quench/tests/node/test/parallel/test-util-inherits.js
+PASS  /workspace/quench/tests/node/test/parallel/test-buffer-tostring.js
+TIMEOUT  /workspace/quench/tests/node/test/parallel/test-string-decoder.js: worker terminated by signal 9; stderr:
+PASS  /workspace/quench/tests/node/test/parallel/test-event-emitter-add-listeners.js
+PASS  /workspace/quench/tests/node/test/parallel/test-event-emitter-get-max-listeners.js
+PASS  /workspace/quench/tests/node/test/parallel/test-event-emitter-method-names.js
+PASS  /workspace/quench/tests/node/test/parallel/test-event-emitter-modify-in-emit.js
+PASS  /workspace/quench/tests/node/test/parallel/test-event-emitter-once.js
+PASS  /workspace/quench/tests/node/test/parallel/test-diagnostics-channel-has-subscribers.js
+PASS  /workspace/quench/tests/node/test/parallel/test-diagnostics-channel-object-channel-pub-sub.js
+PASS  /workspace/quench/tests/node/test/parallel/test-diagnostics-channel-tracing-channel-promise.js
+PASS  /workspace/quench/tests/node/test/parallel/test-diagnostics-channel-tracing-channel-promise-error.js
+PASS  /workspace/quench/tests/node/test/parallel/test-diagnostics-channel-tracing-channel-promise-early-exit.js
+PASS  /workspace/quench/tests/node/test/parallel/test-diagnostics-channel-tracing-channel-promise-non-thenable.js
+PASS  /workspace/quench/tests/node/test/parallel/test-diagnostics-channel-tracing-channel-promise-thenable.js
+PASS  /workspace/quench/tests/node/test/parallel/test-diagnostics-channel-tracing-channel-promise-spoofed-constructor.js
+PASS  /workspace/quench/tests/node/test/parallel/test-diagnostics-channel-tracing-channel-callback-run-stores.js
+PASS  /workspace/quench/tests/node/test/parallel/test-diagnostics-channel-tracing-channel-sync-run-stores.js
+PASS  /workspace/quench/tests/node/test/parallel/test-diagnostics-channel-tracing-channel-promise-run-stores.js
+PASS  /workspace/quench/tests/node/test/parallel/test-async-local-storage-enter-with.js
+PASS  /workspace/quench/tests/node/test/parallel/test-http-automatic-headers.js
+PASS  /workspace/quench/tests/node/test/parallel/test-http-content-length.js
+PASS  /workspace/quench/tests/node/test/parallel/test-http-write-head.js
+PASS  /workspace/quench/tests/node/test/parallel/test-fs-read-stream-resume.js
+PASS  /workspace/quench/tests/node/test/parallel/test-stream-pipe-flow.js
+PASS  /workspace/quench/tests/node/test/parallel/test-async-hooks-run-in-async-scope-this-arg.js
+PASS  /workspace/quench/tests/node/test/parallel/test-http-request-end.js
+PASS  /workspace/quench/tests/node/test/parallel/test-http-response-readable.js
+PASS  /workspace/quench/tests/node/test/parallel/test-http-response-close.js
+PASS  /workspace/quench/tests/node/test/parallel/test-http-head-response-has-no-body.js
+PASS  /workspace/quench/tests/node/test/parallel/test-http-head-response-has-no-body-end.js
+PASS  /workspace/quench/tests/node/test/parallel/test-http-head-response-has-no-body-end-implicit-headers.js
+PASS  /workspace/quench/tests/node/test/parallel/test-http-allow-content-length-304.js
+PASS  /workspace/quench/tests/node/test/parallel/test-http-listening.js
+PASS  /workspace/quench/tests/node/test/parallel/test-global-webstreams.js
+PASS  /workspace/quench/tests/node/test/parallel/test-webstreams-pipeline.js
+parallel: pass=42 skip=0 fail=0 timeout=1 crash=0 unclassified=0 total=43

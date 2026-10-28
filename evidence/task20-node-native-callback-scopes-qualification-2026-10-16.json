@@ -1,0 +1,160 @@
+{
+  "source_commit": "807ae73d9a39e5226363b5dbcbb6c3d2057cba0b",
+  "scope": "Actual native next-tick/Timeout/Immediate callback scopes and completion lifecycle",
+  "functional": {
+    "core": {
+      "passed": 672,
+      "unchanged_source_reuse": {
+        "source_before": "9fb0f880f35eb000d3b6761f3c4b243e577bf933",
+        "source_after": "807ae73d9a39e5226363b5dbcbb6c3d2057cba0b",
+        "changed_files": [
+          "crates/quench-node-test/node-tests/test-async-callback-error-scope.js",
+          "crates/quench-node-test/node-tests/test-sdk-test-context-callbacks.js",
+          "crates/quench-node-test/node-tests/test-tick-resource-canonical-slots.js",
+          "crates/quench-node-test/tests/child_entry.rs",
+          "crates/quench-node/src/host/shared_vm.rs",
+          "crates/quench-node/src/modules/async_hook_registry_shared_vm.rs",
+          "crates/quench-node/src/modules/async_hooks_shared_vm.rs",
+          "crates/quench-node/src/modules/child_process_input_shared_vm.rs",
+          "crates/quench-node/src/modules/child_process_ipc_shared_vm.rs",
+          "crates/quench-node/src/modules/dns_shared_vm.rs",
+          "crates/quench-node/src/modules/http_shared_vm/poll.rs",
+          "crates/quench-node/src/modules/process_shared_vm.rs",
+          "crates/quench-node/src/modules/process_stdin_shared_vm.rs",
+          "crates/quench-node/src/modules/shared_event_loop.rs",
+          "crates/quench-node/src/modules/timers_shared_vm.rs",
+          "crates/quench-node/src/modules/zlib_native_shared_vm.rs",
+          "crates/quench-node/src/modules/zlib_shared_vm.rs",
+          "docs/node-host-contracts.md"
+        ],
+        "all_core_and_dependency_sources_unchanged": true,
+        "core_tests_passed": 672,
+        "raw": "work/sdk-harness-shared/core.log",
+        "sha256": "2ade3cfd2c480829c0c2c731d57f10971f1f136bf2eb438ad47020d32edf5c08"
+      }
+    },
+    "node_api_passed": 418,
+    "framework_passed": 43,
+    "shared_passed": 7,
+    "workspace": "pass",
+    "differentials": {
+      "buffer-poison-oracle.diff": 0,
+      "shadow.diff": 0,
+      "buffer-concat-oracle.diff": 0,
+      "buffer-oracle.diff": 0,
+      "buffer-latin1-oracle.diff": 0
+    },
+    "framework_scenarios_byte_equal": 3
+  },
+  "actual_stock_fixed_work": {
+    "valid_cases": 8,
+    "clean_rounds": 0,
+    "speed_claim": false
+  },
+  "implementation": [
+    "Queued callbacks retain their actual resource/async identity; before/after hooks and callback execution observe that resource.",
+    "TickObject owns canonical mutable callback/argument slots. Init hooks can replace both; queued invocation reads their current values, not cached copies.",
+    "Uncaught handlers observe the failing resource before after/pop, verified against Node. Prior identity/resource restore after callback routing.",
+    "Completion/cancellation clear inherited store roots and queue actual destruction notifications. Timer refresh installs a new identity before queuing its invocation.",
+    "Refresh retains the result of the required ID read/assignment; an extra observable getter read found by the existing exact oracle was removed."
+  ],
+  "retained_failures": [
+    "Initial418 run416passed/2failed retained verbatim: real timer-refresh extra-getter regression and300ms child-signal status assertion. Refresh fix and unchanged child control both pass; fresh whole418 run passes with original budgets.",
+    "Precursor9fb timer-context probe hung; only that own diagnostic was terminated after observed72+seconds. The new exact context/callback-lifecycle oracles pass."
+  ],
+  "limits": [
+    "All-four-thousand goal remains open. Other native I/O resource scopes and missing Node APIs are not claimed complete.",
+    "No fixture/skip/deadline/budget changes, fabricated handles/counters, no-op callbacks or guest Node backend.",
+    "No instruction/wall-time/RSS win claimed. Prior1208 RayTrace instruction regression remains retained.",
+    "Completed full inventories belong to earlier frozen dd981: stable1852/5015,35gains2lost; pinned1871/4727,37gains3lost. No full totals claimed for this callback-scope image."
+  ],
+  "native_image": {
+    "source_commit": "807ae73d9a39e5226363b5dbcbb6c3d2057cba0b",
+    "source_files": 729,
+    "binary_sha256": {
+      "quench-node": "3a19509fea4d169fda61e79eff474996346f57cabbc828a228c74ff365259764",
+      "run-parallel": "4cf3b495053d352775a034300b557abf193ff81a65bee62791bce29b0ec776d5",
+      "openssl-cli": "f4aa15f2822f670af7b5c1043d7aa6ebbbc64229fd2fae382edfc6a4524749c1"
+    },
+    "qualification": "Updated418-case host suite passed; finishing framework/shared/workspace; Core672 unchanged source proof retained",
+    "openssl_cli_provenance": "Unchanged native OpenSSL tool from previously qualified source1208 bundle; independent of Node host/Core changes",
+    "frozen_utc": "2026-10-16T17:57:05.164028+00:00"
+  },
+  "raw": [
+    {
+      "path": "work/async-callback-scope/all-api.log",
+      "bytes": 34775,
+      "sha256": "807c5bc345ad4ac451269b683e0bce56d44e2643137be767cc2350b08d3dbaaf"
+    },
+    {
+      "path": "work/async-callback-scope/framework.log",
+      "bytes": 3798,
+      "sha256": "b41881f94821125815bc87efbbbd7d26b13fd072686394014795864fa55f2ae8"
+    },
+    {
+      "path": "work/async-callback-scope/shared.log",
+      "bytes": 882,
+      "sha256": "8001f464bb474d2b0cb9d50be91591e4eb6c81ea315bc147e30a95d898bea614"
+    },
+    {
+      "path": "work/async-callback-scope/workspace.log",
+      "bytes": 213,
+      "sha256": "f3988a591739b1d8d216900d7a29d78eb548375fa27496a8c0c446292c3cb62d"
+    },
+    {
+      "path": "work/async-callback-scope/core-unchanged-reuse.json",
+      "bytes": 1478,
+      "sha256": "b296ef1ad1f89e35720ba3c270f4643d3c8b6edbf7a887f407ad697e1ebbaa07"
+    },
+    {
+      "path": "work/async-callback-scope/fixed-work.json",
+      "bytes": 153693,
+      "sha256": "baa39a74f37c8b2eb360414ff2c4a29137d1b35d022814b1aa5b4546a3488f00"
+    },
+    {
+      "path": "work/async-callback-scope/fixed-work.log",
+      "bytes": 1129,
+      "sha256": "fb3123fcd115dd693b845325a4683a462d8bef446cbaa5c80f79c22f5d5acbb8"
+    },
+    {
+      "path": "work/async-callback-scope/framework-scenarios.json",
+      "bytes": 1532,
+      "sha256": "430b01db7c0b95dabde93c79e4d6e37720d49c1a3e13c7d3491f1ec7b4998e8f"
+    },
+    {
+      "path": "work/async-callback-scope/all-api-initial-two-failures.log",
+      "bytes": 36915,
+      "sha256": "969c51a699194c90fad99818931f8af79d13b4f4ae383985d256a9c82a74bdec"
+    },
+    {
+      "path": "work/async-callback-scope/refresh-focused-fixed.log",
+      "bytes": 440,
+      "sha256": "131239ff85d671be389533679d3c2c81efeb9769cc8b9457f01b9abf78db878f"
+    },
+    {
+      "path": "work/async-callback-scope/child-deadline-control.log",
+      "bytes": 354,
+      "sha256": "a22256b72ed32ee3084aa18514a42615fa4e31253ba99ec1ace9752419cecc9a"
+    },
+    {
+      "path": "work/async-callback-scope/context-focused.log",
+      "bytes": 428,
+      "sha256": "c9036b13e85aaea56f7cfd5873d844d96af0cf51954b8420461fafc445300b66"
+    },
+    {
+      "path": "work/async-callback-scope/error-focused.log",
+      "bytes": 364,
+      "sha256": "12326729213b80eb1aed1b512da61d08f519af640700cf2461e710736a12a4cc"
+    },
+    {
+      "path": "work/async-callback-scope/tick-focused.log",
+      "bytes": 442,
+      "sha256": "a21f8b6a374171f04349637309a64e13fd8867ff02bdc616b95283cc444ddd9d"
+    },
+    {
+      "path": "work/async-callback-scope-bin/source-sha256.json",
+      "bytes": 90446,
+      "sha256": "8c8eb4dd05066acd73c85a1a0575d7eb32ee2c2473704f2c38d09b71d218365f"
+    }
+  ]
+}

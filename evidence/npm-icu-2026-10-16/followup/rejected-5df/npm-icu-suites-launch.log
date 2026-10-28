@@ -1,0 +1,6 @@
+Traceback (most recent call last):
+  File "/workspace/scratch/npm-icu-suites.py", line 132, in <module>
+    main()
+  File "/workspace/scratch/npm-icu-suites.py", line 46, in main
+    raise RuntimeError(f'{name}: prerequisite failed')
+RuntimeError: build-checks: prerequisite failed

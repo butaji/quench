@@ -1,0 +1,13 @@
+{
+  "all_active_compilers_nonincremental": true,
+  "removed": [
+    {
+      "path": "work/host-build/iteration/incremental/quench_node-2ipyuge3my3mx",
+      "bytes": 576031946
+    },
+    {
+      "path": "work/host-build/iteration/incremental/quench_node-2njnm7sfcr4bs",
+      "bytes": 539859380
+    }
+  ]
+}

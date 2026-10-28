@@ -1,0 +1,4 @@
+    Checking quench-runtime v0.1.0 (/workspace/quench/crates/quench-runtime)
+    Checking quench-wasm v0.1.0 (/workspace/quench/crates/quench-wasm)
+    Checking quench-node v0.1.0 (/workspace/quench/crates/quench-node)
+    Finished `iteration` profile [optimized] target(s) in 23.58s

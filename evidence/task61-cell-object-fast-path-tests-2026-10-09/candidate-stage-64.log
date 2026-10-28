@@ -1,0 +1,21 @@
+stage  64 batch   1/19  passed=100 failed=0 total=100
+stage  64 batch   2/19  passed=100 failed=0 total=100
+stage  64 batch   3/19  passed=100 failed=0 total=100
+stage  64 batch   4/19  passed=100 failed=0 total=100
+stage  64 batch   5/19  passed=100 failed=0 total=100
+stage  64 batch   6/19  passed=100 failed=0 total=100
+stage  64 batch   7/19  passed=100 failed=0 total=100
+stage  64 batch   8/19  passed=100 failed=0 total=100
+stage  64 batch   9/19  passed=100 failed=0 total=100
+stage  64 batch  10/19  passed=100 failed=0 total=100
+stage  64 batch  11/19  passed=100 failed=0 total=100
+stage  64 batch  12/19  passed=100 failed=0 total=100
+stage  64 batch  13/19  passed=100 failed=0 total=100
+stage  64 batch  14/19  passed=100 failed=0 total=100
+stage  64 batch  15/19  passed=100 failed=0 total=100
+stage  64 batch  16/19  passed=100 failed=0 total=100
+stage  64 batch  17/19  passed=100 failed=0 total=100
+stage  64 batch  18/19  passed=100 failed=0 total=100
+stage  64 batch  19/19  passed=79 failed=0 total=79
+stage  64: built-ins/RegExp passed=1879 failed=0 total=1879
+stages=1 passed=1879 failed=0 total=1879

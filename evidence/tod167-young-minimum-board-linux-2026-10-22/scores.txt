@@ -1,0 +1,22 @@
+== no JIT: Score (median of 3) and max RSS KiB (worst sample)
+fixture        thr score mf score mf/thr thr rss mf rss  others: score/rss
+richards            1249     1104   0.88    4316   3036  qjs=647/3576 node --jitless=1301/43912 bun no-JIT=1386/21692
+deltablue           1268     1123   0.89    6976   3468  qjs=661/4092 node --jitless=1103/45916 bun no-JIT=858/21844
+crypto              2430     2108   0.87    8024   3672  qjs=695/3960 node --jitless=1074/44064 bun no-JIT=1481/22600
+raytrace            2419     2284   0.94    6624   3352  qjs=895/3704 node --jitless=3050/46300 bun no-JIT=1438/22832
+earley-boyer        4049     3137   0.77   11216   6612  qjs=1101/18204 node --jitless=5078/75216 bun no-JIT=1722/26396
+regexp              2558     2349   0.92   12808   7412  qjs=222/7340 node --jitless=2825/53848 bun no-JIT=528/30060
+splay               3836     4000   1.04   32772  31456  qjs=1706/160064 node --jitless=3553/360684 bun no-JIT=3375/61736
+navier-stokes       2696     2485   0.92    4752   4700  qjs=1222/5388 node --jitless=1531/48300 bun no-JIT=2440/21984
+geomean mf/thr score 0.902
+== JIT: Score (median of 3) and max RSS KiB (worst sample)
+fixture        thr score mf score mf/thr thr rss mf rss  others: score/rss
+richards            1198     1063   0.89    4704   3168  qjs=647/3576 node=29565/52496 bun=31373/38480
+deltablue           1213      744   0.61    7760   4176  qjs=661/4092 node=56326/66448 bun=12238/42728
+crypto              4698     4615   0.98   10200   5480  qjs=695/3960 node=28980/54016 bun=32748/46788
+raytrace            2579     2196   0.85    6884   3428  qjs=895/3704 node=36001/60088 bun=28802/53972
+earley-boyer        4191     3301   0.79   10960   6596  qjs=1101/18204 node=33771/100120 bun=17403/70360
+regexp              2386     2243   0.94   12936   7540  qjs=222/7340 node=6121/63908 bun=6812/52432
+splay               3534     3953   1.12   32772  31448  qjs=1706/160064 node=6902/452184 bun=17635/194008
+navier-stokes      17788    16803   0.94    9712   9408  qjs=1222/5388 node=28288/56540 bun=26753/36372
+geomean mf/thr score 0.879

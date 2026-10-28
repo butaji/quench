@@ -1,0 +1,8 @@
+    Finished `iteration` profile [optimized] target(s) in 0.12s
+     Running tests/child_entry.rs (target/iteration/deps/child_entry-bd3128b9292fce1f)
+
+running 1 test
+test child_process_reference_state_and_public_handle_hooks_match_node_liveness ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 377 filtered out; finished in 2.10s
+

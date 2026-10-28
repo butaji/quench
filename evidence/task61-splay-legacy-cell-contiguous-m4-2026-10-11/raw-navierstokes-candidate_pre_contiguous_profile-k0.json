@@ -1,0 +1,3591 @@
+{
+  "kind": "quench-profile",
+  "allocations": 8353,
+  "allocation_kinds": {
+    "names": [
+      "object",
+      "array",
+      "map",
+      "set",
+      "iterator",
+      "weak_map",
+      "weak_set",
+      "weak_ref",
+      "function",
+      "environment",
+      "string",
+      "bigint",
+      "symbol",
+      "date",
+      "error"
+    ],
+    "size_buckets": [
+      0,
+      7,
+      15,
+      31,
+      63,
+      127,
+      255,
+      null
+    ],
+    "counts": [
+      797,
+      96,
+      0,
+      0,
+      38,
+      4,
+      0,
+      0,
+      1541,
+      210,
+      5629,
+      0,
+      38,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ],
+    "payload_bytes": [
+      0,
+      2272,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      49312,
+      146864,
+      460064,
+      0,
+      703,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ],
+    "bucket_counts": [
+      [
+        797,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        33,
+        0,
+        6,
+        28,
+        21,
+        2,
+        5,
+        1
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        38,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        4,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        1541,
+        0,
+        0,
+        0
+      ],
+      [
+        62,
+        0,
+        0,
+        10,
+        4,
+        13,
+        4,
+        117
+      ],
+      [
+        196,
+        217,
+        1780,
+        1553,
+        719,
+        954,
+        56,
+        154
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        20,
+        16,
+        2,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ]
+    ]
+  },
+  "collections": 2,
+  "peak_live": 6422,
+  "peak_survivors": 4318,
+  "max_gc_threshold": 2159,
+  "gc": {
+    "roots": 3504,
+    "work_items": 21633,
+    "max_worklist": 2752,
+    "marked": 8056,
+    "freed": 1931,
+    "sweep_slots": 9987,
+    "mark_nanos": 210500,
+    "sweep_nanos": 94708,
+    "marked_kinds": [
+      241,
+      20,
+      0,
+      0,
+      6,
+      6,
+      0,
+      0,
+      2673,
+      140,
+      4922,
+      0,
+      48,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  },
+  "shape_transitions": {
+    "hits": 9363,
+    "misses": 2542
+  },
+  "dictionary_transitions": {
+    "names": [
+      "property_count",
+      "deletion_pattern",
+      "prototype_use"
+    ],
+    "counts": [
+      0,
+      0,
+      10
+    ]
+  },
+  "field_cache": {
+    "hits": 12,
+    "misses": 621,
+    "tiers": [
+      12,
+      0,
+      0
+    ],
+    "depths": [
+      12,
+      0,
+      0
+    ]
+  },
+  "method_cache": {
+    "hits": 0,
+    "misses": 0,
+    "tiers": [
+      0,
+      0,
+      0
+    ],
+    "refill_names": [
+      "first",
+      "post_gc",
+      "post_mutation"
+    ],
+    "refills": [
+      0,
+      0,
+      0
+    ],
+    "same_target_names": [
+      "gc",
+      "mutation"
+    ],
+    "same_targets": [
+      0,
+      0
+    ],
+    "invalidation_names": [
+      "gc_candidates",
+      "mutation_cleared"
+    ],
+    "invalidation_entries": [
+      0,
+      0
+    ],
+    "dead_after_gc": 0
+  },
+  "dynamic_atoms": 1819,
+  "dynamic_strings": {
+    "hits": 0,
+    "misses": 0
+  },
+  "string_concats": {
+    "coercing": 0,
+    "both_strings": 2,
+    "cache_hits": 0,
+    "cache_misses": 2,
+    "size_buckets": [
+      0,
+      0,
+      0,
+      0,
+      2,
+      0,
+      0,
+      0
+    ],
+    "max_bytes": 33
+  },
+  "operand_tags": [
+    76540,
+    92,
+    0,
+    0
+  ],
+  "binary_ops": [
+    0,
+    2,
+    86,
+    13,
+    38164,
+    1,
+    3,
+    0,
+    11,
+    0,
+    5,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0
+  ],
+  "numeric_binary_paths": {
+    "names": [
+      "fast_hit",
+      "integer_operator_miss",
+      "type_miss"
+    ],
+    "counts": [
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ]
+    ]
+  },
+  "branch_values": {
+    "names": [
+      "undefined",
+      "null",
+      "boolean",
+      "integer",
+      "double",
+      "heap"
+    ],
+    "outcome_names": [
+      "falsey",
+      "truthy"
+    ],
+    "counts": [
+      [
+        26,
+        3,
+        255,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        36,
+        0,
+        0,
+        8
+      ]
+    ]
+  },
+  "method_argc": [
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0
+  ],
+  "calls": {
+    "source_names": [
+      "dynamic",
+      "known",
+      "method",
+      "this_method",
+      "construct"
+    ],
+    "sources": [
+      325,
+      0,
+      0,
+      0,
+      25
+    ],
+    "target_names": [
+      "native",
+      "user",
+      "numeric_user"
+    ],
+    "targets": [
+      338,
+      41,
+      0
+    ],
+    "target_argc": [
+      [
+        185,
+        35,
+        32,
+        86,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        10,
+        10,
+        6,
+        14,
+        1,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ]
+    ]
+  },
+  "terminal_calls": [
+    0,
+    0,
+    0
+  ],
+  "indexed_access": {
+    "get_names": [
+      "int_dense",
+      "int_sparse",
+      "int_missing",
+      "wide_dense",
+      "wide_sparse",
+      "wide_missing",
+      "numeric_non_array",
+      "property"
+    ],
+    "gets": [
+      135,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ],
+    "set_names": [
+      "int_replace",
+      "int_grow",
+      "int_sparse",
+      "wide_replace",
+      "wide_grow",
+      "wide_sparse",
+      "numeric_non_array",
+      "property"
+    ],
+    "sets": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ],
+    "dispatch_names": [
+      "get_general",
+      "get_numeric",
+      "set_general",
+      "set_numeric"
+    ],
+    "dispatches": [
+      31,
+      0,
+      228960,
+      0
+    ]
+  },
+  "array_writes": {
+    "names": [
+      "unique",
+      "shared"
+    ],
+    "counts": [
+      228973,
+      0
+    ]
+  },
+  "dispatch_classes": [
+    55,
+    2
+  ],
+  "opcodes": {
+    "Nop": 0,
+    "CloneEnv": 0,
+    "Wide": 0,
+    "LoadConst": 38198,
+    "LoadLocal": 0,
+    "StoreLocal": 0,
+    "StoreVarBinding": 0,
+    "LoadEnvLocal": 33,
+    "StoreEnvLocal": 37,
+    "LoadCapture": 267134,
+    "StoreCapture": 33,
+    "LoadName": 20,
+    "LoadNameCall": 0,
+    "LoadNameTypeof": 0,
+    "ResolveName": 0,
+    "LoadResolvedName": 0,
+    "DeleteName": 0,
+    "StoreName": 0,
+    "StoreResolvedName": 0,
+    "LoadThis": 2,
+    "LoadImportMeta": 0,
+    "MakeClosure": 42,
+    "MakeArray": 2,
+    "MakeConstArray": 0,
+    "MakeObject": 0,
+    "MakeObject2": 0,
+    "MakeObjectLiteral": 0,
+    "SuperConstArrayObject2": 0,
+    "GetIterator": 0,
+    "GetAsyncIterator": 0,
+    "CreateRegExpLiteral": 0,
+    "IteratorClose": 0,
+    "SpreadToArray": 0,
+    "RequireObjectCoercible": 0,
+    "RequireIteratorResult": 0,
+    "SuperCallCheck": 0,
+    "IteratorCleanupPush": 0,
+    "IteratorCleanupPop": 0,
+    "SetFunctionName": 1,
+    "SetFunctionNameKey": 0,
+    "InitializeTdz": 0,
+    "Await": 0,
+    "Yield": 0,
+    "YieldStar": 0,
+    "GetField": 23,
+    "GetIndex": 2,
+    "ToPropertyKey": 0,
+    "ToNumeric": 38157,
+    "CopyDataProperties": 0,
+    "MarkPrivateName": 0,
+    "SetField": 0,
+    "DefineComputedField": 0,
+    "SetThisField": 0,
+    "SetIndex": 228936,
+    "DefineArrayElement": 1,
+    "Binary": 24,
+    "IncDec": 38157,
+    "Unary": 0,
+    "Delete": 0,
+    "CheckPrivate": 0,
+    "PrivateIn": 0,
+    "Move": 23,
+    "Call": 13,
+    "CallDirectEvalArray": 0,
+    "CallKnown": 0,
+    "CallMethod": 0,
+    "CallThisMethod": 0,
+    "Construct": 21,
+    "Jump": 38162,
+    "JumpFalse": 14,
+    "JumpBinaryFalse": 38162,
+    "Return": 15,
+    "Throw": 0,
+    "NumericAdd": 0,
+    "NumericMultiply": 0,
+    "InitializeThis": 0,
+    "CacheTemplateObject": 0,
+    "LoadCachedTemplateObject": 0,
+    "DefineField": 0,
+    "ValidateClassHeritage": 0,
+    "SetFieldStrict": 13,
+    "SetThisFieldStrict": 14,
+    "WasmI32Binary": 0,
+    "WasmI32Unary": 0,
+    "WasmI64Binary": 0,
+    "WasmI64Unary": 0,
+    "WasmScalarConvert": 0,
+    "WasmF32Binary": 0,
+    "WasmF32Unary": 0,
+    "WasmF64Binary": 0,
+    "WasmF64Unary": 0,
+    "WasmTableInit": 0,
+    "WasmIndirectTarget": 0,
+    "WasmGlobalGet": 0,
+    "WasmGlobalSet": 0,
+    "WasmRefFunc": 0,
+    "WasmRefIsNull": 0,
+    "WasmTableSize": 0,
+    "WasmTableGet": 0,
+    "WasmTableSet": 0,
+    "WasmTableGrow": 0,
+    "WasmTableFill": 0,
+    "WasmTableCopy": 0,
+    "WasmMemoryInit": 0,
+    "WasmMemoryCopy": 0,
+    "WasmMemoryFill": 0,
+    "WasmMemoryAddress": 0,
+    "WasmMemoryLoad": 0,
+    "WasmMemoryStore": 0,
+    "WasmMemorySize": 0,
+    "WasmMemoryGrow": 0,
+    "WasmUnreachable": 0,
+    "WasmSimd": 0,
+    "WasmSimdShuffle": 0,
+    "DefinePropertyRecord": 0,
+    "WasmRefAsNonNull": 0,
+    "WasmI31": 0,
+    "WasmRefTest": 0,
+    "WasmRefCast": 0,
+    "WasmRefEq": 0,
+    "WasmStructNew": 0,
+    "WasmStructNewDefault": 0,
+    "WasmStructGet": 0,
+    "WasmStructGetS": 0,
+    "WasmStructGetU": 0,
+    "WasmStructSet": 0,
+    "WasmArrayNew": 0,
+    "WasmArrayNewDefault": 0,
+    "WasmArrayNewFixed": 0,
+    "WasmArrayLen": 0,
+    "WasmArrayGet": 0,
+    "WasmArrayGetS": 0,
+    "WasmArrayGetU": 0,
+    "WasmArraySet": 0,
+    "WasmExternalConversion": 0,
+    "WasmArrayFill": 0,
+    "WasmArrayCopy": 0,
+    "WasmArrayNewData": 0,
+    "WasmArrayNewElem": 0,
+    "WasmArrayInitData": 0,
+    "WasmArrayInitElem": 0,
+    "WasmExceptionNew": 0,
+    "WasmExceptionMatch": 0,
+    "WasmExceptionPayload": 0,
+    "WasmThrowRef": 0,
+    "WasmStructNewDesc": 0,
+    "WasmStructNewDefaultDesc": 0,
+    "WasmRefGetDesc": 0,
+    "WasmDescriptorTest": 0,
+    "WasmDescriptorCast": 0,
+    "WasmAtomicAccess": 0,
+    "WasmAtomicFence": 0,
+    "LoadLocalPlain": 11,
+    "StoreLocalPlain": 6
+  },
+  "dispatch_opcode_targets": {
+    "general": {
+      "Nop": 0,
+      "CloneEnv": 0,
+      "Wide": 0,
+      "LoadConst": 38198,
+      "LoadLocal": 0,
+      "StoreLocal": 0,
+      "StoreVarBinding": 0,
+      "LoadEnvLocal": 33,
+      "StoreEnvLocal": 37,
+      "LoadCapture": 267134,
+      "StoreCapture": 33,
+      "LoadName": 20,
+      "LoadNameCall": 0,
+      "LoadNameTypeof": 0,
+      "ResolveName": 0,
+      "LoadResolvedName": 0,
+      "DeleteName": 0,
+      "StoreName": 0,
+      "StoreResolvedName": 0,
+      "LoadThis": 2,
+      "LoadImportMeta": 0,
+      "MakeClosure": 42,
+      "MakeArray": 2,
+      "MakeConstArray": 0,
+      "MakeObject": 0,
+      "MakeObject2": 0,
+      "MakeObjectLiteral": 0,
+      "SuperConstArrayObject2": 0,
+      "GetIterator": 0,
+      "GetAsyncIterator": 0,
+      "CreateRegExpLiteral": 0,
+      "IteratorClose": 0,
+      "SpreadToArray": 0,
+      "RequireObjectCoercible": 0,
+      "RequireIteratorResult": 0,
+      "SuperCallCheck": 0,
+      "IteratorCleanupPush": 0,
+      "IteratorCleanupPop": 0,
+      "SetFunctionName": 1,
+      "SetFunctionNameKey": 0,
+      "InitializeTdz": 0,
+      "Await": 0,
+      "Yield": 0,
+      "YieldStar": 0,
+      "GetField": 23,
+      "GetIndex": 2,
+      "ToPropertyKey": 0,
+      "ToNumeric": 38157,
+      "CopyDataProperties": 0,
+      "MarkPrivateName": 0,
+      "SetField": 0,
+      "DefineComputedField": 0,
+      "SetThisField": 0,
+      "SetIndex": 228936,
+      "DefineArrayElement": 1,
+      "Binary": 24,
+      "IncDec": 38157,
+      "Unary": 0,
+      "Delete": 0,
+      "CheckPrivate": 0,
+      "PrivateIn": 0,
+      "Move": 23,
+      "Call": 13,
+      "CallDirectEvalArray": 0,
+      "CallKnown": 0,
+      "CallMethod": 0,
+      "CallThisMethod": 0,
+      "Construct": 21,
+      "Jump": 38162,
+      "JumpFalse": 14,
+      "JumpBinaryFalse": 38162,
+      "Return": 15,
+      "Throw": 0,
+      "NumericAdd": 0,
+      "NumericMultiply": 0,
+      "InitializeThis": 0,
+      "CacheTemplateObject": 0,
+      "LoadCachedTemplateObject": 0,
+      "DefineField": 0,
+      "ValidateClassHeritage": 0,
+      "SetFieldStrict": 13,
+      "SetThisFieldStrict": 14,
+      "WasmI32Binary": 0,
+      "WasmI32Unary": 0,
+      "WasmI64Binary": 0,
+      "WasmI64Unary": 0,
+      "WasmScalarConvert": 0,
+      "WasmF32Binary": 0,
+      "WasmF32Unary": 0,
+      "WasmF64Binary": 0,
+      "WasmF64Unary": 0,
+      "WasmTableInit": 0,
+      "WasmIndirectTarget": 0,
+      "WasmGlobalGet": 0,
+      "WasmGlobalSet": 0,
+      "WasmRefFunc": 0,
+      "WasmRefIsNull": 0,
+      "WasmTableSize": 0,
+      "WasmTableGet": 0,
+      "WasmTableSet": 0,
+      "WasmTableGrow": 0,
+      "WasmTableFill": 0,
+      "WasmTableCopy": 0,
+      "WasmMemoryInit": 0,
+      "WasmMemoryCopy": 0,
+      "WasmMemoryFill": 0,
+      "WasmMemoryAddress": 0,
+      "WasmMemoryLoad": 0,
+      "WasmMemoryStore": 0,
+      "WasmMemorySize": 0,
+      "WasmMemoryGrow": 0,
+      "WasmUnreachable": 0,
+      "WasmSimd": 0,
+      "WasmSimdShuffle": 0,
+      "DefinePropertyRecord": 0,
+      "WasmRefAsNonNull": 0,
+      "WasmI31": 0,
+      "WasmRefTest": 0,
+      "WasmRefCast": 0,
+      "WasmRefEq": 0,
+      "WasmStructNew": 0,
+      "WasmStructNewDefault": 0,
+      "WasmStructGet": 0,
+      "WasmStructGetS": 0,
+      "WasmStructGetU": 0,
+      "WasmStructSet": 0,
+      "WasmArrayNew": 0,
+      "WasmArrayNewDefault": 0,
+      "WasmArrayNewFixed": 0,
+      "WasmArrayLen": 0,
+      "WasmArrayGet": 0,
+      "WasmArrayGetS": 0,
+      "WasmArrayGetU": 0,
+      "WasmArraySet": 0,
+      "WasmExternalConversion": 0,
+      "WasmArrayFill": 0,
+      "WasmArrayCopy": 0,
+      "WasmArrayNewData": 0,
+      "WasmArrayNewElem": 0,
+      "WasmArrayInitData": 0,
+      "WasmArrayInitElem": 0,
+      "WasmExceptionNew": 0,
+      "WasmExceptionMatch": 0,
+      "WasmExceptionPayload": 0,
+      "WasmThrowRef": 0,
+      "WasmStructNewDesc": 0,
+      "WasmStructNewDefaultDesc": 0,
+      "WasmRefGetDesc": 0,
+      "WasmDescriptorTest": 0,
+      "WasmDescriptorCast": 0,
+      "WasmAtomicAccess": 0,
+      "WasmAtomicFence": 0,
+      "LoadLocalPlain": 11,
+      "StoreLocalPlain": 6,
+      "JumpTrue": 0
+    },
+    "numeric": {
+      "Nop": 0,
+      "CloneEnv": 0,
+      "Wide": 0,
+      "LoadConst": 0,
+      "LoadLocal": 0,
+      "StoreLocal": 0,
+      "StoreVarBinding": 0,
+      "LoadEnvLocal": 0,
+      "StoreEnvLocal": 0,
+      "LoadCapture": 0,
+      "StoreCapture": 0,
+      "LoadName": 0,
+      "LoadNameCall": 0,
+      "LoadNameTypeof": 0,
+      "ResolveName": 0,
+      "LoadResolvedName": 0,
+      "DeleteName": 0,
+      "StoreName": 0,
+      "StoreResolvedName": 0,
+      "LoadThis": 0,
+      "LoadImportMeta": 0,
+      "MakeClosure": 0,
+      "MakeArray": 0,
+      "MakeConstArray": 0,
+      "MakeObject": 0,
+      "MakeObject2": 0,
+      "MakeObjectLiteral": 0,
+      "SuperConstArrayObject2": 0,
+      "GetIterator": 0,
+      "GetAsyncIterator": 0,
+      "CreateRegExpLiteral": 0,
+      "IteratorClose": 0,
+      "SpreadToArray": 0,
+      "RequireObjectCoercible": 0,
+      "RequireIteratorResult": 0,
+      "SuperCallCheck": 0,
+      "IteratorCleanupPush": 0,
+      "IteratorCleanupPop": 0,
+      "SetFunctionName": 0,
+      "SetFunctionNameKey": 0,
+      "InitializeTdz": 0,
+      "Await": 0,
+      "Yield": 0,
+      "YieldStar": 0,
+      "GetField": 0,
+      "GetIndex": 0,
+      "ToPropertyKey": 0,
+      "ToNumeric": 0,
+      "CopyDataProperties": 0,
+      "MarkPrivateName": 0,
+      "SetField": 0,
+      "DefineComputedField": 0,
+      "SetThisField": 0,
+      "SetIndex": 0,
+      "DefineArrayElement": 0,
+      "Binary": 0,
+      "IncDec": 0,
+      "Unary": 0,
+      "Delete": 0,
+      "CheckPrivate": 0,
+      "PrivateIn": 0,
+      "Move": 0,
+      "Call": 0,
+      "CallDirectEvalArray": 0,
+      "CallKnown": 0,
+      "CallMethod": 0,
+      "CallThisMethod": 0,
+      "Construct": 0,
+      "Jump": 0,
+      "JumpFalse": 0,
+      "JumpBinaryFalse": 0,
+      "Return": 0,
+      "Throw": 0,
+      "NumericAdd": 0,
+      "NumericMultiply": 0,
+      "InitializeThis": 0,
+      "CacheTemplateObject": 0,
+      "LoadCachedTemplateObject": 0,
+      "DefineField": 0,
+      "ValidateClassHeritage": 0,
+      "SetFieldStrict": 0,
+      "SetThisFieldStrict": 0,
+      "WasmI32Binary": 0,
+      "WasmI32Unary": 0,
+      "WasmI64Binary": 0,
+      "WasmI64Unary": 0,
+      "WasmScalarConvert": 0,
+      "WasmF32Binary": 0,
+      "WasmF32Unary": 0,
+      "WasmF64Binary": 0,
+      "WasmF64Unary": 0,
+      "WasmTableInit": 0,
+      "WasmIndirectTarget": 0,
+      "WasmGlobalGet": 0,
+      "WasmGlobalSet": 0,
+      "WasmRefFunc": 0,
+      "WasmRefIsNull": 0,
+      "WasmTableSize": 0,
+      "WasmTableGet": 0,
+      "WasmTableSet": 0,
+      "WasmTableGrow": 0,
+      "WasmTableFill": 0,
+      "WasmTableCopy": 0,
+      "WasmMemoryInit": 0,
+      "WasmMemoryCopy": 0,
+      "WasmMemoryFill": 0,
+      "WasmMemoryAddress": 0,
+      "WasmMemoryLoad": 0,
+      "WasmMemoryStore": 0,
+      "WasmMemorySize": 0,
+      "WasmMemoryGrow": 0,
+      "WasmUnreachable": 0,
+      "WasmSimd": 0,
+      "WasmSimdShuffle": 0,
+      "DefinePropertyRecord": 0,
+      "WasmRefAsNonNull": 0,
+      "WasmI31": 0,
+      "WasmRefTest": 0,
+      "WasmRefCast": 0,
+      "WasmRefEq": 0,
+      "WasmStructNew": 0,
+      "WasmStructNewDefault": 0,
+      "WasmStructGet": 0,
+      "WasmStructGetS": 0,
+      "WasmStructGetU": 0,
+      "WasmStructSet": 0,
+      "WasmArrayNew": 0,
+      "WasmArrayNewDefault": 0,
+      "WasmArrayNewFixed": 0,
+      "WasmArrayLen": 0,
+      "WasmArrayGet": 0,
+      "WasmArrayGetS": 0,
+      "WasmArrayGetU": 0,
+      "WasmArraySet": 0,
+      "WasmExternalConversion": 0,
+      "WasmArrayFill": 0,
+      "WasmArrayCopy": 0,
+      "WasmArrayNewData": 0,
+      "WasmArrayNewElem": 0,
+      "WasmArrayInitData": 0,
+      "WasmArrayInitElem": 0,
+      "WasmExceptionNew": 0,
+      "WasmExceptionMatch": 0,
+      "WasmExceptionPayload": 0,
+      "WasmThrowRef": 0,
+      "WasmStructNewDesc": 0,
+      "WasmStructNewDefaultDesc": 0,
+      "WasmRefGetDesc": 0,
+      "WasmDescriptorTest": 0,
+      "WasmDescriptorCast": 0,
+      "WasmAtomicAccess": 0,
+      "WasmAtomicFence": 0,
+      "LoadLocalPlain": 0,
+      "StoreLocalPlain": 0,
+      "JumpTrue": 0
+    },
+    "virtual": {
+      "Nop": 0,
+      "CloneEnv": 0,
+      "Wide": 0,
+      "LoadConst": 0,
+      "LoadLocal": 0,
+      "StoreLocal": 0,
+      "StoreVarBinding": 0,
+      "LoadEnvLocal": 0,
+      "StoreEnvLocal": 0,
+      "LoadCapture": 0,
+      "StoreCapture": 0,
+      "LoadName": 0,
+      "LoadNameCall": 0,
+      "LoadNameTypeof": 0,
+      "ResolveName": 0,
+      "LoadResolvedName": 0,
+      "DeleteName": 0,
+      "StoreName": 0,
+      "StoreResolvedName": 0,
+      "LoadThis": 0,
+      "LoadImportMeta": 0,
+      "MakeClosure": 0,
+      "MakeArray": 0,
+      "MakeConstArray": 0,
+      "MakeObject": 0,
+      "MakeObject2": 0,
+      "MakeObjectLiteral": 0,
+      "SuperConstArrayObject2": 0,
+      "GetIterator": 0,
+      "GetAsyncIterator": 0,
+      "CreateRegExpLiteral": 0,
+      "IteratorClose": 0,
+      "SpreadToArray": 0,
+      "RequireObjectCoercible": 0,
+      "RequireIteratorResult": 0,
+      "SuperCallCheck": 0,
+      "IteratorCleanupPush": 0,
+      "IteratorCleanupPop": 0,
+      "SetFunctionName": 0,
+      "SetFunctionNameKey": 0,
+      "InitializeTdz": 0,
+      "Await": 0,
+      "Yield": 0,
+      "YieldStar": 0,
+      "GetField": 0,
+      "GetIndex": 0,
+      "ToPropertyKey": 0,
+      "ToNumeric": 0,
+      "CopyDataProperties": 0,
+      "MarkPrivateName": 0,
+      "SetField": 0,
+      "DefineComputedField": 0,
+      "SetThisField": 0,
+      "SetIndex": 0,
+      "DefineArrayElement": 0,
+      "Binary": 0,
+      "IncDec": 0,
+      "Unary": 0,
+      "Delete": 0,
+      "CheckPrivate": 0,
+      "PrivateIn": 0,
+      "Move": 0,
+      "Call": 0,
+      "CallDirectEvalArray": 0,
+      "CallKnown": 0,
+      "CallMethod": 0,
+      "CallThisMethod": 0,
+      "Construct": 0,
+      "Jump": 0,
+      "JumpFalse": 0,
+      "JumpBinaryFalse": 0,
+      "Return": 0,
+      "Throw": 0,
+      "NumericAdd": 0,
+      "NumericMultiply": 0,
+      "InitializeThis": 0,
+      "CacheTemplateObject": 0,
+      "LoadCachedTemplateObject": 0,
+      "DefineField": 0,
+      "ValidateClassHeritage": 0,
+      "SetFieldStrict": 0,
+      "SetThisFieldStrict": 0,
+      "WasmI32Binary": 0,
+      "WasmI32Unary": 0,
+      "WasmI64Binary": 0,
+      "WasmI64Unary": 0,
+      "WasmScalarConvert": 0,
+      "WasmF32Binary": 0,
+      "WasmF32Unary": 0,
+      "WasmF64Binary": 0,
+      "WasmF64Unary": 0,
+      "WasmTableInit": 0,
+      "WasmIndirectTarget": 0,
+      "WasmGlobalGet": 0,
+      "WasmGlobalSet": 0,
+      "WasmRefFunc": 0,
+      "WasmRefIsNull": 0,
+      "WasmTableSize": 0,
+      "WasmTableGet": 0,
+      "WasmTableSet": 0,
+      "WasmTableGrow": 0,
+      "WasmTableFill": 0,
+      "WasmTableCopy": 0,
+      "WasmMemoryInit": 0,
+      "WasmMemoryCopy": 0,
+      "WasmMemoryFill": 0,
+      "WasmMemoryAddress": 0,
+      "WasmMemoryLoad": 0,
+      "WasmMemoryStore": 0,
+      "WasmMemorySize": 0,
+      "WasmMemoryGrow": 0,
+      "WasmUnreachable": 0,
+      "WasmSimd": 0,
+      "WasmSimdShuffle": 0,
+      "DefinePropertyRecord": 0,
+      "WasmRefAsNonNull": 0,
+      "WasmI31": 0,
+      "WasmRefTest": 0,
+      "WasmRefCast": 0,
+      "WasmRefEq": 0,
+      "WasmStructNew": 0,
+      "WasmStructNewDefault": 0,
+      "WasmStructGet": 0,
+      "WasmStructGetS": 0,
+      "WasmStructGetU": 0,
+      "WasmStructSet": 0,
+      "WasmArrayNew": 0,
+      "WasmArrayNewDefault": 0,
+      "WasmArrayNewFixed": 0,
+      "WasmArrayLen": 0,
+      "WasmArrayGet": 0,
+      "WasmArrayGetS": 0,
+      "WasmArrayGetU": 0,
+      "WasmArraySet": 0,
+      "WasmExternalConversion": 0,
+      "WasmArrayFill": 0,
+      "WasmArrayCopy": 0,
+      "WasmArrayNewData": 0,
+      "WasmArrayNewElem": 0,
+      "WasmArrayInitData": 0,
+      "WasmArrayInitElem": 0,
+      "WasmExceptionNew": 0,
+      "WasmExceptionMatch": 0,
+      "WasmExceptionPayload": 0,
+      "WasmThrowRef": 0,
+      "WasmStructNewDesc": 0,
+      "WasmStructNewDefaultDesc": 0,
+      "WasmRefGetDesc": 0,
+      "WasmDescriptorTest": 0,
+      "WasmDescriptorCast": 0,
+      "WasmAtomicAccess": 0,
+      "WasmAtomicFence": 0,
+      "LoadLocalPlain": 0,
+      "StoreLocalPlain": 0,
+      "JumpTrue": 0
+    }
+  },
+  "dispatch_pair_targets": {
+    "general": {
+      "pairs": [
+        [
+          "LoadCapture",
+          "LoadCapture",
+          190780
+        ],
+        [
+          "SetIndex",
+          "SetIndex",
+          190780
+        ],
+        [
+          "LoadCapture",
+          "JumpBinaryFalse",
+          38159
+        ],
+        [
+          "LoadCapture",
+          "LoadConst",
+          38157
+        ],
+        [
+          "ToNumeric",
+          "IncDec",
+          38157
+        ],
+        [
+          "LoadConst",
+          "SetIndex",
+          38156
+        ],
+        [
+          "SetIndex",
+          "ToNumeric",
+          38156
+        ],
+        [
+          "IncDec",
+          "Jump",
+          38156
+        ],
+        [
+          "JumpBinaryFalse",
+          "LoadCapture",
+          38156
+        ],
+        [
+          "StoreEnvLocal",
+          "MakeClosure",
+          23
+        ],
+        [
+          "MakeClosure",
+          "StoreEnvLocal",
+          22
+        ],
+        [
+          "Construct",
+          "StoreCapture",
+          19
+        ],
+        [
+          "LoadCapture",
+          "Construct",
+          18
+        ],
+        [
+          "StoreCapture",
+          "LoadName",
+          18
+        ],
+        [
+          "LoadName",
+          "LoadCapture",
+          18
+        ],
+        [
+          "LoadConst",
+          "Return",
+          14
+        ],
+        [
+          "LoadEnvLocal",
+          "GetField",
+          14
+        ],
+        [
+          "SetFieldStrict",
+          "LoadEnvLocal",
+          12
+        ],
+        [
+          "LoadCapture",
+          "Binary",
+          11
+        ],
+        [
+          "MakeClosure",
+          "SetFieldStrict",
+          10
+        ],
+        [
+          "Move",
+          "JumpFalse",
+          10
+        ],
+        [
+          "StoreCapture",
+          "LoadConst",
+          9
+        ],
+        [
+          "LoadConst",
+          "StoreEnvLocal",
+          8
+        ],
+        [
+          "StoreEnvLocal",
+          "LoadEnvLocal",
+          8
+        ],
+        [
+          "Binary",
+          "Move",
+          8
+        ],
+        [
+          "GetField",
+          "MakeClosure",
+          7
+        ],
+        [
+          "Move",
+          "Move",
+          7
+        ],
+        [
+          "Call",
+          "LoadConst",
+          7
+        ],
+        [
+          "LoadCapture",
+          "GetField",
+          6
+        ],
+        [
+          "MakeClosure",
+          "SetThisFieldStrict",
+          6
+        ],
+        [
+          "Binary",
+          "StoreCapture",
+          6
+        ],
+        [
+          "LoadConst",
+          "LoadCapture",
+          5
+        ],
+        [
+          "LoadEnvLocal",
+          "LoadEnvLocal",
+          5
+        ],
+        [
+          "StoreEnvLocal",
+          "LoadConst",
+          5
+        ],
+        [
+          "Binary",
+          "Binary",
+          5
+        ],
+        [
+          "SetThisFieldStrict",
+          "MakeClosure",
+          5
+        ],
+        [
+          "LoadLocalPlain",
+          "StoreLocalPlain",
+          5
+        ],
+        [
+          "LoadEnvLocal",
+          "LoadConst",
+          4
+        ],
+        [
+          "LoadEnvLocal",
+          "MakeClosure",
+          4
+        ],
+        [
+          "StoreCapture",
+          "LoadCapture",
+          4
+        ],
+        [
+          "GetField",
+          "LoadConst",
+          4
+        ],
+        [
+          "Move",
+          "Call",
+          4
+        ],
+        [
+          "Call",
+          "LoadCapture",
+          4
+        ],
+        [
+          "StoreLocalPlain",
+          "LoadLocalPlain",
+          4
+        ],
+        [
+          "LoadConst",
+          "LoadConst",
+          3
+        ],
+        [
+          "LoadConst",
+          "Call",
+          3
+        ],
+        [
+          "LoadCapture",
+          "Call",
+          3
+        ],
+        [
+          "GetField",
+          "Call",
+          3
+        ],
+        [
+          "Binary",
+          "LoadCapture",
+          3
+        ],
+        [
+          "JumpFalse",
+          "StoreCapture",
+          3
+        ],
+        [
+          "JumpFalse",
+          "Binary",
+          3
+        ],
+        [
+          "SetThisFieldStrict",
+          "LoadLocalPlain",
+          3
+        ],
+        [
+          "LoadConst",
+          "Move",
+          2
+        ],
+        [
+          "StoreCapture",
+          "StoreCapture",
+          2
+        ],
+        [
+          "GetField",
+          "StoreEnvLocal",
+          2
+        ],
+        [
+          "GetField",
+          "Binary",
+          2
+        ],
+        [
+          "GetField",
+          "JumpBinaryFalse",
+          2
+        ],
+        [
+          "GetIndex",
+          "StoreEnvLocal",
+          2
+        ],
+        [
+          "Binary",
+          "JumpFalse",
+          2
+        ],
+        [
+          "Move",
+          "Construct",
+          2
+        ],
+        [
+          "JumpFalse",
+          "LoadCapture",
+          2
+        ],
+        [
+          "JumpFalse",
+          "Jump",
+          2
+        ],
+        [
+          "JumpFalse",
+          "LoadLocalPlain",
+          2
+        ],
+        [
+          "SetThisFieldStrict",
+          "LoadConst",
+          2
+        ],
+        [
+          "SetThisFieldStrict",
+          "SetThisFieldStrict",
+          2
+        ],
+        [
+          "LoadLocalPlain",
+          "Jump",
+          2
+        ],
+        [
+          "LoadLocalPlain",
+          "JumpFalse",
+          2
+        ],
+        [
+          "LoadLocalPlain",
+          "SetThisFieldStrict",
+          2
+        ],
+        [
+          "LoadConst",
+          "LoadEnvLocal",
+          1
+        ],
+        [
+          "LoadConst",
+          "StoreCapture",
+          1
+        ],
+        [
+          "LoadConst",
+          "MakeArray",
+          1
+        ],
+        [
+          "LoadConst",
+          "GetIndex",
+          1
+        ],
+        [
+          "LoadConst",
+          "Construct",
+          1
+        ],
+        [
+          "LoadConst",
+          "SetFieldStrict",
+          1
+        ],
+        [
+          "LoadConst",
+          "StoreLocalPlain",
+          1
+        ],
+        [
+          "LoadEnvLocal",
+          "MakeArray",
+          1
+        ],
+        [
+          "LoadEnvLocal",
+          "GetIndex",
+          1
+        ],
+        [
+          "LoadEnvLocal",
+          "ToNumeric",
+          1
+        ],
+        [
+          "LoadEnvLocal",
+          "Move",
+          1
+        ],
+        [
+          "LoadEnvLocal",
+          "JumpBinaryFalse",
+          1
+        ],
+        [
+          "LoadEnvLocal",
+          "SetThisFieldStrict",
+          1
+        ],
+        [
+          "StoreEnvLocal",
+          "Jump",
+          1
+        ],
+        [
+          "LoadName",
+          "MakeClosure",
+          1
+        ],
+        [
+          "LoadName",
+          "GetField",
+          1
+        ],
+        [
+          "LoadThis",
+          "GetField",
+          1
+        ],
+        [
+          "LoadThis",
+          "Move",
+          1
+        ],
+        [
+          "MakeClosure",
+          "LoadConst",
+          1
+        ],
+        [
+          "MakeClosure",
+          "SetFunctionName",
+          1
+        ],
+        [
+          "MakeClosure",
+          "Move",
+          1
+        ],
+        [
+          "MakeClosure",
+          "Return",
+          1
+        ],
+        [
+          "MakeArray",
+          "LoadEnvLocal",
+          1
+        ],
+        [
+          "MakeArray",
+          "SetFieldStrict",
+          1
+        ],
+        [
+          "SetFunctionName",
+          "StoreEnvLocal",
+          1
+        ],
+        [
+          "GetField",
+          "LoadCapture",
+          1
+        ],
+        [
+          "GetField",
+          "LoadThis",
+          1
+        ],
+        [
+          "GetField",
+          "GetField",
+          1
+        ],
+        [
+          "DefineArrayElement",
+          "Move",
+          1
+        ],
+        [
+          "IncDec",
+          "StoreEnvLocal",
+          1
+        ],
+        [
+          "Call",
+          "Jump",
+          1
+        ],
+        [
+          "Call",
+          "SetFieldStrict",
+          1
+        ],
+        [
+          "Construct",
+          "StoreEnvLocal",
+          1
+        ],
+        [
+          "Construct",
+          "DefineArrayElement",
+          1
+        ],
+        [
+          "JumpBinaryFalse",
+          "LoadEnvLocal",
+          1
+        ],
+        [
+          "SetFieldStrict",
+          "LoadName",
+          1
+        ],
+        [
+          "SetThisFieldStrict",
+          "LoadCapture",
+          1
+        ],
+        [
+          "SetThisFieldStrict",
+          "LoadThis",
+          1
+        ],
+        [
+          "StoreLocalPlain",
+          "LoadConst",
+          1
+        ],
+        [
+          "StoreLocalPlain",
+          "MakeClosure",
+          1
+        ]
+      ],
+      "boundaries": {
+        "Nop": 0,
+        "CloneEnv": 0,
+        "Wide": 0,
+        "LoadConst": 0,
+        "LoadLocal": 0,
+        "StoreLocal": 0,
+        "StoreVarBinding": 0,
+        "LoadEnvLocal": 0,
+        "StoreEnvLocal": 0,
+        "LoadCapture": 0,
+        "StoreCapture": 0,
+        "LoadName": 0,
+        "LoadNameCall": 0,
+        "LoadNameTypeof": 0,
+        "ResolveName": 0,
+        "LoadResolvedName": 0,
+        "DeleteName": 0,
+        "StoreName": 0,
+        "StoreResolvedName": 0,
+        "LoadThis": 0,
+        "LoadImportMeta": 0,
+        "MakeClosure": 0,
+        "MakeArray": 0,
+        "MakeConstArray": 0,
+        "MakeObject": 0,
+        "MakeObject2": 0,
+        "MakeObjectLiteral": 0,
+        "SuperConstArrayObject2": 0,
+        "GetIterator": 0,
+        "GetAsyncIterator": 0,
+        "CreateRegExpLiteral": 0,
+        "IteratorClose": 0,
+        "SpreadToArray": 0,
+        "RequireObjectCoercible": 0,
+        "RequireIteratorResult": 0,
+        "SuperCallCheck": 0,
+        "IteratorCleanupPush": 0,
+        "IteratorCleanupPop": 0,
+        "SetFunctionName": 0,
+        "SetFunctionNameKey": 0,
+        "InitializeTdz": 0,
+        "Await": 0,
+        "Yield": 0,
+        "YieldStar": 0,
+        "GetField": 0,
+        "GetIndex": 0,
+        "ToPropertyKey": 0,
+        "ToNumeric": 0,
+        "CopyDataProperties": 0,
+        "MarkPrivateName": 0,
+        "SetField": 0,
+        "DefineComputedField": 0,
+        "SetThisField": 0,
+        "SetIndex": 0,
+        "DefineArrayElement": 0,
+        "Binary": 0,
+        "IncDec": 0,
+        "Unary": 0,
+        "Delete": 0,
+        "CheckPrivate": 0,
+        "PrivateIn": 0,
+        "Move": 0,
+        "Call": 0,
+        "CallDirectEvalArray": 0,
+        "CallKnown": 0,
+        "CallMethod": 0,
+        "CallThisMethod": 0,
+        "Construct": 0,
+        "Jump": 38162,
+        "JumpFalse": 2,
+        "JumpBinaryFalse": 5,
+        "Return": 15,
+        "Throw": 0,
+        "NumericAdd": 0,
+        "NumericMultiply": 0,
+        "InitializeThis": 0,
+        "CacheTemplateObject": 0,
+        "LoadCachedTemplateObject": 0,
+        "DefineField": 0,
+        "ValidateClassHeritage": 0,
+        "SetFieldStrict": 0,
+        "SetThisFieldStrict": 0,
+        "WasmI32Binary": 0,
+        "WasmI32Unary": 0,
+        "WasmI64Binary": 0,
+        "WasmI64Unary": 0,
+        "WasmScalarConvert": 0,
+        "WasmF32Binary": 0,
+        "WasmF32Unary": 0,
+        "WasmF64Binary": 0,
+        "WasmF64Unary": 0,
+        "WasmTableInit": 0,
+        "WasmIndirectTarget": 0,
+        "WasmGlobalGet": 0,
+        "WasmGlobalSet": 0,
+        "WasmRefFunc": 0,
+        "WasmRefIsNull": 0,
+        "WasmTableSize": 0,
+        "WasmTableGet": 0,
+        "WasmTableSet": 0,
+        "WasmTableGrow": 0,
+        "WasmTableFill": 0,
+        "WasmTableCopy": 0,
+        "WasmMemoryInit": 0,
+        "WasmMemoryCopy": 0,
+        "WasmMemoryFill": 0,
+        "WasmMemoryAddress": 0,
+        "WasmMemoryLoad": 0,
+        "WasmMemoryStore": 0,
+        "WasmMemorySize": 0,
+        "WasmMemoryGrow": 0,
+        "WasmUnreachable": 0,
+        "WasmSimd": 0,
+        "WasmSimdShuffle": 0,
+        "DefinePropertyRecord": 0,
+        "WasmRefAsNonNull": 0,
+        "WasmI31": 0,
+        "WasmRefTest": 0,
+        "WasmRefCast": 0,
+        "WasmRefEq": 0,
+        "WasmStructNew": 0,
+        "WasmStructNewDefault": 0,
+        "WasmStructGet": 0,
+        "WasmStructGetS": 0,
+        "WasmStructGetU": 0,
+        "WasmStructSet": 0,
+        "WasmArrayNew": 0,
+        "WasmArrayNewDefault": 0,
+        "WasmArrayNewFixed": 0,
+        "WasmArrayLen": 0,
+        "WasmArrayGet": 0,
+        "WasmArrayGetS": 0,
+        "WasmArrayGetU": 0,
+        "WasmArraySet": 0,
+        "WasmExternalConversion": 0,
+        "WasmArrayFill": 0,
+        "WasmArrayCopy": 0,
+        "WasmArrayNewData": 0,
+        "WasmArrayNewElem": 0,
+        "WasmArrayInitData": 0,
+        "WasmArrayInitElem": 0,
+        "WasmExceptionNew": 0,
+        "WasmExceptionMatch": 0,
+        "WasmExceptionPayload": 0,
+        "WasmThrowRef": 0,
+        "WasmStructNewDesc": 0,
+        "WasmStructNewDefaultDesc": 0,
+        "WasmRefGetDesc": 0,
+        "WasmDescriptorTest": 0,
+        "WasmDescriptorCast": 0,
+        "WasmAtomicAccess": 0,
+        "WasmAtomicFence": 0,
+        "LoadLocalPlain": 0,
+        "StoreLocalPlain": 0,
+        "JumpTrue": 0
+      }
+    },
+    "numeric": {
+      "pairs": [],
+      "boundaries": {
+        "Nop": 0,
+        "CloneEnv": 0,
+        "Wide": 0,
+        "LoadConst": 0,
+        "LoadLocal": 0,
+        "StoreLocal": 0,
+        "StoreVarBinding": 0,
+        "LoadEnvLocal": 0,
+        "StoreEnvLocal": 0,
+        "LoadCapture": 0,
+        "StoreCapture": 0,
+        "LoadName": 0,
+        "LoadNameCall": 0,
+        "LoadNameTypeof": 0,
+        "ResolveName": 0,
+        "LoadResolvedName": 0,
+        "DeleteName": 0,
+        "StoreName": 0,
+        "StoreResolvedName": 0,
+        "LoadThis": 0,
+        "LoadImportMeta": 0,
+        "MakeClosure": 0,
+        "MakeArray": 0,
+        "MakeConstArray": 0,
+        "MakeObject": 0,
+        "MakeObject2": 0,
+        "MakeObjectLiteral": 0,
+        "SuperConstArrayObject2": 0,
+        "GetIterator": 0,
+        "GetAsyncIterator": 0,
+        "CreateRegExpLiteral": 0,
+        "IteratorClose": 0,
+        "SpreadToArray": 0,
+        "RequireObjectCoercible": 0,
+        "RequireIteratorResult": 0,
+        "SuperCallCheck": 0,
+        "IteratorCleanupPush": 0,
+        "IteratorCleanupPop": 0,
+        "SetFunctionName": 0,
+        "SetFunctionNameKey": 0,
+        "InitializeTdz": 0,
+        "Await": 0,
+        "Yield": 0,
+        "YieldStar": 0,
+        "GetField": 0,
+        "GetIndex": 0,
+        "ToPropertyKey": 0,
+        "ToNumeric": 0,
+        "CopyDataProperties": 0,
+        "MarkPrivateName": 0,
+        "SetField": 0,
+        "DefineComputedField": 0,
+        "SetThisField": 0,
+        "SetIndex": 0,
+        "DefineArrayElement": 0,
+        "Binary": 0,
+        "IncDec": 0,
+        "Unary": 0,
+        "Delete": 0,
+        "CheckPrivate": 0,
+        "PrivateIn": 0,
+        "Move": 0,
+        "Call": 0,
+        "CallDirectEvalArray": 0,
+        "CallKnown": 0,
+        "CallMethod": 0,
+        "CallThisMethod": 0,
+        "Construct": 0,
+        "Jump": 0,
+        "JumpFalse": 0,
+        "JumpBinaryFalse": 0,
+        "Return": 0,
+        "Throw": 0,
+        "NumericAdd": 0,
+        "NumericMultiply": 0,
+        "InitializeThis": 0,
+        "CacheTemplateObject": 0,
+        "LoadCachedTemplateObject": 0,
+        "DefineField": 0,
+        "ValidateClassHeritage": 0,
+        "SetFieldStrict": 0,
+        "SetThisFieldStrict": 0,
+        "WasmI32Binary": 0,
+        "WasmI32Unary": 0,
+        "WasmI64Binary": 0,
+        "WasmI64Unary": 0,
+        "WasmScalarConvert": 0,
+        "WasmF32Binary": 0,
+        "WasmF32Unary": 0,
+        "WasmF64Binary": 0,
+        "WasmF64Unary": 0,
+        "WasmTableInit": 0,
+        "WasmIndirectTarget": 0,
+        "WasmGlobalGet": 0,
+        "WasmGlobalSet": 0,
+        "WasmRefFunc": 0,
+        "WasmRefIsNull": 0,
+        "WasmTableSize": 0,
+        "WasmTableGet": 0,
+        "WasmTableSet": 0,
+        "WasmTableGrow": 0,
+        "WasmTableFill": 0,
+        "WasmTableCopy": 0,
+        "WasmMemoryInit": 0,
+        "WasmMemoryCopy": 0,
+        "WasmMemoryFill": 0,
+        "WasmMemoryAddress": 0,
+        "WasmMemoryLoad": 0,
+        "WasmMemoryStore": 0,
+        "WasmMemorySize": 0,
+        "WasmMemoryGrow": 0,
+        "WasmUnreachable": 0,
+        "WasmSimd": 0,
+        "WasmSimdShuffle": 0,
+        "DefinePropertyRecord": 0,
+        "WasmRefAsNonNull": 0,
+        "WasmI31": 0,
+        "WasmRefTest": 0,
+        "WasmRefCast": 0,
+        "WasmRefEq": 0,
+        "WasmStructNew": 0,
+        "WasmStructNewDefault": 0,
+        "WasmStructGet": 0,
+        "WasmStructGetS": 0,
+        "WasmStructGetU": 0,
+        "WasmStructSet": 0,
+        "WasmArrayNew": 0,
+        "WasmArrayNewDefault": 0,
+        "WasmArrayNewFixed": 0,
+        "WasmArrayLen": 0,
+        "WasmArrayGet": 0,
+        "WasmArrayGetS": 0,
+        "WasmArrayGetU": 0,
+        "WasmArraySet": 0,
+        "WasmExternalConversion": 0,
+        "WasmArrayFill": 0,
+        "WasmArrayCopy": 0,
+        "WasmArrayNewData": 0,
+        "WasmArrayNewElem": 0,
+        "WasmArrayInitData": 0,
+        "WasmArrayInitElem": 0,
+        "WasmExceptionNew": 0,
+        "WasmExceptionMatch": 0,
+        "WasmExceptionPayload": 0,
+        "WasmThrowRef": 0,
+        "WasmStructNewDesc": 0,
+        "WasmStructNewDefaultDesc": 0,
+        "WasmRefGetDesc": 0,
+        "WasmDescriptorTest": 0,
+        "WasmDescriptorCast": 0,
+        "WasmAtomicAccess": 0,
+        "WasmAtomicFence": 0,
+        "LoadLocalPlain": 0,
+        "StoreLocalPlain": 0,
+        "JumpTrue": 0
+      }
+    }
+  },
+  "binary_pair_dependencies": {
+    "names": [
+      "none",
+      "left",
+      "right",
+      "both"
+    ],
+    "counts": [
+      0,
+      2,
+      3,
+      0
+    ]
+  },
+  "top_pairs": [
+    [
+      "LoadCapture",
+      "LoadCapture",
+      190780
+    ],
+    [
+      "SetIndex",
+      "SetIndex",
+      190780
+    ],
+    [
+      "LoadCapture",
+      "JumpBinaryFalse",
+      38159
+    ],
+    [
+      "LoadCapture",
+      "LoadConst",
+      38157
+    ],
+    [
+      "ToNumeric",
+      "IncDec",
+      38157
+    ],
+    [
+      "JumpBinaryFalse",
+      "LoadCapture",
+      38156
+    ],
+    [
+      "LoadConst",
+      "SetIndex",
+      38156
+    ],
+    [
+      "SetIndex",
+      "ToNumeric",
+      38156
+    ],
+    [
+      "IncDec",
+      "Jump",
+      38156
+    ],
+    [
+      "StoreEnvLocal",
+      "MakeClosure",
+      23
+    ],
+    [
+      "MakeClosure",
+      "StoreEnvLocal",
+      22
+    ],
+    [
+      "Construct",
+      "StoreCapture",
+      19
+    ],
+    [
+      "StoreCapture",
+      "LoadName",
+      18
+    ],
+    [
+      "LoadName",
+      "LoadCapture",
+      18
+    ],
+    [
+      "LoadCapture",
+      "Construct",
+      18
+    ],
+    [
+      "LoadConst",
+      "Return",
+      14
+    ],
+    [
+      "LoadEnvLocal",
+      "GetField",
+      14
+    ],
+    [
+      "SetFieldStrict",
+      "LoadEnvLocal",
+      12
+    ],
+    [
+      "LoadCapture",
+      "Binary",
+      11
+    ],
+    [
+      "MakeClosure",
+      "SetFieldStrict",
+      10
+    ]
+  ],
+  "binary_operand_modes": [
+    [
+      4,
+      0,
+      0,
+      38161
+    ],
+    [
+      2,
+      0,
+      1,
+      63
+    ],
+    [
+      2,
+      0,
+      0,
+      23
+    ],
+    [
+      3,
+      0,
+      1,
+      13
+    ],
+    [
+      8,
+      0,
+      1,
+      9
+    ],
+    [
+      10,
+      0,
+      0,
+      5
+    ],
+    [
+      4,
+      0,
+      1,
+      3
+    ],
+    [
+      6,
+      0,
+      1,
+      3
+    ],
+    [
+      1,
+      0,
+      0,
+      2
+    ],
+    [
+      8,
+      0,
+      0,
+      2
+    ],
+    [
+      5,
+      0,
+      1,
+      1
+    ]
+  ],
+  "top_pair_sites": [
+    {
+      "function": 32,
+      "pc": 34,
+      "first": "LoadCapture",
+      "second": "JumpBinaryFalse",
+      "count": 38159
+    },
+    {
+      "function": 32,
+      "pc": 41,
+      "first": "LoadCapture",
+      "second": "LoadConst",
+      "count": 38156
+    },
+    {
+      "function": 32,
+      "pc": 44,
+      "first": "SetIndex",
+      "second": "SetIndex",
+      "count": 38156
+    },
+    {
+      "function": 32,
+      "pc": 36,
+      "first": "LoadCapture",
+      "second": "LoadCapture",
+      "count": 38156
+    },
+    {
+      "function": 32,
+      "pc": 47,
+      "first": "SetIndex",
+      "second": "SetIndex",
+      "count": 38156
+    },
+    {
+      "function": 32,
+      "pc": 39,
+      "first": "LoadCapture",
+      "second": "LoadCapture",
+      "count": 38156
+    },
+    {
+      "function": 32,
+      "pc": 50,
+      "first": "IncDec",
+      "second": "Jump",
+      "count": 38156
+    },
+    {
+      "function": 32,
+      "pc": 42,
+      "first": "LoadConst",
+      "second": "SetIndex",
+      "count": 38156
+    },
+    {
+      "function": 32,
+      "pc": 45,
+      "first": "SetIndex",
+      "second": "SetIndex",
+      "count": 38156
+    },
+    {
+      "function": 32,
+      "pc": 37,
+      "first": "LoadCapture",
+      "second": "LoadCapture",
+      "count": 38156
+    },
+    {
+      "function": 32,
+      "pc": 48,
+      "first": "SetIndex",
+      "second": "ToNumeric",
+      "count": 38156
+    },
+    {
+      "function": 32,
+      "pc": 40,
+      "first": "LoadCapture",
+      "second": "LoadCapture",
+      "count": 38156
+    },
+    {
+      "function": 32,
+      "pc": 43,
+      "first": "SetIndex",
+      "second": "SetIndex",
+      "count": 38156
+    },
+    {
+      "function": 32,
+      "pc": 35,
+      "first": "JumpBinaryFalse",
+      "second": "LoadCapture",
+      "count": 38156
+    },
+    {
+      "function": 32,
+      "pc": 46,
+      "first": "SetIndex",
+      "second": "SetIndex",
+      "count": 38156
+    },
+    {
+      "function": 32,
+      "pc": 38,
+      "first": "LoadCapture",
+      "second": "LoadCapture",
+      "count": 38156
+    },
+    {
+      "function": 32,
+      "pc": 49,
+      "first": "ToNumeric",
+      "second": "IncDec",
+      "count": 38156
+    },
+    {
+      "function": 32,
+      "pc": 29,
+      "first": "LoadName",
+      "second": "LoadCapture",
+      "count": 3
+    },
+    {
+      "function": 32,
+      "pc": 1,
+      "first": "Binary",
+      "second": "StoreCapture",
+      "count": 3
+    },
+    {
+      "function": 32,
+      "pc": 20,
+      "first": "StoreCapture",
+      "second": "LoadName",
+      "count": 3
+    }
+  ],
+  "instruction_word_domains": [
+    {
+      "op": "LoadConst",
+      "count": 196,
+      "max_fields": [
+        24,
+        0,
+        0
+      ],
+      "max_imm": 41,
+      "compound_imm": false,
+      "field_overflow": 0,
+      "immediate_overflow": 0
+    },
+    {
+      "op": "LoadLocal",
+      "count": 6,
+      "max_fields": [
+        4,
+        0,
+        0
+      ],
+      "max_imm": 2,
+      "compound_imm": false,
+      "field_overflow": 0,
+      "immediate_overflow": 0
+    },
+    {
+      "op": "StoreLocal",
+      "count": 3,
+      "max_fields": [
+        0,
+        0,
+        1
+      ],
+      "max_imm": 2,
+      "compound_imm": false,
+      "field_overflow": 0,
+      "immediate_overflow": 0
+    },
+    {
+      "op": "LoadEnvLocal",
+      "count": 46,
+      "max_fields": [
+        8,
+        0,
+        0
+      ],
+      "max_imm": 28,
+      "compound_imm": false,
+      "field_overflow": 0,
+      "immediate_overflow": 0
+    },
+    {
+      "op": "StoreEnvLocal",
+      "count": 54,
+      "max_fields": [
+        7,
+        0,
+        1
+      ],
+      "max_imm": 28,
+      "compound_imm": false,
+      "field_overflow": 0,
+      "immediate_overflow": 0
+    },
+    {
+      "op": "LoadCapture",
+      "count": 251,
+      "max_fields": [
+        26,
+        0,
+        0
+      ],
+      "max_imm": 65561,
+      "compound_imm": true,
+      "field_overflow": 0,
+      "immediate_overflow": 0
+    },
+    {
+      "op": "StoreCapture",
+      "count": 29,
+      "max_fields": [
+        11,
+        0,
+        0
+      ],
+      "max_imm": 27,
+      "compound_imm": true,
+      "field_overflow": 0,
+      "immediate_overflow": 0
+    },
+    {
+      "op": "LoadName",
+      "count": 17,
+      "max_fields": [
+        12,
+        0,
+        163
+      ],
+      "max_imm": 253,
+      "compound_imm": false,
+      "field_overflow": 0,
+      "immediate_overflow": 0
+    },
+    {
+      "op": "LoadNameTypeof",
+      "count": 1,
+      "max_fields": [
+        5,
+        0,
+        57
+      ],
+      "max_imm": 208,
+      "compound_imm": false,
+      "field_overflow": 0,
+      "immediate_overflow": 0
+    },
+    {
+      "op": "LoadThis",
+      "count": 4,
+      "max_fields": [
+        6,
+        0,
+        0
+      ],
+      "max_imm": 0,
+      "compound_imm": false,
+      "field_overflow": 0,
+      "immediate_overflow": 0
+    },
+    {
+      "op": "MakeClosure",
+      "count": 56,
+      "max_fields": [
+        3,
+        0,
+        0
+      ],
+      "max_imm": 56,
+      "compound_imm": false,
+      "field_overflow": 0,
+      "immediate_overflow": 0
+    },
+    {
+      "op": "MakeArray",
+      "count": 4,
+      "max_fields": [
+        3,
+        0,
+        0
+      ],
+      "max_imm": 1,
+      "compound_imm": false,
+      "field_overflow": 0,
+      "immediate_overflow": 0
+    },
+    {
+      "op": "MakeObject2",
+      "count": 1,
+      "max_fields": [
+        32768,
+        1,
+        2
+      ],
+      "max_imm": 0,
+      "compound_imm": false,
+      "field_overflow": 0,
+      "immediate_overflow": 0
+    },
+    {
+      "op": "RequireObjectCoercible",
+      "count": 3,
+      "max_fields": [
+        0,
+        1,
+        0
+      ],
+      "max_imm": 0,
+      "compound_imm": false,
+      "field_overflow": 0,
+      "immediate_overflow": 0
+    },
+    {
+      "op": "SetFunctionName",
+      "count": 1,
+      "max_fields": [
+        0,
+        0,
+        0
+      ],
+      "max_imm": 61,
+      "compound_imm": false,
+      "field_overflow": 0,
+      "immediate_overflow": 0
+    },
+    {
+      "op": "InitializeTdz",
+      "count": 3,
+      "max_fields": [
+        0,
+        0,
+        0
+      ],
+      "max_imm": 0,
+      "compound_imm": false,
+      "field_overflow": 0,
+      "immediate_overflow": 0
+    },
+    {
+      "op": "GetField",
+      "count": 101,
+      "max_fields": [
+        32768,
+        65535,
+        164
+      ],
+      "max_imm": 240,
+      "compound_imm": false,
+      "field_overflow": 0,
+      "immediate_overflow": 0
+    },
+    {
+      "op": "GetIndex",
+      "count": 67,
+      "max_fields": [
+        37,
+        4,
+        36
+      ],
+      "max_imm": 0,
+      "compound_imm": false,
+      "field_overflow": 0,
+      "immediate_overflow": 0
+    },
+    {
+      "op": "ToNumeric",
+      "count": 58,
+      "max_fields": [
+        33,
+        29,
+        0
+      ],
+      "max_imm": 0,
+      "compound_imm": false,
+      "field_overflow": 0,
+      "immediate_overflow": 0
+    },
+    {
+      "op": "SetIndex",
+      "count": 40,
+      "max_fields": [
+        41,
+        8,
+        24
+      ],
+      "max_imm": 1,
+      "compound_imm": false,
+      "field_overflow": 0,
+      "immediate_overflow": 0
+    },
+    {
+      "op": "DefineArrayElement",
+      "count": 1,
+      "max_fields": [
+        13,
+        3,
+        0
+      ],
+      "max_imm": 0,
+      "compound_imm": false,
+      "field_overflow": 0,
+      "immediate_overflow": 0
+    },
+    {
+      "op": "Binary",
+      "count": 219,
+      "max_fields": [
+        32770,
+        16396,
+        16422
+      ],
+      "max_imm": 19,
+      "compound_imm": false,
+      "field_overflow": 0,
+      "immediate_overflow": 0
+    },
+    {
+      "op": "IncDec",
+      "count": 58,
+      "max_fields": [
+        31,
+        33,
+        0
+      ],
+      "max_imm": 1,
+      "compound_imm": false,
+      "field_overflow": 0,
+      "immediate_overflow": 0
+    },
+    {
+      "op": "Unary",
+      "count": 10,
+      "max_fields": [
+        15,
+        14,
+        0
+      ],
+      "max_imm": 4,
+      "compound_imm": false,
+      "field_overflow": 0,
+      "immediate_overflow": 0
+    },
+    {
+      "op": "Move",
+      "count": 180,
+      "max_fields": [
+        27,
+        32,
+        0
+      ],
+      "max_imm": 0,
+      "compound_imm": false,
+      "field_overflow": 0,
+      "immediate_overflow": 0
+    },
+    {
+      "op": "Call",
+      "count": 86,
+      "max_fields": [
+        32779,
+        25,
+        24
+      ],
+      "max_imm": 1703938,
+      "compound_imm": true,
+      "field_overflow": 0,
+      "immediate_overflow": 0
+    },
+    {
+      "op": "Construct",
+      "count": 15,
+      "max_fields": [
+        13,
+        7,
+        9
+      ],
+      "max_imm": 4,
+      "compound_imm": false,
+      "field_overflow": 0,
+      "immediate_overflow": 0
+    },
+    {
+      "op": "Jump",
+      "count": 51,
+      "max_fields": [
+        0,
+        0,
+        0
+      ],
+      "max_imm": 154,
+      "compound_imm": false,
+      "field_overflow": 0,
+      "immediate_overflow": 0
+    },
+    {
+      "op": "JumpFalse",
+      "count": 26,
+      "max_fields": [
+        13,
+        0,
+        0
+      ],
+      "max_imm": 112,
+      "compound_imm": false,
+      "field_overflow": 0,
+      "immediate_overflow": 0
+    },
+    {
+      "op": "JumpBinaryFalse",
+      "count": 44,
+      "max_fields": [
+        6,
+        13,
+        16421
+      ],
+      "max_imm": 159,
+      "compound_imm": false,
+      "field_overflow": 0,
+      "immediate_overflow": 0
+    },
+    {
+      "op": "Return",
+      "count": 78,
+      "max_fields": [
+        24,
+        0,
+        0
+      ],
+      "max_imm": 0,
+      "compound_imm": false,
+      "field_overflow": 0,
+      "immediate_overflow": 0
+    },
+    {
+      "op": "Throw",
+      "count": 2,
+      "max_fields": [
+        10,
+        0,
+        0
+      ],
+      "max_imm": 0,
+      "compound_imm": false,
+      "field_overflow": 0,
+      "immediate_overflow": 0
+    },
+    {
+      "op": "NumericAdd",
+      "count": 18,
+      "max_fields": [
+        41,
+        35,
+        16412
+      ],
+      "max_imm": 8,
+      "compound_imm": false,
+      "field_overflow": 0,
+      "immediate_overflow": 0
+    },
+    {
+      "op": "NumericMultiply",
+      "count": 13,
+      "max_fields": [
+        16395,
+        21,
+        39
+      ],
+      "max_imm": 10,
+      "compound_imm": false,
+      "field_overflow": 0,
+      "immediate_overflow": 0
+    },
+    {
+      "op": "SetFieldStrict",
+      "count": 16,
+      "max_fields": [
+        5,
+        0,
+        151
+      ],
+      "max_imm": 240,
+      "compound_imm": false,
+      "field_overflow": 0,
+      "immediate_overflow": 0
+    },
+    {
+      "op": "SetThisFieldStrict",
+      "count": 25,
+      "max_fields": [
+        4,
+        0,
+        148
+      ],
+      "max_imm": 226,
+      "compound_imm": false,
+      "field_overflow": 0,
+      "immediate_overflow": 0
+    },
+    {
+      "op": "LoadLocalPlain",
+      "count": 66,
+      "max_fields": [
+        29,
+        0,
+        0
+      ],
+      "max_imm": 18,
+      "compound_imm": false,
+      "field_overflow": 0,
+      "immediate_overflow": 0
+    },
+    {
+      "op": "StoreLocalPlain",
+      "count": 35,
+      "max_fields": [
+        31,
+        13,
+        1
+      ],
+      "max_imm": 18,
+      "compound_imm": false,
+      "field_overflow": 0,
+      "immediate_overflow": 0
+    }
+  ],
+  "root_maps": {
+    "full_entries": 1941,
+    "full_bytes": 15528,
+    "distinct_masks": 578,
+    "mask_runs": 1895,
+    "observed_sites": 0,
+    "observed_masks": 0,
+    "frame_observations": 0,
+    "active_observations": 0,
+    "suspended_observations": 0
+  },
+  "functions": [
+    {
+      "id": 0,
+      "name": "<script>",
+      "count": 1,
+      "instructions": 165,
+      "registers": 14,
+      "max_live": 9,
+      "dispatch": "General"
+    },
+    {
+      "id": 1,
+      "name": "Benchmark",
+      "count": 1,
+      "instructions": 28,
+      "registers": 5,
+      "max_live": 1,
+      "dispatch": "General"
+    },
+    {
+      "id": 2,
+      "name": "<script>",
+      "count": 0,
+      "instructions": 2,
+      "registers": 1,
+      "max_live": 1,
+      "dispatch": "General"
+    },
+    {
+      "id": 3,
+      "name": "<script>",
+      "count": 0,
+      "instructions": 2,
+      "registers": 1,
+      "max_live": 1,
+      "dispatch": "General"
+    },
+    {
+      "id": 4,
+      "name": "BenchmarkResult",
+      "count": 0,
+      "instructions": 4,
+      "registers": 3,
+      "max_live": 2,
+      "dispatch": "General"
+    },
+    {
+      "id": 5,
+      "name": "BenchmarkSuite",
+      "count": 1,
+      "instructions": 11,
+      "registers": 9,
+      "max_live": 3,
+      "dispatch": "General"
+    },
+    {
+      "id": 6,
+      "name": "runNavierStokes",
+      "count": 0,
+      "instructions": 5,
+      "registers": 3,
+      "max_live": 2,
+      "dispatch": "General"
+    },
+    {
+      "id": 7,
+      "name": "setupNavierStokes",
+      "count": 1,
+      "instructions": 29,
+      "registers": 7,
+      "max_live": 4,
+      "dispatch": "General"
+    },
+    {
+      "id": 8,
+      "name": "<script>",
+      "count": 0,
+      "instructions": 2,
+      "registers": 1,
+      "max_live": 1,
+      "dispatch": "General"
+    },
+    {
+      "id": 9,
+      "name": "tearDownNavierStokes",
+      "count": 1,
+      "instructions": 4,
+      "registers": 1,
+      "max_live": 1,
+      "dispatch": "General"
+    },
+    {
+      "id": 10,
+      "name": "addPoints",
+      "count": 0,
+      "instructions": 54,
+      "registers": 13,
+      "max_live": 8,
+      "dispatch": "General"
+    },
+    {
+      "id": 11,
+      "name": "prepareFrame",
+      "count": 0,
+      "instructions": 19,
+      "registers": 6,
+      "max_live": 3,
+      "dispatch": "General"
+    },
+    {
+      "id": 12,
+      "name": "FluidField",
+      "count": 1,
+      "instructions": 60,
+      "registers": 7,
+      "max_live": 4,
+      "dispatch": "General"
+    },
+    {
+      "id": 13,
+      "name": "addFields",
+      "count": 0,
+      "instructions": 14,
+      "registers": 12,
+      "max_live": 6,
+      "dispatch": "General"
+    },
+    {
+      "id": 14,
+      "name": "set_bnd",
+      "count": 0,
+      "instructions": 194,
+      "registers": 20,
+      "max_live": 6,
+      "dispatch": "General"
+    },
+    {
+      "id": 15,
+      "name": "lin_solve",
+      "count": 0,
+      "instructions": 104,
+      "registers": 35,
+      "max_live": 12,
+      "dispatch": "General"
+    },
+    {
+      "id": 16,
+      "name": "diffuse",
+      "count": 0,
+      "instructions": 13,
+      "registers": 15,
+      "max_live": 7,
+      "dispatch": "General"
+    },
+    {
+      "id": 17,
+      "name": "lin_solve2",
+      "count": 0,
+      "instructions": 138,
+      "registers": 33,
+      "max_live": 14,
+      "dispatch": "General"
+    },
+    {
+      "id": 18,
+      "name": "diffuse2",
+      "count": 0,
+      "instructions": 14,
+      "registers": 17,
+      "max_live": 8,
+      "dispatch": "General"
+    },
+    {
+      "id": 19,
+      "name": "advect",
+      "count": 0,
+      "instructions": 81,
+      "registers": 42,
+      "max_live": 21,
+      "dispatch": "Numeric"
+    },
+    {
+      "id": 20,
+      "name": "project",
+      "count": 0,
+      "instructions": 166,
+      "registers": 35,
+      "max_live": 11,
+      "dispatch": "General"
+    },
+    {
+      "id": 21,
+      "name": "dens_step",
+      "count": 0,
+      "instructions": 24,
+      "registers": 15,
+      "max_live": 11,
+      "dispatch": "General"
+    },
+    {
+      "id": 22,
+      "name": "vel_step",
+      "count": 0,
+      "instructions": 66,
+      "registers": 16,
+      "max_live": 13,
+      "dispatch": "General"
+    },
+    {
+      "id": 23,
+      "name": "Field",
+      "count": 0,
+      "instructions": 22,
+      "registers": 4,
+      "max_live": 1,
+      "dispatch": "General"
+    },
+    {
+      "id": 24,
+      "name": "<script>",
+      "count": 0,
+      "instructions": 9,
+      "registers": 9,
+      "max_live": 5,
+      "dispatch": "General"
+    },
+    {
+      "id": 25,
+      "name": "<script>",
+      "count": 0,
+      "instructions": 10,
+      "registers": 9,
+      "max_live": 4,
+      "dispatch": "General"
+    },
+    {
+      "id": 26,
+      "name": "<script>",
+      "count": 0,
+      "instructions": 16,
+      "registers": 10,
+      "max_live": 8,
+      "dispatch": "General"
+    },
+    {
+      "id": 27,
+      "name": "<script>",
+      "count": 0,
+      "instructions": 10,
+      "registers": 9,
+      "max_live": 4,
+      "dispatch": "General"
+    },
+    {
+      "id": 28,
+      "name": "<script>",
+      "count": 0,
+      "instructions": 10,
+      "registers": 9,
+      "max_live": 4,
+      "dispatch": "General"
+    },
+    {
+      "id": 29,
+      "name": "<script>",
+      "count": 0,
+      "instructions": 4,
+      "registers": 1,
+      "max_live": 1,
+      "dispatch": "General"
+    },
+    {
+      "id": 30,
+      "name": "<script>",
+      "count": 0,
+      "instructions": 4,
+      "registers": 1,
+      "max_live": 1,
+      "dispatch": "General"
+    },
+    {
+      "id": 31,
+      "name": "queryUI",
+      "count": 0,
+      "instructions": 21,
+      "registers": 13,
+      "max_live": 6,
+      "dispatch": "General"
+    },
+    {
+      "id": 32,
+      "name": "reset",
+      "count": 3,
+      "instructions": 54,
+      "registers": 12,
+      "max_live": 8,
+      "dispatch": "General"
+    },
+    {
+      "id": 33,
+      "name": "<script>",
+      "count": 0,
+      "instructions": 2,
+      "registers": 4,
+      "max_live": 1,
+      "dispatch": "General"
+    },
+    {
+      "id": 34,
+      "name": "<script>",
+      "count": 0,
+      "instructions": 49,
+      "registers": 13,
+      "max_live": 7,
+      "dispatch": "General"
+    },
+    {
+      "id": 35,
+      "name": "<script>",
+      "count": 1,
+      "instructions": 3,
+      "registers": 2,
+      "max_live": 1,
+      "dispatch": "General"
+    },
+    {
+      "id": 36,
+      "name": "<script>",
+      "count": 0,
+      "instructions": 4,
+      "registers": 1,
+      "max_live": 1,
+      "dispatch": "General"
+    },
+    {
+      "id": 37,
+      "name": "<script>",
+      "count": 1,
+      "instructions": 8,
+      "registers": 4,
+      "max_live": 3,
+      "dispatch": "General"
+    },
+    {
+      "id": 38,
+      "name": "<script>",
+      "count": 1,
+      "instructions": 3,
+      "registers": 2,
+      "max_live": 1,
+      "dispatch": "General"
+    },
+    {
+      "id": 39,
+      "name": "<script>",
+      "count": 2,
+      "instructions": 27,
+      "registers": 12,
+      "max_live": 5,
+      "dispatch": "General"
+    },
+    {
+      "id": 40,
+      "name": "<script>",
+      "count": 0,
+      "instructions": 3,
+      "registers": 1,
+      "max_live": 1,
+      "dispatch": "General"
+    },
+    {
+      "id": 41,
+      "name": "<script>",
+      "count": 1,
+      "instructions": 6,
+      "registers": 1,
+      "max_live": 1,
+      "dispatch": "General"
+    }
+  ]
+}

@@ -1,0 +1,40 @@
+{
+  "scope": "Actual shared-push rejection retry with checked GC profiling merge",
+  "source": "d2b4aea1260f9cc4261b2f30e9007607a18d7e98",
+  "incoming": "6c2771a7f",
+  "previous_checked_source": "defaefd0f",
+  "checks": {
+    "workspace": true,
+    "runtime": 584,
+    "api": 165,
+    "framework": 43
+  },
+  "logs": {
+    "work/net-resource-merged2-check.log": {
+      "sha256": "6e6b80c3c03c72704cab3cab3871bf7ee064d024f73c4f87f1b89bb307698c8d",
+      "excerpt": "    Checking quench-runtime v0.1.0 (/workspace/quench/crates/quench-runtime)\n    Checking quench-test262 v0.1.0 (/workspace/quench/crates/quench-test262)\n    Checking quench-node v0.1.0 (/workspace/quench/crates/quench-node)\n    Checking quench-wasm v0.1.0 (/workspace/quench/crates/quench-wasm)\n    Checking quench-wasm-test v0.1.0 (/workspace/quench/crates/quench-wasm-test)\n    Checking quench-node-test v0.1.0 (/workspace/quench/crates/quench-node-test)\n    Finished `dev` profile [unoptimized] target(s) in 21.33s\n"
+    },
+    "work/net-resource-merged2-runtime.log": {
+      "sha256": "3db42f4a772baa67ba0dbdffdaf1fb9cfa36db9318504a244cc78f8fd87930ee",
+      "excerpt": "ared_backing_preserves_mutations_and_orders_opposing_copy_locks ... ok\ntest wasm::scalar::signature_pool_tests::equal_function_facts_share_one_signature_and_unused_types_do_not_become_functions ... ok\ntest wasm::tests::hidden_if_inputs_do_not_expand_the_guest_local_index_domain ... ok\ntest wasm::tests::lowering_boundary_rejects_invalid_operand_and_local_domains ... ok\ntest wasm::tests::lowering_rejects_invalid_control_structure_and_stack_domains ... ok\ntest wasm::tests::lowering_rejects_stack_depth_outside_result_register_layout ... ok\ntest wasm::tests::residual_validation_rejects_unknown_wasm_numeric_selectors ... ok\ntest wasm::tests::scalar_conversion_rows_own_input_output_types_and_selector_domain ... ok\ntest wasm::tests::serialized_float_rows_preserve_rounding_and_nan_classes ... ok\ntest wasm::tests::serialized_i64_numeric_rows_execute_after_decoding ... ok\ntest wasm::tests::serialized_wasm_bits64_preserve_tag_collision_payloads ... ok\ntest wasm::atomic::tests::atomic_accesses_preserve_critical_sections_and_cross_memory_order ... ok\ntest wasm::tests::serialized_wasm_numeric_rows_execute_after_decoding ... ok\ntest wasm::wait::tests::waiter_registration_notification_and_timeout_share_one_lifecycle ... ok\ntest vm::tests::typed_sort_snapshot_roots_release_after_comparator_errors ... ok\ntest vm::tests::typed_initialization_roots_release_after_iterator_and_conversion_errors ... ok\n\ntest result: ok. 584 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.95s\n\n"
+    },
+    "work/net-resource-merged2-api.log": {
+      "sha256": "82c06462fc57c407f5280ab9d8726ef85fc76c38bf8a154f128af1e11c2b64bc",
+      "excerpt": "rror ... ok\ntest tcp_peer_reset_preserves_os_errno_syscall_and_error_message ... ok\ntest tcp_reuse_port_shares_os_listeners_across_processes_like_node ... ok\ntest tcp_write_completion_retains_buffers_and_applies_backpressure ... ok\ntest tls_context_material_uses_real_crl_and_pkcs12_parsers ... ok\ntest trace_categories_retain_enabled_objects_and_capture_array_policy ... ok\ntest trace_category_buffers_follow_activation_without_retaining_dead_views ... ok\ntest tracing_intrinsics_validate_in_order_and_serialize_with_original_json ... ok\ntest tracing_writes_console_events_to_expanded_file_pattern ... ok\ntest typed_array_fill_matches_node_bytes_coercion_and_live_view_ranges ... ok\ntest util_custom_inspection_preserves_depth_receiver_and_hook_order ... ok\ntest util_styles_match_node_ansi_aliases_cache_and_iterator_protocol ... ok\ntest util_text_codec_aliases_capture_initialized_global_constructors ... ok\ntest util_text_operations_match_node_without_utf16_loss ... ok\ntest util_type_predicates_match_node_internal_brands ... ok\ntest warning_options_validation_and_deprecation_delivery_match_node ... ok\ntest zlib_callback_exceptions_escape_once_after_initial_jobs ... ok\ntest zlib_crc32_and_bounded_sync_inputs_match_node_errors_and_bytes ... ok\ntest zlib_info_returns_captured_engines_and_preserves_handle_lifecycle ... ok\ntest zlib_options_match_node_ranges_parameters_and_getter_order ... ok\n\ntest result: ok. 165 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 79.12s\n\n"
+    },
+    "work/net-resource-merged2-framework.log": {
+      "sha256": "b41881f94821125815bc87efbbbd7d26b13fd072686394014795864fa55f2ae8",
+      "excerpt": "nnel-promise-run-stores.js\nPASS  /workspace/quench/tests/node/test/parallel/test-async-local-storage-enter-with.js\nPASS  /workspace/quench/tests/node/test/parallel/test-http-automatic-headers.js\nPASS  /workspace/quench/tests/node/test/parallel/test-http-content-length.js\nPASS  /workspace/quench/tests/node/test/parallel/test-http-write-head.js\nPASS  /workspace/quench/tests/node/test/parallel/test-fs-read-stream-resume.js\nPASS  /workspace/quench/tests/node/test/parallel/test-stream-pipe-flow.js\nPASS  /workspace/quench/tests/node/test/parallel/test-async-hooks-run-in-async-scope-this-arg.js\nPASS  /workspace/quench/tests/node/test/parallel/test-http-request-end.js\nPASS  /workspace/quench/tests/node/test/parallel/test-http-response-readable.js\nPASS  /workspace/quench/tests/node/test/parallel/test-http-response-close.js\nPASS  /workspace/quench/tests/node/test/parallel/test-http-head-response-has-no-body.js\nPASS  /workspace/quench/tests/node/test/parallel/test-http-head-response-has-no-body-end.js\nPASS  /workspace/quench/tests/node/test/parallel/test-http-head-response-has-no-body-end-implicit-headers.js\nPASS  /workspace/quench/tests/node/test/parallel/test-http-allow-content-length-304.js\nPASS  /workspace/quench/tests/node/test/parallel/test-http-listening.js\nPASS  /workspace/quench/tests/node/test/parallel/test-global-webstreams.js\nPASS  /workspace/quench/tests/node/test/parallel/test-webstreams-pipeline.js\nparallel: pass=43 skip=0 fail=0 timeout=0 crash=0 unclassified=0 total=43\n"
+    },
+    "work/net-resource-merged2-gates.txt": {
+      "sha256": "1630d4e135c18bedd30e41f94da5c44472931761487c403ee9c74f578aa6df60",
+      "excerpt": "check=0 runtime=0 api=0 build=0 framework=0\n"
+    }
+  },
+  "binary_sha256": "f2265aced7a6948fb8ad9a6def2de9df9bf914ddf28398353655929b2a84e1d4  work/net-resource-merged2-bin/quench-node\n0a5975db6eaad8a4ae2fb8c9c448c4232281b2198ae570f6bff6263e401f0164  work/net-resource-merged2-bin/run-parallel\n",
+  "qualifications": [
+    "Incoming GC census is guarded by profile-memory, disabled in default iteration; rebuilt and tested exact merged source regardless.",
+    "Earlier group/focused/measurement results remain source-attributed; only the new complete sweep establishes merged totals.",
+    "Preserves normal merge histories after actual rejected shared push; no force, rebase or fabricated checks."
+  ]
+}

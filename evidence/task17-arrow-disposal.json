@@ -1,0 +1,151 @@
+{
+  "schema": 1,
+  "tasks": [
+    "17",
+    "20"
+  ],
+  "baseline_source_head": "f0211d69e0e4defb4420e3f6e068654f9ba464eb",
+  "qualification": "Shared function-body cleanup in isolation; unqualified Wasm and other pending main-tree changes excluded.",
+  "source_sha256": {
+    "crates/quench-runtime-next/src/compile.rs": "4c74d06aeff6aaef3560c55b6bd5e85b059a8f9dad3491c6c7353ac445827e13",
+    "crates/quench-runtime-next/src/compile/arrow.rs": "f72d4fa0e13307ed3233cf9ffbffd4a5a96b0342e9f26eb994a12d4800a558ce",
+    "crates/quench-runtime-next/src/compile/ast/disposal.rs": "b7fc4b3ff446cdcbfe678af23206442658d161c2e834071b33353a16a2f6035e"
+  },
+  "suite_pin": "6eec1ac9ee144dafd8f344d73a21f36bfc9f6755",
+  "representation": {
+    "authority": "Ordinary functions and block-bodied arrows share function_body_statements, routing implicit and thrown completion through the existing disposal-scope exit.",
+    "scope": "Expression-bodied arrows and explicit-return lowering unchanged. No new representation, serialization field or duplicated semantic unit test."
+  },
+  "build": {
+    "profile": "release; correctness only",
+    "log": "target/iteration/task17-arrow-disposal/build.log",
+    "before_binary_sha256": "984f7ab3ee0fb633ebd9404e6834f2189faa8f78b745b6b0b40e73c383521c35",
+    "after_binary_sha256": "f14acf3cdc261170f98fcb4b040292757577dd4c651d0259d4f7b8bb9d71f122"
+  },
+  "affected_test262": {
+    "full_suite_run": false,
+    "jobs_per_scope": 2,
+    "timeout_ms": 10000,
+    "distinct_cases": 1411,
+    "passed_before": 1411,
+    "passed_after": 1411,
+    "gained": [],
+    "regressions": [],
+    "scopes": [
+      {
+        "scope": "arrows",
+        "total": 766,
+        "passed_before": 766,
+        "passed_after": 766,
+        "gained": [],
+        "regressions": [],
+        "reports": {
+          "target/iteration/task17-arrow-disposal/before-arrows.json": "a5383b77b652df59ccaef65729b22ee9f258911243541d0a73c1d58bdd4b4f17",
+          "target/iteration/task17-arrow-disposal/after-arrows.json": "47afa42eadcab6e4fdc2144b4bf1ff0e35c346f83570b664c379c11069f7aad2",
+          "target/iteration/task17-arrow-disposal/compare-arrows.log": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+        }
+      },
+      {
+        "scope": "function-code",
+        "total": 217,
+        "passed_before": 217,
+        "passed_after": 217,
+        "gained": [],
+        "regressions": [],
+        "reports": {
+          "target/iteration/task17-arrow-disposal/before-function-code.json": "fe7c4a9e99a546a68049b9c38d43ff889f9b818a15b7ab7df4b9e77c101cdc9a",
+          "target/iteration/task17-arrow-disposal/after-function-code.json": "b3023479eafa4891b46f9a049dfef6920e2ba08b9740eb84543cb3b11bcee1a4",
+          "target/iteration/task17-arrow-disposal/compare-function-code.log": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+        }
+      },
+      {
+        "scope": "await-using",
+        "total": 100,
+        "passed_before": 100,
+        "passed_after": 100,
+        "gained": [],
+        "regressions": [],
+        "reports": {
+          "target/iteration/task17-arrow-disposal/before-await-using.json": "c46c4d1003137bfdc9fcc4ad6ab6f81f9faf0ba1d873f0aeb37af7eb8dccee4d",
+          "target/iteration/task17-arrow-disposal/after-await-using.json": "aa3932510e04210a0de974570f9e9500266ed86cf2ae8e3fbba67536634d8d0a",
+          "target/iteration/task17-arrow-disposal/compare-await-using.log": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+        }
+      },
+      {
+        "scope": "using",
+        "total": 78,
+        "passed_before": 78,
+        "passed_after": 78,
+        "gained": [],
+        "regressions": [],
+        "reports": {
+          "target/iteration/task17-arrow-disposal/before-using.json": "b958d44e969c06810fad5cbdd6864bd720eed6b89b93a1862da3903124a396a3",
+          "target/iteration/task17-arrow-disposal/after-using.json": "4367f4f06b641eaa99e00ab289927f146755964a401ecdc1b566312423237efe",
+          "target/iteration/task17-arrow-disposal/compare-using.log": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+        }
+      },
+      {
+        "scope": "async-stack",
+        "total": 104,
+        "passed_before": 104,
+        "passed_after": 104,
+        "gained": [],
+        "regressions": [],
+        "reports": {
+          "target/iteration/task17-arrow-disposal/before-async-stack.json": "6dbc23667c521e42f53d37d7780d2da4c7874f9942f7c584ac6e3f4dca554a5e",
+          "target/iteration/task17-arrow-disposal/after-async-stack.json": "7ff2370adf2a971fc644e05481ffefdda0c79a9c9971a1a4d33659f6e7d5ecd0",
+          "target/iteration/task17-arrow-disposal/compare-async-stack.log": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+        }
+      },
+      {
+        "scope": "sync-stack",
+        "total": 93,
+        "passed_before": 93,
+        "passed_after": 93,
+        "gained": [],
+        "regressions": [],
+        "reports": {
+          "target/iteration/task17-arrow-disposal/before-sync-stack.json": "533ffdd32d452db6db8ff6e49b1b38cb5e7cae6d955c5bc4c626a1078eaf461d",
+          "target/iteration/task17-arrow-disposal/after-sync-stack.json": "09f113c06837b4857ca6ca276e8378f102228e6c4a1e90bb144ac29dcd9e77bf",
+          "target/iteration/task17-arrow-disposal/compare-sync-stack.log": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+        }
+      },
+      {
+        "scope": "staged-disposal",
+        "total": 53,
+        "passed_before": 53,
+        "passed_after": 53,
+        "gained": [],
+        "regressions": [],
+        "reports": {
+          "target/iteration/task17-arrow-disposal/before-staged-disposal.json": "12825fec3868dde3706828473b054d66a264ef500a2e394a4e9ef51dce3ee907",
+          "target/iteration/task17-arrow-disposal/after-staged-disposal.json": "64add2b68540f04bef0448ef4fb38b0889e9cf2ab1e8fa463995c13b4603b44d",
+          "target/iteration/task17-arrow-disposal/compare-staged-disposal.log": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+        }
+      }
+    ]
+  },
+  "node_controls": {
+    "sources": 51,
+    "observations_per_build": 102,
+    "before_matches": 58,
+    "after_matches": 92,
+    "losses": 0,
+    "node_version": "v26.10.0",
+    "report": "target/iteration/task17-arrow-disposal/node-controls.json",
+    "sha256": "90762072c00001e6f6f74a03eb14b4eab388093deb60b5cec918810537f8c214",
+    "remaining_cases": [
+      "sync-arrow-return-False",
+      "sync-arrow-return-True",
+      "async-arrow-return-False",
+      "async-arrow-return-True",
+      "arrow-nested-return"
+    ],
+    "remaining_gap": "Five explicit-return controls still skip disposal (ten observations in normal/generic modes). Fallthrough, throws, suppression, initialization failure, LIFO, async disposal and lexical-this controls improve without losses."
+  },
+  "limits": [
+    "Pinned suite inputs, discovery, harnesses, expectations, exclusions and deadlines unchanged.",
+    "Explicit-return cleanup remains follow-up work.",
+    "Complete suites, implemented Node, single production VM cutover and Stage A remain open."
+  ]
+}

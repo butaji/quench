@@ -1,0 +1,407 @@
+{
+  "schema": 2,
+  "checkpoint": {
+    "schema": 2,
+    "created_unix_ns": 1791902590880999000,
+    "updated_unix_ns": 1791902682489793000,
+    "change_kind": "layout",
+    "minimum_clean_pairs": 11,
+    "top_up_rounds": 7,
+    "maximum_top_up_batches_per_fixture": 10,
+    "instruction_aa_band_percent": 0.14,
+    "maximum_rss_increase_percent": 0.5,
+    "measurement_runner": {
+      "path": "/Users/admin/Code/GitHub/quench-v2/target/candidate-b/production/quench-bench",
+      "sha256": "bdc9d6c4afc537fe8ed30d4fccba9157cd4232e345ce75810465a0fff98db109"
+    },
+    "baseline": {
+      "path": "/private/tmp/quench-task61-splay-free-bitmap-m4/target/pinned/c6e60e98592418ca595b1bb15aff2005e5388a321a757fbafae9723155d7e1ca/quench-node",
+      "sha256": "c6e60e98592418ca595b1bb15aff2005e5388a321a757fbafae9723155d7e1ca"
+    },
+    "candidate": {
+      "path": "/private/tmp/quench-task61-splay-free-bitmap-m4/target/pinned/c6e60e98592418ca595b1bb15aff2005e5388a321a757fbafae9723155d7e1ca/quench-node",
+      "sha256": "c6e60e98592418ca595b1bb15aff2005e5388a321a757fbafae9723155d7e1ca"
+    },
+    "timeout_ms": 300000,
+    "source_revision": "f76795545b4f2f8cc7cf423da49e758215525b9f",
+    "source_dirty": true,
+    "corpus": {
+      "checkout_clean": false,
+      "checkout_revision": "f76795545b4f2f8cc7cf423da49e758215525b9f",
+      "fixture_set_matches": true,
+      "pinned_revision": "64e1860c736c1b899708f4cd646721bc71e53d8b"
+    },
+    "suite_inputs": [
+      {
+        "modified_unix_ns": 1791399842589165942,
+        "path": "quench-bench/js-engine-benchmark/v8-v7/base.js",
+        "sha256": "ac383759c3cbf5f3a499ade526a4e296f7925733d8c3889b6d5840ce6867ff51",
+        "size_bytes": 9351
+      },
+      {
+        "modified_unix_ns": 1791399842589772400,
+        "path": "quench-bench/js-engine-benchmark/v8-v7/crypto.js",
+        "sha256": "5321d2ada9b61e01d5f281609513467cbaa7c0effb12c577ed08088d812453af",
+        "size_bytes": 48043
+      },
+      {
+        "modified_unix_ns": 1791399842589978359,
+        "path": "quench-bench/js-engine-benchmark/v8-v7/deltablue.js",
+        "sha256": "74b5a95f4877701073c6efef08e4ae306562747067e292925b69cbd629a511b9",
+        "size_bytes": 25653
+      },
+      {
+        "modified_unix_ns": 1791399842590910109,
+        "path": "quench-bench/js-engine-benchmark/v8-v7/earley-boyer.js",
+        "sha256": "dbf3aeb6b3d056e8ea35b5f19aa8c8a4fb1053e41d07f096c22483b2c1c6ee01",
+        "size_bytes": 195205
+      },
+      {
+        "modified_unix_ns": 1791399842591090359,
+        "path": "quench-bench/js-engine-benchmark/v8-v7/navier-stokes.js",
+        "sha256": "ce241465ffeee77b5c4f7119f522aa971fe1fe92c3aed76f7514ea43e07fec84",
+        "size_bytes": 12690
+      },
+      {
+        "modified_unix_ns": 1791399842591280317,
+        "path": "quench-bench/js-engine-benchmark/v8-v7/raytrace.js",
+        "sha256": "d52183ca324cdb88d9ee3e78326433fe2ca28d6436f0a6c3ec013ab67cb798eb",
+        "size_bytes": 27996
+      },
+      {
+        "modified_unix_ns": 1791399842592027317,
+        "path": "quench-bench/js-engine-benchmark/v8-v7/regexp.js",
+        "sha256": "5268b0d15931fda4e331de35fc58e5beded9a250b60764e1cc7cfc898ab53602",
+        "size_bytes": 111299
+      },
+      {
+        "modified_unix_ns": 1791399842592243692,
+        "path": "quench-bench/js-engine-benchmark/v8-v7/richards.js",
+        "sha256": "d86eac4108343a54ba6e10621a77b46f82f554c3b0a46e8fb4032d5cf65a2a11",
+        "size_bytes": 15776
+      },
+      {
+        "modified_unix_ns": 1791399842592552609,
+        "path": "quench-bench/js-engine-benchmark/v8-v7/splay.js",
+        "sha256": "1f875cec579d03af40d256ceaeb6823f3ef16c883652650ca51d183472a8185d",
+        "size_bytes": 10746
+      }
+    ],
+    "initial_report": {
+      "path": "/private/tmp/quench-task61-splay-free-bitmap-m4/evidence/task61-splay-record-free-bitmap-merged-m4-2026-10-13/all-eight-aa-refreshed-source-correct-11.json",
+      "sha256": "52df8c9f11d7919f350a9b8bf3d3726767344f147ec5d81f6ede28a8d0f9f099"
+    },
+    "top_up_batches": [
+      {
+        "fixture": "deltablue.js",
+        "ordinal": 1,
+        "rounds": 7,
+        "report": "/private/tmp/quench-task61-splay-free-bitmap-m4/evidence/task61-splay-record-free-bitmap-merged-m4-2026-10-13/all-eight-aa-guard-refreshed-layout-topups/deltablue.js-batch-1.json",
+        "state": "complete",
+        "report_sha256": "fe7400fdbe5454a2450d2a9dfb002c44efe9ee9394a6e14de56870c84bb6b269",
+        "runner_exit_code": 0
+      },
+      {
+        "fixture": "earley-boyer.js",
+        "ordinal": 1,
+        "rounds": 7,
+        "report": "/private/tmp/quench-task61-splay-free-bitmap-m4/evidence/task61-splay-record-free-bitmap-merged-m4-2026-10-13/all-eight-aa-guard-refreshed-layout-topups/earley-boyer.js-batch-1.json",
+        "state": "complete",
+        "report_sha256": "5e7b7c9a8376d2e8114419574789323003baa12976943116698f6184b00d3057",
+        "runner_exit_code": 0
+      },
+      {
+        "fixture": "navier-stokes.js",
+        "ordinal": 1,
+        "rounds": 7,
+        "report": "/private/tmp/quench-task61-splay-free-bitmap-m4/evidence/task61-splay-record-free-bitmap-merged-m4-2026-10-13/all-eight-aa-guard-refreshed-layout-topups/navier-stokes.js-batch-1.json",
+        "state": "complete",
+        "report_sha256": "4684117ebe826f343d3cc6092d234f638d3bd29d3407f81c21db715c83c86eb2",
+        "runner_exit_code": 0
+      },
+      {
+        "fixture": "raytrace.js",
+        "ordinal": 1,
+        "rounds": 7,
+        "report": "/private/tmp/quench-task61-splay-free-bitmap-m4/evidence/task61-splay-record-free-bitmap-merged-m4-2026-10-13/all-eight-aa-guard-refreshed-layout-topups/raytrace.js-batch-1.json",
+        "state": "complete",
+        "report_sha256": "ba68fe0d3dda3c7949bed2e08d9aee8c6651e961f4a300a832deac13989a5249",
+        "runner_exit_code": 0
+      },
+      {
+        "fixture": "regexp.js",
+        "ordinal": 1,
+        "rounds": 7,
+        "report": "/private/tmp/quench-task61-splay-free-bitmap-m4/evidence/task61-splay-record-free-bitmap-merged-m4-2026-10-13/all-eight-aa-guard-refreshed-layout-topups/regexp.js-batch-1.json",
+        "state": "complete",
+        "report_sha256": "aed92983ec647de6d648c3a9f9d9e35a71a4a22b513e9617bb9f92d3210b2830",
+        "runner_exit_code": 0
+      },
+      {
+        "fixture": "navier-stokes.js",
+        "ordinal": 2,
+        "rounds": 7,
+        "report": "/private/tmp/quench-task61-splay-free-bitmap-m4/evidence/task61-splay-record-free-bitmap-merged-m4-2026-10-13/all-eight-aa-guard-refreshed-layout-topups/navier-stokes.js-batch-2.json",
+        "state": "complete",
+        "report_sha256": "3acdecbe826040b93a9cacd55a6e002f7491cd84b9f94cc4313bb53daa4525b1",
+        "runner_exit_code": 0
+      },
+      {
+        "fixture": "raytrace.js",
+        "ordinal": 2,
+        "rounds": 7,
+        "report": "/private/tmp/quench-task61-splay-free-bitmap-m4/evidence/task61-splay-record-free-bitmap-merged-m4-2026-10-13/all-eight-aa-guard-refreshed-layout-topups/raytrace.js-batch-2.json",
+        "state": "complete",
+        "report_sha256": "dd734dcae5bd29160b6c1830bace5e4ce8de1ebb9f725d0e55a84c18fa101b35",
+        "runner_exit_code": 0
+      }
+    ]
+  },
+  "reports": [
+    {
+      "path": "/private/tmp/quench-task61-splay-free-bitmap-m4/evidence/task61-splay-record-free-bitmap-merged-m4-2026-10-13/all-eight-aa-refreshed-source-correct-11.json",
+      "sha256": "52df8c9f11d7919f350a9b8bf3d3726767344f147ec5d81f6ede28a8d0f9f099"
+    },
+    {
+      "path": "/private/tmp/quench-task61-splay-free-bitmap-m4/evidence/task61-splay-record-free-bitmap-merged-m4-2026-10-13/all-eight-aa-guard-refreshed-layout-topups/deltablue.js-batch-1.json",
+      "sha256": "fe7400fdbe5454a2450d2a9dfb002c44efe9ee9394a6e14de56870c84bb6b269"
+    },
+    {
+      "path": "/private/tmp/quench-task61-splay-free-bitmap-m4/evidence/task61-splay-record-free-bitmap-merged-m4-2026-10-13/all-eight-aa-guard-refreshed-layout-topups/earley-boyer.js-batch-1.json",
+      "sha256": "5e7b7c9a8376d2e8114419574789323003baa12976943116698f6184b00d3057"
+    },
+    {
+      "path": "/private/tmp/quench-task61-splay-free-bitmap-m4/evidence/task61-splay-record-free-bitmap-merged-m4-2026-10-13/all-eight-aa-guard-refreshed-layout-topups/navier-stokes.js-batch-1.json",
+      "sha256": "4684117ebe826f343d3cc6092d234f638d3bd29d3407f81c21db715c83c86eb2"
+    },
+    {
+      "path": "/private/tmp/quench-task61-splay-free-bitmap-m4/evidence/task61-splay-record-free-bitmap-merged-m4-2026-10-13/all-eight-aa-guard-refreshed-layout-topups/raytrace.js-batch-1.json",
+      "sha256": "ba68fe0d3dda3c7949bed2e08d9aee8c6651e961f4a300a832deac13989a5249"
+    },
+    {
+      "path": "/private/tmp/quench-task61-splay-free-bitmap-m4/evidence/task61-splay-record-free-bitmap-merged-m4-2026-10-13/all-eight-aa-guard-refreshed-layout-topups/regexp.js-batch-1.json",
+      "sha256": "aed92983ec647de6d648c3a9f9d9e35a71a4a22b513e9617bb9f92d3210b2830"
+    },
+    {
+      "path": "/private/tmp/quench-task61-splay-free-bitmap-m4/evidence/task61-splay-record-free-bitmap-merged-m4-2026-10-13/all-eight-aa-guard-refreshed-layout-topups/navier-stokes.js-batch-2.json",
+      "sha256": "3acdecbe826040b93a9cacd55a6e002f7491cd84b9f94cc4313bb53daa4525b1"
+    },
+    {
+      "path": "/private/tmp/quench-task61-splay-free-bitmap-m4/evidence/task61-splay-record-free-bitmap-merged-m4-2026-10-13/all-eight-aa-guard-refreshed-layout-topups/raytrace.js-batch-2.json",
+      "sha256": "dd734dcae5bd29160b6c1830bace5e4ce8de1ebb9f725d0e55a84c18fa101b35"
+    }
+  ],
+  "fixtures": {
+    "crypto.js": {
+      "clean_pairs": 11,
+      "valid_pairs": 11,
+      "cycles": {
+        "median_percent": 0.008473866581804046,
+        "interval_95_percent": [
+          -0.7405708648547615,
+          0.8480390350141587
+        ],
+        "samples": 11,
+        "status": "no_detected_regression"
+      },
+      "instructions": {
+        "median_percent": 0.0031111595158561656,
+        "interval_95_percent": null,
+        "samples": 11,
+        "status": "within_budget"
+      },
+      "max_rss": {
+        "median_percent": 0.06544502617800152,
+        "interval_95_percent": null,
+        "samples": 11,
+        "status": "within_budget"
+      },
+      "classification": "cycles"
+    },
+    "deltablue.js": {
+      "clean_pairs": 16,
+      "valid_pairs": 18,
+      "cycles": {
+        "median_percent": -0.33115207132807245,
+        "interval_95_percent": [
+          -0.7305323982603973,
+          -0.22548999532256975
+        ],
+        "samples": 16,
+        "status": "no_detected_regression"
+      },
+      "instructions": {
+        "median_percent": -0.007749666885165096,
+        "interval_95_percent": null,
+        "samples": 18,
+        "status": "within_budget"
+      },
+      "max_rss": {
+        "median_percent": 0.10181571649030552,
+        "interval_95_percent": null,
+        "samples": 18,
+        "status": "within_budget"
+      },
+      "classification": "cycles"
+    },
+    "earley-boyer.js": {
+      "clean_pairs": 12,
+      "valid_pairs": 18,
+      "cycles": {
+        "median_percent": -0.03450856980182215,
+        "interval_95_percent": [
+          -0.5600176988443673,
+          0.28935084093559826
+        ],
+        "samples": 12,
+        "status": "no_detected_regression"
+      },
+      "instructions": {
+        "median_percent": -0.0002669564962587412,
+        "interval_95_percent": null,
+        "samples": 18,
+        "status": "within_budget"
+      },
+      "max_rss": {
+        "median_percent": -0.08788611982040173,
+        "interval_95_percent": null,
+        "samples": 18,
+        "status": "within_budget"
+      },
+      "classification": "cycles"
+    },
+    "navier-stokes.js": {
+      "clean_pairs": 16,
+      "valid_pairs": 25,
+      "cycles": {
+        "median_percent": -0.13333722717676633,
+        "interval_95_percent": [
+          -0.5039911920232787,
+          0.8597313727075673
+        ],
+        "samples": 16,
+        "status": "no_detected_regression"
+      },
+      "instructions": {
+        "median_percent": 0.0021565865421457886,
+        "interval_95_percent": null,
+        "samples": 25,
+        "status": "within_budget"
+      },
+      "max_rss": {
+        "median_percent": 0.168123739071957,
+        "interval_95_percent": null,
+        "samples": 25,
+        "status": "within_budget"
+      },
+      "classification": "cycles"
+    },
+    "raytrace.js": {
+      "clean_pairs": 14,
+      "valid_pairs": 25,
+      "cycles": {
+        "median_percent": -0.5271755615737783,
+        "interval_95_percent": [
+          -1.1345244319299952,
+          0.8142841841629722
+        ],
+        "samples": 14,
+        "status": "no_detected_regression"
+      },
+      "instructions": {
+        "median_percent": 0.006659325720947962,
+        "interval_95_percent": null,
+        "samples": 25,
+        "status": "within_budget"
+      },
+      "max_rss": {
+        "median_percent": 0.10016694490817546,
+        "interval_95_percent": null,
+        "samples": 25,
+        "status": "within_budget"
+      },
+      "classification": "cycles"
+    },
+    "regexp.js": {
+      "clean_pairs": 17,
+      "valid_pairs": 18,
+      "cycles": {
+        "median_percent": -0.6261102998962542,
+        "interval_95_percent": [
+          -1.3836289628973653,
+          1.461508755139329
+        ],
+        "samples": 17,
+        "status": "no_detected_regression"
+      },
+      "instructions": {
+        "median_percent": 0.0024088033867109004,
+        "interval_95_percent": null,
+        "samples": 18,
+        "status": "within_budget"
+      },
+      "max_rss": {
+        "median_percent": -0.010575296108289445,
+        "interval_95_percent": null,
+        "samples": 18,
+        "status": "within_budget"
+      },
+      "classification": "cycles"
+    },
+    "richards.js": {
+      "clean_pairs": 11,
+      "valid_pairs": 11,
+      "cycles": {
+        "median_percent": 0.11455895396601523,
+        "interval_95_percent": [
+          -0.8499035524547338,
+          0.7990401157521809
+        ],
+        "samples": 11,
+        "status": "no_detected_regression"
+      },
+      "instructions": {
+        "median_percent": 0.003869847657411718,
+        "interval_95_percent": null,
+        "samples": 11,
+        "status": "within_budget"
+      },
+      "max_rss": {
+        "median_percent": 0.03473428273705892,
+        "interval_95_percent": null,
+        "samples": 11,
+        "status": "within_budget"
+      },
+      "classification": "cycles"
+    },
+    "splay.js": {
+      "clean_pairs": 11,
+      "valid_pairs": 11,
+      "cycles": {
+        "median_percent": -0.7836963226691029,
+        "interval_95_percent": [
+          -2.0991026902308585,
+          1.1255327691751305
+        ],
+        "samples": 11,
+        "status": "no_detected_regression"
+      },
+      "instructions": {
+        "median_percent": 0.016677252135410825,
+        "interval_95_percent": null,
+        "samples": 11,
+        "status": "within_budget"
+      },
+      "max_rss": {
+        "median_percent": -0.026695141484245344,
+        "interval_95_percent": null,
+        "samples": 11,
+        "status": "within_budget"
+      },
+      "classification": "cycles"
+    }
+  },
+  "pending_fixtures": [],
+  "all_fixtures_classified": true,
+  "overall": "passed"
+}

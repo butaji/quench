@@ -1,0 +1,29 @@
+typescript-eslint                  base cpu 1368 sc 0 rss 127.9MB | m128 cpu +6% sc +0% rss +0.2MB | m256 cpu -6% sc +0% rss -0.8MB | g4 cpu +8% sc +0% rss +3.5MB | g8 cpu +6% sc +0% rss +1.1MB
+@typescript-eslint/eslint-plugin   base cpu 1319 sc 0 rss 125.8MB | m128 cpu +1% sc +0% rss +1.6MB | m256 cpu -7% sc +0% rss -0.3MB | g4 cpu +8% sc +0% rss +6.2MB | g8 cpu +3% sc +0% rss +1.8MB
+playwright                         base cpu 657 sc 0 rss 79.5MB | m128 cpu +7% sc +0% rss -0.9MB | m256 cpu +0% sc +0% rss +0.9MB | g4 cpu +4% sc +0% rss +0.2MB | g8 cpu -2% sc +0% rss +1.6MB
+jsdom                              base cpu 664 sc 0 rss 83.9MB | m128 cpu +3% sc +0% rss +0.1MB | m256 cpu -9% sc +0% rss +4.4MB | g4 cpu -3% sc +0% rss +0.3MB | g8 cpu +4% sc +0% rss +2.6MB
+Traceback (most recent call last):
+  File "/tmp/claude-0/-home-user-quench/7b48bd7e-c8b8-513f-8fda-df3008a36a8f/scratchpad/sweepy.py", line 20, in <module>
+    if mode=='npm': assert 'npm-behavior-ok' in t, t[-300:]
+                           ^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: er/quench/tests/npm-top300/scenario.mjs:644:573)
+    at file:///home/user/quench/tests/npm-top300/scenario.mjs:661:7 {
+  generatedMessage: true,
+  code: 'ERR_ASSERTION',
+  actual: null,
+  expected: 0,
+  operator: 'strictEqual',
+  diff: 'simple'
+}
+
+Node.js v26.12.0
+rss-exec maxrss_kib=39980 status=1
+
+richards                           base cpu 2008 sc 1538 rss 5.2MB | m128 cpu +1% sc +6% rss +0.1MB | m256 cpu -0% sc -9% rss +0.0MB | g4 cpu -0% sc -3% rss -0.1MB | g8 cpu +0% sc +4% rss +0.0MB
+deltablue                          base cpu 2016 sc 1490 rss 7.1MB | m128 cpu -0% sc -8% rss +2.9MB | m256 cpu -0% sc -3% rss +8.8MB | g4 cpu +0% sc -18% rss +0.1MB | g8 cpu -0% sc -10% rss +0.4MB
+crypto                             base cpu 5005 sc 2580 rss 8.6MB | m128 cpu +1% sc -1% rss +3.7MB | m256 cpu +1% sc -1% rss +11.9MB | g4 cpu +0% sc +1% rss +0.1MB | g8 cpu +0% sc -1% rss +0.4MB
+raytrace                           base cpu 2034 sc 2625 rss 7.2MB | m128 cpu +0% sc +2% rss +3.0MB | m256 cpu +0% sc -2% rss +9.2MB | g4 cpu +0% sc +2% rss +0.4MB | g8 cpu -0% sc -3% rss +0.5MB
+earley-boyer                       base cpu 5065 sc 5276 rss 11.1MB | m128 cpu +0% sc +6% rss +3.6MB | m256 cpu -1% sc -2% rss +9.9MB | g4 cpu -0% sc -2% rss +1.5MB | g8 cpu -0% sc +2% rss +3.2MB
+regexp                             base cpu 2115 sc 3040 rss 10.8MB | m128 cpu +46% sc -6% rss +4.9MB | m256 cpu +44% sc -7% rss +12.5MB | g4 cpu +46% sc -5% rss +2.9MB | g8 cpu +46% sc -22% rss +4.0MB
+splay                              base cpu 2296 sc 4114 rss 32.0MB | m128 cpu -6% sc +2% rss -0.0MB | m256 cpu -6% sc +7% rss +0.1MB | g4 cpu -5% sc +4% rss +0.1MB | g8 cpu -4% sc -11% rss +0.1MB
+navier-stokes                      base cpu 3104 sc 2823 rss 5.0MB | m128 cpu -0% sc -9% rss +0.1MB | m256 cpu +1% sc -5% rss +0.1MB | g4 cpu +0% sc -4% rss +0.1MB | g8 cpu -1% sc -3% rss +0.1MB

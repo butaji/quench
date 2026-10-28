@@ -1,0 +1,144 @@
+{
+  "scope": "Node runner infrastructure only; does not qualify implemented Node compatibility outcomes",
+  "source_revision": "6895044a71fbafbd65ee7c5add12b42b6babb09d",
+  "source_worktree_dirty": true,
+  "host": "macOS-26.5-arm64-arm-64bit",
+  "inventory": {
+    "state": "input_sources_classified_capability_audit_pending",
+    "input_records": 1589,
+    "support_inputs": 13,
+    "case_candidates": 1576,
+    "assertion_candidates": 1556,
+    "observation_candidates": 20,
+    "currently_marked_included": {
+      "assertion": 20,
+      "observation": 1
+    },
+    "currently_pending": {
+      "assertion": 1536,
+      "observation": 19
+    },
+    "excluded": 0,
+    "membership_frozen": false
+  },
+  "checks": [
+    {
+      "command": "cargo test --profile iteration -p quench-node-test --lib --bins",
+      "exit": 0,
+      "passed": 8,
+      "failed": 0,
+      "log": "target/iteration/task19-runner-current/final-package-tests.log"
+    },
+    {
+      "command": "cargo clippy --profile iteration -p quench-node-test --all-targets --no-deps -- -D warnings",
+      "exit": 0,
+      "log": "target/iteration/task19-runner-current/final-clippy.log"
+    },
+    {
+      "command": "cargo fmt -p quench-node-test -- --check",
+      "exit": 0,
+      "log": "target/iteration/task19-runner-current/final-rustfmt.log"
+    },
+    {
+      "command": "cargo build --profile iteration -p quench-node-test --bin run-compat",
+      "exit": 0,
+      "log": "target/iteration/task19-runner-current/final-build.log"
+    }
+  ],
+  "source_sha256": {
+    "crates/quench-node-test/Cargo.toml": "2a54a777222851ab480f7adc6e87ae0ea12fbbaf33a2c7ec838a73bb10b24d32",
+    "crates/quench-node-test/src/case_process.rs": "898b3b8d6fca32799bca0d780a7b2c1a264630c594a6a4ab93b26a0ff4dcccbf",
+    "crates/quench-node-test/src/inventory.rs": "f38703b8a949b5e8cdcc390f92696247756c139ab2ba42dc6ceb3257d585bdcb",
+    "crates/quench-node-test/src/lib.rs": "0bcc3a5abe0cee4c37b59793352fe28037f4749ee497632998a5221f4b8bd6e1",
+    "crates/quench-node-test/src/reader.rs": "17d531efd7dedbb750d5abd8addb6bca941e791b0455d8789abd35217b621558",
+    "crates/quench-node-test/src/stages.rs": "8ef6c0491c2c5c65d7a391a1f0b731f8223bd7f52b2ac60baa78c441f5c7a91a",
+    "crates/quench-node-test/src/bin/run-compat.rs": "dfc116f49fa5202635365b0cb881f3c3148ae05b900a7f9f4fd78aaa1835872b",
+    "crates/quench-node-test/src/bin/run-parallel.rs": "65ae672d702d930721c07361ab004d94126851fb494d19d15531e68b96714f06",
+    "crates/quench-node-test/src/bin/run.rs": "c057a58d89f24a059775c353b0d792278f84c1d2c807cbc4f58fc138157a8a15",
+    "tasks/node-compat-inventory.json": "6990d2397d7f5d1bd2d3edcf66f45368ed3a74ab76880baf67d2d6b0227c5aa6"
+  },
+  "diagnostic_binary_sha256": {
+    "target/iteration/run-compat": "d5370a3183094cb83b1e4303f0803fb15023bd331aedf5151c5fed36c1b5f0b0"
+  },
+  "limitations": [
+    "The diagnostic runner still invokes legacy NodeTestRunner; this does not qualify quench-node on quench-runtime.",
+    "The case inventory is not frozen; no compatibility case ran and no Node pass is claimed.",
+    "The source checkout has unrelated dirty changes; the diagnostic binary hash records the exact current snapshot, not a clean HEAD-only reproduction.",
+    "The currently included observation case still requires matched oracle trace execution.",
+    "No Test262, Wasm, or full Node compatibility suite was run."
+  ],
+  "rustc": "rustc 1.99.0 (b940084d7 2026-09-28) (Homebrew)",
+  "controls": [
+    {
+      "id": "list",
+      "command": [
+        "target/iteration/run-compat",
+        "--inventory",
+        "tasks/node-compat-inventory.json",
+        "--list"
+      ],
+      "exit": 0,
+      "selected_paths": 21,
+      "output": "inventory listing is diagnostic; it does not qualify implemented membership or case outcomes\ncrates/quench-node-test/node-tests/test-assert.js\ncrates/quench-node-test/node-tests/test-buffer.js\ncrates/quench-node-test/node-tests/test-child-process.js\ncrates/quench-node-test/node-tests/test-console.js\ncrates/quench-node-test/node-tests/test-events.js\ncrates/quench-node-test/node-tests/test-fs.js\ncrates/quench-node-test/node-tests/test-npm-ms.js\ncrates/quench-node-test/node-tests/test-npm-require.js\ncrates/quench-node-test/node-tests/test-os.js\ncrates/quench-node-test/node-tests/test-path.js\ncrates/quench-node-test/node-tests/test-process.js\ncrates/quench-node-test/node-tests/test-querystring.js\ncrates/quench-node-test/node-tests/test-string-replace.js\ncrates/quench-node-test/node-tests/test-timers-interval-promises.js\ncrates/quench-node-test/node-tests/test-timers-promises.js\ncrates/quench-node-test/node-tests/test-timers.js\ncrates/quench-node-test/node-tests/test-url.js\ncrates/quench-node-test/node-tests/test-util.js\ncrates/quench-node-test/node-tests/test-vm.js\ncrates/quench-node-test/node-tests/test-zlib-sync.js\ncrates/quench-node-test/node-tests/test-zlib.js\n"
+    },
+    {
+      "id": "filtered-list",
+      "command": [
+        "target/iteration/run-compat",
+        "--inventory",
+        "tasks/node-compat-inventory.json",
+        "--list",
+        "--filter",
+        "test-zlib"
+      ],
+      "exit": 0,
+      "selected_paths": 2,
+      "output": "inventory listing is diagnostic; it does not qualify implemented membership or case outcomes\ncrates/quench-node-test/node-tests/test-zlib-sync.js\ncrates/quench-node-test/node-tests/test-zlib.js\n"
+    },
+    {
+      "id": "unfrozen-execution",
+      "command": [
+        "target/iteration/run-compat",
+        "--inventory",
+        "tasks/node-compat-inventory.json",
+        "--quiet"
+      ],
+      "exit": 2,
+      "selected_paths": null,
+      "output": "error: implemented Node membership is not frozen; --list is diagnostic only\n"
+    },
+    {
+      "id": "unfrozen-subset",
+      "command": [
+        "target/iteration/run-compat",
+        "--inventory",
+        "tasks/node-compat-inventory.json",
+        "--filter",
+        "test-zlib",
+        "--subset",
+        "--quiet"
+      ],
+      "exit": 2,
+      "selected_paths": null,
+      "output": "error: implemented Node membership is not frozen; --list is diagnostic only\n"
+    },
+    {
+      "id": "invalid-subset-args",
+      "command": [
+        "target/iteration/run-compat",
+        "--filter",
+        "test-zlib",
+        "--subset"
+      ],
+      "exit": 2,
+      "selected_paths": null,
+      "output": "error: --subset requires --inventory and --filter\n"
+    }
+  ],
+  "inventory_selection_rules": {
+    "complete_execution": "must select every included path exactly once in inventory order",
+    "diagnostic_subset": "requires --subset and --filter; selected paths must be distinct included paths; output is labelled diagnostic",
+    "validation_coverage": "unit tests exercise complete selection, omitted-path refusal, valid subset and unsupported-path refusal",
+    "current_cli_limit": "live inventory is unfrozen, so both full and subset execution correctly stop before guest execution"
+  }
+}

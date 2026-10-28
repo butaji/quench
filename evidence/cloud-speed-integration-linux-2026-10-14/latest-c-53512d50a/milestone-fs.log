@@ -1,0 +1,20 @@
+Fail /tmp/quench-node-fixtures/test/parallel/test-fs-promises-file-handle-aggregate-errors.js
+Pass /tmp/quench-node-fixtures/test/parallel/test-fs-promises-file-handle-chmod.js
+Fail /tmp/quench-node-fixtures/test/parallel/test-fs-promises-file-handle-close-errors.js
+Pass /tmp/quench-node-fixtures/test/parallel/test-fs-promises-file-handle-append-file.js
+Fail /tmp/quench-node-fixtures/test/parallel/test-fs-promises-file-handle-op-errors.js
+Fail /tmp/quench-node-fixtures/test/parallel/test-fs-promises-file-handle-pull.js
+Fail /tmp/quench-node-fixtures/test/parallel/test-fs-promises-file-handle-dispose.js
+Fail /tmp/quench-node-fixtures/test/parallel/test-fs-promises-file-handle-pullsync.js
+Fail /tmp/quench-node-fixtures/test/parallel/test-fs-promises-file-handle-read-worker.js
+Pass /tmp/quench-node-fixtures/test/parallel/test-fs-promises-file-handle-read.js
+Pass /tmp/quench-node-fixtures/test/parallel/test-fs-promises-file-handle-readFile.js
+Fail /tmp/quench-node-fixtures/test/parallel/test-fs-promises-file-handle-readLines.mjs
+Pass /tmp/quench-node-fixtures/test/parallel/test-fs-promises-file-handle-stat.js
+Fail /tmp/quench-node-fixtures/test/parallel/test-fs-promises-file-handle-stream.js
+Pass /tmp/quench-node-fixtures/test/parallel/test-fs-promises-file-handle-sync.js
+Pass /tmp/quench-node-fixtures/test/parallel/test-fs-promises-file-handle-write.js
+Fail /tmp/quench-node-fixtures/test/parallel/test-fs-promises-file-handle-truncate.js
+Fail /tmp/quench-node-fixtures/test/parallel/test-fs-promises-file-handle-writer.js
+Pass /tmp/quench-node-fixtures/test/parallel/test-fs-promises-file-handle-writeFile.js
+all: pass=8 skip=0 fail=11 timeout=0 crash=0 unclassified=0 total=19 inventory_hash=e6ea54b44c0af934

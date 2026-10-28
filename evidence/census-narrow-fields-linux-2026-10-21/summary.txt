@@ -1,0 +1,29 @@
+fw-express                host_bootstrap save~ 0.23MB | property: slots=   48146 fit= 99.9% dbl= 0.1% dblint= 0.0% narrow-containers= 96.7% of slots | element: slots=   13034 fit=100.0% dbl= 0.0% dblint= 0.0% narrow-containers=100.0% of slots
+fw-fastify                complete     save~ 0.21MB | property: slots=   49273 fit= 99.9% dbl= 0.1% dblint= 0.0% narrow-containers= 96.4% of slots | element: slots=    8017 fit= 99.9% dbl= 0.1% dblint= 0.0% narrow-containers= 99.6% of slots
+fw-hono                   complete     save~ 0.26MB | property: slots=   57004 fit= 99.9% dbl= 0.1% dblint= 0.0% narrow-containers= 96.6% of slots | element: slots=   13655 fit=100.0% dbl= 0.0% dblint= 0.0% narrow-containers= 99.8% of slots
+js3-acorn-wtb             complete     save~ 3.16MB | property: slots=  702923 fit=100.0% dbl= 0.0% dblint= 0.0% narrow-containers= 99.7% of slots | element: slots=  126802 fit=100.0% dbl= 0.0% dblint= 0.0% narrow-containers=100.0% of slots
+js3-chai-wtb              gc_1135_after save~ 0.13MB | property: slots=   30138 fit= 99.8% dbl= 0.2% dblint= 0.0% narrow-containers= 93.6% of slots | element: slots=    4775 fit=100.0% dbl= 0.0% dblint= 0.0% narrow-containers=100.0% of slots
+js3-doxbee-promise        gc_21_after  save~ 0.57MB | property: slots=  137727 fit=100.0% dbl= 0.0% dblint= 0.0% narrow-containers= 98.6% of slots | element: slots=   13556 fit=100.0% dbl= 0.0% dblint= 0.0% narrow-containers=100.0% of slots
+js3-hash-map              complete     save~ 4.35MB | property: slots=  746415 fit=100.0% dbl= 0.0% dblint= 0.0% narrow-containers= 99.7% of slots | element: slots=  397187 fit=100.0% dbl= 0.0% dblint= 0.0% narrow-containers=100.0% of slots
+js3-json-parse-inspector  gc_12_after  save~ 3.23MB | property: slots=  913621 fit= 92.6% dbl= 7.4% dblint= 0.0% narrow-containers= 76.4% of slots | element: slots=  147373 fit=100.0% dbl= 0.0% dblint= 0.0% narrow-containers=100.0% of slots
+js3-source-map-wtb        complete     save~ 1.44MB | property: slots=  289546 fit= 99.9% dbl= 0.1% dblint= 0.0% narrow-containers= 99.3% of slots | element: slots=   89169 fit=100.0% dbl= 0.0% dblint= 0.0% narrow-containers= 99.9% of slots
+js3-web-ssr               gc_76_after  save~ 0.84MB | property: slots=   34208 fit= 99.8% dbl= 0.2% dblint= 0.0% narrow-containers= 94.3% of slots | element: slots=  188771 fit=100.0% dbl= 0.0% dblint= 0.0% narrow-containers=100.0% of slots
+v8-deltablue              gc_74_after  save~ 0.03MB | property: slots=    7576 fit= 99.8% dbl= 0.2% dblint= 0.0% narrow-containers= 97.3% of slots | element: slots=     810 fit=100.0% dbl= 0.0% dblint= 0.0% narrow-containers=100.0% of slots
+v8-earley-boyer           complete     save~ 0.81MB | property: slots=  212772 fit=100.0% dbl= 0.0% dblint= 0.0% narrow-containers= 99.9% of slots | element: slots=     245 fit= 99.6% dbl= 0.4% dblint= 0.0% narrow-containers= 99.6% of slots
+v8-raytrace               gc_2034_after save~ 0.02MB | property: slots=    4791 fit= 93.3% dbl= 6.7% dblint= 0.0% narrow-containers= 85.7% of slots | element: slots=      68 fit=100.0% dbl= 0.0% dblint= 0.0% narrow-containers=100.0% of slots
+v8-splay                  complete     save~ 6.07MB | property: slots= 1640112 fit= 99.3% dbl= 0.7% dblint= 0.0% narrow-containers= 97.1% of slots | element: slots=    8077 fit=  0.9% dbl=99.1% dblint= 0.0% narrow-containers=  0.9% of slots
+
+fw-express                objs=   19486 len<=2 narrow=70.1% wide= 0.0% len3-4=24.5% len5+= 5.4% 16B-record save=0.10MB
+fw-fastify                objs=   19835 len<=2 narrow=66.3% wide= 0.0% len3-4=24.6% len5+= 9.0% 16B-record save=0.10MB
+fw-hono                   objs=   23189 len<=2 narrow=69.8% wide= 0.0% len3-4=21.1% len5+= 9.0% 16B-record save=0.12MB
+js3-acorn-wtb             objs=  279793 len<=2 narrow=78.7% wide= 0.0% len3-4= 1.3% len5+=20.0% 16B-record save=1.68MB
+js3-chai-wtb              objs=   12544 len<=2 narrow=71.9% wide= 0.0% len3-4=22.9% len5+= 5.2% 16B-record save=0.07MB
+js3-doxbee-promise        objs=  130879 len<=2 narrow=97.9% wide= 0.0% len3-4= 1.6% len5+= 0.4% 16B-record save=0.98MB
+js3-hash-map              objs=  190815 len<=2 narrow= 4.2% wide= 0.0% len3-4=95.5% len5+= 0.3% 16B-record save=0.06MB
+js3-json-parse-inspector  objs=  273759 len<=2 narrow=49.2% wide= 1.6% len3-4= 1.4% len5+=47.8% 16B-record save=1.03MB
+js3-source-map-wtb        objs=  101093 len<=2 narrow=54.1% wide= 0.0% len3-4=10.4% len5+=35.5% 16B-record save=0.42MB
+js3-web-ssr               objs=   14734 len<=2 narrow=69.3% wide= 0.0% len3-4=26.1% len5+= 4.6% 16B-record save=0.08MB
+v8-deltablue              objs=    2973 len<=2 narrow=71.3% wide= 0.0% len3-4=13.2% len5+=15.5% 16B-record save=0.02MB
+v8-earley-boyer           objs=  106225 len<=2 narrow=99.4% wide= 0.0% len3-4= 0.5% len5+= 0.1% 16B-record save=0.81MB
+v8-raytrace               objs=    2044 len<=2 narrow=77.2% wide= 0.1% len3-4=17.3% len5+= 5.4% 16B-record save=0.01MB
+v8-splay                  objs= 1171268 len<=2 narrow=97.3% wide= 0.0% len3-4= 2.7% len5+= 0.0% 16B-record save=8.69MB

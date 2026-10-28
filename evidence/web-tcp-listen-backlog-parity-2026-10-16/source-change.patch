@@ -1,0 +1,251 @@
+diff --git a/crates/quench-node-test/node-tests/test-tcp-default-listen-backlog.js b/crates/quench-node-test/node-tests/test-tcp-default-listen-backlog.js
+new file mode 100644
+index 000000000..fff8acd28
+--- /dev/null
++++ b/crates/quench-node-test/node-tests/test-tcp-default-listen-backlog.js
+@@ -0,0 +1,14 @@
++const child=require('child_process');
++if(process.platform!=='linux'||child.spawnSync('strace',['--version']).status!==0)console.log('syscall tracing unavailable');
++else {
++ const fs=require('fs'),os=require('os'),path=require('path');
++ const directory=fs.mkdtempSync(path.join(os.tmpdir(),'listen-backlog-'));
++ try {
++  const trace=path.join(directory,'listen.trace');
++  const source=`const cases=[['net',{port:0,host:'127.0.0.1'}],['net',{port:0}],['net',{port:0,host:'127.0.0.1',reusePort:true}],['http',{port:0,host:'127.0.0.1'}]];function next(index){if(index===cases.length)return;const [module,options]=cases[index];const server=require(module).createServer();server.listen(options,()=>server.close(()=>next(index+1)))}next(0);`;
++  child.execFileSync('strace',['-f','-e','trace=listen','-o',trace,process.execPath,'-e',source],{encoding:'utf8'});
++  const values=[...fs.readFileSync(trace,'utf8').matchAll(/listen\(\d+,\s*(-?\d+)\)/g)].map(match=>Number(match[1]));
++  if(values.length!==4)throw Error('expected four traced TCP listens');
++  console.log(JSON.stringify(values));
++ } finally {fs.rmSync(directory,{recursive:true,force:true})}
++}
+diff --git a/crates/quench-node-test/node-tests/test-tcp-option-listen-backlog.js b/crates/quench-node-test/node-tests/test-tcp-option-listen-backlog.js
+new file mode 100644
+index 000000000..ca1942e98
+--- /dev/null
++++ b/crates/quench-node-test/node-tests/test-tcp-option-listen-backlog.js
+@@ -0,0 +1,14 @@
++const child=require('child_process');
++if(process.platform!=='linux'||child.spawnSync('strace',['--version']).status!==0)console.log('syscall tracing unavailable');
++else {
++ const fs=require('fs'),os=require('os'),path=require('path');
++ const directory=fs.mkdtempSync(path.join(os.tmpdir(),'listen-backlog-'));
++ try {
++  const trace=path.join(directory,'listen.trace');
++  const source=`const values=[undefined,0,7,'7','0',NaN,Infinity,-1,4294967296,true];const cases=['net','http'].flatMap(module=>values.map(backlog=>[module,{port:0,host:'127.0.0.1',backlog}]));function next(index){if(index===cases.length)return;const [module,options]=cases[index];const server=require(module).createServer();server.listen(options,()=>server.close(()=>next(index+1)))}next(0);`;
++  child.execFileSync('strace',['-f','-e','trace=listen','-o',trace,process.execPath,'-e',source],{encoding:'utf8'});
++  const values=[...fs.readFileSync(trace,'utf8').matchAll(/listen\(\d+,\s*(-?\d+)\)/g)].map(match=>Number(match[1]));
++  if(values.length!==20)throw Error('expected twenty traced TCP listens');
++  console.log(JSON.stringify(values));
++ } finally {fs.rmSync(directory,{recursive:true,force:true})}
++}
+diff --git a/crates/quench-node-test/tests/child_entry.rs b/crates/quench-node-test/tests/child_entry.rs
+index d84464fff..60c8cd7cd 100644
+--- a/crates/quench-node-test/tests/child_entry.rs
++++ b/crates/quench-node-test/tests/child_entry.rs
+@@ -9627,3 +9627,13 @@ fn private_brands_follow_initialization_without_branding_the_declaring_prototype
+ fn static_blocks_retain_strict_eval_super_receiver_and_separate_var_contexts() {
+     compare_node_source_with_args(include_str!("../node-tests/test-static-block-context.js"), &[]);
+ }
++
++#[test]
++fn tcp_default_listen_backlog_matches_node_when_syscall_tracing_is_available() {
++    compare_node_source_with_args(include_str!("../node-tests/test-tcp-default-listen-backlog.js"), &[]);
++}
++
++#[test]
++fn tcp_option_listen_backlog_matches_node_truthiness_and_int32_when_tracing_is_available() {
++    compare_node_source_with_args(include_str!("../node-tests/test-tcp-option-listen-backlog.js"), &[]);
++}
+diff --git a/crates/quench-node/src/modules/http_shared_vm/operations.rs b/crates/quench-node/src/modules/http_shared_vm/operations.rs
+index ccf95a12c..25dacf78c 100644
+--- a/crates/quench-node/src/modules/http_shared_vm/operations.rs
++++ b/crates/quench-node/src/modules/http_shared_vm/operations.rs
+@@ -408,6 +408,8 @@ pub(crate) fn server_listen(
+         None => false,
+     };
+     let address = listen_address(context, first, first_is_callback, args.get(1).copied())?;
++    let options = first.filter(|root| context.is_object_rooted(*root).unwrap_or(false) && !first_is_callback);
++    let backlog = net_shared_vm::listen_backlog(context, options)?;
+     let host = context.host_mut().shared_state();
+     {
+         let mut guard = host.borrow_mut();
+@@ -417,7 +419,7 @@ pub(crate) fn server_listen(
+         if server.listener.is_some() {
+             return Err(RootedError::host("shared HTTP server is already listening"));
+         }
+-        let listener = net_shared_vm::listen(&mut guard.tcp, address).map_err(RootedError::host)?;
++        let listener = net_shared_vm::listen_with_backlog(&mut guard.tcp, address, backlog).map_err(RootedError::host)?;
+         let server = guard.http.servers.get_mut(&id).unwrap();
+         server.listener = Some(listener);
+         server.listening_pending = true;
+diff --git a/crates/quench-node/src/modules/net_shared_vm.rs b/crates/quench-node/src/modules/net_shared_vm.rs
+index f6de1386e..b0dd492e4 100644
+--- a/crates/quench-node/src/modules/net_shared_vm.rs
++++ b/crates/quench-node/src/modules/net_shared_vm.rs
+@@ -613,21 +613,22 @@ impl Default for Transport {
+     }
+ }
+ 
+-pub(crate) fn listen(transport: &mut Transport, address: SocketAddr) -> Result<u64, String> {
+-    listen_with_reuse_port(transport, address, false)
++pub(crate) fn listen_with_backlog(
++    transport: &mut Transport,
++    address: SocketAddr,
++    backlog: i32,
++) -> Result<u64, String> {
++    listen_with_reuse_port(transport, address, false, backlog)
+ }
+ 
+ fn listen_with_reuse_port(
+     transport: &mut Transport,
+     address: SocketAddr,
+     reuse_port: bool,
++    backlog: i32,
+ ) -> Result<u64, String> {
+-    let listener = if reuse_port {
+-        bind_reusable_listener(address)
+-    } else {
+-        TcpListener::bind(address)
+-    }
+-    .map_err(|error| error.to_string())?;
++    let listener = bind_listener(address, reuse_port, backlog)
++        .map_err(|error| error.to_string())?;
+     listener
+         .set_nonblocking(true)
+         .map_err(|error| error.to_string())?;
+@@ -639,52 +640,60 @@ fn listen_with_reuse_port(
+ }
+ 
+ // Node's net.Server.listen uses 511 when no backlog was supplied.
+-#[cfg(any(
+-    target_os = "linux",
+-    target_os = "android",
+-    target_os = "freebsd",
+-    target_os = "dragonfly",
+-    target_os = "aix"
+-))]
+ const DEFAULT_TCP_LISTEN_BACKLOG: i32 = 511;
+ 
+-fn bind_reusable_listener(address: SocketAddr) -> std::io::Result<TcpListener> {
+-    #[cfg(any(
+-        target_os = "linux",
+-        target_os = "android",
+-        target_os = "freebsd",
+-        target_os = "dragonfly",
+-        target_os = "aix"
+-    ))]
+-    {
+-        let socket = socket2::Socket::new(
+-            socket2::Domain::for_address(address),
+-            socket2::Type::STREAM,
+-            Some(socket2::Protocol::TCP),
+-        )?;
+-        socket.set_reuse_address(true)?;
+-        #[cfg(target_os = "freebsd")]
+-        socket.set_reuse_port_lb(true)?;
+-        #[cfg(not(target_os = "freebsd"))]
+-        socket.set_reuse_port(true)?;
+-        socket.bind(&address.into())?;
+-        socket.listen(DEFAULT_TCP_LISTEN_BACKLOG)?;
+-        Ok(socket.into())
+-    }
++pub(crate) fn listen_backlog(
++    context: &mut NativeContext<'_, NodeHost>,
++    options: Option<RootId>,
++) -> Result<i32, RootedError> {
++    let Some(options) = options else { return Ok(DEFAULT_TCP_LISTEN_BACKLOG); };
++    let key = context.string_rooted("backlog");
++    let value = context.get_property_rooted(options, key)?;
++    if !context.truthy_rooted(value)? { return Ok(DEFAULT_TCP_LISTEN_BACKLOG); }
++    // TCPWrap::Listen uses ToInt32 after the JavaScript truthy default.
++    // Apply ToNumber first so BigInt and Symbol preserve that conversion's error.
++    let number = context.to_number(value)?;
++    let number = context.number(number);
++    let mask = context.number(super::net_socket_options::SIGNED_INTEGER_MASK);
++    let bits = context.arithmetic_rooted(quench_runtime::NativeArithmetic::BitwiseAnd, number, mask)?;
++    Ok(context.to_number(bits)? as i32)
++}
++
++fn bind_listener(address: SocketAddr, reuse_port: bool, backlog: i32) -> std::io::Result<TcpListener> {
+     #[cfg(not(any(
+-        target_os = "linux",
+-        target_os = "android",
+-        target_os = "freebsd",
+-        target_os = "dragonfly",
+-        target_os = "aix"
++        target_os = "linux", target_os = "android", target_os = "freebsd",
++        target_os = "dragonfly", target_os = "aix"
+     )))]
+-    {
+-        let _ = address;
+-        Err(std::io::Error::new(
++    if reuse_port {
++        return Err(std::io::Error::new(
+             std::io::ErrorKind::Unsupported,
+             "TCP reusePort is unsupported on this platform",
+-        ))
++        ));
++    }
++    let socket = socket2::Socket::new(
++        socket2::Domain::for_address(address),
++        socket2::Type::STREAM,
++        Some(socket2::Protocol::TCP),
++    )?;
++    // libuv enables address reuse for Unix TCP listeners and keeps
++    // SO_REUSEADDR disabled for Windows TCP binds.
++    #[cfg(unix)]
++    socket.set_reuse_address(true)?;
++    if reuse_port {
++        #[cfg(any(
++            target_os = "linux", target_os = "android", target_os = "freebsd",
++            target_os = "dragonfly", target_os = "aix"
++        ))]
++        {
++            #[cfg(target_os = "freebsd")]
++            socket.set_reuse_port_lb(true)?;
++            #[cfg(not(target_os = "freebsd"))]
++            socket.set_reuse_port(true)?;
++        }
+     }
++    socket.bind(&address.into())?;
++    socket.listen(backlog)?;
++    Ok(socket.into())
+ }
+ 
+ pub(crate) fn connect(transport: &mut Transport, host: String, port: u16) -> Result<u64, String> {
+@@ -1846,7 +1855,9 @@ pub(crate) fn server_listen_operation(
+     } else {
+         false
+     };
+-    let listener = listen_with_reuse_port(&mut shared.borrow_mut().tcp, address, reuse_port);
++    let options = args.get(3).copied().filter(|root| context.is_object_rooted(*root).unwrap_or(false));
++    let backlog = listen_backlog(context, options)?;
++    let listener = listen_with_reuse_port(&mut shared.borrow_mut().tcp, address, reuse_port, backlog);
+     // Node tries the IPv6 wildcard first when no host was requested, then
+     // falls back to the IPv4 wildcard if that platform cannot bind IPv6.
+     let listener = match listener {
+@@ -1854,6 +1865,7 @@ pub(crate) fn server_listen_operation(
+             &mut shared.borrow_mut().tcp,
+             SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), port),
+             reuse_port,
++            backlog,
+         ),
+         result => result,
+     }.map_err(RootedError::host)?;
+diff --git a/docs/node-host-contracts.md b/docs/node-host-contracts.md
+index b14f3a76d..c9537c251 100644
+--- a/docs/node-host-contracts.md
++++ b/docs/node-host-contracts.md
+@@ -867,3 +867,12 @@ static blocks and their arrows: eval forbids lexical `arguments`, preserves
+ `this`, and supplies undefined `new.target`. Ordinary nested functions introduce
+ their own context. The existing serialized initializer flag represents this
+ shared context; static blocks keep distinct variable scopes.
++
++TCP listeners share one native socket-creation path and Node's default backlog
++of 511, including ordinary net and HTTP listeners. Unix binds enable address
++reuse as libuv does; unsupported reuse-port requests retain their early error.
++Supplied `options.backlog` uses the JavaScript truthy default followed by shared
++ToNumber/ToInt32 conversion. Linux syscall comparisons cover default, IPv4,
++reuse-port and HTTP listeners plus numeric/string/nonfinite/wrapped options.
++The comparison explicitly reports when syscall tracing is unavailable.
++Positional backlog overloads and DNS-deferred coercion/error timing remain open.

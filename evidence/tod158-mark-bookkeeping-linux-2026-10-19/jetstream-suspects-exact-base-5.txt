@@ -1,0 +1,8 @@
+js3/source-map-wtb               speed x0.984 wins 2/5  RSS    58.7 ->    58.9 MB  wall 30.0s
+js3/espree-wtb                   speed x1.016 wins 3/5  RSS    53.7 ->    53.8 MB  wall 55.9s
+js3/zlib-wasm                    speed x1.055 wins 3/5  RSS    16.5 ->    16.6 MB  wall 4.5s
+js3/doxbee-async                 speed x0.996 wins 2/5  RSS    51.5 ->    51.6 MB  wall 2.8s
+js3/web-ssr                      speed x1.024 wins 3/5  RSS    53.8 ->    53.9 MB  wall 6.8s
+js3/json-stringify-inspector     speed x1.008 wins 3/5  RSS    88.0 ->    88.1 MB  wall 2.1s
+js3/bigint-noble-ed25519         speed x1.096 wins 5/5  RSS    24.7 ->    24.7 MB  wall 30.5s
+== js3       speed geomean x1.025  RSS ratio geomean x1.002  (7 workloads)

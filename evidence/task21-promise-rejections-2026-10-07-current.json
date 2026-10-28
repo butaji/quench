@@ -1,0 +1,124 @@
+{
+  "schema": 1,
+  "task": "21",
+  "kind": "affected_node_promise_rejections_profile",
+  "reviewed_on": "2026-10-07",
+  "source_revision": "14aefd181d46ef3f95f3b78662a659b147036d16",
+  "source_state": "Dirty shared worktree; source, manifest, inventory and binary hashes bind this run to current bytes.",
+  "platform": "macOS-arm64",
+  "runtime_versions": {
+    "rustc": "rustc 1.99.0 (b940084d7 2026-09-28) (Homebrew)",
+    "local_node": "v26.10.0",
+    "node_submodule_revision": "55e4ca33f3a6dfe364bd9558b726576a6d1a2fba"
+  },
+  "selection": {
+    "authority": "crates/quench-node-test/node-tests/parallel.txt",
+    "manifest_sha256": "0209917422a2f0f3fa241d941ec4bc88c9917d5322b69014ab1a662a52e9dfca",
+    "profile": "promise-rejections",
+    "cases": [
+      {
+        "path": "tests/node/test/parallel/test-promise-unhandled-silent.js",
+        "sha256": "2230cd0175b548512f69b35d53ee3f4c0cc0db2cf3e6a02d71f0fd64eb537351",
+        "status": "pass"
+      },
+      {
+        "path": "tests/node/test/parallel/test-promise-unhandled-silent-no-hook.js",
+        "sha256": "83e0a95b89c4c95a68ababc6fdaed67463069dbe938902427c44d9d07451d1aa",
+        "status": "pass"
+      },
+      {
+        "path": "tests/node/test/parallel/test-promise-unhandled-default.js",
+        "sha256": "14f58a8f39c34e7cc86fe36fc811f8409725667a0ff3001a162e4482e20822c4",
+        "status": "pass"
+      },
+      {
+        "path": "tests/node/test/parallel/test-promise-unhandled-throw-handler.js",
+        "sha256": "0097fead088d551eb758ecf06c5567ce97d3e7acec2475b441632b4a49371d9f",
+        "status": "pass"
+      },
+      {
+        "path": "tests/node/test/parallel/test-promise-unhandled-error.js",
+        "sha256": "03ecef3790c2ccf3a9dc7a6c66d7c025832c0f23c3f523703a4e772006098910",
+        "status": "pass"
+      },
+      {
+        "path": "tests/node/test/parallel/test-promise-unhandled-warn-no-hook.js",
+        "sha256": "a0276f994206d3a807c427f0acde4c7f67f35ee0e3c18131b30dbf2ca8d9a833",
+        "status": "pass"
+      },
+      {
+        "path": "tests/node/test/parallel/test-promise-unhandled-warn.js",
+        "sha256": "f7eee847135c4788e459312b85446b76523d4c78c819db8cb3047b080e68e3f4",
+        "status": "pass"
+      },
+      {
+        "path": "tests/node/test/parallel/test-promises-warning-on-unhandled-rejection.js",
+        "sha256": "c7813e8d7b7ac148a72f323907ecd8d4e3d557c39611e26b4f11890a33316647",
+        "status": "pass"
+      },
+      {
+        "path": "tests/node/test/parallel/test-promises-unhandled-symbol-rejections.js",
+        "sha256": "c92bae53025d3f7d1a740ea9bf060d252599f0e39bb58eee66cacd783de995e4",
+        "status": "pass"
+      },
+      {
+        "path": "tests/node/test/parallel/test-promises-unhandled-proxy-rejections.js",
+        "sha256": "4dd5753f5166da68b21670e444ca42a8d3231da77916205f187e6393adae4c89",
+        "status": "pass"
+      }
+    ]
+  },
+  "inventory": {
+    "path": "tasks/node-compat-inventory.json",
+    "sha256": "db6a37da74519e88ec2288ca0cc52b262807f1a29432b945b51a3c9293a4e695",
+    "membership": "Ten profile rows are present but remain pending owner review; this diagnostic profile does not determine membership or qualify Task 22."
+  },
+  "build": {
+    "command": "cargo run --profile iteration -p quench-node-test --bin run-parallel-next -- --profile promise-rejections --timeout-secs 60",
+    "binary": "target/iteration/run-parallel-next",
+    "binary_sha256": "68e7180f323c28344813c03a08ee6382edeb460f632d1c622c0c7f5c144a75a7"
+  },
+  "shared_vm_run": {
+    "command": "target/iteration/run-parallel-next --profile promise-rejections --timeout-secs 60",
+    "result": {
+      "pass": 10,
+      "skip": 0,
+      "fail": 0,
+      "timeout": 0,
+      "crash": 0,
+      "unclassified": 0,
+      "total": 10
+    },
+    "source_note": "Rerun on the current dirty source snapshot after the shared timer-handle liveness change."
+  },
+  "local_node_oracle": {
+    "binary": "/opt/homebrew/bin/node",
+    "version": "v26.10.0",
+    "status": "pass",
+    "cases": 10,
+    "fixture_flags": "Each original // Flags: header was parsed and passed to Node argv.",
+    "loader": "A temporary CommonJS wrapper used Module._compile with each unchanged fixture absolute path because the workspace package.json marks .js as ESM; no repository files were created for the oracle run.",
+    "result": "All ten selected fixtures exited 0."
+  },
+  "source_sha256": {
+    "crates/quench-node-test/src/bin/run-parallel-next.rs": "7b4fa402270d313ecdf9286c00719abd63b1f19f3e5fa578c9e08de7cc845e05",
+    "crates/quench-node-test/src/case_process.rs": "09f8cf7f354c577269f81af92162f99acba63c0cb8f298a92a66791528395fac",
+    "crates/quench-node-test/src/parallel_profile.rs": "eca906ff715e206c588be2ed7a2c1437d457753d2cb82fa5add3f18788dfac1e",
+    "crates/quench-node-test/src/reader.rs": "e2fbbbd29b503aa2c7eede923fe2e22ff4a0ba87c9d4d7df80071828c8b4da4b",
+    "crates/quench-node/src/host/shared_vm.rs": "034e1d2a46a6a92426f814f91c7aa091d35581769f4d6cc1bb92b8d2e2098bb4",
+    "crates/quench-node/src/modules/event_loop.rs": "1cac451e8c17aa5260af3a86eaebaa8810f0155d25b6a2d6937107aed67bcc55",
+    "crates/quench-node/src/modules/process.rs": "9972324de7032f49348031dc9733992d1a1dca4726e6fea56c1709f640992c97",
+    "crates/quench-node/src/modules/process/shared_vm.rs": "5e7849a30c6eca57313523ab80632272cb334503bb0c14e086b0e0f66febe302",
+    "crates/quench-runtime-next/src/api.rs": "e0b4e06a8f776c9083df81a10d542fa9ac808783935f085a0986c7c672512fbf",
+    "crates/quench-runtime-next/src/api_embedding.rs": "396185b69635b1c52004bd5e56a0ab0b1ba95b26db2a8b7c71781b1c42fb93e6",
+    "crates/quench-runtime-next/src/vm/embedding.rs": "792e8eb7beae74dbcf75318a97d624967ebea00587c9446c88c2ec921f7a6b6f",
+    "crates/quench-runtime-next/src/vm/gc.rs": "4c7a648ee4415748a132525134277524d449259a55944644a3bcc7e9d19ce5c1",
+    "crates/quench-runtime-next/src/vm/promise.rs": "40078ad69892d0a5a42547f3943326c5fa3f6127579e6e9e436878cd17d2a606",
+    "crates/quench-runtime-next/src/vm/promise_jobs.rs": "9cb3c6e7ebd3c1e78292d560c6988b97e10e2d102b706911bd1099ebfcaf3a54",
+    "crates/quench-runtime-next/src/vm/promise_state.rs": "1807799996a20bd7f716358f875ea8061c38cf4a4c3bdd3062b164d42b4fee95",
+    "crates/quench-node/src/host.rs": "d8c09bbfff9f711fb6f556aa450a6ab2b6cf57df41bac2554bc9372791221c57",
+    "crates/quench-node/src/modules/dns/shared_vm.rs": "03fe6882621abde28294e2cd4b3f1f7d9050fb3aa319e1a3628328a1f34fd35e",
+    "crates/quench-node/src/modules/timers/shared_vm.rs": "cd00806198fd61df1090ffd6395180b23400414624c942d41fd640966afc171c"
+  },
+  "qualification_limit": "Focused upstream behavior evidence only. It does not classify membership, qualify the full implemented-Node inventory, or close Stage A."
+}

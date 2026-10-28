@@ -1,0 +1,26 @@
+{
+  "clone_source": "9095ca60e1a0fb9e5ab466e1f2e16416cd02f5c3",
+  "filesystem_source": "3e503bc169b0e65eef3296ec5bd7f5a5187f638e",
+  "parent": "5858b2949bbc1913b62ebea0feb8e36a4d89edee",
+  "oracle": "Node v26.12.0",
+  "node_source_archive_sha256": "ce59f9038dda0e637656fb1c36cf52c07c637922fd81d419dbba2ec129afbd35",
+  "qualification_scope": "Frozen clone/filesystem milestone, before subsequent transfer-marker changes; not total Node parity or a performance win",
+  "binaries": {
+    "baseline": {
+      "path": "work/quench-http-blockers-integrated",
+      "sha256": "700cb9c953c1ebbbefb0931d1cc48421d32f29399b7f9d13f0f59bd1f4b39352"
+    },
+    "clone": {
+      "path": "work/quench-clone-repaired",
+      "sha256": "091d70f55856706902a1675ad35674494872d06f6ef08b57514def3b34f40ce9"
+    },
+    "filesystem": {
+      "path": "work/quench-clone-fs-repaired",
+      "sha256": "ccc606cf5b41a1318a4655e59b3908905760add068d4a5ac62b1e89bd450fe22"
+    },
+    "node": {
+      "path": "work/node-v26.12.0-linux-x64/bin/node",
+      "sha256": "caa24debe02770c92a70677e2a62ca98890150e7ac1c17bcfe31bcc98cc89943"
+    }
+  }
+}

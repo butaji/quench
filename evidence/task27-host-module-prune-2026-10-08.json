@@ -1,0 +1,99 @@
+{
+  "schema": 1,
+  "task": "27",
+  "kind": "host_and_module_prune",
+  "recorded_on": "2026-10-08",
+  "source": {
+    "revision": "8e954be2f7742da79fb4a64babd184cb519c55e7",
+    "worktree_dirty": true,
+    "platform": "Darwin arm64",
+    "node": "v26.10.0",
+    "rustc": "rustc 1.99.0 (b940084d7 2026-09-28) (Homebrew)",
+    "files_sha256": {
+      "crates/quench-node/src/host.rs": "cbd46bb010e7ac4ae341ce40e0a52840cefa7331704aff9624a22e79ff2c7beb",
+      "crates/quench-node/src/dispatch.rs": "b623442c002443d0765dd0181be203976d462d5d8f6a9bd195bf8f1a4b85f84e",
+      "crates/quench-node/src/modules/mod.rs": "db04ed9682a11ec0c7a75c8f488cfd6391a0d92bf80fbe8d6367ec58dbb55eeb",
+      "crates/quench-node/src/modules/require.rs": "b36484a57a6798f8eb9eed09f40aad44fd116e55461dff176cacdcf761391bd7",
+      "crates/quench-node/src/registry.rs": "4fa2ed32bcf2b5c03bf6d217f3fc09584c9aa2b1abb199dace88f6517171b555",
+      "crates/quench-node/src/modules/repl.rs@base": "b9a60c7d7b98a0c5ae7bde2d76b87dca39e7013c42027a439cdb99a884a2bc6e",
+      "crates/quench-node/src/modules/wasi.rs@base": "0efaf6628ca74a4d6026cba8f0e1b0b88e98f9428a1402d0f5aa6aafedcd7504",
+      "crates/quench-node-test/node-tests/test-repl.js": "bfa4184285bda0acb5bb607af6321849d1020cf5ae203a669f26f4faa7800426",
+      "tests/node-compat/stage-2726/wasi-rust-surface.js": "836504c0fdc68a6650bf09989749df835e17d898673d39d515b8a76dc84f8f62",
+      "tasks/node-compat-inventory.json": "668c4302964d57f9e693e08f9225a9692072c435468c63f721627a45b3e37702",
+      "target/iteration/quench-node": "99cc258ff8430f64184233e350fc3867ec9478d382bf555621fe466c3467ab06",
+      "target/iteration/run-parallel": "b6a9e3c0dd2a4c751a89ae4e53ff048e7a54f57ba9ae45f6739298d618c8c075",
+      "target/iteration/task27-host-prune-2026-10-08/framework-core.stdout": "2f2d921dcfce7bd620f630e927555625fcd4e20465e3fc2110af3973bf050cc9",
+      "target/iteration/task27-host-prune-2026-10-08/framework-core.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "target/iteration/task27-host-prune-2026-10-08/apps/express-node.stdout": "6a8388b87cdb9dc7618e136828b626c2213b937ea1645882ef0c33bedf95b54d",
+      "target/iteration/task27-host-prune-2026-10-08/apps/express-quench.stdout": "6a8388b87cdb9dc7618e136828b626c2213b937ea1645882ef0c33bedf95b54d",
+      "target/iteration/task27-host-prune-2026-10-08/apps/koa-node.stdout": "6a8388b87cdb9dc7618e136828b626c2213b937ea1645882ef0c33bedf95b54d",
+      "target/iteration/task27-host-prune-2026-10-08/apps/koa-quench.stdout": "6a8388b87cdb9dc7618e136828b626c2213b937ea1645882ef0c33bedf95b54d",
+      "target/iteration/task27-host-prune-2026-10-08/apps/fastify-node.stdout": "6a8388b87cdb9dc7618e136828b626c2213b937ea1645882ef0c33bedf95b54d",
+      "target/iteration/task27-host-prune-2026-10-08/apps/fastify-quench.stdout": "6a8388b87cdb9dc7618e136828b626c2213b937ea1645882ef0c33bedf95b54d"
+    }
+  },
+  "change": {
+    "removed_node_modules": [
+      "repl",
+      "wasi"
+    ],
+    "removed_files": [
+      "crates/quench-node/src/modules/repl.rs",
+      "crates/quench-node/src/modules/wasi.rs"
+    ],
+    "removed_legacy_host_route": "Deleted impl quench_runtime::vm::Host for NodeHost and its private dispatch/construct wrappers. NodeHost retains only quench_runtime_next::Host in host/shared_vm.rs.",
+    "remaining_legacy_boundary": "Legacy dispatch lookup tables, adapters, and the direct quench-runtime dependency remain; task 27 is not complete.",
+    "inventory_membership_changed": false,
+    "preserved_inventory_identities": [
+      "crates/quench-node-test/node-tests/test-repl.js",
+      "tests/node-compat/stage-2726/wasi-rust-surface.js"
+    ],
+    "removed_runtime_dependency": false
+  },
+  "verification": {
+    "commands": [
+      {
+        "command": "cargo check --quiet -p quench-node -p quench-node-test",
+        "exit_code": 0,
+        "result": "passed; only the two existing deprecated Atomic::fetch_update warnings in quench-runtime"
+      },
+      {
+        "command": "cargo build --profile iteration -p quench-node --bin quench-node -p quench-node-test --bin run-parallel",
+        "exit_code": 0,
+        "result": "passed"
+      },
+      {
+        "command": "target/iteration/run-parallel --profile framework-core --timeout-secs 60",
+        "exit_code": 0,
+        "result": {
+          "pass": 43,
+          "skip": 0,
+          "fail": 0,
+          "timeout": 0,
+          "crash": 0,
+          "unclassified": 0,
+          "total": 43
+        },
+        "stdout_artifact": "target/iteration/task27-host-prune-2026-10-08/framework-core.stdout",
+        "stderr_artifact": "target/iteration/task27-host-prune-2026-10-08/framework-core.stderr"
+      },
+      {
+        "command": "From tests/frameworks, compare node driver.cjs and ../../target/iteration/quench-node driver.cjs for scenarios/{express,koa,fastify}.cjs using exact exit status, stdout, and stderr",
+        "exit_code": 0,
+        "result": "All six processes exited 0. Each Quench output matched local Node byte-for-byte; stdout SHA-256 was 6a8388b87cdb9dc7618e136828b626c2213b937ea1645882ef0c33bedf95b54d and stderr was empty.",
+        "artifacts_directory": "target/iteration/task27-host-prune-2026-10-08/apps"
+      },
+      {
+        "command": "rustfmt --edition 2021 --check --config skip_children=true on changed Rust files; node tools/check-task-coherence.mjs; git diff --check",
+        "exit_code": 0,
+        "result": "passed; task queue has 80 tasks, task 27 is the only active task, and 43 framework-core fixtures plus three package scenarios remain selected"
+      },
+      {
+        "command": "Search Rust sources for modules::repl/modules::wasi and for NodeHost Host implementations",
+        "exit_code": 0,
+        "result": "No removed Node module routes remain. NodeHost implements only quench_runtime_next::Host; the legacy Host trait implementation is absent."
+      }
+    ],
+    "unit_tests": "not run"
+  }
+}

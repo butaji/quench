@@ -1,0 +1,15 @@
+{
+  "base_commit": "0234d909cfa82e246eedfa1087bb13a94e80ab7a",
+  "candidate_source_commit": "ded7d0b4c1a5bb4a3971c77b7ef86fff3ce28ebf",
+  "candidate_dirty": false,
+  "host": "Linux 3e67e86749eb 6.18.44 #1 SMP Sat Sep 26 20:02:31 UTC 2026 x86_64 GNU/Linux",
+  "cpu_max": "400000 100000",
+  "memory_max": "17179869184",
+  "profile": "iteration; opt-level=1, lto=false, codegen-units=256; LLVM align-all-functions=6; static OpenSSL ssl:crypto:z; distinct Cargo target directories",
+  "ordering_linker_available": false,
+  "executables": {
+    "/workspace/scratch/npm300-clock-base": "a2fb35294714c229654924531ea025a613dcb78fb2aebf7344b1feeaab6d42b7",
+    "/workspace/scratch/npm300-clock-candidate": "273804599ef71f152bb9d646df4582b32f79bb1d51c4ccad1371f31ef76c0ea5",
+    "/workspace/shared/node-v26.11.1-linux-x64/bin/node": "5a7b8a3cf5ccb57d297519754fd73238f64cf560afd0ef19a2f9bf7384cbb657"
+  }
+}

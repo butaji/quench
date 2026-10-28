@@ -1,0 +1,59 @@
+{
+  "experiment": "EarleyBoyer builtin Function.prototype[@@hasInstance] dispatch bypass",
+  "fixture_sha256": "aa379c1d54f5d13de32ebf2b50729d0cbc64bb23de5e524256c7b2270213cc0b",
+  "baseline_sha256": "e46537823eb25a37cf5646af793e6873ceaeff1069fb878a96813cae3a86ab32",
+  "candidate_sha256": "f42033212a5458e95145a00f99cb447bef3f5282acfd13451d5523f7531e9e62",
+  "pairs": [
+    {
+      "pair": 1,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "valid": true,
+      "output_equal": true,
+      "baseline_score": 421.0,
+      "candidate_score": 407.0,
+      "score_delta": -14.0,
+      "baseline_rss_bytes": 41775104,
+      "candidate_rss_bytes": 48001024,
+      "rss_delta_bytes": 6225920,
+      "baseline_stdout": "__quenchBenchResult: EarleyBoyer: 421\n----\nScore: 421\n",
+      "candidate_stdout": "__quenchBenchResult: EarleyBoyer: 407\n----\nScore: 407\n"
+    },
+    {
+      "pair": 2,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "valid": true,
+      "output_equal": true,
+      "baseline_score": 432.0,
+      "candidate_score": 409.0,
+      "score_delta": -23.0,
+      "baseline_rss_bytes": 41496576,
+      "candidate_rss_bytes": 47648768,
+      "rss_delta_bytes": 6152192,
+      "baseline_stdout": "__quenchBenchResult: EarleyBoyer: 432\n----\nScore: 432\n",
+      "candidate_stdout": "__quenchBenchResult: EarleyBoyer: 409\n----\nScore: 409\n"
+    },
+    {
+      "pair": 3,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "valid": true,
+      "output_equal": true,
+      "baseline_score": 428.0,
+      "candidate_score": 393.0,
+      "score_delta": -35.0,
+      "baseline_rss_bytes": 41644032,
+      "candidate_rss_bytes": 47693824,
+      "rss_delta_bytes": 6049792,
+      "baseline_stdout": "__quenchBenchResult: EarleyBoyer: 428\n----\nScore: 428\n",
+      "candidate_stdout": "__quenchBenchResult: EarleyBoyer: 393\n----\nScore: 393\n"
+    }
+  ]
+}

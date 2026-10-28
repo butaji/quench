@@ -1,0 +1,38 @@
+{
+  "source": "383fcec1750a9eca4673853b2137d3b746c246d3",
+  "equal": false,
+  "observations": {
+    "node": {
+      "complete": true,
+      "out": [
+        [
+          "before",
+          null
+        ],
+        [
+          "after",
+          7,
+          9,
+          [
+            "\u0000quench:private:/workspace/scratch/npm-private-brand-draft/string-key-isolation.cjs:0:value"
+          ]
+        ]
+      ]
+    },
+    "quench": {
+      "complete": true,
+      "out": [
+        [
+          "before",
+          7
+        ],
+        [
+          "after",
+          9,
+          9,
+          []
+        ]
+      ]
+    }
+  }
+}

@@ -1,0 +1,309 @@
+{
+  "schema": 1,
+  "tasks": [
+    "13",
+    "20"
+  ],
+  "baseline_source_head": "39177c0f6509ba144f7d19a68d9b0cab6f64123d",
+  "qualification": "Isolated Array construction changes on the committed shared-VM baseline; unrelated pending roots, descriptors, Node host and Wasm changes excluded and preserved.",
+  "source_sha256": {
+    "crates/quench-runtime-next/src/vm/array.rs": "60f4dd01e53e71c245b38a1010ffa705331bf986b31394a3a918a07ebe1963b9",
+    "crates/quench-runtime-next/src/vm/array_indexed.rs": "1c397a21d65ce7b7c321e34d461154a843dab3096522365b0b80ad0863621618",
+    "crates/quench-runtime-next/src/vm/array_modern.rs": "b395ca811a3c11afbbcde9f705ab2238624200991ed1eee6deba1ff6e5da63d2"
+  },
+  "suite_pin": "6eec1ac9ee144dafd8f344d73a21f36bfc9f6755",
+  "suite_clean": true,
+  "representation": {
+    "intrinsic": "Default Array allocation derives prototypes from the existing current-realm intrinsic table; it never reads mutable global Array or invents another constructor authority.",
+    "length": "Array.from uses shared LengthOfArrayLike. Only ArrayCreate owns the ordinary Array length bound; custom species observe the converted length. Callback validation precedes map species construction.",
+    "final_set": "Array.from array-like and Array.prototype.slice use the existing array-like length Set after indexed definitions. TypedArray.from retains its different contract.",
+    "reduction": "Removed global/prototype reads, duplicated length conversion and premature map/slice length checks. Existing operations own coercion, property effects and abrupt completion."
+  },
+  "upstream_node_source": {
+    "tests/node/deps/v8/src/builtins/array-from.tq": "d30c941700d7477b0efdf1ec4c6efd8eba9705a381960859e8fb48af1b18bb73",
+    "tests/node/deps/v8/src/builtins/array-map.tq": "e7aba10004c7dc0444d2fcaff8624462fd301351982c80c01399e8348c517b38",
+    "tests/node/deps/v8/src/builtins/array-slice.tq": "c3421e47bcc18a639464971d14329d93c6f8caf231f3f780a58f26073adefd4d"
+  },
+  "build": {
+    "profile": "release; correctness only, no speed or RSS claim",
+    "log": "target/iteration/task13-array-construction/final-build.log",
+    "before_binary_sha256": "91912a142d258185a035d956798f971eba9fcc60e0f5e0fb2a4d24f51b55a080",
+    "after_binary_sha256": "6be2c1b558d2c2609482e2f00adcf43f5d41538fcddd149ac433358c7f8c021a"
+  },
+  "affected_test262": {
+    "full_suite_run": false,
+    "jobs": 2,
+    "timeout_ms": 10000,
+    "distinct_cases": 4649,
+    "passed_before": 4600,
+    "passed_after": 4604,
+    "gained": [
+      "staging/sm/Array/change-array-by-copy-cross-compartment-create.js",
+      "staging/sm/Array/from_constructor.js",
+      "staging/sm/Array/species.js",
+      "staging/sm/Array/to-length.js"
+    ],
+    "regressions": 0,
+    "scopes": [
+      {
+        "scope": "array",
+        "total": 3081,
+        "passed_before": 3081,
+        "passed_after": 3081,
+        "regressions": 0,
+        "reports": {
+          "target/iteration/task13-array-construction/before-array.json": "77174f3645c6440b8e1b77f44c6d6ac87db3d120d2f54507d9dec584b0fcef97",
+          "target/iteration/task13-array-construction/after-array.json": "970009c1436e6eb16c04892f6e1ed52ca1db5a38cd311f79562893286b948340",
+          "target/iteration/task13-array-construction/compare-array.log": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+        }
+      },
+      {
+        "scope": "array-iterator",
+        "total": 27,
+        "passed_before": 27,
+        "passed_after": 27,
+        "regressions": 0,
+        "reports": {
+          "target/iteration/task13-array-construction/before-array-iterator.json": "f4a623776e54680950bd69f0acbe191c70a68d4c4582da870b1fb872a8a40234",
+          "target/iteration/task13-array-construction/after-array-iterator.json": "512eb805b88e1e7101a96bd61466de012ea74750618e5a4975576feddfa401a3",
+          "target/iteration/task13-array-construction/compare-array-iterator.log": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+        }
+      },
+      {
+        "scope": "typed-from",
+        "total": 59,
+        "passed_before": 59,
+        "passed_after": 59,
+        "regressions": 0,
+        "reports": {
+          "target/iteration/task13-array-construction/before-typed-from.json": "e92629bc52bb318f65ce398743e28f68190bfce9693f050b2acbe358135ce7f2",
+          "target/iteration/task13-array-construction/after-typed-from.json": "34694cc84fe4fe01fb540058b764ae6d2823b9c54e62f3ed4ef8489d31696720",
+          "target/iteration/task13-array-construction/compare-typed-from.log": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+        }
+      },
+      {
+        "scope": "staged-array",
+        "total": 90,
+        "passed_before": 85,
+        "passed_after": 89,
+        "regressions": 0,
+        "reports": {
+          "target/iteration/task13-array-construction/before-staged-array.json": "458e5806dadb5d16b117dd9e441031b3e9f3870e1c8a26356181782ead165d98",
+          "target/iteration/task13-array-construction/after-staged-array.json": "55edb92df92c060854f9d25169193fb005bb44e88d45e83e90438095c2a699d8",
+          "target/iteration/task13-array-construction/compare-staged-array.log": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+        }
+      },
+      {
+        "scope": "staging",
+        "total": 1482,
+        "passed_before": 1433,
+        "passed_after": 1437,
+        "regressions": 0,
+        "reports": {
+          "target/iteration/task20-current-staging/current.json": "2980f0004e3b485b336b228cbca5ab9901c00965e9075f06e4ec61910ed234cb",
+          "target/iteration/task13-array-construction/after-staging.json": "9be8a2eef571eddfbdf238240b03f767b55ca76389743cc70cadb818e600c9ed",
+          "target/iteration/task13-array-construction/compare-staging.log": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+        }
+      }
+    ],
+    "remaining_non_pass": [
+      {
+        "path": "staging/sm/Array/length-01.js",
+        "outcome": "failed"
+      },
+      {
+        "path": "staging/explicit-resource-management/async-disposal-from-sync-method-returning-a-promise.js",
+        "outcome": "failed"
+      },
+      {
+        "path": "staging/sm/ArrayBuffer/slice-species.js",
+        "outcome": "failed"
+      },
+      {
+        "path": "staging/sm/Date/dst-offset-caching-1-of-8.js",
+        "outcome": "timed_out"
+      },
+      {
+        "path": "staging/sm/Date/dst-offset-caching-2-of-8.js",
+        "outcome": "timed_out"
+      },
+      {
+        "path": "staging/sm/Date/dst-offset-caching-3-of-8.js",
+        "outcome": "timed_out"
+      },
+      {
+        "path": "staging/sm/Date/dst-offset-caching-4-of-8.js",
+        "outcome": "timed_out"
+      },
+      {
+        "path": "staging/sm/Date/dst-offset-caching-5-of-8.js",
+        "outcome": "timed_out"
+      },
+      {
+        "path": "staging/sm/Date/dst-offset-caching-6-of-8.js",
+        "outcome": "timed_out"
+      },
+      {
+        "path": "staging/sm/Date/dst-offset-caching-7-of-8.js",
+        "outcome": "timed_out"
+      },
+      {
+        "path": "staging/sm/Date/dst-offset-caching-8-of-8.js",
+        "outcome": "timed_out"
+      },
+      {
+        "path": "staging/sm/Error/constructor-ordering.js",
+        "outcome": "failed"
+      },
+      {
+        "path": "staging/sm/Function/bound-length-and-name.js",
+        "outcome": "failed"
+      },
+      {
+        "path": "staging/sm/Function/function-caller-restrictions.js",
+        "outcome": "failed"
+      },
+      {
+        "path": "staging/sm/Function/throw-type-error.js",
+        "outcome": "failed"
+      },
+      {
+        "path": "staging/sm/Math/atanh-approx.js",
+        "outcome": "failed"
+      },
+      {
+        "path": "staging/sm/PrivateName/modify-non-extensible.js",
+        "outcome": "failed"
+      },
+      {
+        "path": "staging/sm/String/replace-math.js",
+        "outcome": "timed_out"
+      },
+      {
+        "path": "staging/sm/TypedArray/constructor-ArrayBuffer-species-wrap.js",
+        "outcome": "failed"
+      },
+      {
+        "path": "staging/sm/TypedArray/constructor-buffer-sequence.js",
+        "outcome": "failed"
+      },
+      {
+        "path": "staging/sm/TypedArray/iterator-next-with-detached.js",
+        "outcome": "failed"
+      },
+      {
+        "path": "staging/sm/TypedArray/seal-and-freeze.js",
+        "outcome": "failed"
+      },
+      {
+        "path": "staging/sm/TypedArray/set-detached.js",
+        "outcome": "failed"
+      },
+      {
+        "path": "staging/sm/TypedArray/set-wrapped.js",
+        "outcome": "failed"
+      },
+      {
+        "path": "staging/sm/TypedArray/slice-bitwise-same.js",
+        "outcome": "failed"
+      },
+      {
+        "path": "staging/sm/TypedArray/test-integrity-level.js",
+        "outcome": "failed"
+      },
+      {
+        "path": "staging/sm/class/boundFunctionSubclassing.js",
+        "outcome": "failed"
+      },
+      {
+        "path": "staging/sm/extensions/arguments-property-access-in-function.js",
+        "outcome": "failed"
+      },
+      {
+        "path": "staging/sm/extensions/censor-strict-caller.js",
+        "outcome": "failed"
+      },
+      {
+        "path": "staging/sm/extensions/function-caller-skips-eval-frames.js",
+        "outcome": "failed"
+      },
+      {
+        "path": "staging/sm/extensions/function-properties.js",
+        "outcome": "failed"
+      },
+      {
+        "path": "staging/sm/extensions/newer-type-functions-caller-arguments.js",
+        "outcome": "failed"
+      },
+      {
+        "path": "staging/sm/lexical-environment/block-scoped-functions-annex-b-arguments.js",
+        "outcome": "failed"
+      },
+      {
+        "path": "staging/sm/object/toPrimitive.js",
+        "outcome": "failed"
+      },
+      {
+        "path": "staging/sm/regress/regress-1507322-deep-weakmap.js",
+        "outcome": "timed_out"
+      },
+      {
+        "path": "staging/sm/regress/regress-571014.js",
+        "outcome": "failed"
+      },
+      {
+        "path": "staging/sm/regress/regress-577648-1.js",
+        "outcome": "failed"
+      },
+      {
+        "path": "staging/sm/regress/regress-577648-2.js",
+        "outcome": "failed"
+      },
+      {
+        "path": "staging/sm/regress/regress-584355.js",
+        "outcome": "failed"
+      },
+      {
+        "path": "staging/sm/regress/regress-586482-1.js",
+        "outcome": "failed"
+      },
+      {
+        "path": "staging/sm/regress/regress-586482-2.js",
+        "outcome": "failed"
+      },
+      {
+        "path": "staging/sm/regress/regress-586482-3.js",
+        "outcome": "failed"
+      },
+      {
+        "path": "staging/sm/regress/regress-586482-4.js",
+        "outcome": "failed"
+      },
+      {
+        "path": "staging/sm/regress/regress-602621.js",
+        "outcome": "failed"
+      },
+      {
+        "path": "staging/source-phase-imports/import-source-source-text-module.js",
+        "outcome": "failed"
+      }
+    ]
+  },
+  "node_controls": {
+    "oracle": "v26.10.0",
+    "controls": 25,
+    "observations_per_build": 50,
+    "before_matches": 10,
+    "after_matches": 50,
+    "regressions": 0,
+    "scope": "25 sources in normal/generic modes: constructor arguments, length coercion/order, mutable globals, intrinsic prototypes, species, Proxy definition/final Set effects, thrown identity, rejection and non-writable lengths.",
+    "report": "target/iteration/task13-array-construction/node-controls.json",
+    "sha256": "ff53698f8334a0f99144cd3ba91b9bfebe1c27644fbc9e2f32dcd47a25cbc35d"
+  },
+  "units": "No unit tests added that duplicate suite cases. Existing production suites and matched oracle effects qualify these semantic changes.",
+  "limits": [
+    "Array/length-01.js remains a concrete shared-property authority gap.",
+    "Stage 114 retains 45 non-pass cases on the final candidate; exact classifications remain in the saved report. No fixture, harness, pin, inventory or expectation changed.",
+    "Complete Test262, Wasm, implemented-only Node compatibility, production legacy removal and Stage A remain open."
+  ]
+}

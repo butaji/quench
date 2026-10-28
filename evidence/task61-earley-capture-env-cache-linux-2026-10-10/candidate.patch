@@ -1,0 +1,208 @@
+diff --git a/crates/quench-runtime/src/vm.rs b/crates/quench-runtime/src/vm.rs
+index bf49b350f..d4ca8329c 100644
+--- a/crates/quench-runtime/src/vm.rs
++++ b/crates/quench-runtime/src/vm.rs
+@@ -173,6 +173,9 @@ pub(super) struct Frame {
+     // published for GC roots or saved as the continuation after a call.
+     binding_site_pc: Option<u32>,
+     env: Value,
++    // Cached lexical parent for depth-zero capture accesses. DELETED means
++    // capture lookup has not proved that the path contains no skipped layers.
++    capture_base: Value,
+     this: Value,
+     locals: Vec<Value>,
+     dynamic_bindings: Vec<(Atom, Value)>,
+diff --git a/crates/quench-runtime/src/vm/activation.rs b/crates/quench-runtime/src/vm/activation.rs
+index 0d6305e55..14cb5ec62 100644
+--- a/crates/quench-runtime/src/vm/activation.rs
++++ b/crates/quench-runtime/src/vm/activation.rs
+@@ -169,6 +169,7 @@ impl Continuation {
+             pc: self.pc,
+             binding_site_pc: None,
+             env: self.env,
++            capture_base: Value::DELETED,
+             this: self.this,
+             locals: self.locals,
+             dynamic_bindings: self.dynamic_bindings,
+diff --git a/crates/quench-runtime/src/vm/dispatch.rs b/crates/quench-runtime/src/vm/dispatch.rs
+index 46ba9a381..cec309855 100644
+--- a/crates/quench-runtime/src/vm/dispatch.rs
++++ b/crates/quench-runtime/src/vm/dispatch.rs
+@@ -1712,6 +1712,7 @@ impl<H: Host> Vm<H> {
+                     frame.dynamic_bindings.clear();
+                     frame.active_iterators.clear();
+                     frame.env = Value::NULL;
++                    frame.capture_base = Value::DELETED;
+                     frame.this = Value::UNDEFINED;
+                     frame.captured = false;
+                 }
+diff --git a/crates/quench-runtime/src/vm/dispatch_frame.rs b/crates/quench-runtime/src/vm/dispatch_frame.rs
+index 6f76c2c42..78892523a 100644
+--- a/crates/quench-runtime/src/vm/dispatch_frame.rs
++++ b/crates/quench-runtime/src/vm/dispatch_frame.rs
+@@ -181,6 +181,7 @@ impl<H: Host> Vm<H> {
+             pc: 0,
+             binding_site_pc: None,
+             env: Value::NULL,
++            capture_base: Value::DELETED,
+             this: Value::UNDEFINED,
+             locals: vec![],
+             dynamic_bindings: vec![],
+@@ -229,6 +230,7 @@ impl<H: Host> Vm<H> {
+         frame.pc = 0;
+         frame.binding_site_pc = None;
+         frame.env = parent;
++        frame.capture_base = Value::DELETED;
+         let arrow = function.is_arrow;
+         let derived = function.derived_constructor;
+         let this = if derived {
+@@ -389,6 +391,7 @@ impl<H: Host> Vm<H> {
+                 pc: 0,
+                 binding_site_pc: None,
+                 env: Value::NULL,
++                capture_base: Value::DELETED,
+                 this: Value::UNDEFINED,
+                 locals: vec![],
+                 dynamic_bindings: vec![],
+@@ -440,6 +443,7 @@ impl<H: Host> Vm<H> {
+         frame.pc = 0;
+         frame.binding_site_pc = None;
+         frame.env = parent;
++        frame.capture_base = Value::DELETED;
+         let arrow = function.is_arrow;
+         let derived = function.derived_constructor;
+         let this = if derived {
+@@ -756,6 +760,7 @@ impl<H: Host> Vm<H> {
+         frame.context = CallContext::Internal;
+         frame.original_arguments.clear();
+         frame.with_objects = Vec::new();
++        frame.capture_base = Value::DELETED;
+         const RETAINED_VALUES: usize = 256;
+         if frame.original_arguments.capacity() > RETAINED_VALUES {
+             frame.original_arguments.shrink_to(RETAINED_VALUES);
+diff --git a/crates/quench-runtime/src/vm/environment.rs b/crates/quench-runtime/src/vm/environment.rs
+index 1a94b8297..864325b06 100644
+--- a/crates/quench-runtime/src/vm/environment.rs
++++ b/crates/quench-runtime/src/vm/environment.rs
+@@ -1323,6 +1323,11 @@ impl<H: Host> Vm<H> {
+     #[inline(always)]
+     pub(super) fn capture_env(&self, frame: usize, depth: u16) -> Option<Value> {
+         let frame = &self.frames[frame];
++        Self::capture_env_uncached(self, frame, depth)
++    }
++
++    #[inline(always)]
++    fn capture_env_uncached(&self, frame: &Frame, depth: u16) -> Option<Value> {
+         let mut env = if frame.captured {
+             match self.heap.get(frame.env)? {
+                 Cell::Environment { parent, .. } => *parent,
+@@ -1342,6 +1347,31 @@ impl<H: Host> Vm<H> {
+         Some(env)
+     }
+ 
++    #[inline(always)]
++    fn capture_env_for_capture(&mut self, frame: usize, depth: u16) -> Option<Value> {
++        if depth == 0 && self.frames[frame].capture_base != Value::DELETED {
++            return Some(self.frames[frame].capture_base);
++        }
++        let resolved = Self::capture_env_uncached(self, &self.frames[frame], depth)?;
++        if depth == 0 && self.frames[frame].capture_base == Value::DELETED {
++            let frame_ref = &self.frames[frame];
++            let start = if frame_ref.captured {
++                match self.heap.get(frame_ref.env)? {
++                    Cell::Environment { parent, .. } => *parent,
++                    _ => return None,
++                }
++            } else {
++                frame_ref.env
++            };
++            // Skipped with/lexical wrappers can be sensitive to dynamic scope.
++            // Cache only when the generic walk proved that no wrapper was skipped.
++            if resolved == start {
++                self.frames[frame].capture_base = resolved;
++            }
++        }
++        Some(resolved)
++    }
++
+     fn skip_with_environment_layers(&self, mut env: Value) -> Option<Value> {
+         while let Some(Cell::Environment {
+             parent,
+@@ -1375,7 +1405,7 @@ impl<H: Host> Vm<H> {
+         slot: u16,
+     ) -> Result<Value, JsError> {
+         let env = self
+-            .capture_env(frame, depth)
++            .capture_env_for_capture(frame, depth)
+             .ok_or_else(|| JsError("invalid capture environment".into()))?;
+         self.load_environment_binding(p, env, slot)
+     }
+@@ -1462,7 +1492,7 @@ impl<H: Host> Vm<H> {
+         value: Value,
+     ) -> Result<(), JsError> {
+         let env = self
+-            .capture_env(frame, depth)
++            .capture_env_for_capture(frame, depth)
+             .ok_or_else(|| JsError("invalid capture environment".into()))?;
+         self.store_environment_binding(p, frame, env, slot, value)
+     }
+diff --git a/crates/quench-runtime/src/vm/generator.rs b/crates/quench-runtime/src/vm/generator.rs
+index db614089e..7b6b5bc0c 100644
+--- a/crates/quench-runtime/src/vm/generator.rs
++++ b/crates/quench-runtime/src/vm/generator.rs
+@@ -84,6 +84,7 @@ impl<H: Host> Vm<H> {
+             pc: 0,
+             binding_site_pc: None,
+             env: Value::NULL,
++            capture_base: Value::DELETED,
+             this: Value::UNDEFINED,
+             locals: vec![],
+             dynamic_bindings: vec![],
+@@ -130,6 +131,7 @@ impl<H: Host> Vm<H> {
+         frame.pc = 0;
+         frame.binding_site_pc = None;
+         frame.env = parent;
++        frame.capture_base = Value::DELETED;
+         frame.this = self.call_this_value(this, function.strict)?;
+         self.initialize_activation_bindings(&mut frame, false, Value::UNDEFINED);
+         frame.captured = false;
+diff --git a/crates/quench-runtime/src/vm/profile_edges.rs b/crates/quench-runtime/src/vm/profile_edges.rs
+index 5cf75cea3..ebe577af1 100644
+--- a/crates/quench-runtime/src/vm/profile_edges.rs
++++ b/crates/quench-runtime/src/vm/profile_edges.rs
+@@ -77,6 +77,7 @@ mod tests {
+             pc: 0,
+             binding_site_pc: None,
+             env: Value::NULL,
++            capture_base: Value::DELETED,
+             this: Value::UNDEFINED,
+             locals: vec![],
+             dynamic_bindings: vec![],
+diff --git a/crates/quench-runtime/src/vm/tests.rs b/crates/quench-runtime/src/vm/tests.rs
+index 4805a84f3..973d0239f 100644
+--- a/crates/quench-runtime/src/vm/tests.rs
++++ b/crates/quench-runtime/src/vm/tests.rs
+@@ -879,6 +879,7 @@ fn unrepresentable_register_maps_keep_the_conservative_frame_roots() {
+         pc: 0,
+         binding_site_pc: None,
+         env: Value::NULL,
++        capture_base: Value::DELETED,
+         this: Value::UNDEFINED,
+         locals: vec![],
+         dynamic_bindings: vec![],
+@@ -3876,6 +3877,7 @@ fn pooled_frame_registers_are_reset_when_their_length_is_reused() {
+         pc: 0,
+         binding_site_pc: None,
+         env: Value::NULL,
++        capture_base: Value::DELETED,
+         this: Value::UNDEFINED,
+         locals: vec![],
+         dynamic_bindings: vec![],
+@@ -6084,6 +6086,7 @@ fn suspended_owners_trace_complete_frame_and_request_state() {
+                 pc: 0,
+                 binding_site_pc: None,
+                 env,
++                capture_base: Value::DELETED,
+                 this: receiver,
+                 locals: vec![local],
+                 dynamic_bindings: vec![(atom, binding)],

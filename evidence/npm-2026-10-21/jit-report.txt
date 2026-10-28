@@ -1,0 +1,46 @@
+verdicts {"behavior-pass":286,"declarations-pass":13,"oracle-failed":1}
+passing 299  fastest wall 147  fastest cpu 198  lowest rss 290
+wall median (ms) quench 61.6 node 103.3 bun 64.3
+cpu median (ms) quench 60.6 node 123.2 bun 69.0
+rss median (MiB) quench 14.8 node 63.3 bun 36.0
+slowest relative to the faster of Node and Bun (wall ms):
+  color-convert                            q     363 n    155 b     68  x5.3
+  jiti                                     q     332 n    329 b     71  x4.7
+  undici                                   q     144 n    139 b     48  x3.0
+  @babel/helper-module-transforms          q     557 n    308 b    196  x2.8
+  @babel/helpers                           q     266 n    147 b    105  x2.5
+  ajv-formats                              q     304 n    156 b    122  x2.5
+  semver                                   q     234 n    132 b     96  x2.4
+  @babel/core                              q     472 n    329 b    196  x2.4
+  schema-utils                             q     392 n    181 b    164  x2.4
+  whatwg-url                               q     252 n    135 b    106  x2.4
+  @babel/plugin-syntax-typescript          q     530 n    250 b    229  x2.3
+  baseline-browser-mapping                 q     151 n     93 b     66  x2.3
+  vitest                                   q    1321 n    744 b    581  x2.3
+  @testing-library/dom                     q    1847 n    821 b    866  x2.2
+  ajv                                      q     326 n    147 b    169  x2.2
+  lucide-react                             q     307 n    228 b    139  x2.2
+  date-fns                                 q     158 n   1267 b     73  x2.1
+  @babel/traverse                          q     220 n    174 b    104  x2.1
+  zod                                      q     157 n    183 b     75  x2.1
+  typescript-eslint                        q    1655 n   1216 b    797  x2.1
+  execa                                    q     269 n    221 b    130  x2.1
+  @asamuzakjp/css-color                    q     142 n    155 b     69  x2.1
+  @babel/template                          q     187 n    137 b     91  x2.1
+  vite                                     q     390 n    211 b    191  x2.0
+  axios                                    q     193 n    167 b    101  x1.9
+  jsdom                                    q     981 n    676 b    525  x1.9
+  rollup                                   q     215 n    166 b    116  x1.9
+  source-map                               q     112 n    113 b     61  x1.8
+  prettier                                 q     251 n    143 b    138  x1.8
+  eslint-plugin-react-hooks                q     475 n    361 b    265  x1.8
+not lowest rss: 9
+  @types/node                              q 72.3 n 72.3 b 72.1
+  undici-types                             q 74.6 n 74.4 b 74.3
+  @types/react                             q 54.2 n 63.0 b 53.8
+  @types/json-schema                       q 45.1 n 62.8 b 45.1
+  @typescript-eslint/type-utils            q 131.7 n 190.1 b 123.5
+  @types/chai                              q 45.9 n 62.9 b 45.6
+  @types/babel__traverse                   q 55.2 n 62.9 b 54.9
+  @types/yargs                             q 45.6 n 62.8 b 44.8
+  @types/ws                                q 72.5 n 71.9 b 71.6

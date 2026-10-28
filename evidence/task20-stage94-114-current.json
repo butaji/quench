@@ -1,0 +1,63 @@
+{
+  "schema": 1,
+  "tasks": ["20"],
+  "scope": "Complete Test262 stages 94 and 114 only; no full-inventory run.",
+  "suite": {
+    "repository": "tests/test262",
+    "revision": "6eec1ac9ee144dafd8f344d73a21f36bfc9f6755",
+    "stage_definition": "docs/STAGES.md",
+    "stage_definition_sha256": "4cb13c366db7ed8d7ae0a1b7fe63eb18f93def77fd09231630ba5050f7d7d3d2"
+  },
+  "source": {
+    "revision": "d31adb9274a8156c395082fb7dba745bf39d9d11",
+    "worktree_dirty": true,
+    "runner": "target/iteration/run-stages-next",
+    "runner_sha256": "ad7a3b4973d71c4d7d5a2085e2dc10bde7b2790a44d917a66bea5ff546fbf8ba",
+    "host": "macos-aarch64",
+    "timeout_ms": 30000,
+    "jobs": 8,
+    "commands": [
+      "TEST262_TEST_TIMEOUT_MS=30000 TEST262_JOBS=8 TEST262_RATCHET=target/iteration/task20-stage114-herdr-ratchet.json TEST262_REPORT=target/iteration/task20-stage114-herdr-current.json cargo run --profile iteration -p quench-test262 --bin run-stages-next -- 114 114",
+      "TEST262_TEST_TIMEOUT_MS=30000 TEST262_JOBS=8 TEST262_REPORT=target/iteration/task20-stage94-herdr-current.json cargo run --profile iteration -p quench-test262 --bin run-stages-next -- 94 94"
+    ]
+  },
+  "stage_114": {
+    "total": 1482,
+    "passed": 1482,
+    "failed": 0,
+    "previous_complete_report": {
+      "source_revision": "39177c0f6509ba144f7d19a68d9b0cab6f64123d",
+      "suite_revision_at_source_revision": "6eec1ac9ee144dafd8f344d73a21f36bfc9f6755",
+      "stage_definition_sha256_at_source_revision": "4cb13c366db7ed8d7ae0a1b7fe63eb18f93def77fd09231630ba5050f7d7d3d2",
+      "total": 1482,
+      "passed": 1433,
+      "failed": 49
+    },
+    "comparison": {
+      "same_inventory": true,
+      "gains": 49,
+      "regressions": 0
+    }
+  },
+  "stage_94": {
+    "total": 845,
+    "passed": 844,
+    "failed": 1,
+    "failed_case": {
+      "path": "annexB/language/function-code/block-decl-func-skip-arguments.js",
+      "outcome": "failed",
+      "reason": "Expected SameValue(\"function arguments() {}\", \"[object Arguments]\") to be true"
+    }
+  },
+  "annex_b_conflict": {
+    "opposing_stage_114_case": "staging/sm/lexical-environment/block-scoped-functions-annex-b-arguments.js",
+    "upstream_issue": "https://github.com/tc39/test262/issues/5113",
+    "upstream_pull_request": "https://github.com/tc39/test262/pull/5112",
+    "upstream_state_checked": "2026-10-05: issue and PR are open",
+    "suite_inputs_or_expectations_changed": false
+  },
+  "limitations": [
+    "These results qualify only stages 94 and 114 on a dirty source snapshot; they do not qualify the complete Test262 inventory or Stage A.",
+    "The pinned Stage 94 case and its contradictory Stage 114 counterpart remain unchanged."
+  ]
+}

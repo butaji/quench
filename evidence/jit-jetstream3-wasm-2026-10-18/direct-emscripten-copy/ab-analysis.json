@@ -1,0 +1,697 @@
+{
+  "schema": 1,
+  "report_kind": "jit_wasm_memcpy_ab_diagnostic",
+  "created_unix_ns": 1792339709724015465,
+  "input_report_path": "evidence/jit-jetstream3-wasm-2026-10-18/direct-emscripten-copy/ab-11-round.json",
+  "input_report_sha256": "2d8d20e2f6c370df27ca40e7ee173303a95b1f91b839fdc807f50f83dc71cb2c",
+  "suite": "jet-stream3",
+  "jit_mode": "jit",
+  "quench_bench_binary": {
+    "path": "/workspace/quench/target/production/quench-bench",
+    "size_bytes": 1605504,
+    "modified_unix_ns": 1792339602539748987,
+    "sha256": "73d5ade55a622a3469d7b8aa7b6f38f5674862f5ecec5f42981e7bdac27f5feb"
+  },
+  "source_revision": "bb3d924ac50be782fe8ea2908b535802305148e4",
+  "source_dirty": true,
+  "corpus_revision": "06785cf861ac44855f168cbbe829278c2802e6de",
+  "timeout_ms": 600000,
+  "host": {
+    "uname": "Linux f3da3ef8e0e6 6.18.55 #1 SMP Wed Oct 14 19:45:18 UTC 2026 x86_64 GNU/Linux",
+    "rustc": "rustc 1.99.1 (58cf8f9c3 2026-10-13)\nbinary: rustc\ncommit-hash: 58cf8f9c35b355199727627d07ae34a4e2846d67\ncommit-date: 2026-10-13\nhost: x86_64-unknown-linux-gnu\nrelease: 1.99.1\nLLVM version: 23.1.1",
+    "model": null,
+    "memory_bytes": 18882674688,
+    "memory_limit_bytes": 17179869184,
+    "cpu_quota": "400000 100000",
+    "process_metrics_backend": "Linux wait4 rusage"
+  },
+  "engine_provenance": [
+    {
+      "name": "quench_memcpy_direct_off",
+      "executable": "/workspace/quench/target/production/quench-node",
+      "executable_sha256": "b9260d5c72686f025391c823442d53b99a84e36638151c2331dbea478067fb49",
+      "version": "Quench shared-VM JIT build; package 0.1.0",
+      "argv": [
+        "--jit"
+      ],
+      "environment": {
+        "HOME": "/home/agent",
+        "LANG": "C.UTF-8",
+        "LC_ALL": "C.UTF-8",
+        "PATH": "/home/agent/.cargo/bin:/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/override:/opt/codex/runtimes/codex-primary-runtime/dependencies/python/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin:/opt/codex/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/fallback",
+        "QUENCH_WASM_EMSCRIPTEN_MEMCPY_DIRECT": "0"
+      },
+      "inherits_environment": false,
+      "jit_mode": "enabled-by-cli-flag",
+      "jit_proof_command": [
+        "/workspace/quench/target/production/quench-node",
+        "--jit"
+      ],
+      "jit_proof": "the measured Quench process is launched with --jit; diagnostic A/B arm with QUENCH_WASM_EMSCRIPTEN_MEMCPY_DIRECT=0"
+    },
+    {
+      "name": "quench_memcpy_direct_on",
+      "executable": "/workspace/quench/target/production/quench-node",
+      "executable_sha256": "b9260d5c72686f025391c823442d53b99a84e36638151c2331dbea478067fb49",
+      "version": "Quench shared-VM JIT build; package 0.1.0",
+      "argv": [
+        "--jit"
+      ],
+      "environment": {
+        "HOME": "/home/agent",
+        "LANG": "C.UTF-8",
+        "LC_ALL": "C.UTF-8",
+        "PATH": "/home/agent/.cargo/bin:/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/override:/opt/codex/runtimes/codex-primary-runtime/dependencies/python/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin:/opt/codex/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/fallback",
+        "QUENCH_WASM_EMSCRIPTEN_MEMCPY_DIRECT": "1"
+      },
+      "inherits_environment": false,
+      "jit_mode": "enabled-by-cli-flag",
+      "jit_proof_command": [
+        "/workspace/quench/target/production/quench-node",
+        "--jit"
+      ],
+      "jit_proof": "the measured Quench process is launched with --jit; diagnostic A/B arm with QUENCH_WASM_EMSCRIPTEN_MEMCPY_DIRECT=1"
+    },
+    {
+      "name": "bun",
+      "executable": "/workspace/.local/bench-runtimes/bun-linux-x64/bun",
+      "executable_sha256": "a83d263767d839e4d2649ca8e35d07159c7afc99afdc96d731ced29e056dda0c",
+      "version": "1.4.2",
+      "argv": [],
+      "environment": {
+        "BUN_JSC_useJIT": "1",
+        "HOME": "/home/agent",
+        "LANG": "C.UTF-8",
+        "LC_ALL": "C.UTF-8",
+        "PATH": "/home/agent/.cargo/bin:/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/override:/opt/codex/runtimes/codex-primary-runtime/dependencies/python/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin:/opt/codex/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/fallback"
+      },
+      "inherits_environment": false,
+      "jit_mode": "enabled-and-probed",
+      "jit_proof_command": [
+        "BUN_JSC_useJIT=1",
+        "BUN_JSC_dumpOptions=1",
+        "/workspace/.local/bench-runtimes/bun-linux-x64/bun",
+        "-e",
+        "console.log(Bun.version)"
+      ],
+      "jit_proof": "command succeeded and reported \"useJIT=true\": 1.4.2\n\nModified JSC options:\n   dumpOptions=1 (default: 0)\n   useJIT=true (default: true)"
+    },
+    {
+      "name": "node",
+      "executable": "/workspace/.local/bench-runtimes/node-v26.10.0-linux-x64/bin/node",
+      "executable_sha256": "ab9c8eecf9f82d6693cdc3accced17034065c8d96213b0aa76a7e803d20ae1da",
+      "version": "v26.10.0",
+      "argv": [],
+      "environment": {
+        "HOME": "/home/agent",
+        "LANG": "C.UTF-8",
+        "LC_ALL": "C.UTF-8",
+        "PATH": "/home/agent/.cargo/bin:/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/override:/opt/codex/runtimes/codex-primary-runtime/dependencies/python/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin:/opt/codex/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/fallback"
+      },
+      "inherits_environment": false,
+      "jit_mode": "enabled-and-probed",
+      "jit_proof_command": [
+        "/workspace/.local/bench-runtimes/node-v26.10.0-linux-x64/bin/node",
+        "--trace-opt",
+        "--no-concurrent-recompilation",
+        "-e",
+        "function hot(x) { return x + 1; } for (let i = 0; i < 100000; i++) hot(i);"
+      ],
+      "jit_proof": "command succeeded and reported \"completed compiling\": [marking 0x1b72e57b4d91 <JSFunction hot (sfi = 0x1b72e57b1571)> for optimization to MAGLEV, ConcurrencyMode::kConcurrent, reason: hot and stable]\n[compiling method 0x1b72e57b4d91 <JSFunction hot (sfi = 0x1b72e57b1571)> (target MAGLEV), mode: ConcurrencyMode::kSynchronous]\n[completed compiling 0x1b72e57b4d91 <JSFunction hot (sfi = 0x1b72e57b1571)> (target MAGLEV) - took 0.004, 0.231, 0.001 ms]\n[marking 0x1b72e57b4d21 <JSFunction (sfi = 0x1b72e57b14c9)> for optimization to MAGLEV, ConcurrencyMode::kConcurrent, reason: hot and stable]\n[marking 0x1b72e57b4d91 <JSFunction hot (sfi = 0x1b72e57b1571)> for optimization to TURBOFAN_JS, ConcurrencyMode::kConcurrent, reason: hot and stable]\n[compiling method 0x1b72e57b4d91 <JSFunction hot (sfi = 0x1b72e57b1571)> (target TURBOFAN_JS), mode: ConcurrencyMode::kSynchronous]\n[completed compiling 0x1b72e57b4d91 <JSFunction hot (sfi = 0x1b72e57b1571)> (target TURBOFAN_JS) - took 0.006, 0.566, 0.010 ms]\n[compiling method 0x1b72e57b4d21 <JSFunction (sfi = 0x1b72e57b14c9)> (target MAGLEV) OSR, mode: ConcurrencyMode::kSynchronous]\n[completed compiling 0x1b72e57b4d21 <JSFunction (sfi = 0x1b72e57b14c9)> (target MAGLEV) OSR - took 0.000, 0.144, 0.002 ms]"
+    }
+  ],
+  "rounds_per_fixture": 11,
+  "analysis_runtime": "quench-bench Rust analyzer; rustc 1.99.1 (58cf8f9c3 2026-10-13)\nbinary: rustc\ncommit-hash: 58cf8f9c35b355199727627d07ae34a4e2846d67\ncommit-date: 2026-10-13\nhost: x86_64-unknown-linux-gnu\nrelease: 1.99.1\nLLVM version: 23.1.1",
+  "suite_inputs": [
+    {
+      "path": "quench-bench/jetstream/cli.js",
+      "size_bytes": 5600,
+      "modified_unix_ns": 1792229119091972874,
+      "sha256": "22ee4b987b07940dd7397ed7f88345c71acc415e2549b64bf45ba43f7572e5f0"
+    },
+    {
+      "path": "quench-bench/jetstream/JetStreamDriver.js",
+      "size_bytes": 110633,
+      "modified_unix_ns": 1792229118593919588,
+      "sha256": "f105bddfd402514b2325fe9ea6e1df5ce776a4ad4570a8006c7c8559159440fc"
+    },
+    {
+      "path": "quench-bench/jetstream/utils/params.js",
+      "size_bytes": 8047,
+      "modified_unix_ns": 1792229119770704165,
+      "sha256": "0e9d28c0fd2de5583c64678ffc61307b10d983bcb419fe2e3bb383c8b7ded647"
+    },
+    {
+      "path": "quench-bench/jetstream/utils/shell-config.js",
+      "size_bytes": 2352,
+      "modified_unix_ns": 1792229119770904880,
+      "sha256": "9a83000be5e6526a3c26a414fc3a23043e57ef8e4cd67aaff459066a2c347bca"
+    }
+  ],
+  "bootstrap": {
+    "name": "paired percentile bootstrap of median log-ratios, reported as ratios",
+    "interval_level": 0.95,
+    "replicates": 100000,
+    "base_seed": "0x51a7beefcafe2c31",
+    "resampling": "resample matching round indices jointly for candidate and reference",
+    "statistic": "exp(median(log(candidate / reference)))",
+    "interval": "exponentiated linear-interpolated log-ratio percentiles"
+  },
+  "fixtures": {
+    "gcc-loops-wasm": {
+      "input_sha256": "22e54dd411e29379a6ba08d84e54b890d620f7c1f2ba9b37ff108c4fe3c98c48",
+      "paired_rounds": 11,
+      "raw_rounds": [
+        {
+          "round": 0,
+          "execution_order": [
+            "quench_memcpy_direct_off",
+            "quench_memcpy_direct_on",
+            "bun",
+            "node"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 1203901186,
+              "score": 176.66,
+              "peak_rss_bytes": 55484416
+            },
+            "node": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 1183555907,
+              "score": 189.39,
+              "peak_rss_bytes": 65429504
+            },
+            "quench_memcpy_direct_off": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2612489352,
+              "score": 52.91,
+              "peak_rss_bytes": 50401280
+            },
+            "quench_memcpy_direct_on": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2455466831,
+              "score": 56.7,
+              "peak_rss_bytes": 50421760
+            }
+          }
+        },
+        {
+          "round": 1,
+          "execution_order": [
+            "quench_memcpy_direct_on",
+            "bun",
+            "node",
+            "quench_memcpy_direct_off"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 1237277053,
+              "score": 167.8,
+              "peak_rss_bytes": 55083008
+            },
+            "node": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 1200583222,
+              "score": 184.92,
+              "peak_rss_bytes": 65372160
+            },
+            "quench_memcpy_direct_off": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2564390030,
+              "score": 51.71,
+              "peak_rss_bytes": 50401280
+            },
+            "quench_memcpy_direct_on": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2468288259,
+              "score": 55.62,
+              "peak_rss_bytes": 50388992
+            }
+          }
+        },
+        {
+          "round": 2,
+          "execution_order": [
+            "bun",
+            "node",
+            "quench_memcpy_direct_off",
+            "quench_memcpy_direct_on"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 1374433746,
+              "score": 141.28,
+              "peak_rss_bytes": 55939072
+            },
+            "node": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 1253113067,
+              "score": 172.09,
+              "peak_rss_bytes": 65228800
+            },
+            "quench_memcpy_direct_off": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2783429612,
+              "score": 47.93,
+              "peak_rss_bytes": 50393088
+            },
+            "quench_memcpy_direct_on": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2482651951,
+              "score": 54.81,
+              "peak_rss_bytes": 50417664
+            }
+          }
+        },
+        {
+          "round": 3,
+          "execution_order": [
+            "node",
+            "quench_memcpy_direct_off",
+            "quench_memcpy_direct_on",
+            "bun"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 1217232479,
+              "score": 164.44,
+              "peak_rss_bytes": 57839616
+            },
+            "node": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 1180013751,
+              "score": 190.68,
+              "peak_rss_bytes": 65548288
+            },
+            "quench_memcpy_direct_off": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2578196234,
+              "score": 53.89,
+              "peak_rss_bytes": 50409472
+            },
+            "quench_memcpy_direct_on": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2640399099,
+              "score": 50.37,
+              "peak_rss_bytes": 50409472
+            }
+          }
+        },
+        {
+          "round": 4,
+          "execution_order": [
+            "quench_memcpy_direct_off",
+            "quench_memcpy_direct_on",
+            "bun",
+            "node"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 1219174110,
+              "score": 174.31,
+              "peak_rss_bytes": 60657664
+            },
+            "node": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 1263015645,
+              "score": 172.32,
+              "peak_rss_bytes": 65888256
+            },
+            "quench_memcpy_direct_off": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2726507383,
+              "score": 48.82,
+              "peak_rss_bytes": 50446336
+            },
+            "quench_memcpy_direct_on": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2618196474,
+              "score": 52.48,
+              "peak_rss_bytes": 50413568
+            }
+          }
+        },
+        {
+          "round": 5,
+          "execution_order": [
+            "quench_memcpy_direct_on",
+            "bun",
+            "node",
+            "quench_memcpy_direct_off"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 1183364449,
+              "score": 181.99,
+              "peak_rss_bytes": 56201216
+            },
+            "node": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 1225728256,
+              "score": 185.59,
+              "peak_rss_bytes": 65429504
+            },
+            "quench_memcpy_direct_off": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2529351707,
+              "score": 53.16,
+              "peak_rss_bytes": 50397184
+            },
+            "quench_memcpy_direct_on": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2551396914,
+              "score": 52.04,
+              "peak_rss_bytes": 50405376
+            }
+          }
+        },
+        {
+          "round": 6,
+          "execution_order": [
+            "bun",
+            "node",
+            "quench_memcpy_direct_off",
+            "quench_memcpy_direct_on"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 1145217044,
+              "score": 181.89,
+              "peak_rss_bytes": 56594432
+            },
+            "node": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 1168174085,
+              "score": 192.99,
+              "peak_rss_bytes": 65605632
+            },
+            "quench_memcpy_direct_off": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2590746653,
+              "score": 51.06,
+              "peak_rss_bytes": 50393088
+            },
+            "quench_memcpy_direct_on": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2562030410,
+              "score": 53.23,
+              "peak_rss_bytes": 50479104
+            }
+          }
+        },
+        {
+          "round": 7,
+          "execution_order": [
+            "node",
+            "quench_memcpy_direct_off",
+            "quench_memcpy_direct_on",
+            "bun"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 1200625382,
+              "score": 174.07,
+              "peak_rss_bytes": 56520704
+            },
+            "node": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 1212490079,
+              "score": 180.08,
+              "peak_rss_bytes": 65814528
+            },
+            "quench_memcpy_direct_off": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2568125135,
+              "score": 51.71,
+              "peak_rss_bytes": 50425856
+            },
+            "quench_memcpy_direct_on": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2604084473,
+              "score": 53.07,
+              "peak_rss_bytes": 50249728
+            }
+          }
+        },
+        {
+          "round": 8,
+          "execution_order": [
+            "quench_memcpy_direct_off",
+            "quench_memcpy_direct_on",
+            "bun",
+            "node"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 1182616222,
+              "score": 169.96,
+              "peak_rss_bytes": 57970688
+            },
+            "node": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 1169927178,
+              "score": 188.53,
+              "peak_rss_bytes": 65605632
+            },
+            "quench_memcpy_direct_off": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2661005191,
+              "score": 51.43,
+              "peak_rss_bytes": 50446336
+            },
+            "quench_memcpy_direct_on": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2523754368,
+              "score": 55.27,
+              "peak_rss_bytes": 50417664
+            }
+          }
+        },
+        {
+          "round": 9,
+          "execution_order": [
+            "quench_memcpy_direct_on",
+            "bun",
+            "node",
+            "quench_memcpy_direct_off"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 1199740701,
+              "score": 168.42,
+              "peak_rss_bytes": 56856576
+            },
+            "node": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 1192077161,
+              "score": 185.67,
+              "peak_rss_bytes": 65363968
+            },
+            "quench_memcpy_direct_off": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2623262781,
+              "score": 51.24,
+              "peak_rss_bytes": 50458624
+            },
+            "quench_memcpy_direct_on": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2520643586,
+              "score": 52.93,
+              "peak_rss_bytes": 50421760
+            }
+          }
+        },
+        {
+          "round": 10,
+          "execution_order": [
+            "bun",
+            "node",
+            "quench_memcpy_direct_off",
+            "quench_memcpy_direct_on"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 1288338973,
+              "score": 155.78,
+              "peak_rss_bytes": 57257984
+            },
+            "node": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 1318349868,
+              "score": 149.78,
+              "peak_rss_bytes": 65208320
+            },
+            "quench_memcpy_direct_off": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2556042092,
+              "score": 54.1,
+              "peak_rss_bytes": 50393088
+            },
+            "quench_memcpy_direct_on": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2421047024,
+              "score": 56.39,
+              "peak_rss_bytes": 50417664
+            }
+          }
+        }
+      ],
+      "engine_medians": {
+        "bun": {
+          "score": 169.96,
+          "max_rss_bytes": 56594432.0
+        },
+        "node": {
+          "score": 185.59,
+          "max_rss_bytes": 65429504.0
+        },
+        "quench_memcpy_direct_off": {
+          "score": 51.71,
+          "max_rss_bytes": 50401280.0
+        },
+        "quench_memcpy_direct_on": {
+          "score": 53.23,
+          "max_rss_bytes": 50417664.0
+        }
+      },
+      "comparisons": {
+        "quench_memcpy_direct_on_vs_bun": {
+          "candidate_engine": "quench_memcpy_direct_on",
+          "reference_engine": "bun",
+          "score": {
+            "candidate_median": 53.23,
+            "reference_median": 169.96,
+            "median_ratio": 0.3142738392114951,
+            "paired_ratio_interval_95": [
+              0.30107280133096204,
+              0.33146603098927296
+            ],
+            "interval_excludes_tie": true,
+            "seed": "0xf428961dd72758b6"
+          },
+          "max_rss": {
+            "candidate_median": 50417664.0,
+            "reference_median": 56594432.0,
+            "median_ratio": 0.8890499311544314,
+            "paired_ratio_interval_95": [
+              0.8715388428581545,
+              0.9012960386614923
+            ],
+            "interval_excludes_tie": true,
+            "seed": "0x952880261c213c5d"
+          }
+        },
+        "quench_memcpy_direct_on_vs_node": {
+          "candidate_engine": "quench_memcpy_direct_on",
+          "reference_engine": "node",
+          "score": {
+            "candidate_median": 53.23,
+            "reference_median": 185.59,
+            "median_ratio": 0.29470235450910703,
+            "paired_ratio_interval_95": [
+              0.2804030389568403,
+              0.3045496750232126
+            ],
+            "interval_excludes_tie": true,
+            "seed": "0x150740c30e6cc3e1"
+          },
+          "max_rss": {
+            "candidate_median": 50417664.0,
+            "reference_median": 65429504.0,
+            "median_ratio": 0.7703768624014022,
+            "paired_ratio_interval_95": [
+              0.768495973028657,
+              0.7713999248026069
+            ],
+            "interval_excludes_tie": true,
+            "seed": "0x074af454d1b78cfa"
+          }
+        },
+        "quench_memcpy_direct_on_vs_quench_memcpy_direct_off": {
+          "candidate_engine": "quench_memcpy_direct_on",
+          "reference_engine": "quench_memcpy_direct_off",
+          "score": {
+            "candidate_median": 53.23,
+            "reference_median": 51.71,
+            "median_ratio": 1.0424990207598903,
+            "paired_ratio_interval_95": [
+              1.026300522142719,
+              1.0749692748873412
+            ],
+            "interval_excludes_tie": true,
+            "seed": "0xaa288ed7a33beab9"
+          },
+          "max_rss": {
+            "candidate_median": 50417664.0,
+            "reference_median": 50401280.0,
+            "median_ratio": 1.0,
+            "paired_ratio_interval_95": [
+              0.9993504384540435,
+              1.000487685930261
+            ],
+            "interval_excludes_tie": false,
+            "seed": "0xc3203ac588b5d7d2"
+          }
+        }
+      },
+      "qualified": false
+    }
+  },
+  "qualified": false
+}

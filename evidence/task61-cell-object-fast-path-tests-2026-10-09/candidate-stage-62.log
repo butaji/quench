@@ -1,0 +1,6 @@
+stage  62 batch   1/4   passed=100 failed=0 total=100
+stage  62 batch   2/4   passed=100 failed=0 total=100
+stage  62 batch   3/4   passed=100 failed=0 total=100
+stage  62 batch   4/4   passed=11 failed=0 total=11
+stage  62: built-ins/Proxy passed=311 failed=0 total=311
+stages=1 passed=311 failed=0 total=311

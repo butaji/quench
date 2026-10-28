@@ -1,0 +1,11 @@
+{
+  "cwd": "/workspace/quench",
+  "commands": [
+    [
+      "bash",
+      "/workspace/quench/work/native-buffer-allocation/qualify.sh"
+    ]
+  ],
+  "state": "/workspace/quench/work/task-supervisor/buffer-qualify-state.json",
+  "log": "/workspace/quench/work/task-supervisor/buffer-qualify.log"
+}

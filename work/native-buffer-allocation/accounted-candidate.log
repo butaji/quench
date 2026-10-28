@@ -1,0 +1,17 @@
+method createUnsafeArrayBuffer createUnsafeArrayBuffer 0 false true true true
+method arrayBufferAlignedOffset arrayBufferAlignedOffset 0 false true true true
+align 1 true 8193 true true true true
+gc 1 true 17
+align 2 true 8194 true true true true
+gc 2 true 17
+align 8 true 8200 true true true true
+gc 8 true 17
+align 16 true 8208 true true true true
+gc 16 true 17
+align 64 true 8256 true true true true
+gc 64 true 17
+align 256 true 8448 true true true true
+gc 256 true 17
+align 4096 true 12288 true true true true
+gc 4096 true 17
+empty 0

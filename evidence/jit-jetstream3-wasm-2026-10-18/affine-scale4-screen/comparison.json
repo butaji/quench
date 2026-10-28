@@ -1,0 +1,82 @@
+{
+  "experiment": "guarded affine scale-4 Wasm address lowering",
+  "fixture": "quicksort-wasm",
+  "baseline_source_revision": "40cb9a3bf539ee3a44e10d87eab9c6bfe14df5bf",
+  "candidate_source_revision": "40cb9a3bf539ee3a44e10d87eab9c6bfe14df5bf",
+  "baseline_binary_sha256": "30242535f476c24e04f164974c6b1d7c0ad1a23bc452f4146f1bb0fa913bd8bd",
+  "candidate_binary_sha256": "30ba1baaa71c0b3751e1ebb6441028eeb2d95a2e0f7a700e853ee43e9a1324cd",
+  "rounds": 11,
+  "bootstrap_replicates": 100000,
+  "method": "independent bootstrap of baseline and candidate round samples; the two 11-round windows were run sequentially, not randomized per round",
+  "qualification_ready": false,
+  "baseline": {
+    "quench": {
+      "median_score": 221.73,
+      "median_max_rss_bytes": 44879872,
+      "valid_samples": 11
+    },
+    "bun": {
+      "median_score": 338.95,
+      "median_max_rss_bytes": 52379648,
+      "valid_samples": 11
+    },
+    "node": {
+      "median_score": 431.95,
+      "median_max_rss_bytes": 92475392,
+      "valid_samples": 11
+    }
+  },
+  "candidate": {
+    "quench": {
+      "median_score": 149.23,
+      "median_max_rss_bytes": 45936640,
+      "valid_samples": 11
+    },
+    "bun": {
+      "median_score": 375.19,
+      "median_max_rss_bytes": 52412416,
+      "valid_samples": 11
+    },
+    "node": {
+      "median_score": 431.22,
+      "median_max_rss_bytes": 92553216,
+      "valid_samples": 11
+    }
+  },
+  "candidate_over_baseline": {
+    "score": {
+      "median_ratio": 0.6730257520407703,
+      "ci95": [
+        0.6111937942542733,
+        0.7332235294117647
+      ]
+    },
+    "peak_rss_bytes": {
+      "median_ratio": 1.0235465912202246,
+      "ci95": [
+        1.0165409433790784,
+        1.0284277879341865
+      ]
+    },
+    "quench_over_bun_score_ratio": {
+      "median_ratio": 0.6125570957108163,
+      "ci95": [
+        0.5434246671050648,
+        0.7381481444035841
+      ]
+    },
+    "quench_over_node_score_ratio": {
+      "median_ratio": 0.6368768628789929,
+      "ci95": [
+        0.5890238697985024,
+        0.7174590346209327
+      ]
+    }
+  },
+  "all_outputs_equal": true,
+  "notes": [
+    "The candidate loses Score and raises Quench peak RSS versus the exact source baseline.",
+    "The candidate retains RSS wins versus Bun and Node, but not the joint Score/RSS win sought.",
+    "Sequential windows and the single-fixture scope limit causal and qualification claims."
+  ]
+}

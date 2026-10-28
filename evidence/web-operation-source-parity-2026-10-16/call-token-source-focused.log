@@ -1,0 +1,17 @@
+
+running 1 test
+
+thread 'optional_private_and_complex_call_columns_follow_actual_syntax_tokens' (507706) panicked at crates/quench-node-test/tests/child_entry.rs:1507:5:
+assertion `left == right` failed
+  left: [91, 91, 91, 49, 44, 49, 52, 50, 93, 44, 91, 50, 44, 49, 56, 93, 93, 44, 91, 91, 49, 44, 49, 52, 50, 93, 44, 91, 51, 44, 50, 49, 93, 93, 44, 91, 91, 49, 44, 49, 52, 50, 93, 44, 91, 52, 44, 50, 52, 93, 93, 44, 91, 91, 49, 44, 49, 52, 50, 93, 44, 91, 53, 44, 50, 52, 93, 93, 44, 91, 91, 49, 44, 49, 52, 50, 93, 44, 91, 54, 44, 50, 50, 93, 93, 44, 91, 91, 49, 44, 49, 52, 50, 93, 44, 91, 55, 44, 50, 51, 93, 93, 44, 91, 91, 49, 44, 49, 52, 50, 93, 44, 91, 56, 44, 52, 55, 93, 93, 93, 10]
+ right: [91, 91, 91, 49, 44, 49, 52, 50, 93, 44, 91, 50, 44, 53, 93, 93, 44, 91, 91, 49, 44, 49, 52, 50, 93, 44, 91, 51, 44, 53, 93, 93, 44, 91, 91, 49, 44, 49, 52, 50, 93, 44, 91, 52, 44, 53, 93, 93, 44, 91, 91, 49, 44, 49, 52, 50, 93, 44, 91, 53, 44, 53, 93, 93, 44, 91, 91, 49, 44, 49, 52, 50, 93, 44, 91, 54, 44, 53, 93, 93, 44, 91, 91, 49, 44, 49, 52, 50, 93, 44, 91, 55, 44, 53, 93, 93, 44, 91, 91, 49, 44, 49, 52, 50, 93, 44, 91, 56, 44, 52, 55, 93, 93, 93, 10]
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test optional_private_and_complex_call_columns_follow_actual_syntax_tokens ... FAILED
+
+failures:
+
+failures:
+    optional_private_and_complex_call_columns_follow_actual_syntax_tokens
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 356 filtered out; finished in 0.24s
+

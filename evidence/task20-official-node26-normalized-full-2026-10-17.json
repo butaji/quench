@@ -1,0 +1,117 @@
+{
+  "recorded_utc": "2026-10-17T02:33:05.460068+00:00",
+  "engine": "Official unmodified Node v26.12.0 latest stable",
+  "summary": {
+    "runner_exit": 1,
+    "official_all_count": 5015,
+    "official_selected_count": 5012,
+    "policy_skips": 3,
+    "tap_records": 5012,
+    "unexpected_not_ok": 12,
+    "runtime_skips": 417,
+    "todo": 2,
+    "integrity_ok": true
+  },
+  "receipt": {
+    "release": "v26.12.0",
+    "fixture_commit": "26e72d85a611e222e3f06025de8a3c496923bacd",
+    "command": [
+      "python3",
+      "/workspace/work/node-stable-release/node-v26.12.0/tools/test.py",
+      "--shell=/workspace/work/node26-oracle-bin/node",
+      "--mode=release",
+      "--progress=tap",
+      "-v",
+      "-j4",
+      "--timeout=30",
+      "--temp-dir=/tmp/q26-normal/test-tmp",
+      "parallel"
+    ],
+    "cwd": "/workspace/work/node-stable-release/node-v26.12.0",
+    "API474_gate_sha256": "7afd97e274e8b59332d60769386834ecd44b53fc4be3b7986530639d5250f185",
+    "node_before_sha256": "caa24debe02770c92a70677e2a62ca98890150e7ac1c17bcfe31bcc98cc89943",
+    "archive_sha256": "ce59f9038dda0e637656fb1c36cf52c07c637922fd81d419dbba2ec129afbd35",
+    "policy_hashes_before": {
+      "/workspace/work/node-stable-release/node-v26.12.0/tools/test.py": "2ac192059d801fd74bc1ce4d847b634e172658bb147f51cfd28c1e1491a19960",
+      "/workspace/work/node-stable-release/node-v26.12.0/tools/utils.py": "642abee051e8862c963a893eb1d87661e3121db3a72e225c5938bb9707a29384",
+      "/workspace/work/node-stable-release/node-v26.12.0/test/testpy/__init__.py": "0904fc766ea5a3e21deada325348370cbe0e98f1a0f805d5695ae2b6d98ca85f",
+      "/workspace/work/node-stable-release/node-v26.12.0/test/parallel/testcfg.py": "9b96860e5710c0dfa1d8f2603a364d4687af9b7a592025a38f7d7d34e0082660",
+      "/workspace/work/node-stable-release/node-v26.12.0/test/parallel/parallel.status": "7352b5c072a296576198dd13b4e30fe75a6497a6c814031ab1868144643d4af2"
+    },
+    "fixtures_before_sha256": "5edb5198354092c9ff2eeef6e4ea38d197befb9cc331d8ce23d81c3af7b1f196",
+    "protected_before": {
+      "restored": true,
+      "sha256": "b0e78cd4bb13929391b33a2ad7d80f61d8b2f1d66533aaf31d95807e5f3863eb"
+    },
+    "memory_before": "low 0\nhigh 0\nmax 1296850\noom 2\noom_kill 1\noom_group_kill 0\n",
+    "started_utc": "2026-10-17T02:22:45.504691+00:00",
+    "runner_pid": 47921,
+    "finished": true,
+    "environment": {
+      "PATH": "/workspace/quench/work/apachebench-root/usr/bin:/workspace/work/node26-oracle-bin:/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/override:/opt/codex/runtimes/codex-primary-runtime/dependencies/python/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin:/opt/codex/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/fallback",
+      "LD_LIBRARY_PATH": "/workspace/quench/work/apachebench-root/usr/lib/x86_64-linux-gnu",
+      "PYTHONDONTWRITEBYTECODE": "1",
+      "QUENCH_NODE_LIBRARY_ROOT": null,
+      "QUENCH_NODE_TEST_EXECUTABLE": null,
+      "NODE_TEST_DIR": null
+    },
+    "node_version": "v26.12.0",
+    "inventory_audit_exit": 0,
+    "official_inventory_sha256": "f7b861a7981a17c2aee482b6e3e99692ed4a31d8e21bdaf5dd97146d985e9fa0",
+    "official_all_count": 5015,
+    "official_selected_count": 5012,
+    "official_policy_skip_count": 3,
+    "outcome_counts": {
+      "pass": 5010,
+      "flaky,pass": 2,
+      "skip": 3
+    },
+    "exit": 1,
+    "residual_owned_group_disposed": true,
+    "protected_after": {
+      "restored": true,
+      "sha256": "b0e78cd4bb13929391b33a2ad7d80f61d8b2f1d66533aaf31d95807e5f3863eb"
+    },
+    "memory_after": "low 0\nhigh 0\nmax 1305989\noom 2\noom_kill 1\noom_group_kill 0\n",
+    "node_after_sha256": "caa24debe02770c92a70677e2a62ca98890150e7ac1c17bcfe31bcc98cc89943",
+    "policy_hashes_after": {
+      "/workspace/work/node-stable-release/node-v26.12.0/tools/test.py": "2ac192059d801fd74bc1ce4d847b634e172658bb147f51cfd28c1e1491a19960",
+      "/workspace/work/node-stable-release/node-v26.12.0/tools/utils.py": "642abee051e8862c963a893eb1d87661e3121db3a72e225c5938bb9707a29384",
+      "/workspace/work/node-stable-release/node-v26.12.0/test/testpy/__init__.py": "0904fc766ea5a3e21deada325348370cbe0e98f1a0f805d5695ae2b6d98ca85f",
+      "/workspace/work/node-stable-release/node-v26.12.0/test/parallel/testcfg.py": "9b96860e5710c0dfa1d8f2603a364d4687af9b7a592025a38f7d7d34e0082660",
+      "/workspace/work/node-stable-release/node-v26.12.0/test/parallel/parallel.status": "7352b5c072a296576198dd13b4e30fe75a6497a6c814031ab1868144643d4af2"
+    },
+    "elapsed_seconds": 302.5178751879721,
+    "finished_utc": "2026-10-17T02:27:48.022822+00:00",
+    "changed_fixtures": [],
+    "fixtures_after_sha256": "5edb5198354092c9ff2eeef6e4ea38d197befb9cc331d8ce23d81c3af7b1f196",
+    "integrity_ok": true
+  },
+  "unexpected_not_ok": [
+    "not ok 657 parallel/test-cluster-primary-error",
+    "not ok 660 parallel/test-cluster-primary-kill",
+    "not ok 2500 parallel/test-module-loading-globalpaths",
+    "not ok 2544 parallel/test-net-boundsocket",
+    "not ok 3330 parallel/test-repl-context",
+    "not ok 3332 parallel/test-repl-custom-eval-previews",
+    "not ok 3337 parallel/test-repl-empty",
+    "not ok 3340 parallel/test-repl-eval-error-after-close",
+    "not ok 3357 parallel/test-repl-multiline",
+    "not ok 3372 parallel/test-repl-pretty-stack-custom-writer",
+    "not ok 3423 parallel/test-repl-underscore",
+    "not ok 3549 parallel/test-repl-custom-eval"
+  ],
+  "artifacts": {
+    "/tmp/q26-normal/raw.tap": "43bb3c4ab4df9f13a34e595192f866eddca056196792621061824bcc0d5f3670",
+    "/tmp/q26-normal/official-inventory.json": "f7b861a7981a17c2aee482b6e3e99692ed4a31d8e21bdaf5dd97146d985e9fa0",
+    "/tmp/q26-normal/fixtures-before.json": "5edb5198354092c9ff2eeef6e4ea38d197befb9cc331d8ce23d81c3af7b1f196",
+    "/tmp/q26-normal/fixtures-after.json": "5edb5198354092c9ff2eeef6e4ea38d197befb9cc331d8ce23d81c3af7b1f196",
+    "/tmp/q26-normal/tap-results.json": "27b1625e912fa7029c9ef834c049a6470be4f64e90b82f688fffec56f7d20c15"
+  },
+  "limits": [
+    "Original full tools/test.py policy and all5015 fixture source files unchanged.",
+    "Only four documented guest environment variables removed; exact environment and commands in receipt.",
+    "These12 native Node failures do not reclassify, exclude or excuse any Quench failure.",
+    "Runtime skips and TODO counts are reported separately from official policy selection."
+  ]
+}

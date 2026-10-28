@@ -1,0 +1,200 @@
+{
+  "production_source": "faa120035a332d3b5eb232eaadcad1399f306d7d",
+  "cases": 232,
+  "differences": 116,
+  "qualified": false,
+  "examples": [
+    {
+      "node": [
+        "utf-8",
+        false,
+        false,
+        1,
+        [
+          "",
+          "\u20ac\ud83d\ude00A",
+          ""
+        ]
+      ],
+      "quench": [
+        "utf-8",
+        false,
+        false,
+        1,
+        [
+          "\ufffd",
+          "\ufffd\ufffd\u20ac\ud83d\ude00A",
+          ""
+        ]
+      ]
+    },
+    {
+      "node": [
+        "utf-8",
+        false,
+        false,
+        2,
+        [
+          "",
+          "\u20ac\ud83d\ude00A",
+          ""
+        ]
+      ],
+      "quench": [
+        "utf-8",
+        false,
+        false,
+        2,
+        [
+          "\ufffd",
+          "\ufffd\u20ac\ud83d\ude00A",
+          ""
+        ]
+      ]
+    },
+    {
+      "node": [
+        "utf-8",
+        false,
+        false,
+        4,
+        [
+          "",
+          "\u20ac\ud83d\ude00A",
+          ""
+        ]
+      ],
+      "quench": [
+        "utf-8",
+        false,
+        false,
+        4,
+        [
+          "\ufffd",
+          "\ufffd\ufffd\ud83d\ude00A",
+          ""
+        ]
+      ]
+    },
+    {
+      "node": [
+        "utf-8",
+        false,
+        false,
+        5,
+        [
+          "",
+          "\u20ac\ud83d\ude00A",
+          ""
+        ]
+      ],
+      "quench": [
+        "utf-8",
+        false,
+        false,
+        5,
+        [
+          "\ufffd",
+          "\ufffd\ud83d\ude00A",
+          ""
+        ]
+      ]
+    },
+    {
+      "node": [
+        "utf-8",
+        false,
+        false,
+        7,
+        [
+          "\u20ac",
+          "\ud83d\ude00A",
+          ""
+        ]
+      ],
+      "quench": [
+        "utf-8",
+        false,
+        false,
+        7,
+        [
+          "\u20ac\ufffd",
+          "\ufffd\ufffd\ufffdA",
+          ""
+        ]
+      ]
+    },
+    {
+      "node": [
+        "utf-8",
+        false,
+        false,
+        8,
+        [
+          "\u20ac",
+          "\ud83d\ude00A",
+          ""
+        ]
+      ],
+      "quench": [
+        "utf-8",
+        false,
+        false,
+        8,
+        [
+          "\u20ac\ufffd",
+          "\ufffd\ufffdA",
+          ""
+        ]
+      ]
+    },
+    {
+      "node": [
+        "utf-8",
+        false,
+        false,
+        9,
+        [
+          "\u20ac",
+          "\ud83d\ude00A",
+          ""
+        ]
+      ],
+      "quench": [
+        "utf-8",
+        false,
+        false,
+        9,
+        [
+          "\u20ac\ufffd",
+          "\ufffdA",
+          ""
+        ]
+      ]
+    },
+    {
+      "node": [
+        "utf-8",
+        false,
+        true,
+        1,
+        [
+          "",
+          "\ufeff\u20ac\ud83d\ude00A",
+          ""
+        ]
+      ],
+      "quench": [
+        "utf-8",
+        false,
+        true,
+        1,
+        [
+          "\ufffd",
+          "\ufffd\ufffd\u20ac\ud83d\ude00A",
+          ""
+        ]
+      ]
+    }
+  ]
+}

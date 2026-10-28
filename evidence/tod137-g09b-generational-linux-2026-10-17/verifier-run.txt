@@ -1,0 +1,8 @@
+crypto Score: 856
+deltablue Score: 401
+earley-boyer Score: 624
+navier-stokes Score: 1555
+raytrace Score: 1321
+regexp Score: 493
+richards Score: 790
+splay Score: 1909

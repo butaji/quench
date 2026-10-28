@@ -1,0 +1,43 @@
+method allocUnsafe allocUnsafe 2 true true true true
+ordinary allocUnsafe true 65600 3 true
+aligned allocUnsafe 1 17 65600 true true true true
+aligned allocUnsafe 8 17 65600 true true true true
+aligned allocUnsafe 16 17 65600 true true true true
+aligned allocUnsafe 64 17 65600 true true true true
+aligned allocUnsafe 256 17 273 true false true true
+aligned allocUnsafe 4096 17 4113 true false true true
+zero allocUnsafe 0
+invalid allocUnsafe 0 RangeError ERR_OUT_OF_RANGE The value of "alignment" is out of range. It must be >= 1 && <= 1073741824. Received 0
+invalid allocUnsafe 3 TypeError ERR_INVALID_ARG_VALUE The argument 'alignment' must be a power of two. Received 3
+invalid allocUnsafe 1.5 RangeError ERR_OUT_OF_RANGE The value of "alignment" is out of range. It must be an integer. Received 1.5
+invalid allocUnsafe NaN RangeError ERR_OUT_OF_RANGE The value of "alignment" is out of range. It must be an integer. Received NaN
+invalid allocUnsafe Infinity RangeError ERR_OUT_OF_RANGE The value of "alignment" is out of range. It must be an integer. Received Infinity
+invalid allocUnsafe 8 TypeError ERR_INVALID_ARG_TYPE The "alignment" argument must be of type number. Received type string ('8')
+invalid allocUnsafe null TypeError ERR_INVALID_ARG_TYPE The "alignment" argument must be of type number. Received null
+invalid allocUnsafe [object Object] TypeError ERR_INVALID_ARG_TYPE The "alignment" argument must be of type number. Received an instance of Object
+invalid allocUnsafe 64 TypeError ERR_INVALID_ARG_TYPE The "alignment" argument must be of type number. Received type bigint (64n)
+size allocUnsafe RangeError ERR_OUT_OF_RANGE The value of "size" is out of range. It must be >= 0 && <= 9007199254740991. Received -1
+size allocUnsafe RangeError ERR_OUT_OF_RANGE The value of "size" is out of range. It must be >= 0 && <= 9007199254740991. Received 9_007_199_254_740_992
+padded allocUnsafe RangeError ERR_OUT_OF_RANGE The value of "size" is out of range. It must be <= 9007199254736895. Received 9_007_199_254_740_991
+method allocUnsafeSlow allocUnsafeSlow 2 true true true true
+ordinary allocUnsafeSlow false 3 3 false
+aligned allocUnsafeSlow 1 17 25 true false true true
+aligned allocUnsafeSlow 8 17 25 true false true true
+aligned allocUnsafeSlow 16 17 33 true false true true
+aligned allocUnsafeSlow 64 17 81 true false true true
+aligned allocUnsafeSlow 256 17 273 true false true true
+aligned allocUnsafeSlow 4096 17 4113 true false true true
+zero allocUnsafeSlow 0
+invalid allocUnsafeSlow 0 RangeError ERR_OUT_OF_RANGE The value of "alignment" is out of range. It must be >= 1 && <= 1073741824. Received 0
+invalid allocUnsafeSlow 3 TypeError ERR_INVALID_ARG_VALUE The argument 'alignment' must be a power of two. Received 3
+invalid allocUnsafeSlow 1.5 RangeError ERR_OUT_OF_RANGE The value of "alignment" is out of range. It must be an integer. Received 1.5
+invalid allocUnsafeSlow NaN RangeError ERR_OUT_OF_RANGE The value of "alignment" is out of range. It must be an integer. Received NaN
+invalid allocUnsafeSlow Infinity RangeError ERR_OUT_OF_RANGE The value of "alignment" is out of range. It must be an integer. Received Infinity
+invalid allocUnsafeSlow 8 TypeError ERR_INVALID_ARG_TYPE The "alignment" argument must be of type number. Received type string ('8')
+invalid allocUnsafeSlow null TypeError ERR_INVALID_ARG_TYPE The "alignment" argument must be of type number. Received null
+invalid allocUnsafeSlow [object Object] TypeError ERR_INVALID_ARG_TYPE The "alignment" argument must be of type number. Received an instance of Object
+invalid allocUnsafeSlow 64 TypeError ERR_INVALID_ARG_TYPE The "alignment" argument must be of type number. Received type bigint (64n)
+size allocUnsafeSlow RangeError ERR_OUT_OF_RANGE The value of "size" is out of range. It must be >= 0 && <= 9007199254740991. Received -1
+size allocUnsafeSlow RangeError ERR_OUT_OF_RANGE The value of "size" is out of range. It must be >= 0 && <= 9007199254740991. Received 9_007_199_254_740_992
+padded allocUnsafeSlow RangeError ERR_OUT_OF_RANGE The value of "size" is out of range. It must be <= 9007199254736895. Received 9_007_199_254_740_991
+concat true 010203 65600

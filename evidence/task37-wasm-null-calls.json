@@ -1,0 +1,132 @@
+{
+  "schema": 1,
+  "source_head": "7e60169df033dd247f34199e084e3e8080a92a29",
+  "dirty_worktree": true,
+  "source_hashes": {
+    "crates/quench-runtime-next/src/wasm.rs": "f48d339ea76388a39d6eb768e9062576c381fe3fba8b5640336b821e7f7777e3",
+    "crates/quench-runtime-next/src/wasm/reference.rs": "32563fb6bab8601ed81e418f6f3b793cbf7b77eb2419d9cc3de75749a5d16e52",
+    "crates/quench-runtime-next/src/wasm/table.rs": "c24a0c88982ff467482c9c5839ebca1c36f4791bd7621fa8176ef9269174113a",
+    "crates/quench-runtime-next/src/bytecode.rs": "7e14253f74bc07dd41793b6172fb2cc11a844a2c1092b617a6481b0c531eed9c",
+    "crates/quench-runtime-next/src/bytecode/validate.rs": "e4e60791a93a8f2835c275030040f4818b10938439fa32b00130baaa9c3ccbf7",
+    "crates/quench-runtime-next/src/bytecode/disassemble.rs": "4da4a20aa50097b57868aaeec1f6dd7041f83e716f571c5afee50b83e233eec0",
+    "crates/quench-runtime-next/src/vm/dispatch.rs": "e6db65f4647951704e075e4cc38c9730707e93898d45b8bd8b2385386136a13c"
+  },
+  "suite_head": "67c8b9dc32c47d61c05a1681df349d01c85fa8ff",
+  "suite_dirty": false,
+  "residual_format": 66,
+  "obligation": "Keep null function-call traps distinct from explicit ref.as_non_null traps without changing evaluation order, tail transfer or trap recovery.",
+  "representation": "One NonNullCheck selector names Reference and Function contracts. Existing WasmRefAsNonNull carries the validated selector; ordinary and tail reference calls share Function, explicit narrowing uses Reference. No new opcode, cell, executor or duplicate conformance unit. Format66 admits the selector without changing packed widths.",
+  "scope": "Six matching pinned files cover normal/tail reference calls, explicit narrowing, element-array users and exact-function imports. Ten focused directives check operand effects, recovery and successful calls; nine Node observations match. No full suites or expectations/inventory changes.",
+  "sources": [
+    "https://raw.githubusercontent.com/WebAssembly/function-references/main/proposals/function-references/Overview.md"
+  ],
+  "affected": {
+    "before": {
+      "path": "target/iteration/task37-wasm-null-calls-affected-before.json",
+      "sha256": "c6de2828490a660bc284de98072caef2ecaf77390075b480c6e4cc7f0011f820",
+      "binary_sha256": "2576f8f77cafa8d42e55a380f864a237504e904d5213c0223a2ded829174f985"
+    },
+    "after": {
+      "path": "target/iteration/task37-wasm-null-calls-affected-after.json",
+      "sha256": "21cfa00bb8a5a0c00e1c675c9b38aed1c7e9caf43454fce3a4c727c552e9486e",
+      "binary_sha256": "634275557ade6f21e6b39a017729233f7d34c22e6978d0ee32513b4e296dad11"
+    },
+    "files": 6,
+    "total": 186,
+    "before_passed": 180,
+    "passed": 182,
+    "failed": 4,
+    "gains": 2,
+    "gains_by_file": {
+      "crates/quench-wasm-test/testsuite/call_ref.wast": 1,
+      "crates/quench-wasm-test/testsuite/return_call_ref.wast": 1
+    },
+    "regressions": 0,
+    "same_ids_and_input_hashes": true,
+    "all_workers_completed": true
+  },
+  "controls": {
+    "before": {
+      "path": "target/iteration/task37-wasm-null-calls-controls-before.json",
+      "sha256": "b91cce97a8b1789580ca46b4b5f214af8b3d16427d26be65ad73c114cd361c77",
+      "binary_sha256": "2576f8f77cafa8d42e55a380f864a237504e904d5213c0223a2ded829174f985"
+    },
+    "after": {
+      "path": "target/iteration/task37-wasm-null-calls-controls-after.json",
+      "sha256": "81af92e4cde7fcafcab2ef3fc8363087320a76bd337e0ff464c675fbcab890eb",
+      "binary_sha256": "634275557ade6f21e6b39a017729233f7d34c22e6978d0ee32513b4e296dad11"
+    },
+    "files": 1,
+    "total": 10,
+    "before_passed": 8,
+    "passed": 10,
+    "failed": 0,
+    "gains": 2,
+    "gains_by_file": {
+      "target/iteration/proposals/custom-descriptors/task37-wasm-null-calls-controls.wast": 2
+    },
+    "regressions": 0,
+    "same_ids_and_input_hashes": true,
+    "all_workers_completed": true
+  },
+  "runner": {
+    "path": "target/iteration/task37-wasm-null-calls-runner",
+    "sha256": "634275557ade6f21e6b39a017729233f7d34c22e6978d0ee32513b4e296dad11"
+  },
+  "checks": {
+    "runtime": {
+      "path": "target/iteration/task37-wasm-null-calls-runtime.log",
+      "sha256": "cce05db88fc231b6d443c7d7a1d452ec3408ff8fdc97762212dec61fbfb4dac3",
+      "passed": 33
+    },
+    "frontend": {
+      "path": "target/iteration/task37-wasm-null-calls-frontend.log",
+      "sha256": "0eab2ca434f494c52661d50636e0dd18f6edbb05fe7626e6fef2e3d6aec03943",
+      "passed": 32
+    },
+    "bytecode": {
+      "path": "target/iteration/task37-wasm-null-calls-bytecode.log",
+      "sha256": "b8461dcbf0dfd0b18dae05dde77a59d2c4380dd900c05ecd93f2991a5880c706",
+      "passed": 19
+    },
+    "check": {
+      "path": "target/iteration/task37-wasm-null-calls-check.log",
+      "sha256": "1339017228cf149e5703d3977f440923a1f439aa086738c8efda9b42e581f78c",
+      "passed": null
+    },
+    "build": {
+      "path": "target/iteration/task37-wasm-null-calls-build.log",
+      "sha256": "812aa7caf450fdfd29467447223b90dde2accc9e50e230c25ea28cabaee413c6",
+      "passed": null
+    }
+  },
+  "oracle": {
+    "path": "target/iteration/task37-wasm-null-calls-oracle.json",
+    "sha256": "1f5727fc09b05363d9f531c71d326a877bb9c15f69276a90b6509e88b35f9ae0",
+    "node": "v26.10.0",
+    "flags": [
+      "--no-sparkplug",
+      "--no-maglev",
+      "--no-turbofan",
+      "--wasm-jitless",
+      "--experimental-wasm-custom-descriptors"
+    ],
+    "matched": 9,
+    "command": [
+      "node",
+      "--no-sparkplug",
+      "--no-maglev",
+      "--no-turbofan",
+      "--wasm-jitless",
+      "--experimental-wasm-custom-descriptors",
+      "target/iteration/task37-wasm-null-calls-oracle.cjs"
+    ],
+    "input_hashes": {
+      "target/iteration/task37-wasm-null-calls.wat": "8101277c24ca47e1479f3cab497fe4df952fccd78750211c920dea1e13ca583d",
+      "target/iteration/task37-wasm-null-calls.wasm": "779779dc203b87b1d2989d7798525ea396482c0f712cead3a886f6b473f74662",
+      "target/iteration/task37-wasm-null-calls-oracle.cjs": "9e06135f5205c2b6cae01652596fc62f7cfd2b15fa84fb82fa6fc709864795ab"
+    }
+  },
+  "internal_obligation": "Existing bytecode validation regression rejects unknown selectors and admits both named kinds; conformance cases remain in the pinned suite.",
+  "limits": "Four exact-function import failures remain in this scope. Earlier 232-file array-segment evidence was not rerun on this source. Full Wasm, implemented Node, production cutover and Stage A closure remain open."
+}

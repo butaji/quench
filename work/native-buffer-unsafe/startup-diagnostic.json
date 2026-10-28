@@ -1,0 +1,44 @@
+[
+  {
+    "label": "before",
+    "seconds": 0.15802620101021603,
+    "exit": 0,
+    "stdout": "ready\n",
+    "stderr": ""
+  },
+  {
+    "label": "before",
+    "seconds": 0.16085189598379657,
+    "exit": 0,
+    "stdout": "ready\n",
+    "stderr": ""
+  },
+  {
+    "label": "before",
+    "seconds": 0.14946674701059237,
+    "exit": 0,
+    "stdout": "ready\n",
+    "stderr": ""
+  },
+  {
+    "label": "candidate",
+    "seconds": 0.15533824602607638,
+    "exit": 0,
+    "stdout": "ready\n",
+    "stderr": ""
+  },
+  {
+    "label": "candidate",
+    "seconds": 0.16444820002652705,
+    "exit": 0,
+    "stdout": "ready\n",
+    "stderr": ""
+  },
+  {
+    "label": "candidate",
+    "seconds": 0.18848389299819246,
+    "exit": 0,
+    "stdout": "ready\n",
+    "stderr": ""
+  }
+]

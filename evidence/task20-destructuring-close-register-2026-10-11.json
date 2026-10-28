@@ -1,0 +1,38 @@
+{
+  "recorded_at": "2026-10-11T22:50:38.060633+00:00",
+  "base_commit": "50abd77e73789f6ef134523d13b2af7d1238a935",
+  "change": "Allocate a real result register for every IteratorClose emitted by binding/assignment destructuring; share that emission with for-of/for-await cleanup. Never use register zero as a discarded-result sentinel. Bump residual format/cache ABI to 84 to exclude previously compiled programs.",
+  "validation": {
+    "runtime_tests_passed": 3,
+    "execution_modes": [
+      "specialized",
+      "unspecialized"
+    ],
+    "new_regression": "Live parameters survive normal/abrupt iterator close, nested patterns, exhausted/rest patterns, generator resume, and bytecode save/read round trips. Original error identity and iterator-close count are preserved.",
+    "related_regressions": [
+      "regression_destructuring_iterator_steps_validate_results_and_mark_abrupt_completion",
+      "regression_iterator_close_throw_bypasses_exited_inner_catch"
+    ],
+    "log": "work/destructuring-close-related-runtime.log",
+    "log_sha256": "24ab7b2d936d80c390d95ed1adaff03f3b97af5230f717b1ed95b4e0e5bc98f1",
+    "pinned_node27_cli": [
+      {
+        "executable": "work/node-v27.0.0-nightly20260819c79868f102-linux-x64/bin/node",
+        "exit_code": 0,
+        "stdout": "[5,7]\n[9,8]\n",
+        "stderr": ""
+      },
+      {
+        "executable": "target/iteration/run-parallel",
+        "exit_code": 0,
+        "stdout": "[5,7]\n[9,8]\n",
+        "stderr": ""
+      }
+    ]
+  },
+  "scope": "Compiler change only. Node IPC/FS work is uncommitted and not included in this checkpoint. Full parallel/ goal remains unmet.",
+  "resources": {
+    "cpu.max": "400000 100000",
+    "memory.max": "17179869184"
+  }
+}

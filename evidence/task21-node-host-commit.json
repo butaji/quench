@@ -1,0 +1,161 @@
+{
+  "schema": 1,
+  "task": "21",
+  "kind": "existing_node_host_on_shared_vm",
+  "timestamp_utc": "2026-10-05T02:58:59.586256+00:00",
+  "base_commit": "83eec1951386aa69579e9ca519989bac2e2f471c",
+  "staged_sources": {
+    "crates/quench-node/src/bin/quench-node-next.rs": "f624ddf34d0473e51e65d1166fad72be036d8b6c2c2a8046291347fd2807f5a5",
+    "crates/quench-node/src/dispatch_handlers.rs": "885593b17ffd2b356ab9d0ae1829876b737b9743542491b7f6fe807387ad253a",
+    "crates/quench-node/src/host.rs": "c46bf0ba95188b89c11ee029f730ea77320ece45e118434c6c055b01f09e9d1b",
+    "crates/quench-node/src/host/shared_vm.rs": "cb3fad98432fe5061b8050caa2d52b701bc0c8e521ea40b2f2f6ef12e70741fc",
+    "crates/quench-node/src/modules/process.rs": "9c6f72f79d520b04d73cee6e309839ca49b917fa1a64643db1eacb56056555ce",
+    "crates/quench-node/src/modules/process/shared_vm.rs": "a9af8104f029c4c056daa9a7e5e5967136a1edd3d07d39128179eae428baf5af",
+    "crates/quench-node/src/modules/process/shared_vm_tests.rs": "29dd843958ac07c2156f628a2b04fe7407d60b3512c059e3fe45099bf0edaf41",
+    "crates/quench-node/src/polyfills/bootstrap/metrics.rs": "0cf2cf92ce1928a50efb260bbac7c32ceb1d1e58fb4b1298e78c28f108886de4",
+    "crates/quench-runtime-next/src/vm/builtins.rs": "418210583689e793f64fdb227dbf8d8363ac1157b9288cff316e632ce0651b63",
+    "crates/quench-runtime-next/src/vm/function.rs": "e708880bf944b4cd44520616ac8d4d35d67e21bd57a57659441eba859b4df268"
+  },
+  "internal_check": {
+    "passed": 1,
+    "failed": 0,
+    "scope": "canonical process root survives global replacement/collection and refreshes on fresh execution",
+    "log": "target/iteration/task21-node-host-commit/isolated-host-final.log"
+  },
+  "node_control": {
+    "node": {
+      "exit": 0,
+      "stdout": "{\"elapsed\":true,\"monotonic\":true,\"finite\":true,\"identity\":true,\"replacement\":true,\"name\":\"uptime\",\"nameAttributes\":[false,false,true],\"length\":0,\"lengthAttributes\":[false,false,true],\"attributes\":[true,true,true],\"prototype\":true,\"native\":true,\"constructorError\":true,\"callerError\":true,\"deletion\":true}\n",
+      "stderr": ""
+    },
+    "shared": {
+      "exit": 0,
+      "stdout": "{\"elapsed\":true,\"monotonic\":true,\"finite\":true,\"identity\":true,\"replacement\":true,\"name\":\"uptime\",\"nameAttributes\":[false,false,true],\"length\":0,\"lengthAttributes\":[false,false,true],\"attributes\":[true,true,true],\"prototype\":true,\"native\":true,\"constructorError\":true,\"callerError\":true,\"deletion\":true}\n",
+      "stderr": ""
+    }
+  },
+  "upstream_fixture": {
+    "path": "tests/node/test/parallel/test-process-uptime.js",
+    "sha256": "d625dd216c8d8b38240629601c08fff69edd6f3abf89ec8fa692ed3ff309fb30",
+    "outcomes": {
+      "node": {
+        "exit": 0,
+        "stdout": "",
+        "stderr": "0.560738458\n"
+      },
+      "legacy": {
+        "exit": -6,
+        "stdout": "",
+        "stderr": "\nthread 'quench-node' (180078199) has overflowed its stack\nfatal runtime error: stack overflow, aborting\n"
+      },
+      "shared": {
+        "exit": 1,
+        "stdout": "",
+        "stderr": "quench-node-next: Execution(JsError(ErrorMessage { payload: ErrorPayload { description: Text { message: \"ReferenceError: require is not defined\", eval_parser_diagnostic: false }, thrown: Some(heap(3173)) } }))\n"
+      }
+    },
+    "classified_passing": false
+  },
+  "upstream_source": "tests/node/src/node_process_methods.cc:289-296 uses the process monotonic start, and :815 registers native uptime.",
+  "affected_test262": {
+    "status": "complete",
+    "jobs": 2,
+    "timeout_ms": 10000,
+    "scopes": [
+      {
+        "stage": 48,
+        "scope": "built-ins/Function/prototype/",
+        "before_passed": 308,
+        "before_failed": 1,
+        "after_passed": 308,
+        "after_failed": 1,
+        "regressions": 0,
+        "before_report": "target/iteration/task21-node-host-commit/before-function-final.json",
+        "after_report": "target/iteration/task21-node-host-commit/after-function-final.json",
+        "compare": "target/iteration/task21-node-host-commit/compare-function-final.log"
+      },
+      {
+        "stage": 60,
+        "scope": "built-ins/Object/getOwnPropertyNames/",
+        "before_passed": 45,
+        "before_failed": 0,
+        "after_passed": 45,
+        "after_failed": 0,
+        "regressions": 0,
+        "before_report": "target/iteration/task21-node-host-commit/before-names-final.json",
+        "after_report": "target/iteration/task21-node-host-commit/after-names-final.json",
+        "compare": "target/iteration/task21-node-host-commit/compare-names-final.log"
+      },
+      {
+        "stage": 62,
+        "scope": "built-ins/Proxy/ownKeys/",
+        "before_passed": 27,
+        "before_failed": 0,
+        "after_passed": 27,
+        "after_failed": 0,
+        "regressions": 0,
+        "before_report": "target/iteration/task21-node-host-commit/before-keys-final.json",
+        "after_report": "target/iteration/task21-node-host-commit/after-keys-final.json",
+        "compare": "target/iteration/task21-node-host-commit/compare-keys-final.log"
+      }
+    ],
+    "limits": [
+      "Intrinsic built-in traversal times out on both debug runners at the same deadline; no pass is claimed for it. The matcher ownership fix remains uncommitted migration work."
+    ]
+  },
+  "contract": [
+    "Existing NodeHost owns host policy; the development entry executes through the published shared Runtime.",
+    "One ProcessState monotonic origin serves legacy and shared adapters; the legacy lazy global and JS clock fallback are removed.",
+    "One host process cache retains the shared object independently of mutable globals.",
+    "Shared builtin naming retains native source text for Function.prototype.toString.",
+    "Shared native caller restriction applies to all native functions, including host callbacks."
+  ],
+  "limits": [
+    "Stage A and tasks 21/43 remain open.",
+    "The standalone development entry is Script-only; broader module-entry work remains separate.",
+    "CommonJS, timers, process prototypes, other Node APIs and legacy removal remain incomplete.",
+    "The unchanged upstream uptime failure remains required migration work."
+  ],
+  "scope": {
+    "full_suites_run": false,
+    "implemented_inventory_changed": false,
+    "performance_claim": false
+  },
+  "binaries": {
+    "target/iteration/task21-node-host-commit/quench-node-next-qualified": "93349767b4d1792cead7edfdcf65fd0b2a0fb1a111c224ce2428e3d16cfee791",
+    "target/iteration/task21-node-host-commit/quench-node-qualified": "b217e7d62a920abc6fe6c975cb045b799a20716537f0ee6f5cba52997e5cb8c7",
+    "target/iteration/task21-node-host-commit/run-stages-before": "9d88b0b02374d349ddaefa1d6e89e8dfd91827ae6a74c7aa7c3436f829b40ce4",
+    "target/iteration/task21-node-host-commit/run-stages-after": "fb9c19a71878293121e1606059deb11bd49bc05fb5b25911a89c7ca9cfe17f18"
+  },
+  "raw_artifacts": {
+    "target/iteration/task21-node-host-commit/isolated-host-final.log": "01125fa80b3aa5d054fda138e9b369fea3b146c1d139298a984a4ae6f9d80086",
+    "target/iteration/task21-node-host-commit/control.js": "3d46321bee7d1b6f7f3652a2c4893ba1bd77027df8ce78b2d4775c4f68de20fe",
+    "target/iteration/task21-node-host-commit/compare-names-final.log": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd",
+    "target/iteration/task21-node-host-commit/before-function.json": "9ec4fefa46d53a5c7c376695929249f5371562bb690e6a9675422b1dd5e7ccfe",
+    "target/iteration/task21-node-host-commit/controls.json": "7fd113808242f5d2a2ce5d3b3fe1f9166be85d6845f0ce7d7c2eeeccbe2a0bbe",
+    "target/iteration/task21-node-host-commit/after-keys-final.json": "c6ee8995b3bea72f87ddbf29ee2baa520f370e2868e95b7890416eb20e73ff01",
+    "target/iteration/task21-node-host-commit/after-names-final.json": "860a45bc6018be1ca7114cc953012844a0dbc6749f784726b8c42239b6a69b57",
+    "target/iteration/task21-node-host-commit/after-function-final.json": "6e3ba997bd84630908f0750a48706eeecd1c75bf9a1865e00052852c79212d34",
+    "target/iteration/task21-node-host-commit/before-names-final.log": "72329fb944520a4020b8e0b140c4494fe31f8c53dbc4f52c42aab83d60619539",
+    "target/iteration/task21-node-host-commit/after-function.json": "0c06634faa6da4d75a0157c46717a6c3b14f765a79a5714198352986546dd01f",
+    "target/iteration/task21-node-host-commit/build-final.log": "0becffa9af18a8eed0ef5f288de9318a41f5ed02579af786dcbc680ea4375ac3",
+    "target/iteration/task21-node-host-commit/baseline-build.log": "ff4420e8d3791b5913c6e25f701e05a94c8df06932d37f138ce829db181f8a7d",
+    "target/iteration/task21-node-host-commit/before-function-final.json": "5ffef5d6419b750bb2be63d817001d500ee507c523376c9b3e1f1076b1900bee",
+    "target/iteration/task21-node-host-commit/after-function-final.log": "da3da7f901e789608de46ccb1f86fc0c463c4d633e4725680ac3bd37ea72668a",
+    "target/iteration/task21-node-host-commit/before-function-final.log": "da3da7f901e789608de46ccb1f86fc0c463c4d633e4725680ac3bd37ea72668a",
+    "target/iteration/task21-node-host-commit/after-build.log": "9101e4d5240d6e6e43d1639d02bb97f4ef4df981541e7e493f3a0fee78456aff",
+    "target/iteration/task21-node-host-commit/after-names-final.log": "72329fb944520a4020b8e0b140c4494fe31f8c53dbc4f52c42aab83d60619539",
+    "target/iteration/task21-node-host-commit/before-keys-final.json": "32c2556e7fb47fbcff9665b7952c374a2884e9a1cb2fafd7e38113aa88832c3c",
+    "target/iteration/task21-node-host-commit/compare-function-final.log": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd",
+    "target/iteration/task21-node-host-commit/before-keys-final.log": "290c1db5b0f46278e023ab7ff4c26a5ca51716c3cde027d4f722d022c6802707",
+    "target/iteration/task21-node-host-commit/upstream-uptime.json": "b71bc99168e3e734ea2bb289448fc3e1a103c960af4fe6c05c75f90ef002d1a4",
+    "target/iteration/task21-node-host-commit/after-keys-final.log": "290c1db5b0f46278e023ab7ff4c26a5ca51716c3cde027d4f722d022c6802707",
+    "target/iteration/task21-node-host-commit/before-names-final.json": "bf0e73bc6d9870df39b9350770d9f453e24f282052fb4b2a13b9d38dfb88d380",
+    "target/iteration/task21-node-host-commit/controls-initial.json": "a02089a00d60ef95889215a2b8ec71525d2fed58493b5100bd68061f3d2ba11a",
+    "target/iteration/task21-node-host-commit/compare-keys-final.log": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd",
+    "target/iteration/task21-node-host-commit/isolated-host.log": "f06094012ed3a2f4412dab6627a8a96a196b900dac770f37dd9aa5f6854037ad",
+    "target/iteration/task21-node-host-commit/build-native-name.log": "61ab68e16b3485c830684ab3d60971137da8b2daed5f78b6be3c3907ac8c7197",
+    "target/iteration/task21-node-host-commit/controls-final.json": "d848e5d139789b3b673d65f21b0240b86ca74c50b8074a0961a89bafbe68bca8",
+    "target/iteration/task21-node-host-commit/build.log": "efa2c67611d5097bdb43bb9c89939800964950d4a368e7ad94ab936eed6222fa"
+  }
+}

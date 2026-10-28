@@ -1,0 +1,6 @@
+Merge made by the 'ort' strategy.
+ crates/quench-runtime/src/vm/array.rs            | 16 +++++++
+ crates/quench-runtime/src/vm/index.rs            |  3 ++
+ crates/quench-runtime/src/vm/object.rs           | 53 ++++++++++++++++++++++++
+ crates/quench-runtime/src/vm/object_integrity.rs | 44 +++++++-------------
+ 4 files changed, 87 insertions(+), 29 deletions(-)

@@ -1,0 +1,30 @@
+   Compiling npm-zlib-stream-probe v0.0.0 (/workspace/scratch/npm-zlib-draft)
+warning: field `status` is never read
+  --> native-codec.rs:66:9
+   |
+65 | pub struct Error {
+   |            ----- field in this struct
+66 |     pub status: i32,
+   |         ^^^^^^
+   |
+   = note: `Error` has a derived impl for the trait `Debug`, but this is intentionally ignored during dead code analysis
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: field `ended` is never read
+  --> native-codec.rs:90:9
+   |
+87 | pub struct Output {
+   |            ------ field in this struct
+...
+90 |     pub ended: bool,
+   |         ^^^^^
+
+warning: function `compress` is never used
+   --> native-codec.rs:175:8
+    |
+175 | pub fn compress(header: Header, input: &[u8], level: i32) -> io::Result<Vec<u8>> {
+    |        ^^^^^^^^
+
+warning: `npm-zlib-stream-probe` (bin "npm-zlib-codec-probe") generated 3 warnings
+    Finished `dev` profile [unoptimized] target(s) in 0.16s
+     Running `quench/target/npm-zlib-native-probe/debug/npm-zlib-codec-probe`

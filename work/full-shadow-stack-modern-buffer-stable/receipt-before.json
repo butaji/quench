@@ -1,0 +1,29 @@
+{
+  "source_commit": "c4f7844bd397cd702363a2ba54185e613c6d8273",
+  "checkout_commit": "c4f7844bd397cd702363a2ba54185e613c6d8273",
+  "release": "v26.12.0",
+  "fixture_commit": "26e72d85a611e222e3f06025de8a3c496923bacd",
+  "command": [
+    "/workspace/quench/work/shadow-stack-bin/run-parallel",
+    "--all",
+    "--parallel-dir",
+    "/workspace/work/node-stable-release/node-v26.12.0/test/parallel",
+    "--jobs",
+    "4",
+    "--timeout-secs",
+    "30",
+    "--results",
+    "/workspace/quench/work/full-shadow-stack-modern-buffer-stable/results.json"
+  ],
+  "binaries_before": {
+    "quench-node": "b7c78eb8bf8d924e4b89d3016248044d1339b6471a246187d7c0f2b50052e8cf",
+    "run-parallel": "bc0c221daad55d34601305899383798a85cc351595dff35546b0161490df1104",
+    "openssl-cli": "f4aa15f2822f670af7b5c1043d7aa6ebbbc64229fd2fae382edfc6a4524749c1"
+  },
+  "protected_before": {
+    "restored": true,
+    "sha256": "b0e78cd4bb13929391b33a2ad7d80f61d8b2f1d66533aaf31d95807e5f3863eb"
+  },
+  "memory_before": "low 0\nhigh 0\nmax 818259\noom 0\noom_kill 0\noom_group_kill 0\n",
+  "started_utc": "2026-10-16T07:58:48.688576+00:00"
+}

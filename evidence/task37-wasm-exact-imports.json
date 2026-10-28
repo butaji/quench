@@ -1,0 +1,145 @@
+{
+  "schema": 1,
+  "source_head": "7e60169df033dd247f34199e084e3e8080a92a29",
+  "dirty_worktree": true,
+  "source_hashes": {
+    "crates/quench-runtime-next/src/wasm/scalar.rs": "8c0eaf7ea376f3a066720edc90361359576435daed5f466e7d2d56f80fadfe12",
+    "crates/quench-runtime-next/src/wasm/constant.rs": "613b19471d4f7ce30642e4f72b881331ce085930c8c7b35a14151a7ff4ca9f5a",
+    "crates/quench-runtime-next/src/wasm.rs": "992a377c054c7076b725c89b0133a861649c85cb7ac35f8ea5bc282a2e7c8cf4",
+    "crates/quench-runtime-next/src/vm/wasm.rs": "cb6b2f89bc005679fa39a2be550677d72689f5c7e8646b1502197ffaf4bfb5e4",
+    "crates/quench-runtime-next/src/vm/wasm_host.rs": "fae49399215b32f6dfa2cbf6f0174e18689e932888ca8a63fad82a4b8065b0ac",
+    "crates/quench-runtime-next/src/vm/wasm_table.rs": "564505c6ef5b2f5715ed05559baa8ce0cfce5befb4178ba890b5c8589417d140",
+    "crates/quench-wasm/src/shared.rs": "ee39c246a8c79aacc8765416f747b31b8422dfe35f9fa079f0c5f0ce9edd2f8f"
+  },
+  "suite_head": "67c8b9dc32c47d61c05a1681df349d01c85fa8ff",
+  "suite_dirty": false,
+  "residual_format": 66,
+  "obligation": "Link exact-function imports using original dynamic callable identity while keeping static ref.func projections inexact for ordinary imports.",
+  "representation": "The canonical CallableImport owns name and exactness once; callable shapes/declarations remain interned independently and shared across exact/inexact imports. Frontend decodes FuncExact. Linking uses existing matches_declaration equivalence for exact imports and subtype admission for ordinary ones. Re-exports retain original cells without retagging or forwarding bodies. Static initializer admission uses function_reference_type and ordinary reference subtyping; implicit final host signatures retain their ownerless matching rule. No opcode, residual-format, cell, heap or executor changes.",
+  "scope": "25 matching pinned import, linking, callable/type, initializer, call/tail/table and exact-reference files. 13 focused directives cover original subtype through shifted foreign graphs, re-exported exact identity and rejected wrong exact imports. Ten Node no-JIT observations match values, identity and LinkError results. No full suites or suite expectation/inventory changes.",
+  "sources": [
+    "https://github.com/WebAssembly/custom-descriptors/blob/main/proposals/custom-descriptors/Overview.md"
+  ],
+  "affected": {
+    "before": {
+      "path": "target/iteration/task37-wasm-exact-imports-focused-before.json",
+      "sha256": "ef90f441497fa111b38ec8aeb694c5c7d5adbd1bf74d42c38fe4edbd289f3042",
+      "binary_sha256": "634275557ade6f21e6b39a017729233f7d34c22e6978d0ee32513b4e296dad11"
+    },
+    "after": {
+      "path": "target/iteration/task37-wasm-exact-imports-focused-after.json",
+      "sha256": "d40ab9718c48bd11d666fe8ba483ff18077a90e658b2fa9c1071a32d9927c2f6",
+      "binary_sha256": "428b615704e71c5429c9753abc43eabdf99b877b28bc4b71d3d83e0076b410ca"
+    },
+    "files": 25,
+    "total": 1736,
+    "before_passed": 1712,
+    "passed": 1716,
+    "failed": 20,
+    "gains": 4,
+    "gains_by_file": {
+      "crates/quench-wasm-test/testsuite/proposals/custom-descriptors/exact-func-import.wast": 4
+    },
+    "regressions": 0,
+    "same_ids_and_input_hashes": true,
+    "all_workers_completed": true
+  },
+  "controls": {
+    "before": {
+      "path": "target/iteration/task37-wasm-exact-imports-controls-before.json",
+      "sha256": "2f78f88f9170454321ec70971908e007cfa4c3291fe003c4ad7a2941c65af0ec",
+      "binary_sha256": "634275557ade6f21e6b39a017729233f7d34c22e6978d0ee32513b4e296dad11"
+    },
+    "after": {
+      "path": "target/iteration/task37-wasm-exact-imports-controls-after.json",
+      "sha256": "a20b1dc057ebe3ca0f70cc4386270d934715934cf40383b92101c73c2171f053",
+      "binary_sha256": "428b615704e71c5429c9753abc43eabdf99b877b28bc4b71d3d83e0076b410ca"
+    },
+    "files": 1,
+    "total": 13,
+    "before_passed": 4,
+    "passed": 13,
+    "failed": 0,
+    "gains": 9,
+    "gains_by_file": {
+      "target/iteration/proposals/custom-descriptors/task37-wasm-exact-imports-controls.wast": 9
+    },
+    "regressions": 0,
+    "same_ids_and_input_hashes": true,
+    "all_workers_completed": true
+  },
+  "runner": {
+    "path": "target/iteration/task37-wasm-exact-imports-runner",
+    "sha256": "428b615704e71c5429c9753abc43eabdf99b877b28bc4b71d3d83e0076b410ca"
+  },
+  "checks": {
+    "runtime": {
+      "path": "target/iteration/task37-wasm-exact-imports-runtime.log",
+      "sha256": "c2d29df55a7d4691e584320f29f5bf811f41ab2a24df7acb59f58d5fcfc42710",
+      "passed": 33
+    },
+    "frontend": {
+      "path": "target/iteration/task37-wasm-exact-imports-frontend.log",
+      "sha256": "a4d97a31d96972fb25e6a15ab49419d1f55f2b259e84eeedb295f0a7c2033262",
+      "passed": 32
+    },
+    "check": {
+      "path": "target/iteration/task37-wasm-exact-imports-check.log",
+      "sha256": "3ceeb9099b3a71c5c83fc93e3525346de9d16538d26ed878b7efa5b77c129d06",
+      "passed": null
+    },
+    "build": {
+      "path": "target/iteration/task37-wasm-exact-imports-build.log",
+      "sha256": "50e81aedb614f6861e418f2fa464d0355e2e0309ddf6473b1c140f0bd88c279e",
+      "passed": null
+    }
+  },
+  "oracle": {
+    "path": "target/iteration/task37-wasm-exact-imports-oracle.json",
+    "sha256": "a2fbe971ba60aaf34fc41cdfbcb71c19b690115ac5fc65f26f9d3b3c4c47ef87",
+    "node": "v26.10.0",
+    "flags": [
+      "--no-sparkplug",
+      "--no-maglev",
+      "--no-turbofan",
+      "--wasm-jitless",
+      "--experimental-wasm-custom-descriptors"
+    ],
+    "matched": 10,
+    "command": [
+      "node",
+      "--no-sparkplug",
+      "--no-maglev",
+      "--no-turbofan",
+      "--wasm-jitless",
+      "--experimental-wasm-custom-descriptors",
+      "target/iteration/task37-wasm-exact-imports-oracle.cjs"
+    ],
+    "input_hashes": {
+      "target/iteration/task37-wasm-exact-imports-a-sub.wat": "7cf802c7a873becaa800c8586153f46308aaaaf482f019c25bc46ecaf245f08c",
+      "target/iteration/task37-wasm-exact-imports-a-super.wat": "c5abfba943475ef8cbc16e6fba7ba80271712d5019acdeab2e9cabd6589c29eb",
+      "target/iteration/task37-wasm-exact-imports-a.wat": "45b80fe6d334cd7507ca3acc056c7ad62230037e0fcaaa1dc9531371251c991c",
+      "target/iteration/task37-wasm-exact-imports-b-sub.wat": "778f52d668bfd908d69da80c858ae00dde39e21f9a779e3e34d5dbd568b5b27b",
+      "target/iteration/task37-wasm-exact-imports-b-super.wat": "45f7be5f916e2d091af7bc3cb60e0d813710e391af40d9841881adb27be427a0",
+      "target/iteration/task37-wasm-exact-imports-b.wat": "a5d07555e44809a0e3ff9ff0a4521fcd67dda18e9b845c190238428fcbf854d3",
+      "target/iteration/task37-wasm-exact-imports-g-sub.wat": "cd0600306a381cb54f41516846e37e214632130b62a53e90381d168577adf192",
+      "target/iteration/task37-wasm-exact-imports-g-super.wat": "886c3ffde8ab01100b2221d717377ce6f55fa020c81e2394bca997bd259f724f",
+      "target/iteration/task37-wasm-exact-imports-a-sub.wasm": "f7c38efbce2e9dadfd2b385534cbbfe481e1e08885f8ab3a99a2c8c7e62b592d",
+      "target/iteration/task37-wasm-exact-imports-a-super.wasm": "989d0411018806a958c0d691e3f140ba1298a6cf8be5293cb87b4daf18342b4b",
+      "target/iteration/task37-wasm-exact-imports-a.wasm": "9d32e18f5c77c116351d6da72168fb40b7ab3e81cccf3587cfd98d713f0a42f1",
+      "target/iteration/task37-wasm-exact-imports-b-sub.wasm": "478e624ef38e80784252f11e9391b0b6536bb5b50fee3baa4e9c27e46c7af238",
+      "target/iteration/task37-wasm-exact-imports-b-super.wasm": "ae29373bc227eca0eefc3dfa84c1801f88cfa292f90fe79735124b2e85ce683c",
+      "target/iteration/task37-wasm-exact-imports-b.wasm": "5cbe3836d8a0b2a1ee3606ac6eb7893ed8dc47285e40588a6aeaad04ae0bf2c5",
+      "target/iteration/task37-wasm-exact-imports-g-sub.wasm": "39bcac55bcde190242d994d36f1d6a4abcf11b48865fd97f1967b76b56f33b44",
+      "target/iteration/task37-wasm-exact-imports-g-super.wasm": "09258b7047dff05055711a3fc4d65b6f39d15547b0621134f57b30c7b8c9ebf2",
+      "target/iteration/task37-wasm-exact-imports-oracle.cjs": "39a7719a3ca9c12844daca2404252ec5f0b5616b247d06af2ac14e34ac52d61f"
+    }
+  },
+  "internal_obligation": "Existing signature-pool regression proves ordinary/exact imports and definitions share one callable fact while deriving distinct static reference exactness. Runtime internal checks cover original captures, imported bindings, roots and host protocol. No duplicate suite units added.",
+  "limits": "Twenty failures remain in the 25-file affected scope, for unsupported import/module state and dependent invalid instances. Complete Wasm and frozen implemented Node inventories, production cutover and Stage A cleanup/closure remain open. The initial concurrent 232-file baseline timed out in two tail stress files and is excluded from qualification; final 25-file paired runs were sequential, complete and allowed 180s per worker.",
+  "remaining_failures": {
+    "unsupported shared Wasm module state, imports or section": 2,
+    "unsupported shared Wasm: unsupported shared Wasm import kind": 8,
+    "import module has no valid instance": 10
+  }
+}

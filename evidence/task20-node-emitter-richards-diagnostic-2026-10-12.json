@@ -1,0 +1,44 @@
+{
+  "suite": "stock V8-v7 Richards; exact base.js + richards.js + existing repository RUNNER",
+  "qualification": "One diagnostic round; iteration build, two engines only. No matched production or aggregate performance claim.",
+  "platform": "linux-x86_64",
+  "cpu_max": "400000 100000",
+  "memory_max": "17179869184",
+  "results": [
+    {
+      "engine": "quench-iteration",
+      "argv": [
+        "target/iteration/quench-node"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "elapsed_seconds": 2.4023742389981635,
+      "peak_rss_kib": 117168,
+      "stdout": "__quenchBenchResult: Richards: 167\n----\nScore: 167\n",
+      "stderr": ""
+    },
+    {
+      "engine": "node27-jitless",
+      "argv": [
+        "work/node-v27.0.0-nightly20260819c79868f102-linux-x64/bin/node",
+        "--jitless"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "elapsed_seconds": 2.2022960119938944,
+      "peak_rss_kib": 44064,
+      "stdout": "__quenchBenchResult: Richards: 2019\n----\nScore: 2019\n",
+      "stderr": ""
+    }
+  ],
+  "source_commit": "873a5ec2d6bafb907e4b428e9d56f89cf63517c0",
+  "suite_commit": "64e1860c736c1b899708f4cd646721bc71e53d8b",
+  "harness_sha256": "b501f150708fa94cc6973a0fe6e07004635150c6c7794bab660abbf1beed5ed0",
+  "build_profile": "iteration",
+  "oracle": "Node v27.0.0-nightly20260819c79868f102 --jitless",
+  "binary_sha256": {
+    "target/iteration/quench-node": "648fff4b78187991a7998e85f56d42f200665c0fb4064aa3b9a268f957b7e4d1",
+    "work/node-v27.0.0-nightly20260819c79868f102-linux-x64/bin/node": "ab33e5793484170822fe3931a978b3a5e802ccf6b13bf2101922a1b37323b2e7"
+  },
+  "isolation": "No compiler or other guest test scope overlapped; stock harness validations unchanged."
+}

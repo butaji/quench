@@ -1,0 +1,122 @@
+{
+  "tasks": [
+    "19",
+    "23",
+    "37",
+    "40",
+    "48"
+  ],
+  "source_head": "7e60169df033dd247f34199e084e3e8080a92a29",
+  "source_state": "dirty worktree",
+  "source_hashes": {
+    "crates/quench-wasm/src/shared.rs": "3fa6cbb562a42b21370d7eb5f12c2b3309b2d1f2c540e5c46fb0afa7851e5b7c",
+    "crates/quench-runtime-next/src/wasm/types.rs": "08417dba33f25ef4aac1e8072ae5b45c51d15dd92326c3e915878ab0047ad26e",
+    "crates/quench-runtime-next/src/wasm/control.rs": "5dbe38e452670aefb124b6bbb77f7f7c00dc8af5f8c2120df90dcd2812db5cd8",
+    "crates/quench-runtime-next/src/wasm/scalar.rs": "3dd629ec2fffe7d0797ffc0edecfc0b2863c01f465a9decf5204c2e80e655e48",
+    "crates/quench-runtime-next/src/wasm/table.rs": "979fdaad072eca79fe699ce95bec4d22238341f678510e0cb757741f3c679838"
+  },
+  "suite_head": "67c8b9dc32c47d61c05a1681df349d01c85fa8ff",
+  "suite_clean": true,
+  "host": "Darwin arm64",
+  "rustc": "rustc 1.99.0 (b940084d7 2026-09-28) (Homebrew)",
+  "profile": "debug",
+  "residual_format": 54,
+  "obligation": "Compare closed defined types by recursive group identity and follow declared ancestry across module-local indices; expand non-final/grouped block function types without erasing callable identity.",
+  "representation": "WasmTypes remains the single declaration authority. Equivalence compares whole group shape/member position, finality, supertype/descriptor edges, shared flags, nullability, exact/concrete/abstract heap forms, numeric/packed field kinds, mutability and all function parameters/results. Group-local references normalize by member position; preceding-group references enqueue their origin pair, visited once. External and local references remain distinct, including cases with equal infinite unfoldings. Worklist traversal avoids native recursion and repeated diamond expansion. Defined-type subtyping follows declared ancestry using this equivalence; ancestry traversal is bounded by the declaration count. Block function_shape is a projection from the same facts; callable function admission remains guarded. No stored canonical cache, new opcode, Value/cell, executor or residual format.",
+  "sources": [
+    "https://webassembly.github.io/spec/core/valid/matching.html",
+    "https://webassembly.github.io/spec/core/valid/types.html#block-types",
+    "wasmparser 0.247.0 Validator::reset and TypesRef::core_type_at_in_module/supertype_of"
+  ],
+  "scope": "The prior 210-file affected decoded-module inventory, the prior 3212 focused controls, and 19 new block-type directives. No complete pinned suite replay or Test262 replay; no OXC semantic/dispatch operation changes.",
+  "reports": {
+    "before": {
+      "path": "target/iteration/task37-wasm-type-graph-after.json",
+      "sha256": "4844e8f8d5dafbfd4ca5b216fe92b1c47c9edaa7a5757944984bbd2c73c032cd",
+      "binary_sha256": "047d0c6a60a71000855852b3e733a2d00841ca240b68fda07fe259e1623ddd54"
+    },
+    "after": {
+      "path": "target/iteration/task37-wasm-type-equivalence-after.json",
+      "sha256": "9a7c6db53a9e927339eea85cc1889b177aa4e6101199cad6878ce2f8c1c33f6f",
+      "binary_sha256": "5e575e7840d3118b74bc6dcc88740d3a5431c5b5c96913c085d5738235c6881e"
+    },
+    "controls_before": {
+      "path": "target/iteration/task37-wasm-type-equivalence-controls-before.json",
+      "sha256": "c6c4ca0d70a234030aa3da887792fed1ac659f42cd27c2e8ef28c7bcbaa12b65",
+      "binary_sha256": "047d0c6a60a71000855852b3e733a2d00841ca240b68fda07fe259e1623ddd54"
+    },
+    "controls": {
+      "path": "target/iteration/task37-wasm-type-equivalence-controls.json",
+      "sha256": "4692f6e21f992914943d27144ce90b805cdbfc2fe3854f53f706c2d5426e83df",
+      "binary_sha256": "5e575e7840d3118b74bc6dcc88740d3a5431c5b5c96913c085d5738235c6881e"
+    }
+  },
+  "runner": {
+    "path": "target/iteration/task37-wasm-type-equivalence-runner",
+    "sha256": "5e575e7840d3118b74bc6dcc88740d3a5431c5b5c96913c085d5738235c6881e"
+  },
+  "qualification": {
+    "files": 210,
+    "total": 61588,
+    "passed": 60619,
+    "failed": 969,
+    "gains": 0,
+    "regressions": 0,
+    "identical_input_hashes": true,
+    "identical_directive_ids": true,
+    "complete_workers": true
+  },
+  "controls": {
+    "files": 25,
+    "total": 3231,
+    "before_passed": 3213,
+    "before_failed": 18,
+    "passed": 3231,
+    "failed": 0,
+    "gains": 18,
+    "regressions": 0,
+    "new_directives": 19,
+    "obligations": "Non-final and multi-member recursive function declarations used as scalar block and if signatures; both if arms, shifted declaration indices, and signed I32 wrapping boundaries. Previous numeric/resource/call/root controls retain all passes."
+  },
+  "checks": {
+    "wasm_internal": 33,
+    "frontend_internal": 31,
+    "profile_feature_all_target_check": "passed",
+    "new_internal_obligation": "2048 all-pair canonical equality and declared-ancestry checks from 32 types in 20 independently validated modules, against IDs and ancestor chains from one reused wasmparser validator. Covers index renaming, whole-group membership/order, local versus external references, nullability, field mutability/packed widths, finality, supertypes and function params/results. Separate shifted 1024-declaration duplicate-edge chains agree with validator IDs and complete without recursive matching. Out-of-range indices fail closed. This internal representation oracle is not ordinary suite-conformance coverage."
+  },
+  "oracle": {
+    "path": "target/iteration/task37-wasm-type-equivalence-oracle.json",
+    "sha256": "608c0e27e6de8196164ae1ec82f02622f9019715469475c5ddcfcebb7b56fc07",
+    "result": {
+      "node": "v26.10.0",
+      "flags": [
+        "--no-sparkplug",
+        "--no-maglev",
+        "--no-turbofan",
+        "--wasm-jitless"
+      ],
+      "checks": 18,
+      "passed": true
+    },
+    "source": "target/iteration/task37-wasm-type-equivalence-oracle.cjs",
+    "source_sha256": "97a9f32ebaea4d434d99267c00dbbe0f23e5dd95ea399eb835a6b73c50bb744c"
+  },
+  "fixtures": {
+    "target/iteration/task37-wasm-type-equivalence-controls.wast": "fe5968beec502b63cca77ed0cf3ca89525225459816905d6016edad46be5f247",
+    "target/iteration/task37-wasm-type-equivalence-controls.wat": "d7706619f367c46151fded95a5e926f0ba9270fc20a1ad1a172ab817c63d4a5e",
+    "target/iteration/task37-wasm-type-equivalence-controls.wasm": "42577cd792aff8bfeda322670a73e6ac45c878ad88fd74ae5b18b0ca2352dd7e",
+    "target/iteration/task37-wasm-type-equivalence-oracle-cases.json": "8daccf5700b366668e91bfd2226d6f621de2f38dca20cff13fbc8cc700d21cdf"
+  },
+  "logs": {
+    "target/iteration/task37-wasm-type-equivalence-frontend.log": "cc003db144b7ce7804fce309e6aed54dfcb6a4900e092eff531309863fcbf4d7",
+    "target/iteration/task37-wasm-type-equivalence-runtime.log": "c816afd82088e0bd26e1d5825efb1056902118e2d378e51c55f41e679e2cc70f",
+    "target/iteration/task37-wasm-type-equivalence-check.log": "6f8ceedcffcecf77f4e628213e1c0b6efc47246792c5399290ac7bc0f98ada2b",
+    "target/iteration/task37-wasm-type-equivalence-build.log": "7920433f0040fd1ed6b7d1a21fb5841c589afa402389269b6043c00ffca7f83f",
+    "target/iteration/task37-wasm-type-equivalence-after.log": "786b5847a9f67f39ff92c17be619c6d0db8c096a412aa2a58cf996b6d09fc6d4",
+    "target/iteration/task37-wasm-type-equivalence-controls.log": "93c123238ca5bafdaad524df6df49abe33d7194335e9071713819089081c6f3d",
+    "target/iteration/task37-wasm-type-equivalence-controls-before.log": "b45f082824ec2215762ddc5f3b532760c0cc946795f457e281819e1948d6134c",
+    "target/iteration/task37-wasm-type-equivalence-compare.log": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd",
+    "target/iteration/task37-wasm-type-equivalence-controls-compare.log": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+  },
+  "limitations": "Type operations and block expansion are qualified foundations. Functions still need explicit declared-type identity binding before imported/indirect calls can admit recursive/non-final callable types. Typed/nullability value guards, concrete/GC reference values, GC allocation/operators, typed reference/tail calls, exceptions and full-inventory closure remain open. Shared/descriptor/continuation comparisons preserve their fields but are not newly admitted or comprehensively oracle-qualified. The affected pinned inventory still has 969 failures; Stage A and production cutover/cleanup remain open. No performance claim."
+}

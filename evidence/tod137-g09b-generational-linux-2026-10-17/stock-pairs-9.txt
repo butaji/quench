@@ -1,0 +1,8 @@
+crypto         score    1699 ->    1666  paired ratio median 1.023 [0.786..1.188] cand ahead 5/9   rss   22.0 ->    7.5 MB
+deltablue      score     961 ->     921  paired ratio median 0.950 [0.716..1.163] cand ahead 3/9   rss   20.3 ->    6.9 MB
+earley-boyer   score    1642 ->    1725  paired ratio median 1.048 [0.822..1.193] cand ahead 6/9   rss   47.6 ->   15.9 MB
+navier-stokes  score    2354 ->    2168  paired ratio median 0.972 [0.799..1.064] cand ahead 3/9   rss    5.9 ->    6.0 MB
+raytrace       score    1731 ->    1836  paired ratio median 1.019 [0.877..1.217] cand ahead 5/9   rss   18.2 ->    6.3 MB
+regexp         score     631 ->     639  paired ratio median 1.000 [0.824..1.224] cand ahead 4/9   rss   26.8 ->   14.3 MB
+richards       score    1246 ->    1231  paired ratio median 1.055 [0.706..1.375] cand ahead 5/9   rss    5.8 ->    5.7 MB
+splay          score    4352 ->    5027  paired ratio median 1.016 [0.858..1.474] cand ahead 6/9   rss   93.7 ->   94.2 MB

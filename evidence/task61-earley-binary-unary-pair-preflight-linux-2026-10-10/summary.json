@@ -1,0 +1,26 @@
+{
+  "schema": 1,
+  "experiment": "EarleyBoyer adjacent Binary-to-Unary superinstruction profile preflight",
+  "branch": "v2-cloud",
+  "source_revision": "4348833f7ad3523f87197c756fbff27f15e1e86b",
+  "v2_fetched_revision": "7dfe2e1f1326706d2e5c2dff637cd66710ecff1a",
+  "fixture": "EarleyBoyer",
+  "fixture_sha256": "aa379c1d54f5d13de32ebf2b50729d0cbc64bb23de5e524256c7b2270213cc0b",
+  "profile_binary_sha256": "4a6b2b1df738f4c31198ceb51d5b309bbaae46d7ad7de316bcf6d2f8cfd33f38",
+  "census": {
+    "physical_dispatches": 736032152,
+    "SuperBinaryUnary": 0,
+    "SuperBinaryUnaryJumpFalse": 928,
+    "Binary": 52052074,
+    "Unary": 16713365
+  },
+  "oracle": {
+    "node_version": "v24.19.0",
+    "baseline_candidate_exact": true,
+    "candidate_node_exact": true,
+    "baseline_sha256": "e46537823eb25a37cf5646af793e6873ceaeff1069fb878a96813cae3a86ab32",
+    "candidate_sha256": "4a6b2b1df738f4c31198ceb51d5b309bbaae46d7ad7de316bcf6d2f8cfd33f38"
+  },
+  "production_pairs_run": 0,
+  "decision": "rejected before production scoring because the broad Binary-to-Unary opcode executed zero times; strict Binary-to-Unary-to-JumpFalse fusion executed 928 times."
+}

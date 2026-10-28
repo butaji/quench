@@ -1,0 +1,204 @@
+{
+  "schema": 1,
+  "task": "24",
+  "kind": "integrated-stagea-suite-qualification",
+  "recorded_at": "2026-10-07",
+  "qualification": "complete-before-production-cutover",
+  "source_at_suite_run": {
+    "revision": "3f94373bd09e8570b76b900c7924f4bbc70ca9be",
+    "dirty": true,
+    "platform": "macOS arm64",
+    "rustc": "rustc 1.99.0 (b940084d7 2026-09-28) (Homebrew)",
+    "runtime_wasm_snapshot_sha256": "e34e467e7e8f37281a6d0b42658b28414b3192b0c17a248a99e036ac61158ad6",
+    "runtime_node_snapshot_sha256": "e49021ea6c9fbc8303f8db3d301a2a6585f44ff5bb8dea2f1e63439e6f677e72",
+    "snapshot_interpretation": "The shared quench-runtime-next source is identical in both snapshots. Task 23 binds the Wasm/VM source set; Task 21 binds the Node/VM source set. After suite execution, only cfg(test) assertions in api.rs and bytecode/tests.rs changed; reversing those exact test-only hunks reproduces both recorded snapshots. The execution binaries and production semantics are unchanged.",
+    "post_run_test_only_edits": [
+      {
+        "path": "crates/quench-runtime-next/src/api.rs",
+        "purpose": "The paired specialization control now asserts that the optimized residual contains a cached GetField path and that the generic residual is unspecialized."
+      },
+      {
+        "path": "crates/quench-runtime-next/src/bytecode/tests.rs",
+        "purpose": "The ABI mismatch fixture now mutates the serialized ABI fingerprint instead of corrupting the residual magic header."
+      }
+    ]
+  },
+  "test262": {
+    "corpus": {
+      "path": "tests/test262",
+      "revision": "f2d1435644797268dca1f7988cad5a4e89ccd8d2",
+      "clean": true,
+      "stage_definitions_sha256": "4cb13c366db7ed8d7ae0a1b7fe63eb18f93def77fd09231630ba5050f7d7d3d2",
+      "stages": 116,
+      "cases": 53406
+    },
+    "runner": {
+      "path": "target/iteration/run-stages-next",
+      "sha256": "62f53c7e7164e44c1a9e417142c8374d52f3497391f70c53598678d10afb6fec",
+      "timeout_ms": 900000
+    },
+    "ranges": [
+      {
+        "stages": "0-31",
+        "command": "TEST262_TEST_TIMEOUT_MS=900000 TEST262_JOBS=4 TEST262_REPORT=target/iteration/task24-node-arbitration-2026-10-07/stages-0-31.json target/iteration/run-stages-next 0 31",
+        "report": "target/iteration/task24-node-arbitration-2026-10-07/stages-0-31.json",
+        "sha256": "e6e3d2463fdd28b93b720b697d75cb9570da55ce93a0593d4c635c88e1405e9f",
+        "passed": 26943,
+        "failed": 0
+      },
+      {
+        "stages": "32-63",
+        "command": "TEST262_TEST_TIMEOUT_MS=900000 TEST262_JOBS=4 TEST262_REPORT=target/iteration/task24-node-arbitration-2026-10-07/stages-32-63.json target/iteration/run-stages-next 32 63",
+        "report": "target/iteration/task24-node-arbitration-2026-10-07/stages-32-63.json",
+        "sha256": "c31fcd8631f7a4a23a0a1368956b6a8c6e28145cdc2051825bfe9c861f80376f",
+        "passed": 9261,
+        "failed": 0
+      },
+      {
+        "stages": "64",
+        "command": "TEST262_TEST_TIMEOUT_MS=900000 TEST262_JOBS=8 TEST262_REPORT=target/iteration/task24-node-arbitration-2026-10-07/stage-64.json target/iteration/run-stages-next 64 64",
+        "report": "target/iteration/task24-node-arbitration-2026-10-07/stage-64.json",
+        "sha256": "a4c38320878001745df1d299a0643707d50fe0c85b53731d152a282e18e14573",
+        "passed": 1879,
+        "failed": 0
+      },
+      {
+        "stages": "65-93",
+        "command": "TEST262_TEST_TIMEOUT_MS=900000 TEST262_JOBS=8 TEST262_REPORT=target/iteration/task24-node-arbitration-2026-10-07/stages-65-93.json target/iteration/run-stages-next 65 93",
+        "report": "target/iteration/task24-node-arbitration-2026-10-07/stages-65-93.json",
+        "sha256": "f92896209a840a154ae5d15543e94d59e54a9bab3700765afbd374517b8da5c4",
+        "passed": 9655,
+        "failed": 0
+      },
+      {
+        "stages": "94",
+        "command": "TEST262_TEST_TIMEOUT_MS=900000 TEST262_JOBS=8 TEST262_REPORT=target/iteration/task24-node-arbitration-2026-10-07/stage-94.json target/iteration/run-stages-next 94 94",
+        "report": "target/iteration/task24-node-arbitration-2026-10-07/stage-94.json",
+        "sha256": "df4e12da0c1a95f703215023e07c2617e0a048599abe8dd854817509b21835b6",
+        "passed": 844,
+        "failed": 1
+      },
+      {
+        "stages": "95-115",
+        "command": "TEST262_TEST_TIMEOUT_MS=900000 TEST262_JOBS=8 TEST262_REPORT=target/iteration/task24-node-arbitration-2026-10-07/stages-95-115.json target/iteration/run-stages-next 95 115",
+        "report": "target/iteration/task24-node-arbitration-2026-10-07/stages-95-115.json",
+        "sha256": "483c75002bd3aebe4e2c5a4e96a7aac93fcd2940ebe92327dc2e22ff14706397",
+        "passed": 4823,
+        "failed": 0
+      }
+    ],
+    "aggregate": {
+      "path": "target/iteration/task24-node-arbitration-2026-10-07/aggregate.json",
+      "sha256": "abb9ba5756214dab0c8fb601755ba1e6ce1e8ba674ad5961d6278adac501454d",
+      "total": 53406,
+      "passed": 53405,
+      "failed": 1,
+      "unique_paths": 53406,
+      "stage_keys": 116,
+      "canonical_projection_sha256": "f80ff1736814060eecc5764472519724fa2456d109af32b73b2e171c76a54c42",
+      "waived_failure": {
+        "stage": 94,
+        "path": "annexB/language/function-code/block-decl-func-skip-arguments.js",
+        "outcome": "failed",
+          "reason": "The stale pinned fixture expects an arguments object; local Node v26.10.0 and current ECMA-262 return the Annex B function binding.",
+          "policy_evidence": "tasks/evidence/task20-node-oracle-annexb-2026-10-07.json",
+          "policy_evidence_sha256": "e6047c37cd3c8f061cef705fef30f05d9704b16aa71385654f5e6eec2865d836"
+      }
+    },
+    "baseline_comparison": {
+      "baseline_evidence": "tasks/evidence/task24-stagea-suite-runs-2026-10-07.json",
+      "baseline_aggregate_sha256": "79f443c219734ae9a2127e680532cde49535e2d056e1815f156a17c71fa10e89",
+      "command": "target/iteration/compare-runs --reports target/iteration/task24-node-arbitration-2026-10-07/baseline-aggregate.json target/iteration/task24-node-arbitration-2026-10-07/aggregate.json",
+      "compare_binary_sha256": "7667d4435e4fea32d6d2b00b34509250ffac1d2dac882688c9fd732321031ba2",
+      "regressions": 0,
+      "canonical_projection_matches_baseline": true
+    }
+  },
+  "wasm": {
+    "evidence": "tasks/evidence/task23-wasm-single-vm-current-2026-10-07.json",
+    "evidence_sha256": "dfadde3efc2dbf26ed42406e063c2ea2f77b91601c2ee795c8b39fd3e4b62cfa",
+    "source_snapshot_sha256": "e34e467e7e8f37281a6d0b42658b28414b3192b0c17a248a99e036ac61158ad6",
+    "suite": "pinned Wasm testsuite",
+    "files": 288,
+    "directives": 67124,
+    "passed": 67124,
+    "failed": 0,
+    "inventory_complete": true,
+    "runner_sha256": "d0c5e8174609a3ad7682d057b378bb4ed3ea137b889251a86bbca09a7dd7d1dc",
+    "report_sha256": "fdf67e6cd20fbad4eafec9a2d72b1daac1516b329b81c903371600c73093fa4e"
+  },
+  "node_framework_gate": {
+    "evidence": "tasks/evidence/task21-framework-core-final-2026-10-07.json",
+    "evidence_sha256": "60cdf2c9786d3bd9b888f291add0bc6546559657602b37ca41d6b92d0552b6ef",
+    "source_snapshot_sha256": "e49021ea6c9fbc8303f8db3d301a2a6585f44ff5bb8dea2f1e63439e6f677e72",
+    "node": {
+      "version": "v26.10.0",
+      "executable": "/opt/homebrew/bin/node"
+    },
+    "profile": {
+      "name": "framework-core",
+      "selected": 43,
+      "passed": 43,
+      "failed": 0,
+      "skipped": 0,
+      "timeouts": 0,
+      "crashes": 0,
+      "unclassified": 0,
+      "run_parallel_sha256": "25e64e2ca109e3871cd56cca0d475a2f0bf1b7b979de52dae14e8e7b54f99dfe",
+      "quench_node_sha256": "e38cd5eed1d21931d70bf4f46721b6ad58670ae023afca9355ed0eb825feb5b5"
+    },
+    "framework_scenarios": {
+      "express": "exit/stdout/stderr match Node",
+      "koa": "exit/stdout/stderr match Node",
+      "fastify": "exit/stdout/stderr match Node"
+    }
+  },
+  "internal_controls": {
+    "runtime_next": {
+      "test_binary_sha256": "3bfa6d0dbf113404a7c7d08eb76390d9a0a4296666d62f7a06080d0932d88fef",
+      "passed": 17,
+      "failed": 0,
+      "tests": [
+        "bytecode::tests::decoder_rejects_out_of_range_local_load",
+        "bytecode::tests::decoder_rejects_runtime_abi_mismatch_before_tables",
+        "api::tests::generic_reference_matches_specialized_output",
+        "compile::tests::constant_computed_property_uses_field_cache_site",
+        "compile::tests::unspecialized_entry_keeps_generic_dispatch_class",
+        "heap::tests::strong_root_keeps_cell_alive_until_release",
+        "heap::tests::wasm_scalar_and_gc_fields_follow_the_shared_strong_root_lifecycle",
+        "vm::tests::object_method_home_survives_collection_with_precise_register_roots",
+        "vm::tests::suspended_continuations_are_rooted_until_generation_checked_resume",
+        "api::embedding::tests::invalid_inputs_are_rejected_before_guest_effects",
+        "api::native::tests::captured_host_environment_survives_scope_drop_collection_and_guest_reentry",
+        "api::tests::module_evaluation_query_follows_execution_gc_and_reinitialization",
+        "api::tests::regression_parser_exhaustion_is_catchable_across_dynamic_entry_points",
+        "api::tests::regression_dynamic_compiler_exhaustion_is_catchable_and_recovers",
+        "api::tests::regression_runtime_owners_share_recursion_budget",
+        "api::tests::regression_recursive_guest_transitions_throw_and_release_stack_budget",
+        "vm::wasm::tests::wasm_entry_views_preserve_js_roots_and_restore_program_after_traps"
+      ]
+    },
+    "quench_wasm": {
+      "test_binary_sha256": "d2de6f2ba874e8e8a82ea84b6dad3e0e4be175e9b098aa9a0214d448cb96634b",
+      "passed": 4,
+      "failed": 0,
+      "tests": [
+        "shared::scalar_tests::host_boundary_rejects_type_mismatches_and_i32_convenience_misuse",
+        "shared::tests::shared_wasm_and_javascript_use_the_same_runtime",
+        "shared::tests::shared_integer_traps_are_typed_and_runtime_recovers",
+        "shared::call_tests::ordinary_recursive_call_exhausts_instead_of_becoming_a_tail_call"
+      ]
+    },
+    "unsafe_operation_lint": {
+      "command": "cargo clippy --locked --profile iteration -p quench-runtime-next --lib -- -A clippy::all -D unsafe_op_in_unsafe_fn",
+      "exit_status": 0,
+      "scope": "The unsafe_op_in_unsafe_fn lint over quench-runtime-next library code and dependencies. This is a focused static check, not a memory-safety proof.",
+      "miri_installed": false
+    }
+  },
+  "stage_a_cutover": {
+    "status": "open",
+    "next_task": "27",
+    "reason": "The integrated suites qualify the shared VM before production cutover. Canonical Node and Test262 entrypoints, the legacy runtime package, and audited repository clutter remain Task 27/86 work."
+  }
+}

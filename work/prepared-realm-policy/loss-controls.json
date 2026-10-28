@@ -1,0 +1,140 @@
+[
+  {
+    "label": "before",
+    "fixture": "test-shadow-realm-gc-module.js",
+    "command": [
+      "/workspace/quench/work/shadow-stack-bin/run-parallel",
+      "--all",
+      "--parallel-dir",
+      "/workspace/work/node-stable-release/node-v26.12.0/test/parallel",
+      "--filter",
+      "test-shadow-realm-gc-module.js",
+      "--jobs",
+      "1",
+      "--timeout-secs",
+      "30",
+      "--results",
+      "/workspace/quench/work/prepared-realm-policy/loss-before-test-shadow-realm-gc-module.js.json"
+    ],
+    "exit": 0,
+    "elapsed_seconds": 21.384151679987554,
+    "counts": {
+      "pass": 1
+    }
+  },
+  {
+    "label": "before",
+    "fixture": "test-stream2-read-sync-stack.js",
+    "command": [
+      "/workspace/quench/work/shadow-stack-bin/run-parallel",
+      "--all",
+      "--parallel-dir",
+      "/workspace/work/node-stable-release/node-v26.12.0/test/parallel",
+      "--filter",
+      "test-stream2-read-sync-stack.js",
+      "--jobs",
+      "1",
+      "--timeout-secs",
+      "30",
+      "--results",
+      "/workspace/quench/work/prepared-realm-policy/loss-before-test-stream2-read-sync-stack.js.json"
+    ],
+    "exit": 0,
+    "elapsed_seconds": 21.751187490008306,
+    "counts": {
+      "pass": 1
+    }
+  },
+  {
+    "label": "before",
+    "fixture": "test-stringbytes-external.js",
+    "command": [
+      "/workspace/quench/work/shadow-stack-bin/run-parallel",
+      "--all",
+      "--parallel-dir",
+      "/workspace/work/node-stable-release/node-v26.12.0/test/parallel",
+      "--filter",
+      "test-stringbytes-external.js",
+      "--jobs",
+      "1",
+      "--timeout-secs",
+      "30",
+      "--results",
+      "/workspace/quench/work/prepared-realm-policy/loss-before-test-stringbytes-external.js.json"
+    ],
+    "exit": 0,
+    "elapsed_seconds": 26.10872948402539,
+    "counts": {
+      "pass": 1
+    }
+  },
+  {
+    "label": "candidate",
+    "fixture": "test-shadow-realm-gc-module.js",
+    "command": [
+      "/workspace/quench/work/prepared-realm-bin/run-parallel",
+      "--all",
+      "--parallel-dir",
+      "/workspace/work/node-stable-release/node-v26.12.0/test/parallel",
+      "--filter",
+      "test-shadow-realm-gc-module.js",
+      "--jobs",
+      "1",
+      "--timeout-secs",
+      "30",
+      "--results",
+      "/workspace/quench/work/prepared-realm-policy/loss-candidate-test-shadow-realm-gc-module.js.json"
+    ],
+    "exit": 0,
+    "elapsed_seconds": 21.492213452002034,
+    "counts": {
+      "pass": 1
+    }
+  },
+  {
+    "label": "candidate",
+    "fixture": "test-stream2-read-sync-stack.js",
+    "command": [
+      "/workspace/quench/work/prepared-realm-bin/run-parallel",
+      "--all",
+      "--parallel-dir",
+      "/workspace/work/node-stable-release/node-v26.12.0/test/parallel",
+      "--filter",
+      "test-stream2-read-sync-stack.js",
+      "--jobs",
+      "1",
+      "--timeout-secs",
+      "30",
+      "--results",
+      "/workspace/quench/work/prepared-realm-policy/loss-candidate-test-stream2-read-sync-stack.js.json"
+    ],
+    "exit": 0,
+    "elapsed_seconds": 24.57057253801031,
+    "counts": {
+      "pass": 1
+    }
+  },
+  {
+    "label": "candidate",
+    "fixture": "test-stringbytes-external.js",
+    "command": [
+      "/workspace/quench/work/prepared-realm-bin/run-parallel",
+      "--all",
+      "--parallel-dir",
+      "/workspace/work/node-stable-release/node-v26.12.0/test/parallel",
+      "--filter",
+      "test-stringbytes-external.js",
+      "--jobs",
+      "1",
+      "--timeout-secs",
+      "30",
+      "--results",
+      "/workspace/quench/work/prepared-realm-policy/loss-candidate-test-stringbytes-external.js.json"
+    ],
+    "exit": 0,
+    "elapsed_seconds": 27.12483035499463,
+    "counts": {
+      "pass": 1
+    }
+  }
+]

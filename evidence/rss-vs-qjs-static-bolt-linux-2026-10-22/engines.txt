@@ -1,0 +1,3 @@
+v22.22.0
+1.4.2
+QuickJS-ng version 0.10.1

@@ -1,0 +1,209 @@
+{
+  "schema": 1,
+  "task": "19",
+  "kind": "node_manifest_inventory_reconciliation",
+  "source_head": "62109e265221b718a2b0c4680e057453d0f3941a",
+  "source_state": "dirty worktree; every input row is bound by its current SHA-256",
+  "upstream": {
+    "root": "tests/node",
+    "revision": "55e4ca33f3a6dfe364bd9558b726576a6d1a2fba"
+  },
+  "before": {
+    "inventory_inputs": 1599,
+    "inventory_manifest_sha256": "1db49b2a3d1a5131eb0452ec8611243c1758aab79985bfc7c087891e4f8a82dc",
+    "observed_manifest_sha256": "fb38810de07feaf35f035122425e51212b5d6c73bbc9131640cb5a7e0566a46c",
+    "manifest_members": 696,
+    "inventory_only_upstream_paths": [
+      "tests/node/test/parallel/test-http-server.js",
+      "tests/node/test/parallel/test-http-generic-streams.js"
+    ],
+    "manifest_paths_without_inventory_rows": [
+      "tests/node/test/parallel/test-stream-inheritance.js",
+      "tests/node/test/parallel/test-readable-from.js",
+      "tests/node/test/parallel/test-buffer-write-utf8-two-byte.js",
+      "tests/node/test/parallel/test-diagnostics-channel-object-channel-pub-sub.js",
+      "tests/node/test/parallel/test-diagnostics-channel-tracing-channel-callback-run-stores.js",
+      "tests/node/test/parallel/test-diagnostics-channel-tracing-channel-sync-run-stores.js",
+      "tests/node/test/parallel/test-diagnostics-channel-tracing-channel-promise-run-stores.js",
+      "tests/node/test/parallel/test-http-incoming-message-destroy.js",
+      "tests/node/test/parallel/test-fs-read-stream-inherit.js",
+      "tests/node/test/parallel/test-zlib-from-string.js",
+      "tests/node/test/parallel/test-http-request-end.js",
+      "tests/node/test/parallel/test-stream-readable-async-iterators.js",
+      "tests/node/test/parallel/test-http-response-readable.js",
+      "tests/node/test/parallel/test-stream-pipeline-async-iterator.js",
+      "tests/node/test/parallel/test-http-allow-content-length-304.js",
+      "tests/node/test/parallel/test-http-listening.js",
+      "tests/node/test/parallel/test-global-webstreams.js",
+      "tests/node/test/parallel/test-queue-microtask.js"
+    ]
+  },
+  "after": {
+    "inventory_inputs": 1617,
+    "manifest_sha256": "e72613082b78a734fbac78689496771781e25cfe6b1890b456e12030548617cd",
+    "manifest_members": 698,
+    "case_candidates": {
+      "assertion_case": 1584,
+      "observation_case": 20
+    },
+    "implementation_status_counts": {
+      "assertion_case/included": 443,
+      "assertion_case/pending": 1109,
+      "assertion_case/excluded": 32,
+      "observation_case/included": 4,
+      "observation_case/pending": 15,
+      "observation_case/excluded": 1
+    },
+    "membership_frozen": false
+  },
+  "preserved_included_inputs": [
+    {
+      "path": "tests/node/test/parallel/test-http-server.js",
+      "sha256": "9adbaf9262b3e38d0362ff7dc635dabdb6dc39b58b4bbff674982d9e315d25fa",
+      "implementation_status": "included",
+      "owners": [
+        "crates/quench-node/src/modules/http.rs",
+        "crates/quench-node/src/modules/http_res.rs",
+        "crates/quench-node/src/modules/net/mod.rs"
+      ]
+    },
+    {
+      "path": "tests/node/test/parallel/test-http-generic-streams.js",
+      "sha256": "a401a903cd1ba9dc37f03556b90075b798096bc354fbd727005fd4fb9e412e35",
+      "implementation_status": "included",
+      "owners": [
+        "crates/quench-node/src/modules/http.rs",
+        "crates/quench-node/src/modules/http_res.rs",
+        "crates/quench-node/src/modules/net/mod.rs",
+        "crates/quench-node/src/modules/stream.rs",
+        "crates/quench-node/src/modules/stream_prelude.js"
+      ]
+    }
+  ],
+  "added_pending_assertion_inputs": [
+    {
+      "path": "tests/node/test/parallel/test-stream-inheritance.js",
+      "sha256": "c9ef907fd9bdff250ccdcc38cb1df7368334f6427520229e84aba826b1a86bee",
+      "role": "assertion_case",
+      "implementation": "pending owner review"
+    },
+    {
+      "path": "tests/node/test/parallel/test-readable-from.js",
+      "sha256": "81a800f5e3d73933d110e9578b3bf31776e814c73b472910ec34e20bfd3b5124",
+      "role": "assertion_case",
+      "implementation": "pending owner review"
+    },
+    {
+      "path": "tests/node/test/parallel/test-buffer-write-utf8-two-byte.js",
+      "sha256": "e544936e15fad34fc47cebb8b791e24959148aecb14cb392f999a5d1ed9f98b4",
+      "role": "assertion_case",
+      "implementation": "pending owner review"
+    },
+    {
+      "path": "tests/node/test/parallel/test-diagnostics-channel-object-channel-pub-sub.js",
+      "sha256": "80ec1039fa620286f417ea7cf2aa994e24e9985b25d3a30528796806d1f85dca",
+      "role": "assertion_case",
+      "implementation": "pending owner review"
+    },
+    {
+      "path": "tests/node/test/parallel/test-diagnostics-channel-tracing-channel-callback-run-stores.js",
+      "sha256": "5e3fe6cd5b4054e9d997b4c5800cc4c8920a1a3ac4c18fa3b4121f4d2224cef2",
+      "role": "assertion_case",
+      "implementation": "pending owner review"
+    },
+    {
+      "path": "tests/node/test/parallel/test-diagnostics-channel-tracing-channel-sync-run-stores.js",
+      "sha256": "3d54d2674fcc699f81cdc3da8d5deaf0c805a9e745cb8184684acb82eb0b2e13",
+      "role": "assertion_case",
+      "implementation": "pending owner review"
+    },
+    {
+      "path": "tests/node/test/parallel/test-diagnostics-channel-tracing-channel-promise-run-stores.js",
+      "sha256": "29a2d0c6131ef63cd8b706e2e9cba6b38e9cdd869b69a615e95d64c1c4b92d00",
+      "role": "assertion_case",
+      "implementation": "pending owner review"
+    },
+    {
+      "path": "tests/node/test/parallel/test-http-incoming-message-destroy.js",
+      "sha256": "f5687e6385fc1c34bf20e53586cb0b25610eb00b3f3353d5911793bef760d8dd",
+      "role": "assertion_case",
+      "implementation": "pending owner review"
+    },
+    {
+      "path": "tests/node/test/parallel/test-fs-read-stream-inherit.js",
+      "sha256": "38a9fdbf6df6ef8c04a3847d2f78f8c39ed0654c7d6dd8278b1d1a0b6c6af2fd",
+      "role": "assertion_case",
+      "implementation": "pending owner review"
+    },
+    {
+      "path": "tests/node/test/parallel/test-zlib-from-string.js",
+      "sha256": "710df25a808bf39929b964730aee798cc453b4f0c1d618bd0b547e1b675b2a08",
+      "role": "assertion_case",
+      "implementation": "pending owner review"
+    },
+    {
+      "path": "tests/node/test/parallel/test-http-request-end.js",
+      "sha256": "3e0b807998d5d332cb0f0ebaa4d9131776a0889c92729e0092216285e0737c33",
+      "role": "assertion_case",
+      "implementation": "pending owner review"
+    },
+    {
+      "path": "tests/node/test/parallel/test-stream-readable-async-iterators.js",
+      "sha256": "053c89c514f3b58eed64e5ec0b789078b366a203b8af00e315813766c3a80655",
+      "role": "assertion_case",
+      "implementation": "pending owner review"
+    },
+    {
+      "path": "tests/node/test/parallel/test-http-response-readable.js",
+      "sha256": "6fd7cd5b9a45b4ecb5c5204f3af1e4658bf257eee4a8ca80382aaee0adffabac",
+      "role": "assertion_case",
+      "implementation": "pending owner review"
+    },
+    {
+      "path": "tests/node/test/parallel/test-stream-pipeline-async-iterator.js",
+      "sha256": "1327f0087c9ed6b9640f66708ab2ba72305e94b8ac7c29ba7500654d3e59a4b4",
+      "role": "assertion_case",
+      "implementation": "pending owner review"
+    },
+    {
+      "path": "tests/node/test/parallel/test-http-allow-content-length-304.js",
+      "sha256": "549f270f168edd84dc9a3f68b60dbdf342064080fd1d37837e8b135ea36863f1",
+      "role": "assertion_case",
+      "implementation": "pending owner review"
+    },
+    {
+      "path": "tests/node/test/parallel/test-http-listening.js",
+      "sha256": "59bf8088ec4ad0fce262e0a50a7ea7c79950d39e4bf202d49634ee9fc30dd0f8",
+      "role": "assertion_case",
+      "implementation": "pending owner review"
+    },
+    {
+      "path": "tests/node/test/parallel/test-global-webstreams.js",
+      "sha256": "eb3016b2899247ca258c8f8229d351150be47703e79711693778a3b33dac2f06",
+      "role": "assertion_case",
+      "implementation": "pending owner review"
+    },
+    {
+      "path": "tests/node/test/parallel/test-queue-microtask.js",
+      "sha256": "f7964c48b8e9e0bba7c51be3500355871219e2e4321c401e1cb523efc7888ac8",
+      "role": "assertion_case",
+      "implementation": "pending owner review"
+    }
+  ],
+  "framework_core_projection": {
+    "profile": "framework-core",
+    "selected_count": 25,
+    "selected_paths_match_prior_evidence": true,
+    "selected_fixture_hashes_match_prior_evidence": true,
+    "selected_fixtures_sha256": "ac6c0b5e9228cc3cfd5ac6e5a6767f9fd9ec86ddd34b3e7c0f46393f6a8985ad",
+    "prior_evidence_manifest_sha256": "fb38810de07feaf35f035122425e51212b5d6c73bbc9131640cb5a7e0566a46c",
+    "prior_fixture_results_retained": true,
+    "reason": "The manifest edit only restored two untagged included cases; all 25 tagged fixture paths and fixture hashes are unchanged."
+  },
+  "verification": {
+    "command": "node tools/check-task-coherence.mjs",
+    "result": "passed: task queue coherent: 80 tasks, 6 active, next=20, Node inputs=1617",
+    "inventory_order": "tracked tests/node-compat, tracked local node-tests, then exact parallel.txt order",
+    "suites_run": []
+  }
+}

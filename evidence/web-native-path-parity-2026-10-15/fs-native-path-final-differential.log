@@ -1,0 +1,31 @@
+   Compiling quench-node v0.1.0 (/workspace/quench/crates/quench-node)
+   Compiling quench-node-test v0.1.0 (/workspace/quench/crates/quench-node-test)
+    Finished `iteration` profile [optimized] target(s) in 5.60s
+     Running tests/child_entry.rs (work/host-build/iteration/deps/child_entry-0c4d472d0248eb46)
+
+running 1 test
+
+thread 'filesystem_metadata_paths_preserve_bytes_validation_and_option_getter_order' (183596) panicked at crates/quench-node-test/tests/child_entry.rs:1491:9:
+assertion `left == right` failed: <eval>:4
+for(const detached of [false,true]){const b=new ArrayBuffer(8,{maxByteLength:16}),v=new Uint8Array(b,4,2);if(detached)b.transfer();else b.resize(2);for(const method of ['statSync','lstatSync','statfsSync']){try{fs[method](v);assert.fail('accepted unavailable backing bytes')}catch(e){assert(e instanceof TypeError);out.push([method,detached,e.name,e.message,e.code??null]);}}}
+^
+
+AssertionError [ERR_ASSERTION]: The expression evaluated to a falsy value
+    at node:assert/AssertionError.js:3:11
+    at <eval>:4:285
+
+Node.js v22.0.0
+
+  left: Some(1)
+ right: Some(0)
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test filesystem_metadata_paths_preserve_bytes_validation_and_option_getter_order ... FAILED
+
+failures:
+
+failures:
+    filesystem_metadata_paths_preserve_bytes_validation_and_option_getter_order
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 265 filtered out; finished in 0.18s
+
+error: test failed, to rerun pass `-p quench-node-test --test child_entry`

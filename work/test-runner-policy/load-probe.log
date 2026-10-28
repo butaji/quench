@@ -1,0 +1,10 @@
+/workspace/work/node-stable-release/node-v26.12.0/lib/internal/test_runner/harness.js:23
+const { exitCodes: { kGenericUserError } } = internalBinding('errors');
+^
+
+TypeError: cannot destructure null or undefined
+    at node:internal/test_runner/harness:23:1
+    at node:test:8:79
+    at [eval]:1:9
+
+Node.js v26.12.0

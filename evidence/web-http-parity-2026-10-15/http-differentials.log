@@ -1,0 +1,13 @@
+    Finished `iteration` profile [optimized] target(s) in 0.29s
+     Running tests/child_entry.rs (work/host-build/iteration/deps/child_entry-0c4d472d0248eb46)
+
+running 6 tests
+test http_agent_pool_names_preserve_property_reads_and_coercion ... ok
+test binary_http_response_views_match_the_node_oracle ... ok
+test http_response_preserves_http10_close_framing_raw_send_and_date_setting ... ok
+test http_header_validators_preserve_metadata_coercions_errors_and_byte_rules ... ok
+test http_transfer_codings_match_node_default_error_order_and_wire_bytes ... ok
+test native_http_status_reasons_preserve_mutable_map_coercion_errors_and_wire_bytes ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 241 filtered out; finished in 4.88s
+

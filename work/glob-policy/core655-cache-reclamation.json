@@ -1,0 +1,6 @@
+{
+  "path": "target/debug/deps/quench_runtime-faba0c2c63dca90b",
+  "bytes": 536459976,
+  "sha256": "1ef77cf332a716500475bae136cddb89c6d1e810cb52f5bf43c2b8e916f88131",
+  "reason": "Completed Core655 test executable cache only; raw PASS retained and frozen bundles untouched. Incoming eval-origin source requires fresh test link."
+}

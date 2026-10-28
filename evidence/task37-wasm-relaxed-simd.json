@@ -1,0 +1,179 @@
+{
+  "tasks": [
+    "19",
+    "23",
+    "37",
+    "40",
+    "48",
+    "86"
+  ],
+  "source_head": "7e60169df033dd247f34199e084e3e8080a92a29",
+  "source_state": "dirty worktree",
+  "source_hashes": {
+    "crates/quench-runtime-next/src/wasm/simd.rs": "780fabc404f8a43d495d25a14eac9216bb072e0b934670229bdccd254bb9de62",
+    "crates/quench-runtime-next/src/wasm/simd/integer.rs": "541697187ea2846438cc82255d31d483559ddc00b5427fa69d2005afd67665e8",
+    "crates/quench-runtime-next/src/wasm/conversion.rs": "d94e889b429ffb65609807905ccc19dbdc37595c142520e0837e3fc71318d610",
+    "crates/quench-runtime-next/src/wasm/float.rs": "92097185c57bc2140130c410ad63cf821d5cbdb6390566f94c1b36332f73d091",
+    "crates/quench-runtime-next/src/vm/dispatch.rs": "2b864ee849fb308950a55024cd4ddd36cdbf3dc94eaf4bb053bd727275c3f8c6",
+    "crates/quench-runtime-next/src/bytecode.rs": "6883256769bdb0c1f31ab039ffc127f57c1c15d7949c6ab7c43e35ab70a8a928",
+    "crates/quench-runtime-next/src/bytecode/validate.rs": "bff371e18a443b16c4771dfcc498afb4793d48321dd19bec042da6deccac4031"
+  },
+  "suite_head": "67c8b9dc32c47d61c05a1681df349d01c85fa8ff",
+  "suite_clean": true,
+  "host": "macOS-26.5-arm64-arm-64bit",
+  "rustc": "rustc 1.99.0 (b940084d7 2026-09-28) (Homebrew)",
+  "profile": "debug",
+  "residual_format": 54,
+  "obligation": "Execute all twenty relaxed SIMD operators on the single shared VM, choosing consistent deterministic spec-admitted outcomes and preserving existing vector/scalar semantics.",
+  "representation": "The existing SIMD table appends eleven unary/binary selectors after 211 existing selectors. Swizzle, truncation, extrema and Q15 project existing strict operations. One composition table derives ternary lowering: ordinary bitselect and four relaxed lane selections share bitselect; madd/nmadd compose optional first-operand negation, multiplication and addition with explicit unfused rounding; dot-add composes signed saturated byte-pair dot, signed pairwise extension and I32 addition. Consumed three operands remain reserved while allocating temporary registers. The distinct signed byte-pair dot rule saturates signed I16 sums, unlike ordinary signed I16-to-I32 wrapping dot. No new cells, opcodes, executor, identity map or residual format.",
+  "scope": "Unchanged 209-file affected inventory from specialized vector memory qualification, including all top-level v128 sources, all seven relaxed-SIMD files and existing scalar/resource/host/lifecycle callers. Exact hashes/directive identities, complete workers and unchanged final binaries required. Not full Wasm, Test262, implemented Node or performance qualification.",
+  "inventory": {
+    "path": "target/iteration/task37-wasm-relaxed-simd-files.json",
+    "sha256": "02f701595425dc034e5a79f6a285e4daff3377a8c887e6c5279f035f1779317a"
+  },
+  "qualification": {
+    "files": 209,
+    "total": 61479,
+    "before_passed": 60441,
+    "passed": 60510,
+    "failed": 969,
+    "gains": 69,
+    "regressions": 0,
+    "gains_by_file": {
+      "crates/quench-wasm-test/testsuite/i16x8_relaxed_q15mulr_s.wast": 2,
+      "crates/quench-wasm-test/testsuite/i8x16_relaxed_swizzle.wast": 5,
+      "crates/quench-wasm-test/testsuite/relaxed_dot_product.wast": 10,
+      "crates/quench-wasm-test/testsuite/relaxed_laneselect.wast": 11,
+      "crates/quench-wasm-test/testsuite/relaxed_madd_nmadd.wast": 17,
+      "crates/quench-wasm-test/testsuite/relaxed_min_max.wast": 24
+    },
+    "exact_directive_ids": true,
+    "identical_input_hashes": true,
+    "complete_workers": true,
+    "remaining_relaxed_scope_failures": 0
+  },
+  "controls": {
+    "files": 22,
+    "total": 2913,
+    "passed": 2913,
+    "failed": 0,
+    "new_relaxed_directives": 41,
+    "previous_controls": 2872,
+    "same_runner": true,
+    "obligations": "All twenty operators; in-range fractional truncation and zero upper lanes, swizzle bounds, Q15 overflowing minimum pair, signed-zero extrema, exact/partial masks, signed-vs-unsigned byte-dot choices and saturated minimum pair, wrapping dot accumulation, heterogeneous lanes, unfused cancellation and madd/nmadd operand order. Pinned cases cover NaN/overflow alternatives and repeated-operation consistency; focused shared controls assert chosen deterministic outputs."
+  },
+  "checks": {
+    "wasm_internal": 33,
+    "bytecode_internal": 19,
+    "frontend": 39,
+    "profile_feature_all_target_check": "passed",
+    "internal_obligations": "Existing serialization, root/GC, typed host protocols and malformed bytecode checks pass. No ordinary conformance units added; representation and lifecycle authorities unchanged."
+  },
+  "oracle": {
+    "path": "target/iteration/task37-wasm-relaxed-simd-oracle.json",
+    "sha256": "5ef589239662916cede42c35c9b7fd14f4c1a4484bd24bdba968a441fc6dbe18",
+    "source": "target/iteration/task37-wasm-relaxed-simd-oracle.cjs",
+    "source_sha256": "cf1cd574a2a50028a798b617fce6769d0b9c62c54b469d22920c295140d01598",
+    "result": {
+      "node": "v26.10.0",
+      "flags": [
+        "--no-sparkplug",
+        "--no-maglev",
+        "--no-turbofan",
+        "--wasm-jitless"
+      ],
+      "modules": 1,
+      "operators": 20,
+      "checks": 40,
+      "differing_admitted_choices": 6,
+      "qualification": "Exact results in defined domains; spec-admitted alternatives for relaxed rounding, selection, swizzle, signed-zero extrema, Q15 overflow and signed/unsigned saturating dot choices."
+    },
+    "qualification_limit": "One exact shared Wast/Node module, twenty operators and forty exact-bit/admitted-choice checks. Six Node results differ from the selected Quench output but satisfy independent per-lane spec alternatives; those are not regressions. Hex strings and BigInt retain exact bits. Pinned assertions own NaN classes and unspecified truncation overflow; no forced Node parity on implementation-dependent results. Does not qualify concrete references/GC, shared resources/threads, installed JS API or full suite closure.",
+    "cases": {
+      "path": "target/iteration/task37-wasm-relaxed-simd-oracle-cases.json",
+      "sha256": "ca32986d820f48d4188ab24721ed564f75b2a50ea0f264c7c2a347f492bf57e5"
+    },
+    "fixture_generator": {
+      "path": "target/iteration/task37-wasm-relaxed-simd-controls.py",
+      "sha256": "deae0a9f07286c44c8fa8e37c3e64b755546a15bbe578eae72b69acf92284647"
+    },
+    "module_inputs": {
+      "target/iteration/task37-wasm-relaxed-simd-oracle.wat": "927a4e0a8d6ef793c058e979adf138accda759da563d7b38f326def8642198eb",
+      "target/iteration/task37-wasm-relaxed-simd-oracle.wasm": "9ad1287a5f42beca2ffe1707d4542e648c838f27c801bd469283a21e07875c62"
+    }
+  },
+  "specification": {
+    "relaxed_numerics": "https://webassembly.github.io/spec/core/exec/numerics.html#aux-relaxed",
+    "unfused_madd": "https://webassembly.github.io/spec/core/exec/numerics.html#op-frelaxed-madd",
+    "saturated_dot": "https://webassembly.github.io/spec/core/exec/numerics.html#op-ivdot-sat",
+    "laneselect": "https://webassembly.github.io/spec/core/exec/numerics.html#op-irelaxed-laneselect"
+  },
+  "reports": {
+    "before": {
+      "path": "target/iteration/task37-wasm-relaxed-simd-before.json",
+      "sha256": "d294b989efcc9ee2b099fc16e112dbe476ff166760b3e76ba2aeb9284347b9dc",
+      "binary_sha256": "5a783e39cd4e59db40bb8c6d62bbd11cca0e4806e351579f0d0dce49553d556b",
+      "command_source": "provenance.command in report"
+    },
+    "after": {
+      "path": "target/iteration/task37-wasm-relaxed-simd-after.json",
+      "sha256": "928d118104733118a8c53370da305d2bfe21a73fad9fd0c4b9cccdd626f577e8",
+      "binary_sha256": "eb7b38f7a01d1c212930fa3aa0508b4cdf1562c21421492a18b2e968e1d11d2e",
+      "command_source": "provenance.command in report"
+    },
+    "controls": {
+      "path": "target/iteration/task37-wasm-relaxed-simd-controls.json",
+      "sha256": "f9f8fcc6d3a41b5cd2260d259ff6eb992a56212bf4ed39727f2b349bff9673b7",
+      "binary_sha256": "eb7b38f7a01d1c212930fa3aa0508b4cdf1562c21421492a18b2e968e1d11d2e",
+      "command_source": "provenance.command in report"
+    }
+  },
+  "frozen_runner": {
+    "path": "target/iteration/task37-wasm-relaxed-simd-runner",
+    "sha256": "eb7b38f7a01d1c212930fa3aa0508b4cdf1562c21421492a18b2e968e1d11d2e"
+  },
+  "logs": {
+    "runtime": {
+      "path": "target/iteration/task37-wasm-relaxed-simd-runtime.log",
+      "sha256": "98f44be06f05b4c31af594270fcc1fe16de73fdf434873093c773bf0b1940862"
+    },
+    "bytecode": {
+      "path": "target/iteration/task37-wasm-relaxed-simd-bytecode.log",
+      "sha256": "cbd300b6824b7ddc287d91740c5b84e05737c2a5e44b5619ce18d1c24ea7383d"
+    },
+    "frontend": {
+      "path": "target/iteration/task37-wasm-relaxed-simd-frontend.log",
+      "sha256": "dfc9d223b4859dc8023b88b909edf2fbdd332080b6df29d25c2f6332097add3f"
+    },
+    "profile-check": {
+      "path": "target/iteration/task37-wasm-relaxed-simd-profile-check.log",
+      "sha256": "cd41c4d84a60f0d3f5c5f0aadaf6ce39b4787cf4115bc27c1a7a8eca5ce4292d"
+    },
+    "build": {
+      "path": "target/iteration/task37-wasm-relaxed-simd-build.log",
+      "sha256": "72a8031d9933fadcf9b141905bd2967a550e4d9b15cc7a504cbb2c8325ef7b02"
+    },
+    "compare": {
+      "path": "target/iteration/task37-wasm-relaxed-simd-compare.log",
+      "sha256": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+    },
+    "before": {
+      "path": "target/iteration/task37-wasm-relaxed-simd-before.log",
+      "sha256": "ec7c858a700550dbb7086e7ff3d3681c9a21ecdff07ecc47335b13d445f29fc0"
+    },
+    "after": {
+      "path": "target/iteration/task37-wasm-relaxed-simd-after.log",
+      "sha256": "b52565d6cd4b28be4f59f3e705830887f73a5bb018da92136a1a76786c5319b8"
+    },
+    "controls": {
+      "path": "target/iteration/task37-wasm-relaxed-simd-controls.log",
+      "sha256": "6dc2eca4b3f60bb649d1feea8c60d807ff7d326a656c5f820a8df7d686313697"
+    },
+    "oracle": {
+      "path": "target/iteration/task37-wasm-relaxed-simd-oracle.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  },
+  "remaining": "Concrete typed/GC/non-null references, shared resources/threads and remaining proposals; JS/Wasm adapters and embedding reentry. Full three-suite gates, implemented Node inventory/migration, production cutover and cleanup remain open. Stage A is open; Stage B has not started.",
+  "profile_limit": "Feature builds pass; profile execution attribution remains task68 work. No speed or RSS claim."
+}

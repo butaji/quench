@@ -1,0 +1,6 @@
+fw/express                       speed x0.996 wins 5/10  RSS    26.1 ->    26.1 MB  wall 0.7s
+fw/koa                           speed x1.027 wins 8/10  RSS    34.3 ->    34.6 MB  wall 0.8s
+fw/fastify                       speed x0.995 wins 5/10  RSS    29.4 ->    28.8 MB  wall 0.9s
+fw/hono                          speed x0.989 wins 4/10  RSS    31.9 ->    31.1 MB  wall 0.8s
+fw/h3                            speed x0.977 wins 4/10  RSS    30.1 ->    30.0 MB  wall 0.8s
+== fw        speed geomean x0.997  RSS ratio geomean x0.992  (5 workloads)

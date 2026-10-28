@@ -1,0 +1,9 @@
+    Blocking waiting for file lock on build directory
+    Finished `iteration` profile [optimized] target(s) in 1m 52s
+     Running tests/child_entry.rs (target/iteration/deps/child_entry-6f33ac6f753c66ce)
+
+running 1 test
+test public_commonjs_wrappers_have_five_parameters_and_no_internal_bindings ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 189 filtered out; finished in 0.64s
+

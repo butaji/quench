@@ -1,0 +1,33 @@
+{
+  "method": "paired bootstrap over per-round candidate-minus-baseline percentages",
+  "bootstrap_samples": 100000,
+  "seed": 61102027,
+  "cases": {
+    "dense-literal": {
+      "pairs": 11,
+      "baseline_instruction_median": 256176856988,
+      "candidate_instruction_median": 41753876412,
+      "instruction_delta_median_percent": -83.7011544030951,
+      "instruction_delta_95_percentile_interval": [
+        -83.70181645628554,
+        -83.7005192192903
+      ],
+      "candidate_lower_instruction_pairs": 11,
+      "elapsed_delta_median_percent": -87.42514970059881,
+      "candidate_faster_elapsed_pairs": 11
+    },
+    "new-array-filled": {
+      "pairs": 11,
+      "baseline_instruction_median": 262215659514,
+      "candidate_instruction_median": 150609742973,
+      "instruction_delta_median_percent": -42.56264356898228,
+      "instruction_delta_95_percentile_interval": [
+        -42.58735099390359,
+        -42.546373635237295
+      ],
+      "candidate_lower_instruction_pairs": 11,
+      "elapsed_delta_median_percent": -45.13018322082931,
+      "candidate_faster_elapsed_pairs": 11
+    }
+  }
+}

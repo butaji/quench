@@ -1,0 +1,417 @@
+{
+  "scope": "Latest Node aligned unsafe Buffer allocation, shared pooled concat, Latin1 classification and protected original validation policy",
+  "source_commit": "28b7467ed9759f2d15e78b3aded7f370402766d4",
+  "latest_stable": "v26.12.0",
+  "checks": {
+    "unchanged_qualified_core": 653,
+    "unchanged_core_dependency_config_files": 301,
+    "api": 360,
+    "focused_buffer": 21,
+    "framework": 43,
+    "shared": 7,
+    "workspace_all_targets": true,
+    "direct_differentials_equal": 4
+  },
+  "unchanged_originals": {
+    "test-buffer-alloc-alignment.js": {
+      "pass": 1
+    },
+    "test-buffer-islatin1.js": {
+      "pass": 1
+    },
+    "test-buffer-concat.js": {
+      "pass": 1
+    }
+  },
+  "family": {
+    "counts": {
+      "pass": 52,
+      "timeout": 1
+    },
+    "total": 53,
+    "inventory_hash": "647b9535ab7f6745"
+  },
+  "fixed_work": {
+    "valid": 8,
+    "clean": 0,
+    "speed_claim": false
+  },
+  "design": [
+    "One real private pool is shared by from/copyBytesFrom/allocUnsafe/concat. Slow and strict-alignment allocations own actual over-allocated ArrayBuffers.",
+    "Physical alignment is measured from fixed backing storage; independent snapshots preserve observed addresses and actual contents.",
+    "Original configured Node validators and coded constructors are captured before guest execution, including before replacement of internal exports.",
+    "Concat preserves original two-pass reads, reentrant allocation, truncation and real zero filling.",
+    "Latin1 classification reads genuine Core UTF16 code units; original Node validation rejects objects without coercion.",
+    "Core source, dependency and configuration bytes are unchanged from passing Core653 qualification."
+  ],
+  "limitations": [
+    "Goal remains open. Latest complete full stable1787/5015 and pinned1815/4727 use older b673 source, excluding this allocation extension and9b3 Core integration.",
+    "Real ShadowRealm stack callback regression remains recorded in both full audits; realm-local original Node policy is the next fix.",
+    "Two contended full API attempts each passed359/360 with distinct child-process500ms and TCP5s deadline failures. Both unchanged isolated controls pass; a subsequent quiet complete run passed360/360186.87s. Failed attempts are retained and not replaced by control sums.",
+    "First focused run20/21 caught private isLatin1 binding name mismatch; corrected actual empty name and reran21/21.",
+    "No speed claim:8fixed-work outputs valid,0clean rounds.",
+    "Iterator broadcast-waiter-cleanup remains an unchanged30s timeout. No fixture, deadline or skip changes."
+  ],
+  "raw": [
+    {
+      "path": "work/native-buffer-unsafe/all-api-first-liveness-failure.log",
+      "bytes": 30644,
+      "sha256": "57a2b854af77635f618d9b04367e9fbdcdd428bd273799cf4ad4e4891e5e35f3"
+    },
+    {
+      "path": "work/native-buffer-unsafe/all-api-second-tcp-timeout.log",
+      "bytes": 30020,
+      "sha256": "53afd4fe510b799b198f7f682459c5e5a1c08f57a50051aa6b0d2e6a8a8b648b"
+    },
+    {
+      "path": "work/native-buffer-unsafe/all-api.log",
+      "bytes": 29502,
+      "sha256": "7a24bfd8cd12e5e61ac2916f56defea7289dff9aa0fa792fc5d2f2b00bb3cc13"
+    },
+    {
+      "path": "work/native-buffer-unsafe/build-focused.sh",
+      "bytes": 656,
+      "sha256": "42903df250a0573fc77b6c831bdf9f293259ee2cd876d38b1ce70bcce9523001"
+    },
+    {
+      "path": "work/native-buffer-unsafe/check.log",
+      "bytes": 135,
+      "sha256": "7499de7614b527e1c520acc04a4b220473b103906c8f8a24a13470d647e530af"
+    },
+    {
+      "path": "work/native-buffer-unsafe/child-liveness-control.log",
+      "bytes": 351,
+      "sha256": "b637e2e13da4fb06bdb0e131912f24ce7a8fb25f6de6221d9d35a7dfa3327562"
+    },
+    {
+      "path": "work/native-buffer-unsafe/concat-oracle.cjs",
+      "bytes": 1210,
+      "sha256": "6303b23bda481e274da473682405660dcba52c79108848f282d57f224c38adb5"
+    },
+    {
+      "path": "work/native-buffer-unsafe/concat-oracle.final-candidate.log",
+      "bytes": 945,
+      "sha256": "6952b631101e34ed06edc5159ea6b526493f0567d64f94710f686417c70d0b7d"
+    },
+    {
+      "path": "work/native-buffer-unsafe/concat-oracle.final-node.log",
+      "bytes": 945,
+      "sha256": "6952b631101e34ed06edc5159ea6b526493f0567d64f94710f686417c70d0b7d"
+    },
+    {
+      "path": "work/native-buffer-unsafe/concat-oracle.final.diff",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "work/native-buffer-unsafe/concat-oracle.log",
+      "bytes": 945,
+      "sha256": "6952b631101e34ed06edc5159ea6b526493f0567d64f94710f686417c70d0b7d"
+    },
+    {
+      "path": "work/native-buffer-unsafe/core653-cache-reclamation.json",
+      "bytes": 460,
+      "sha256": "a94337e6e31b8e4d042188d034f8880669b16531aeed5057b75e43e0d1c16e23"
+    },
+    {
+      "path": "work/native-buffer-unsafe/extras.sh",
+      "bytes": 2033,
+      "sha256": "440dd8ff0c341e874069b6195d0edf9f9e980fdbc1062cbf8a42a9b7bfa223d4"
+    },
+    {
+      "path": "work/native-buffer-unsafe/family.json",
+      "bytes": 129220,
+      "sha256": "6c6313f11740ad12976c1f329e81e2d8068a249c295aec67b15eb96e263eceb0"
+    },
+    {
+      "path": "work/native-buffer-unsafe/family.log",
+      "bytes": 5629,
+      "sha256": "2873bfc3cce8ec2d835008a1adca70f898e68a77a5a38f3997bfb89339ffc1e3"
+    },
+    {
+      "path": "work/native-buffer-unsafe/fixed-work.json",
+      "bytes": 153793,
+      "sha256": "cd096597e83a44c7a8a57bc41ae600cad19a7ea4f02ca6978cb0ffd225b4e49a"
+    },
+    {
+      "path": "work/native-buffer-unsafe/fixed-work.log",
+      "bytes": 1129,
+      "sha256": "4d6e51c4d5b898ba879e5dc9847c8985aa6c7684ee405b34bdef5b4af865230b"
+    },
+    {
+      "path": "work/native-buffer-unsafe/focused-first-metadata-failure.log",
+      "bytes": 19897,
+      "sha256": "a84c813a5ba790c8f3d419c27137466893fe993c294c99cac048c22e3f7dfcfa"
+    },
+    {
+      "path": "work/native-buffer-unsafe/focused.log",
+      "bytes": 2277,
+      "sha256": "19633c9d7d84dcbdefc22e53096783c8af233038451b3a1111dd8f61abdf8cfa"
+    },
+    {
+      "path": "work/native-buffer-unsafe/framework.log",
+      "bytes": 3798,
+      "sha256": "b41881f94821125815bc87efbbbd7d26b13fd072686394014795864fa55f2ae8"
+    },
+    {
+      "path": "work/native-buffer-unsafe/latin1-first-candidate.log",
+      "bytes": 1871,
+      "sha256": "e959339186396b88f65a359423c6e71684283ebe472358bc8e88f89d07146151"
+    },
+    {
+      "path": "work/native-buffer-unsafe/latin1-first.diff",
+      "bytes": 377,
+      "sha256": "457599f3ed296173e20dfbf65b30b4e0c4f520a37e0dbf56c55c43a517dd4b13"
+    },
+    {
+      "path": "work/native-buffer-unsafe/latin1-oracle.cjs",
+      "bytes": 888,
+      "sha256": "6932c0c74cd5dd667734c00806135d73487642bf55beff49a18a0823608b865d"
+    },
+    {
+      "path": "work/native-buffer-unsafe/latin1-oracle.final-candidate.log",
+      "bytes": 1863,
+      "sha256": "09939bcf717a24a1d1193e5d2dbf4d0d6b23ecbde28bc8e551a3afaef73c562a"
+    },
+    {
+      "path": "work/native-buffer-unsafe/latin1-oracle.final-node.log",
+      "bytes": 1863,
+      "sha256": "09939bcf717a24a1d1193e5d2dbf4d0d6b23ecbde28bc8e551a3afaef73c562a"
+    },
+    {
+      "path": "work/native-buffer-unsafe/latin1-oracle.final.diff",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "work/native-buffer-unsafe/latin1-oracle.log",
+      "bytes": 1863,
+      "sha256": "09939bcf717a24a1d1193e5d2dbf4d0d6b23ecbde28bc8e551a3afaef73c562a"
+    },
+    {
+      "path": "work/native-buffer-unsafe/oracle.cjs",
+      "bytes": 1832,
+      "sha256": "d327e70c3bf57a3c3faea8e3897b9272d8e9c81b175592ddc89e188667b08e1c"
+    },
+    {
+      "path": "work/native-buffer-unsafe/oracle.final-candidate.log",
+      "bytes": 4169,
+      "sha256": "f9d0f3418b5812dbcd7e927283a12ea6ff35b6b736c9073a3243ad20342338ce"
+    },
+    {
+      "path": "work/native-buffer-unsafe/oracle.final-node.log",
+      "bytes": 4169,
+      "sha256": "f9d0f3418b5812dbcd7e927283a12ea6ff35b6b736c9073a3243ad20342338ce"
+    },
+    {
+      "path": "work/native-buffer-unsafe/oracle.final.diff",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "work/native-buffer-unsafe/oracle.log",
+      "bytes": 4169,
+      "sha256": "f9d0f3418b5812dbcd7e927283a12ea6ff35b6b736c9073a3243ad20342338ce"
+    },
+    {
+      "path": "work/native-buffer-unsafe/paired-build.log",
+      "bytes": 217,
+      "sha256": "0a954dc717153a11d289c317eda53b78915ce781abb17938d2dbcf43d47277b2"
+    },
+    {
+      "path": "work/native-buffer-unsafe/paired-first-build.log",
+      "bytes": 217,
+      "sha256": "868b6fb08c518bf0e81372d88900956bed1961ad6e9c231fa22198bd3fb31921"
+    },
+    {
+      "path": "work/native-buffer-unsafe/poison-oracle.cjs",
+      "bytes": 729,
+      "sha256": "7866c2a0b977877cb146960d04c7f1f0d0b9e4f9a29f14e68b52a28890f9336b"
+    },
+    {
+      "path": "work/native-buffer-unsafe/poison-oracle.final-candidate.log",
+      "bytes": 476,
+      "sha256": "13189736a66e7b1615619955feaa462064b24ed73d07b84b76bd4d5c21fd39e8"
+    },
+    {
+      "path": "work/native-buffer-unsafe/poison-oracle.final-node.log",
+      "bytes": 476,
+      "sha256": "13189736a66e7b1615619955feaa462064b24ed73d07b84b76bd4d5c21fd39e8"
+    },
+    {
+      "path": "work/native-buffer-unsafe/poison-oracle.final.diff",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "work/native-buffer-unsafe/poison-oracle.log",
+      "bytes": 476,
+      "sha256": "13189736a66e7b1615619955feaa462064b24ed73d07b84b76bd4d5c21fd39e8"
+    },
+    {
+      "path": "work/native-buffer-unsafe/qualify-quiet.sh",
+      "bytes": 353,
+      "sha256": "2ebe8c9595b8645f09bf2676dd0cddf899ed3b81573e0b10a96a5a3375581542"
+    },
+    {
+      "path": "work/native-buffer-unsafe/qualify.sh",
+      "bytes": 719,
+      "sha256": "1013a9c6f1948d3bea58240f63aa0fc4c5db36b0c54f7c74f1ec1f22ff5bae13"
+    },
+    {
+      "path": "work/native-buffer-unsafe/shared.log",
+      "bytes": 882,
+      "sha256": "32fe9d04a88c20abc6f97504868e4db21e0bb9ea31226c3a90debbcb174b02e7"
+    },
+    {
+      "path": "work/native-buffer-unsafe/startup-diagnostic.json",
+      "bytes": 762,
+      "sha256": "c477e9de60ec08dbf63849bde758f066f7a7494a6c523b42c8948c435913e9e1"
+    },
+    {
+      "path": "work/native-buffer-unsafe/tcp-reuse-control.log",
+      "bytes": 339,
+      "sha256": "9efc255e4608b8a7e8ca7c8c56f5ae212de7757538929d0e29b428929dcd8631"
+    },
+    {
+      "path": "work/native-buffer-unsafe/test-buffer-alloc-alignment.js.log",
+      "bytes": 199,
+      "sha256": "01c16e764e4f1ca45b3f21eac181ab5e65f368f5ffe4feda5e7e47511a4a70a9"
+    },
+    {
+      "path": "work/native-buffer-unsafe/test-buffer-alloc-alignment.js.results.json",
+      "bytes": 2302,
+      "sha256": "5c605812e55da0eff6e5ccae5a7a73e01fda40eacf9b87ff76b73e493ec0a813"
+    },
+    {
+      "path": "work/native-buffer-unsafe/test-buffer-concat.js.log",
+      "bytes": 190,
+      "sha256": "fe172a1dcd11481e6d473728987c101df9b18aae21d5de10ec34ea9a38e37385"
+    },
+    {
+      "path": "work/native-buffer-unsafe/test-buffer-concat.js.results.json",
+      "bytes": 671,
+      "sha256": "4e28a187085b4f91275a3553628c19831bdb03498510347a9d8985f3465326b5"
+    },
+    {
+      "path": "work/native-buffer-unsafe/test-buffer-islatin1.js.log",
+      "bytes": 192,
+      "sha256": "096127dae529651d37578eef5ed1a4f92f365dec7f139b11cc62b03bf5f795a4"
+    },
+    {
+      "path": "work/native-buffer-unsafe/test-buffer-islatin1.js.results.json",
+      "bytes": 673,
+      "sha256": "fadad48e399286aebe1a817058c8f2c2e36618e1509b9957ec372f9778534225"
+    },
+    {
+      "path": "work/native-buffer-unsafe/unchanged-core653.json",
+      "bytes": 35850,
+      "sha256": "3bd8bd03365812696b05470e2d89f95a1e98f3300f60c6f84cdb997ce720d919"
+    },
+    {
+      "path": "work/native-buffer-unsafe/validator-capture-before.log",
+      "bytes": 36,
+      "sha256": "162cbb0b2dd6532246824a1a8f3d20afbed4cdbebe4cbc5b04f79c68c540350e"
+    },
+    {
+      "path": "work/native-buffer-unsafe/workspace.log",
+      "bytes": 213,
+      "sha256": "700c0c8ade427c81523af68a21b9481d3885680f0b012094507be44888fa2ff0"
+    },
+    {
+      "path": "work/native-buffer-unsafe-bin/source-commit.txt",
+      "bytes": 41,
+      "sha256": "09004c8866c81a8fb279bde1a77fd0ff1e0baf86be4ed56c4c3cce13703361b4"
+    },
+    {
+      "path": "work/native-buffer-unsafe-bin/source-sha256.json",
+      "bytes": 77477,
+      "sha256": "d6978c1729f33209e3259105ec4142ef4b9b5d99d235ee8ca3299b4b77dddc96"
+    },
+    {
+      "path": "work/native-buffer-unsafe-bin/sha256.txt",
+      "bytes": 235,
+      "sha256": "04cb531ff9446e6bcb5e58175600034fa84697d61c6ec2959d22f00ed8242aba"
+    },
+    {
+      "path": "work/task-supervisor/buffer-unsafe-focused-state.json",
+      "bytes": 255,
+      "sha256": "0b0e6620cc349bee1703ca16ddd5ec1bb5bd46a60a9090984661f42d1bf82576"
+    },
+    {
+      "path": "work/task-supervisor/buffer-unsafe-focused.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "work/task-supervisor/buffer-unsafe-qualify-state.json",
+      "bytes": 255,
+      "sha256": "b20ecce42688eddf287f37c1b3e463fdf623f76c530012461cf97f7e1d0d3a32"
+    },
+    {
+      "path": "work/task-supervisor/buffer-unsafe-qualify.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "work/task-supervisor/buffer-unsafe-extras-state.json",
+      "bytes": 248,
+      "sha256": "f69fef0f8da0c9faf8d22547218d36b9cf9a9e9dfc24b709695ce3a7db82099e"
+    },
+    {
+      "path": "work/task-supervisor/buffer-unsafe-extras.log",
+      "bytes": 46,
+      "sha256": "aa2664e4de864732d654e664946693c05fe6932429fbf8fc506b822b75c9c603"
+    },
+    {
+      "path": "work/task-supervisor/buffer-unsafe-focused.json",
+      "bytes": 311,
+      "sha256": "e16c98cb968ee956668107528484eb24a1a860f158c96a2091163cf58cc03749"
+    },
+    {
+      "path": "work/task-supervisor/buffer-unsafe-qualify.json",
+      "bytes": 305,
+      "sha256": "c9d67a1728b9ae24ba5c0defef6b9c683209d96b9899514418619286da3fd58e"
+    },
+    {
+      "path": "work/task-supervisor/buffer-unsafe-extras.json",
+      "bytes": 302,
+      "sha256": "fb77458716726ef6c534aa4c29396323105246ad7bb05255f16b858256824f4f"
+    },
+    {
+      "path": "work/task-supervisor/buffer-unsafe-quiet.json",
+      "bytes": 311,
+      "sha256": "434219f228eb7c42c71bbb2cf11af1b8b1c82faa87f15e762cbee1f4a56ab21e"
+    },
+    {
+      "path": "work/task-supervisor/buffer-unsafe-first-state.json",
+      "bytes": 252,
+      "sha256": "7be319077bfe797ca19da6aeba380fee8a3996a3db331c40fbb0b00973c378d1"
+    },
+    {
+      "path": "work/task-supervisor/buffer-unsafe-first.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "work/task-supervisor/buffer-unsafe-qualify-first-state.json",
+      "bytes": 246,
+      "sha256": "1c044679ad339a4c996f206b794ae28b0da59a69c9966ef34a98f9ce263329bc"
+    },
+    {
+      "path": "work/task-supervisor/buffer-unsafe-qualify-first.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "work/task-supervisor/buffer-unsafe-qualify-second-state.json",
+      "bytes": 246,
+      "sha256": "43d319ddc6ad63b5a8304dec73c1f67a02fa63c94d5df92f515a40790cc4e040"
+    },
+    {
+      "path": "work/task-supervisor/buffer-unsafe-qualify-second.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  ]
+}

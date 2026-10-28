@@ -1,0 +1,18 @@
+{
+  "work/clone-callgrind/richards-25.js": "e6a7011a625787f350fb4d5111f6b8c99edd44316d5a1b2929a0109dd14cf912",
+  "work/clone-callgrind/navier-stokes-1.js": "00d27e3d49bc2015349fcc5243076ac2ab65bc1c875abaa941df80d23b4b59d7",
+  "work/clone-callgrind/splay-75.js": "254221707fe6780ca2810cce23690d1d34aa34e4671f427b523664415c125fc2",
+  "work/clone-callgrind/deltablue-10.js": "94ad9cd0ade255de35ab14fe84715c825fd547022e0024a16b7ed5f47a0c0fe0",
+  "work/clone-callgrind/crypto-0.js": "8033c2f351dd0dc3d22a8984f07125779e6800db0d18d1cdc1297d4b7a99dabf",
+  "work/clone-callgrind/regexp-0.js": "257087a723bb3a06aad3a0db9b13615adf871a20fcdfec85c2dc3572271df020",
+  "work/clone-callgrind/earley-boyer-1.js": "16d7b1ceb8ca393730a46b42e046b6c81f928654eeaec8a957cefd35a0aaf168",
+  "work/clone-callgrind/raytrace-3.js": "bc1870485d2425041043c51075ba8042c3526d60e01e83c09efaec09109dd1e1",
+  "work/clone-callgrind/raytrace-0.js": "24e0ddf9a979e5ce113ba59fac8e4b7f0201404cc7c7c286e40ed00ebdf76b96",
+  "work/clone-callgrind/earley-boyer-0.js": "435ce2e0e38336f05a797de549764c407abc3a3a98d5dbf549ef8c97d51482fe",
+  "work/clone-callgrind/deltablue-0.js": "6b574c154e9813db6295f427e875d64b2bc11dbba939eed45e44144a088a4abe",
+  "work/clone-callgrind/richards-0.js": "2a7c2080c45f4dac2e47676d042dc07dc40979f03e7560ef28129d87fc580951",
+  "work/clone-callgrind/navier-stokes-0.js": "aa93f9aaafdf39eb9a6fba21cb0df9c7f189d2e95998a86a8ea5527bc9970e8c",
+  "work/clone-callgrind/crypto-1.js": "503985d8dc7f0f1482ac830d850506ef12fb88edb027bfdb803b10db6d793350",
+  "work/clone-callgrind/regexp-1.js": "3fa6412c8dcea1947ad04829000722ed2818d2b7fd2fb80818cd53f98396d76c",
+  "work/clone-callgrind/splay-0.js": "3e919dd1f4f72b4cd62e319318258704cb781ddab850cc09fbf1713f16ff2d70"
+}

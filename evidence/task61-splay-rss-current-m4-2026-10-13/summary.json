@@ -1,0 +1,61 @@
+{
+  "purpose": "Splay-only resident mapping attribution for the exact pinned binary; not a timing or qualification result",
+  "platform": "M4 arm64 macOS 26.5",
+  "logical_cpus": 10,
+  "evidence_head": "ebcf80c4b2e5ee73fb71e2cd053d3c46a8df4965",
+  "synced_v2_merged_head_after_capture": "a70849cf6656dd70d425ee831750a4c6536c22fc",
+  "capture_time_utc": "2026-10-13T18:06:49Z",
+  "runtime_source": "4062a6be9",
+  "binary_sha256": "098cc7aa69195bab87115b496a4df9660f78c5d7364e60a52c8761f2e857f5e6",
+  "capture_script_sha256": "a78ec25ec18842dc431df0a638329237cd4c9dfdc0fe64e0a8f7203d9297b999",
+  "input_sha256": {
+    "base.js": "ac383759c3cbf5f3a499ade526a4e296f7925733d8c3889b6d5840ce6867ff51",
+    "splay.js": "1f875cec579d03af40d256ceaeb6823f3ef16c883652650ca51d183472a8185d"
+  },
+  "load_average_before": [2.86474609375, 6.84423828125, 8.36181640625],
+  "load_average_after": [2.79541015625, 6.763671875, 8.32421875],
+  "work_runs": 300,
+  "measurements": {
+    "pre_setup": {
+      "ps_rss_kib": 45472,
+      "vmmap_physical_footprint_mib": 32.5,
+      "malloc_small_resident_mib": 30.6,
+      "record_regions_resident_mib": 0.0625
+    },
+    "after_setup": {
+      "ps_rss_kib": 77008,
+      "vmmap_physical_footprint_mib": 63.3,
+      "malloc_small_resident_mib": 35.8,
+      "record_regions_resident_mib": 25.6,
+      "object_record_region_resident_mib": 15.8,
+      "array_record_region_resident_mib": 9.8
+    },
+    "after_300_runs": {
+      "ps_rss_kib": 114352,
+      "vmmap_physical_footprint_mib": 99.8,
+      "malloc_small_resident_mib": 39.3,
+      "malloc_large_resident_mib": 53.6,
+      "malloc_large_empty_resident_mib": 3.0,
+      "malloc_small_empty_resident_mib": 2.0,
+      "record_regions_resident_mib": 50.6,
+      "object_record_region_resident_mib": 31.6,
+      "array_record_region_resident_mib": 19.0
+    }
+  },
+  "derived": {
+    "setup_to_work_rss_delta_kib": 37344,
+    "setup_to_work_physical_footprint_delta_mib": 36.5,
+    "setup_to_work_record_region_delta_mib": 25.0,
+    "record_region_share_of_physical_footprint_delta": 0.685,
+    "object_record_size_bytes": 32,
+    "array_record_size_bytes": 40,
+    "object_record_space_reserved_mib": 512,
+    "array_record_space_reserved_mib": 640
+  },
+  "limits": [
+    "OS mapping snapshots after the final run, before TearDown; may miss a transient intra-run max-RSS peak.",
+    "Record-region resident pages are not a count of live records.",
+    "The remaining footprint growth is not fully attributed to named allocator categories.",
+    "The 1.620x Score / 1.782x max-RSS diagnostic belongs to binary 098cc7aa, not the later a70849cf runtime tree."
+  ]
+}

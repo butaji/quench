@@ -1,0 +1,175 @@
+{
+  "tasks": [
+    "19",
+    "23",
+    "37",
+    "40",
+    "48",
+    "86"
+  ],
+  "source_head": "7e60169df033dd247f34199e084e3e8080a92a29",
+  "source_state": "dirty worktree",
+  "source_hashes": {
+    "crates/quench-runtime-next/src/wasm.rs": "0645b0d78e155c468ac85498f02b73c4ca56b438e34cfeac46a20eedcfe1584c",
+    "crates/quench-runtime-next/src/wasm/integer.rs": "94b93b45002e30d45e3cec63b6bef457242789d0c9b8afb1aea0b32d7f5a2fd9",
+    "crates/quench-runtime-next/src/wasm/numeric.rs": "94218b258d3fe873fd4ae0da0863d4bdf2b573bd65e338a87a3f61d03f8b16da",
+    "crates/quench-runtime-next/src/wasm/conversion.rs": "d94e889b429ffb65609807905ccc19dbdc37595c142520e0837e3fc71318d610",
+    "crates/quench-runtime-next/src/vm/dispatch.rs": "2b864ee849fb308950a55024cd4ddd36cdbf3dc94eaf4bb053bd727275c3f8c6",
+    "crates/quench-runtime-next/src/bytecode.rs": "6883256769bdb0c1f31ab039ffc127f57c1c15d7949c6ab7c43e35ab70a8a928",
+    "crates/quench-runtime-next/src/bytecode/validate.rs": "bff371e18a443b16c4771dfcc498afb4793d48321dd19bec042da6deccac4031"
+  },
+  "suite_head": "67c8b9dc32c47d61c05a1681df349d01c85fa8ff",
+  "suite_clean": true,
+  "host": "macOS-26.5-arm64-arm-64bit",
+  "rustc": "rustc 1.99.0 (b940084d7 2026-09-28) (Homebrew)",
+  "profile": "debug",
+  "residual_format": 54,
+  "obligation": "Execute I64Add128, I64Sub128 and signed/unsigned I64MulWide as low/high I64 stack results on the existing shared VM.",
+  "representation": "Add/sub lower to existing wrapping I64 operations, unsigned carry/borrow comparison and I32-to-I64 extension. Multiplication appends two high-word rules to the existing I64 binary table; signed/unsigned 128-bit Rust multiplication and type-derived 64-bit shift yield the high word while existing wrapping multiply yields the low word. Consumed inputs stay reserved across temporary registers and allocation-capable scalar operations. Final low/high values reuse two ordinary operand slots and the existing multi-result ABI. Existing numeric selector meanings and format54 remain; no opcode, cell, numeric payload, bundle representation or executor added.",
+  "scope": "The prior 209-file affected scalar/vector/resource/host/lifecycle inventory plus the pinned wide-arithmetic proposal, for 210 exact files. Same input hashes/directive IDs and completed 60-second workers. Full suite closure is not claimed.",
+  "inventory": {
+    "path": "target/iteration/task37-wasm-wide-arithmetic-files.json",
+    "sha256": "aa49f49ab2ccffcb4dc9fda00c89fc6b5237c48651ca836ce286f44c7879d838"
+  },
+  "qualification": {
+    "files": 210,
+    "total": 61588,
+    "before_passed": 60520,
+    "passed": 60619,
+    "failed": 969,
+    "gains": 99,
+    "regressions": 0,
+    "gains_by_file": {
+      "crates/quench-wasm-test/testsuite/proposals/wide-arithmetic/wide-arithmetic.wast": 99
+    },
+    "exact_directive_ids": true,
+    "identical_input_hashes": true,
+    "complete_workers": true,
+    "wide_arithmetic_proposal": {
+      "total": 109,
+      "passed": 109,
+      "failed": 0
+    }
+  },
+  "controls": {
+    "files": 23,
+    "total": 3178,
+    "passed": 3178,
+    "failed": 0,
+    "new_wide_directives": 265,
+    "previous_controls": 2913,
+    "same_runner": true,
+    "obligations": "All four operations; carry/borrow across low words, wrapping across 128-bit range, signed versus unsigned high words, zero/all-one/min/max/sign boundaries, tagged-bit collision patterns, and chained multiplication-to-add results. All prior vector/scalar/resource/ABI controls retain passes."
+  },
+  "checks": {
+    "wasm_internal": 33,
+    "bytecode_internal": 19,
+    "frontend_internal": 29,
+    "profile_feature_all_target_check": "passed",
+    "internal_obligations": "Retained serialized bit/cell/root ownership, multi-result bundles and malformed selector domains pass. No ordinary suite-conformance unit added."
+  },
+  "oracle": {
+    "path": "target/iteration/task37-wasm-wide-arithmetic-oracle.json",
+    "sha256": "d2f54d74404b7b89d49b8fbd72f997dea77d60e8e38636ea20e7680d67b00d02",
+    "source": "target/iteration/task37-wasm-wide-arithmetic-oracle.cjs",
+    "source_sha256": "e1b758994bf7ff18707a61bb9108f852cafcc3e4670a1c914fb0aede81ceb19a",
+    "result": {
+      "node": "v26.10.0",
+      "flags": [
+        "--no-sparkplug",
+        "--no-maglev",
+        "--no-turbofan",
+        "--wasm-jitless"
+      ],
+      "operators": 4,
+      "checks": 264,
+      "wasm_supported": false,
+      "wasm_error": "CompileError: WebAssembly.Module(): Compiling function #0 failed: invalid numeric opcode: 0xfc13 @+103",
+      "qualification": "Independent Node BigInt arithmetic on exact shared Wast inputs/expected limbs. This is not a Node WebAssembly execution claim."
+    },
+    "qualification_limit": "Node BigInt independently checks 264 exact arithmetic vectors/limb pairs shared with Wast controls. Local Node v26.10.0 rejects the wide-arithmetic Wasm opcode; this is arithmetic-oracle evidence, not Node WebAssembly execution parity. JSON hex strings and BigInt preserve every bit. Pinned Wast proposal and controls prove shared-VM execution; no full suite or performance claim.",
+    "cases": {
+      "path": "target/iteration/task37-wasm-wide-arithmetic-oracle-cases.json",
+      "sha256": "aa88363572c723e8cc37b22d974cb5d36a0e5f660deab3e0061cc8f79810e291"
+    },
+    "fixture_generator": {
+      "path": "target/iteration/task37-wasm-wide-arithmetic-controls.py",
+      "sha256": "8a5cc52bd8e611f715d58eab706406e8c5aa35ac84a4d40f748bc7c512d76cd3"
+    },
+    "module_inputs": {
+      "target/iteration/task37-wasm-wide-arithmetic-oracle.wat": "77b282537491ddcfd5631cbf02e4dabfadf20a7d822a4bfb0f710ae4dc8a0dc8",
+      "target/iteration/task37-wasm-wide-arithmetic-oracle.wasm": "76252f3a1d3f5885de76055fcfdd09394c75ee2903f206570eefbe16867cd1ae"
+    }
+  },
+  "specification": {
+    "wide_arithmetic_proposal": "https://github.com/WebAssembly/wide-arithmetic/blob/main/proposals/wide-arithmetic/Overview.md"
+  },
+  "reports": {
+    "before": {
+      "path": "target/iteration/task37-wasm-wide-arithmetic-before.json",
+      "sha256": "92a1791ac365857bdfb9dba866dc2e16e871ec0e093a235dcc8ee93d160b584a",
+      "binary_sha256": "eb7b38f7a01d1c212930fa3aa0508b4cdf1562c21421492a18b2e968e1d11d2e",
+      "command_source": "provenance.command in report"
+    },
+    "after": {
+      "path": "target/iteration/task37-wasm-wide-arithmetic-after.json",
+      "sha256": "9307ca82d645b24bc006eb9196e8fe9085302cf576b4535649472994ca57fb9b",
+      "binary_sha256": "0b8501af233af817c05223f1e146c68dc1c61c971531d4d32e008e0576f886ad",
+      "command_source": "provenance.command in report"
+    },
+    "controls": {
+      "path": "target/iteration/task37-wasm-wide-arithmetic-controls.json",
+      "sha256": "97c833c0c289433a08994b04ffa37a356411bc00332a63dd859d3f618f3c833b",
+      "binary_sha256": "0b8501af233af817c05223f1e146c68dc1c61c971531d4d32e008e0576f886ad",
+      "command_source": "provenance.command in report"
+    }
+  },
+  "frozen_runner": {
+    "path": "target/iteration/task37-wasm-wide-arithmetic-runner",
+    "sha256": "0b8501af233af817c05223f1e146c68dc1c61c971531d4d32e008e0576f886ad"
+  },
+  "logs": {
+    "runtime": {
+      "path": "target/iteration/task37-wasm-wide-arithmetic-runtime.log",
+      "sha256": "eb5ce69825442f5b23cfa1f898b744b50c63236828458b543b41f942e634f85d"
+    },
+    "bytecode": {
+      "path": "target/iteration/task37-wasm-wide-arithmetic-bytecode.log",
+      "sha256": "191014cc3bba3360f84d13743f25a26e865cd29ee7a629b9e7fae6b34debba55"
+    },
+    "frontend": {
+      "path": "target/iteration/task37-wasm-wide-arithmetic-frontend.log",
+      "sha256": "31fadd7bbcca8c18f3ffa23347b1f37c6ffcdd9ee5cad8f30eca6b407c871fc0"
+    },
+    "profile-check": {
+      "path": "target/iteration/task37-wasm-wide-arithmetic-profile-check.log",
+      "sha256": "a3e06f70644960da4d0bba8c36b3d1eaf5f3da7f47854c58bea763cf903fbb4f"
+    },
+    "build": {
+      "path": "target/iteration/task37-wasm-wide-arithmetic-build.log",
+      "sha256": "9fde03ff33bd06fc960d5b7cfadbe893bdc5c11d0927186630c73e764eea7f4b"
+    },
+    "compare": {
+      "path": "target/iteration/task37-wasm-wide-arithmetic-compare.log",
+      "sha256": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+    },
+    "before": {
+      "path": "target/iteration/task37-wasm-wide-arithmetic-before.log",
+      "sha256": "30f2e998c3b7820075164d45bc1b1f03080b1a4e750eb29acf38209d07041095"
+    },
+    "after": {
+      "path": "target/iteration/task37-wasm-wide-arithmetic-after.log",
+      "sha256": "9eb1d528fb63b5f8344553705b13641810a9e76d6ddf0945f0236a3294ddcc1b"
+    },
+    "controls": {
+      "path": "target/iteration/task37-wasm-wide-arithmetic-controls.log",
+      "sha256": "ca91d32498bcc85388ca46e235b1468775a2c3988cd919d5b1680bbdd76cbe5c"
+    },
+    "oracle": {
+      "path": "target/iteration/task37-wasm-wide-arithmetic-oracle.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  },
+  "remaining": "Concrete typed/GC/non-null references, shared resources/threads and other proposals; JS/Wasm adapters and embedding reentry. Full three-suite gates, implemented Node inventory/migration, production cutover and cleanup remain open. Stage A is open; Stage B has not started.",
+  "profile_limit": "Feature builds pass; profile execution attribution remains task68 work. No speed or RSS claim."
+}

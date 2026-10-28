@@ -1,0 +1,66 @@
+{
+  "engine": "quench",
+  "provenance": {
+    "binary": "/Users/admin/Code/GitHub/quench-v2/target/iteration/run-stages",
+    "host": "macos-aarch64",
+    "jobs": 1,
+    "source_dirty": true,
+    "source_revision": "a55e7cf16c6068fd9ac1dcefcfee03225fc4763d",
+    "timeout_ms": 30000
+  },
+  "selected": [
+    {
+      "stage": "114",
+      "path": "staging/sm/extensions/arguments-property-access-in-function.js",
+      "outcome": "pass"
+    },
+    {
+      "stage": "48",
+      "path": "built-ins/Function/StrictFunction_restricted-properties.js",
+      "outcome": "pass"
+    },
+    {
+      "stage": "48",
+      "path": "built-ins/Function/15.3.5.4_2-1gs.js",
+      "outcome": "pass"
+    },
+    {
+      "stage": "48",
+      "path": "built-ins/Function/prototype/caller-arguments/accessor-properties.js",
+      "outcome": "pass"
+    },
+    {
+      "stage": "48",
+      "path": "built-ins/Function/prototype/bind/BoundFunction_restricted-properties.js",
+      "outcome": "pass"
+    },
+    {
+      "stage": "10",
+      "path": "language/expressions/arrow-function/ArrowFunction_restricted-properties.js",
+      "outcome": "pass"
+    },
+    {
+      "stage": "26",
+      "path": "language/statements/class/definition/methods-restricted-properties.js",
+      "outcome": "pass"
+    },
+    {
+      "stage": "49",
+      "path": "built-ins/GeneratorFunction/instance-restricted-properties.js",
+      "outcome": "pass"
+    },
+    {
+      "stage": "114",
+      "path": "staging/sm/extensions/newer-type-functions-caller-arguments.js",
+      "outcome": "pass"
+    },
+    {
+      "stage": "114",
+      "path": "staging/sm/extensions/function-properties.js",
+      "outcome": "pass"
+    }
+  ],
+  "passed": 10,
+  "failed": 0,
+  "total": 10
+}

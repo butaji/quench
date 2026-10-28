@@ -1,0 +1,26 @@
+default hook function true
+identity true true true
+header SystemError [ERR_SOCKET_BUFFER_SIZE]: Could not get or set buffer size: uv_send_buffer_size returned EBADF (bad file descriptor) SystemError [ERR_SOCKET_BUFFER_SIZE]: Could not get or set buffer size: uv_send_buffer_size returned EBADF (bad file descriptor)
+descriptor name false true true undefined undefined
+descriptor message false true true undefined undefined
+descriptor info true true false undefined undefined
+descriptor errno true true undefined function function
+descriptor syscall true true undefined function function
+context 42 changed
+inspect [SystemError [ERR_SOCKET_BUFFER_SIZE]: Could not get or set buffer size: uv_send_buffer_size returned EBADF (bad file descriptor)] {
+  code: 'ERR_SOCKET_BUFFER_SIZE',
+  info: {
+    errno: 42,
+    code: 'EBADF',
+    message: 'bad file descriptor',
+    syscall: 'changed'
+  },
+  errno: [Getter/Setter: 42],
+  syscall: [Getter/Setter: 'changed']
+}
+native coded TypeError ERR_INVALID_ARG_TYPE true undefined TypeError [ERR_INVALID_ARG_TYPE]: The "path" argument must be of type string or an instance of Buffer or URL. Received null
+internal override override:override:true override:override:true
+user hook true true true 1
+throw identity true
+retry Error: throw 2
+internal policy policy:policy:true

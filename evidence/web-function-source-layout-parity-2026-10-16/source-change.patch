@@ -1,0 +1,221 @@
+diff --git a/crates/quench-node-test/node-tests/test-function-constructor-source-layout.js b/crates/quench-node-test/node-tests/test-function-constructor-source-layout.js
+new file mode 100644
+index 000000000..302eaf417
+--- /dev/null
++++ b/crates/quench-node-test/node-tests/test-function-constructor-source-layout.js
+@@ -0,0 +1,25 @@
++Error.prepareStackTrace=(_,frames)=>frames;
++const Kinds=[Function,(async function(){}).constructor,(function*(){}).constructor,(async function*(){}).constructor];
++async function invoke(fn){const value=fn();return typeof value?.next==='function'?(await value.next()).value:await value}
++const position=frame=>[frame.getLineNumber(),frame.getColumnNumber()];
++(async()=>{
++ const out=[];
++ for(const Kind of Kinds){
++  for(const prefix of ['', '  ', '\t', '\n  ', '\r\n  ', '\r  ', '\u2028  ', '\u2029  ', '\ufeff  ']){
++   const body=prefix+'return new Error().stack[0];\n  ';
++   const fn=Kind(body);out.push([Kind.name,'body',prefix,position(await invoke(fn)),fn.toString()]);
++  }
++  for(const parameters of ['arg = new Error().stack[0]', 'arg =\n  new Error().stack[0]', 'arg /*🦀*/ = new Error().stack[0]', 'arg = (function parameter(){return new Error().stack[0]})()', 'arg = (()=>new Error().stack[0])()']){
++   const fn=Kind(parameters,'\n return arg; \n');out.push([Kind.name,'parameters',parameters,position(await invoke(fn)),fn.name,fn.length,fn.toString()]);
++  }
++  const nested=Kind('\n return function nested(){return new Error().stack[0]};\n '),closure=await invoke(nested);
++  out.push([Kind.name,'nested',position(closure()),closure.toString(),nested.toString()]);
++  const evaluated=Kind('\n return eval("new Error().stack[0]");\n '),frame=await invoke(evaluated);
++  out.push([Kind.name,'eval-origin',position(frame),frame.getEvalOrigin()]);
++  out.push([Kind.name,'no-self-binding',await invoke(Kind('return typeof anonymous'))]);
++  let strict;try{await invoke(Kind('"use strict";return anonymous'))}catch(error){strict=error.name}
++  out.push([Kind.name,'strict-self-binding',strict]);
++  out.push([Kind.name,'parameter-binding',await invoke(Kind('anonymous=17','return anonymous'))]);
++ }
++ console.log(JSON.stringify(out));
++})();
+diff --git a/crates/quench-node-test/tests/child_entry.rs b/crates/quench-node-test/tests/child_entry.rs
+index 1f03d76b9..6fe238606 100644
+--- a/crates/quench-node-test/tests/child_entry.rs
++++ b/crates/quench-node-test/tests/child_entry.rs
+@@ -9602,3 +9602,8 @@ fn function_constructor_default_debug_names_remain_distinct_from_public_names_an
+ fn function_prototype_info_lookups_preserve_native_accessor_layout_and_descriptor_transitions() {
+     compare_node_source_with_args(include_str!("../node-tests/test-function-prototype-info-lookups.js"), &["--expose-internals", "--no-warnings"]);
+ }
++
++#[test]
++fn function_constructor_sources_preserve_whitespace_parameter_positions_and_synthetic_name_scope() {
++    compare_node_source_with_args(include_str!("../node-tests/test-function-constructor-source-layout.js"), &[]);
++}
+diff --git a/crates/quench-runtime/src/compile.rs b/crates/quench-runtime/src/compile.rs
+index f95b5a98a..033adc0cf 100644
+--- a/crates/quench-runtime/src/compile.rs
++++ b/crates/quench-runtime/src/compile.rs
+@@ -156,6 +156,23 @@ pub(crate) enum DynamicFunctionKind {
+     AsyncGenerator,
+ }
+ 
++pub(crate) const DYNAMIC_FUNCTION_PUBLIC_NAME: &str = "anonymous";
++
++impl DynamicFunctionKind {
++    fn source_prefix(self) -> &'static str {
++        match self {
++            Self::Ordinary => "function",
++            Self::Async => "async function",
++            Self::Generator => "function*",
++            Self::AsyncGenerator => "async function*",
++        }
++    }
++
++    pub(crate) fn source(self, parameters: &str, body: &str) -> String {
++        format!("{} {DYNAMIC_FUNCTION_PUBLIC_NAME}({parameters}\n) {{\n{body}\n}}", self.source_prefix())
++    }
++}
++
+ #[derive(Clone, Copy, Default)]
+ pub(crate) struct EvalContext {
+     pub in_function: bool,
+@@ -610,17 +627,11 @@ impl Engine {
+     ) -> Result<ResidualProgram, Vec<Diagnostic>> {
+         let body = early::normalize_dynamic_function_body(body);
+         let parameters = early::normalize_dynamic_function_parameters(parameters);
+-        let prefix = match kind {
+-            DynamicFunctionKind::Ordinary => "function",
+-            DynamicFunctionKind::Async => "async function",
+-            DynamicFunctionKind::Generator => "function*",
+-            DynamicFunctionKind::AsyncGenerator => "async function*",
+-        };
+-        let function_prefix = format!("{prefix}(");
+         let expression_wrapper = "(";
+-        let parameter_list_end =
+-            expression_wrapper.len() + function_prefix.len() + parameters.len() + ")".len();
+-        let source = format!("{expression_wrapper}{function_prefix}{parameters}) {{{body}\n}})");
++        let function_prefix = format!("{} {DYNAMIC_FUNCTION_PUBLIC_NAME}(", kind.source_prefix());
++        let parameter_list_end = expression_wrapper.len() + function_prefix.len()
++            + parameters.len() + "\n)".len();
++        let source = format!("{expression_wrapper}{})", kind.source(&parameters, &body));
+         let expected_shape = ParsedProgramShape::DynamicFunction { parameter_list_end };
+         Self::specialize_with_program_shape(
+             &source,
+@@ -770,14 +781,18 @@ impl Engine {
+                 context.home_atom.is_none() || eval_method_body(&mut parsed.program).is_some()
+             }
+             ParsedProgramShape::DynamicFunction { parameter_list_end } => {
+-                match parsed.program.body.as_slice() {
+-                    [Statement::ExpressionStatement(statement)] => match &statement.expression {
++                match parsed.program.body.as_mut_slice() {
++                    [Statement::ExpressionStatement(statement)] => match &mut statement.expression {
+                         Expression::ParenthesizedExpression(expression) => {
+-                            match &expression.expression {
++                            match &mut expression.expression {
+                                 Expression::FunctionExpression(function) => {
+-                                    function.id.is_none()
++                                    let valid = function.id.as_ref().is_some_and(|identifier| identifier.name == DYNAMIC_FUNCTION_PUBLIC_NAME)
+                                         && function.body.is_some()
+-                                        && function.params.span.end as usize == parameter_list_end
++                                        && function.params.span.end as usize == parameter_list_end;
++                                    // The generated public source name is not a dynamic
++                                    // Function self binding. OXC still owns the grammar.
++                                    if valid { function.id = None; }
++                                    valid
+                                 }
+                                 _ => false,
+                             }
+diff --git a/crates/quench-runtime/src/vm/error.rs b/crates/quench-runtime/src/vm/error.rs
+index 2e5fcda35..b0968ada3 100644
+--- a/crates/quench-runtime/src/vm/error.rs
++++ b/crates/quench-runtime/src/vm/error.rs
+@@ -1335,9 +1335,7 @@ impl<H: Host> Vm<H> {
+             argument_strings.push(text);
+         }
+         let source = argument_strings.pop().unwrap_or_default();
+-        let source = source.trim();
+         let parameters = argument_strings.join(",");
+-        let parser_parameters = format!("{parameters}\n");
+         let source_name = format!("<Function:{}>", self.programs.len());
+         let kind = match native {
+             Native::AsyncFunction => crate::compile::DynamicFunctionKind::Async,
+@@ -1346,8 +1344,8 @@ impl<H: Host> Vm<H> {
+             _ => crate::compile::DynamicFunctionKind::Ordinary,
+         };
+         let residual = crate::Engine::specialize_function_constructor(
+-            &parser_parameters,
+-            source,
++            &parameters,
++            &source,
+             &source_name,
+             &*self,
+             kind,
+@@ -1389,21 +1387,8 @@ impl<H: Host> Vm<H> {
+         })();
+         self.set_active_program(active_program);
+         let function = result?;
+-        self.set_function_name_text(function, "anonymous".to_owned());
+-        let function_source = match kind {
+-            crate::compile::DynamicFunctionKind::Ordinary => {
+-                format!("function anonymous({parameters}\n) {{\n{source}\n}}")
+-            }
+-            crate::compile::DynamicFunctionKind::Async => {
+-                format!("async function anonymous({parameters}\n) {{\n{source}\n}}")
+-            }
+-            crate::compile::DynamicFunctionKind::Generator => {
+-                format!("function* anonymous({parameters}\n) {{\n{source}\n}}")
+-            }
+-            crate::compile::DynamicFunctionKind::AsyncGenerator => {
+-                format!("async function* anonymous({parameters}\n) {{\n{source}\n}}")
+-            }
+-        };
++        self.set_function_name_text(function, crate::compile::DYNAMIC_FUNCTION_PUBLIC_NAME.to_owned());
++        let function_source = kind.source(&parameters, &source);
+         self.set_function_source(function, &function_source)?;
+         Ok(function)
+     }
+diff --git a/crates/quench-runtime/src/vm/tests.rs b/crates/quench-runtime/src/vm/tests.rs
+index a0be85a8d..f506a9ad1 100644
+--- a/crates/quench-runtime/src/vm/tests.rs
++++ b/crates/quench-runtime/src/vm/tests.rs
+@@ -10159,3 +10159,22 @@ if(fn().getFunctionName()!=='anonymous')throw Error('deleted length layout');
+         Vm::new(SilentHost).execute(&program).unwrap();
+     }
+ }
++
++#[test]
++fn dynamic_function_canonical_source_and_wrapper_origins_match_in_both_modes() {
++    let source = r#"
++Error.prepareStackTrace=(_,frames)=>frames;
++const fn=Function(' \n return new Error().stack[0];\n '),frame=fn();
++if(frame.getLineNumber()!==4||frame.getColumnNumber()!==9)throw Error('body position');
++if(fn.toString()!=='function anonymous(\n) {\n \n return new Error().stack[0];\n \n}')throw Error('body source');
++const parameter=Function('p = new Error().stack[0]','return p;')();
++if(parameter.getLineNumber()!==1||parameter.getColumnNumber()!==25)throw Error('parameter position');
++if(Function('return typeof anonymous')()!=='undefined')throw Error('synthetic self binding');
++if(Function('anonymous=17','return anonymous')()!==17)throw Error('parameter shadow');
++let threw=false;try{Function('"use strict";return anonymous')()}catch(error){threw=error instanceof ReferenceError}
++if(!threw)throw Error('strict synthetic self binding');
++"#;
++    for program in [Engine::compile(crate::ExecutionRequest { source, name: "dynamic-function-source.js", kind: crate::SourceKind::Script }).unwrap(), Engine::specialize(source, "dynamic-function-source.js").unwrap()] {
++        Vm::new(SilentHost).execute(&program).unwrap();
++    }
++}
+diff --git a/docs/node-host-contracts.md b/docs/node-host-contracts.md
+index 98ef692c9..6e9af7bff 100644
+--- a/docs/node-host-contracts.md
++++ b/docs/node-host-contracts.md
+@@ -81,12 +81,20 @@ cache rules. Parser-owned syntax includes nested template sites. Entries use the
+ program store's existing reclamation lifecycle, validate the program identity
+ on lookup and disappear when their program is reclaimed or the store resets.
+ Complete V8 cache ageing, contextual direct-eval identity, sourceURL/source-map
+-metadata, complete prototype-cache transitions and Function-constructor body
+-positions remain open. Function-constructor public names are initialized as
++metadata, complete prototype-cache transitions, raw UTF16 Function-constructor
++source and compatibility-normalized parameter positions remain open. Function-constructor public names are initialized as
+ creation data: public anonymous is distinct from the empty default source/debug
+ name. Stack names and native constructor display share this distinction across
+ all four constructor kinds without invoking public name getters.
+ 
++Function-constructor compilation and public source text share a kind-owned
++canonical renderer. Public source preserves parameter/body whitespace, and
++compiled source retains the expression wrapper that Node includes in first-line
++parameter columns. Body lines begin after the canonical header newline. OXC
++validates the generated identifier and parameter boundary; only the synthetic
++outer identifier is removed before semantic binding, so anonymous is not a
++self binding. Nested names and real parameter bindings remain intact.
++
+ ## Parsed eval execution
+ 
+ Direct and indirect eval execute the existing OXC-compiled Eval goal, retaining

@@ -1,0 +1,113 @@
+{
+  "schema": 1,
+  "task": "20",
+  "kind": "test262_lower_stage_conflict_adjudication",
+  "recorded_at": "2026-10-07",
+  "policy": {
+    "rule": "When pinned Test262 expectations directly conflict, the lower-numbered stage is authoritative.",
+    "accounting": "Keep all fixtures and inventory identities. Report contradicted higher-stage cases as waived, never as passes.",
+    "authority": "User instruction in this session"
+  },
+  "source": {
+    "revision": "935cc951d3a75f88f7bd1ff58a750bbca4f564c7",
+    "dirty": true,
+    "host": "macOS arm64",
+    "rustc": "rustc 1.99.0 (b940084d7 2026-09-28) (Homebrew)",
+    "snapshot_algorithm": "SHA-256 over sorted UTF-8 relative path, NUL, file SHA-256 hex, newline records",
+    "snapshot_file_count": 292,
+    "snapshot_sha256": "344c5caa13f8bb9b811a021ba83e0266cc74487b612e617d2fd0666656e70ae2",
+    "snapshot_roots": [
+      "crates/quench-runtime-next/src",
+      "crates/quench-test262/src",
+      "vendor/oxc-parser-next/src"
+    ],
+    "snapshot_additional_files": [
+      "Cargo.toml",
+      "Cargo.lock",
+      "crates/quench-runtime-next/Cargo.toml",
+      "crates/quench-test262/Cargo.toml",
+      "vendor/oxc-parser-next/Cargo.toml",
+      "docs/STAGES.md"
+    ],
+    "changed_owner_sha256": {
+      "crates/quench-runtime-next/src/compile.rs": "ba571ee2c9da4653cdccce1251f89c2a3bd793c9cde8bd9fc7af2d88e75e3b79",
+      "crates/quench-runtime-next/src/compile/ast.rs": "c66fad7a2fe0407005eec931f34db33d231ba52c94540b6e89e3786157298e70",
+      "crates/quench-runtime-next/src/compile/arrow.rs": "00396e9ca6d3f147e38e1191ca36ee3cc531405a58d4f86d3e2bc20dd13f33f8",
+      "crates/quench-runtime-next/src/compile/ast/expression.rs": "fa6f4370d03a1749efbfd6a14eaa8f2fa0b435719cf0cefabc9f4f6e7626a9fe"
+    }
+  },
+  "corpus": {
+    "path": "tests/test262",
+    "revision": "f2d1435644797268dca1f7988cad5a4e89ccd8d2",
+    "clean": true,
+    "stage_definitions_sha256": "4cb13c366db7ed8d7ae0a1b7fe63eb18f93def77fd09231630ba5050f7d7d3d2",
+    "inputs_changed": false
+  },
+  "change": {
+    "owner": "FunctionCompiler::annex_b_outer_binding_allowed",
+    "rule": "A sloppy block function named arguments keeps its block lexical binding but does not overwrite the containing function's existing arguments binding.",
+    "implementation": "Use the existing arguments_slot presence when deciding whether the Annex B outer binding store is allowed. No stage or fixture identity enters runtime behavior.",
+    "build_command": "CARGO_INCREMENTAL=0 cargo build --profile iteration -p quench-test262 --bin run-stages-next",
+    "runner": "target/iteration/run-stages-next",
+    "runner_sha256": "0de0d28c9763cc4b89cbcd19860067684fb309289f095562dfae8317dc4577b4"
+  },
+  "conflict": {
+    "authoritative_stage": "94",
+    "authoritative_fixture": {
+      "path": "annexB/language/function-code/block-decl-func-skip-arguments.js",
+      "sha256": "8a225aefbeb41d9a8f5630403141e3b718330d1e946c15a9fb35678da9a90d01",
+      "result": "pass"
+    },
+    "waived_higher_stage": "114",
+    "waived_fixtures": [
+      {
+        "path": "staging/sm/lexical-environment/block-scoped-functions-annex-b-arguments.js",
+        "sha256": "1bc4233bfb75d6b06a47773ad93e9fd3e7c500a0fbeb2de4a5b7eb508fdd8dab"
+      },
+      {
+        "path": "staging/sm/regress/regress-602621.js",
+        "sha256": "43ec595a2220317a7b295e1ab23c3d0f94bb104bc65398e606a38a0d323f95cf"
+      }
+    ],
+    "reason": "Both Stage 114 fixtures require the same block function to overwrite the arguments binding that Stage 94 requires to remain the arguments object.",
+    "inventory_and_fixtures_preserved": true
+  },
+  "verification": {
+    "full_test262_run": false,
+    "unit_tests_run": false,
+    "affected_stages": [
+      {
+        "stage": 94,
+        "passed": 845,
+        "failed": 0,
+        "total": 845,
+        "report": "target/iteration/annexb-lower-stage-2026-10-07/stage-94.json",
+        "report_sha256": "c29c22affa3ef6f53fccab371edc265b65e084189626489308e4e4158ecef1cb",
+        "compare_to": "target/iteration/task20-recheck-2026-10-07/stages-94-114.json",
+        "compare_sha256": "41692f93abda765663dbecf7c8f2e7145512113aa3282502e41d254200e43308",
+        "comparison": "regressions=0"
+      },
+      {
+        "stage": 114,
+        "passed": 1480,
+        "failed": 2,
+        "total": 1482,
+        "report": "target/iteration/annexb-lower-stage-2026-10-07/stage-114.json",
+        "report_sha256": "f5056e28d40bc17092da570471689a051243f8be3b704203613c3bc4ae3dbb36",
+        "compare_to": "target/iteration/task20-recheck-2026-10-07/stage-114.json",
+        "compare_sha256": "392284775fb270081f3010e261d4402dc382fbac53bc962708ae9f656a614f96",
+        "comparison": "regressions=2; both identities are the explicitly waived fixtures above",
+        "failures": [
+          "staging/sm/lexical-environment/block-scoped-functions-annex-b-arguments.js",
+          "staging/sm/regress/regress-602621.js"
+        ]
+      }
+    ],
+    "commands": [
+      "TEST262_JOBS=4 TEST262_TEST_TIMEOUT_MS=900000 TEST262_REPORT=target/iteration/annexb-lower-stage-2026-10-07/stage-94.json target/iteration/run-stages-next 94 94",
+      "TEST262_JOBS=4 TEST262_TEST_TIMEOUT_MS=900000 TEST262_REPORT=target/iteration/annexb-lower-stage-2026-10-07/stage-114.json target/iteration/run-stages-next 114 114"
+    ],
+    "compare_runs_sha256": "7667d4435e4fea32d6d2b00b34509250ffac1d2dac882688c9fd732321031ba2"
+  },
+  "result": "Stage 94 now passes in full. All Stage 114 cases pass except the two direct conflicts listed above; those remain failed in raw reports and are excluded only from the adjudicated pass denominator. The complete suite gate remains Task 24."
+}

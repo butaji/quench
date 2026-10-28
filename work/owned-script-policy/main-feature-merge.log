@@ -1,0 +1,14 @@
+Merge made by the 'ort' strategy.
+ crates/quench-runtime/src/api.rs              |  3 +-
+ crates/quench-runtime/src/api_native.rs       | 34 +++++++++
+ crates/quench-runtime/src/api_native_tests.rs | 99 +++++++++++++++++++++++++++
+ crates/quench-runtime/src/lib.rs              |  2 +-
+ crates/quench-runtime/src/vm.rs               |  6 +-
+ crates/quench-runtime/src/vm/embedding.rs     | 14 +++-
+ crates/quench-runtime/src/vm/eval.rs          | 39 +++++++++++
+ crates/quench-runtime/src/vm/gc.rs            |  4 +-
+ crates/quench-runtime/src/vm/program_store.rs | 72 +++++++++++++++++--
+ crates/quench-runtime/src/vm/provenance.rs    | 15 +++-
+ crates/quench-runtime/src/vm/tests.rs         | 37 ++++++++++
+ docs/node-host-contracts.md                   | 15 ++++
+ 12 files changed, 328 insertions(+), 12 deletions(-)

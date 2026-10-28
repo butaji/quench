@@ -1,0 +1,20 @@
+{
+  "source": "99dd33963d3b305faa387b805d4d34e62d961947",
+  "parent": "b8917f7e6984014edcaf6efaf312b6ae8fa6f31a",
+  "node_version": "v26.12.0",
+  "node_source_sha256": "ce59f9038dda0e637656fb1c36cf52c07c637922fd81d419dbba2ec129afbd35",
+  "binaries": {
+    "quench": {
+      "path": "work/quench-http-blockers",
+      "sha256": "a614ac991c9885a540b4e9c3100f71715115097b083de923f6ae85882cda9ecf"
+    },
+    "base": {
+      "path": "work/quench-web-integration",
+      "sha256": "1d3c8b749baf60e12f1a2e02fbc89e98832b872f61c24d95a4b6d5dc242ce1d2"
+    },
+    "node": {
+      "path": "work/node-v26.12.0-linux-x64/bin/node",
+      "sha256": "caa24debe02770c92a70677e2a62ca98890150e7ac1c17bcfe31bcc98cc89943"
+    }
+  }
+}

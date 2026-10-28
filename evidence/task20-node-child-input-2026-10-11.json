@@ -1,0 +1,194 @@
+{
+  "schema_version": 1,
+  "base_commit": "27b49f30b86c104ed9e0d63249eaac25868b2631",
+  "change": "Native nonblocking child stdin retains bytes and callbacks through OS completion; Writable finishes after restoring ended state when queued writes drain synchronously.",
+  "oracle": {
+    "node": "v27.0.0-nightly20260819c79868f102",
+    "tests": 45,
+    "passed": 45,
+    "log": "work/child-input-retain-oracles.log"
+  },
+  "framework_core": {
+    "passed": 43,
+    "total": 43,
+    "log": "work/child-input-framework.log"
+  },
+  "stdio_group": {
+    "schema_version": 2,
+    "inventory_hash": "7c73ed6da4f575b9",
+    "timeout_secs": 30,
+    "jobs": 2,
+    "node_version": "v27.0.0-nightly20260819c79868f102",
+    "runtime_commit": "27b49f30b86c104ed9e0d63249eaac25868b2631",
+    "tests_node_commit": "55e4ca33f3a6dfe364bd9558b726576a6d1a2fba",
+    "platform": "linux-x86_64",
+    "results": [
+      {
+        "fixture": "/workspace/work/node-fixtures/test/parallel/test-child-process-stdio-big-write-end.js",
+        "status": "pass",
+        "observation": {
+          "Ok": {
+            "exit_code": 0,
+            "signal": null,
+            "timed_out": false,
+            "worker": {
+              "outcome": "pass"
+            },
+            "stdout": [],
+            "stderr": []
+          }
+        }
+      },
+      {
+        "fixture": "/workspace/work/node-fixtures/test/parallel/test-child-process-stdio-inherit.js",
+        "status": "pass",
+        "observation": {
+          "Ok": {
+            "exit_code": 0,
+            "signal": null,
+            "timed_out": false,
+            "worker": {
+              "outcome": "pass"
+            },
+            "stdout": [],
+            "stderr": []
+          }
+        }
+      },
+      {
+        "fixture": "/workspace/work/node-fixtures/test/parallel/test-child-process-stdio-merge-stdouts-into-cat.js",
+        "status": "fail",
+        "observation": {
+          "Ok": {
+            "exit_code": 1,
+            "signal": null,
+            "timed_out": false,
+            "worker": {
+              "outcome": "fail",
+              "reason": "node:child_process/shared.js:166\n    return new ChildProcess(file, args, spawnNative(file, args, options), options);\n                                        ^\n\nTypeError: The argument 'stdio' is invalid. Received { _emitter: { _events: { error: [Function: onError] }, captureRejections: false }, _listenerWrappers: [], _events: {}, _eventsCount: 0, _writableState: { objectMode: false, writable: undefined, decodeStrings: true, defaultEncoding: 'utf8', highWaterMark: 65536, buffered: 0, needDrain: false, drainPending: false, bufferedRequestCount: 0, pending: [], writing: false, ending: false, ended: false, finished: false, errored: null, errorEmitted: false, corked: 0, prefinished: false, finishScheduled: false, final: [Function: final], endCallbacks: [], autoDestroy: true, destroyed: false, getBuffer: [Function (anonymous)] }, writable: true, writableAborted: false, _write: [Function: write] }\n    at node:child_process/shared.js:166:41\n    at /workspace/work/node-fixtures/test/parallel/test-child-process-stdio-merge-stdouts-into-cat.js:10:12\n\nNode.js v22.0.0"
+            },
+            "stdout": [],
+            "stderr": []
+          }
+        }
+      },
+      {
+        "fixture": "/workspace/work/node-fixtures/test/parallel/test-child-process-stdio-overlapped.js",
+        "status": "skip",
+        "observation": {
+          "Ok": {
+            "exit_code": 0,
+            "signal": null,
+            "timed_out": false,
+            "worker": {
+              "outcome": "guestexit",
+              "code": 0
+            },
+            "stdout": [
+              49,
+              46,
+              46,
+              48,
+              32,
+              35,
+              32,
+              83,
+              107,
+              105,
+              112,
+              112,
+              101,
+              100,
+              58,
+              32,
+              111,
+              118,
+              101,
+              114,
+              108,
+              97,
+              112,
+              112,
+              101,
+              100,
+              45,
+              99,
+              104,
+              101,
+              99,
+              107,
+              101,
+              114,
+              32,
+              98,
+              105,
+              110,
+              97,
+              114,
+              121,
+              32,
+              105,
+              115,
+              32,
+              110,
+              111,
+              116,
+              32,
+              97,
+              118,
+              97,
+              105,
+              108,
+              97,
+              98,
+              108,
+              101,
+              10
+            ],
+            "stderr": []
+          }
+        }
+      },
+      {
+        "fixture": "/workspace/work/node-fixtures/test/parallel/test-child-process-stdio-reuse-readable-stdio.js",
+        "status": "fail",
+        "observation": {
+          "Ok": {
+            "exit_code": 1,
+            "signal": null,
+            "timed_out": false,
+            "worker": {
+              "outcome": "fail",
+              "reason": "node:child_process/shared.js:166\n    return new ChildProcess(file, args, spawnNative(file, args, options), options);\n                                        ^\n\nTypeError: The argument 'stdio' is invalid. Received { _emitter: { _events: { error: [Function: onError], prefinish: [Function (anonymous)], end: [Function (anonymous)], close: [Function (anonymous)] }, captureRejections: false }, _listenerWrappers: [ { name: 'prefinish', fn: [Function (anonymous)], wrapper: [Function (anonymous)] }, { name: 'end', fn: [Function (anonymous)], wrapper: [Function (anonymous)] }, { name: 'close', fn: [Function (anonymous)], wrapper: [Function (anonymous)] } ], _events: { prefinish: [Function (anonymous)], end: [Function (anonymous)], close: [Function (anonymous)] }, _eventsCount: 3, _readableState: { objectMode: false, highWaterMark: 65536, buffer: [], bufferIndex: 0, length: [Getter], sync: false, flowing: null, flowScheduled: false, reading: false, readableListening: false, needReadable: false, readingMore: true, readingMoreScheduled: false, resumeScheduled: false, resumeEventPending: false, readRequests: 0, ended: false, endEmitted: false, endScheduled: false, emittedReadable: false, errorEmitted: false, errored: null, closeEmitted: false, encoding: null, decoder: null, awaitDrainWriters: null, pipes: [], pipeListeners: [], autoDestroy: true, defaultEncoding: 'utf8' }, readable: true, readableDidRead: false, destroyed: false, closed: false, readableAborted: false, _isDuplex: true, _writableState: { objectMode: false, writable: undefined, decodeStrings: true, defaultEncoding: 'utf8', highWaterMark: 65536, buffered: 0, needDrain: false, drainPending: false, bufferedRequestCount: 0, pending: [], writing: false, ending: false, ended: false, finished: false, errored: null, errorEmitted: false, corked: 0, prefinished: false, finishScheduled: false, final: null, endCallbacks: [], autoDestroy: true, destroyed: false, getBuffer: [Function (anonymous)] }, writable: true, writableAborted: false, allowHalfOpen: true, _isTransform: true, _transformBackpressure: null, _passThrough: true, _passThroughRead: false, _transform: [Function (anonymous)] }\n    at node:child_process/shared.js:166:41\n    at /workspace/work/node-fixtures/test/parallel/test-child-process-stdio-reuse-readable-stdio.js:17:12\n\nNode.js v22.0.0"
+            },
+            "stdout": [],
+            "stderr": []
+          }
+        }
+      },
+      {
+        "fixture": "/workspace/work/node-fixtures/test/parallel/test-child-process-stdio.js",
+        "status": "pass",
+        "observation": {
+          "Ok": {
+            "exit_code": 0,
+            "signal": null,
+            "timed_out": false,
+            "worker": {
+              "outcome": "pass"
+            },
+            "stdout": [],
+            "stderr": []
+          }
+        }
+      }
+    ]
+  },
+  "known_limits": [
+    "Non-Unix stdin remains blocking.",
+    "Stream-object stdio forwarding and extra pipe descriptors remain unsupported.",
+    "This focused checkpoint does not establish full parallel suite success."
+  ],
+  "raw_stdio_sha256": "38ae95ef0be9ca9e3837a50dee88d2270b231b673d4643d55a0a3cf03ded0b6e",
+  "memory_events": "low 0\nhigh 0\nmax 4613753\noom 176\noom_kill 46\noom_group_kill 0\n"
+}

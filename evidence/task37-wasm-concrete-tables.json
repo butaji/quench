@@ -1,0 +1,128 @@
+{
+  "tasks": [
+    "23",
+    "37",
+    "48"
+  ],
+  "source_head": "7e60169df033dd247f34199e084e3e8080a92a29",
+  "source_dirty": true,
+  "source_hashes": {
+    "crates/quench-runtime-next/src/wasm.rs": "262bb1d8d9992db6935a9e527a1c36666921b727b6a69af0056e814d041cc7ec",
+    "crates/quench-runtime-next/src/wasm/types.rs": "f25193cdf7c5a2c5ceebb89100dab89a4e977980a7c5b541a3679636b86da9e7",
+    "crates/quench-runtime-next/src/wasm/table.rs": "84a6aea407c63a0491a512d4c4d38986234350869548a7b9f44d29e141275940",
+    "crates/quench-runtime-next/src/wasm/element.rs": "12cd809fbde43fc8598250259046e971a2d1a98c0aa2a65d36a65ac582b3a15b",
+    "crates/quench-runtime-next/src/heap/cell.rs": "b2a2a5b70f622154e077033c7774aa9a14a4863a85229dbd56202d137e0a3e91",
+    "crates/quench-runtime-next/src/vm/wasm.rs": "c0c0cb41eb411a4fdaa27b2e8393683a933e1f62516aad4f5bc06c32ef4adf63",
+    "crates/quench-runtime-next/src/vm/wasm_table.rs": "f52e0c9b1fadd63281ce37012d874d22990f5b0e96e87dfbef560bff040ed0a3",
+    "crates/quench-wasm/src/shared.rs": "e48e1c8320a96f6623d7e6ab86c26ffb3b4e9c1ca79d7a5e2137ff84a688c1db"
+  },
+  "suite_head": "67c8b9dc32c47d61c05a1681df349d01c85fa8ff",
+  "residual_format": 55,
+  "obligation": "Concrete function-reference tables retain original declaration context through imports, reexports and mutation.",
+  "representation": "The existing table cell retains WasmTypes sharing original immutable graph storage. Import matching is invariant through bidirectional graph-aware reference matching. Table copy uses graph-aware covariance; fill/set/grow validate against the destination cell owner via the shared callable value decoder. Lowering derives table/element subtype checks from the declaration graph. Ordinary null/function initializers use their existing data variants; general expressions keep their constant-expression path. Function cells/captures, table identity and effects remain unchanged. No side map, opcode, executor or format change.",
+  "sources": [
+    "https://webassembly.github.io/spec/core/valid/matching.html#match-reftype"
+  ],
+  "scope": "230 affected pinned files plus35 focused files. No full suite.",
+  "reports": {
+    "affected": {
+      "before": {
+        "path": "target/iteration/task37-wasm-concrete-tables-before.json",
+        "sha256": "2312994e66957ac59b4f8633606411c421b2c0e169de9ef143cbc639e7d58e9a",
+        "binary_sha256": "6b19b8bea337bdfc1173f0453924daf813271de33b13bcb95b216b81b12e72fb"
+      },
+      "after": {
+        "path": "target/iteration/task37-wasm-concrete-tables-after.json",
+        "sha256": "2f9733bc38f00913953fca6862bcaa12c6d6be5cc965deba2429ba93e35d656c",
+        "binary_sha256": "7afebc939c5088902353ea1e8eb78d30b300094fc053ceaa0675abef36eea042"
+      }
+    },
+    "controls": {
+      "before": {
+        "path": "target/iteration/task37-wasm-concrete-tables-controls-before.json",
+        "sha256": "c86c610bc0541ac6a801cfebe96294aa3909bc94f3f9d18e21e0e57810e47cfc",
+        "binary_sha256": "6b19b8bea337bdfc1173f0453924daf813271de33b13bcb95b216b81b12e72fb"
+      },
+      "after": {
+        "path": "target/iteration/task37-wasm-concrete-tables-controls-after.json",
+        "sha256": "c32171b6ee4e5735ef5b07ccdb93f97f3a6895657ee573fdb54c0681d4ed182f",
+        "binary_sha256": "7afebc939c5088902353ea1e8eb78d30b300094fc053ceaa0675abef36eea042"
+      }
+    }
+  },
+  "results": {
+    "affected": {
+      "files": 230,
+      "total": 62758,
+      "before_passed": 61209,
+      "passed": 61400,
+      "failed": 1358,
+      "gains": 191,
+      "gains_by_file": {
+        "crates/quench-wasm-test/testsuite/br_table.wast": 162,
+        "crates/quench-wasm-test/testsuite/linking.wast": 5,
+        "crates/quench-wasm-test/testsuite/ref_is_null.wast": 19,
+        "crates/quench-wasm-test/testsuite/table.wast": 1,
+        "crates/quench-wasm-test/testsuite/type-subtyping.wast": 4
+      },
+      "regressions": 0,
+      "all_workers_completed": true,
+      "same_ids_and_input_hashes": true
+    },
+    "controls": {
+      "files": 35,
+      "total": 3553,
+      "before_passed": 3540,
+      "passed": 3553,
+      "failed": 0,
+      "gains": 13,
+      "gains_by_file": {
+        "target/iteration/task37-wasm-concrete-tables-controls.wast": 13
+      },
+      "regressions": 0,
+      "all_workers_completed": true,
+      "same_ids_and_input_hashes": true
+    }
+  },
+  "runner": {
+    "path": "target/iteration/task37-wasm-concrete-tables-runner",
+    "sha256": "7afebc939c5088902353ea1e8eb78d30b300094fc053ceaa0675abef36eea042"
+  },
+  "checks": {
+    "runtime": {
+      "path": "target/iteration/task37-wasm-concrete-tables-runtime.log",
+      "sha256": "888678781e8fe860571e199b832e529edf811c769434d946ef9529d5b2d723d7",
+      "passed": 33
+    },
+    "frontend": {
+      "path": "target/iteration/task37-wasm-concrete-tables-frontend.log",
+      "sha256": "fc1682705c1c9d8598a63b7e40fc8cec1318170f6309b9ad5dc6cd46a9101e57",
+      "passed": 31
+    },
+    "check": {
+      "path": "target/iteration/task37-wasm-concrete-tables-check.log",
+      "sha256": "3e18a0feb1dea492c23cd5cac95ef87145e7cc27804747a3e7770d13fe7f78bd",
+      "passed": null
+    }
+  },
+  "limits": "Exact/shared/GC table families, concrete global contexts, general concrete reference initializer expressions, GC operations/casts, exceptions and JS embedding adapters remain open. Earlier six subtype table-call Node discrepancies remain. This affected scope does not close a full suite or Stage A.",
+  "internal_obligation": "Existing table import/root-transfer/GC test now uses concrete types with shifted module indices and preserves foreign captures before reclaiming the owner cycle. No ordinary conformance unit added.",
+  "oracle": {
+    "path": "target/iteration/task37-wasm-concrete-tables-oracle.json",
+    "sha256": "e74acd90349ffac2eff31c0ff23eb870e49f88ecd8e6a59d564254f89f97f5c2",
+    "input_hashes": {
+      "target/iteration/task37-wasm-concrete-tables-a.wat": "57586219beb934a3c07975ca4763f96353bf14da074028193975eca5688277ee",
+      "target/iteration/task37-wasm-concrete-tables-a.wasm": "e2ec9f014a20dd98d52c89eece4466f4f3c5e71781ce0afe0a32508a71ecb994",
+      "target/iteration/task37-wasm-concrete-tables-b.wat": "6cf41d0d041495e6adfb9b501eefc0817be9c745dcbbc45629167cbadd6bda72",
+      "target/iteration/task37-wasm-concrete-tables-b.wasm": "e5b05d70ec71408561fee8d59251328d0ae2eaa7154aff43dffb00559af77042"
+    },
+    "node": "v26.10.0",
+    "flags": [
+      "--no-sparkplug",
+      "--no-maglev",
+      "--no-turbofan",
+      "--wasm-jitless"
+    ],
+    "matched": 10
+  }
+}

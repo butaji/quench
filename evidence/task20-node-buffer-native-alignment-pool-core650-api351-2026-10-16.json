@@ -1,0 +1,259 @@
+{
+  "scope": "Native ArrayBuffer physical alignment and real shared Buffer.from/copyBytesFrom pools",
+  "source_commit": "b6738fa9553fb172655d04bd27f120e7b43f9a25",
+  "latest_stable": "v26.12.0",
+  "checks": {
+    "core": 650,
+    "latest_node_api": 351,
+    "paired_native_build": true,
+    "framework": true,
+    "shared_regressions": true,
+    "workspace_all_targets": true,
+    "direct_oracles_equal": true
+  },
+  "family": {
+    "counts": {
+      "pass": 52,
+      "timeout": 1
+    },
+    "total": 53,
+    "inventory_hash": "647b9535ab7f6745",
+    "gained": [
+      "test-stream-iter-readable-interop.js"
+    ],
+    "lost": []
+  },
+  "fixed_work": {
+    "valid": 8,
+    "clean": 0,
+    "qualification_ready": false,
+    "speed_claim": false
+  },
+  "design": [
+    "Core fixed observed backings preserve physical address across snapshots, copying snapshots independently; ordinary buffers retain COW.",
+    "Pinning an externally shared zero store accounts actual newly owned allocation once. Core owns storage and alignment; Node owns Buffer ABI/pool policy.",
+    "Native allocation creates a real ArrayBuffer with initialized bytes. Unsafe permits zero initialization. No synthetic pointers or zero-fill toggles.",
+    "One shared private pool state handles from(strings/arraylike) and copyBytesFrom, actual mark-untransferable, physical base alignment and reentrant cursor semantics.",
+    "Original latest Node library remains guest code over genuine Rust primitives; no Node guest execution."
+  ],
+  "limitations": [
+    "Goal remains open. Latest complete stable full1783/5015 is from older c4ad13141, not this source. Do not add selected gains to full totals.",
+    "Remaining selected broadcast-waiter-cleanup times out unchanged at30s; own smaller-count diagnostic completes without consumers. This is not retention proof.",
+    "allocUnsafe/concat remain legacy unpooled and latest aligned public allocation arguments are not yet implemented.",
+    "No setDetachKey export until complete real detach-key semantics exist.",
+    "Fixed-work diagnostic does not establish a speed claim; compilation/full inventory overlap precludes isolated timing attribution.",
+    "Core before latest accounting passed649; linker disk exhaustion was retained and recovered using only failed owned temporary plus byte-identical immutable binary hardlink dedup."
+  ],
+  "raw": [
+    {
+      "path": "work/native-buffer-allocation/core-accounting.log",
+      "bytes": 57091,
+      "sha256": "a4d59d7e280ceacef37727d7db55b9eeb955e72b290bf32b4f78c8fa8b796f7c"
+    },
+    {
+      "path": "work/native-buffer-allocation/accounting-check.log",
+      "bytes": 142,
+      "sha256": "40bdff29b5dccad675ad269c9b45257aa0e15d9c5db0b5df8b69c50758b84a07"
+    },
+    {
+      "path": "work/native-buffer-allocation/accounted-paired-build.log",
+      "bytes": 365,
+      "sha256": "40420e1041eaf8ed9d59a9359226e8b4f6205dff7226fd6494236796d99d4bb0"
+    },
+    {
+      "path": "work/native-buffer-allocation/all-api.log",
+      "bytes": 28744,
+      "sha256": "0c4af6c348cfa1247315be6aa0f3d5c610a28cbc17b9c8582e58be6fbd031092"
+    },
+    {
+      "path": "work/native-buffer-allocation/framework.log",
+      "bytes": 3798,
+      "sha256": "b41881f94821125815bc87efbbbd7d26b13fd072686394014795864fa55f2ae8"
+    },
+    {
+      "path": "work/native-buffer-allocation/shared.log",
+      "bytes": 882,
+      "sha256": "d815de3e6d45a76ab19692112db27e2fb7e7667b2105235394e522519c5fa1a9"
+    },
+    {
+      "path": "work/native-buffer-allocation/workspace.log",
+      "bytes": 519,
+      "sha256": "5bf6a2e8fda8bba737ad10a5d9efb05a64d80e859b71d005ca27dfcb3f986890"
+    },
+    {
+      "path": "work/native-buffer-allocation/accounted-oracle.log",
+      "bytes": 538,
+      "sha256": "6ca98f0851b50df5c6c468ce2163b62734d1a62275cf985d092d11c29a9a3c18"
+    },
+    {
+      "path": "work/native-buffer-allocation/accounted-candidate.log",
+      "bytes": 538,
+      "sha256": "6ca98f0851b50df5c6c468ce2163b62734d1a62275cf985d092d11c29a9a3c18"
+    },
+    {
+      "path": "work/native-buffer-allocation/accounted-diff.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "work/native-buffer-allocation/qualify.sh",
+      "bytes": 1003,
+      "sha256": "b4f7ced36f198ec885f8ae69b008989e1766e4e575e45d8d6ffc8512828df053"
+    },
+    {
+      "path": "work/native-buffer-allocation/run-extras.sh",
+      "bytes": 3326,
+      "sha256": "6ac94cbc6227da86aa5875238cc760f359485fdd4c73c5bca589db80024fbf87"
+    },
+    {
+      "path": "work/native-buffer-allocation/core-before-accounting.log",
+      "bytes": 57114,
+      "sha256": "ededb1f1d43327898a7a29a770f48e97a0e20607355fcba5268fe6f1d7980959"
+    },
+    {
+      "path": "work/native-buffer-allocation/core-disk-full.log",
+      "bytes": 5764,
+      "sha256": "7752175d3b0f0f71cd4320ffe93de381c86fd71f44d38f73ca10eddf5b5fe42e"
+    },
+    {
+      "path": "work/native-buffer-allocation/failed-link-reclamation.json",
+      "bytes": 246,
+      "sha256": "3ea075739a85c4c73e07bb1ff829fb81c4697b4dbbaf100ffbfd66ff2944a133"
+    },
+    {
+      "path": "work/native-buffer-allocation/immutable-bundle-dedup.json",
+      "bytes": 38077,
+      "sha256": "b4d4d48b2f73d3d40542a50b4894731c8465e9a68a8ce2b0f3f8c23cc7df37a4"
+    },
+    {
+      "path": "work/native-buffer-allocation/interrupted-run-orphan-cleanup.json",
+      "bytes": 869,
+      "sha256": "b3ca8c16b66d3d66ab1084d00ba834df072eeb5b8d73e25be1624110aafc0b2f"
+    },
+    {
+      "path": "work/native-buffer-pool/accounted-oracle.log",
+      "bytes": 323,
+      "sha256": "8ca76fd2c3e915d4600b0731951e819be9064f326b5b87d8751856547ea12724"
+    },
+    {
+      "path": "work/native-buffer-pool/accounted-candidate.log",
+      "bytes": 323,
+      "sha256": "8ca76fd2c3e915d4600b0731951e819be9064f326b5b87d8751856547ea12724"
+    },
+    {
+      "path": "work/native-buffer-pool/accounted-diff.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "work/native-buffer-pool/accounted-family.json",
+      "bytes": 129220,
+      "sha256": "22c2fb1e75c4cb2beb10f483e25ea9dca2374677a96995e75f630cb1eaa0317b"
+    },
+    {
+      "path": "work/native-buffer-pool/accounted-family.log",
+      "bytes": 5629,
+      "sha256": "cac52d42769dd16f1282da91b6c51a9d9981523b2bb9186f629499000b71ecff"
+    },
+    {
+      "path": "work/native-buffer-pool/oracle.cjs",
+      "bytes": 2130,
+      "sha256": "1fc1a90a3c490f015e3336d9e8eb5c30a65437624ac7298eb92e2415e1a87352"
+    },
+    {
+      "path": "work/native-buffer-pool/waiter-probe.cjs",
+      "bytes": 422,
+      "sha256": "3dc26d17e0d88957d92ad2bbcdc72d2ecc5289bb30028c3f259bb30f416d30dd"
+    },
+    {
+      "path": "work/native-buffer-pool/waiter-probe.log",
+      "bytes": 134,
+      "sha256": "a5034750b6119b0f2fcf8eea67c4b100e7aed10fcddef680974e6f96f523ce8f"
+    },
+    {
+      "path": "work/native-buffer-pool/waiter-probe-node.log",
+      "bytes": 200,
+      "sha256": "2629cd9490d3a045e65e128d048d962d1302f95208e5c1b58e8886e60b7b3493"
+    },
+    {
+      "path": "work/native-buffer-pool/full-failure-priorities.json",
+      "bytes": 34631,
+      "sha256": "c61c9db443626a8d508f9847f3b0301a3dce704688465b622632766a6c17fcff"
+    },
+    {
+      "path": "work/native-buffer-allocation/oracle.cjs",
+      "bytes": 1048,
+      "sha256": "ff7c6bba8f55c808a7f67912d363e0e9bf16000005f3900d5f8a35b0235fb075"
+    },
+    {
+      "path": "work/native-buffer-pool-fixed-work.json",
+      "bytes": 153703,
+      "sha256": "5c0bf2328334d8f704e87edf47668864b1edeb49c64850d8a05099422a4d8217"
+    },
+    {
+      "path": "work/native-buffer-pool-fixed-work.log",
+      "bytes": 1127,
+      "sha256": "c0da0b0b6011380f89932ca79e116cbddef963c8a6d2e413a221ef5147a4863d"
+    },
+    {
+      "path": "work/native-buffer-pool-bin/source-sha256.json",
+      "bytes": 77099,
+      "sha256": "08f4d8a5207b004093802510444b3ecf1846a4c03be0d9cba5f691347f3c398d"
+    },
+    {
+      "path": "work/native-buffer-pool-bin/sha256.txt",
+      "bytes": 235,
+      "sha256": "0769a1b8650cbee83a02238a23ccb8ee13bad3f66af34e2fd12ff1d13203687f"
+    },
+    {
+      "path": "work/native-buffer-pool-bin/source-commit.txt",
+      "bytes": 41,
+      "sha256": "023cb8c7df273e9e7ead7890317b1a75a3fd2b39fec9945984bda15edb32f5a9"
+    },
+    {
+      "path": "work/node-api-surface/audit.cjs",
+      "bytes": 898,
+      "sha256": "e1a6007ff83987a23ac998fa3d03558465b7fa9b8e997b20ab48d2ae4417ac9d"
+    },
+    {
+      "path": "work/node-api-surface/comparison.json",
+      "bytes": 127987,
+      "sha256": "9204a1445a84594183d7d05cb5f2d94545f1df21d0c80c3f364f3cd849260a34"
+    },
+    {
+      "path": "work/node-api-surface/node.json",
+      "bytes": 102143,
+      "sha256": "226c77c2476a52dca5b97ff7069a11051fb40c760295711ffdd1d635ace77522"
+    },
+    {
+      "path": "work/node-api-surface/node.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "work/node-api-surface/quench.json",
+      "bytes": 67784,
+      "sha256": "ad5e803922ba57b5dd587f9a1dd9e817bb02a9221e8d9ac1a62ed28be5dd1ba5"
+    },
+    {
+      "path": "work/node-api-surface/quench.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "work/node-api-surface/receipt.json",
+      "bytes": 1111,
+      "sha256": "eb29586dce837effa6ce484f3ed5776d1699fab34027f9c47175281d472e1b84"
+    },
+    {
+      "path": "work/task-supervisor/buffer-extras-missing-companion.log",
+      "bytes": 510,
+      "sha256": "f76e6db048d1ceb3d3628ef39cb08e249985e66b93661e1a56851d8f38035a78"
+    },
+    {
+      "path": "work/task-supervisor/buffer-extras-missing-companion-state.json",
+      "bytes": 251,
+      "sha256": "4ca72a48776b60f5c5ae5004bd02b666d969fafab6c6d86a7d574873d4a08b34"
+    }
+  ]
+}

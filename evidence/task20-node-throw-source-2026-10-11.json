@@ -1,0 +1,37 @@
+{
+  "scope": "Compiler-owned fatal throw diagnostics and side-effect-free throw identity",
+  "oracle": "v27.0.0-nightly20260819c79868f102",
+  "validation": {
+    "child_entry": {
+      "pass": 14,
+      "fail": 0,
+      "log": "work/uncaught-diagnostic-integration2.log"
+    },
+    "runtime_subset": {
+      "pass": 9,
+      "fail": 0,
+      "log": "work/throw-source-subset.log"
+    },
+    "bytecode": {
+      "pass": 21,
+      "fail": 0,
+      "log": "work/throw-source-bytecode.log"
+    },
+    "utilities": {
+      "counts": {
+        "pass": 12,
+        "fail": 18,
+        "skip": 1
+      },
+      "total": 31,
+      "inventory_hash": "9db1c1006acbd125",
+      "timeout_secs": 10,
+      "jobs": 2,
+      "raw_results": "work/util-source-subset.json"
+    }
+  },
+  "new_pass": "test-util-callbackify.js",
+  "source_metadata": "One shared compiler source snapshot; CommonJS origins project compiler positions; binary format 83 requires regeneration of old residuals.",
+  "remaining": "Complete parallel inventory remains far from passing; full post-change sweep pending.",
+  "performance_claim": false
+}

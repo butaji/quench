@@ -1,0 +1,390 @@
+{
+  "scope": "Canonical dynamic Function source layout integrated with owned logical Scripts",
+  "source_commit": "6265028d790c73be5ca36a6d5edbd748df3b6e63",
+  "host": "Linux-6.18.44-x86_64-with-glibc2.41",
+  "node_latest_stable": "v26.12.0",
+  "release_index": {
+    "path": "work/fs-readdir-policy/node-release-index-2026-10-16T115908.json",
+    "bytes": 333611,
+    "sha256": "b52f521b8e24898364b74f03596afef1f97c1448014df7c2b5ebdcd2b69ca4a9"
+  },
+  "tracked_crate_files": 687,
+  "checks": {
+    "core": 664,
+    "node_api": 381,
+    "framework": 43,
+    "shared": 7,
+    "workspace_all_targets": true,
+    "differentials": 5,
+    "framework_scenarios": 3,
+    "fixed_work_valid": 8,
+    "fixed_work_clean": 0
+  },
+  "family": {
+    "runs": [
+      {
+        "label": "before",
+        "group": "test-assert",
+        "command": [
+          "/workspace/quench/work/owned-script-bin/run-parallel",
+          "--all",
+          "--parallel-dir",
+          "/workspace/work/node-stable-release/node-v26.12.0/test/parallel",
+          "--filter",
+          "test-assert",
+          "--jobs",
+          "4",
+          "--timeout-secs",
+          "30",
+          "--results",
+          "/workspace/quench/work/function-source-merge/family-before-test-assert.json"
+        ],
+        "exit": 1,
+        "counts": {
+          "fail": 4,
+          "pass": 10
+        },
+        "inventory_hash": "f938c688fba61da2"
+      },
+      {
+        "label": "before",
+        "group": "test-os-checked-function",
+        "command": [
+          "/workspace/quench/work/owned-script-bin/run-parallel",
+          "--all",
+          "--parallel-dir",
+          "/workspace/work/node-stable-release/node-v26.12.0/test/parallel",
+          "--filter",
+          "test-os-checked-function",
+          "--jobs",
+          "4",
+          "--timeout-secs",
+          "30",
+          "--results",
+          "/workspace/quench/work/function-source-merge/family-before-test-os-checked-function.json"
+        ],
+        "exit": 0,
+        "counts": {
+          "pass": 1
+        },
+        "inventory_hash": "6154fe7396063f58"
+      },
+      {
+        "label": "candidate",
+        "group": "test-assert",
+        "command": [
+          "/workspace/quench/work/function-source-merge-bin/run-parallel",
+          "--all",
+          "--parallel-dir",
+          "/workspace/work/node-stable-release/node-v26.12.0/test/parallel",
+          "--filter",
+          "test-assert",
+          "--jobs",
+          "4",
+          "--timeout-secs",
+          "30",
+          "--results",
+          "/workspace/quench/work/function-source-merge/family-candidate-test-assert.json"
+        ],
+        "exit": 1,
+        "counts": {
+          "fail": 4,
+          "pass": 10
+        },
+        "inventory_hash": "f938c688fba61da2"
+      },
+      {
+        "label": "candidate",
+        "group": "test-os-checked-function",
+        "command": [
+          "/workspace/quench/work/function-source-merge-bin/run-parallel",
+          "--all",
+          "--parallel-dir",
+          "/workspace/work/node-stable-release/node-v26.12.0/test/parallel",
+          "--filter",
+          "test-os-checked-function",
+          "--jobs",
+          "4",
+          "--timeout-secs",
+          "30",
+          "--results",
+          "/workspace/quench/work/function-source-merge/family-candidate-test-os-checked-function.json"
+        ],
+        "exit": 0,
+        "counts": {
+          "pass": 1
+        },
+        "inventory_hash": "6154fe7396063f58"
+      }
+    ],
+    "before": {
+      "fail": 4,
+      "pass": 11
+    },
+    "candidate": {
+      "fail": 4,
+      "pass": 11
+    },
+    "total": 15,
+    "gained": [],
+    "lost": [],
+    "skip_changes": {}
+  },
+  "full_audits": {
+    "latest_stable": {
+      "passing": 1795,
+      "total": 5015,
+      "source_commit": "3218431de1e87a51b63fee8bd3091aa631eec046"
+    },
+    "pinned": {
+      "passing": 1824,
+      "total": 4727,
+      "source_commit": "3218431de1e87a51b63fee8bd3091aa631eec046"
+    }
+  },
+  "limitations": [
+    "Full goal remains open. New source626 full audits are not inferred from selected cases. Frozen qualified7f stable/pinned audits are running separately.",
+    "Functional milestone only; fixed-work counters unavailable on this host, no speed or 1% instruction-guard claim.",
+    "Initial full381 API run retained379pass/2fail in unchanged300/500ms child startup checks; exact sources passed on Node/before/candidate and the unchanged complete rerun381 passed. No deadline/assertion/source changes.",
+    "Initial Core link failed SIGBUS under disk exhaustion before tests. Failure retained; hashed stale executable caches reclaimed and ordinary Cargo retry passed unchanged664 tests.",
+    "Latest stable and pinned full321 retain one upstream inspector-disabled skip newly reached after Acorn loads; not a pass.",
+    "ContextifyScript, native VM timeout/cache/code-generation controls and asynchronous directory binding remain incomplete."
+  ],
+  "raw": [
+    {
+      "path": "work/function-source-merge/all-api-initial-concurrent.log",
+      "bytes": 32935,
+      "sha256": "9b26072867d8305f0d3cd591c4bbf8a83f9b939d534c7e154b8d1565f664c76a"
+    },
+    {
+      "path": "work/function-source-merge/all-api.log",
+      "bytes": 31401,
+      "sha256": "b916e23baea56e9e9bf0558afe69039bc74c7a9a9f11d3286ef716437bc9bb39"
+    },
+    {
+      "path": "work/function-source-merge/buffer-concat-oracle.diff",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "work/function-source-merge/buffer-concat-oracle.log",
+      "bytes": 945,
+      "sha256": "6952b631101e34ed06edc5159ea6b526493f0567d64f94710f686417c70d0b7d"
+    },
+    {
+      "path": "work/function-source-merge/buffer-latin1-oracle.diff",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "work/function-source-merge/buffer-latin1-oracle.log",
+      "bytes": 1863,
+      "sha256": "09939bcf717a24a1d1193e5d2dbf4d0d6b23ecbde28bc8e551a3afaef73c562a"
+    },
+    {
+      "path": "work/function-source-merge/buffer-oracle.diff",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "work/function-source-merge/buffer-oracle.log",
+      "bytes": 4169,
+      "sha256": "f9d0f3418b5812dbcd7e927283a12ea6ff35b6b736c9073a3243ad20342338ce"
+    },
+    {
+      "path": "work/function-source-merge/buffer-poison-oracle.diff",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "work/function-source-merge/buffer-poison-oracle.log",
+      "bytes": 476,
+      "sha256": "13189736a66e7b1615619955feaa462064b24ed73d07b84b76bd4d5c21fd39e8"
+    },
+    {
+      "path": "work/function-source-merge/check.log",
+      "bytes": 64,
+      "sha256": "b10c4a98f8a8746000c2565b958bf1a2a20ede27ad94c2fddfdaf778391b07ba"
+    },
+    {
+      "path": "work/function-source-merge/core-initial-disk-link-failure.log",
+      "bytes": 5920,
+      "sha256": "2506335eafbaf4e938f306472dded62e8a6cd7f42873a88718eb5d0147c5ecf5"
+    },
+    {
+      "path": "work/function-source-merge/core.log",
+      "bytes": 58550,
+      "sha256": "f4ec2815d1fb2bb8b5579ae2ef9fd02a7abe9fe6bd0e4c5b09f4223e145ec9f3"
+    },
+    {
+      "path": "work/function-source-merge/core663-cache-reclamation.json",
+      "bytes": 364,
+      "sha256": "a1cb82a9c099494292554b379b3a9e0ff03c38cf75cc4fb7a531e4c0f9f84b51"
+    },
+    {
+      "path": "work/function-source-merge/deadline-concurrent-controls.json",
+      "bytes": 5453,
+      "sha256": "d76031e469d61b0579deff4fcd3c7ca544e92b0bd15115b07798f8edb7269bda"
+    },
+    {
+      "path": "work/function-source-merge/deadline-controls.py",
+      "bytes": 1228,
+      "sha256": "b28f92935d2ef5c4b8a885ae0a2bf416953a9e3c9e65afe559774047aff5386d"
+    },
+    {
+      "path": "work/function-source-merge/extras-retry-supervisor.log",
+      "bytes": 308,
+      "sha256": "b0655395b8e5293e17b276a70d2f02c791efc4e55299f09f61e5c728166d576b"
+    },
+    {
+      "path": "work/function-source-merge/extras.sh",
+      "bytes": 3513,
+      "sha256": "3ac790a0028842e214bea2800fbafc36f6499f7e1ddd5a33ecb262b9dc4d617f"
+    },
+    {
+      "path": "work/function-source-merge/family-before-test-assert.json",
+      "bytes": 10967,
+      "sha256": "145b2273654b645512de092c03fe5cde5a2087e82641bb7574d6fdd57271b451"
+    },
+    {
+      "path": "work/function-source-merge/family-before-test-assert.log",
+      "bytes": 1438,
+      "sha256": "cd7783d5e157ebe073955c1073674355382448347c59809a7e708fd39e68f6e9"
+    },
+    {
+      "path": "work/function-source-merge/family-before-test-os-checked-function.json",
+      "bytes": 2299,
+      "sha256": "4579a21cdb1eb13d5d54ceb4a764103692804d8aff662cd1dc2f75c0e31fa4ff"
+    },
+    {
+      "path": "work/function-source-merge/family-before-test-os-checked-function.log",
+      "bytes": 196,
+      "sha256": "103e6f19e6cb0ac7c40c7df43245c7df459e9a3069e057f4450e5e73685f8cc1"
+    },
+    {
+      "path": "work/function-source-merge/family-candidate-test-assert.json",
+      "bytes": 10967,
+      "sha256": "145b2273654b645512de092c03fe5cde5a2087e82641bb7574d6fdd57271b451"
+    },
+    {
+      "path": "work/function-source-merge/family-candidate-test-assert.log",
+      "bytes": 1438,
+      "sha256": "b599fe30dc0e366e5d7535dc6c4446fd8ec940f7c9a7f4c153bf3945c141a631"
+    },
+    {
+      "path": "work/function-source-merge/family-candidate-test-os-checked-function.json",
+      "bytes": 2299,
+      "sha256": "41a7cb7f1d7dd3b45a909fc901b38f6423cf48811b83c574f0f26723f13d84c1"
+    },
+    {
+      "path": "work/function-source-merge/family-candidate-test-os-checked-function.log",
+      "bytes": 196,
+      "sha256": "103e6f19e6cb0ac7c40c7df43245c7df459e9a3069e057f4450e5e73685f8cc1"
+    },
+    {
+      "path": "work/function-source-merge/family-driver.log",
+      "bytes": 2027,
+      "sha256": "9ec3b69a1a0d6d3a8b280d502e2651255f50b74a018aacccbfa0323914d71895"
+    },
+    {
+      "path": "work/function-source-merge/family-receipt.json",
+      "bytes": 2751,
+      "sha256": "d7dde2dd237f1102fc34aab940fa951b6b493cf250b389af1ea2dcbb753563e9"
+    },
+    {
+      "path": "work/function-source-merge/family.py",
+      "bytes": 1847,
+      "sha256": "759ad38f58405e68f2cebc7c399019419c2a46570584172bc24a45ac8f7b1df3"
+    },
+    {
+      "path": "work/function-source-merge/fixed-work.json",
+      "bytes": 153706,
+      "sha256": "7c892b606f0ca21cf71ebb3518a160d80bae195b06d55417656300df3cafbc7c"
+    },
+    {
+      "path": "work/function-source-merge/fixed-work.log",
+      "bytes": 1130,
+      "sha256": "070971eb95a47483b8a1a5cd59a8449908ad04d1335b6f93a203ffdacf422e04"
+    },
+    {
+      "path": "work/function-source-merge/framework-scenarios.json",
+      "bytes": 1532,
+      "sha256": "430b01db7c0b95dabde93c79e4d6e37720d49c1a3e13c7d3491f1ec7b4998e8f"
+    },
+    {
+      "path": "work/function-source-merge/framework.log",
+      "bytes": 3798,
+      "sha256": "b41881f94821125815bc87efbbbd7d26b13fd072686394014795864fa55f2ae8"
+    },
+    {
+      "path": "work/function-source-merge/merge.log",
+      "bytes": 46363,
+      "sha256": "eab2401b7d24d7981bb1efdf10453c86cd904a647cca1e8ef3b77d8aa868516a"
+    },
+    {
+      "path": "work/function-source-merge/paired-build.log",
+      "bytes": 365,
+      "sha256": "46b43f46b00bb0b0ba12f20f5525921169bbb20408e6016eac6d84369843c56a"
+    },
+    {
+      "path": "work/function-source-merge/qualify-retry-supervisor.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "work/function-source-merge/qualify.sh",
+      "bytes": 1083,
+      "sha256": "ec1cfd30d703945071b7a702eae73abe5305dd41a4fe70b3f51052082445efda"
+    },
+    {
+      "path": "work/function-source-merge/resume.sh",
+      "bytes": 723,
+      "sha256": "4b5cc5aa48b58a06d918eebd4fdbbaafe16b0f0429cba3cd63c5d93e0b748f07"
+    },
+    {
+      "path": "work/function-source-merge/shadow-node.log",
+      "bytes": 195,
+      "sha256": "5bb1c6f6a341403cc0fb9a357f431916fbbeb47d4b36b6b0a8179f599a2f7a1f"
+    },
+    {
+      "path": "work/function-source-merge/shadow-quench.log",
+      "bytes": 195,
+      "sha256": "5bb1c6f6a341403cc0fb9a357f431916fbbeb47d4b36b6b0a8179f599a2f7a1f"
+    },
+    {
+      "path": "work/function-source-merge/shadow.diff",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "work/function-source-merge/shared.log",
+      "bytes": 882,
+      "sha256": "6351e3e88f6626536440a630e4892157868b1cf0f5027800bea13cf7ecc16731"
+    },
+    {
+      "path": "work/function-source-merge/stale-executable-cache-reclamation.json",
+      "bytes": 9366,
+      "sha256": "4359bb31d35c15969070229ec1c2729ffd7df1e7924a6f36cf7c197b3d9583a1"
+    },
+    {
+      "path": "work/function-source-merge/workspace.log",
+      "bytes": 519,
+      "sha256": "ad770d696942a6c7d92d96e62aba6d68ef511b9c32e38e2e265a73c64cf76906"
+    },
+    {
+      "path": "work/function-source-merge-bin/source-commit.txt",
+      "bytes": 41,
+      "sha256": "0cac4b14e8bb6ccb1829c2654252d26946805ebcb9bbc5817bd931b968e0e470"
+    },
+    {
+      "path": "work/function-source-merge-bin/source-sha256.json",
+      "bytes": 84638,
+      "sha256": "ae8bfdeaa3a9524e3f42efc7d988a79876aeae29e7acdc51cb058ac47205de6d"
+    },
+    {
+      "path": "work/function-source-merge-bin/sha256.txt",
+      "bytes": 235,
+      "sha256": "580bb1b193e3f3f5ad31dbeaf07ce0a31d2d7fbdc502020fe728d41caca1734b"
+    }
+  ]
+}

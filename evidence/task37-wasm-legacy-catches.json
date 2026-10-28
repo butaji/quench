@@ -1,0 +1,142 @@
+{
+  "schema": 1,
+  "source_head": "7e60169df033dd247f34199e084e3e8080a92a29",
+  "dirty_worktree": true,
+  "source_hashes": {
+    "crates/quench-runtime-next/src/wasm.rs": "7f02dccdcca24f7beee090f845c4425db53ed3b53b568caac70d58d113983ee8",
+    "crates/quench-runtime-next/src/wasm/control.rs": "566d2009d9ddf93a2524867105dcaff00043adabeb5f3f63b2d74e46f6f7d8d7",
+    "crates/quench-runtime-next/src/wasm/tag.rs": "33160f6585224921a875a1e5f7d4113919daf7d808d17b493a73c5824b4b3b27",
+    "crates/quench-runtime-next/src/wasm/scalar.rs": "24a16656e3b67bcf6e05387bfd8aa31f95deec17ee76ea558650de58b57d94f3",
+    "crates/quench-runtime-next/src/wasm/types.rs": "55d9ca4f433dd93b31fb630af626b7aeddc4e1ab60fc8350f028096ee932c044",
+    "crates/quench-runtime-next/src/wasm/reference.rs": "fd31a76373489e43b1d4b9a6852ebc5ccfec35ac2c7c8a5f9d3aebed08f875fb",
+    "crates/quench-runtime-next/src/bytecode.rs": "6083e7d036b51c35a6d656a274fd9cc40a7478de0e13415ffd499120b1ce3e84",
+    "crates/quench-runtime-next/src/bytecode/validate.rs": "6e703b3c8f9172695eab75c4463df40e9cd16a3b55a93896fc5893c1b3e524a8",
+    "crates/quench-runtime-next/src/bytecode/disassemble.rs": "2006b8f6ff91bbbabce25b53813f6fb99c1c8e61b5c4aff4b95196ef619a4721",
+    "crates/quench-runtime-next/src/bytecode/tests.rs": "6a44ebff70c1b48d568e0b8118139d672c9f504fc88b4dee538bcf7593739c47",
+    "crates/quench-runtime-next/src/compile/liveness.rs": "19d8fb9ee20fb8cd4252d7dcdf0ec6b21b7f8eee60de18c1690f7712e1b19b8b",
+    "crates/quench-runtime-next/src/heap.rs": "cc6935da8a13deb5f6b518094cc42f434189649b2fb76249be890e17f29470f1",
+    "crates/quench-runtime-next/src/heap/cell.rs": "fa5d1c8e9d87c28bcef1081f79304439bdd01d2140e5c17c423956b6c1750fae",
+    "crates/quench-runtime-next/src/heap/memory_profile.rs": "37a75b4772267318b39402fbbd86e6417cc07b95bd9724d88790ac9e6701a14d",
+    "crates/quench-runtime-next/src/heap/tests.rs": "522377682aa9ba2c8ade4d6f455a868857947b20498be61e9589e7f78cfb2a08",
+    "crates/quench-runtime-next/src/vm.rs": "04c8bd31941e645344783ac826e98850f102e679582ac99faae2c892996ea1f7",
+    "crates/quench-runtime-next/src/vm/wasm_exception.rs": "8a4a40d03b3f13d3191251a35b796c90d66e6eda97be5c4823c6af39416f196e",
+    "crates/quench-runtime-next/src/vm/wasm_table.rs": "e07a32893482739679b4f018680690c5bab3da0633b70bcac88bd61b68eb0004",
+    "crates/quench-runtime-next/src/vm/json.rs": "2af173b4980b930be17d1cea41758907f6d2de990b81b056f1a74254b34dfd08",
+    "crates/quench-runtime-next/src/vm/error.rs": "7d6125479875c707e54a166bf77f20ae4071e308b8c48828098f58c5d6421d4c",
+    "crates/quench-runtime-next/src/vm/dispatch.rs": "bd6047018bf83e516ed64ca52882cbe03391b6525f5952ebd2425165dba5098c",
+    "crates/quench-runtime-next/src/vm/dispatch_frame.rs": "97c3d34787abc4ded210adc5541ba8a18e139a57721e3dbd346b40dbf0ab68da",
+    "crates/quench-wasm/src/shared_wast.rs": "1650162b70e070148e22563b30e94131bfcd3e1d02c1b5b77d3a4db9e4b5fe0d",
+    "crates/quench-wasm/src/wast_exec.rs": "6faf936f92051eb0b3da52e4a28a1ffca39b499e60b9a77a6ddfccce32e475c2"
+  },
+  "suite_head": "67c8b9dc32c47d61c05a1681df349d01c85fa8ff",
+  "suite_dirty": false,
+  "residual_format": 67,
+  "obligation": "Lower legacy try/catch/catch_all/rethrow into existing shared-VM exception operations and activation handlers.",
+  "representation": "LegacyTry owns one hidden exception slot and a named Body/Catch transition. The body alone is protected; arm completion branches past later catch dispatch. Catch mismatches continue in declaration order and an unmatched exception propagates outside that protected body. Lexical rethrow projects the original caught reference from its owning frame local. Modern and legacy catches share catch_values, exception_slot and protect_exception_region, preserving payload windows and original tag identity. No VM dispatch, cell, opcode, format or second executor is added.",
+  "scope": "Six matching pinned files, ten focused directives and eleven Node observations. Affected runtime/frontend checks and all-target profile checks only; no full suites, expectations, skips or inventory changes.",
+  "affected": {
+    "before": {
+      "path": "target/iteration/task37-wasm-legacy-catches-before.json",
+      "sha256": "26b1f5a7d46389a17d5960fcfd39e2392dbb451ac3623612799bfddcdb6559d5"
+    },
+    "after": {
+      "path": "target/iteration/task37-wasm-legacy-catches-after.json",
+      "sha256": "6fd205235880025bab9407cd41193201d9b45269ce69d196a4dc13d77024e09a"
+    },
+    "binary_sha256": {
+      "before": "2726100b6e01a4241e70765b8aee45e60a870465264e02d38ac9a1d25eca7c7d",
+      "after": "9e758efe207c05d995c654a908f6429f66773d0c7791308c0b073596c8bc358f"
+    },
+    "files": 6,
+    "total": 165,
+    "before_passed": 111,
+    "passed": 165,
+    "failed": 0,
+    "gains": 54,
+    "gains_by_file": {
+      "crates/quench-wasm-test/testsuite/legacy/rethrow.wast": 13,
+      "crates/quench-wasm-test/testsuite/legacy/throw.wast": 8,
+      "crates/quench-wasm-test/testsuite/legacy/try_catch.wast": 33
+    },
+    "regressions": 0,
+    "same_ids_and_input_hashes": true,
+    "all_workers_completed": true
+  },
+  "controls": {
+    "before": {
+      "path": "target/iteration/task37-wasm-legacy-catches-controls-before.json",
+      "sha256": "c6d3e6ce31d3abea5f119eef5359be6c002da980b721d1862a0ec261e67bf0a7"
+    },
+    "after": {
+      "path": "target/iteration/task37-wasm-legacy-catches-controls-after.json",
+      "sha256": "de72598dead23b857e0e6e901c39fc7110d772973f36a6513294f3bda4fadcd0"
+    },
+    "binary_sha256": {
+      "before": "2726100b6e01a4241e70765b8aee45e60a870465264e02d38ac9a1d25eca7c7d",
+      "after": "9e758efe207c05d995c654a908f6429f66773d0c7791308c0b073596c8bc358f"
+    },
+    "files": 1,
+    "total": 10,
+    "before_passed": 0,
+    "passed": 10,
+    "failed": 0,
+    "gains": 10,
+    "gains_by_file": {
+      "target/iteration/legacy/task37-wasm-legacy-catches-controls.wast": 10
+    },
+    "regressions": 0,
+    "same_ids_and_input_hashes": true,
+    "all_workers_completed": true
+  },
+  "runner": {
+    "path": "target/iteration/task37-wasm-legacy-catches-runner",
+    "sha256": "9e758efe207c05d995c654a908f6429f66773d0c7791308c0b073596c8bc358f"
+  },
+  "checks": {
+    "runtime": {
+      "path": "target/iteration/task37-wasm-legacy-catches-runtime.log",
+      "sha256": "f2c6c472f8679245fd7cc57f709d4f5590ec5158551b1d51e00d75d162ecad33",
+      "passed": 35
+    },
+    "frontend": {
+      "path": "target/iteration/task37-wasm-legacy-catches-frontend.log",
+      "sha256": "297cc9917dee381532a900e8ea1621d28204d382a85653f47bdd7fc041cdd960",
+      "passed": 19
+    },
+    "check": {
+      "path": "target/iteration/task37-wasm-legacy-catches-check.log",
+      "sha256": "2e1538c5af9849c3c93657537a4c73fe88f739ad2b65381a426a3ce0e3e37aa2",
+      "passed": null
+    },
+    "build": {
+      "path": "target/iteration/task37-wasm-legacy-catches-build.log",
+      "sha256": "34e64646f724966a670492b8f7bc17db0f94f515049fb2aafb77a73b13e5c7c2",
+      "passed": null
+    }
+  },
+  "oracle": {
+    "path": "target/iteration/task37-wasm-legacy-catches-oracle.json",
+    "sha256": "ec98ae8af28f6dd69e314e745bced9501232b140ae16fdf96a381ce249163520",
+    "node": "v26.10.0",
+    "observations": 11,
+    "flags": [
+      "--no-sparkplug",
+      "--no-maglev",
+      "--no-turbofan",
+      "--wasm-jitless",
+      "--experimental-wasm-custom-descriptors"
+    ],
+    "inputs": {
+      "target/iteration/task37-wasm-legacy-catches-controls.wasm": "b5a329f75c8071aa22e55c1e9b2ff3db31bcf71ac6df19ed876e3d194b3f2026",
+      "target/iteration/task37-wasm-legacy-catches-controls.wat": "e361d97a04b1f39ccf4f8def37439a91475a0c2c8c0fb7b670e13ca06ce8768c",
+      "target/iteration/task37-wasm-legacy-catches-oracle.cjs": "a68f911f42a757d40bf3d9f6080f33df4099637cca48e626e87a0a3361b48553"
+    },
+    "limit": "Node tag reflection/getArg observations are embedding comparison contracts; Wast qualifies core values/errors, not the unfinished JavaScript exception facade."
+  },
+  "javascript_scope": "Only Wasm lowering changed. Every other production source hash in the prior modern-exception qualification is unchanged, including VM error routing. That prior 541-case JavaScript evidence retains its original scope; no new JavaScript or full-suite run was needed.",
+  "sources": [
+    "https://webassembly.github.io/exception-handling/legacy/exceptions/core/exec.html",
+    "https://github.com/WebAssembly/exception-handling/blob/main/proposals/exception-handling/legacy/Exceptions.md"
+  ],
+  "limits": "Legacy delegate, shared types/tags, descriptor proposals, JS/foreign-host exception embedding and complete suite inventories remain open. Production cutover and Stage A closure remain open."
+}

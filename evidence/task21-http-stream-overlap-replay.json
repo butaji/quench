@@ -1,0 +1,65 @@
+{
+  "schema": 1,
+  "task": "21",
+  "kind": "official_node_parallel_affected_replay",
+  "reviewed_on": "2026-10-06",
+  "source_revision": "b1b7c1cc3",
+  "source_state": "dirty worktree; hashes below bind the reviewed legacy owners",
+  "suite": {
+    "path": "tests/node/test/parallel",
+    "submodule_revision": "55e4ca33f3a6dfe364bd9558b726576a6d1a2fba",
+    "local_node_version": "v26.10.0",
+    "runner": "quench-node-test run-parallel / legacy NodeTestRunner",
+    "command_shapes": [
+      "cargo run --profile iteration -p quench-node-test --bin run-parallel -- --all --filter <fixture-name> --results target/iteration/<report>.json (four-fixture replay)",
+      "cargo run --profile iteration -p quench-node-test --bin run-parallel -- --one tests/node/test/parallel/test-http-generic-streams.js (initial focused reproduction)"
+    ]
+  },
+  "selection": [
+    {
+      "path": "tests/node/test/parallel/test-http-generic-streams.js",
+      "sha256": "a401a903cd1ba9dc37f03556b90075b798096bc354fbd727005fd4fb9e412e35"
+    },
+    {
+      "path": "tests/node/test/parallel/test-stream-finished.js",
+      "sha256": "7eea605ea2dcdd24db877558dca70c30d5eb604785042c3c4231844b9cad2620"
+    },
+    {
+      "path": "tests/node/test/parallel/test-https-insecure-parse-per-stream.js",
+      "sha256": "e12039486c6c46d5b4aeb0fc07253134231047961c7ae2a1934e561bdf1b8192"
+    },
+    {
+      "path": "tests/node/test/parallel/test-https-max-header-size-per-stream.js",
+      "sha256": "a468959201cfe3bade6b96c6a293604f7f5285bac4556ecdd031652005b0348b"
+    }
+  ],
+  "result": {
+    "pass": 0,
+    "fail": 4,
+    "timeout": 0,
+    "crash": 0,
+    "unclassified": 0,
+    "all_worker_errors": "TypeError: value is not callable",
+    "harness_output": "common.mustCall checks did not run before worker failure (13 mismatches for HTTP generic streams, 3 for stream.finished, 1 for each HTTPS per-stream case); stderr was empty",
+    "raw_reports": [
+      "target/iteration/test-http-generic-streams-current.json",
+      "target/iteration/test-stream-finished.js.json",
+      "target/iteration/test-https-insecure-parse-per-stream.js.json",
+      "target/iteration/test-https-max-header-size-per-stream.js.json"
+    ]
+  },
+  "owner_sha256": {
+    "crates/quench-node/src/modules/http.rs": "193ed21a2a38920d8f86979dd69f1645c776425ddff282dbb7a4ea4d0b1e2c87",
+    "crates/quench-node/src/modules/http_client.rs": "28ba97e4ecff1ff919fe855111f12234affbf8cbeaa00dad510fc805faa4c2b3",
+    "crates/quench-node/src/modules/http_res.rs": "78ac3d6ec9570e0679f317f77f32428c0a5185d47a6094716480cfe559d86188",
+    "crates/quench-node/src/modules/net/mod.rs": "8dbad00db05088dd73bc77a79d59416f809f77237fcd051fdc79378fffd07c4f",
+    "crates/quench-node/src/modules/stream.rs": "2e0109f4a937700d60fe960d102bd6e46f371093c4bbdce530d2a19131966c12",
+    "crates/quench-node/src/modules/stream_prelude.js": "7fbfaa5bc14f737171c2618040b048b61643f734a78092e64537aee7d8302724",
+    "crates/quench-node/src/modules/tls.rs": "023be348bf3833c16eb67dc915df6f052142b39b58b772613783cdb5059e3f0b"
+  },
+  "limits": [
+    "These runs use the legacy NodeTestRunner and do not qualify the shared NodeHost.",
+    "The runner reports only the generic not-callable TypeError; it does not provide a guest stack for localizing the earliest failed call.",
+    "No unit tests or full suites were run."
+  ]
+}

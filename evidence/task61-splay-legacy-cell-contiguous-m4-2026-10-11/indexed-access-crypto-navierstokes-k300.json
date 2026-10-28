@@ -1,0 +1,765 @@
+{
+  "schema": 1,
+  "platform": "M4 arm64 macOS",
+  "host": "Darwin mini.local 25.5.0 Darwin Kernel Version 25.5.0: Mon Apr 27 20:41:26 PDT 2026; root:xnu-12377.121.6~2/RELEASE_ARM64_T8132 arm64",
+  "scope": "profile-aggregate counters; K=300 minus K=0; counts only, not timing",
+  "runs_per_benchmark": 300,
+  "binaries": {
+    "trunk_81c_profile": {
+      "path": "/Users/admin/Code/GitHub/quench-v2/target/pinned/96b98b605ef0a77b29282c5decb088c3b14f61d53da6143474c50ba2170ae63e/quench-node",
+      "sha256": "96b98b605ef0a77b29282c5decb088c3b14f61d53da6143474c50ba2170ae63e"
+    },
+    "candidate_pre_contiguous_profile": {
+      "path": "/Users/admin/Code/GitHub/quench-v2/target/pinned/ad6d9eef2c4470bb2dd48f653babd4c4c2d237cb306eeb60030966113561f098/quench-node",
+      "sha256": "ad6d9eef2c4470bb2dd48f653babd4c4c2d237cb306eeb60030966113561f098"
+    }
+  },
+  "fixtures": {
+    "Crypto": {
+      "trunk_81c_profile": {
+        "setup_k0": {
+          "get_names": [
+            "int_dense",
+            "int_sparse",
+            "int_missing",
+            "wide_dense",
+            "wide_sparse",
+            "wide_missing",
+            "numeric_non_array",
+            "property"
+          ],
+          "gets": [
+            141,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "set_names": [
+            "int_replace",
+            "int_grow",
+            "int_sparse",
+            "wide_replace",
+            "wide_grow",
+            "wide_sparse",
+            "numeric_non_array",
+            "property"
+          ],
+          "sets": [
+            4,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "dispatch_names": [
+            "get_general",
+            "get_numeric",
+            "set_general",
+            "set_numeric"
+          ],
+          "dispatches": [
+            37,
+            0,
+            347,
+            0
+          ]
+        },
+        "work_k300": {
+          "get_names": [
+            "int_dense",
+            "int_sparse",
+            "int_missing",
+            "wide_dense",
+            "wide_sparse",
+            "wide_missing",
+            "numeric_non_array",
+            "property"
+          ],
+          "gets": [
+            729441863,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "set_names": [
+            "int_replace",
+            "int_grow",
+            "int_sparse",
+            "wide_replace",
+            "wide_grow",
+            "wide_sparse",
+            "numeric_non_array",
+            "property"
+          ],
+          "sets": [
+            259080119,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "dispatch_names": [
+            "get_general",
+            "get_numeric",
+            "set_general",
+            "set_numeric"
+          ],
+          "dispatches": [
+            729441759,
+            0,
+            260065018,
+            0
+          ]
+        },
+        "marginal_k300_minus_k0": {
+          "gets": [
+            729441722,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "sets": [
+            259080115,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "dispatches": [
+            729441722,
+            0,
+            260064671,
+            0
+          ]
+        },
+        "mean_per_benchmark_run": {
+          "gets": [
+            1215736.2033333334,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "sets": [
+            431800.19166666665,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "dispatches": [
+            1215736.2033333334,
+            0.0,
+            433441.11833333335,
+            0.0
+          ]
+        },
+        "opcodes_k300_minus_k0": {
+          "GetIndex": 729441722,
+          "SetIndex": 260064671
+        },
+        "benchmark_count": 2
+      },
+      "candidate_pre_contiguous_profile": {
+        "setup_k0": {
+          "get_names": [
+            "int_dense",
+            "int_sparse",
+            "int_missing",
+            "wide_dense",
+            "wide_sparse",
+            "wide_missing",
+            "numeric_non_array",
+            "property"
+          ],
+          "gets": [
+            141,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "set_names": [
+            "int_replace",
+            "int_grow",
+            "int_sparse",
+            "wide_replace",
+            "wide_grow",
+            "wide_sparse",
+            "numeric_non_array",
+            "property"
+          ],
+          "sets": [
+            4,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "dispatch_names": [
+            "get_general",
+            "get_numeric",
+            "set_general",
+            "set_numeric"
+          ],
+          "dispatches": [
+            37,
+            0,
+            347,
+            0
+          ]
+        },
+        "work_k300": {
+          "get_names": [
+            "int_dense",
+            "int_sparse",
+            "int_missing",
+            "wide_dense",
+            "wide_sparse",
+            "wide_missing",
+            "numeric_non_array",
+            "property"
+          ],
+          "gets": [
+            729441863,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "set_names": [
+            "int_replace",
+            "int_grow",
+            "int_sparse",
+            "wide_replace",
+            "wide_grow",
+            "wide_sparse",
+            "numeric_non_array",
+            "property"
+          ],
+          "sets": [
+            259080119,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "dispatch_names": [
+            "get_general",
+            "get_numeric",
+            "set_general",
+            "set_numeric"
+          ],
+          "dispatches": [
+            729441759,
+            0,
+            260065018,
+            0
+          ]
+        },
+        "marginal_k300_minus_k0": {
+          "gets": [
+            729441722,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "sets": [
+            259080115,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "dispatches": [
+            729441722,
+            0,
+            260064671,
+            0
+          ]
+        },
+        "mean_per_benchmark_run": {
+          "gets": [
+            1215736.2033333334,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "sets": [
+            431800.19166666665,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "dispatches": [
+            1215736.2033333334,
+            0.0,
+            433441.11833333335,
+            0.0
+          ]
+        },
+        "opcodes_k300_minus_k0": {
+          "GetIndex": 729441722,
+          "SetIndex": 260064671
+        },
+        "benchmark_count": 2
+      }
+    },
+    "NavierStokes": {
+      "trunk_81c_profile": {
+        "setup_k0": {
+          "get_names": [
+            "int_dense",
+            "int_sparse",
+            "int_missing",
+            "wide_dense",
+            "wide_sparse",
+            "wide_missing",
+            "numeric_non_array",
+            "property"
+          ],
+          "gets": [
+            135,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "set_names": [
+            "int_replace",
+            "int_grow",
+            "int_sparse",
+            "wide_replace",
+            "wide_grow",
+            "wide_sparse",
+            "numeric_non_array",
+            "property"
+          ],
+          "sets": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "dispatch_names": [
+            "get_general",
+            "get_numeric",
+            "set_general",
+            "set_numeric"
+          ],
+          "dispatches": [
+            31,
+            0,
+            228960,
+            0
+          ]
+        },
+        "work_k300": {
+          "get_names": [
+            "int_dense",
+            "int_sparse",
+            "int_missing",
+            "wide_dense",
+            "wide_sparse",
+            "wide_missing",
+            "numeric_non_array",
+            "property"
+          ],
+          "gets": [
+            1028028135,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "set_names": [
+            "int_replace",
+            "int_grow",
+            "int_sparse",
+            "wide_replace",
+            "wide_grow",
+            "wide_sparse",
+            "numeric_non_array",
+            "property"
+          ],
+          "sets": [
+            303904320,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "dispatch_names": [
+            "get_general",
+            "get_numeric",
+            "set_general",
+            "set_numeric"
+          ],
+          "dispatches": [
+            1028028031,
+            0,
+            304133280,
+            0
+          ]
+        },
+        "marginal_k300_minus_k0": {
+          "gets": [
+            1028028000,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "sets": [
+            303904320,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "dispatches": [
+            1028028000,
+            0,
+            303904320,
+            0
+          ]
+        },
+        "mean_per_benchmark_run": {
+          "gets": [
+            3426760.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "sets": [
+            1013014.4,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "dispatches": [
+            3426760.0,
+            0.0,
+            1013014.4,
+            0.0
+          ]
+        },
+        "opcodes_k300_minus_k0": {
+          "GetIndex": 1028028000,
+          "SetIndex": 303904320
+        },
+        "benchmark_count": 1
+      },
+      "candidate_pre_contiguous_profile": {
+        "setup_k0": {
+          "get_names": [
+            "int_dense",
+            "int_sparse",
+            "int_missing",
+            "wide_dense",
+            "wide_sparse",
+            "wide_missing",
+            "numeric_non_array",
+            "property"
+          ],
+          "gets": [
+            135,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "set_names": [
+            "int_replace",
+            "int_grow",
+            "int_sparse",
+            "wide_replace",
+            "wide_grow",
+            "wide_sparse",
+            "numeric_non_array",
+            "property"
+          ],
+          "sets": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "dispatch_names": [
+            "get_general",
+            "get_numeric",
+            "set_general",
+            "set_numeric"
+          ],
+          "dispatches": [
+            31,
+            0,
+            228960,
+            0
+          ]
+        },
+        "work_k300": {
+          "get_names": [
+            "int_dense",
+            "int_sparse",
+            "int_missing",
+            "wide_dense",
+            "wide_sparse",
+            "wide_missing",
+            "numeric_non_array",
+            "property"
+          ],
+          "gets": [
+            1028028135,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "set_names": [
+            "int_replace",
+            "int_grow",
+            "int_sparse",
+            "wide_replace",
+            "wide_grow",
+            "wide_sparse",
+            "numeric_non_array",
+            "property"
+          ],
+          "sets": [
+            303904320,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "dispatch_names": [
+            "get_general",
+            "get_numeric",
+            "set_general",
+            "set_numeric"
+          ],
+          "dispatches": [
+            1028028031,
+            0,
+            304133280,
+            0
+          ]
+        },
+        "marginal_k300_minus_k0": {
+          "gets": [
+            1028028000,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "sets": [
+            303904320,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "dispatches": [
+            1028028000,
+            0,
+            303904320,
+            0
+          ]
+        },
+        "mean_per_benchmark_run": {
+          "gets": [
+            3426760.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "sets": [
+            1013014.4,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "dispatches": [
+            3426760.0,
+            0.0,
+            1013014.4,
+            0.0
+          ]
+        },
+        "opcodes_k300_minus_k0": {
+          "GetIndex": 1028028000,
+          "SetIndex": 303904320
+        },
+        "benchmark_count": 1
+      }
+    }
+  },
+  "candidate_minus_trunk": {
+    "Crypto": {
+      "gets": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "sets": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "dispatches": [
+        0,
+        0,
+        0,
+        0
+      ]
+    },
+    "NavierStokes": {
+      "gets": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "sets": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "dispatches": [
+        0,
+        0,
+        0,
+        0
+      ]
+    }
+  }
+}

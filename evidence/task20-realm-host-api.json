@@ -1,0 +1,156 @@
+{
+  "schema": 1,
+  "tasks": [
+    "13",
+    "20"
+  ],
+  "baseline_source_head": "61248c457d677a4277a0fb683f53fec91259b39f",
+  "qualification": "One shared installer for the embedding realm capability API; unrelated pending Error/Wasm/constructor/prototype changes excluded and preserved.",
+  "source_sha256": {
+    "crates/quench-runtime-next/src/vm/error.rs": "b61d227375deecaf69a87713ba7ef836a95871c685838c578fbb6172de4b9c73"
+  },
+  "suite_pin": "6eec1ac9ee144dafd8f344d73a21f36bfc9f6755",
+  "suite_clean": true,
+  "representation": {
+    "authority": "install_realm_host_api owns the API object and method rows for primary and child realms. Host.globals remains the authority for whether, and under which binding name, the host exposes it.",
+    "realm": "Each API object points at its own global and returns that same object from the global binding. Realm-bound methods use the existing native realm operation; nested creation and borrowed evalScript retain their owning realm.",
+    "reduction": "Removed duplicated partial installers and the nameless child API. The capability is implemented in the VM; no fixture or harness edits, JS production shims, host-adapter changes or extra unit tests."
+  },
+  "host_contract": {
+    "tests/test262/INTERPRETING.md": "a2447c706f9f109bce4f990cb46c84b933de855fb795ce4e6e75e485c563f9a8",
+    "source": "https://github.com/tc39/test262/blob/6eec1ac9ee144dafd8f344d73a21f36bfc9f6755/INTERPRETING.md",
+    "section": "Host-Defined Functions: createRealm defines the API on the new global and returns that global API object."
+  },
+  "build": {
+    "profile": "release; correctness qualification, no performance claim",
+    "log": "target/iteration/task20-realm-host-api/build.log",
+    "before_binary_sha256": "955fd870ab50f576c1a1e1db5935448b9a0fe3c7bba22c797c216206541dcdc2",
+    "after_binary_sha256": "c69a6b82d8e2c974c6681b07027bf5988647ac0c8a258528305fac33e3e6817b"
+  },
+  "affected_test262": {
+    "full_suite_run": false,
+    "selection": "Stage 76, staged TypedArray, and only realm-named fixtures from stages 0-114. The latter is a 230-case affected subset, not a full suite run.",
+    "jobs": 2,
+    "timeout_ms": 10000,
+    "distinct_cases": 1771,
+    "passed_before": 1763,
+    "passed_after": 1765,
+    "gained": [
+      "staging/sm/TypedArray/iterator-next-with-detached.js",
+      "staging/sm/TypedArray/set-wrapped.js"
+    ],
+    "regressions": 0,
+    "scopes": [
+      {
+        "scope": "typed-array",
+        "path_filter": null,
+        "total": 1446,
+        "passed_before": 1442,
+        "passed_after": 1442,
+        "gained": [],
+        "regressions": 0,
+        "remaining_failures": [
+          {
+            "outcome": "timed_out",
+            "path": "built-ins/TypedArray/prototype/copyWithin/coerced-values-end-detached-prototype.js",
+            "reason": "test timed out after 10000ms",
+            "stage": "76"
+          },
+          {
+            "outcome": "timed_out",
+            "path": "built-ins/TypedArray/prototype/copyWithin/coerced-values-end-detached.js",
+            "reason": "test timed out after 10000ms",
+            "stage": "76"
+          },
+          {
+            "outcome": "timed_out",
+            "path": "built-ins/TypedArray/prototype/copyWithin/coerced-values-start-detached.js",
+            "reason": "test timed out after 10000ms",
+            "stage": "76"
+          },
+          {
+            "outcome": "failed",
+            "path": "built-ins/TypedArray/prototype/slice/speciesctor-return-same-buffer-with-offset.js",
+            "reason": "next runtime: TypeError: typed array constructor result is not writable (Testing with Float64Array and makeImmutableArrayBuffer.)",
+            "stage": "76"
+          }
+        ],
+        "reports": {
+          "target/iteration/task20-realm-host-api/before-typed-array.json": "81b6af050a9a343bb60a9f83e12d29361c7de9f17facfd2475f9e2fa56923907",
+          "target/iteration/task20-realm-host-api/after-typed-array.json": "d5727e76133816956c7698380399f4bc126197ceed66afdfb1a64e1ef32b69e4",
+          "target/iteration/task20-realm-host-api/compare-typed-array.log": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+        }
+      },
+      {
+        "scope": "staged-typed-array",
+        "path_filter": "staging/sm/TypedArray",
+        "total": 96,
+        "passed_before": 92,
+        "passed_after": 94,
+        "gained": [
+          "staging/sm/TypedArray/iterator-next-with-detached.js",
+          "staging/sm/TypedArray/set-wrapped.js"
+        ],
+        "regressions": 0,
+        "remaining_failures": [
+          {
+            "outcome": "failed",
+            "path": "staging/sm/TypedArray/constructor-ArrayBuffer-species-wrap.js",
+            "reason": "next runtime: TypeError: property descriptor is not an object",
+            "stage": "114"
+          },
+          {
+            "outcome": "failed",
+            "path": "staging/sm/TypedArray/constructor-buffer-sequence.js",
+            "reason": "next runtime: Test262Error: Expected a ExpectedError but got a Error",
+            "stage": "114"
+          }
+        ],
+        "reports": {
+          "target/iteration/task20-realm-host-api/before-staged-typed-array.json": "bcdbc26d117aa98c5cede66f38c2857c4cdddf125a0c7cb0f4343684ce9cdc12",
+          "target/iteration/task20-realm-host-api/after-staged-typed-array.json": "0cce2fa284dbaf9e643c84aff405c40453c99e404b153cd2b40080f73e2e2969",
+          "target/iteration/task20-realm-host-api/compare-staged-typed-array.log": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+        }
+      },
+      {
+        "scope": "realm",
+        "path_filter": "realm",
+        "total": 230,
+        "passed_before": 230,
+        "passed_after": 230,
+        "gained": [],
+        "regressions": 0,
+        "remaining_failures": [],
+        "reports": {
+          "target/iteration/task20-realm-host-api/before-realm.json": "84374714aefb180be5e647bb991b5e10b1039614d2929b2bb1064aa3345f9717",
+          "target/iteration/task20-realm-host-api/after-realm.json": "d2dad63bf5481e7c9cd80e81b165b6f8cff98df1e941891f887ec7565f3ff586",
+          "target/iteration/task20-realm-host-api/compare-realm.log": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+        }
+      }
+    ]
+  },
+  "node_controls": {
+    "version": "v26.10.0",
+    "sources": 44,
+    "observations_per_build": 44,
+    "before_matches": 2,
+    "after_matches": 44,
+    "losses": 0,
+    "oracle": "Node vm contexts and real ArrayBuffer.transfer provide realm and detachment plumbing. Guest code stays unchanged. Node does not implement AbstractModuleSource, so it is not shimmed or claimed covered.",
+    "report": "target/iteration/task20-realm-host-api/node-controls.json",
+    "sha256": "c6659add15f28235cd8fb91b954cb6c9a23e5f54fc023a7a96668fb47d45e0b5",
+    "ordinary_host": {
+      "observations_per_build": 2,
+      "before_matches": 2,
+      "after_matches": 2,
+      "losses": 0,
+      "report": "target/iteration/task20-realm-host-api/ordinary-host-control.json",
+      "sha256": "c8502ee06d2218e85982d34754f17ba37cea9baadb9263a26a48eef8fa894e88"
+    }
+  },
+  "limits": [
+    "The selected TypedArray inventory still has six failures: three official copyWithin timeouts, the immutable-alias conflict and two staged construction failures.",
+    "This is a bounded realm API qualification. It does not claim every host capability or all realm intrinsic prototypes are complete.",
+    "Task 13, task 20, Stage A and the production single-VM cutover remain open; Wasm, the implemented Node suite and Stage B are not qualified."
+  ]
+}

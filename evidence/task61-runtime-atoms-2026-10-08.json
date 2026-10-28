@@ -1,0 +1,408 @@
+{
+  "schema": 1,
+  "task": "61",
+  "experiment": "Cache lexical-this and new-target atom identifiers per VM initialization",
+  "decision": "retain as a measured Stage B candidate; full V8-v7 qualification remains open",
+  "binding_time": {
+    "static": "The hidden binding names are fixed by the runtime and their Atom identifiers are fixed after each active atom-table initialization.",
+    "dynamic": "Ordinary binding visibility, call receiver behavior, arrow lexical capture, eval, derived-constructor TDZ, and new.target values remain runtime semantics.",
+    "representation": "RuntimeAtoms owns the two canonical Atom identifiers; bytecode emission reuses the same named binding constant."
+  },
+  "source": {
+    "base_revision": "69a21f5592094c2d065ba308fc27901e56757c3e",
+    "worktree_dirty_during_build_and_checks": true,
+    "owner_files_sha256": {
+      "crates/quench-runtime/src/bytecode.rs": "8c66606864a507c807fe26f9b5e7d9bb4d2175adf63a1a4a83a3820d5058f09b",
+      "crates/quench-runtime/src/compile/ast/expression.rs": "641dbf72f998eaebddc9513ba91ced03953877f07139686b8ea01de51ff9a2d6",
+      "crates/quench-runtime/src/vm.rs": "0ea7fc8afc89689a4b433866d02b0d51208005e752c642bab8376858a72bbff7",
+      "crates/quench-runtime/src/vm/construction.rs": "cdaedce618d2f2ed6fa5f747c16773b129b2013d2588e5acbbffcbb7b022cc90",
+      "crates/quench-runtime/src/vm/dispatch_frame.rs": "d5076efc2ae6a3db322fec36c7f3a0460dde7c533547c1b2c68017144b14dcfd",
+      "crates/quench-runtime/src/vm/environment.rs": "ef846817a193053aa863e9b7887b7d0825936b423a205e49f5a3156c73c8bca0",
+      "crates/quench-runtime/src/vm/eval.rs": "9763443b4857b4d0fcdd698300f82734e144de617591ea2c2d31b7b81c5d7043",
+      "crates/quench-runtime/src/vm/object.rs": "b95284eb7a08a1995e260e2b205944a5419ca09bace9f84d1e04bc9bc0d2aca9",
+      "crates/quench-runtime/src/vm/vm_init.rs": "cdc02ad4f0b0b9e1451d612800cf739f5bc6b6c06e0594a0c401879460451ee6"
+    },
+    "cargo_lock_sha256": "02b0a61df0566b30cc3644995cbad9f142abac9c538a276a24cc9f502a1d6d14",
+    "candidate_binary_sha256": "f20a1295044c24dfb26cc4b1414f3da3295049f109108e4bc678e9e34946490e",
+    "baseline_binary_sha256": "bfd414a2f08300ec2a21ec74828f8e69964a692b300f9bf79badb49dc8f974b7",
+    "baseline_binary_copied_before_runtime_atoms_edit": true,
+    "candidate_profile": "production"
+  },
+  "host": {
+    "model": "Mac16,10",
+    "cpu": "Apple M4",
+    "os": "macOS 25.5 ARM64",
+    "rustc": "rustc 1.99.0 (b940084d7 2026-09-28) (Homebrew)",
+    "cargo": "cargo 1.99.0 (5f94df478 2026-08-27) (Homebrew)"
+  },
+  "measurement": {
+    "kind": "diagnostic single-engine paired microbenchmark",
+    "benchmark": "10,000,000 direct method calls",
+    "input": {
+      "source": "function P(){ this.x=1; } P.prototype.m=function(){ return this.x; }; var o=new P(); var total=0; for(var t=0;t<4000;t++) for(var i=0;i<2500;i++) total+=o.m(); if(total!==10000000) throw new Error(String(total));",
+      "source_sha256": "0a1979a8b4b1e705e6b50462d435baadb8a7e1859b69118c07004dfda1e04b17",
+      "repetitions_per_process": 10000000,
+      "command_template": "/usr/bin/time -lp -o /tmp/runtime-atoms-time.txt <binary> -e <input> > /dev/null",
+      "timer_fields": [
+        "real seconds",
+        "maximum resident set size bytes"
+      ]
+    },
+    "node_oracle_version": "v26.10.0",
+    "pairs": 11,
+    "order_alternated": true,
+    "raw_csv": {
+      "path": "tasks/evidence/task61-runtime-atoms-method-call-pairs-2026-10-08.csv",
+      "sha256": "933e579edd9cae15ea6231c4e72f7c744945bf5c9f803db520a31a29f6779622",
+      "rows": 22
+    },
+    "raw_pairs": [
+      {
+        "pair": 1,
+        "order": [
+          "baseline",
+          "candidate"
+        ],
+        "baseline": {
+          "real_seconds": 10.43,
+          "max_rss_bytes": 19857408
+        },
+        "candidate": {
+          "real_seconds": 9.26,
+          "max_rss_bytes": 19628032
+        },
+        "paired_time_delta_seconds": -1.17,
+        "paired_time_delta_percent": -11.217641418983701,
+        "paired_max_rss_delta_bytes": -229376
+      },
+      {
+        "pair": 2,
+        "order": [
+          "candidate",
+          "baseline"
+        ],
+        "baseline": {
+          "real_seconds": 10.46,
+          "max_rss_bytes": 19808256
+        },
+        "candidate": {
+          "real_seconds": 9.38,
+          "max_rss_bytes": 19709952
+        },
+        "paired_time_delta_seconds": -1.08,
+        "paired_time_delta_percent": -10.325047801147226,
+        "paired_max_rss_delta_bytes": -98304
+      },
+      {
+        "pair": 3,
+        "order": [
+          "baseline",
+          "candidate"
+        ],
+        "baseline": {
+          "real_seconds": 10.56,
+          "max_rss_bytes": 19628032
+        },
+        "candidate": {
+          "real_seconds": 11.54,
+          "max_rss_bytes": 19775488
+        },
+        "paired_time_delta_seconds": 0.9799999999999986,
+        "paired_time_delta_percent": 9.280303030303017,
+        "paired_max_rss_delta_bytes": 147456
+      },
+      {
+        "pair": 4,
+        "order": [
+          "candidate",
+          "baseline"
+        ],
+        "baseline": {
+          "real_seconds": 10.35,
+          "max_rss_bytes": 19808256
+        },
+        "candidate": {
+          "real_seconds": 9.38,
+          "max_rss_bytes": 19693568
+        },
+        "paired_time_delta_seconds": -0.9699999999999989,
+        "paired_time_delta_percent": -9.371980676328493,
+        "paired_max_rss_delta_bytes": -114688
+      },
+      {
+        "pair": 5,
+        "order": [
+          "baseline",
+          "candidate"
+        ],
+        "baseline": {
+          "real_seconds": 10.62,
+          "max_rss_bytes": 19759104
+        },
+        "candidate": {
+          "real_seconds": 11.23,
+          "max_rss_bytes": 19677184
+        },
+        "paired_time_delta_seconds": 0.6100000000000012,
+        "paired_time_delta_percent": 5.7438794726930436,
+        "paired_max_rss_delta_bytes": -81920
+      },
+      {
+        "pair": 6,
+        "order": [
+          "candidate",
+          "baseline"
+        ],
+        "baseline": {
+          "real_seconds": 10.55,
+          "max_rss_bytes": 19791872
+        },
+        "candidate": {
+          "real_seconds": 9.27,
+          "max_rss_bytes": 19677184
+        },
+        "paired_time_delta_seconds": -1.2800000000000011,
+        "paired_time_delta_percent": -12.132701421800958,
+        "paired_max_rss_delta_bytes": -114688
+      },
+      {
+        "pair": 7,
+        "order": [
+          "baseline",
+          "candidate"
+        ],
+        "baseline": {
+          "real_seconds": 11.98,
+          "max_rss_bytes": 19759104
+        },
+        "candidate": {
+          "real_seconds": 9.64,
+          "max_rss_bytes": 19693568
+        },
+        "paired_time_delta_seconds": -2.34,
+        "paired_time_delta_percent": -19.532554257095157,
+        "paired_max_rss_delta_bytes": -65536
+      },
+      {
+        "pair": 8,
+        "order": [
+          "candidate",
+          "baseline"
+        ],
+        "baseline": {
+          "real_seconds": 10.39,
+          "max_rss_bytes": 19759104
+        },
+        "candidate": {
+          "real_seconds": 9.3,
+          "max_rss_bytes": 19529728
+        },
+        "paired_time_delta_seconds": -1.0899999999999999,
+        "paired_time_delta_percent": -10.490856592877766,
+        "paired_max_rss_delta_bytes": -229376
+      },
+      {
+        "pair": 9,
+        "order": [
+          "baseline",
+          "candidate"
+        ],
+        "baseline": {
+          "real_seconds": 10.39,
+          "max_rss_bytes": 19824640
+        },
+        "candidate": {
+          "real_seconds": 9.29,
+          "max_rss_bytes": 19611648
+        },
+        "paired_time_delta_seconds": -1.1000000000000014,
+        "paired_time_delta_percent": -10.587102983638127,
+        "paired_max_rss_delta_bytes": -212992
+      },
+      {
+        "pair": 10,
+        "order": [
+          "candidate",
+          "baseline"
+        ],
+        "baseline": {
+          "real_seconds": 10.4,
+          "max_rss_bytes": 19660800
+        },
+        "candidate": {
+          "real_seconds": 9.33,
+          "max_rss_bytes": 19709952
+        },
+        "paired_time_delta_seconds": -1.0700000000000003,
+        "paired_time_delta_percent": -10.28846153846154,
+        "paired_max_rss_delta_bytes": 49152
+      },
+      {
+        "pair": 11,
+        "order": [
+          "baseline",
+          "candidate"
+        ],
+        "baseline": {
+          "real_seconds": 10.39,
+          "max_rss_bytes": 19759104
+        },
+        "candidate": {
+          "real_seconds": 9.32,
+          "max_rss_bytes": 19644416
+        },
+        "paired_time_delta_seconds": -1.0700000000000003,
+        "paired_time_delta_percent": -10.298363811357076,
+        "paired_max_rss_delta_bytes": -114688
+      }
+    ],
+    "summary": {
+      "median_baseline_seconds": 10.43,
+      "median_candidate_seconds": 9.33,
+      "median_paired_time_delta_seconds": -1.08,
+      "median_paired_time_delta_percent": -10.325047801147226,
+      "paired_time_delta_percent_bootstrap_95_ci": [
+        -11.217641418983701,
+        -9.371980676328493
+      ],
+      "median_paired_max_rss_delta_bytes": -114688,
+      "paired_max_rss_delta_bytes_bootstrap_95_ci": [
+        -212992,
+        -65536
+      ],
+      "candidate_faster_pairs": 9,
+      "candidate_lower_rss_pairs": 9
+    },
+    "bootstrap": {
+      "method": "paired percentile bootstrap of the median paired delta",
+      "replicates": 100000,
+      "deterministic_xorshift32_seed": "0x61b47",
+      "quantiles": [
+        0.025,
+        0.975
+      ]
+    },
+    "scope_limit": "One M4 microbenchmark; this is not a V8-v7 Score gate or cross-engine qualification."
+  },
+  "verification": {
+    "build": {
+      "command": "CARGO_INCREMENTAL=0 cargo build --locked --profile production --workspace",
+      "result": "passed"
+    },
+    "test262": {
+      "command_pattern": "TEST262_TEST_TIMEOUT_MS=60000 TEST262_JOBS=8 TEST262_REPORT=<path> <runner> --from <stage> --to <stage>",
+      "selected_passed": 12307,
+      "selected_failed": 0,
+      "comparisons_against_prechange_reports": [
+        {
+          "stage": 8,
+          "path": "language/eval-code",
+          "before_passed": 347,
+          "after_passed": 347,
+          "before_failed": 0,
+          "after_failed": 0,
+          "compare_runs_regressions": 0,
+          "before_report_sha256": "499afdb26a242c5de41010457ddb4ec5b698e1d27304e450ed2375e104ebaf33",
+          "after_report_sha256": "caf3724ffcc28ee753237375130c14cb95b83716d8c05ec72a21d9f7e42b55f9"
+        },
+        {
+          "stage": 10,
+          "path": "language/expressions",
+          "before_passed": 11102,
+          "after_passed": 11102,
+          "before_failed": 0,
+          "after_failed": 0,
+          "compare_runs_regressions": 0,
+          "before_report_sha256": "7f888c42ab668b37b4a896bf4cca2249fb215b3ad156121e7c489c717f12b791",
+          "after_report_sha256": "7e5253303a001f81b5f0e51901f1e0aae230af15f2e25672317b721b5c2c5581"
+        },
+        {
+          "stage": 11,
+          "path": "language/function-code",
+          "before_passed": 217,
+          "after_passed": 217,
+          "before_failed": 0,
+          "after_failed": 0,
+          "compare_runs_regressions": 0,
+          "before_report_sha256": "442eff54589016565805a95e43d0314c2991c6e0b821b5b54ced7c929b0e9ba9",
+          "after_report_sha256": "49524f987357e5e7429e6551a5cf79361ca0afc68fa4d26179a1fbcbfcea5777"
+        },
+        {
+          "stage": 13,
+          "path": "language/global-code",
+          "before_passed": 42,
+          "after_passed": 42,
+          "before_failed": 0,
+          "after_failed": 0,
+          "compare_runs_regressions": 0,
+          "before_report_sha256": "1128ab76f7246a36efbccd414af98a7b8cbecaa9a40a9b9d7a4668e952e5bd98",
+          "after_report_sha256": "bb51df67781aa0e3a5a14ec15af3414b2821f39f057b0448dde6ecb4fc9efd58"
+        },
+        {
+          "stage": 20,
+          "path": "language/module-code",
+          "before_passed": 599,
+          "after_passed": 599,
+          "before_failed": 0,
+          "after_failed": 0,
+          "compare_runs_regressions": 0,
+          "before_report_sha256": "ee3486311cff52d6913c048c33f3a18c4fe28aa29bbf74103b431c99f9fcac7e",
+          "after_report_sha256": "0f72f8f0e7bb5202256fce19939857fc37cff2439ea3e5672ae1d78ecf43da2c"
+        }
+      ],
+      "compare_runs_command": "TEST262_TEST_TIMEOUT_MS=60000 target/production/compare-runs --reports <before> <after>",
+      "baseline_runner_sha256": "e931a7e5ffd7a387db976a87ff2d16f0e0cb1b5c97266c72a3602efa6496f607",
+      "candidate_runner_sha256": "ad05449210562828795d4792d0d9b836cad93ce006c1e80389ba1c85e3d774a3",
+      "compare_runs_binary_sha256": "28165cec99bdb4cd0742d82b2cc3938d6150200ce5526e15e980aab05242618c",
+      "before_runner": "/tmp/run-stages-before-runtime-atoms",
+      "after_runner": "target/production/run-stages"
+    },
+    "node_framework_core": {
+      "profile": "framework-core",
+      "passed": 43,
+      "skipped": 0,
+      "failed": 0,
+      "timeouts": 0,
+      "crashes": 0,
+      "unclassified": 0,
+      "log_sha256": "2f2d921dcfce7bd620f630e927555625fcd4e20465e3fc2110af3973bf050cc9",
+      "quench_node_sha256": "f20a1295044c24dfb26cc4b1414f3da3295049f109108e4bc678e9e34946490e"
+    },
+    "node_oracle": {
+      "script_sha256": "2b7cfe32cef64ec537e8b0019d9a57191f0a2ddfb460f00fc9b63721eb7a01f1",
+      "cases": [
+        "sloppy null receiver",
+        "strict null receiver",
+        "arrow lexical this",
+        "constructor new.target",
+        "arrow new.target",
+        "direct eval new.target",
+        "eval this",
+        "derived-constructor this TDZ before super",
+        "derived-constructor arrow after super",
+        "Reflect.construct newTarget"
+      ],
+      "candidate_and_node_exit_code": 0,
+      "stdout_identical": true,
+      "stdout": "[true,true,true,true,true,true,true,true,true,true,true,true]",
+      "stdout_sha256": "4ab78c2792e5ebb22fa1f570a547862787cf5b99757867cfaf47d72191dac2ff",
+      "stderr_identical_and_empty": true,
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "rust_unit_tests": "not run, per instruction",
+    "wasm_suite": {
+      "command": "cargo run --locked --profile iteration -p quench-wasm-test --bin run -- --report target/production/stageb-runtime-atoms/wasm-full.json crates/quench-wasm-test/testsuite",
+      "passed_directives": 67124,
+      "failed_directives": 0,
+      "inventory_complete": true,
+      "file_errors": [],
+      "exit_code": 0,
+      "runner_binary_sha256": "ae7b19171b65ec8d1474d89cec1ce2d0db54358b23d6ab5de07258ced06539b3",
+      "report_path": "target/production/stageb-runtime-atoms/wasm-full.json",
+      "report_sha256": "0c7d358ccb5b9851fbc6de689478ba5fbd531e27b4ba75452e5809ad7fe6075e",
+      "log_path": "target/production/stageb-runtime-atoms/wasm-full.log",
+      "log_sha256": "5ea068a23538251186207517b0e3c68ef2372e01b8ceef67cacf4d6b02afb00a"
+    },
+    "linux64": "not validated here; the Colima x86_64 emulated build stalled in a Cargo lock wait. Native Linux validation remains with the cloud branch."
+  }
+}

@@ -1,0 +1,172 @@
+{
+  "tasks": [
+    "23",
+    "37",
+    "48"
+  ],
+  "source_head": "7e60169df033dd247f34199e084e3e8080a92a29",
+  "source_dirty": true,
+  "source_hashes": {
+    "crates/quench-runtime-next/src/wasm/control.rs": "c86cead35eb479b6e15167eb83caf58130a352d85f71fd222a42711bec1cc3fa",
+    "crates/quench-runtime-next/src/wasm/types.rs": "0a4cad1f9c297269d027450ebf42cee214a0dd520661e76b98c26b5efbff0b5c",
+    "crates/quench-runtime-next/src/wasm.rs": "ad74a1cc82bf4e729cbc29f0221b680cbe85f52d03ea33af01cd9a0bd8962a98",
+    "crates/quench-runtime-next/src/wasm/scalar.rs": "db0341fbba4adc8a61d8b63af3596ca64b65c43f15a725840eaaa1850cf8eb43",
+    "crates/quench-wasm/src/shared.rs": "6a089ba0375e40287fa7e8bcc8e9393c391da0747581f6a8f881330197c96f6f"
+  },
+  "suite_head": "67c8b9dc32c47d61c05a1681df349d01c85fa8ff",
+  "residual_format": 55,
+  "obligation": "Match embedded callables against exact singleton declarations before admitting concrete boundary types.",
+  "representation": "WasmTypes.matches_implicit_function owns final singleton/group/shared/descriptor and exact parameter/result matching. Embedded value types project exactly into wasmparser ValTypes. All mixed pool matching routes through accepts_embedded; declared-to-declared matching still uses recursive group equivalence and declared ancestry. No additional signature table, runtime representation or residual change. Existing pool-domain internal test covers abstract vs concrete references, both mixed directions and nullability.",
+  "sources": [
+    "https://webassembly.github.io/spec/core/valid/matching.html#match-deftype"
+  ],
+  "scope": "Affected callable/type/import files plus existing33 focused control files; no full suite.",
+  "reports": {
+    "affected": {
+      "before": {
+        "path": "target/iteration/task37-wasm-embedded-types-before.json",
+        "sha256": "85d44f3b505c05b2c7f80a610b4192dc5a9dbc15dc102f4e23c0aedb98c8aa74",
+        "binary_sha256": "43cdc77df6d8ee8d82464362c2b657e154de3dbf6b39a8bfaa169f01a90c7654"
+      },
+      "after": {
+        "path": "target/iteration/task37-wasm-embedded-types-after.json",
+        "sha256": "3cffe6433a9302d8ea881658947d770f88a457f11a7d4615a0f8b3285a1f0e1e",
+        "binary_sha256": "139e1f2a71de9801cff450bf74a6f1d94cb3126dff378c2c7924947f198671a6"
+      }
+    },
+    "controls": {
+      "before": {
+        "path": "target/iteration/task37-wasm-embedded-types-controls-before.json",
+        "sha256": "1cd9b73e605b12867358319389ba383943d077b502dd0bc0d71f587feeef10a9",
+        "binary_sha256": "43cdc77df6d8ee8d82464362c2b657e154de3dbf6b39a8bfaa169f01a90c7654"
+      },
+      "after": {
+        "path": "target/iteration/task37-wasm-embedded-types-controls-after.json",
+        "sha256": "92c168f86b1c25136f8b124fa289fd485607ad07b26b88f0320d3195e15bdaa4",
+        "binary_sha256": "139e1f2a71de9801cff450bf74a6f1d94cb3126dff378c2c7924947f198671a6"
+      }
+    }
+  },
+  "results": {
+    "affected": {
+      "files": 14,
+      "total": 1220,
+      "before_passed": 1013,
+      "passed": 1013,
+      "failed": 207,
+      "gains": 0,
+      "regressions": 0,
+      "all_workers_completed": true,
+      "same_ids_and_input_hashes": true
+    },
+    "controls": {
+      "files": 33,
+      "total": 3528,
+      "before_passed": 3528,
+      "passed": 3528,
+      "failed": 0,
+      "gains": 0,
+      "regressions": 0,
+      "all_workers_completed": true,
+      "same_ids_and_input_hashes": true
+    }
+  },
+  "runner": {
+    "path": "target/iteration/task37-wasm-embedded-types-runner",
+    "sha256": "139e1f2a71de9801cff450bf74a6f1d94cb3126dff378c2c7924947f198671a6"
+  },
+  "checks": {
+    "runtime": {
+      "path": "target/iteration/task37-wasm-embedded-types-runtime.log",
+      "sha256": "4b58b6bd57768bc5aff92b2caaf186088c292011473773690ad75e72862e031d",
+      "passed": 33
+    },
+    "frontend": {
+      "path": "target/iteration/task37-wasm-embedded-types-frontend.log",
+      "sha256": "6c85cf30a7cb998bda0fe2aff2a30cabbc794bed36023a1babc1fcc3bb66b395",
+      "passed": 31
+    },
+    "check": {
+      "path": "target/iteration/task37-wasm-embedded-types-check.log",
+      "sha256": "e7fed94161fc96686966c7d58f0e0c9aa82fdfa6fe82e029fa9b811eda1cc4e1",
+      "passed": null
+    }
+  },
+  "limits": "No new pinned gains or concrete callable admission. The affected-only census records first observed failures, not all unsupported mechanisms or a global inventory. Concrete/GC callable and resource boundaries need owning declaration context. Stage A and earlier six Node subtype discrepancies remain open.",
+  "failure_census": {
+    "report": "target/iteration/task37-wasm-block-types-after.json",
+    "sha256": "f6cabc1b48246b5ac8a957e41f834fb3bf4e983829b04cf27eb4bf0aa53a4567",
+    "affected_only": true,
+    "failed": 1676,
+    "groups": [
+      {
+        "got": "unsupported shared Wasm: unsupported Wasm value type",
+        "directives": 964
+      },
+      {
+        "got": "unsupported shared Wasm: wasm-instance:0..0: unsupported Wasm table declaration",
+        "directives": 325
+      },
+      {
+        "got": "unsupported shared Wasm: wasm-instance:0..0: unsupported Wasm callable value type",
+        "directives": 151
+      },
+      {
+        "got": "unsupported shared Wasm module state, imports or section",
+        "directives": 117
+      },
+      {
+        "got": "unsupported shared Wasm: wasm-instance:0..0: unsupported shared Wasm operator: RefCastNullable { hty: Exact(Module(0)) }",
+        "directives": 36
+      },
+      {
+        "got": "unsupported shared Wasm: unsupported shared Wasm import kind",
+        "directives": 23
+      },
+      {
+        "got": "unsupported shared Wasm: wasm-global-initializer:0..0: unsupported Wasm constant expression operator",
+        "directives": 16
+      },
+      {
+        "got": "unsupported shared Wasm: wasm-instance:0..0: unsupported shared Wasm operator: ArrayNewDefault { array_type_index: 0 }",
+        "directives": 13
+      },
+      {
+        "got": "import module has no valid instance",
+        "directives": 10
+      },
+      {
+        "got": "unsupported shared Wasm: wasm-instance:0..0: unsupported shared Wasm operator: RefCastNonNull { hty: Concrete(Module(0)) }",
+        "directives": 5
+      },
+      {
+        "got": "unsupported shared Wasm argument type",
+        "directives": 3
+      },
+      {
+        "got": "unsupported shared Wasm: wasm-instance:0..0: unsupported shared Wasm operator: RefTestNonNull { hty: Concrete(Module(4)) }",
+        "directives": 3
+      },
+      {
+        "got": "unsupported shared Wasm: wasm-instance:0..0: unsupported shared Wasm operator: RefTestNonNull { hty: Concrete(Module(0)) }",
+        "directives": 3
+      },
+      {
+        "got": "unsupported shared Wasm: wasm-instance:0..0: unsupported shared Wasm operator: ArrayGet { array_type_index: 0 }",
+        "directives": 2
+      },
+      {
+        "got": "unsupported shared Wasm: wasm-instance:0..0: unsupported shared Wasm operator: StructGet { struct_type_index: 0, field_index: 1 }",
+        "directives": 2
+      },
+      {
+        "got": "unsupported shared Wasm: wasm-instance:0..0: unsupported shared Wasm operator: TryTable { try_table: TryTable { ty: Empty, catches: [] } }",
+        "directives": 2
+      },
+      {
+        "got": "unsupported shared Wasm: wasm-instance:0..0: unsupported shared Wasm operator: RefTestNonNull { hty: Concrete(Module(2)) }",
+        "directives": 1
+      }
+    ]
+  }
+}

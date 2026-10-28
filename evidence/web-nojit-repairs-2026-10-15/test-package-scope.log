@@ -1,0 +1,8 @@
+    Finished `iteration` profile [optimized] target(s) in 0.89s
+     Running tests/child_entry.rs (work/host-build/iteration/deps/child_entry-3aa884c89143835b)
+
+running 1 test
+test node_modules_bounds_package_scope_without_hiding_local_package_types ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 240 filtered out; finished in 0.80s
+

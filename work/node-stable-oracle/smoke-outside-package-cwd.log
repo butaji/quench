@@ -1,0 +1,16 @@
+TAP version 13
+1..3
+ok 1 /workspace/work/node-stable-oracle-copy/test/parallel/test-fs-glob-throw
+  ---
+  duration_ms: 83.00400
+  ...
+ok 2 /workspace/work/node-stable-oracle-copy/test/parallel/test-abortcontroller
+  ---
+  duration_ms: 190.91900
+  ...
+ok 3 /workspace/work/node-stable-oracle-copy/test/parallel/test-compile-cache-typescript-esm
+  ---
+  duration_ms: 357.21700
+  ...
+
+All tests passed.

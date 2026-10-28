@@ -1,0 +1,199 @@
+{
+  "tasks": [
+    "19",
+    "23",
+    "37",
+    "40",
+    "48",
+    "86"
+  ],
+  "source_head": "7e60169df033dd247f34199e084e3e8080a92a29",
+  "source_state": "dirty worktree",
+  "source_hashes": {
+    "crates/quench-runtime-next/src/wasm/simd.rs": "698c60c7d91cc055e50cde7eca4e1b55546b8d6f24c03b9b07f3927c6b452f94",
+    "crates/quench-runtime-next/src/wasm/simd/integer.rs": "2b7494d69e68e7fda7a8975feb7f7a3a41f52d4d946615f0f1355f53bfb79296",
+    "crates/quench-runtime-next/src/wasm/integer.rs": "ffa5f2ba202a1469c271c7e56d4c3de12b5fc7b24f573a073941733143b727e7",
+    "crates/quench-runtime-next/src/vm/dispatch.rs": "2b864ee849fb308950a55024cd4ddd36cdbf3dc94eaf4bb053bd727275c3f8c6",
+    "crates/quench-runtime-next/src/bytecode.rs": "6883256769bdb0c1f31ab039ffc127f57c1c15d7949c6ab7c43e35ab70a8a928",
+    "crates/quench-runtime-next/src/bytecode/validate.rs": "bff371e18a443b16c4771dfcc498afb4793d48321dd19bec042da6deccac4031",
+    "crates/quench-runtime-next/src/bytecode/disassemble.rs": "481cee76d5344cd1c4cc014a6dabce6481961f6077365e421b68cc6ecd21a972"
+  },
+  "suite_head": "67c8b9dc32c47d61c05a1681df349d01c85fa8ff",
+  "suite_clean": true,
+  "host": "macOS-26.5-arm64-arm-64bit",
+  "rustc": "rustc 1.99.0 (b940084d7 2026-09-28) (Homebrew)",
+  "profile": "debug",
+  "residual_format": 54,
+  "obligation": "Execute the 132 standard integer SIMD operators through shared vector dispatch; preserve prior selector meanings, exact raw bits and scalar semantics.",
+  "representation": "The existing flat Rust SIMD table remains the operator/operand/lane authority. The original 69 selectors are unchanged; 132 integer selectors append. Existing scalar I64 binary/unary operations project over signed/unsigned lanes. SIMD-specific saturation, narrowing, widening, pairwise sums, Q15 rounding and dot grouping are pure lane rules. Widths derive from Rust integer types and the existing u128 vector layout. Both narrowing forms interpret source lanes as signed; target signedness owns clamping. One existing V128 payload, ABI and lane mapper remain; no cells, opcodes, residual format, executor or registry added.",
+  "scope": "The unchanged 209-file affected inventory from SIMD float qualification, including every top-level pinned Wast source containing v128 and earlier memory/table/host/lifecycle callers. Exact hashes/directive IDs and completed 60-second workers required. Not the full Wasm, Test262 or implemented Node inventory.",
+  "inventory": {
+    "path": "target/iteration/task37-wasm-simd-integer-files.json",
+    "sha256": "02f701595425dc034e5a79f6a285e4daff3377a8c887e6c5279f035f1779317a"
+  },
+  "qualification": {
+    "files": 209,
+    "total": 61479,
+    "before_passed": 55391,
+    "passed": 59462,
+    "failed": 2017,
+    "gains": 4071,
+    "regressions": 0,
+    "gains_by_file": {
+      "crates/quench-wasm-test/testsuite/simd_bit_shift.wast": 212,
+      "crates/quench-wasm-test/testsuite/simd_boolean.wast": 260,
+      "crates/quench-wasm-test/testsuite/simd_const.wast": 22,
+      "crates/quench-wasm-test/testsuite/simd_i16x8_arith.wast": 181,
+      "crates/quench-wasm-test/testsuite/simd_i16x8_arith2.wast": 151,
+      "crates/quench-wasm-test/testsuite/simd_i16x8_cmp.wast": 434,
+      "crates/quench-wasm-test/testsuite/simd_i16x8_extadd_pairwise_i8x16.wast": 16,
+      "crates/quench-wasm-test/testsuite/simd_i16x8_extmul_i8x16.wast": 104,
+      "crates/quench-wasm-test/testsuite/simd_i16x8_q15mulr_sat_s.wast": 26,
+      "crates/quench-wasm-test/testsuite/simd_i16x8_sat_arith.wast": 204,
+      "crates/quench-wasm-test/testsuite/simd_i32x4_arith.wast": 181,
+      "crates/quench-wasm-test/testsuite/simd_i32x4_arith2.wast": 121,
+      "crates/quench-wasm-test/testsuite/simd_i32x4_cmp.wast": 434,
+      "crates/quench-wasm-test/testsuite/simd_i32x4_dot_i16x8.wast": 28,
+      "crates/quench-wasm-test/testsuite/simd_i32x4_extadd_pairwise_i16x8.wast": 16,
+      "crates/quench-wasm-test/testsuite/simd_i32x4_extmul_i16x8.wast": 104,
+      "crates/quench-wasm-test/testsuite/simd_i64x2_arith.wast": 187,
+      "crates/quench-wasm-test/testsuite/simd_i64x2_arith2.wast": 21,
+      "crates/quench-wasm-test/testsuite/simd_i64x2_cmp.wast": 102,
+      "crates/quench-wasm-test/testsuite/simd_i64x2_extmul_i32x4.wast": 104,
+      "crates/quench-wasm-test/testsuite/simd_i8x16_arith.wast": 121,
+      "crates/quench-wasm-test/testsuite/simd_i8x16_arith2.wast": 184,
+      "crates/quench-wasm-test/testsuite/simd_i8x16_cmp.wast": 414,
+      "crates/quench-wasm-test/testsuite/simd_i8x16_sat_arith.wast": 188,
+      "crates/quench-wasm-test/testsuite/simd_int_to_int_extend.wast": 228,
+      "crates/quench-wasm-test/testsuite/simd_lane.wast": 19,
+      "crates/quench-wasm-test/testsuite/simd_load.wast": 9
+    },
+    "exact_directive_ids": true,
+    "identical_input_hashes": true,
+    "complete_workers": true
+  },
+  "controls": {
+    "files": 19,
+    "total": 2051,
+    "passed": 2051,
+    "failed": 0,
+    "new_integer_directives": 1153,
+    "previous_controls": 898,
+    "same_runner": true,
+    "obligations": "Every added operator; heterogeneous/zero/minimum/maximum/all-one lanes, signed-vs-unsigned comparison masks and extrema, wrapping arithmetic and minimum absolute, shift counts zero/width/width+1/all-one/width-1, saturation boundaries, unsigned average rounding, Q15 min*min clamp, high/low extension and multiplication, signed sources for unsigned narrowing, pairwise adjacency, dot overflow and ordering."
+  },
+  "checks": {
+    "wasm_internal": 35,
+    "bytecode_internal": 19,
+    "frontend": 39,
+    "profile_feature_all_target_check": "passed",
+    "internal_obligations": "Existing serialization, root/GC, callback guards, scalar-bit ABI and malformed bytecode admission checks retained. No unit tests added for ordinary suite semantics; no ownership/representation changes."
+  },
+  "oracle": {
+    "path": "target/iteration/task37-wasm-simd-integer-oracle.json",
+    "sha256": "73920ba333f992664a274a623313efb70422f2f86449932c8a9b089828a33e6f",
+    "source": "target/iteration/task37-wasm-simd-integer-oracle.cjs",
+    "source_sha256": "11be538171b0ca087178b9c37c47509071921e9e61a62fb6afc231ecda1a5593",
+    "result": {
+      "node": "v26.10.0",
+      "flags": [
+        "--no-sparkplug",
+        "--no-maglev",
+        "--no-turbofan",
+        "--wasm-jitless"
+      ],
+      "modules": 1,
+      "operators": 132,
+      "checks": 1152
+    },
+    "qualification_limit": "Exact shared Wast/Node module, all 132 added operators and 1152 checks; all vector results observed as two exact i64 halves. JSON expected values are hex strings and compared with BigInt. Does not qualify conversions, relaxed SIMD, specialized memory, installed JS WebAssembly API or the full Node compatibility inventory.",
+    "cases": {
+      "path": "target/iteration/task37-wasm-simd-integer-oracle-cases.json",
+      "sha256": "137bb796fd7e2449191773a5680c579512e548a9bc9cd01a0ca405d60acef275"
+    },
+    "fixture_generator": {
+      "path": "target/iteration/task37-wasm-simd-integer-controls.py",
+      "sha256": "d905ddd2156cbb9b3655ede7c58e20bf1000788461aa91a167e69d1debb5aa88"
+    },
+    "module_inputs": {
+      "target/iteration/task37-wasm-simd-integer-oracle.wat": "ce931a91532bea396c805cc5dba690402c60d2f8e6280e88b65536c8f3d6aeb1",
+      "target/iteration/task37-wasm-simd-integer-oracle.wasm": "e0450878ac470664b322da7ab13212882ef67af12542535ab7fc433e42a0c265"
+    }
+  },
+  "specification": {
+    "vector_execution": "https://webassembly.github.io/spec/core/exec/instructions.html",
+    "vector_numerics": "https://webassembly.github.io/spec/core/exec/numerics.html"
+  },
+  "reports": {
+    "before": {
+      "path": "target/iteration/task37-wasm-simd-integer-before.json",
+      "sha256": "92b20b3459a58243d837ad238ba777d4c85d13d292647ff4c7000a17e5f6a7e6",
+      "binary_sha256": "170338eb1ec0e2fd61a78893247fd5fe23f740cf95e27a0ba4fa3685f58be84d",
+      "command_source": "provenance.command in report"
+    },
+    "after": {
+      "path": "target/iteration/task37-wasm-simd-integer-after.json",
+      "sha256": "72513bfde79cce18f1b7d3614695e83444892b640bec255ba9eca84796e8e2ea",
+      "binary_sha256": "53e08226e9f4e5262b4abf7f8d944532316cc55b537519d2a7ac41062516d83d",
+      "command_source": "provenance.command in report"
+    },
+    "controls": {
+      "path": "target/iteration/task37-wasm-simd-integer-controls.json",
+      "sha256": "e13311788643a253d5c6adceada89f61702fc696ccfdb4baac980f09dfa3a3c4",
+      "binary_sha256": "53e08226e9f4e5262b4abf7f8d944532316cc55b537519d2a7ac41062516d83d",
+      "command_source": "provenance.command in report"
+    }
+  },
+  "frozen_runner": {
+    "path": "target/iteration/task37-wasm-simd-integer-runner",
+    "sha256": "53e08226e9f4e5262b4abf7f8d944532316cc55b537519d2a7ac41062516d83d"
+  },
+  "logs": {
+    "runtime": {
+      "path": "target/iteration/task37-wasm-simd-integer-runtime.log",
+      "sha256": "6d774e3f6dd0594c66aea8e46e775b17e784235811fbda33b4fbac91f22fe0d9"
+    },
+    "bytecode": {
+      "path": "target/iteration/task37-wasm-simd-integer-bytecode.log",
+      "sha256": "a5685279d94c519e5ed6c9b7aeee5f98eba9b59a2167f14832894da617ffd7e6"
+    },
+    "frontend": {
+      "path": "target/iteration/task37-wasm-simd-integer-frontend.log",
+      "sha256": "7a49b300ac09b7fc83132d428288d32b67417813c9f67cd54e66cac74ecb2db5"
+    },
+    "check": {
+      "path": "target/iteration/task37-wasm-simd-integer-check.log",
+      "sha256": "72b16954d12545c4f77a38e44601d7f4052a55d4020716a100aaa8a51a88cf29"
+    },
+    "profile-check": {
+      "path": "target/iteration/task37-wasm-simd-integer-profile-check.log",
+      "sha256": "44ed08b1f75ee73a8fa770d5b8f7af3ea4412e52283fb1297552a7e72e86acbf"
+    },
+    "build": {
+      "path": "target/iteration/task37-wasm-simd-integer-build.log",
+      "sha256": "f1f83842120a216ed648ae6fa0055f17f56352a0d42cfbea82f2d730751ef200"
+    },
+    "compare": {
+      "path": "target/iteration/task37-wasm-simd-integer-compare.log",
+      "sha256": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+    },
+    "before": {
+      "path": "target/iteration/task37-wasm-simd-integer-before.log",
+      "sha256": "13f5c06b2616974f211d8fb0c8ab0bc63bc3766280e21d67aad2065fda1e5fe7"
+    },
+    "after": {
+      "path": "target/iteration/task37-wasm-simd-integer-after.log",
+      "sha256": "769a3cd457e358e308b9d8d3938c634873c0a50fcf0faf6e55ef8be1ca33e186"
+    },
+    "controls": {
+      "path": "target/iteration/task37-wasm-simd-integer-controls.log",
+      "sha256": "1086f2ddf1864cbb11eefb7d821d40aa827053e49072e9726ebf7cd365f1ccf0"
+    },
+    "oracle": {
+      "path": "target/iteration/task37-wasm-simd-integer-oracle.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  },
+  "remaining": "Vector conversions, relaxed SIMD, specialized splat/widen/zero/lane memory accesses; concrete typed/GC/non-null references, shared resources/threads and remaining proposals; JS/Wasm adapters and embedding reentry. Full three-suite qualification, implemented Node inventory/migration, production cutover and cleanup remain open. Stage A is open; Stage B has not started.",
+  "profile_limit": "Feature builds pass; profile execution attribution remains task68 work. No speed or RSS claim."
+}

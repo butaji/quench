@@ -1,0 +1,17 @@
+# fixture engine maxrss KiB x5 (evicted), qjs = QuickJS 2026-06-04, qn-b27b = v2-cloud-c2 d796e622d + retrained orders, static BOLT; every fixture's console.log now loads the SDK console (trunk)
+crypto qjs 3532 3580 3612 3520 3492
+crypto qn-b27b 12812 12964 12944 12892 12940
+deltablue qjs 3724 3576 3864 3656 3684
+deltablue qn-b27b 12324 12308 12320 12356 12316
+earley-boyer qjs 16820 16568 16772 16736 16896
+earley-boyer qn-b27b 19332 19416 19312 19540 19352
+navier-stokes qjs 5080 4924 4996 4924 5024
+navier-stokes qn-b27b 13384 13364 13372 13368 13368
+raytrace qjs 3468 3516 3376 3376 3528
+raytrace qn-b27b 12228 12268 12244 12228 12232
+regexp qjs 6720 6676 6752 6748 6700
+regexp qn-b27b 19964 19968 19936 19972 19976
+richards qjs 3440 3392 3484 3256 3420
+richards qn-b27b 12268 12104 12268 12140 12228
+splay qjs 146928 146916 147036 146992 147164
+splay qn-b27b 50740 50736 50736 50724 50752

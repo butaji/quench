@@ -1,0 +1,133 @@
+{
+  "schema": 1,
+  "task": "27",
+  "kind": "legacy_handler_table_prune",
+  "recorded_on": "2026-10-08",
+  "source": {
+    "revision": "e3d3e40a93033cb7d2f16b0bd8c9823d3827d079",
+    "worktree_dirty": true,
+    "platform": "Darwin arm64",
+    "changed_source_sha256": {
+      "crates/quench-node/src/lib.rs": "5fa9c783eb4021067e9806e5fc52845c15611d81e75ee1a53a8c99e3d9c18d74",
+      "crates/quench-node/src/modules/event_target.rs": "c5094ada896dd858df7268b56532aee95183e69b52a626e6442cc075bb9c329b",
+      "crates/quench-node/src/modules/require.rs": "1dfe19ebc6766fa0174fce310bce9f9dba8d9b254fa76f5486116f0a592f3116",
+      "tasks/27.md": "10f7f946b1ab0df828c7345183fa727d3ab07fc04b7aa9a6aa6b0268ebb5b01b"
+    },
+    "deleted_source_preimage_sha256": {
+      "crates/quench-node/src/dispatch_handlers.rs": "0e0fc2f7b84520e295fa1ce1e8112be370beb3e494187ad50f953d707e93a4a7"
+    }
+  },
+  "cleanup": {
+    "removed": [
+      "crates/quench-node/src/dispatch_handlers.rs"
+    ],
+    "deleted_source_lines": 16093,
+    "incremental_module_declarations_removed": 1,
+    "cumulative_dispatch_module_declarations_removed_from_head": 4,
+    "old_direct_caller_edges_relocated": 4,
+    "remaining_rust_source_references": [],
+    "moved_owners": {
+      "abort_composite_and_event_constructors": "crates/quench-node/src/modules/event_target.rs",
+      "system_error_constructors": "crates/quench-node/src/modules/require.rs"
+    },
+    "public_rust_module_removed": true,
+    "downstream_rust_api_break": true,
+    "node_guest_api_membership_changed": false,
+    "inventory_membership_changed": false,
+    "inventory_sha256": "668c4302964d57f9e693e08f9225a9692072c435468c63f721627a45b3e37702",
+    "parallel_manifest_sha256": "0209917422a2f0f3fa241d941ec4bc88c9917d5322b69014ab1a662a52e9dfca"
+  },
+  "binaries": {
+    "production_quench_node_sha256": "b839364ebf1a2702b1934cd4328e1beae42b9e89a92b45db02cd6e075b291112",
+    "iteration_quench_node_sha256": "b1c7fbd8ddbf3a821781a68274d374d7ed7dc7157a4f62b681d6995ccb43b45a",
+    "iteration_run_parallel_sha256": "852d9b91394817a97ec0533552db3eacc28b5c8161f895669046cb061bc6e3ab"
+  },
+  "validation": {
+    "commands": [
+      "cargo check -p quench-node",
+      "cargo build --profile production -p quench-node",
+      "cargo build --profile iteration -p quench-node --bin quench-node",
+      "target/iteration/run-parallel --profile framework-core",
+      "local Node and target/iteration/quench-node: tests/frameworks/driver.cjs scenarios/{express,koa,fastify}.cjs",
+      "rustfmt --edition 2024 --check crates/quench-node/src/modules/event_target.rs crates/quench-node/src/modules/require.rs",
+      "git diff --check"
+    ],
+    "cargo_check": "pass",
+    "production_build": "pass",
+    "iteration_build": "pass",
+    "framework_core": {
+      "pass": 43,
+      "skip": 0,
+      "fail": 0,
+      "timeout": 0,
+      "crash": 0,
+      "unclassified": 0,
+      "total": 43,
+      "manifest_sha256": "0209917422a2f0f3fa241d941ec4bc88c9917d5322b69014ab1a662a52e9dfca",
+      "stdout_sha256": "2f2d921dcfce7bd620f630e927555625fcd4e20465e3fc2110af3973bf050cc9",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdout_artifact": "target/iteration/task27-legacy-handler-prune-2026-10-08/framework.stdout",
+      "stderr_artifact": "target/iteration/task27-legacy-handler-prune-2026-10-08/framework.stderr"
+    },
+    "node": {
+      "executable": "/opt/homebrew/bin/node",
+      "version": "v26.10.0"
+    },
+    "framework_scenarios": {
+      "express": {
+        "node_exit": 0,
+        "quench_exit": 0,
+        "stdout_sha256": "6a8388b87cdb9dc7618e136828b626c2213b937ea1645882ef0c33bedf95b54d",
+        "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "exact_match": true,
+        "stdout_artifacts": [
+          "target/iteration/task27-legacy-handler-prune-2026-10-08/express-node.stdout",
+          "target/iteration/task27-legacy-handler-prune-2026-10-08/express-quench.stdout"
+        ],
+        "stderr_artifacts": [
+          "target/iteration/task27-legacy-handler-prune-2026-10-08/express-node.stderr",
+          "target/iteration/task27-legacy-handler-prune-2026-10-08/express-quench.stderr"
+        ]
+      },
+      "koa": {
+        "node_exit": 0,
+        "quench_exit": 0,
+        "stdout_sha256": "6a8388b87cdb9dc7618e136828b626c2213b937ea1645882ef0c33bedf95b54d",
+        "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "exact_match": true,
+        "stdout_artifacts": [
+          "target/iteration/task27-legacy-handler-prune-2026-10-08/koa-node.stdout",
+          "target/iteration/task27-legacy-handler-prune-2026-10-08/koa-quench.stdout"
+        ],
+        "stderr_artifacts": [
+          "target/iteration/task27-legacy-handler-prune-2026-10-08/koa-node.stderr",
+          "target/iteration/task27-legacy-handler-prune-2026-10-08/koa-quench.stderr"
+        ]
+      },
+      "fastify": {
+        "node_exit": 0,
+        "quench_exit": 0,
+        "stdout_sha256": "6a8388b87cdb9dc7618e136828b626c2213b937ea1645882ef0c33bedf95b54d",
+        "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "exact_match": true,
+        "stdout_artifacts": [
+          "target/iteration/task27-legacy-handler-prune-2026-10-08/fastify-node.stdout",
+          "target/iteration/task27-legacy-handler-prune-2026-10-08/fastify-quench.stdout"
+        ],
+        "stderr_artifacts": [
+          "target/iteration/task27-legacy-handler-prune-2026-10-08/fastify-node.stderr",
+          "target/iteration/task27-legacy-handler-prune-2026-10-08/fastify-quench.stderr"
+        ]
+      }
+    },
+    "scoped_format_check": "pass",
+    "workspace_format_check": "fails on pre-existing formatting drift in unrelated dirty files",
+    "unit_tests": "not run by instruction"
+  },
+  "remaining_cutover": {
+    "quench_node_normal_dependency_on_quench_runtime": true,
+    "legacy_host_state_and_value_adapters_remain": true,
+    "task27_complete": false,
+    "task86_complete": false
+  }
+}

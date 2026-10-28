@@ -1,0 +1,1648 @@
+{
+  "scope": "Canonical connection delivery completion and referenced closing resource visibility",
+  "runtime_commit": "c6e58bc53d65c378c43b688c200e68d5ced090cc",
+  "branch": "v2-cloud-node",
+  "oracle": "v27.0.0-nightly20260819c79868f102",
+  "fixture_commit": "55e4ca33f3a6dfe364bd9558b726576a6d1a2fba",
+  "checks": {
+    "check": {
+      "passed": true,
+      "failed": 0,
+      "log_sha256": "b99aa3c68cf04ce7610f2c4be1b99e395604f9fc4b3b0ff79cb4aed57e22ab39"
+    },
+    "runtime": {
+      "passed": 582,
+      "failed": 0,
+      "log_sha256": "e0a17b9be1767473a1e40b754235c955a76f4c6007caa8ee2b01d77117008e9e"
+    },
+    "oracles": {
+      "passed": 160,
+      "failed": 0,
+      "log_sha256": "eb9ffc614c61af1d80531b49aa0d10bf0fbabf688c54494c0909257922f7d774"
+    },
+    "framework": {
+      "passed": 43,
+      "failed": 0,
+      "log_sha256": "b41881f94821125815bc87efbbbd7d26b13fd072686394014795864fa55f2ae8"
+    }
+  },
+  "groups": {
+    "restored": {
+      "counts": {
+        "pass": 1
+      },
+      "total": 1,
+      "inventory_hash": "5469b4262bf91422",
+      "jobs": 4,
+      "timeout_secs": 30,
+      "lost_passes": [],
+      "gained_passes": [
+        "test-process-getactiveresources-track-active-handles.js"
+      ],
+      "results": [
+        {
+          "fixture": "test-process-getactiveresources-track-active-handles.js",
+          "status": "pass"
+        }
+      ],
+      "raw_path": "work/parallel-tls-resource-restored.json",
+      "raw_sha256": "b1055269a67d81b9b03395bf14e0c5025593d48954c92bd64b11ec470ec13d19"
+    },
+    "net": {
+      "counts": {
+        "fail": 72,
+        "pass": 77,
+        "timeout": 14
+      },
+      "total": 163,
+      "inventory_hash": "3eebd3979d1f2256",
+      "jobs": 4,
+      "timeout_secs": 30,
+      "lost_passes": [],
+      "gained_passes": [],
+      "results": [
+        {
+          "fixture": "test-net-access-byteswritten.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-net-after-close.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-net-allow-half-open-async-iter.js",
+          "status": "timeout"
+        },
+        {
+          "fixture": "test-net-allow-half-open.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-net-autoselectfamily-attempt-timeout-cli-option.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-net-autoselectfamily-attempt-timeout-default-value.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-net-autoselectfamily-commandline-option.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-net-autoselectfamily-default.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-net-autoselectfamily-ipv4first.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-net-autoselectfamily.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-net-better-error-messages-listen-path.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-net-better-error-messages-listen.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-net-better-error-messages-path.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-net-better-error-messages-port-hostname.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-net-binary.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-net-bind-twice.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-net-blocklist.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-net-boundsocket.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-net-buffersize.js",
+          "status": "timeout"
+        },
+        {
+          "fixture": "test-net-bytes-read.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-net-bytes-stats.js",
+          "status": "timeout"
+        },
+        {
+          "fixture": "test-net-bytes-written-large.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-net-can-reset-timeout.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-net-child-process-connect-reset.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-net-client-bind-twice.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-net-connect-abort-controller.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-net-connect-after-destroy.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-net-connect-buffer.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-net-connect-buffer2.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-net-connect-call-socket-connect.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-net-connect-custom-lookup-non-string-address.mjs",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-net-connect-destroy.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-net-connect-immediate-destroy.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-net-connect-immediate-finish.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-net-connect-keepalive.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-net-connect-memleak.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-net-connect-no-arg.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-net-connect-nodelay.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-net-connect-options-allowhalfopen.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-net-connect-options-fd.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-net-connect-options-invalid.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-net-connect-options-ipv6.js",
+          "status": "timeout"
+        },
+        {
+          "fixture": "test-net-connect-options-path.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-net-connect-options-port.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-net-connect-paused-connection.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-net-connect-reset-after-destroy.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-net-connect-reset-before-connected.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-net-connect-reset-until-connected.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-net-connect-reset.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-net-dns-custom-lookup.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-net-dns-error.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-net-dns-lookup-skip.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-net-dns-lookup.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-net-during-close.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-net-eaddrinuse.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-net-end-close.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-net-end-destroyed.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-net-end-without-connect.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-net-error-twice.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-net-isip.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-net-isipv4.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-net-isipv6.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-net-keepalive-interval-count.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-net-keepalive.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-net-large-string.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-net-listen-after-destroying-stdin.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-net-listen-close-server-callback-is-not-function.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-net-listen-close-server.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-net-listen-error.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-net-listen-exclusive-random-ports.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-net-listen-fd0.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-net-listen-handle-in-cluster-1.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-net-listen-handle-in-cluster-2.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-net-listen-invalid-port.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-net-listen-ipv6only.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-net-listen-twice.js",
+          "status": "timeout"
+        },
+        {
+          "fixture": "test-net-listening.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-net-local-address-port.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-net-localerror.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-net-negative-zero.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-net-normalize-args.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-net-onread-static-buffer.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-net-options-lookup.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-net-pause-resume-connecting.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-net-perf_hooks.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-net-persistent-keepalive.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-net-persistent-nodelay.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-net-persistent-ref-unref.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-net-pingpong.js",
+          "status": "timeout"
+        },
+        {
+          "fixture": "test-net-pipe-connect-errors.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-net-pipe-with-long-path.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-net-promises-connect.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-net-promises-listen.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-net-reconnect.js",
+          "status": "timeout"
+        },
+        {
+          "fixture": "test-net-remote-address-port.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-net-remote-address.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-net-reuseport.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-net-server-async-dispose.mjs",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-net-server-async-iterator.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-net-server-blocklist.js",
+          "status": "timeout"
+        },
+        {
+          "fixture": "test-net-server-call-listen-multiple-times.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-net-server-capture-rejection.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-net-server-close-before-calling-lookup-callback.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-net-server-close-before-ipc-response.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-net-server-close.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-net-server-drop-connections.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-net-server-keepalive.js",
+          "status": "timeout"
+        },
+        {
+          "fixture": "test-net-server-listen-handle.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-net-server-listen-options-signal.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-net-server-listen-options.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-net-server-listen-path.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-net-server-listen-remove-callback.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-net-server-listen2-deprecation.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-net-server-listen2-monkeypatch.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-net-server-max-connections-close-makes-more-available.js",
+          "status": "timeout"
+        },
+        {
+          "fixture": "test-net-server-max-connections.js",
+          "status": "timeout"
+        },
+        {
+          "fixture": "test-net-server-nodelay.js",
+          "status": "timeout"
+        },
+        {
+          "fixture": "test-net-server-options.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-net-server-pause-on-connect.js",
+          "status": "timeout"
+        },
+        {
+          "fixture": "test-net-server-reset.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-net-server-transfer-worker.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-net-server-try-ports.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-net-server-unref-persistent.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-net-server-unref.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-net-settimeout.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-net-socket-byteswritten.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-net-socket-close-after-end.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-net-socket-connect-invalid-autoselectfamily.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-net-socket-connect-invalid-autoselectfamilyattempttimeout.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-net-socket-connect-without-cb.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-net-socket-connecting.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-net-socket-constructor.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-net-socket-destroy-send.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-net-socket-destroy-twice.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-net-socket-end-before-connect.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-net-socket-end-callback.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-net-socket-local-address.js",
+          "status": "timeout"
+        },
+        {
+          "fixture": "test-net-socket-no-halfopen-enforcer.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-net-socket-ready-without-cb.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-net-socket-reset-send.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-net-socket-reset-twice.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-net-socket-setnodelay.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-net-socket-timeout-unref.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-net-socket-timeout.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-net-socket-tos.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-net-socket-transfer-worker-http.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-net-socket-transfer-worker.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-net-socket-write-after-close.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-net-socket-write-error.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-net-stream.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-net-sync-cork.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-net-throttle.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-net-timeout-no-handle.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-net-transfer-guards.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-net-writable.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-net-write-after-close.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-net-write-after-end-nt.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-net-write-arguments.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-net-write-cb-on-destroy-before-connect.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-net-write-connect-write.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-net-write-fully-async-buffer.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-net-write-fully-async-hex-string.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-net-write-slow.js",
+          "status": "pass"
+        }
+      ],
+      "raw_path": "work/parallel-tls-resource-net.json",
+      "raw_sha256": "704dc1ffb38e4e91adbe4d932e68afa68628df3da7187e8e2b00f42a94b47e32"
+    },
+    "tls": {
+      "counts": {
+        "fail": 167,
+        "pass": 41,
+        "skip": 4,
+        "timeout": 12
+      },
+      "total": 224,
+      "inventory_hash": "8c929d2a1ce1d845",
+      "jobs": 4,
+      "timeout_secs": 30,
+      "lost_passes": [],
+      "gained_passes": [],
+      "results": [
+        {
+          "fixture": "test-tls-0-dns-altname.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-tls-add-context.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-tls-addca.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-tls-alert-handling.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-tls-alert.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-tls-alpn-server-client.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-tls-async-cb-after-socket-end.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-tls-basic-validations.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-tls-buffersize.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-tls-ca-concat.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-tls-canonical-ip.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-tls-cert-chains-concat.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-tls-cert-chains-in-ca.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-tls-cert-ext-encoding.js",
+          "status": "skip"
+        },
+        {
+          "fixture": "test-tls-cert-regression.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-tls-certcb-sync-write.js",
+          "status": "timeout"
+        },
+        {
+          "fixture": "test-tls-certificate-compression.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-tls-check-server-identity.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-tls-cipher-list.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-tls-cli-max-version-1.2.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-tls-cli-max-version-1.3.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-tls-cli-min-max-conflict.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-tls-cli-min-version-1.0.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-tls-cli-min-version-1.1.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-tls-cli-min-version-1.2.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-tls-cli-min-version-1.3.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-tls-client-abort.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-tls-client-abort2.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-tls-client-allow-partial-trust-chain.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-tls-client-auth.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-tls-client-cert-resumption.js",
+          "status": "timeout"
+        },
+        {
+          "fixture": "test-tls-client-default-ciphers.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-tls-client-destroy-soon.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-tls-client-getephemeralkeyinfo.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-tls-client-hello-fragmented.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-tls-client-mindhsize.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-tls-client-reject-12.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-tls-client-reject.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-tls-client-renegotiation-13.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-tls-client-renegotiation-limit.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-tls-client-resume-12.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-tls-client-resume.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-tls-client-verify.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-tls-clientcertengine-invalid-arg-type.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-tls-clientcertengine-unsupported.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-tls-clienthello-sync-write.js",
+          "status": "timeout"
+        },
+        {
+          "fixture": "test-tls-close-error.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-tls-close-event-after-write.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-tls-close-notify.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-tls-cnnic-whitelist.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-tls-connect-abort-controller.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-tls-connect-address-family.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-tls-connect-allow-half-open-option.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-tls-connect-given-socket.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-tls-connect-hints-option.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-tls-connect-hwm-option.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-tls-connect-keepalive-nodelay.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-tls-connect-memleak.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-tls-connect-no-host.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-tls-connect-pipe.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-tls-connect-secure-context.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-tls-connect-simple.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-tls-connect-stream-writes.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-tls-connect-timeout-option.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-tls-delayed-attach-error.js",
+          "status": "timeout"
+        },
+        {
+          "fixture": "test-tls-delayed-attach.js",
+          "status": "timeout"
+        },
+        {
+          "fixture": "test-tls-destroy-stream-12.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-tls-destroy-stream.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-tls-destroy-whilst-write.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-tls-dhe.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-tls-dhparam-auto-boringssl.js",
+          "status": "skip"
+        },
+        {
+          "fixture": "test-tls-disable-renegotiation.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-tls-ecdh-auto.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-tls-ecdh-multiple.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-tls-ecdh.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-tls-econnreset.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-tls-empty-sni-context.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-tls-enable-keylog-cli.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-tls-enable-trace-cli.js",
+          "status": "skip"
+        },
+        {
+          "fixture": "test-tls-enable-trace.js",
+          "status": "skip"
+        },
+        {
+          "fixture": "test-tls-env-bad-extra-ca.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-tls-env-extra-ca-no-crypto.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-tls-env-extra-ca-with-options.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-tls-env-extra-ca.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-tls-error-servername.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-tls-error-stack.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-tls-exportkeyingmaterial.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-tls-external-accessor.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-tls-fast-writing.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-tls-finished.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-tls-friendly-error-message.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-tls-generic-stream.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-tls-get-ca-certificates-bundled-subset.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-tls-get-ca-certificates-bundled.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-tls-get-ca-certificates-default.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-tls-get-ca-certificates-error.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-tls-get-ca-certificates-extra-empty.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-tls-get-ca-certificates-extra-subset.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-tls-get-ca-certificates-extra.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-tls-get-ca-certificates-node-use-system-ca.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-tls-get-ca-certificates-system-without-flag.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-tls-get-ca-certificates-system.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-tls-get-ca-certificates-worker-no-use-system-ca.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-tls-get-ca-certificates-worker-use-system-ca.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-tls-getcertificate-x509.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-tls-getcipher.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-tls-getprotocol.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-tls-handshake-error.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-tls-handshake-exception.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-tls-hello-parser-failure.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-tls-honorcipherorder.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-tls-inception.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-tls-interleave.js",
+          "status": "timeout"
+        },
+        {
+          "fixture": "test-tls-invalid-pfx.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-tls-invoke-queued.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-tls-ip-servername-forbidden.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-tls-js-stream.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-tls-junk-closes-server.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-tls-junk-server.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-tls-key-mismatch.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-tls-keyengine-invalid-arg-type.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-tls-keyengine-unsupported.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-tls-keylog-tlsv13.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-tls-legacy-pfx.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-tls-max-send-fragment.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-tls-min-max-version.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-tls-multi-key.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-tls-multi-pfx.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-tls-multiple-cas-as-string.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-tls-net-connect-prefer-path.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-tls-net-socket-keepalive-12.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-tls-net-socket-keepalive.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-tls-no-cert-required.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-tls-no-rsa-key.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-tls-no-sslv23.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-tls-no-sslv3.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-tls-ocsp-callback.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-tls-off-thread-cert-loading-disabled.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-tls-off-thread-cert-loading-system.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-tls-off-thread-cert-loading.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-tls-on-empty-socket.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-tls-onread-static-buffer.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-tls-options-boolean-check.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-tls-over-http-tunnel.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-tls-passphrase.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-tls-pause.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-tls-peer-certificate-encoding.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-tls-peer-certificate-multi-keys.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-tls-peer-certificate.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-tls-pfx-authorizationerror.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-tls-psk-alpn-callback-exception-handling.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-tls-psk-circuit.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-tls-psk-errors.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-tls-psk-server.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-tls-reduced-SECLEVEL-in-cipher.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-tls-reinitialize-listeners.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-tls-request-timeout.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-tls-retain-handle-no-abort.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-tls-reuse-host-from-socket.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-tls-root-certificates.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-tls-secure-context-usage-order.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-tls-secure-session.js",
+          "status": "timeout"
+        },
+        {
+          "fixture": "test-tls-server-capture-rejection.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-tls-server-connection-server.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-tls-server-failed-handshake-emits-clienterror.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-tls-server-parent-constructor-options.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-tls-server-setkeycert.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-tls-server-verify.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-tls-session-cache.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-tls-session-reuse-different-servername.js",
+          "status": "timeout"
+        },
+        {
+          "fixture": "test-tls-session-timeout-errors.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-tls-set-ciphers-error.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-tls-set-ciphers.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-tls-set-default-ca-certificates-append-fetch.mjs",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-tls-set-default-ca-certificates-append-https-request.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-tls-set-default-ca-certificates-array-buffer.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-tls-set-default-ca-certificates-basic.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-tls-set-default-ca-certificates-error.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-tls-set-default-ca-certificates-extra-override.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-tls-set-default-ca-certificates-mixed-types.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-tls-set-default-ca-certificates-precedence-bundled.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-tls-set-default-ca-certificates-precedence-empty.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-tls-set-default-ca-certificates-recovery.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-tls-set-default-ca-certificates-reset-fetch.mjs",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-tls-set-default-ca-certificates-reset-https-request.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-tls-set-encoding.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-tls-set-secure-context.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-tls-set-sigalgs.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-tls-sni-case-insensitive.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-tls-sni-option.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-tls-sni-server-client.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-tls-sni-servername.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-tls-snicallback-error.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-tls-socket-allow-half-open-option.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-tls-socket-close.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-tls-socket-constructor-alpn-options-parsing.js",
+          "status": "timeout"
+        },
+        {
+          "fixture": "test-tls-socket-default-options.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-tls-socket-destroy.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-tls-socket-failed-handshake-emits-error.js",
+          "status": "timeout"
+        },
+        {
+          "fixture": "test-tls-socket-snicallback-without-server.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-tls-startcom-wosign-whitelist.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-tls-starttls-server.js",
+          "status": "timeout"
+        },
+        {
+          "fixture": "test-tls-streamwrap-buffersize.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-tls-ticket-12.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-tls-ticket-cluster.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-tls-ticket-invalid-arg.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-tls-ticket.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-tls-timeout-server-2.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-tls-timeout-server.js",
+          "status": "timeout"
+        },
+        {
+          "fixture": "test-tls-tlswrap-segfault-2.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-tls-tlswrap-segfault.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-tls-translate-peer-certificate.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-tls-transport-destroy-after-own-gc.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-tls-use-after-free-regression.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-tls-wrap-econnreset-localaddress.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-tls-wrap-econnreset-pipe.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-tls-wrap-econnreset-socket.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-tls-wrap-econnreset.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-tls-wrap-event-emmiter.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-tls-wrap-no-abort.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-tls-wrap-timeout.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-tls-write-error.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-tls-writewrap-leak.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-tls-zero-clear-in.js",
+          "status": "pass"
+        }
+      ],
+      "raw_path": "work/parallel-tls-resource-tls.json",
+      "raw_sha256": "54905712319f0adfc35de18e282182194799aee94e86cf752b4c20c30fe7e940"
+    }
+  },
+  "latest_complete_full_counts": {
+    "timeout": 111,
+    "fail": 2473,
+    "pass": 1468,
+    "skip": 675
+  },
+  "latest_complete_full_source": "65011c72499f3d2d3f71587ed20d6c1ba90feca3",
+  "qualifications": [
+    "The complete TLS stream sweep remains 1468 pass / 675 skip / 2473 fail / 111 timeout / 0 crash across 4727. Its one lost pass remains preserved in that full evidence; this focused restoration does not establish a new full total.",
+    "Original connection delivery clears accepted endpoint pending state in its native completion operation, including exceptional completion. Removed the generic scheduler argument-position heuristic.",
+    "Live and closing socket resource projections use the canonical transport reference bit. Pinned Node GetActiveResourcesInfo / HandleWrap::HasRef includes referenced closing handles until completion. The new general oracle covers ref/unref and pending-close visibility.",
+    "No deadline, fixture, skip policy, oracle backend, or source identity dispatch changed. User dirty files remain untouched. Task remains in progress; no performance claim."
+  ]
+}

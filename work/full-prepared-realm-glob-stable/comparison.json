@@ -1,0 +1,11 @@
+{
+  "gained": [
+    "test-fs-glob-throw.mjs",
+    "test-icu-env.js",
+    "test-shadow-realm-gc-module.js"
+  ],
+  "lost": [
+    "test-os-checked-function.js"
+  ],
+  "skip_changes": {}
+}

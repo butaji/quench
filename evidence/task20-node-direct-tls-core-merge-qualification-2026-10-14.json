@@ -1,0 +1,33 @@
+{
+  "scope": "Direct TLS lane qualification after actual shared push rejection and incoming Core merge",
+  "runtime_commit": "cd4be998f4560802a114237dc6cd004e7f9062c9",
+  "core_incoming": "fdc843033",
+  "node_qualified_source": "b455e3a96",
+  "checks": {
+    "check": {
+      "passed": true,
+      "failed": 0,
+      "log_sha256": "ff8461d80604e7b0b476c7e3e630703c3dc87e073a143015e7d7f5a4bd6267ac"
+    },
+    "runtime": {
+      "passed": 582,
+      "failed": 0,
+      "log_sha256": "64e5f886ced59e121ffb6029b146bfbe2e4ac01035794b46c19c22d7003de9b6"
+    },
+    "oracles": {
+      "passed": 162,
+      "failed": 0,
+      "log_sha256": "8e1dc67003622d22e2a9359f65766fc25d43f34f849221fbc0a343dccd0b2eb2"
+    },
+    "framework": {
+      "passed": 43,
+      "failed": 0,
+      "log_sha256": "b41881f94821125815bc87efbbbd7d26b13fd072686394014795864fa55f2ae8"
+    }
+  },
+  "binary_sha256": "513a50ec8e69d4a05a9b81f7f086990db07d56afc4c55713862bb9cfe20fdc43  work/tls-direct-merged-bin/quench-node\na216fd9a8ff526dbb4c52d50bcfcca1313cf435e25a2b686045539e96fbfa978  work/tls-direct-merged-bin/run-parallel\n",
+  "qualifications": [
+    "Shared push of rejected local merge3738c8d41 rejected because remote advanced. Rootlane normalmergecd4be998f integrates material Core changes. Both original Node group artifacts remain attributed to their original sources; merged gates do not invent updated group totals.",
+    "New full sweep must use fresh merged binaries, not prior b455 frozen binaries. No build/probe/measurement alongside full. User dirty files preserved. Goal remains open."
+  ]
+}

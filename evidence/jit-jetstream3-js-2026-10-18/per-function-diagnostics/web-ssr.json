@@ -1,0 +1,448 @@
+{
+  "schema": 13,
+  "suite": "jet-stream3",
+  "jit_mode": "jit",
+  "jit_diagnostics": true,
+  "jit_wasm_root": null,
+  "jit_wasm_root_only": false,
+  "jit_wasm_root_first": false,
+  "jit_wasm_selective": false,
+  "jit_wasm_memcpy_ab": false,
+  "jit_wasm_memcpy_raw_ab": false,
+  "jit_wasm_memcpy_early_ab": false,
+  "jit_wasm_compare_branch_ab": false,
+  "created_unix_ns": 1792352483860735486,
+  "rounds_requested": 1,
+  "timeout_ms": 600000,
+  "source_revision": "bb0afaba4f0d52d881c6036af284c6953aaeb8b8",
+  "source_dirty": true,
+  "corpus": {
+    "pinned_revision": "06785cf861ac44855f168cbbe829278c2802e6de",
+    "checkout_revision": "06785cf861ac44855f168cbbe829278c2802e6de",
+    "checkout_clean": true,
+    "fixture_set_matches": false
+  },
+  "host": {
+    "uname": "Linux f3da3ef8e0e6 6.18.55 #1 SMP Wed Oct 14 19:45:18 UTC 2026 x86_64 GNU/Linux",
+    "rustc": "rustc 1.99.1 (58cf8f9c3 2026-10-13)\nbinary: rustc\ncommit-hash: 58cf8f9c35b355199727627d07ae34a4e2846d67\ncommit-date: 2026-10-13\nhost: x86_64-unknown-linux-gnu\nrelease: 1.99.1\nLLVM version: 23.1.1",
+    "model": null,
+    "memory_bytes": 18882674688,
+    "memory_limit_bytes": 17179869184,
+    "cpu_quota": "400000 100000",
+    "logical_cpus": 4,
+    "process_metrics_backend": "Linux wait4 rusage"
+  },
+  "engines": [
+    {
+      "name": "quench",
+      "executable": "/workspace/quench/target/iteration/quench-node",
+      "executable_sha256": "f2c6922466a2457f9010b4c6b5ec5e1b785ca976ca6be97db18077247b0aeadc",
+      "version": "Quench shared-VM JIT build; package 0.1.0",
+      "argv": [
+        "--jit"
+      ],
+      "environment": {
+        "HOME": "/home/agent",
+        "LANG": "C.UTF-8",
+        "LC_ALL": "C.UTF-8",
+        "PATH": "/home/agent/.cargo/bin:/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/override:/opt/codex/runtimes/codex-primary-runtime/dependencies/python/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin:/opt/codex/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/fallback",
+        "QUENCH_JS_JIT_STATS": "1",
+        "QUENCH_WASM_JIT_STATS": "1"
+      },
+      "inherits_environment": false,
+      "jit_mode": "enabled-by-cli-flag",
+      "jit_proof_command": [
+        "/workspace/quench/target/iteration/quench-node",
+        "--jit"
+      ],
+      "jit_proof": "the measured Quench process is launched with --jit and opt-in JavaScript/WebAssembly JIT counters; diagnostic-only, not for qualification",
+      "webassembly": true
+    },
+    {
+      "name": "bun",
+      "executable": "/workspace/.local/bench-runtimes/bun-linux-x64/bun",
+      "executable_sha256": "a83d263767d839e4d2649ca8e35d07159c7afc99afdc96d731ced29e056dda0c",
+      "version": "1.4.2",
+      "argv": [],
+      "environment": {
+        "BUN_JSC_useJIT": "1",
+        "HOME": "/home/agent",
+        "LANG": "C.UTF-8",
+        "LC_ALL": "C.UTF-8",
+        "PATH": "/home/agent/.cargo/bin:/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/override:/opt/codex/runtimes/codex-primary-runtime/dependencies/python/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin:/opt/codex/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/fallback"
+      },
+      "inherits_environment": false,
+      "jit_mode": "enabled-and-probed",
+      "jit_proof_command": [
+        "BUN_JSC_useJIT=1",
+        "BUN_JSC_dumpOptions=1",
+        "/workspace/.local/bench-runtimes/bun-linux-x64/bun",
+        "-e",
+        "console.log(Bun.version)"
+      ],
+      "jit_proof": "command succeeded and reported \"useJIT=true\": 1.4.2\n\nModified JSC options:\n   dumpOptions=1 (default: 0)\n   useJIT=true (default: true)",
+      "webassembly": true
+    },
+    {
+      "name": "node",
+      "executable": "/workspace/.local/bench-runtimes/node-v26.10.0-linux-x64/bin/node",
+      "executable_sha256": "ab9c8eecf9f82d6693cdc3accced17034065c8d96213b0aa76a7e803d20ae1da",
+      "version": "v26.10.0",
+      "argv": [],
+      "environment": {
+        "HOME": "/home/agent",
+        "LANG": "C.UTF-8",
+        "LC_ALL": "C.UTF-8",
+        "PATH": "/home/agent/.cargo/bin:/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/override:/opt/codex/runtimes/codex-primary-runtime/dependencies/python/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin:/opt/codex/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/fallback"
+      },
+      "inherits_environment": false,
+      "jit_mode": "enabled-and-probed",
+      "jit_proof_command": [
+        "/workspace/.local/bench-runtimes/node-v26.10.0-linux-x64/bin/node",
+        "--trace-opt",
+        "--no-concurrent-recompilation",
+        "-e",
+        "function hot(x) { return x + 1; } for (let i = 0; i < 100000; i++) hot(i);"
+      ],
+      "jit_proof": "command succeeded and reported \"completed compiling\": [marking 0x3d2221974d91 <JSFunction hot (sfi = 0x3d2221971571)> for optimization to MAGLEV, ConcurrencyMode::kConcurrent, reason: hot and stable]\n[compiling method 0x3d2221974d91 <JSFunction hot (sfi = 0x3d2221971571)> (target MAGLEV), mode: ConcurrencyMode::kSynchronous]\n[completed compiling 0x3d2221974d91 <JSFunction hot (sfi = 0x3d2221971571)> (target MAGLEV) - took 0.003, 0.149, 0.001 ms]\n[marking 0x3d2221974d21 <JSFunction (sfi = 0x3d22219714c9)> for optimization to MAGLEV, ConcurrencyMode::kConcurrent, reason: hot and stable]\n[marking 0x3d2221974d91 <JSFunction hot (sfi = 0x3d2221971571)> for optimization to TURBOFAN_JS, ConcurrencyMode::kConcurrent, reason: hot and stable]\n[compiling method 0x3d2221974d91 <JSFunction hot (sfi = 0x3d2221971571)> (target TURBOFAN_JS), mode: ConcurrencyMode::kSynchronous]\n[completed compiling 0x3d2221974d91 <JSFunction hot (sfi = 0x3d2221971571)> (target TURBOFAN_JS) - took 0.005, 0.515, 0.008 ms]\n[compiling method 0x3d2221974d21 <JSFunction (sfi = 0x3d22219714c9)> (target MAGLEV) OSR, mode: ConcurrencyMode::kSynchronous]\n[completed compiling 0x3d2221974d21 <JSFunction (sfi = 0x3d22219714c9)> (target MAGLEV) OSR - took 0.000, 0.136, 0.002 ms]",
+      "webassembly": true
+    }
+  ],
+  "suite_inputs": [
+    {
+      "path": "quench-bench/jetstream/cli.js",
+      "size_bytes": 5600,
+      "modified_unix_ns": 1792229119091972874,
+      "sha256": "22ee4b987b07940dd7397ed7f88345c71acc415e2549b64bf45ba43f7572e5f0"
+    },
+    {
+      "path": "quench-bench/jetstream/JetStreamDriver.js",
+      "size_bytes": 110633,
+      "modified_unix_ns": 1792229118593919588,
+      "sha256": "f105bddfd402514b2325fe9ea6e1df5ce776a4ad4570a8006c7c8559159440fc"
+    },
+    {
+      "path": "quench-bench/jetstream/utils/params.js",
+      "size_bytes": 8047,
+      "modified_unix_ns": 1792229119770704165,
+      "sha256": "0e9d28c0fd2de5583c64678ffc61307b10d983bcb419fe2e3bb383c8b7ded647"
+    },
+    {
+      "path": "quench-bench/jetstream/utils/shell-config.js",
+      "size_bytes": 2352,
+      "modified_unix_ns": 1792229119770904880,
+      "sha256": "9a83000be5e6526a3c26a414fc3a23043e57ef8e4cd67aaff459066a2c347bca"
+    }
+  ],
+  "selected_fixtures": [
+    "quench-bench/jetstream/web-ssr"
+  ],
+  "fixtures": {
+    "quench-bench/jetstream/web-ssr": {
+      "source": {
+        "path": "quench-bench/jetstream/web-ssr",
+        "size_bytes": 4096,
+        "modified_unix_ns": 1792229120217833851,
+        "sha256": "1bf00853c893a1b4b497ac8b785ff913bc63ab9787a69aeb1c4409e31653dc39"
+      },
+      "valid": true,
+      "output_equal": true,
+      "summaries": {
+        "bun": {
+          "median_score": 131.97,
+          "median_max_rss_bytes": 249585664,
+          "valid_samples": 1
+        },
+        "node": {
+          "median_score": 135.57,
+          "median_max_rss_bytes": 227098624,
+          "valid_samples": 1
+        },
+        "quench": {
+          "median_score": 8.95,
+          "median_max_rss_bytes": 135888896,
+          "valid_samples": 1
+        }
+      },
+      "unsupported_engines": {},
+      "rounds": [
+        {
+          "round": 0,
+          "execution_order": [
+            "quench",
+            "bun",
+            "node"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 1099358047,
+              "peak_rss_bytes": 249585664,
+              "score": 131.97,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 77117,
+              "page_reclaims": 77117,
+              "involuntary_context_switches": 492,
+              "host_before": {
+                "captured_unix_ns": 1792352500798672091,
+                "load_average": {
+                  "one_minute": 0.67,
+                  "five_minutes": 0.91,
+                  "fifteen_minutes": 0.99
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 567831,
+                    "cpu_percent": 1.2,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 200,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.0,
+                    "command": "containerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792352501902662468,
+                "load_average": {
+                  "one_minute": 0.67,
+                  "five_minutes": 0.91,
+                  "fifteen_minutes": 0.99
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 567831,
+                    "cpu_percent": 1.1,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 200,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.0,
+                    "command": "containerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "Starting JetStream3\nRunning web-ssr:\nweb-ssr First-Score                            136.22 pts\nweb-ssr Worst-Score                            117.20 pts\nweb-ssr Average-Score                          143.96 pts\nweb-ssr Score                                  131.97 pts\nweb-ssr First-Time                              36.70 ms \nweb-ssr Worst-Time                              42.66 ms \nweb-ssr Average-Time                            34.73 ms \nweb-ssr Total-Time                             114.10 ms \nweb-ssr Wall-Time                             1065.14 ms \n\nOverall:\nOverall First-Score                            136.22 pts\nOverall Worst-Score                            117.20 pts\nOverall Average-Score                          143.96 pts\nOverall First-Time                              36.70 ms \nOverall Worst-Time                              42.66 ms \nOverall Average-Time                            34.73 ms \n\nOverall Score                                  131.97 pts\nOverall Wall-Time                             1066.43 ms \n\n",
+              "stderr": ""
+            },
+            "node": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 1118027291,
+              "peak_rss_bytes": 227098624,
+              "score": 135.57,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 62977,
+              "page_reclaims": 62977,
+              "involuntary_context_switches": 48,
+              "host_before": {
+                "captured_unix_ns": 1792352501906821371,
+                "load_average": {
+                  "one_minute": 0.67,
+                  "five_minutes": 0.91,
+                  "fifteen_minutes": 0.99
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 567831,
+                    "cpu_percent": 1.1,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 200,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.0,
+                    "command": "containerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792352503029881224,
+                "load_average": {
+                  "one_minute": 0.67,
+                  "five_minutes": 0.91,
+                  "fifteen_minutes": 0.99
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 567831,
+                    "cpu_percent": 1.2,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 200,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.0,
+                    "command": "containerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "Starting JetStream3\nRunning web-ssr:\nweb-ssr First-Score                            134.79 pts\nweb-ssr Worst-Score                            129.88 pts\nweb-ssr Average-Score                          142.35 pts\nweb-ssr Score                                  135.57 pts\nweb-ssr First-Time                              37.10 ms \nweb-ssr Worst-Time                              38.50 ms \nweb-ssr Average-Time                            35.13 ms \nweb-ssr Total-Time                             110.72 ms \nweb-ssr Wall-Time                             1073.93 ms \n\nOverall:\nOverall First-Score                            134.79 pts\nOverall Worst-Score                            129.88 pts\nOverall Average-Score                          142.35 pts\nOverall First-Time                              37.10 ms \nOverall Worst-Time                              38.50 ms \nOverall Average-Time                            35.13 ms \n\nOverall Score                                  135.57 pts\nOverall Wall-Time                             1075.75 ms \n\n",
+              "stderr": ""
+            },
+            "quench": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 16752784391,
+              "peak_rss_bytes": 135888896,
+              "score": 8.95,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 368572,
+              "page_reclaims": 368572,
+              "involuntary_context_switches": 68,
+              "host_before": {
+                "captured_unix_ns": 1792352484037140864,
+                "load_average": {
+                  "one_minute": 0.54,
+                  "five_minutes": 0.9,
+                  "fifteen_minutes": 0.99
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 567831,
+                    "cpu_percent": 0.7,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 200,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.0,
+                    "command": "containerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792352500795111469,
+                "load_average": {
+                  "one_minute": 0.67,
+                  "five_minutes": 0.91,
+                  "fifteen_minutes": 0.99
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 567831,
+                    "cpu_percent": 1.2,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 200,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.0,
+                    "command": "containerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "Starting JetStream3\nRunning web-ssr:\nweb-ssr First-Score                              8.86 pts\nweb-ssr Worst-Score                              8.73 pts\nweb-ssr Average-Score                            9.27 pts\nweb-ssr Score                                    8.95 pts\nweb-ssr First-Time                             564.34 ms \nweb-ssr Worst-Time                             573.01 ms \nweb-ssr Average-Time                           539.62 ms \nweb-ssr Total-Time                            1676.97 ms \nweb-ssr Wall-Time                             16275.25 ms \n\nOverall:\nOverall First-Score                              8.86 pts\nOverall Worst-Score                              8.73 pts\nOverall Average-Score                            9.27 pts\nOverall First-Time                             564.34 ms \nOverall Worst-Time                             573.01 ms \nOverall Average-Time                           539.62 ms \n\nOverall Score                                    8.95 pts\nOverall Wall-Time                             16279.57 ms \n\n",
+              "stderr": "QUENCH_JS_JIT_STATS {\"program\":15,\"function\":2,\"function_name\":\"get performance\",\"status\":\"hot\",\"entries\":14,\"numeric_entries\":14,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":37,\"function\":42,\"function_name\":\"getExpectedArgumentLength\",\"status\":\"unsupported\",\"entries\":263,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":38,\"function\":3,\"function_name\":\"assert\",\"status\":\"hot\",\"entries\":9,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":42,\"function\":19,\"function_name\":\"normalizeEncoding\",\"status\":\"hot\",\"entries\":7,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":76,\"function\":23,\"function_name\":\"ownMember\",\"status\":\"hot\",\"entries\":2,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":80,\"function\":12,\"function_name\":\"fromStringFast\",\"status\":\"hot\",\"entries\":1,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":80,\"function\":14,\"function_name\":\"fromString\",\"status\":\"hot\",\"entries\":1,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":80,\"function\":43,\"function_name\":\"get\",\"status\":\"hot\",\"entries\":1,\"numeric_entries\":1,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":83,\"function\":102,\"function_name\":\"markAsUntransferable\",\"status\":\"hot\",\"entries\":1,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":83,\"function\":106,\"function_name\":\"createUnsafeAlignedBuffer\",\"status\":\"hot\",\"entries\":1,\"numeric_entries\":1,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":85,\"function\":2,\"function_name\":\"isBuildingSnapshot\",\"status\":\"hot\",\"entries\":1,\"numeric_entries\":1,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":143,\"function\":3,\"function_name\":\"assertEncoding\",\"status\":\"hot\",\"entries\":7,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":144,\"function\":27,\"function_name\":\"toPathIfFileURL\",\"status\":\"hot\",\"entries\":7,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":162,\"function\":24,\"function_name\":\"get\",\"status\":\"unsupported\",\"entries\":63,\"numeric_entries\":63,\"promotions\":1,\"compile_attempts\":1,\"compile_successes\":0,\"compile_ns\":59437,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":162,\"function\":30,\"function_name\":\"\",\"status\":\"hot\",\"entries\":17,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":169,\"function\":23,\"function_name\":\"_parseStringParam\",\"status\":\"hot\",\"entries\":2,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":169,\"function\":24,\"function_name\":\"_parseBooleanParam\",\"status\":\"hot\",\"entries\":9,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":170,\"function\":3,\"function_name\":\"mean\",\"status\":\"hot\",\"entries\":2,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":170,\"function\":10,\"function_name\":\"uiFriendlyNumber\",\"status\":\"hot\",\"entries\":8,\"numeric_entries\":8,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":170,\"function\":145,\"function_name\":\"get prepareForNextIterationCode\",\"status\":\"hot\",\"entries\":1,\"numeric_entries\":1,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":177,\"function\":18,\"function_name\":\"quickHash\",\"status\":\"hot\",\"entries\":61,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":179,\"function\":1,\"function_name\":\"log\",\"status\":\"hot\",\"entries\":30,\"numeric_entries\":30,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":179,\"function\":3,\"function_name\":\"assert\",\"status\":\"hot\",\"entries\":4,\"numeric_entries\":0,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":181,\"function\":173,\"function_name\":\"\",\"status\":\"reclaimed\",\"entries\":2,\"numeric_entries\":2,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":181,\"function\":570,\"function_name\":\"\",\"status\":\"reclaimed\",\"entries\":1,\"numeric_entries\":1,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":181,\"function\":626,\"function_name\":\"\",\"status\":\"reclaimed\",\"entries\":1,\"numeric_entries\":1,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":182,\"function\":173,\"function_name\":\"\",\"status\":\"reclaimed\",\"entries\":2,\"numeric_entries\":2,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":182,\"function\":570,\"function_name\":\"\",\"status\":\"reclaimed\",\"entries\":1,\"numeric_entries\":1,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":182,\"function\":626,\"function_name\":\"\",\"status\":\"reclaimed\",\"entries\":1,\"numeric_entries\":1,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":183,\"function\":173,\"function_name\":\"\",\"status\":\"reclaimed\",\"entries\":2,\"numeric_entries\":2,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":183,\"function\":570,\"function_name\":\"\",\"status\":\"reclaimed\",\"entries\":1,\"numeric_entries\":1,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":183,\"function\":626,\"function_name\":\"\",\"status\":\"reclaimed\",\"entries\":1,\"numeric_entries\":1,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":184,\"function\":173,\"function_name\":\"\",\"status\":\"reclaimed\",\"entries\":2,\"numeric_entries\":2,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":184,\"function\":570,\"function_name\":\"\",\"status\":\"reclaimed\",\"entries\":1,\"numeric_entries\":1,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":184,\"function\":626,\"function_name\":\"\",\"status\":\"reclaimed\",\"entries\":1,\"numeric_entries\":1,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":185,\"function\":173,\"function_name\":\"\",\"status\":\"reclaimed\",\"entries\":2,\"numeric_entries\":2,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":185,\"function\":570,\"function_name\":\"\",\"status\":\"reclaimed\",\"entries\":1,\"numeric_entries\":1,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":185,\"function\":626,\"function_name\":\"\",\"status\":\"reclaimed\",\"entries\":1,\"numeric_entries\":1,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":186,\"function\":173,\"function_name\":\"\",\"status\":\"reclaimed\",\"entries\":2,\"numeric_entries\":2,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":186,\"function\":545,\"function_name\":\"\",\"status\":\"reclaimed\",\"entries\":1,\"numeric_entries\":1,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":186,\"function\":570,\"function_name\":\"\",\"status\":\"reclaimed\",\"entries\":1,\"numeric_entries\":1,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":186,\"function\":626,\"function_name\":\"\",\"status\":\"reclaimed\",\"entries\":1,\"numeric_entries\":1,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":187,\"function\":173,\"function_name\":\"\",\"status\":\"reclaimed\",\"entries\":2,\"numeric_entries\":2,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":187,\"function\":570,\"function_name\":\"\",\"status\":\"reclaimed\",\"entries\":1,\"numeric_entries\":1,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":187,\"function\":626,\"function_name\":\"\",\"status\":\"reclaimed\",\"entries\":1,\"numeric_entries\":1,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":188,\"function\":173,\"function_name\":\"\",\"status\":\"reclaimed\",\"entries\":2,\"numeric_entries\":2,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":188,\"function\":570,\"function_name\":\"\",\"status\":\"reclaimed\",\"entries\":1,\"numeric_entries\":1,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":188,\"function\":626,\"function_name\":\"\",\"status\":\"reclaimed\",\"entries\":1,\"numeric_entries\":1,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":189,\"function\":173,\"function_name\":\"\",\"status\":\"reclaimed\",\"entries\":2,\"numeric_entries\":2,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":189,\"function\":570,\"function_name\":\"\",\"status\":\"reclaimed\",\"entries\":1,\"numeric_entries\":1,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":189,\"function\":626,\"function_name\":\"\",\"status\":\"reclaimed\",\"entries\":1,\"numeric_entries\":1,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":190,\"function\":173,\"function_name\":\"\",\"status\":\"reclaimed\",\"entries\":2,\"numeric_entries\":2,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":190,\"function\":570,\"function_name\":\"\",\"status\":\"reclaimed\",\"entries\":1,\"numeric_entries\":1,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":190,\"function\":626,\"function_name\":\"\",\"status\":\"reclaimed\",\"entries\":1,\"numeric_entries\":1,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":191,\"function\":173,\"function_name\":\"\",\"status\":\"reclaimed\",\"entries\":2,\"numeric_entries\":2,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":191,\"function\":570,\"function_name\":\"\",\"status\":\"reclaimed\",\"entries\":1,\"numeric_entries\":1,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":191,\"function\":626,\"function_name\":\"\",\"status\":\"reclaimed\",\"entries\":1,\"numeric_entries\":1,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":192,\"function\":173,\"function_name\":\"\",\"status\":\"reclaimed\",\"entries\":2,\"numeric_entries\":2,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":192,\"function\":570,\"function_name\":\"\",\"status\":\"reclaimed\",\"entries\":1,\"numeric_entries\":1,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":192,\"function\":626,\"function_name\":\"\",\"status\":\"reclaimed\",\"entries\":1,\"numeric_entries\":1,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":193,\"function\":173,\"function_name\":\"\",\"status\":\"reclaimed\",\"entries\":2,\"numeric_entries\":2,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":193,\"function\":570,\"function_name\":\"\",\"status\":\"reclaimed\",\"entries\":1,\"numeric_entries\":1,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":193,\"function\":626,\"function_name\":\"\",\"status\":\"reclaimed\",\"entries\":1,\"numeric_entries\":1,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":194,\"function\":173,\"function_name\":\"\",\"status\":\"reclaimed\",\"entries\":2,\"numeric_entries\":2,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":194,\"function\":570,\"function_name\":\"\",\"status\":\"reclaimed\",\"entries\":1,\"numeric_entries\":1,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":194,\"function\":626,\"function_name\":\"\",\"status\":\"reclaimed\",\"entries\":1,\"numeric_entries\":1,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":195,\"function\":173,\"function_name\":\"\",\"status\":\"reclaimed\",\"entries\":2,\"numeric_entries\":2,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":195,\"function\":570,\"function_name\":\"\",\"status\":\"reclaimed\",\"entries\":1,\"numeric_entries\":1,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":195,\"function\":626,\"function_name\":\"\",\"status\":\"reclaimed\",\"entries\":1,\"numeric_entries\":1,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":196,\"function\":173,\"function_name\":\"\",\"status\":\"reclaimed\",\"entries\":2,\"numeric_entries\":2,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":196,\"function\":570,\"function_name\":\"\",\"status\":\"reclaimed\",\"entries\":1,\"numeric_entries\":1,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":196,\"function\":626,\"function_name\":\"\",\"status\":\"reclaimed\",\"entries\":1,\"numeric_entries\":1,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":197,\"function\":173,\"function_name\":\"\",\"status\":\"reclaimed\",\"entries\":2,\"numeric_entries\":2,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":197,\"function\":545,\"function_name\":\"\",\"status\":\"reclaimed\",\"entries\":1,\"numeric_entries\":1,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":197,\"function\":570,\"function_name\":\"\",\"status\":\"reclaimed\",\"entries\":1,\"numeric_entries\":1,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":197,\"function\":626,\"function_name\":\"\",\"status\":\"reclaimed\",\"entries\":1,\"numeric_entries\":1,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":198,\"function\":173,\"function_name\":\"\",\"status\":\"reclaimed\",\"entries\":2,\"numeric_entries\":2,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":198,\"function\":570,\"function_name\":\"\",\"status\":\"reclaimed\",\"entries\":1,\"numeric_entries\":1,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":198,\"function\":626,\"function_name\":\"\",\"status\":\"reclaimed\",\"entries\":1,\"numeric_entries\":1,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":199,\"function\":173,\"function_name\":\"\",\"status\":\"reclaimed\",\"entries\":2,\"numeric_entries\":2,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":199,\"function\":570,\"function_name\":\"\",\"status\":\"reclaimed\",\"entries\":1,\"numeric_entries\":1,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":199,\"function\":626,\"function_name\":\"\",\"status\":\"reclaimed\",\"entries\":1,\"numeric_entries\":1,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":200,\"function\":173,\"function_name\":\"\",\"status\":\"reclaimed\",\"entries\":2,\"numeric_entries\":2,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":200,\"function\":570,\"function_name\":\"\",\"status\":\"reclaimed\",\"entries\":1,\"numeric_entries\":1,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":200,\"function\":626,\"function_name\":\"\",\"status\":\"reclaimed\",\"entries\":1,\"numeric_entries\":1,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":201,\"function\":173,\"function_name\":\"\",\"status\":\"reclaimed\",\"entries\":2,\"numeric_entries\":2,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":201,\"function\":570,\"function_name\":\"\",\"status\":\"reclaimed\",\"entries\":1,\"numeric_entries\":1,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":201,\"function\":626,\"function_name\":\"\",\"status\":\"reclaimed\",\"entries\":1,\"numeric_entries\":1,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":202,\"function\":173,\"function_name\":\"\",\"status\":\"reclaimed\",\"entries\":2,\"numeric_entries\":2,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":202,\"function\":570,\"function_name\":\"\",\"status\":\"reclaimed\",\"entries\":1,\"numeric_entries\":1,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":202,\"function\":626,\"function_name\":\"\",\"status\":\"reclaimed\",\"entries\":1,\"numeric_entries\":1,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":203,\"function\":173,\"function_name\":\"\",\"status\":\"reclaimed\",\"entries\":2,\"numeric_entries\":2,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":203,\"function\":570,\"function_name\":\"\",\"status\":\"reclaimed\",\"entries\":1,\"numeric_entries\":1,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":203,\"function\":626,\"function_name\":\"\",\"status\":\"reclaimed\",\"entries\":1,\"numeric_entries\":1,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":204,\"function\":173,\"function_name\":\"\",\"status\":\"reclaimed\",\"entries\":2,\"numeric_entries\":2,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":204,\"function\":570,\"function_name\":\"\",\"status\":\"reclaimed\",\"entries\":1,\"numeric_entries\":1,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":204,\"function\":626,\"function_name\":\"\",\"status\":\"reclaimed\",\"entries\":1,\"numeric_entries\":1,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":205,\"function\":173,\"function_name\":\"\",\"status\":\"reclaimed\",\"entries\":2,\"numeric_entries\":2,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":205,\"function\":570,\"function_name\":\"\",\"status\":\"reclaimed\",\"entries\":1,\"numeric_entries\":1,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":205,\"function\":626,\"function_name\":\"\",\"status\":\"reclaimed\",\"entries\":1,\"numeric_entries\":1,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":206,\"function\":173,\"function_name\":\"\",\"status\":\"reclaimed\",\"entries\":2,\"numeric_entries\":2,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":206,\"function\":570,\"function_name\":\"\",\"status\":\"reclaimed\",\"entries\":1,\"numeric_entries\":1,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":206,\"function\":626,\"function_name\":\"\",\"status\":\"reclaimed\",\"entries\":1,\"numeric_entries\":1,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":207,\"function\":173,\"function_name\":\"\",\"status\":\"reclaimed\",\"entries\":2,\"numeric_entries\":2,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":207,\"function\":570,\"function_name\":\"\",\"status\":\"reclaimed\",\"entries\":1,\"numeric_entries\":1,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":207,\"function\":626,\"function_name\":\"\",\"status\":\"reclaimed\",\"entries\":1,\"numeric_entries\":1,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":208,\"function\":173,\"function_name\":\"\",\"status\":\"reclaimed\",\"entries\":2,\"numeric_entries\":2,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":208,\"function\":570,\"function_name\":\"\",\"status\":\"reclaimed\",\"entries\":1,\"numeric_entries\":1,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":208,\"function\":626,\"function_name\":\"\",\"status\":\"reclaimed\",\"entries\":1,\"numeric_entries\":1,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":209,\"function\":173,\"function_name\":\"rr\",\"status\":\"hot\",\"entries\":2,\"numeric_entries\":2,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":209,\"function\":545,\"function_name\":\"Un\",\"status\":\"hot\",\"entries\":1,\"numeric_entries\":1,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":209,\"function\":570,\"function_name\":\"cu\",\"status\":\"hot\",\"entries\":1,\"numeric_entries\":1,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":209,\"function\":626,\"function_name\":\"\",\"status\":\"hot\",\"entries\":1,\"numeric_entries\":1,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":210,\"function\":173,\"function_name\":\"rr\",\"status\":\"hot\",\"entries\":2,\"numeric_entries\":2,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":210,\"function\":570,\"function_name\":\"cu\",\"status\":\"hot\",\"entries\":1,\"numeric_entries\":1,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\nQUENCH_JS_JIT_STATS {\"program\":210,\"function\":626,\"function_name\":\"\",\"status\":\"hot\",\"entries\":1,\"numeric_entries\":1,\"promotions\":0,\"compile_attempts\":0,\"compile_successes\":0,\"compile_ns\":0,\"native_entries\":0,\"code_bytes\":0}\n"
+            }
+          }
+        }
+      ]
+    }
+  },
+  "complete": true,
+  "qualification_ready": false
+}

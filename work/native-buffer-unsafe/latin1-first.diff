@@ -1,0 +1,11 @@
+--- work/native-buffer-unsafe/latin1-oracle.log	2026-10-16 06:36:43.473302046 +0000
++++ work/native-buffer-unsafe/latin1-first-candidate.log	2026-10-16 06:43:54.277302336 +0000
+@@ -9,7 +9,7 @@
+ public 2 false
+ public 3 true
+ public 400 true
+-method binding  0 false true true true
++method binding isLatin1 0 false true true true
+ binding 0 true
+ binding 5 true
+ binding 4 true

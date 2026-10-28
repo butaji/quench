@@ -1,0 +1,83 @@
+diff --git a/crates/quench-runtime/src/bytecode.rs b/crates/quench-runtime/src/bytecode.rs
+index 3aec0fab5..b89d651d0 100644
+--- a/crates/quench-runtime/src/bytecode.rs
++++ b/crates/quench-runtime/src/bytecode.rs
+@@ -663,0 +664 @@ opcodes!(
++    SetThisFieldStrictLocal => WRITE_THROW; layout Scalar; meaning AtomIndex, @ Register, @ fields(LocalSlot, Unused, CacheSiteIndex),
+@@ -1376 +1377 @@ impl ResidualProgram {
+-    pub const FORMAT_VERSION: u8 = 81;
++    pub const FORMAT_VERSION: u8 = 82;
+diff --git a/crates/quench-runtime/src/bytecode/instruction.rs b/crates/quench-runtime/src/bytecode/instruction.rs
+index 8426ad852..1fa445f52 100644
+--- a/crates/quench-runtime/src/bytecode/instruction.rs
++++ b/crates/quench-runtime/src/bytecode/instruction.rs
+@@ -573,0 +574,9 @@ macro_rules! layout_accessors {
++            #[allow(dead_code)]
++            pub(crate) fn local_slot_a(self) -> usize {
++                debug_assert_eq!(
++                    self.op().field_layout(InstructionField::A),
++                    FieldLayout::LocalSlot
++                );
++                self.a() as usize
++            }
++
+diff --git a/crates/quench-runtime/src/bytecode/validate.rs b/crates/quench-runtime/src/bytecode/validate.rs
+index d47ea75f5..1a31261d7 100644
+--- a/crates/quench-runtime/src/bytecode/validate.rs
++++ b/crates/quench-runtime/src/bytecode/validate.rs
+@@ -634,0 +635,10 @@ impl ResidualProgram {
++                if instruction.op() == super::Op::SetThisFieldStrictLocal
++                    && !plain_local_slots
++                        .get(instruction.local_slot_a())
++                        .copied()
++                        .unwrap_or(false)
++                {
++                    return Err(format!(
++                        "function {index} sets a field from an unproven plain-local slot"
++                    ));
++                }
+@@ -641,0 +652 @@ impl ResidualProgram {
++                            | super::Op::SetThisFieldStrictLocal
+@@ -645 +656,7 @@ impl ResidualProgram {
+-                    .then(|| instruction.local_slot());
++                    .then(|| {
++                        if instruction.op() == super::Op::SetThisFieldStrictLocal {
++                            instruction.local_slot_a()
++                        } else {
++                            instruction.local_slot()
++                        }
++                    });
+diff --git a/crates/quench-runtime/src/compile/rewrite.rs b/crates/quench-runtime/src/compile/rewrite.rs
+index 7f68d1058..24feb3586 100644
+--- a/crates/quench-runtime/src/compile/rewrite.rs
++++ b/crates/quench-runtime/src/compile/rewrite.rs
+@@ -72,0 +73,17 @@ fusion_recipes! {
++    LoadLocalSetThisFieldStrict: [LoadLocalPlain, SetThisFieldStrict] =>
++        |first: Instr, second: Instr, _: &mut Vec<FieldSite>| {
++            if first.numeric_local_store_target().is_some()
++                || second.register_a() != first.result_register()
++            {
++                return None;
++            }
++            let source = u16::try_from(first.local_slot()).ok()?;
++            let cache_site = u16::try_from(second.cache_site_index()).ok()?;
++            Instr::try_new(
++                Op::SetThisFieldStrictLocal,
++                source,
++                0,
++                cache_site,
++                second.atom_index() as u32,
++            )
++        };
+diff --git a/crates/quench-runtime/src/vm/dispatch.rs b/crates/quench-runtime/src/vm/dispatch.rs
+index d8253580f..23a8b92db 100644
+--- a/crates/quench-runtime/src/vm/dispatch.rs
++++ b/crates/quench-runtime/src/vm/dispatch.rs
+@@ -90,0 +91,7 @@ impl<H: Host> Vm<H> {
++            Op::SetThisFieldStrictLocal => {
++                // SAFETY: validation bounds this plain-local slot and proves
++                // it is not captured, so the activation owns the value.
++                let value = unsafe { self.read_validated_local(f, i.local_slot_a()) };
++                let this = self.checked_this_binding(p, f)?;
++                self.set_field_cached(p, this, i.atom_index(), value, i.cache_site_index(), true)?;
++            }

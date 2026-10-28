@@ -1,0 +1,53 @@
+{
+  "schema": 1,
+  "benchmark": "V8-v7 Splay active candidate; all-eight WP6 guard",
+  "platform": "Apple M4 arm64 macOS",
+  "source_revision": "f76795545b4f2f8cc7cf423da49e758215525b9f",
+  "candidate_change": "Replace RecordSpace free-ID Vec with an occupied-bitmap cursor, preserving descending ID reuse order.",
+  "parent_binary_sha256": "c6e60e98592418ca595b1bb15aff2005e5388a321a757fbafae9723155d7e1ca",
+  "candidate_binary_sha256": "d71b870433be8173470951e76872e2cddb71fd0723cbb6c2d7695ffbaf345ebe",
+  "runner_sha256": "bdc9d6c4afc537fe8ed30d4fccba9157cd4232e345ce75810465a0fff98db109",
+  "method": {
+    "reports": "Schema-5 setup-subtracted fixed-work reports, including resumable fixture top-ups.",
+    "minimum_clean_pairs_per_fixture": 11,
+    "wall_cycles_instructions": "Clean pairs only.",
+    "rss": "All valid paired work samples.",
+    "bootstrap_replicates": 20000,
+    "bootstrap_seed": "0x61_F1_7E_D5_2026_1010 xor sample count",
+    "wp6_other_fixture_limits_beyond_aa_95_upper_percentage_points": {
+      "wall": 2.0,
+      "max_rss": 1.0,
+      "finding_threshold": 0.5
+    }
+  },
+  "input_decisions": {
+    "same_binary_aa": {
+      "path": "all-eight-aa-guard-refreshed-layout.decision.json",
+      "sha256": "a97c46aae97498c4867ac090ca5492c8d3e1cc84b432e2a042854fd1e93cae30"
+    },
+    "candidate_ab": {
+      "path": "all-eight-guard-refreshed-layout-10-topups.decision.json",
+      "sha256": "541b629bf8693116cebd5c5030985cdf084b025e515085eb7d99a76cbe0f7060"
+    }
+  },
+  "fixtures": {
+    "crypto.js": {"aa_clean_valid": "11/11", "ab_clean_valid": "15/18", "wall_aa_median_ci95": [-0.101, -0.677, 1.149], "wall_ab_median_ci95": [0.085, -1.217, 0.430], "wall_excess_beyond_aa_upper_pp": -1.064, "rss_aa_median_ci95": [0.065, -0.033, 0.098], "rss_ab_median_ci95": [0.622, 0.474, 0.787], "rss_excess_beyond_aa_upper_pp": 0.524, "wp6_pass": true, "finding_required": true},
+    "deltablue.js": {"aa_clean_valid": "16/18", "ab_clean_valid": "14/25", "wall_aa_median_ci95": [-0.796, -1.281, -0.114], "wall_ab_median_ci95": [1.005, -1.817, 3.025], "wall_excess_beyond_aa_upper_pp": 1.119, "rss_aa_median_ci95": [0.102, -0.051, 0.220], "rss_ab_median_ci95": [0.136, -0.533, 0.746], "rss_excess_beyond_aa_upper_pp": -0.084, "wp6_pass": true, "finding_required": true},
+    "earley-boyer.js": {"aa_clean_valid": "12/18", "ab_clean_valid": "17/32", "wall_aa_median_ci95": [0.431, -0.843, 0.935], "wall_ab_median_ci95": [0.083, -1.088, 0.855], "wall_excess_beyond_aa_upper_pp": -0.852, "rss_aa_median_ci95": [-0.088, -0.352, 0.254], "rss_ab_median_ci95": [-0.692, -1.163, -0.484], "rss_excess_beyond_aa_upper_pp": -0.946, "wp6_pass": true, "finding_required": false},
+    "navier-stokes.js": {"aa_clean_valid": "16/25", "ab_clean_valid": "12/25", "wall_aa_median_ci95": [-0.122, -0.746, 1.056], "wall_ab_median_ci95": [0.593, -0.930, 1.261], "wall_excess_beyond_aa_upper_pp": -0.463, "rss_aa_median_ci95": [0.168, -0.034, 0.532], "rss_ab_median_ci95": [0.469, 0.268, 0.840], "rss_excess_beyond_aa_upper_pp": -0.063, "wp6_pass": true, "finding_required": false},
+    "raytrace.js": {"aa_clean_valid": "14/25", "ab_clean_valid": "11/11", "wall_aa_median_ci95": [-0.390, -1.158, 0.744], "wall_ab_median_ci95": [-0.044, -0.479, 0.624], "wall_excess_beyond_aa_upper_pp": -0.788, "rss_aa_median_ci95": [0.100, -0.033, 0.301], "rss_ab_median_ci95": [0.502, 0.466, 0.802], "rss_excess_beyond_aa_upper_pp": 0.201, "wp6_pass": true, "finding_required": false},
+    "regexp.js": {"aa_clean_valid": "17/18", "ab_clean_valid": "11/11", "wall_aa_median_ci95": [-0.828, -4.641, 3.138], "wall_ab_median_ci95": [0.407, -2.074, 1.474], "wall_excess_beyond_aa_upper_pp": -2.731, "rss_aa_median_ci95": [-0.011, -0.106, 0.021], "rss_ab_median_ci95": [0.423, 0.254, 0.487], "rss_excess_beyond_aa_upper_pp": 0.402, "wp6_pass": true, "finding_required": false},
+    "richards.js": {"aa_clean_valid": "11/11", "ab_clean_valid": "12/25", "wall_aa_median_ci95": [0.324, -1.334, 1.121], "wall_ab_median_ci95": [0.106, -0.462, 0.722], "wall_excess_beyond_aa_upper_pp": -1.015, "rss_aa_median_ci95": [0.035, -0.278, 0.209], "rss_ab_median_ci95": [0.244, 0.035, 0.451], "rss_excess_beyond_aa_upper_pp": 0.035, "wp6_pass": true, "finding_required": false},
+    "splay.js": {"aa_clean_valid": "11/11", "ab_clean_valid": "11/11", "wall_ab_median_ci95": [-0.500, -1.259, 1.959], "cycles_ab_median_ci95": [-0.252, -1.270, 2.510], "rss_aa_median_ci95": [-0.027, -0.053, 0.067], "rss_ab_median_ci95": [-4.166, -4.267, -4.152], "rss_gain_interval_excludes_zero": true, "speed_median_non_regression": true, "speed_gain_claimed": false, "parent_work_max_rss_median_bytes": 127254528, "candidate_work_max_rss_median_bytes": 117719040}
+  },
+  "checks": {
+    "all_aa_fixtures_at_least_11_clean_pairs": true,
+    "all_ab_fixtures_at_least_11_clean_pairs": true,
+    "all_a_a_and_a_b_outputs_equal": true,
+    "splay_rss_gain_interval_excludes_zero": true,
+    "splay_speed_median_non_regression": true,
+    "all_seven_other_fixtures_within_wp6_limits": true,
+    "wp6_pass": true
+  },
+  "decision": "WP6 A/A-adjusted guard passes. Splay fixed-work work RSS falls 7.50%; wall and cycles are neutral within their intervals. This is not a stock-harness qualification and does not change official Splay Score/RSS distances."
+}

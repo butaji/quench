@@ -1,0 +1,103 @@
+    Checking quench-runtime v0.1.0 (/workspace/quench/crates/quench-runtime)
+error: enum `EvalExpressionKind` is never used
+   --> crates/quench-runtime/src/compile.rs:159:17
+    |
+159 | pub(crate) enum EvalExpressionKind {
+    |                 ^^^^^^^^^^^^^^^^^^
+    |
+note: the lint level is defined here
+   --> crates/quench-runtime/src/lib.rs:1:9
+    |
+  1 | #![deny(warnings)]
+    |         ^^^^^^^^
+    = note: `#[deny(dead_code)]` implied by `#[deny(warnings)]`
+
+error: variant `None` is never constructed
+   --> crates/quench-runtime/src/compile.rs:182:5
+    |
+181 | enum DynamicFunctionValidation {
+    |      ------------------------- variant in this enum
+182 |     None,
+    |     ^^^^
+    |
+    = note: `DynamicFunctionValidation` has a derived impl for the trait `Clone`, but this is intentionally ignored during dead code analysis
+
+error: function `eval_expression_span` is never used
+   --> crates/quench-runtime/src/compile.rs:203:4
+    |
+203 | fn eval_expression_span(body: &[Statement<'_>], directives: &[Directive<'_>]) -> Option<Span> {
+    |    ^^^^^^^^^^^^^^^^^^^^
+
+error: multiple associated functions are never used
+    --> crates/quench-runtime/src/compile.rs:214:19
+     |
+ 213 | impl Engine {
+     | ----------- associated functions in this implementation
+ 214 |     pub(crate) fn eval_single_string_constant(source: &str) -> Option<Constant> {
+     |                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+ 270 |     pub(crate) fn strict_octal_numeric_early_error(source: &str) -> Option<String> {
+     |                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+ 294 |     pub(crate) fn eval_has_use_strict_directive(source: &str) -> bool {
+     |                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+ 307 |     pub(crate) fn eval_expression_kind(source: &str) -> EvalExpressionKind {
+     |                   ^^^^^^^^^^^^^^^^^^^^
+...
+ 327 |     pub(crate) fn eval_single_expression(source: &str) -> Option<&str> {
+     |                   ^^^^^^^^^^^^^^^^^^^^^^
+...
+ 342 |     pub(crate) fn eval_method_expression(source: &str) -> Option<&str> {
+     |                   ^^^^^^^^^^^^^^^^^^^^^^
+...
+ 355 |     pub(crate) fn eval_statement_slices(source: &str) -> Option<Vec<&str>> {
+     |                   ^^^^^^^^^^^^^^^^^^^^^
+...
+ 388 |     pub(crate) fn eval_requires_compiled_program(source: &str) -> bool {
+     |                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+ 786 |     pub(crate) fn specialize_dynamic_function(
+     |                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+ 800 |     pub(crate) fn specialize_dynamic_function_with_kind(
+     |                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+ 871 |     pub(crate) fn specialize_dynamic_function_with_private_names(
+     |                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+1158 |     pub(crate) fn eval_parameter_early_error(source: &str, strict: bool) -> Option<String> {
+     |                   ^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error: method `is_eval_parser_diagnostic` is never used
+   --> crates/quench-runtime/src/vm/error.rs:208:19
+    |
+135 | impl JsError {
+    | ------------ method in this implementation
+...
+208 |     pub(crate) fn is_eval_parser_diagnostic(&self) -> bool {
+    |                   ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error: variant `Caller` is never constructed
+  --> crates/quench-runtime/src/vm/program_store.rs:47:5
+   |
+38 | enum ProgramScope {
+   |      ------------ variant in this enum
+...
+47 |     Caller,
+   |     ^^^^^^
+   |
+   = note: `ProgramScope` has a derived impl for the trait `Clone`, but this is intentionally ignored during dead code analysis
+
+error: method `mark_caller_scope` is never used
+   --> crates/quench-runtime/src/vm/program_store.rs:171:19
+    |
+ 90 | impl ProgramStore {
+    | ----------------- method in this implementation
+...
+171 |     pub(crate) fn mark_caller_scope(&mut self, id: ProgramId) {
+    |                   ^^^^^^^^^^^^^^^^^
+
+error: could not compile `quench-runtime` (lib) due to 7 previous errors
+warning: build failed, waiting for other jobs to finish...
+error: could not compile `quench-runtime` (lib test) due to 7 previous errors

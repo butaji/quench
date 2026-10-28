@@ -1,0 +1,213 @@
+{
+  "interpretation": "Unfiltered valid-sample Linux wall-time/RSS diagnostic; hardware counters unavailable, zero clean rounds in standard report; no qualification claim.",
+  "fixtures": {
+    "crypto": {
+      "wall_ns": {
+        "baseline_median": 270050291,
+        "candidate_median": 275308862,
+        "delta_percent": 1.9472561871818117,
+        "interval": {
+          "lower_95": -2589908.0,
+          "upper_95": 25126697.0,
+          "resamples": 100000,
+          "method": "paired percentile bootstrap of difference in medians",
+          "seed": 20261009
+        }
+      },
+      "peak_rss_bytes": {
+        "baseline_median": 13119488,
+        "candidate_median": 12996608,
+        "delta_percent": -0.9366219169528622,
+        "interval": {
+          "lower_95": -126976.0,
+          "upper_95": -114688.0,
+          "resamples": 100000,
+          "method": "paired percentile bootstrap of difference in medians",
+          "seed": 20261009
+        }
+      }
+    },
+    "deltablue": {
+      "wall_ns": {
+        "baseline_median": 552284819,
+        "candidate_median": 548335542,
+        "delta_percent": -0.7150797675646414,
+        "interval": {
+          "lower_95": -21344142.0,
+          "upper_95": 10322893.0,
+          "resamples": 100000,
+          "method": "paired percentile bootstrap of difference in medians",
+          "seed": 20261009
+        }
+      },
+      "peak_rss_bytes": {
+        "baseline_median": 13025280,
+        "candidate_median": 12906496,
+        "delta_percent": -0.9119496855345965,
+        "interval": {
+          "lower_95": -122880.0,
+          "upper_95": -110592.0,
+          "resamples": 100000,
+          "method": "paired percentile bootstrap of difference in medians",
+          "seed": 20261009
+        }
+      }
+    },
+    "earley-boyer": {
+      "wall_ns": {
+        "baseline_median": 505414954,
+        "candidate_median": 498785567,
+        "delta_percent": -1.3116721117040764,
+        "interval": {
+          "lower_95": -29594295.0,
+          "upper_95": 18709597.0,
+          "resamples": 100000,
+          "method": "paired percentile bootstrap of difference in medians",
+          "seed": 20261009
+        }
+      },
+      "peak_rss_bytes": {
+        "baseline_median": 19746816,
+        "candidate_median": 19615744,
+        "delta_percent": -0.6637627048330264,
+        "interval": {
+          "lower_95": -188416.0,
+          "upper_95": -28672.0,
+          "resamples": 100000,
+          "method": "paired percentile bootstrap of difference in medians",
+          "seed": 20261009
+        }
+      }
+    },
+    "navier-stokes": {
+      "wall_ns": {
+        "baseline_median": 294672817,
+        "candidate_median": 302230209,
+        "delta_percent": 2.564672261574774,
+        "interval": {
+          "lower_95": -4784537.0,
+          "upper_95": 12187923.0,
+          "resamples": 100000,
+          "method": "paired percentile bootstrap of difference in medians",
+          "seed": 20261009
+        }
+      },
+      "peak_rss_bytes": {
+        "baseline_median": 13770752,
+        "candidate_median": 13582336,
+        "delta_percent": -1.3682331945270687,
+        "interval": {
+          "lower_95": -188416.0,
+          "upper_95": -184320.0,
+          "resamples": 100000,
+          "method": "paired percentile bootstrap of difference in medians",
+          "seed": 20261009
+        }
+      }
+    },
+    "raytrace": {
+      "wall_ns": {
+        "baseline_median": 530728138,
+        "candidate_median": 512169708,
+        "delta_percent": -3.496786522368256,
+        "interval": {
+          "lower_95": -36407415.0,
+          "upper_95": 16413592.0,
+          "resamples": 100000,
+          "method": "paired percentile bootstrap of difference in medians",
+          "seed": 20261009
+        }
+      },
+      "peak_rss_bytes": {
+        "baseline_median": 12865536,
+        "candidate_median": 12746752,
+        "delta_percent": -0.923272843043621,
+        "interval": {
+          "lower_95": -122880.0,
+          "upper_95": -118784.0,
+          "resamples": 100000,
+          "method": "paired percentile bootstrap of difference in medians",
+          "seed": 20261009
+        }
+      }
+    },
+    "regexp": {
+      "wall_ns": {
+        "baseline_median": 388711005,
+        "candidate_median": 389281096,
+        "delta_percent": 0.14666191403560624,
+        "interval": {
+          "lower_95": -22835841.0,
+          "upper_95": 25410499.0,
+          "resamples": 100000,
+          "method": "paired percentile bootstrap of difference in medians",
+          "seed": 20261009
+        }
+      },
+      "peak_rss_bytes": {
+        "baseline_median": 24190976,
+        "candidate_median": 24178688,
+        "delta_percent": -0.050795800880465425,
+        "interval": {
+          "lower_95": -114688.0,
+          "upper_95": 102400.0,
+          "resamples": 100000,
+          "method": "paired percentile bootstrap of difference in medians",
+          "seed": 20261009
+        }
+      }
+    },
+    "richards": {
+      "wall_ns": {
+        "baseline_median": 512301391,
+        "candidate_median": 523802179,
+        "delta_percent": 2.244926170813377,
+        "interval": {
+          "lower_95": -10131322.0,
+          "upper_95": 54748130.0,
+          "resamples": 100000,
+          "method": "paired percentile bootstrap of difference in medians",
+          "seed": 20261009
+        }
+      },
+      "peak_rss_bytes": {
+        "baseline_median": 12316672,
+        "candidate_median": 12210176,
+        "delta_percent": -0.8646491519787136,
+        "interval": {
+          "lower_95": -110592.0,
+          "upper_95": -94208.0,
+          "resamples": 100000,
+          "method": "paired percentile bootstrap of difference in medians",
+          "seed": 20261009
+        }
+      }
+    },
+    "splay": {
+      "wall_ns": {
+        "baseline_median": 677810990,
+        "candidate_median": 633318906,
+        "delta_percent": -6.564084185179708,
+        "interval": {
+          "lower_95": -60668268.0,
+          "upper_95": -23849403.0,
+          "resamples": 100000,
+          "method": "paired percentile bootstrap of difference in medians",
+          "seed": 20261009
+        }
+      },
+      "peak_rss_bytes": {
+        "baseline_median": 57081856,
+        "candidate_median": 56963072,
+        "delta_percent": -0.20809414466130827,
+        "interval": {
+          "lower_95": -126976.0,
+          "upper_95": -114688.0,
+          "resamples": 100000,
+          "method": "paired percentile bootstrap of difference in medians",
+          "seed": 20261009
+        }
+      }
+    }
+  }
+}

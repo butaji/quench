@@ -1,0 +1,121 @@
+{
+  "schema": 1,
+  "kind": "shape-count-census",
+  "platform": "arm64-apple-darwin",
+  "profile": "iteration (opt-level 1, profile-memory)",
+  "binary_sha256": "7a88180ad85442e85ffcad90f9fdd62108312c72a69ae6909d8bc80c87935d1d",
+  "source_head": "6186d6a513cad7146eca63b6dcd3536c6835aa17",
+  "merge_head": "496b8045d507411051e5121e2c17da44b3685fa3",
+  "working_tree_patch_sha256": "15b6c7e115b15c4ff08ca779b0892e11371348cb3c84b058613a5d9d052d2fad",
+  "method": "Each pinned V8-v7 fixture was materialized as base.js + fixture + the quench-bench fixed-work setup/run/teardown plan. QUENCH_MEMORY and QUENCH_MEMORY_PEAK emitted pre/post-GC and completion snapshots. Counts are maximum observed shape-table lengths across those snapshots. The 30-bit capacity is 1,073,741,824 ids; the largest observed fixture table length is 3,048 (RayTrace).",
+  "fixtures": [
+    {
+      "fixture": "crypto.js",
+      "suite": "Crypto",
+      "runs_per_benchmark": 4,
+      "exit_code": 0,
+      "completion_marker": true,
+      "snapshot_count": 33,
+      "peak_observed_shape_count": 2956,
+      "final_shape_count": 2956,
+      "peak_snapshot_phase": "node_commonjs_entry"
+    },
+    {
+      "fixture": "deltablue.js",
+      "suite": "DeltaBlue",
+      "runs_per_benchmark": 40,
+      "exit_code": 0,
+      "completion_marker": true,
+      "snapshot_count": 199,
+      "peak_observed_shape_count": 2945,
+      "final_shape_count": 2945,
+      "peak_snapshot_phase": "node_commonjs_entry"
+    },
+    {
+      "fixture": "earley-boyer.js",
+      "suite": "EarleyBoyer",
+      "runs_per_benchmark": 3,
+      "exit_code": 0,
+      "completion_marker": true,
+      "snapshot_count": 163,
+      "peak_observed_shape_count": 3003,
+      "final_shape_count": 3003,
+      "peak_snapshot_phase": "node_commonjs_entry"
+    },
+    {
+      "fixture": "navier-stokes.js",
+      "suite": "NavierStokes",
+      "runs_per_benchmark": 5,
+      "exit_code": 0,
+      "completion_marker": true,
+      "snapshot_count": 31,
+      "peak_observed_shape_count": 2856,
+      "final_shape_count": 2856,
+      "peak_snapshot_phase": "node_commonjs_entry"
+    },
+    {
+      "fixture": "raytrace.js",
+      "suite": "RayTrace",
+      "runs_per_benchmark": 10,
+      "exit_code": 0,
+      "completion_marker": true,
+      "snapshot_count": 1047,
+      "peak_observed_shape_count": 3048,
+      "final_shape_count": 3048,
+      "peak_snapshot_phase": "node_commonjs_entry"
+    },
+    {
+      "fixture": "regexp.js",
+      "suite": "RegExp",
+      "runs_per_benchmark": 1,
+      "exit_code": 0,
+      "completion_marker": true,
+      "snapshot_count": 177,
+      "peak_observed_shape_count": 2848,
+      "final_shape_count": 2848,
+      "peak_snapshot_phase": "node_commonjs_entry"
+    },
+    {
+      "fixture": "richards.js",
+      "suite": "Richards",
+      "runs_per_benchmark": 100,
+      "exit_code": 0,
+      "completion_marker": true,
+      "snapshot_count": 33,
+      "peak_observed_shape_count": 2899,
+      "final_shape_count": 2899,
+      "peak_snapshot_phase": "node_commonjs_entry"
+    },
+    {
+      "fixture": "splay.js",
+      "suite": "Splay",
+      "runs_per_benchmark": 300,
+      "exit_code": 0,
+      "completion_marker": true,
+      "snapshot_count": 57,
+      "peak_observed_shape_count": 2866,
+      "final_shape_count": 2866,
+      "peak_snapshot_phase": "node_commonjs_entry"
+    }
+  ],
+  "node_test_corpus": {
+    "status": "not measured",
+    "pinned_gitlink_revision": "55e4ca33f3a6dfe364bd9558b726576a6d1a2fba",
+    "reason": "The tests/node directory is an uninitialized upstream Node.js Git submodule in this checkout. No substitute corpus is reported as Node tests."
+  },
+  "fixture_source_revision": "64e1860c736c1b899708f4cd646721bc71e53d8b",
+  "shape_id_layout": {
+    "field": "ValueVec.auxiliary low 30 bits",
+    "mask": "0x3fff_ffff",
+    "representable_shape_ids": 1073741824,
+    "max_observed_fixture_shape_count": 3048,
+    "fixture": "raytrace.js",
+    "observed_capacity_fraction": 2.8386712074279785e-06,
+    "decision": "Keep the existing 30-bit shape id. Fixture counts do not justify narrowing while the requested upstream Node test corpus count is unmeasured."
+  },
+  "runtime_test_gate": {
+    "command": "cargo test -p quench-runtime --lib --features profile-memory",
+    "result": "557 passed, 0 failed"
+  },
+  "working_tree_source_delta_sha256": "09a85e7e52a77a9cd4826092c4edc9bf756c79d4b5b9baf573a3e88fd819829b"
+}

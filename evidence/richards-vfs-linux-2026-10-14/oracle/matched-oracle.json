@@ -1,0 +1,218 @@
+{
+  "node": {
+    "fs": {
+      "flags": [],
+      "status": 0,
+      "stdout": "{\"promisesIdentity\":true,\"builtinIdentity\":true,\"written\":1,\"writeBufferIdentity\":true,\"bytesRead\":6,\"readBufferIdentity\":true,\"text\":\"hello!\",\"isFile\":true,\"size\":6,\"closedFd\":-1,\"closeEvents\":1,\"closedRead\":{\"name\":\"Error\",\"code\":\"EBADF\"},\"diskText\":\"hello!\",\"atimeMs\":946684800000,\"mtimeMs\":946684802000}\n",
+      "stderr": ""
+    },
+    "fs-metadata": {
+      "flags": [],
+      "status": 0,
+      "stdout": "{\"methods\":{\"utimesSync\":{\"type\":\"function\",\"writable\":true,\"enumerable\":true,\"configurable\":true},\"lutimesSync\":{\"type\":\"function\",\"writable\":true,\"enumerable\":true,\"configurable\":true},\"futimesSync\":{\"type\":\"function\",\"writable\":true,\"enumerable\":true,\"configurable\":true},\"utimes\":{\"type\":\"function\",\"writable\":true,\"enumerable\":true,\"configurable\":true},\"lutimes\":{\"type\":\"function\",\"writable\":true,\"enumerable\":true,\"configurable\":true},\"futimes\":{\"type\":\"function\",\"writable\":true,\"enumerable\":true,\"configurable\":true},\"rm\":{\"type\":\"function\",\"writable\":true,\"enumerable\":true,\"configurable\":true},\"write\":{\"type\":\"function\",\"writable\":true,\"enumerable\":true,\"configurable\":true}},\"targetMtimeMs\":946684802000,\"linkTimes\":{\"mtimeMs\":946684806000}}\n",
+      "stderr": ""
+    },
+    "compression": {
+      "flags": [],
+      "status": 0,
+      "stdout": "{\"globalBufferIdentity\":true,\"builtinBufferIdentity\":true,\"gzipHeader\":[31,139,8],\"restoredBuffer\":true,\"restoredHex\":\"42756666657220616e642077656220636f6d7072657373696f6e2070726573657276652062797465733a2000cebb\",\"restoredText\":\"Buffer and web compression preserve bytes: \\u0000\u03bb\",\"payloadHex\":\"42756666657220616e642077656220636f6d7072657373696f6e2070726573657276652062797465733a2000cebb\"}\n",
+      "stderr": ""
+    },
+    "child-process": {
+      "flags": [],
+      "status": 0,
+      "stdout": "{\"status\":0,\"signal\":null,\"errorCode\":null,\"stdoutBuffer\":true,\"stdoutText\":\"child output\",\"stderrBuffer\":true,\"stderrBytes\":0,\"execBuffer\":true,\"execText\":\"child output\"}\n",
+      "stderr": ""
+    },
+    "fs-mutated-define-property": {
+      "flags": [],
+      "status": 0,
+      "stdout": "{\"calls\":0,\"outcome\":{\"loaded\":true,\"readFileSync\":\"function\",\"open\":\"function\",\"repeatedIdentity\":true}}\n",
+      "stderr": ""
+    },
+    "visibility-0": {
+      "flags": [],
+      "status": 0,
+      "stdout": "{\"listed\":false,\"builtin\":false,\"bareBuiltin\":false,\"getBuiltin\":\"undefined\",\"required\":{\"name\":\"Error\",\"code\":\"ERR_UNKNOWN_BUILTIN_MODULE\"},\"bare\":{\"name\":\"Error\",\"code\":\"MODULE_NOT_FOUND\"}}\n",
+      "stderr": ""
+    },
+    "visibility-1": {
+      "flags": [
+        "--experimental-vfs"
+      ],
+      "status": 0,
+      "stdout": "{\"listed\":true,\"builtin\":true,\"bareBuiltin\":false,\"getBuiltin\":\"function\",\"required\":{\"text\":\"enabled\"},\"bare\":{\"name\":\"Error\",\"code\":\"MODULE_NOT_FOUND\"}}\n",
+      "stderr": "(node:87064) ExperimentalWarning: VirtualFileSystem is an experimental feature and might change at any time\n(Use `node --trace-warnings ...` to show where the warning was created)\n"
+    },
+    "visibility-2": {
+      "flags": [
+        "--no-experimental-vfs"
+      ],
+      "status": 0,
+      "stdout": "{\"listed\":false,\"builtin\":false,\"bareBuiltin\":false,\"getBuiltin\":\"undefined\",\"required\":{\"name\":\"Error\",\"code\":\"ERR_UNKNOWN_BUILTIN_MODULE\"},\"bare\":{\"name\":\"Error\",\"code\":\"MODULE_NOT_FOUND\"}}\n",
+      "stderr": ""
+    },
+    "visibility-3": {
+      "flags": [
+        "--experimental-vfs",
+        "--no-experimental-vfs"
+      ],
+      "status": 0,
+      "stdout": "{\"listed\":false,\"builtin\":false,\"bareBuiltin\":false,\"getBuiltin\":\"undefined\",\"required\":{\"name\":\"Error\",\"code\":\"ERR_UNKNOWN_BUILTIN_MODULE\"},\"bare\":{\"name\":\"Error\",\"code\":\"MODULE_NOT_FOUND\"}}\n",
+      "stderr": ""
+    },
+    "visibility-4": {
+      "flags": [
+        "--no-experimental-vfs",
+        "--experimental-vfs"
+      ],
+      "status": 0,
+      "stdout": "{\"listed\":true,\"builtin\":true,\"bareBuiltin\":false,\"getBuiltin\":\"function\",\"required\":{\"text\":\"enabled\"},\"bare\":{\"name\":\"Error\",\"code\":\"MODULE_NOT_FOUND\"}}\n",
+      "stderr": "(node:87085) ExperimentalWarning: VirtualFileSystem is an experimental feature and might change at any time\n(Use `node --trace-warnings ...` to show where the warning was created)\n"
+    }
+  },
+  "control": {
+    "fs": {
+      "flags": [],
+      "status": 0,
+      "stdout": "{\"promisesIdentity\":true,\"builtinIdentity\":true,\"written\":1,\"writeBufferIdentity\":true,\"bytesRead\":6,\"readBufferIdentity\":true,\"text\":\"hello!\",\"isFile\":true,\"size\":6,\"closedFd\":-1,\"closeEvents\":1,\"closedRead\":{\"name\":\"Error\",\"code\":\"EBADF\"},\"diskText\":\"hello!\",\"atimeMs\":946684800000,\"mtimeMs\":946684802000}\n",
+      "stderr": ""
+    },
+    "fs-metadata": {
+      "flags": [],
+      "status": 0,
+      "stdout": "{\"methods\":{\"utimesSync\":{\"type\":\"function\",\"writable\":true,\"enumerable\":true,\"configurable\":true},\"lutimesSync\":{\"type\":\"function\",\"writable\":true,\"enumerable\":false,\"configurable\":true},\"futimesSync\":{\"type\":\"function\",\"writable\":true,\"enumerable\":false,\"configurable\":true},\"utimes\":{\"type\":\"function\",\"writable\":true,\"enumerable\":false,\"configurable\":true},\"lutimes\":{\"type\":\"function\",\"writable\":true,\"enumerable\":false,\"configurable\":true},\"futimes\":{\"type\":\"function\",\"writable\":true,\"enumerable\":false,\"configurable\":true},\"rm\":{\"type\":\"function\",\"writable\":true,\"enumerable\":true,\"configurable\":true},\"write\":{\"type\":\"function\",\"writable\":true,\"enumerable\":false,\"configurable\":true}},\"targetMtimeMs\":946684802000,\"linkTimes\":{\"name\":\"Error\",\"code\":\"ENOSYS\"}}\n",
+      "stderr": ""
+    },
+    "compression": {
+      "flags": [],
+      "status": 1,
+      "stdout": "",
+      "stderr": "{\"name\":\"TypeError\",\"message\":\"value is not callable\"}\nTypeError: value is not callable\n    at node:bootstrap/shared-vm/web-streams.js:838:22\n    at node:bootstrap/shared-vm/web-streams.js:775:38\n    at node:bootstrap/shared-vm/web-streams.js:281:12\n    at node:bootstrap/shared-vm/web-streams.js:318:19\n\nNode.js v22.0.0\n"
+    },
+    "child-process": {
+      "flags": [],
+      "status": 0,
+      "stdout": "{\"status\":0,\"signal\":null,\"errorCode\":null,\"stdoutBuffer\":true,\"stdoutText\":\"child output\",\"stderrBuffer\":true,\"stderrBytes\":0,\"execBuffer\":true,\"execText\":\"child output\"}\n",
+      "stderr": ""
+    },
+    "fs-mutated-define-property": {
+      "flags": [],
+      "status": 0,
+      "stdout": "{\"calls\":0,\"outcome\":{\"loaded\":true,\"readFileSync\":\"function\",\"open\":\"function\",\"repeatedIdentity\":true}}\n",
+      "stderr": ""
+    },
+    "visibility-0": {
+      "flags": [],
+      "status": 0,
+      "stdout": "{\"listed\":false,\"builtin\":false,\"bareBuiltin\":false,\"getBuiltin\":\"undefined\",\"required\":{\"name\":\"Error\",\"code\":\"ERR_UNKNOWN_BUILTIN_MODULE\"},\"bare\":{\"name\":\"Error\",\"code\":\"MODULE_NOT_FOUND\"}}\n",
+      "stderr": ""
+    },
+    "visibility-1": {
+      "flags": [
+        "--experimental-vfs"
+      ],
+      "status": 0,
+      "stdout": "{\"listed\":true,\"builtin\":true,\"bareBuiltin\":false,\"getBuiltin\":\"function\",\"required\":{\"text\":\"enabled\"},\"bare\":{\"name\":\"Error\",\"code\":\"MODULE_NOT_FOUND\"}}\n",
+      "stderr": ""
+    },
+    "visibility-2": {
+      "flags": [
+        "--no-experimental-vfs"
+      ],
+      "status": 0,
+      "stdout": "{\"listed\":false,\"builtin\":false,\"bareBuiltin\":false,\"getBuiltin\":\"undefined\",\"required\":{\"name\":\"Error\",\"code\":\"ERR_UNKNOWN_BUILTIN_MODULE\"},\"bare\":{\"name\":\"Error\",\"code\":\"MODULE_NOT_FOUND\"}}\n",
+      "stderr": ""
+    },
+    "visibility-3": {
+      "flags": [
+        "--experimental-vfs",
+        "--no-experimental-vfs"
+      ],
+      "status": 0,
+      "stdout": "{\"listed\":true,\"builtin\":true,\"bareBuiltin\":false,\"getBuiltin\":\"function\",\"required\":{\"text\":\"enabled\"},\"bare\":{\"name\":\"Error\",\"code\":\"MODULE_NOT_FOUND\"}}\n",
+      "stderr": ""
+    },
+    "visibility-4": {
+      "flags": [
+        "--no-experimental-vfs",
+        "--experimental-vfs"
+      ],
+      "status": 0,
+      "stdout": "{\"listed\":true,\"builtin\":true,\"bareBuiltin\":false,\"getBuiltin\":\"function\",\"required\":{\"text\":\"enabled\"},\"bare\":{\"name\":\"Error\",\"code\":\"MODULE_NOT_FOUND\"}}\n",
+      "stderr": ""
+    }
+  },
+  "candidate": {
+    "fs": {
+      "flags": [],
+      "status": 0,
+      "stdout": "{\"promisesIdentity\":true,\"builtinIdentity\":true,\"written\":1,\"writeBufferIdentity\":true,\"bytesRead\":6,\"readBufferIdentity\":true,\"text\":\"hello!\",\"isFile\":true,\"size\":6,\"closedFd\":-1,\"closeEvents\":1,\"closedRead\":{\"name\":\"Error\",\"code\":\"EBADF\"},\"diskText\":\"hello!\",\"atimeMs\":946684800000,\"mtimeMs\":946684802000}\n",
+      "stderr": ""
+    },
+    "fs-metadata": {
+      "flags": [],
+      "status": 0,
+      "stdout": "{\"methods\":{\"utimesSync\":{\"type\":\"function\",\"writable\":true,\"enumerable\":true,\"configurable\":true},\"lutimesSync\":{\"type\":\"function\",\"writable\":true,\"enumerable\":false,\"configurable\":true},\"futimesSync\":{\"type\":\"function\",\"writable\":true,\"enumerable\":false,\"configurable\":true},\"utimes\":{\"type\":\"function\",\"writable\":true,\"enumerable\":false,\"configurable\":true},\"lutimes\":{\"type\":\"function\",\"writable\":true,\"enumerable\":false,\"configurable\":true},\"futimes\":{\"type\":\"function\",\"writable\":true,\"enumerable\":false,\"configurable\":true},\"rm\":{\"type\":\"function\",\"writable\":true,\"enumerable\":true,\"configurable\":true},\"write\":{\"type\":\"function\",\"writable\":true,\"enumerable\":false,\"configurable\":true}},\"targetMtimeMs\":946684802000,\"linkTimes\":{\"name\":\"Error\",\"code\":\"ENOSYS\"}}\n",
+      "stderr": ""
+    },
+    "compression": {
+      "flags": [],
+      "status": 1,
+      "stdout": "",
+      "stderr": "{\"name\":\"TypeError\",\"message\":\"value is not callable\"}\nTypeError: value is not callable\n    at node:bootstrap/shared-vm/web-streams.js:838:22\n    at node:bootstrap/shared-vm/web-streams.js:775:38\n    at node:bootstrap/shared-vm/web-streams.js:281:12\n    at node:bootstrap/shared-vm/web-streams.js:318:19\n\nNode.js v22.0.0\n"
+    },
+    "child-process": {
+      "flags": [],
+      "status": 0,
+      "stdout": "{\"status\":0,\"signal\":null,\"errorCode\":null,\"stdoutBuffer\":true,\"stdoutText\":\"child output\",\"stderrBuffer\":true,\"stderrBytes\":0,\"execBuffer\":true,\"execText\":\"child output\"}\n",
+      "stderr": ""
+    },
+    "fs-mutated-define-property": {
+      "flags": [],
+      "status": 0,
+      "stdout": "{\"calls\":0,\"outcome\":{\"loaded\":true,\"readFileSync\":\"function\",\"open\":\"function\",\"repeatedIdentity\":true}}\n",
+      "stderr": ""
+    },
+    "visibility-0": {
+      "flags": [],
+      "status": 0,
+      "stdout": "{\"listed\":false,\"builtin\":false,\"bareBuiltin\":false,\"getBuiltin\":\"undefined\",\"required\":{\"name\":\"Error\",\"code\":\"ERR_UNKNOWN_BUILTIN_MODULE\"},\"bare\":{\"name\":\"Error\",\"code\":\"MODULE_NOT_FOUND\"}}\n",
+      "stderr": ""
+    },
+    "visibility-1": {
+      "flags": [
+        "--experimental-vfs"
+      ],
+      "status": 0,
+      "stdout": "{\"listed\":true,\"builtin\":true,\"bareBuiltin\":false,\"getBuiltin\":\"function\",\"required\":{\"text\":\"enabled\"},\"bare\":{\"name\":\"Error\",\"code\":\"MODULE_NOT_FOUND\"}}\n",
+      "stderr": ""
+    },
+    "visibility-2": {
+      "flags": [
+        "--no-experimental-vfs"
+      ],
+      "status": 0,
+      "stdout": "{\"listed\":false,\"builtin\":false,\"bareBuiltin\":false,\"getBuiltin\":\"undefined\",\"required\":{\"name\":\"Error\",\"code\":\"ERR_UNKNOWN_BUILTIN_MODULE\"},\"bare\":{\"name\":\"Error\",\"code\":\"MODULE_NOT_FOUND\"}}\n",
+      "stderr": ""
+    },
+    "visibility-3": {
+      "flags": [
+        "--experimental-vfs",
+        "--no-experimental-vfs"
+      ],
+      "status": 0,
+      "stdout": "{\"listed\":false,\"builtin\":false,\"bareBuiltin\":false,\"getBuiltin\":\"undefined\",\"required\":{\"name\":\"Error\",\"code\":\"ERR_UNKNOWN_BUILTIN_MODULE\"},\"bare\":{\"name\":\"Error\",\"code\":\"MODULE_NOT_FOUND\"}}\n",
+      "stderr": ""
+    },
+    "visibility-4": {
+      "flags": [
+        "--no-experimental-vfs",
+        "--experimental-vfs"
+      ],
+      "status": 0,
+      "stdout": "{\"listed\":true,\"builtin\":true,\"bareBuiltin\":false,\"getBuiltin\":\"function\",\"required\":{\"text\":\"enabled\"},\"bare\":{\"name\":\"Error\",\"code\":\"MODULE_NOT_FOUND\"}}\n",
+      "stderr": ""
+    }
+  }
+}

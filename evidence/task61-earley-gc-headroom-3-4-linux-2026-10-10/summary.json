@@ -1,0 +1,116 @@
+{
+  "schema": 1,
+  "fixture": "EarleyBoyer",
+  "experiment": "global large-heap GC allocation headroom 1/1 to 3/4",
+  "fixture_sha256": "aa379c1d54f5d13de32ebf2b50729d0cbc64bb23de5e524256c7b2270213cc0b",
+  "baseline_sha256": "e46537823eb25a37cf5646af793e6873ceaeff1069fb878a96813cae3a86ab32",
+  "candidate_sha256": "0d38f5bdeec7337a3e15e4a97a1d486fe8e8b502e7899979a4cf75be745bc317",
+  "pairs": [
+    {
+      "pair": 1,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "output_equal": true,
+      "baseline_score": 421.0,
+      "candidate_score": 420.0,
+      "baseline_rss": 41816064,
+      "candidate_rss": 39862272,
+      "baseline_wall_ns": 22009458090,
+      "candidate_wall_ns": 22070263515,
+      "valid": true,
+      "results": {
+        "baseline": {
+          "exit_code": 0,
+          "score": 421.0,
+          "maximum_rss_bytes": 41816064,
+          "wall_ns": 22009458090,
+          "semantic_output": [],
+          "stdout": "__quenchBenchResult: EarleyBoyer: 421\n----\nScore: 421\n",
+          "stderr": ""
+        },
+        "candidate": {
+          "exit_code": 0,
+          "score": 420.0,
+          "maximum_rss_bytes": 39862272,
+          "wall_ns": 22070263515,
+          "semantic_output": [],
+          "stdout": "__quenchBenchResult: EarleyBoyer: 420\n----\nScore: 420\n",
+          "stderr": ""
+        }
+      }
+    },
+    {
+      "pair": 2,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "output_equal": true,
+      "baseline_score": 424.0,
+      "candidate_score": 420.0,
+      "baseline_rss": 41721856,
+      "candidate_rss": 39940096,
+      "baseline_wall_ns": 21956468992,
+      "candidate_wall_ns": 21916085073,
+      "valid": true,
+      "results": {
+        "candidate": {
+          "exit_code": 0,
+          "score": 420.0,
+          "maximum_rss_bytes": 39940096,
+          "wall_ns": 21916085073,
+          "semantic_output": [],
+          "stdout": "__quenchBenchResult: EarleyBoyer: 420\n----\nScore: 420\n",
+          "stderr": ""
+        },
+        "baseline": {
+          "exit_code": 0,
+          "score": 424.0,
+          "maximum_rss_bytes": 41721856,
+          "wall_ns": 21956468992,
+          "semantic_output": [],
+          "stdout": "__quenchBenchResult: EarleyBoyer: 424\n----\nScore: 424\n",
+          "stderr": ""
+        }
+      }
+    },
+    {
+      "pair": 3,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "output_equal": true,
+      "baseline_score": 427.0,
+      "candidate_score": 422.0,
+      "baseline_rss": 41721856,
+      "candidate_rss": 39493632,
+      "baseline_wall_ns": 21771004542,
+      "candidate_wall_ns": 22125466820,
+      "valid": true,
+      "results": {
+        "baseline": {
+          "exit_code": 0,
+          "score": 427.0,
+          "maximum_rss_bytes": 41721856,
+          "wall_ns": 21771004542,
+          "semantic_output": [],
+          "stdout": "__quenchBenchResult: EarleyBoyer: 427\n----\nScore: 427\n",
+          "stderr": ""
+        },
+        "candidate": {
+          "exit_code": 0,
+          "score": 422.0,
+          "maximum_rss_bytes": 39493632,
+          "wall_ns": 22125466820,
+          "semantic_output": [],
+          "stdout": "__quenchBenchResult: EarleyBoyer: 422\n----\nScore: 422\n",
+          "stderr": ""
+        }
+      }
+    }
+  ],
+  "all_valid": true
+}

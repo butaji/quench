@@ -1,0 +1,12 @@
+{
+  "status": "failed",
+  "index": 0,
+  "command": [
+    "bash",
+    "/workspace/quench/work/shadow-stack-isolation/qualify.sh"
+  ],
+  "exit": 101,
+  "supervisor_pid": 2971579,
+  "session_id": 2971578,
+  "utc": "2026-10-16T07:34:16.614389+00:00"
+}

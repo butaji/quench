@@ -1,0 +1,51 @@
+{
+  "schema": 1,
+  "task": "23",
+  "kind": "full_canonical_single_vm_wasm_suite_run",
+  "reviewed_on": "2026-10-07",
+  "source": {
+    "revision": "8aff5f75d60f7a6fa8f201f84ea6fc6529f7bf7f",
+    "dirty": true,
+    "platform": "macOS arm64",
+    "snapshot_sha256_algorithm": "SHA-256 over sorted UTF-8 relative path, NUL, file SHA-256 hex, newline records",
+    "snapshot_file_count": 283,
+    "snapshot_sha256": "ac9fda01d4bd3acb001fcbf6d150cebc5ef8c33d27ec7fc7601953bf2810cc57",
+    "snapshot_roots": [
+      "crates/quench-runtime-next/src",
+      "crates/quench-wasm/src",
+      "crates/quench-wasm-test/src",
+      "vendor/oxc-parser-next/src"
+    ],
+    "snapshot_additional_files": [
+      "Cargo.toml",
+      "Cargo.lock",
+      "crates/quench-runtime-next/Cargo.toml",
+      "crates/quench-wasm/Cargo.toml",
+      "crates/quench-wasm-test/Cargo.toml",
+      "vendor/oxc-parser-next/Cargo.toml"
+    ]
+  },
+  "suite": {
+    "name": "pinned Wasm testsuite",
+    "path": "crates/quench-wasm-test/testsuite",
+    "files": 288,
+    "input_manifest_sha256": "c7ebeaaa1e4ce2938d22806b0dd3d454177dcc0b091e8982b5e8bb142a653914",
+    "input_manifest_algorithm": "SHA-256 over sorted repository-relative path, NUL, file SHA-256 hex, newline records"
+  },
+  "binary": {
+    "path": "target/iteration/run",
+    "sha256": "d0c5e8174609a3ad7682d057b378bb4ed3ea137b889251a86bbca09a7dd7d1dc",
+    "report_path": "target/iteration/wasm-canonical-single-vm-final-2026-10-07.json",
+    "report_sha256": "d4d2a95802feef77dd710842c9420229cbddbf8eb23f115c11737cf0ecbcbfda"
+  },
+  "command": "WASM_FILE_TIMEOUT_MS=60000 cargo run --profile iteration -p quench-wasm-test --bin run -- --report target/iteration/wasm-canonical-single-vm-final-2026-10-07.json crates/quench-wasm-test/testsuite",
+  "result": {
+    "passed": 67124,
+    "failed": 0,
+    "total": 67124,
+    "inventory_complete": true,
+    "file_timeouts": 0,
+    "failed_files": []
+  },
+  "qualification_limit": "The canonical runner executes only the shared Quench VM; quench-wasm no longer depends on the legacy runtime. This is a dirty-build Wasm qualification, not Task 24 integrated Stage A qualification. Node and Test262 consumers still retain legacy-runtime dependencies."
+}

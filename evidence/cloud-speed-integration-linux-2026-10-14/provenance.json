@@ -1,0 +1,18 @@
+{
+  "source_revision": "a200755e6d1e8180dcbd9aaab215f4a4effd1c88",
+  "rust": "1.99.0",
+  "profile": "production, thin LTO, repository flags, no PGO",
+  "runtime_debug_test_override": {
+    "opt-level": 0,
+    "debug-assertions": true
+  },
+  "source_branches": {
+    "v2-cloud-c": "8c69d6aeb63880dd077739818a0108da088ca9e3",
+    "v2-cloud-c2": "f71a0ee24d6ef51933c19dfeff0b9d33ca524899"
+  },
+  "binaries": {
+    "target/production/quench-node": "196bc8c43cab926c8d0f220a00c0361aa64a28d1a6064fc6bdc312677900e4f9",
+    "target/production/run-stages": "9cabb95d258b335b5887da318c54794c1367012d071c8572adf14b10097ca336",
+    "target/production/run": "721fbb52cbc782a204e15aea53d9184c5b1dda26caaed6e88550c874499ad7d7"
+  }
+}

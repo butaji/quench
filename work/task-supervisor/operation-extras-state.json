@@ -1,0 +1,13 @@
+{
+  "status": "complete",
+  "commands": [
+    [
+      "bash",
+      "/workspace/quench/work/operation-source-integration/extras.sh"
+    ]
+  ],
+  "exit": 0,
+  "supervisor_pid": 3001628,
+  "session_id": 3001627,
+  "utc": "2026-10-16T08:17:42.962300+00:00"
+}

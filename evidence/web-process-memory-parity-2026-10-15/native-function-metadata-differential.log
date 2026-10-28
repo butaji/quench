@@ -1,0 +1,9 @@
+   Compiling quench-runtime v0.1.0 (/workspace/quench/crates/quench-runtime)
+    Finished `test` profile [unoptimized] target(s) in 2m 02s
+     Running unittests src/lib.rs (target/debug/deps/quench_runtime-b1dfba37316f435f)
+
+running 1 test
+test api::native::tests::native_function_metadata_preserves_standard_key_order_and_constructor_views ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 626 filtered out; finished in 0.05s
+

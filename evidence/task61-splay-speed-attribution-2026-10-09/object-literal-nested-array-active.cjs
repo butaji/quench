@@ -1,0 +1,1 @@
+(function(){var N=2000000;var value='payload', result=null; for(var i=0;i<N;i++) result={array:[0,1,2,3,4,5,6,7,8,9],string:value};if(N ? (!result || result.array.length!==10 || result.array[9]!==9 || result.string!==value) : result!==null) throw new Error('nested literal check');})();

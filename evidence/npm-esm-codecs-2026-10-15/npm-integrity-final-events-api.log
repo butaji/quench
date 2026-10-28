@@ -1,0 +1,14 @@
+   Compiling quench-runtime v0.1.0 (/workspace/scratch/quench-npm-file-url/crates/quench-runtime)
+   Compiling quench-wasm v0.1.0 (/workspace/scratch/quench-npm-file-url/crates/quench-wasm)
+   Compiling quench-node v0.1.0 (/workspace/scratch/quench-npm-file-url/crates/quench-node)
+   Compiling quench-node-test v0.1.0 (/workspace/scratch/quench-npm-file-url/crates/quench-node-test)
+    Finished `test` profile [unoptimized] target(s) in 29.30s
+     Running tests/child_entry.rs (/workspace/quench/target/npm-file-url/debug/deps/child_entry-94fd2328f8a45425)
+
+running 3 tests
+test events_async_iterator_descriptor_initialization_captures_original_abort_helper ... ok
+test events_async_iterator_initialization_preserves_freeze_before_observation ... ok
+test events_async_iterator_preserves_queues_cleanup_abort_and_watermarks ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 276 filtered out; finished in 1.13s
+

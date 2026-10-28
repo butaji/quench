@@ -1,0 +1,1 @@
+req: {"protocol":null,"slashes":null,"auth":null,"host":null,"port":null,"hostname":null,"hash":null,"search":"?foo=%99bar","query":"foo=%99bar","pathname":"/hello","path":"/hello?foo=%99bar","href":"/hello?foo=%99bar"}

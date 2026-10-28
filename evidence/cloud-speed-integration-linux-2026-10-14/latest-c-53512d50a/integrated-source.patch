@@ -1,0 +1,340 @@
+diff --git a/crates/quench-runtime/src/bytecode.rs b/crates/quench-runtime/src/bytecode.rs
+index 5987dce8e..ffff2d087 100644
+--- a/crates/quench-runtime/src/bytecode.rs
++++ b/crates/quench-runtime/src/bytecode.rs
+@@ -1041,6 +1041,11 @@ pub(crate) struct CallPlan {
+     pub(crate) legacy_reflection: bool,
+     /// `reflects_live_parameters`.
+     pub(crate) live_parameters: bool,
++    /// Some instruction can reach the frame's local slots: one names a slot
++    /// (`addressed_local_slots`), creates a closure or clones an environment. A plain
++    /// activation without that needs no local storage, since promoted bindings live in
++    /// registers and nothing else reads its locals.
++    pub(crate) addresses_locals: bool,
+ }
+ 
+ #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+@@ -1330,6 +1335,10 @@ impl Function {
+                     && !self.parameter_eval_arguments_error,
+                 legacy_reflection: !self.has_restricted_legacy_caller_access(),
+                 live_parameters: self.reflects_live_parameters(atoms),
++                addresses_locals: self.instructions().any(|instruction| {
++                    matches!(instruction.op(), Op::MakeClosure | Op::CloneEnv)
++                        || instruction.addressed_local_slots().next().is_some()
++                }),
+             }
+         })
+     }
+diff --git a/crates/quench-runtime/src/bytecode/instruction.rs b/crates/quench-runtime/src/bytecode/instruction.rs
+index 712edc88a..dd9c5b288 100644
+--- a/crates/quench-runtime/src/bytecode/instruction.rs
++++ b/crates/quench-runtime/src/bytecode/instruction.rs
+@@ -32,6 +32,30 @@ pub(crate) struct WideInstruction {
+ }
+ 
+ impl WideInstruction {
++    /// The frame-local slots this instruction reads or writes: its local-slot immediate, a
++    /// fused numeric store target, and local operands. Every frame-local access names its
++    /// slot one of these ways.
++    pub(crate) fn addressed_local_slots(self) -> impl Iterator<Item = u16> {
++        let immediate = (self.op().immediate_role() == ImmediateRole::LocalSlot)
++            .then(|| u16::try_from(self.local_slot()).ok())
++            .flatten();
++        let operands = InstructionField::ALL
++            .iter()
++            .copied()
++            .filter_map(move |field| {
++                let operand = Operand(self.field_value(field));
++                (matches!(
++                    self.op().field_layout(field),
++                    FieldLayout::Operand | FieldLayout::NumericIndexOperand
++                ) && operand.kind() == Some(super::OperandKind::Local))
++                .then(|| operand.payload())
++            });
++        immediate
++            .into_iter()
++            .chain(self.numeric_local_target())
++            .chain(operands)
++    }
++
+     pub(crate) const fn new(op: Op, a: u16, b: u16, c: u16, imm: u32) -> Self {
+         Self { op, a, b, c, imm }
+     }
+diff --git a/crates/quench-runtime/src/bytecode/validate.rs b/crates/quench-runtime/src/bytecode/validate.rs
+index 50f47df3d..606e136da 100644
+--- a/crates/quench-runtime/src/bytecode/validate.rs
++++ b/crates/quench-runtime/src/bytecode/validate.rs
+@@ -1,7 +1,7 @@
+ use super::control_flow::instruction_at;
+ use super::{
+-    FieldBase, FieldLayout, ImmediateLayout, ImmediateRole, InstructionField, Op, Operand,
+-    OperandKind, REGISTER_MASK, Register, ResidualProgram,
++    FieldBase, FieldLayout, ImmediateLayout, InstructionField, Op, Operand, OperandKind,
++    REGISTER_MASK, Register, ResidualProgram,
+ };
+ use rustc_hash::FxHashSet;
+ 
+@@ -160,24 +160,9 @@ fn instruction_uses_promoted_local(
+     instruction: super::WideInstruction,
+     function: &super::Function,
+ ) -> bool {
+-    let local_slot = (instruction.op().immediate_role() == ImmediateRole::LocalSlot)
+-        .then(|| instruction.local_slot())
+-        .and_then(|slot| u16::try_from(slot).ok());
+-    local_slot.is_some_and(|slot| function.promoted_register(slot).is_some())
+-        || instruction
+-            .numeric_local_target()
+-            .is_some_and(|slot| function.promoted_register(slot).is_some())
+-        || InstructionField::ALL.iter().copied().any(|field| {
+-            matches!(
+-                instruction.op().field_layout(field),
+-                FieldLayout::Operand | FieldLayout::NumericIndexOperand
+-            ) && Operand(instruction.field_value(field))
+-                .kind()
+-                .is_some_and(|kind| kind == OperandKind::Local)
+-                && function
+-                    .promoted_register(Operand(instruction.field_value(field)).payload())
+-                    .is_some()
+-        })
++    instruction
++        .addressed_local_slots()
++        .any(|slot| function.promoted_register(slot).is_some())
+ }
+ 
+ #[derive(Clone, Copy)]
+diff --git a/crates/quench-runtime/src/heap/cell.rs b/crates/quench-runtime/src/heap/cell.rs
+index 9c37c4bb4..869cedf11 100644
+--- a/crates/quench-runtime/src/heap/cell.rs
++++ b/crates/quench-runtime/src/heap/cell.rs
+@@ -1305,6 +1305,7 @@ impl Object {
+ 
+     /// The property storage descriptor, assembled from the header and, without inline
+     /// storage, the payload.
++    #[inline(always)]
+     pub(crate) fn properties(&self) -> ValueVec {
+         let integrity = self.meta & VALUE_VEC_INTEGRITY_BITS;
+         let position = if self.meta & OBJECT_INLINE_STORAGE != 0 {
+@@ -1330,6 +1331,7 @@ impl Object {
+         }
+     }
+ 
++    #[inline(always)]
+     fn storage_position(&self) -> u32 {
+         if !self.is_array() {
+             // SAFETY: both views are plain words; without inline storage the second word
+diff --git a/crates/quench-runtime/src/vm.rs b/crates/quench-runtime/src/vm.rs
+index 9da720223..eb765f463 100644
+--- a/crates/quench-runtime/src/vm.rs
++++ b/crates/quench-runtime/src/vm.rs
+@@ -189,6 +189,9 @@ pub(super) struct Frame {
+     dynamic_bindings: Vec<(Atom, Value)>,
+     captured: bool,
+     registers: Vec<Value>,
++    /// How many leading register slots hold values, whatever the current length: below it a
++    /// root-mapped activation can take the file without rewriting it.
++    initialized_registers: usize,
+     active_iterators: Vec<ActiveIterator>,
+     // Empty while active; owns the transferred scope stack while detached.
+     with_objects: Vec<Value>,
+@@ -214,6 +217,7 @@ impl Frame {
+             dynamic_bindings: vec![],
+             captured: false,
+             registers: vec![],
++            initialized_registers: 0,
+             active_iterators: vec![],
+             with_objects: Vec::new(),
+             with_base,
+@@ -270,12 +274,14 @@ impl Frame {
+             }
+             self.registers.set_len(count);
+         }
++        self.initialized_registers = count;
+     }
+ 
+     #[inline(always)]
+     fn prepare_registers(&mut self, count: u16, initial: crate::bytecode::InitialRegister) {
+         self.registers.clear();
+         self.registers.resize(usize::from(count), initial.value());
++        self.initialized_registers = usize::from(count);
+     }
+ 
+     /// Sizes the register file for `function`. Compiled code writes every register before
+@@ -295,7 +301,14 @@ impl Frame {
+         {
+             self.prepare_registers(function.registers, function.initial_register);
+         } else {
+-            self.registers.resize(register_count, Value::UNDEFINED);
++            if register_count <= self.initialized_registers {
++                // SAFETY: the first `initialized_registers` slots of this buffer hold values
++                // (`Value` has no destructor, and shortening the file kept them in place).
++                unsafe { self.registers.set_len(register_count) };
++            } else {
++                self.registers.resize(register_count, Value::UNDEFINED);
++                self.initialized_registers = register_count;
++            }
+             if let Some(register) = function.undefined_register {
+                 // Validation bounds the register by the function's register count.
+                 self.registers[usize::from(register)] = Value::UNDEFINED;
+diff --git a/crates/quench-runtime/src/vm/activation.rs b/crates/quench-runtime/src/vm/activation.rs
+index 2375b6ded..50d41c170 100644
+--- a/crates/quench-runtime/src/vm/activation.rs
++++ b/crates/quench-runtime/src/vm/activation.rs
+@@ -141,6 +141,7 @@ impl Continuation {
+         resume_register: Option<u16>,
+         promise: Value,
+     ) -> Self {
++        frame.initialized_registers = 0;
+         Self {
+             context: std::mem::replace(&mut frame.context, CallContext::Internal),
+             reflected_parameters: std::mem::take(&mut frame.reflected_parameters),
+@@ -163,6 +164,7 @@ impl Continuation {
+     }
+ 
+     pub(super) fn into_frame(self, with_base: usize) -> super::Frame {
++        let initialized_registers = self.registers.len();
+         super::Frame {
+             context: self.context,
+             reflected_parameters: self.reflected_parameters,
+@@ -177,6 +179,7 @@ impl Continuation {
+             dynamic_bindings: self.dynamic_bindings,
+             captured: self.captured,
+             registers: self.registers,
++            initialized_registers,
+             active_iterators: self.active_iterators,
+             with_objects: self.with_objects,
+             with_base,
+diff --git a/crates/quench-runtime/src/vm/dispatch_frame.rs b/crates/quench-runtime/src/vm/dispatch_frame.rs
+index 142fc712c..c6a71af63 100644
+--- a/crates/quench-runtime/src/vm/dispatch_frame.rs
++++ b/crates/quench-runtime/src/vm/dispatch_frame.rs
+@@ -262,6 +262,7 @@ impl<H: Host> Vm<H> {
+         frame.locals.clear();
+         frame.registers.clear();
+         frame.registers.extend_from_slice(registers);
++        frame.initialized_registers = frame.registers.len();
+         frame.context = CallContext::Internal;
+         frame.function = id;
+         frame.program = program;
+@@ -296,18 +297,20 @@ impl<H: Host> Vm<H> {
+         self.activate_user_frame(p, id, parent, this, args, context)?;
+         // An in-loop activation grows the frame stack, not the native stack, so it counts
+         // against the live guest-call budget rather than a native transition.
+-        match crate::stack::GuestCallGuard::enter() {
+-            Ok(guard) => Ok(guard),
+-            Err(()) => {
+-                let outcome = Err(self.stack_exhaustion_error());
+-                let mut frame = self.frames.pop().unwrap();
+-                self.deactivate_frame(&mut frame, &outcome);
+-                self.persist_global_lexical_bindings(p, &frame);
+-                match outcome {
+-                    Err(error) => Err(error),
+-                    Ok(_) => unreachable!(),
+-                }
+-            }
++        crate::stack::GuestCallGuard::enter().or_else(|()| Err(self.unwind_exhausted_push(p)))
++    }
++
++    /// Pops an in-loop activation the guest-call budget refused and yields the error.
++    #[cold]
++    #[inline(never)]
++    fn unwind_exhausted_push(&mut self, p: &ResidualProgram) -> JsError {
++        let outcome = Err(self.stack_exhaustion_error());
++        let mut frame = self.frames.pop().unwrap();
++        self.deactivate_frame(&mut frame, &outcome);
++        self.persist_global_lexical_bindings(p, &frame);
++        match outcome {
++            Err(error) => error,
++            Ok(_) => unreachable!(),
+         }
+     }
+ 
+@@ -401,7 +404,12 @@ impl<H: Host> Vm<H> {
+             .function(self.active_program.raw(), id as usize);
+         let this = self.call_this_value(this, function.strict)?;
+         let mut frame = self.pooled_frame();
+-        frame.reset_locals_undefined(usize::from(function.locals));
++        let local_count = if function.call_plan(&p.atoms).addresses_locals {
++            usize::from(function.locals)
++        } else {
++            0
++        };
++        frame.reset_locals_undefined(local_count);
+         self.initialize_frame_invocation(&p.atoms, &mut frame, function, context, args);
+         frame.function = id;
+         frame.program = self.active_program;
+@@ -996,6 +1004,7 @@ impl<H: Host> Vm<H> {
+         if frame.registers.capacity() > RETAINED_FRAME_VALUES {
+             frame.registers.clear();
+             frame.registers.shrink_to(RETAINED_FRAME_VALUES);
++            frame.initialized_registers = 0;
+         }
+         self.frame_pool.push(frame);
+     }
+@@ -1037,6 +1046,7 @@ impl<H: Host> Vm<H> {
+                 buffer.shrink_to(RETAINED_FRAME_VALUES);
+             }
+         }
++        frame.initialized_registers = frame.initialized_registers.min(frame.registers.len());
+         frame.dynamic_bindings.shrink_to(RETAINED_FRAME_VALUES);
+     }
+ 
+diff --git a/crates/quench-runtime/src/vm/tests.rs b/crates/quench-runtime/src/vm/tests.rs
+index 5ddca8cbd..8e013e48d 100644
+--- a/crates/quench-runtime/src/vm/tests.rs
++++ b/crates/quench-runtime/src/vm/tests.rs
+@@ -962,6 +962,7 @@ fn unrepresentable_register_maps_keep_the_conservative_frame_roots() {
+         dynamic_bindings: vec![],
+         captured: false,
+         registers,
++        initialized_registers: 65,
+         active_iterators: vec![],
+         with_objects: Vec::new(),
+         with_base: 0,
+@@ -4025,6 +4026,7 @@ fn pooled_frame_registers_are_reset_when_their_length_is_reused() {
+         dynamic_bindings: vec![],
+         captured: false,
+         registers: vec![Value::heap(11), Value::heap(12)],
++        initialized_registers: 0,
+         active_iterators: vec![],
+         with_objects: vec![Value::heap(16)],
+         with_base: 0,
+@@ -4052,6 +4054,31 @@ fn pooled_frame_registers_are_reset_when_their_length_is_reused() {
+     assert!(recycled.with_objects.is_empty());
+ }
+ 
++#[test]
++fn wasm_retirement_invalidates_register_reuse_after_shrinking() {
++    let mut vm = Vm::new(SilentHost);
++    let mut frame = Box::new(super::Frame::empty(super::program_store::ProgramId::MAIN, 0));
++    frame.prepare_registers(u16::MAX, crate::bytecode::InitialRegister::I32Zero);
++    let prior_capacity = frame.registers.capacity();
++    vm.frames.push(frame);
++    vm.retire_wasm_frame();
++    let mut frame = vm.pooled_frame();
++    assert!(frame.registers.capacity() < prior_capacity);
++    assert_eq!(frame.initialized_registers, 0);
++
++    // Exercise register preparation only: a mapped JS activation must grow and
++    // initialize the retired buffer, rather than set its length past capacity.
++    let mut program = Engine::specialize("function identity(x) { return x; }", "retired-frame.js")
++        .unwrap();
++    let function = &mut program.functions[1];
++    function.registers = u16::MAX;
++    function.register_root_offset = 0;
++    frame.prepare_registers_for(function);
++    assert_eq!(frame.registers.len(), usize::from(u16::MAX));
++    assert!(frame.registers.capacity() >= frame.registers.len());
++    assert!(frame.registers.iter().all(|value| *value == Value::UNDEFINED));
++}
++
+ #[test]
+ fn regression_collection_preserves_unused_regexp_iterator_prototype() {
+     for (mode, compile) in [
+@@ -6254,6 +6281,7 @@ fn suspended_owners_trace_complete_frame_and_request_state() {
+                 dynamic_bindings: vec![(atom, binding)],
+                 captured: true,
+                 registers: vec![register, iterator, Value::FALSE],
++                initialized_registers: 0,
+                 active_iterators: vec![super::ActiveIterator {
+                     iterator: 1,
+                     done: 2,

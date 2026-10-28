@@ -1,0 +1,1 @@
+{"qualification":false,"finding":"Draft punycode uppercase ACE-prefix expected result was wrong: the package leaves uppercase XN-- unchanged. Both engines rejected the draft assertion. Corrected expected value to observed Node/package behavior; empty stdout comparisons were not qualified."}

@@ -1,0 +1,2242 @@
+{
+  "task": 61,
+  "experiment": "lazy derived UTF-8 host-string memory screen",
+  "host": {
+    "platform": "macOS-26.5-arm64-arm-64bit",
+    "machine": "arm64",
+    "processor": "arm",
+    "python": "3.9.6"
+  },
+  "rounds_per_case": 11,
+  "iterations_per_case": 200000,
+  "binary_sha256": {
+    "baseline": "b2602ed749e836b199a42f3477f0725e01a0dd9e6162f12d79bdca0a663547c2",
+    "candidate": "c7b1acaa513ab1fad7dc3e213180d1190139862cacdfe71ffe6efcff9f06aaef"
+  },
+  "input_sha256": {
+    "short_concat": "1c970686b353c502c360af2cf65d347ec9eabcccc554c99f73ae899340fc79b7",
+    "number_string": "9769baef709efeb0723b3dbdca84426e6da7ba0ae19a13f82cc624942a5f3b60",
+    "splay_payload": "c8f4cadd42e955fba877a982fafdfed239168c34b04f7c7a4982d1d0e1dbf3e3",
+    "slice": "c4e9aa7a5cdefd3fb079fa6351ae2beabc5e0614c5489753aee6b0da4717f490"
+  },
+  "summary": {
+    "number_string": {
+      "metrics": {
+        "maximum_rss_bytes": {
+          "baseline_median": 50741248,
+          "candidate_median": 47218688,
+          "median_absolute_delta": -3522560,
+          "median_change_percent": -6.942202131094611,
+          "paired_median_change_percent": -6.8776235066193125,
+          "candidate_lower_pairs": 11,
+          "pairs": 11
+        },
+        "instructions_retired": {
+          "baseline_median": 4128695626,
+          "candidate_median": 4050037387,
+          "median_absolute_delta": -78658239,
+          "median_change_percent": -1.9051595497778684,
+          "paired_median_change_percent": -1.9126629260555528,
+          "candidate_lower_pairs": 11,
+          "pairs": 11
+        },
+        "elapsed_seconds": {
+          "baseline_median": 0.23,
+          "candidate_median": 0.22,
+          "median_absolute_delta": -0.010000000000000009,
+          "median_change_percent": -4.34782608695653,
+          "paired_median_change_percent": 0.0,
+          "candidate_lower_pairs": 4,
+          "pairs": 11
+        }
+      },
+      "stdout_equal_every_pair": true
+    },
+    "short_concat": {
+      "metrics": {
+        "maximum_rss_bytes": {
+          "baseline_median": 57278464,
+          "candidate_median": 54329344,
+          "median_absolute_delta": -2949120,
+          "median_change_percent": -5.148741418764303,
+          "paired_median_change_percent": -5.202973127501432,
+          "candidate_lower_pairs": 11,
+          "pairs": 11
+        },
+        "instructions_retired": {
+          "baseline_median": 2944528442,
+          "candidate_median": 2731174731,
+          "median_absolute_delta": -213353711,
+          "median_change_percent": -7.245768387113438,
+          "paired_median_change_percent": -7.242666291897248,
+          "candidate_lower_pairs": 11,
+          "pairs": 11
+        },
+        "elapsed_seconds": {
+          "baseline_median": 0.12,
+          "candidate_median": 0.11,
+          "median_absolute_delta": -0.009999999999999995,
+          "median_change_percent": -8.333333333333325,
+          "paired_median_change_percent": -8.333333333333325,
+          "candidate_lower_pairs": 7,
+          "pairs": 11
+        }
+      },
+      "stdout_equal_every_pair": true
+    },
+    "slice": {
+      "metrics": {
+        "maximum_rss_bytes": {
+          "baseline_median": 52346880,
+          "candidate_median": 49004544,
+          "median_absolute_delta": -3342336,
+          "median_change_percent": -6.384976525821595,
+          "paired_median_change_percent": -6.384976525821595,
+          "candidate_lower_pairs": 11,
+          "pairs": 11
+        },
+        "instructions_retired": {
+          "baseline_median": 22365454740,
+          "candidate_median": 22195817836,
+          "median_absolute_delta": -169636904,
+          "median_change_percent": -0.758477330204288,
+          "paired_median_change_percent": -0.7571724633164134,
+          "candidate_lower_pairs": 11,
+          "pairs": 11
+        },
+        "elapsed_seconds": {
+          "baseline_median": 1.49,
+          "candidate_median": 1.47,
+          "median_absolute_delta": -0.020000000000000018,
+          "median_change_percent": -1.342281879194629,
+          "paired_median_change_percent": -0.6756756756756799,
+          "candidate_lower_pairs": 7,
+          "pairs": 11
+        }
+      },
+      "stdout_equal_every_pair": true
+    },
+    "splay_payload": {
+      "metrics": {
+        "maximum_rss_bytes": {
+          "baseline_median": 95682560,
+          "candidate_median": 84361216,
+          "median_absolute_delta": -11321344,
+          "median_change_percent": -11.83219178082192,
+          "paired_median_change_percent": -11.830166067454206,
+          "candidate_lower_pairs": 11,
+          "pairs": 11
+        },
+        "instructions_retired": {
+          "baseline_median": 4392947776,
+          "candidate_median": 3468613946,
+          "median_absolute_delta": -924333830,
+          "median_change_percent": -21.04131160060483,
+          "paired_median_change_percent": -21.071815478231127,
+          "candidate_lower_pairs": 11,
+          "pairs": 11
+        },
+        "elapsed_seconds": {
+          "baseline_median": 0.25,
+          "candidate_median": 0.18,
+          "median_absolute_delta": -0.07,
+          "median_change_percent": -28.000000000000004,
+          "paired_median_change_percent": -25.00000000000001,
+          "candidate_lower_pairs": 10,
+          "pairs": 11
+        }
+      },
+      "stdout_equal_every_pair": true
+    }
+  },
+  "records": [
+    {
+      "case": "short_concat",
+      "pair": 1,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "variant": "baseline",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-argument-shapes-profile-20261009/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-lazy-host-string-short-2026-10-09.cjs"
+      ],
+      "exit_code": 0,
+      "stdout": "200000\n",
+      "stderr": "        0.12 real         0.12 user         0.00 sys\n            57327616  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                3681  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  12  involuntary context switches\n          2944528442  instructions retired\n           485541345  cycles elapsed\n            47890888  peak memory footprint\n",
+      "wall_seconds": 0.127288375,
+      "instructions_retired": 2944528442,
+      "maximum_rss_bytes": 57327616,
+      "elapsed_seconds": 0.12
+    },
+    {
+      "case": "short_concat",
+      "pair": 1,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "variant": "candidate",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-lazy-host-string-20261009/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-lazy-host-string-short-2026-10-09.cjs"
+      ],
+      "exit_code": 0,
+      "stdout": "200000\n",
+      "stderr": "        0.12 real         0.12 user         0.00 sys\n            54083584  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                3485  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  20  involuntary context switches\n          2729570867  instructions retired\n           473444891  cycles elapsed\n            44712392  peak memory footprint\n",
+      "wall_seconds": 0.12840433300000004,
+      "instructions_retired": 2729570867,
+      "maximum_rss_bytes": 54083584,
+      "elapsed_seconds": 0.12
+    },
+    {
+      "case": "short_concat",
+      "pair": 2,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "variant": "candidate",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-lazy-host-string-20261009/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-lazy-host-string-short-2026-10-09.cjs"
+      ],
+      "exit_code": 0,
+      "stdout": "200000\n",
+      "stderr": "        0.11 real         0.11 user         0.00 sys\n            54050816  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                3483  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  11  involuntary context switches\n          2731174731  instructions retired\n           446847330  cycles elapsed\n            44663216  peak memory footprint\n",
+      "wall_seconds": 0.11719458300000002,
+      "instructions_retired": 2731174731,
+      "maximum_rss_bytes": 54050816,
+      "elapsed_seconds": 0.11
+    },
+    {
+      "case": "short_concat",
+      "pair": 2,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "variant": "baseline",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-argument-shapes-profile-20261009/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-lazy-host-string-short-2026-10-09.cjs"
+      ],
+      "exit_code": 0,
+      "stdout": "200000\n",
+      "stderr": "        0.12 real         0.11 user         0.00 sys\n            57344000  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                3682  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  11  involuntary context switches\n          2944578061  instructions retired\n           473541607  cycles elapsed\n            47907272  peak memory footprint\n",
+      "wall_seconds": 0.12379125000000002,
+      "instructions_retired": 2944578061,
+      "maximum_rss_bytes": 57344000,
+      "elapsed_seconds": 0.12
+    },
+    {
+      "case": "short_concat",
+      "pair": 3,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "variant": "baseline",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-argument-shapes-profile-20261009/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-lazy-host-string-short-2026-10-09.cjs"
+      ],
+      "exit_code": 0,
+      "stdout": "200000\n",
+      "stderr": "        0.12 real         0.11 user         0.00 sys\n            57245696  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                3676  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  10  involuntary context switches\n          2943390804  instructions retired\n           480958521  cycles elapsed\n            47808968  peak memory footprint\n",
+      "wall_seconds": 0.12574408399999992,
+      "instructions_retired": 2943390804,
+      "maximum_rss_bytes": 57245696,
+      "elapsed_seconds": 0.12
+    },
+    {
+      "case": "short_concat",
+      "pair": 3,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "variant": "candidate",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-lazy-host-string-20261009/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-lazy-host-string-short-2026-10-09.cjs"
+      ],
+      "exit_code": 0,
+      "stdout": "200000\n",
+      "stderr": "        0.11 real         0.11 user         0.00 sys\n            54427648  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                3505  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                   9  involuntary context switches\n          2729282293  instructions retired\n           453818743  cycles elapsed\n            45040072  peak memory footprint\n",
+      "wall_seconds": 0.11871241600000004,
+      "instructions_retired": 2729282293,
+      "maximum_rss_bytes": 54427648,
+      "elapsed_seconds": 0.11
+    },
+    {
+      "case": "short_concat",
+      "pair": 4,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "variant": "candidate",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-lazy-host-string-20261009/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-lazy-host-string-short-2026-10-09.cjs"
+      ],
+      "exit_code": 0,
+      "stdout": "200000\n",
+      "stderr": "        0.11 real         0.11 user         0.00 sys\n            54247424  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                3495  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  11  involuntary context switches\n          2731400036  instructions retired\n           452424011  cycles elapsed\n            44876232  peak memory footprint\n",
+      "wall_seconds": 0.11841954200000004,
+      "instructions_retired": 2731400036,
+      "maximum_rss_bytes": 54247424,
+      "elapsed_seconds": 0.11
+    },
+    {
+      "case": "short_concat",
+      "pair": 4,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "variant": "baseline",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-argument-shapes-profile-20261009/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-lazy-host-string-short-2026-10-09.cjs"
+      ],
+      "exit_code": 0,
+      "stdout": "200000\n",
+      "stderr": "        0.12 real         0.12 user         0.00 sys\n            57344000  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                3682  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  14  involuntary context switches\n          2944672865  instructions retired\n           493852533  cycles elapsed\n            47907272  peak memory footprint\n",
+      "wall_seconds": 0.1290562500000001,
+      "instructions_retired": 2944672865,
+      "maximum_rss_bytes": 57344000,
+      "elapsed_seconds": 0.12
+    },
+    {
+      "case": "short_concat",
+      "pair": 5,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "variant": "baseline",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-argument-shapes-profile-20261009/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-lazy-host-string-short-2026-10-09.cjs"
+      ],
+      "exit_code": 0,
+      "stdout": "200000\n",
+      "stderr": "        0.12 real         0.12 user         0.00 sys\n            57311232  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                3680  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  11  involuntary context switches\n          2945023854  instructions retired\n           494842978  cycles elapsed\n            47874504  peak memory footprint\n",
+      "wall_seconds": 0.12920808299999997,
+      "instructions_retired": 2945023854,
+      "maximum_rss_bytes": 57311232,
+      "elapsed_seconds": 0.12
+    },
+    {
+      "case": "short_concat",
+      "pair": 5,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "variant": "candidate",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-lazy-host-string-20261009/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-lazy-host-string-short-2026-10-09.cjs"
+      ],
+      "exit_code": 0,
+      "stdout": "200000\n",
+      "stderr": "        0.11 real         0.11 user         0.00 sys\n            54329344  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                3500  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                   9  involuntary context switches\n          2731140616  instructions retired\n           450512862  cycles elapsed\n            44941744  peak memory footprint\n",
+      "wall_seconds": 0.11762016699999989,
+      "instructions_retired": 2731140616,
+      "maximum_rss_bytes": 54329344,
+      "elapsed_seconds": 0.11
+    },
+    {
+      "case": "short_concat",
+      "pair": 6,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "variant": "candidate",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-lazy-host-string-20261009/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-lazy-host-string-short-2026-10-09.cjs"
+      ],
+      "exit_code": 0,
+      "stdout": "200000\n",
+      "stderr": "        0.11 real         0.11 user         0.00 sys\n            54345728  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                3499  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  18  involuntary context switches\n          2731639058  instructions retired\n           453677378  cycles elapsed\n            44941768  peak memory footprint\n",
+      "wall_seconds": 0.11852020800000007,
+      "instructions_retired": 2731639058,
+      "maximum_rss_bytes": 54345728,
+      "elapsed_seconds": 0.11
+    },
+    {
+      "case": "short_concat",
+      "pair": 6,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "variant": "baseline",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-argument-shapes-profile-20261009/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-lazy-host-string-short-2026-10-09.cjs"
+      ],
+      "exit_code": 0,
+      "stdout": "200000\n",
+      "stderr": "        0.12 real         0.11 user         0.00 sys\n            57311232  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                3680  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                   8  involuntary context switches\n          2944508368  instructions retired\n           477028954  cycles elapsed\n            47874504  peak memory footprint\n",
+      "wall_seconds": 0.12456191699999986,
+      "instructions_retired": 2944508368,
+      "maximum_rss_bytes": 57311232,
+      "elapsed_seconds": 0.12
+    },
+    {
+      "case": "short_concat",
+      "pair": 7,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "variant": "baseline",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-argument-shapes-profile-20261009/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-lazy-host-string-short-2026-10-09.cjs"
+      ],
+      "exit_code": 0,
+      "stdout": "200000\n",
+      "stderr": "        0.12 real         0.11 user         0.00 sys\n            57278464  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                3677  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                   9  involuntary context switches\n          2943614540  instructions retired\n           484600792  cycles elapsed\n            47841736  peak memory footprint\n",
+      "wall_seconds": 0.12635912500000002,
+      "instructions_retired": 2943614540,
+      "maximum_rss_bytes": 57278464,
+      "elapsed_seconds": 0.12
+    },
+    {
+      "case": "short_concat",
+      "pair": 7,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "variant": "candidate",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-lazy-host-string-20261009/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-lazy-host-string-short-2026-10-09.cjs"
+      ],
+      "exit_code": 0,
+      "stdout": "200000\n",
+      "stderr": "        0.11 real         0.11 user         0.00 sys\n            54181888  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                3490  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  15  involuntary context switches\n          2732007847  instructions retired\n           452846599  cycles elapsed\n            44777904  peak memory footprint\n",
+      "wall_seconds": 0.11823420800000006,
+      "instructions_retired": 2732007847,
+      "maximum_rss_bytes": 54181888,
+      "elapsed_seconds": 0.11
+    },
+    {
+      "case": "short_concat",
+      "pair": 8,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "variant": "candidate",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-lazy-host-string-20261009/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-lazy-host-string-short-2026-10-09.cjs"
+      ],
+      "exit_code": 0,
+      "stdout": "200000\n",
+      "stderr": "        0.11 real         0.10 user         0.00 sys\n            54329344  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                3500  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                   7  involuntary context switches\n          2729316805  instructions retired\n           437945526  cycles elapsed\n            44958152  peak memory footprint\n",
+      "wall_seconds": 0.11206075000000015,
+      "instructions_retired": 2729316805,
+      "maximum_rss_bytes": 54329344,
+      "elapsed_seconds": 0.11
+    },
+    {
+      "case": "short_concat",
+      "pair": 8,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "variant": "baseline",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-argument-shapes-profile-20261009/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-lazy-host-string-short-2026-10-09.cjs"
+      ],
+      "exit_code": 0,
+      "stdout": "200000\n",
+      "stderr": "        0.11 real         0.11 user         0.00 sys\n            57245696  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                3676  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                   8  involuntary context switches\n          2944692828  instructions retired\n           467701455  cycles elapsed\n            47808968  peak memory footprint\n",
+      "wall_seconds": 0.11915233299999994,
+      "instructions_retired": 2944692828,
+      "maximum_rss_bytes": 57245696,
+      "elapsed_seconds": 0.11
+    },
+    {
+      "case": "short_concat",
+      "pair": 9,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "variant": "baseline",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-argument-shapes-profile-20261009/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-lazy-host-string-short-2026-10-09.cjs"
+      ],
+      "exit_code": 0,
+      "stdout": "200000\n",
+      "stderr": "        0.11 real         0.11 user         0.00 sys\n            57278464  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                3678  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                   4  involuntary context switches\n          2944366292  instructions retired\n           471948680  cycles elapsed\n            47841736  peak memory footprint\n",
+      "wall_seconds": 0.12085395799999987,
+      "instructions_retired": 2944366292,
+      "maximum_rss_bytes": 57278464,
+      "elapsed_seconds": 0.11
+    },
+    {
+      "case": "short_concat",
+      "pair": 9,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "variant": "candidate",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-lazy-host-string-20261009/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-lazy-host-string-short-2026-10-09.cjs"
+      ],
+      "exit_code": 0,
+      "stdout": "200000\n",
+      "stderr": "        0.11 real         0.10 user         0.00 sys\n            54345728  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                3500  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                   9  involuntary context switches\n          2731660329  instructions retired\n           443292608  cycles elapsed\n            44958152  peak memory footprint\n",
+      "wall_seconds": 0.11363058299999995,
+      "instructions_retired": 2731660329,
+      "maximum_rss_bytes": 54345728,
+      "elapsed_seconds": 0.11
+    },
+    {
+      "case": "short_concat",
+      "pair": 10,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "variant": "candidate",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-lazy-host-string-20261009/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-lazy-host-string-short-2026-10-09.cjs"
+      ],
+      "exit_code": 0,
+      "stdout": "200000\n",
+      "stderr": "        0.10 real         0.10 user         0.00 sys\n            54329344  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                3499  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                   7  involuntary context switches\n          2731706781  instructions retired\n           434259896  cycles elapsed\n            44925360  peak memory footprint\n",
+      "wall_seconds": 0.1111506659999999,
+      "instructions_retired": 2731706781,
+      "maximum_rss_bytes": 54329344,
+      "elapsed_seconds": 0.1
+    },
+    {
+      "case": "short_concat",
+      "pair": 10,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "variant": "baseline",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-argument-shapes-profile-20261009/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-lazy-host-string-short-2026-10-09.cjs"
+      ],
+      "exit_code": 0,
+      "stdout": "200000\n",
+      "stderr": "        0.11 real         0.11 user         0.00 sys\n            57212928  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                3674  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                   6  involuntary context switches\n          2944801493  instructions retired\n           473113150  cycles elapsed\n            47776200  peak memory footprint\n",
+      "wall_seconds": 0.12058933299999985,
+      "instructions_retired": 2944801493,
+      "maximum_rss_bytes": 57212928,
+      "elapsed_seconds": 0.11
+    },
+    {
+      "case": "short_concat",
+      "pair": 11,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "variant": "baseline",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-argument-shapes-profile-20261009/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-lazy-host-string-short-2026-10-09.cjs"
+      ],
+      "exit_code": 0,
+      "stdout": "200000\n",
+      "stderr": "        0.11 real         0.11 user         0.00 sys\n            57212928  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                3674  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                   6  involuntary context switches\n          2943801196  instructions retired\n           464319542  cycles elapsed\n            47776200  peak memory footprint\n",
+      "wall_seconds": 0.11866741699999972,
+      "instructions_retired": 2943801196,
+      "maximum_rss_bytes": 57212928,
+      "elapsed_seconds": 0.11
+    },
+    {
+      "case": "short_concat",
+      "pair": 11,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "variant": "candidate",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-lazy-host-string-20261009/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-lazy-host-string-short-2026-10-09.cjs"
+      ],
+      "exit_code": 0,
+      "stdout": "200000\n",
+      "stderr": "        0.11 real         0.10 user         0.00 sys\n            54165504  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                3489  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  10  involuntary context switches\n          2730881730  instructions retired\n           438228897  cycles elapsed\n            44761520  peak memory footprint\n",
+      "wall_seconds": 0.11209616599999972,
+      "instructions_retired": 2730881730,
+      "maximum_rss_bytes": 54165504,
+      "elapsed_seconds": 0.11
+    },
+    {
+      "case": "number_string",
+      "pair": 1,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "variant": "baseline",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-argument-shapes-profile-20261009/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-lazy-host-string-number-2026-10-09.cjs"
+      ],
+      "exit_code": 0,
+      "stdout": "200000\n",
+      "stderr": "        0.22 real         0.22 user         0.00 sys\n            50757632  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                3279  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  16  involuntary context switches\n          4128309678  instructions retired\n           921325875  cycles elapsed\n            41288112  peak memory footprint\n",
+      "wall_seconds": 0.23192654099999999,
+      "instructions_retired": 4128309678,
+      "maximum_rss_bytes": 50757632,
+      "elapsed_seconds": 0.22
+    },
+    {
+      "case": "number_string",
+      "pair": 1,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "variant": "candidate",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-lazy-host-string-20261009/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-lazy-host-string-number-2026-10-09.cjs"
+      ],
+      "exit_code": 0,
+      "stdout": "200000\n",
+      "stderr": "        0.22 real         0.22 user         0.00 sys\n            47300608  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                3071  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  13  involuntary context switches\n          4050023781  instructions retired\n           915751342  cycles elapsed\n            37896600  peak memory footprint\n",
+      "wall_seconds": 0.23027641700000023,
+      "instructions_retired": 4050023781,
+      "maximum_rss_bytes": 47300608,
+      "elapsed_seconds": 0.22
+    },
+    {
+      "case": "number_string",
+      "pair": 2,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "variant": "candidate",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-lazy-host-string-20261009/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-lazy-host-string-number-2026-10-09.cjs"
+      ],
+      "exit_code": 0,
+      "stdout": "200000\n",
+      "stderr": "        0.22 real         0.22 user         0.00 sys\n            47104000  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                3059  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                   7  involuntary context switches\n          4047771174  instructions retired\n           915143524  cycles elapsed\n            37716400  peak memory footprint\n",
+      "wall_seconds": 0.23072616699999982,
+      "instructions_retired": 4047771174,
+      "maximum_rss_bytes": 47104000,
+      "elapsed_seconds": 0.22
+    },
+    {
+      "case": "number_string",
+      "pair": 2,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "variant": "baseline",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-argument-shapes-profile-20261009/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-lazy-host-string-number-2026-10-09.cjs"
+      ],
+      "exit_code": 0,
+      "stdout": "200000\n",
+      "stderr": "        0.23 real         0.22 user         0.00 sys\n            50724864  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                3277  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                   9  involuntary context switches\n          4128695626  instructions retired\n           919573274  cycles elapsed\n            41255344  peak memory footprint\n",
+      "wall_seconds": 0.23227754200000028,
+      "instructions_retired": 4128695626,
+      "maximum_rss_bytes": 50724864,
+      "elapsed_seconds": 0.23
+    },
+    {
+      "case": "number_string",
+      "pair": 3,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "variant": "baseline",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-argument-shapes-profile-20261009/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-lazy-host-string-number-2026-10-09.cjs"
+      ],
+      "exit_code": 0,
+      "stdout": "200000\n",
+      "stderr": "        0.23 real         0.22 user         0.00 sys\n            50741248  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                3278  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  21  involuntary context switches\n          4130279407  instructions retired\n           922418808  cycles elapsed\n            41255320  peak memory footprint\n",
+      "wall_seconds": 0.23284658299999972,
+      "instructions_retired": 4130279407,
+      "maximum_rss_bytes": 50741248,
+      "elapsed_seconds": 0.23
+    },
+    {
+      "case": "number_string",
+      "pair": 3,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "variant": "candidate",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-lazy-host-string-20261009/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-lazy-host-string-number-2026-10-09.cjs"
+      ],
+      "exit_code": 0,
+      "stdout": "200000\n",
+      "stderr": "        0.22 real         0.22 user         0.00 sys\n            47104000  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                3058  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  11  involuntary context switches\n          4047696436  instructions retired\n           922452371  cycles elapsed\n            37683608  peak memory footprint\n",
+      "wall_seconds": 0.23143704200000048,
+      "instructions_retired": 4047696436,
+      "maximum_rss_bytes": 47104000,
+      "elapsed_seconds": 0.22
+    },
+    {
+      "case": "number_string",
+      "pair": 4,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "variant": "candidate",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-lazy-host-string-20261009/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-lazy-host-string-number-2026-10-09.cjs"
+      ],
+      "exit_code": 0,
+      "stdout": "200000\n",
+      "stderr": "        0.22 real         0.22 user         0.00 sys\n            47218688  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                3070  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  13  involuntary context switches\n          4050037387  instructions retired\n           920976640  cycles elapsed\n            37814704  peak memory footprint\n",
+      "wall_seconds": 0.23141437500000084,
+      "instructions_retired": 4050037387,
+      "maximum_rss_bytes": 47218688,
+      "elapsed_seconds": 0.22
+    },
+    {
+      "case": "number_string",
+      "pair": 4,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "variant": "baseline",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-argument-shapes-profile-20261009/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-lazy-host-string-number-2026-10-09.cjs"
+      ],
+      "exit_code": 0,
+      "stdout": "200000\n",
+      "stderr": "        0.22 real         0.22 user         0.00 sys\n            50757632  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                3279  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                   7  involuntary context switches\n          4128534867  instructions retired\n           916080250  cycles elapsed\n            41271704  peak memory footprint\n",
+      "wall_seconds": 0.2307001669999993,
+      "instructions_retired": 4128534867,
+      "maximum_rss_bytes": 50757632,
+      "elapsed_seconds": 0.22
+    },
+    {
+      "case": "number_string",
+      "pair": 5,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "variant": "baseline",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-argument-shapes-profile-20261009/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-lazy-host-string-number-2026-10-09.cjs"
+      ],
+      "exit_code": 0,
+      "stdout": "200000\n",
+      "stderr": "        0.23 real         0.22 user         0.00 sys\n            50757632  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                3280  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  17  involuntary context switches\n          4128355024  instructions retired\n           928792042  cycles elapsed\n            41288088  peak memory footprint\n",
+      "wall_seconds": 0.23295279199999985,
+      "instructions_retired": 4128355024,
+      "maximum_rss_bytes": 50757632,
+      "elapsed_seconds": 0.23
+    },
+    {
+      "case": "number_string",
+      "pair": 5,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "variant": "candidate",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-lazy-host-string-20261009/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-lazy-host-string-number-2026-10-09.cjs"
+      ],
+      "exit_code": 0,
+      "stdout": "200000\n",
+      "stderr": "        0.22 real         0.22 user         0.00 sys\n            47071232  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                3056  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                   8  involuntary context switches\n          4049393508  instructions retired\n           918776496  cycles elapsed\n            37650840  peak memory footprint\n",
+      "wall_seconds": 0.23129191700000007,
+      "instructions_retired": 4049393508,
+      "maximum_rss_bytes": 47071232,
+      "elapsed_seconds": 0.22
+    },
+    {
+      "case": "number_string",
+      "pair": 6,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "variant": "candidate",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-lazy-host-string-20261009/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-lazy-host-string-number-2026-10-09.cjs"
+      ],
+      "exit_code": 0,
+      "stdout": "200000\n",
+      "stderr": "        0.22 real         0.22 user         0.00 sys\n            47366144  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                3073  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  17  involuntary context switches\n          4050235551  instructions retired\n           922816529  cycles elapsed\n            37962160  peak memory footprint\n",
+      "wall_seconds": 0.2313611670000002,
+      "instructions_retired": 4050235551,
+      "maximum_rss_bytes": 47366144,
+      "elapsed_seconds": 0.22
+    },
+    {
+      "case": "number_string",
+      "pair": 6,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "variant": "baseline",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-argument-shapes-profile-20261009/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-lazy-host-string-number-2026-10-09.cjs"
+      ],
+      "exit_code": 0,
+      "stdout": "200000\n",
+      "stderr": "        0.23 real         0.22 user         0.00 sys\n            50741248  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                3279  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                   9  involuntary context switches\n          4128437199  instructions retired\n           920262605  cycles elapsed\n            41271704  peak memory footprint\n",
+      "wall_seconds": 0.23207704099999926,
+      "instructions_retired": 4128437199,
+      "maximum_rss_bytes": 50741248,
+      "elapsed_seconds": 0.23
+    },
+    {
+      "case": "number_string",
+      "pair": 7,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "variant": "baseline",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-argument-shapes-profile-20261009/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-lazy-host-string-number-2026-10-09.cjs"
+      ],
+      "exit_code": 0,
+      "stdout": "200000\n",
+      "stderr": "        0.22 real         0.22 user         0.00 sys\n            50659328  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                3274  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  16  involuntary context switches\n          4130248259  instructions retired\n           919553841  cycles elapsed\n            41206192  peak memory footprint\n",
+      "wall_seconds": 0.23161912499999993,
+      "instructions_retired": 4130248259,
+      "maximum_rss_bytes": 50659328,
+      "elapsed_seconds": 0.22
+    },
+    {
+      "case": "number_string",
+      "pair": 7,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "variant": "candidate",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-lazy-host-string-20261009/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-lazy-host-string-number-2026-10-09.cjs"
+      ],
+      "exit_code": 0,
+      "stdout": "200000\n",
+      "stderr": "        0.22 real         0.22 user         0.00 sys\n            47153152  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                3061  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  23  involuntary context switches\n          4047713398  instructions retired\n           915091210  cycles elapsed\n            37749168  peak memory footprint\n",
+      "wall_seconds": 0.2304487919999998,
+      "instructions_retired": 4047713398,
+      "maximum_rss_bytes": 47153152,
+      "elapsed_seconds": 0.22
+    },
+    {
+      "case": "number_string",
+      "pair": 8,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "variant": "candidate",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-lazy-host-string-20261009/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-lazy-host-string-number-2026-10-09.cjs"
+      ],
+      "exit_code": 0,
+      "stdout": "200000\n",
+      "stderr": "        0.23 real         0.22 user         0.00 sys\n            47202304  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                3064  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  16  involuntary context switches\n          4050110934  instructions retired\n           922330987  cycles elapsed\n            37798320  peak memory footprint\n",
+      "wall_seconds": 0.2325549580000006,
+      "instructions_retired": 4050110934,
+      "maximum_rss_bytes": 47202304,
+      "elapsed_seconds": 0.23
+    },
+    {
+      "case": "number_string",
+      "pair": 8,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "variant": "baseline",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-argument-shapes-profile-20261009/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-lazy-host-string-number-2026-10-09.cjs"
+      ],
+      "exit_code": 0,
+      "stdout": "200000\n",
+      "stderr": "        0.22 real         0.22 user         0.00 sys\n            50675712  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                3274  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  10  involuntary context switches\n          4128279367  instructions retired\n           917903535  cycles elapsed\n            41206192  peak memory footprint\n",
+      "wall_seconds": 0.23182170800000002,
+      "instructions_retired": 4128279367,
+      "maximum_rss_bytes": 50675712,
+      "elapsed_seconds": 0.22
+    },
+    {
+      "case": "number_string",
+      "pair": 9,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "variant": "baseline",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-argument-shapes-profile-20261009/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-lazy-host-string-number-2026-10-09.cjs"
+      ],
+      "exit_code": 0,
+      "stdout": "200000\n",
+      "stderr": "        0.23 real         0.22 user         0.00 sys\n            50659328  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                3274  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  20  involuntary context switches\n          4130480814  instructions retired\n           920722941  cycles elapsed\n            41206192  peak memory footprint\n",
+      "wall_seconds": 0.2319887500000002,
+      "instructions_retired": 4130480814,
+      "maximum_rss_bytes": 50659328,
+      "elapsed_seconds": 0.23
+    },
+    {
+      "case": "number_string",
+      "pair": 9,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "variant": "candidate",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-lazy-host-string-20261009/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-lazy-host-string-number-2026-10-09.cjs"
+      ],
+      "exit_code": 0,
+      "stdout": "200000\n",
+      "stderr": "        0.23 real         0.23 user         0.00 sys\n            47316992  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                3071  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  24  involuntary context switches\n          4050341224  instructions retired\n           929132113  cycles elapsed\n            37913008  peak memory footprint\n",
+      "wall_seconds": 0.23883787499999976,
+      "instructions_retired": 4050341224,
+      "maximum_rss_bytes": 47316992,
+      "elapsed_seconds": 0.23
+    },
+    {
+      "case": "number_string",
+      "pair": 10,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "variant": "candidate",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-lazy-host-string-20261009/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-lazy-host-string-number-2026-10-09.cjs"
+      ],
+      "exit_code": 0,
+      "stdout": "200000\n",
+      "stderr": "        0.24 real         0.23 user         0.00 sys\n            47874048  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                3106  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  19  involuntary context switches\n          4054563460  instructions retired\n           948086762  cycles elapsed\n            38486448  peak memory footprint\n",
+      "wall_seconds": 0.24880562500000014,
+      "instructions_retired": 4054563460,
+      "maximum_rss_bytes": 47874048,
+      "elapsed_seconds": 0.24
+    },
+    {
+      "case": "number_string",
+      "pair": 10,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "variant": "baseline",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-argument-shapes-profile-20261009/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-lazy-host-string-number-2026-10-09.cjs"
+      ],
+      "exit_code": 0,
+      "stdout": "200000\n",
+      "stderr": "        0.24 real         0.23 user         0.00 sys\n            50659328  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                3274  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  37  involuntary context switches\n          4129196307  instructions retired\n           940718653  cycles elapsed\n            41206192  peak memory footprint\n",
+      "wall_seconds": 0.24498291600000055,
+      "instructions_retired": 4129196307,
+      "maximum_rss_bytes": 50659328,
+      "elapsed_seconds": 0.24
+    },
+    {
+      "case": "number_string",
+      "pair": 11,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "variant": "baseline",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-argument-shapes-profile-20261009/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-lazy-host-string-number-2026-10-09.cjs"
+      ],
+      "exit_code": 0,
+      "stdout": "200000\n",
+      "stderr": "        0.24 real         0.24 user         0.00 sys\n            50741248  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                3279  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                 352  involuntary context switches\n          4132613482  instructions retired\n           951178800  cycles elapsed\n            41288112  peak memory footprint\n",
+      "wall_seconds": 0.2523220419999994,
+      "instructions_retired": 4132613482,
+      "maximum_rss_bytes": 50741248,
+      "elapsed_seconds": 0.24
+    },
+    {
+      "case": "number_string",
+      "pair": 11,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "variant": "candidate",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-lazy-host-string-20261009/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-lazy-host-string-number-2026-10-09.cjs"
+      ],
+      "exit_code": 0,
+      "stdout": "200000\n",
+      "stderr": "        0.25 real         0.24 user         0.00 sys\n            47251456  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                3068  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                 204  involuntary context switches\n          4053463146  instructions retired\n           961710645  cycles elapsed\n            37863856  peak memory footprint\n",
+      "wall_seconds": 0.2574298749999997,
+      "instructions_retired": 4053463146,
+      "maximum_rss_bytes": 47251456,
+      "elapsed_seconds": 0.25
+    },
+    {
+      "case": "splay_payload",
+      "pair": 1,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "variant": "baseline",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-argument-shapes-profile-20261009/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-lazy-host-string-splay-2026-10-09.cjs"
+      ],
+      "exit_code": 0,
+      "stdout": "200000\n",
+      "stderr": "        0.21 real         0.20 user         0.00 sys\n            95780864  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                6030  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                 163  involuntary context switches\n          4391577972  instructions retired\n           830742681  cycles elapsed\n            86393336  peak memory footprint\n",
+      "wall_seconds": 0.2215532920000003,
+      "instructions_retired": 4391577972,
+      "maximum_rss_bytes": 95780864,
+      "elapsed_seconds": 0.21
+    },
+    {
+      "case": "splay_payload",
+      "pair": 1,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "variant": "candidate",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-lazy-host-string-20261009/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-lazy-host-string-splay-2026-10-09.cjs"
+      ],
+      "exit_code": 0,
+      "stdout": "200000\n",
+      "stderr": "        0.16 real         0.15 user         0.00 sys\n            84361216  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                5336  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  67  involuntary context switches\n          3468347317  instructions retired\n           632711614  cycles elapsed\n            75039200  peak memory footprint\n",
+      "wall_seconds": 0.16731737499999966,
+      "instructions_retired": 3468347317,
+      "maximum_rss_bytes": 84361216,
+      "elapsed_seconds": 0.16
+    },
+    {
+      "case": "splay_payload",
+      "pair": 2,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "variant": "candidate",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-lazy-host-string-20261009/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-lazy-host-string-splay-2026-10-09.cjs"
+      ],
+      "exit_code": 0,
+      "stdout": "200000\n",
+      "stderr": "        0.16 real         0.15 user         0.00 sys\n            84017152  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                5315  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  10  involuntary context switches\n          3461472109  instructions retired\n           624520792  cycles elapsed\n            74695136  peak memory footprint\n",
+      "wall_seconds": 0.16287683299999856,
+      "instructions_retired": 3461472109,
+      "maximum_rss_bytes": 84017152,
+      "elapsed_seconds": 0.16
+    },
+    {
+      "case": "splay_payload",
+      "pair": 2,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "variant": "baseline",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-argument-shapes-profile-20261009/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-lazy-host-string-splay-2026-10-09.cjs"
+      ],
+      "exit_code": 0,
+      "stdout": "200000\n",
+      "stderr": "        0.19 real         0.19 user         0.00 sys\n            95649792  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                6022  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  14  involuntary context switches\n          4388694216  instructions retired\n           779837194  cycles elapsed\n            86245856  peak memory footprint\n",
+      "wall_seconds": 0.20207683399999965,
+      "instructions_retired": 4388694216,
+      "maximum_rss_bytes": 95649792,
+      "elapsed_seconds": 0.19
+    },
+    {
+      "case": "splay_payload",
+      "pair": 3,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "variant": "baseline",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-argument-shapes-profile-20261009/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-lazy-host-string-splay-2026-10-09.cjs"
+      ],
+      "exit_code": 0,
+      "stdout": "200000\n",
+      "stderr": "        0.19 real         0.18 user         0.00 sys\n            95698944  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                6025  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  33  involuntary context switches\n          4387859728  instructions retired\n           772102519  cycles elapsed\n            86295008  peak memory footprint\n",
+      "wall_seconds": 0.19981433300000084,
+      "instructions_retired": 4387859728,
+      "maximum_rss_bytes": 95698944,
+      "elapsed_seconds": 0.19
+    },
+    {
+      "case": "splay_payload",
+      "pair": 3,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "variant": "candidate",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-lazy-host-string-20261009/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-lazy-host-string-splay-2026-10-09.cjs"
+      ],
+      "exit_code": 0,
+      "stdout": "200000\n",
+      "stderr": "        0.15 real         0.15 user         0.00 sys\n            84377600  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                5336  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  17  involuntary context switches\n          3465591989  instructions retired\n           616949961  cycles elapsed\n            75039200  peak memory footprint\n",
+      "wall_seconds": 0.15948208300000033,
+      "instructions_retired": 3465591989,
+      "maximum_rss_bytes": 84377600,
+      "elapsed_seconds": 0.15
+    },
+    {
+      "case": "splay_payload",
+      "pair": 4,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "variant": "candidate",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-lazy-host-string-20261009/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-lazy-host-string-splay-2026-10-09.cjs"
+      ],
+      "exit_code": 0,
+      "stdout": "200000\n",
+      "stderr": "        0.15 real         0.15 user         0.00 sys\n            83935232  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                5310  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  18  involuntary context switches\n          3464778550  instructions retired\n           621725797  cycles elapsed\n            74613216  peak memory footprint\n",
+      "wall_seconds": 0.16192316699999942,
+      "instructions_retired": 3464778550,
+      "maximum_rss_bytes": 83935232,
+      "elapsed_seconds": 0.15
+    },
+    {
+      "case": "splay_payload",
+      "pair": 4,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "variant": "baseline",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-argument-shapes-profile-20261009/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-lazy-host-string-splay-2026-10-09.cjs"
+      ],
+      "exit_code": 0,
+      "stdout": "200000\n",
+      "stderr": "        0.20 real         0.19 user         0.00 sys\n            95797248  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                6031  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  28  involuntary context switches\n          4392200499  instructions retired\n           799744620  cycles elapsed\n            86393312  peak memory footprint\n",
+      "wall_seconds": 0.20980508299999912,
+      "instructions_retired": 4392200499,
+      "maximum_rss_bytes": 95797248,
+      "elapsed_seconds": 0.2
+    },
+    {
+      "case": "splay_payload",
+      "pair": 5,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "variant": "baseline",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-argument-shapes-profile-20261009/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-lazy-host-string-splay-2026-10-09.cjs"
+      ],
+      "exit_code": 0,
+      "stdout": "200000\n",
+      "stderr": "        0.20 real         0.19 user         0.00 sys\n            95649792  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                6022  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                 174  involuntary context switches\n          4389671625  instructions retired\n           784549987  cycles elapsed\n            86245856  peak memory footprint\n",
+      "wall_seconds": 0.20832283299999865,
+      "instructions_retired": 4389671625,
+      "maximum_rss_bytes": 95649792,
+      "elapsed_seconds": 0.2
+    },
+    {
+      "case": "splay_payload",
+      "pair": 5,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "variant": "candidate",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-lazy-host-string-20261009/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-lazy-host-string-splay-2026-10-09.cjs"
+      ],
+      "exit_code": 0,
+      "stdout": "200000\n",
+      "stderr": "        0.35 real         0.22 user         0.01 sys\n            84393984  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                5338  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                1816  involuntary context switches\n          3485523159  instructions retired\n           814223322  cycles elapsed\n            75071968  peak memory footprint\n",
+      "wall_seconds": 0.356190625,
+      "instructions_retired": 3485523159,
+      "maximum_rss_bytes": 84393984,
+      "elapsed_seconds": 0.35
+    },
+    {
+      "case": "splay_payload",
+      "pair": 6,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "variant": "candidate",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-lazy-host-string-20261009/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-lazy-host-string-splay-2026-10-09.cjs"
+      ],
+      "exit_code": 0,
+      "stdout": "200000\n",
+      "stderr": "        0.29 real         0.22 user         0.01 sys\n            84017152  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                5317  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                 491  involuntary context switches\n          3471914251  instructions retired\n           792377142  cycles elapsed\n            74678728  peak memory footprint\n",
+      "wall_seconds": 0.2970807080000011,
+      "instructions_retired": 3471914251,
+      "maximum_rss_bytes": 84017152,
+      "elapsed_seconds": 0.29
+    },
+    {
+      "case": "splay_payload",
+      "pair": 6,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "variant": "baseline",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-argument-shapes-profile-20261009/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-lazy-host-string-splay-2026-10-09.cjs"
+      ],
+      "exit_code": 0,
+      "stdout": "200000\n",
+      "stderr": "        0.50 real         0.31 user         0.01 sys\n            95649792  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                6022  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                1510  involuntary context switches\n          4405765306  instructions retired\n          1082062870  cycles elapsed\n            86262264  peak memory footprint\n",
+      "wall_seconds": 0.5046897920000006,
+      "instructions_retired": 4405765306,
+      "maximum_rss_bytes": 95649792,
+      "elapsed_seconds": 0.5
+    },
+    {
+      "case": "splay_payload",
+      "pair": 7,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "variant": "baseline",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-argument-shapes-profile-20261009/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-lazy-host-string-splay-2026-10-09.cjs"
+      ],
+      "exit_code": 0,
+      "stdout": "200000\n",
+      "stderr": "        0.53 real         0.40 user         0.02 sys\n            95567872  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                6017  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                3624  involuntary context switches\n          4427189397  instructions retired\n          1268311851  cycles elapsed\n            86180344  peak memory footprint\n",
+      "wall_seconds": 0.537956458,
+      "instructions_retired": 4427189397,
+      "maximum_rss_bytes": 95567872,
+      "elapsed_seconds": 0.53
+    },
+    {
+      "case": "splay_payload",
+      "pair": 7,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "variant": "candidate",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-lazy-host-string-20261009/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-lazy-host-string-splay-2026-10-09.cjs"
+      ],
+      "exit_code": 0,
+      "stdout": "200000\n",
+      "stderr": "        0.31 real         0.27 user         0.01 sys\n            84443136  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                5341  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                1312  involuntary context switches\n          3481992683  instructions retired\n           910699552  cycles elapsed\n            75121120  peak memory footprint\n",
+      "wall_seconds": 0.31888125000000045,
+      "instructions_retired": 3481992683,
+      "maximum_rss_bytes": 84443136,
+      "elapsed_seconds": 0.31
+    },
+    {
+      "case": "splay_payload",
+      "pair": 8,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "variant": "candidate",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-lazy-host-string-20261009/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-lazy-host-string-splay-2026-10-09.cjs"
+      ],
+      "exit_code": 0,
+      "stdout": "200000\n",
+      "stderr": "        0.18 real         0.17 user         0.00 sys\n            84525056  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                5346  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                 214  involuntary context switches\n          3472088712  instructions retired\n           682052579  cycles elapsed\n            75203040  peak memory footprint\n",
+      "wall_seconds": 0.18760887500000045,
+      "instructions_retired": 3472088712,
+      "maximum_rss_bytes": 84525056,
+      "elapsed_seconds": 0.18
+    },
+    {
+      "case": "splay_payload",
+      "pair": 8,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "variant": "baseline",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-argument-shapes-profile-20261009/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-lazy-host-string-splay-2026-10-09.cjs"
+      ],
+      "exit_code": 0,
+      "stdout": "200000\n",
+      "stderr": "        0.31 real         0.24 user         0.01 sys\n            95813632  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                6032  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                 985  involuntary context switches\n          4401966631  instructions retired\n           929395826  cycles elapsed\n            86426104  peak memory footprint\n",
+      "wall_seconds": 0.3216590840000002,
+      "instructions_retired": 4401966631,
+      "maximum_rss_bytes": 95813632,
+      "elapsed_seconds": 0.31
+    },
+    {
+      "case": "splay_payload",
+      "pair": 9,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "variant": "baseline",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-argument-shapes-profile-20261009/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-lazy-host-string-splay-2026-10-09.cjs"
+      ],
+      "exit_code": 0,
+      "stdout": "200000\n",
+      "stderr": "        0.25 real         0.23 user         0.01 sys\n            95682560  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                6026  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                 250  involuntary context switches\n          4395830053  instructions retired\n           893030289  cycles elapsed\n            86278624  peak memory footprint\n",
+      "wall_seconds": 0.2582105840000004,
+      "instructions_retired": 4395830053,
+      "maximum_rss_bytes": 95682560,
+      "elapsed_seconds": 0.25
+    },
+    {
+      "case": "splay_payload",
+      "pair": 9,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "variant": "candidate",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-lazy-host-string-20261009/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-lazy-host-string-splay-2026-10-09.cjs"
+      ],
+      "exit_code": 0,
+      "stdout": "200000\n",
+      "stderr": "        0.18 real         0.16 user         0.00 sys\n            84606976  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                5353  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                 266  involuntary context switches\n          3473474023  instructions retired\n           671886842  cycles elapsed\n            75284960  peak memory footprint\n",
+      "wall_seconds": 0.188538792000001,
+      "instructions_retired": 3473474023,
+      "maximum_rss_bytes": 84606976,
+      "elapsed_seconds": 0.18
+    },
+    {
+      "case": "splay_payload",
+      "pair": 10,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "variant": "candidate",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-lazy-host-string-20261009/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-lazy-host-string-splay-2026-10-09.cjs"
+      ],
+      "exit_code": 0,
+      "stdout": "200000\n",
+      "stderr": "        0.17 real         0.16 user         0.01 sys\n            84148224  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                5325  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  51  involuntary context switches\n          3467585127  instructions retired\n           663424971  cycles elapsed\n            74809800  peak memory footprint\n",
+      "wall_seconds": 0.1821993329999998,
+      "instructions_retired": 3467585127,
+      "maximum_rss_bytes": 84148224,
+      "elapsed_seconds": 0.17
+    },
+    {
+      "case": "splay_payload",
+      "pair": 10,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "variant": "baseline",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-argument-shapes-profile-20261009/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-lazy-host-string-splay-2026-10-09.cjs"
+      ],
+      "exit_code": 0,
+      "stdout": "200000\n",
+      "stderr": "        0.27 real         0.25 user         0.01 sys\n            95354880  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                6006  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                 155  involuntary context switches\n          4393342059  instructions retired\n           933244638  cycles elapsed\n            85950944  peak memory footprint\n",
+      "wall_seconds": 0.27729800000000004,
+      "instructions_retired": 4393342059,
+      "maximum_rss_bytes": 95354880,
+      "elapsed_seconds": 0.27
+    },
+    {
+      "case": "splay_payload",
+      "pair": 11,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "variant": "baseline",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-argument-shapes-profile-20261009/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-lazy-host-string-splay-2026-10-09.cjs"
+      ],
+      "exit_code": 0,
+      "stdout": "200000\n",
+      "stderr": "        0.26 real         0.23 user         0.01 sys\n            95764480  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                6029  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                 330  involuntary context switches\n          4392947776  instructions retired\n           896448755  cycles elapsed\n            86360544  peak memory footprint\n",
+      "wall_seconds": 0.26672787500000084,
+      "instructions_retired": 4392947776,
+      "maximum_rss_bytes": 95764480,
+      "elapsed_seconds": 0.26
+    },
+    {
+      "case": "splay_payload",
+      "pair": 11,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "variant": "candidate",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-lazy-host-string-20261009/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-lazy-host-string-splay-2026-10-09.cjs"
+      ],
+      "exit_code": 0,
+      "stdout": "200000\n",
+      "stderr": "        0.22 real         0.18 user         0.01 sys\n            84033536  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                5316  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                 617  involuntary context switches\n          3468613946  instructions retired\n           711643012  cycles elapsed\n            74695112  peak memory footprint\n",
+      "wall_seconds": 0.22952062499999926,
+      "instructions_retired": 3468613946,
+      "maximum_rss_bytes": 84033536,
+      "elapsed_seconds": 0.22
+    },
+    {
+      "case": "slice",
+      "pair": 1,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "variant": "baseline",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-argument-shapes-profile-20261009/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-lazy-host-string-slice-2026-10-09.cjs"
+      ],
+      "exit_code": 0,
+      "stdout": "200000\n",
+      "stderr": "        1.76 real         1.75 user         0.01 sys\n            52215808  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                3369  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                 490  involuntary context switches\n         22353365793  instructions retired\n          6829768831  cycles elapsed\n            42762672  peak memory footprint\n",
+      "wall_seconds": 1.7723579170000008,
+      "instructions_retired": 22353365793,
+      "maximum_rss_bytes": 52215808,
+      "elapsed_seconds": 1.76
+    },
+    {
+      "case": "slice",
+      "pair": 1,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "variant": "candidate",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-lazy-host-string-20261009/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-lazy-host-string-slice-2026-10-09.cjs"
+      ],
+      "exit_code": 0,
+      "stdout": "200000\n",
+      "stderr": "        1.65 real         1.64 user         0.00 sys\n            49168384  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                3185  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                 236  involuntary context switches\n         22198625792  instructions retired\n          6524354237  cycles elapsed\n            39780784  peak memory footprint\n",
+      "wall_seconds": 1.661759667,
+      "instructions_retired": 22198625792,
+      "maximum_rss_bytes": 49168384,
+      "elapsed_seconds": 1.65
+    },
+    {
+      "case": "slice",
+      "pair": 2,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "variant": "candidate",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-lazy-host-string-20261009/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-lazy-host-string-slice-2026-10-09.cjs"
+      ],
+      "exit_code": 0,
+      "stdout": "200000\n",
+      "stderr": "        1.58 real         1.57 user         0.00 sys\n            49135616  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                3182  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                 124  involuntary context switches\n         22195244892  instructions retired\n          6239495253  cycles elapsed\n            39731632  peak memory footprint\n",
+      "wall_seconds": 1.5836179999999977,
+      "instructions_retired": 22195244892,
+      "maximum_rss_bytes": 49135616,
+      "elapsed_seconds": 1.58
+    },
+    {
+      "case": "slice",
+      "pair": 2,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "variant": "baseline",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-argument-shapes-profile-20261009/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-lazy-host-string-slice-2026-10-09.cjs"
+      ],
+      "exit_code": 0,
+      "stdout": "200000\n",
+      "stderr": "        1.49 real         1.48 user         0.00 sys\n            52363264  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                3378  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  62  involuntary context switches\n         22366952173  instructions retired\n          5958290292  cycles elapsed\n            42893720  peak memory footprint\n",
+      "wall_seconds": 1.492178250000002,
+      "instructions_retired": 22366952173,
+      "maximum_rss_bytes": 52363264,
+      "elapsed_seconds": 1.49
+    },
+    {
+      "case": "slice",
+      "pair": 3,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "variant": "baseline",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-argument-shapes-profile-20261009/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-lazy-host-string-slice-2026-10-09.cjs"
+      ],
+      "exit_code": 0,
+      "stdout": "200000\n",
+      "stderr": "        1.47 real         1.47 user         0.00 sys\n            51773440  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                3341  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  65  involuntary context switches\n         22364514066  instructions retired\n          5913777886  cycles elapsed\n            42303920  peak memory footprint\n",
+      "wall_seconds": 1.481190208000001,
+      "instructions_retired": 22364514066,
+      "maximum_rss_bytes": 51773440,
+      "elapsed_seconds": 1.47
+    },
+    {
+      "case": "slice",
+      "pair": 3,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "variant": "candidate",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-lazy-host-string-20261009/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-lazy-host-string-slice-2026-10-09.cjs"
+      ],
+      "exit_code": 0,
+      "stdout": "200000\n",
+      "stderr": "        1.47 real         1.46 user         0.00 sys\n            49152000  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                3183  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  57  involuntary context switches\n         22197397839  instructions retired\n          5875280010  cycles elapsed\n            39748016  peak memory footprint\n",
+      "wall_seconds": 1.4723301249999992,
+      "instructions_retired": 22197397839,
+      "maximum_rss_bytes": 49152000,
+      "elapsed_seconds": 1.47
+    },
+    {
+      "case": "slice",
+      "pair": 4,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "variant": "candidate",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-lazy-host-string-20261009/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-lazy-host-string-slice-2026-10-09.cjs"
+      ],
+      "exit_code": 0,
+      "stdout": "200000\n",
+      "stderr": "        1.48 real         1.47 user         0.00 sys\n            48201728  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                3124  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  70  involuntary context switches\n         22194288778  instructions retired\n          5928509051  cycles elapsed\n            38781360  peak memory footprint\n",
+      "wall_seconds": 1.4861812090000015,
+      "instructions_retired": 22194288778,
+      "maximum_rss_bytes": 48201728,
+      "elapsed_seconds": 1.48
+    },
+    {
+      "case": "slice",
+      "pair": 4,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "variant": "baseline",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-argument-shapes-profile-20261009/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-lazy-host-string-slice-2026-10-09.cjs"
+      ],
+      "exit_code": 0,
+      "stdout": "200000\n",
+      "stderr": "        1.49 real         1.48 user         0.00 sys\n            51838976  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                3345  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   1  voluntary context switches\n                  72  involuntary context switches\n         22365384403  instructions retired\n          5952850565  cycles elapsed\n            42369456  peak memory footprint\n",
+      "wall_seconds": 1.493337375000003,
+      "instructions_retired": 22365384403,
+      "maximum_rss_bytes": 51838976,
+      "elapsed_seconds": 1.49
+    },
+    {
+      "case": "slice",
+      "pair": 5,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "variant": "baseline",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-argument-shapes-profile-20261009/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-lazy-host-string-slice-2026-10-09.cjs"
+      ],
+      "exit_code": 0,
+      "stdout": "200000\n",
+      "stderr": "        1.50 real         1.49 user         0.00 sys\n            52363264  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                3378  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                 322  involuntary context switches\n         22367910924  instructions retired\n          5983236314  cycles elapsed\n            42910128  peak memory footprint\n",
+      "wall_seconds": 1.5023353750000012,
+      "instructions_retired": 22367910924,
+      "maximum_rss_bytes": 52363264,
+      "elapsed_seconds": 1.5
+    },
+    {
+      "case": "slice",
+      "pair": 5,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "variant": "candidate",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-lazy-host-string-20261009/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-lazy-host-string-slice-2026-10-09.cjs"
+      ],
+      "exit_code": 0,
+      "stdout": "200000\n",
+      "stderr": "        1.47 real         1.46 user         0.00 sys\n            48709632  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                3156  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  73  involuntary context switches\n         22194409986  instructions retired\n          5889568846  cycles elapsed\n            39289240  peak memory footprint\n",
+      "wall_seconds": 1.4735923330000027,
+      "instructions_retired": 22194409986,
+      "maximum_rss_bytes": 48709632,
+      "elapsed_seconds": 1.47
+    },
+    {
+      "case": "slice",
+      "pair": 6,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "variant": "candidate",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-lazy-host-string-20261009/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-lazy-host-string-slice-2026-10-09.cjs"
+      ],
+      "exit_code": 0,
+      "stdout": "200000\n",
+      "stderr": "        1.48 real         1.48 user         0.00 sys\n            49152000  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                3183  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  69  involuntary context switches\n         22195133458  instructions retired\n          5954770724  cycles elapsed\n            39748016  peak memory footprint\n",
+      "wall_seconds": 1.4917316669999998,
+      "instructions_retired": 22195133458,
+      "maximum_rss_bytes": 49152000,
+      "elapsed_seconds": 1.48
+    },
+    {
+      "case": "slice",
+      "pair": 6,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "variant": "baseline",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-argument-shapes-profile-20261009/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-lazy-host-string-slice-2026-10-09.cjs"
+      ],
+      "exit_code": 0,
+      "stdout": "200000\n",
+      "stderr": "        1.50 real         1.49 user         0.00 sys\n            52330496  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                3375  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  69  involuntary context switches\n         22367065538  instructions retired\n          6000462487  cycles elapsed\n            42844568  peak memory footprint\n",
+      "wall_seconds": 1.5046106250000015,
+      "instructions_retired": 22367065538,
+      "maximum_rss_bytes": 52330496,
+      "elapsed_seconds": 1.5
+    },
+    {
+      "case": "slice",
+      "pair": 7,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "variant": "baseline",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-argument-shapes-profile-20261009/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-lazy-host-string-slice-2026-10-09.cjs"
+      ],
+      "exit_code": 0,
+      "stdout": "200000\n",
+      "stderr": "        1.49 real         1.48 user         0.00 sys\n            52330496  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                3376  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  59  involuntary context switches\n         22365657339  instructions retired\n          5985261250  cycles elapsed\n            42877360  peak memory footprint\n",
+      "wall_seconds": 1.4987228750000021,
+      "instructions_retired": 22365657339,
+      "maximum_rss_bytes": 52330496,
+      "elapsed_seconds": 1.49
+    },
+    {
+      "case": "slice",
+      "pair": 7,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "variant": "candidate",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-lazy-host-string-20261009/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-lazy-host-string-slice-2026-10-09.cjs"
+      ],
+      "exit_code": 0,
+      "stdout": "200000\n",
+      "stderr": "        1.49 real         1.48 user         0.00 sys\n            49004544  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                3174  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  76  involuntary context switches\n         22196363131  instructions retired\n          5964617907  cycles elapsed\n            39600560  peak memory footprint\n",
+      "wall_seconds": 1.495327500000002,
+      "instructions_retired": 22196363131,
+      "maximum_rss_bytes": 49004544,
+      "elapsed_seconds": 1.49
+    },
+    {
+      "case": "slice",
+      "pair": 8,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "variant": "candidate",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-lazy-host-string-20261009/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-lazy-host-string-slice-2026-10-09.cjs"
+      ],
+      "exit_code": 0,
+      "stdout": "200000\n",
+      "stderr": "        1.47 real         1.46 user         0.00 sys\n            48791552  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                3162  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  84  involuntary context switches\n         22195817836  instructions retired\n          5907841639  cycles elapsed\n            39387544  peak memory footprint\n",
+      "wall_seconds": 1.4790057920000024,
+      "instructions_retired": 22195817836,
+      "maximum_rss_bytes": 48791552,
+      "elapsed_seconds": 1.47
+    },
+    {
+      "case": "slice",
+      "pair": 8,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "variant": "baseline",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-argument-shapes-profile-20261009/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-lazy-host-string-slice-2026-10-09.cjs"
+      ],
+      "exit_code": 0,
+      "stdout": "200000\n",
+      "stderr": "        1.47 real         1.46 user         0.00 sys\n            52379648  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                3379  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  73  involuntary context switches\n         22365160674  instructions retired\n          5890679780  cycles elapsed\n            42926512  peak memory footprint\n",
+      "wall_seconds": 1.4746417910000034,
+      "instructions_retired": 22365160674,
+      "maximum_rss_bytes": 52379648,
+      "elapsed_seconds": 1.47
+    },
+    {
+      "case": "slice",
+      "pair": 9,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "variant": "baseline",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-argument-shapes-profile-20261009/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-lazy-host-string-slice-2026-10-09.cjs"
+      ],
+      "exit_code": 0,
+      "stdout": "200000\n",
+      "stderr": "        1.48 real         1.47 user         0.00 sys\n            52396032  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                3379  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  79  involuntary context switches\n         22365454740  instructions retired\n          5927293601  cycles elapsed\n            42910104  peak memory footprint\n",
+      "wall_seconds": 1.4850989159999983,
+      "instructions_retired": 22365454740,
+      "maximum_rss_bytes": 52396032,
+      "elapsed_seconds": 1.48
+    },
+    {
+      "case": "slice",
+      "pair": 9,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "variant": "candidate",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-lazy-host-string-20261009/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-lazy-host-string-slice-2026-10-09.cjs"
+      ],
+      "exit_code": 0,
+      "stdout": "200000\n",
+      "stderr": "        1.46 real         1.45 user         0.00 sys\n            49004544  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                3174  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  63  involuntary context switches\n         22196582598  instructions retired\n          5871323349  cycles elapsed\n            39600560  peak memory footprint\n",
+      "wall_seconds": 1.4685816250000059,
+      "instructions_retired": 22196582598,
+      "maximum_rss_bytes": 49004544,
+      "elapsed_seconds": 1.46
+    },
+    {
+      "case": "slice",
+      "pair": 10,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "variant": "candidate",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-lazy-host-string-20261009/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-lazy-host-string-slice-2026-10-09.cjs"
+      ],
+      "exit_code": 0,
+      "stdout": "200000\n",
+      "stderr": "        1.47 real         1.46 user         0.00 sys\n            49004544  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                3174  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  68  involuntary context switches\n         22197171089  instructions retired\n          5895346162  cycles elapsed\n            39600560  peak memory footprint\n",
+      "wall_seconds": 1.477556290999999,
+      "instructions_retired": 22197171089,
+      "maximum_rss_bytes": 49004544,
+      "elapsed_seconds": 1.47
+    },
+    {
+      "case": "slice",
+      "pair": 10,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "variant": "baseline",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-argument-shapes-profile-20261009/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-lazy-host-string-slice-2026-10-09.cjs"
+      ],
+      "exit_code": 0,
+      "stdout": "200000\n",
+      "stderr": "        1.48 real         1.47 user         0.00 sys\n            52346880  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                3377  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  58  involuntary context switches\n         22366294141  instructions retired\n          5932558003  cycles elapsed\n            42893744  peak memory footprint\n",
+      "wall_seconds": 1.4848649999999992,
+      "instructions_retired": 22366294141,
+      "maximum_rss_bytes": 52346880,
+      "elapsed_seconds": 1.48
+    },
+    {
+      "case": "slice",
+      "pair": 11,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "variant": "baseline",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-argument-shapes-profile-20261009/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-lazy-host-string-slice-2026-10-09.cjs"
+      ],
+      "exit_code": 0,
+      "stdout": "200000\n",
+      "stderr": "        1.47 real         1.46 user         0.00 sys\n            52396032  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                3380  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  67  involuntary context switches\n         22365327412  instructions retired\n          5907929001  cycles elapsed\n            42942896  peak memory footprint\n",
+      "wall_seconds": 1.4783148339999954,
+      "instructions_retired": 22365327412,
+      "maximum_rss_bytes": 52396032,
+      "elapsed_seconds": 1.47
+    },
+    {
+      "case": "slice",
+      "pair": 11,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "variant": "candidate",
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-lazy-host-string-20261009/production/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-lazy-host-string-slice-2026-10-09.cjs"
+      ],
+      "exit_code": 0,
+      "stdout": "200000\n",
+      "stderr": "        1.46 real         1.46 user         0.00 sys\n            48726016  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                3157  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  55  involuntary context switches\n         22195667277  instructions retired\n          5873540345  cycles elapsed\n            39305624  peak memory footprint\n",
+      "wall_seconds": 1.4698624580000015,
+      "instructions_retired": 22195667277,
+      "maximum_rss_bytes": 48726016,
+      "elapsed_seconds": 1.46
+    }
+  ],
+  "source_and_validation": {
+    "source": {
+      "base_revision": "ff60d06c55546b8b8b2d443697a8c335545d736b",
+      "dirty_at_measurement": true,
+      "modified_file": "crates/quench-runtime/src/vm/wtf16.rs",
+      "modified_file_sha256": "30306e7f783e26d7b23890a2e2f0c1aeefbef7abce63e595c6a684f70be8cffa",
+      "git_diff_sha256": "645808e85bf1f800ab57912b603ec26d9683f7c59bd3a17253bc6583c92e696f"
+    },
+    "build": {
+      "command": "CARGO_INCREMENTAL=0 CARGO_TARGET_DIR=target/iteration/task61-lazy-host-string-20261009 cargo build --profile production -p quench-node --bin quench-node",
+      "profile": "production",
+      "candidate_binary": "target/iteration/task61-lazy-host-string-20261009/production/quench-node",
+      "baseline_binary": "target/iteration/task61-argument-shapes-profile-20261009/production/quench-node",
+      "rustc": "rustc 1.99.0 (b940084d7 2026-09-28) (Homebrew), host aarch64-apple-darwin, LLVM 23.1.2"
+    },
+    "measurement_environment": {
+      "os": "macOS-26.5-arm64-arm-64bit",
+      "kernel": "25.5.0",
+      "architecture": "arm64",
+      "logical_cpus": 10,
+      "memory_bytes": 17179869184,
+      "tool": "/usr/bin/time -l",
+      "concurrency": "baseline and candidate were run sequentially within each alternating pair; no concurrent test campaign during final measurements"
+    },
+    "validation": {
+      "test262_reports": [
+        {
+          "path": "target/iteration/task61-lazy-host-string-20261009/test262-stage-53.json",
+          "sha256": "e4a93c45bccfb0b2b7f60ba0266ce3f832125297ffcc96a9632ef5669732e964",
+          "passed": 165,
+          "failed": 0,
+          "stages": {
+            "53": {
+              "failed": 0,
+              "passed": 165,
+              "total": 165
+            }
+          }
+        },
+        {
+          "path": "target/iteration/task61-lazy-host-string-20261009/test262-stages-64-65.json",
+          "sha256": "1d02b948ca210ca930189ed1a11858de560098c23785e3e11728c1b8972efacb",
+          "passed": 1896,
+          "failed": 0,
+          "stages": {
+            "64": {
+              "failed": 0,
+              "passed": 1879,
+              "total": 1879
+            },
+            "65": {
+              "failed": 0,
+              "passed": 17,
+              "total": 17
+            }
+          }
+        },
+        {
+          "path": "target/iteration/task61-lazy-host-string-20261009/test262-stages-70-71.json",
+          "sha256": "fbfdf5152e3653d2b0e6b2dbc21aea618fd3ae676c09fa145c366cc8cfbb4862",
+          "passed": 1230,
+          "failed": 0,
+          "stages": {
+            "70": {
+              "failed": 0,
+              "passed": 1223,
+              "total": 1223
+            },
+            "71": {
+              "failed": 0,
+              "passed": 7,
+              "total": 7
+            }
+          }
+        }
+      ],
+      "test262_total_passed": 3291,
+      "test262_total_failed": 0,
+      "focused_unit_test_command": "CARGO_TARGET_DIR=target/iteration/task61-lazy-host-string-20261009 CARGO_INCREMENTAL=0 cargo test -p quench-runtime --features profile-memory vm::wtf16::tests -- --nocapture",
+      "focused_unit_tests_passed": 8,
+      "node_oracle_script": "tasks/evidence/task61-lazy-host-string-node-2026-10-09.cjs",
+      "node_oracle_script_sha256": "105069021842feb22985281a6d17cf4bce3601799edc21faffa180f77eed5133",
+      "node_oracle_runs": {
+        "baseline": {
+          "command": [
+            "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-argument-shapes-profile-20261009/production/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-lazy-host-string-node-2026-10-09.cjs"
+          ],
+          "exit_code": 0,
+          "stdout": "[1,55296,55296,2,55358,56704,2,\"\\\"\\\\ud800\\\"\",true]\n�\n",
+          "stderr": ""
+        },
+        "candidate": {
+          "command": [
+            "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-lazy-host-string-20261009/production/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-lazy-host-string-node-2026-10-09.cjs"
+          ],
+          "exit_code": 0,
+          "stdout": "[1,55296,55296,2,55358,56704,2,\"\\\"\\\\ud800\\\"\",true]\n�\n",
+          "stderr": ""
+        },
+        "node_26_10_0": {
+          "command": [
+            "/opt/homebrew/bin/node",
+            "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-lazy-host-string-node-2026-10-09.cjs"
+          ],
+          "exit_code": 0,
+          "stdout": "[1,55296,55296,2,55358,56704,2,\"\\\"\\\\ud800\\\"\",true]\n�\n",
+          "stderr": ""
+        }
+      },
+      "normalize_control_script": "tasks/evidence/task61-lazy-host-string-normalize-control-2026-10-09.cjs",
+      "normalize_control_script_sha256": "3c4496e0a78fdaf65a346234348e0ccbaf2fa4545451d5b161bdf1edf143b226",
+      "normalize_control_runs": {
+        "baseline": {
+          "command": [
+            "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-argument-shapes-profile-20261009/production/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-lazy-host-string-normalize-control-2026-10-09.cjs"
+          ],
+          "exit_code": 0,
+          "stdout": "65533\n",
+          "stderr": ""
+        },
+        "candidate": {
+          "command": [
+            "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-lazy-host-string-20261009/production/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-lazy-host-string-normalize-control-2026-10-09.cjs"
+          ],
+          "exit_code": 0,
+          "stdout": "65533\n",
+          "stderr": ""
+        },
+        "node_26_10_0": {
+          "command": [
+            "/opt/homebrew/bin/node",
+            "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-lazy-host-string-normalize-control-2026-10-09.cjs"
+          ],
+          "exit_code": 0,
+          "stdout": "55296\n",
+          "stderr": ""
+        }
+      },
+      "pre_existing_normalize_mismatch": {
+        "baseline_quench_output": "65533\n",
+        "candidate_quench_output": "65533\n",
+        "node_26_10_0_output": "55296\n",
+        "same_baseline_and_candidate": true,
+        "status": "Existing lossy host conversion used by String.prototype.normalize; not introduced by the lazy host-view change."
+      }
+    }
+  },
+  "measurement_script_sha256": "df608c816d52dd267986f5b414121c73cf5d15c0575e3733b74586fac5f93566"
+}

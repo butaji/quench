@@ -1,0 +1,79 @@
+{
+  "kind": "task61_mapped_arguments_fast_return_candidate",
+  "source_revision": "4198902f6914db063e378b6ce22fd823432c2562",
+  "source_tree": "dirty",
+  "host": {
+    "os": "macOS 25.5 ARM64",
+    "cpu": "Apple M4",
+    "rustc": "1.99.0 (b940084d7 2026-09-28)",
+    "cargo": "1.99.0 (5f94df478 2026-08-27)"
+  },
+  "change": {
+    "file": "crates/quench-runtime/src/vm/arguments.rs",
+    "source_sha256": "21f5d2038c6f6193ae4db05a6b4cb452f039b7319fc84e4e58cceb786fa92a4a",
+    "behavior": "Resolve the mapped parameter slot before scanning active frames and return immediately for ordinary arrays, unmapped arguments, deleted mappings, or out-of-range indices. The existing mapped-object synchronization path is unchanged.",
+    "binding_time": "The arguments_map is attached only to mapped arguments objects at activation creation; ordinary arrays and unmapped arguments cannot acquire it."
+  },
+  "production_build": {
+    "command": "CARGO_INCREMENTAL=0 cargo build --locked --profile production -p quench-runtime --bin quench",
+    "baseline_binary": "/tmp/quench-mapped-args-matched-baseline-2026-10-08",
+    "baseline_binary_sha256": "1d0338aa150971cfaa38376bbdbab91c3f756231fc872f4aadd7a0dec9851272",
+    "candidate_binary": "/tmp/quench-mapped-args-fast-return-2026-10-08",
+    "candidate_binary_sha256": "25efc115c8cce5796ec2fb73257e5c1cf1dcf4c07b4f0823b127b49fd2d689fc",
+    "comparison": "The binaries were built from the same dirty source tree and toolchain; only the early-return change in arguments.rs differed."
+  },
+  "paired_microbenchmark": {
+    "runner": "tasks/evidence/task61-mapped-arguments-fast-return-paired-2026-10-08.zsh",
+    "runner_sha256": "9afe8a235f83d27b3141b3edbe83ad53a9efc6ac59938e8c5c60cdf7e5014127",
+    "raw_pairs": "tasks/evidence/task61-mapped-arguments-fast-return-paired-2026-10-08.csv",
+    "raw_pairs_sha256": "2530f5e4a22937988b237365e3babcfd250d126cf60fa584842b3005ab22e2e0",
+    "pairs": 11,
+    "bootstrap": "100000 paired resamples of per-round candidate/baseline deltas; median and percentile 95% interval; seed 61102027",
+    "workload": "An existing dense Array is updated and read over 4000x2500 iterations (10,000,000 indexed stores), inside a function whose ordinary argument local aliases the Array. This exercises the generic array-store path that previously scanned active frames looking for mapped arguments.",
+    "array_store": {
+      "elapsed_median_delta_percent": -4.2857,
+      "elapsed_95_percentile_interval": [-6.3107, -2.8571],
+      "candidate_faster_pairs": 11,
+      "instructions_median_delta_percent": -2.2042,
+      "instructions_95_percentile_interval": [-2.2098, -2.1976],
+      "candidate_lower_instruction_pairs": 11,
+      "max_rss_median_delta_percent": 0.0,
+      "max_rss_95_percentile_interval": [-1.074, 0.8373],
+      "max_rss_median_delta_bytes": 0
+    },
+    "local_store_control": {
+      "elapsed_median_delta_percent": -3.4483,
+      "elapsed_95_percentile_interval": [-3.5714, 0.0],
+      "instructions_median_delta_percent": 0.0013,
+      "instructions_95_percentile_interval": [-0.0019, 0.0028],
+      "max_rss_median_delta_percent": 0.1294,
+      "max_rss_median_delta_bytes": 16384
+    }
+  },
+  "test262": {
+    "command": "TEST262_TEST_TIMEOUT_MS=900000 TEST262_JOBS=4 TEST262_REPORT=target/iteration/task61-arguments-object-stage1-current.json target/iteration/run-stages --from 1 --to 1 --filter language/arguments-object --root tests/test262",
+    "stage": 1,
+    "filter": "language/arguments-object",
+    "passed": 263,
+    "failed": 0,
+    "total": 263,
+    "runner_sha256": "1460920d53bd7a9b50d30c114411723765fcbee4223a110cc3732c00325c8d56",
+    "report": "target/iteration/task61-arguments-object-stage1-current.json",
+    "report_sha256": "44b615c9e85e53aac10a85070f9e22382c2f8db00d233637dec6e17548877bb2"
+  },
+  "node_oracle": {
+    "version": "v26.10.0",
+    "mode": "--jitless",
+    "baseline_candidate_match": true,
+    "ordinary_dense_write_output": "[16,0,21,45]",
+    "mapped_write_through_output": "[7,7]",
+    "delete_unmapping_output": "[true,1,9,true]",
+    "preexisting_nested_alias_mismatch": {
+      "baseline_and_candidate_output": "[9,9]",
+      "node_output": "[3,9]",
+      "fixture": "function f(a){const alias=arguments;function g(x,other){other[0]=9;return x;}return [g(3,alias),a];}",
+      "introduced_by_candidate": false,
+      "note": "The pre-existing frame scan treats any frame holding the arguments object as its owner and can overwrite an unrelated local. This behavior is unchanged by the fast-return optimization and remains a separate correctness issue."
+    }
+  }
+}

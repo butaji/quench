@@ -1,0 +1,40 @@
+[X=0] crypto score=2182 rssMB=11
+[X=0] deltablue score=1031 rssMB=12
+[X=0] earley-boyer score=2320 rssMB=45
+[X=0] navier-stokes score=2414 rssMB=12
+[X=0] raytrace score=2150 rssMB=12
+[X=0] regexp score=1462 rssMB=20
+[X=0] richards score=1523 rssMB=12
+[X=0] splay score=6069 rssMB=161
+[QUENCH_GC_YOUNG_NUM=1 QUENCH_GC_YOUNG_DEN=2] crypto score=1952 rssMB=12
+[QUENCH_GC_YOUNG_NUM=1 QUENCH_GC_YOUNG_DEN=2] deltablue score=1025 rssMB=12
+[QUENCH_GC_YOUNG_NUM=1 QUENCH_GC_YOUNG_DEN=2] earley-boyer score=2343 rssMB=15
+[QUENCH_GC_YOUNG_NUM=1 QUENCH_GC_YOUNG_DEN=2] navier-stokes score=2626 rssMB=12
+[QUENCH_GC_YOUNG_NUM=1 QUENCH_GC_YOUNG_DEN=2] raytrace score=2396 rssMB=12
+[QUENCH_GC_YOUNG_NUM=1 QUENCH_GC_YOUNG_DEN=2] regexp score=1293 rssMB=13
+[QUENCH_GC_YOUNG_NUM=1 QUENCH_GC_YOUNG_DEN=2] richards score=1365 rssMB=12
+[QUENCH_GC_YOUNG_NUM=1 QUENCH_GC_YOUNG_DEN=2] splay score=5851 rssMB=92
+[X=0] crypto score=2063 rssMB=11
+[X=0] deltablue score=935 rssMB=12
+[X=0] earley-boyer score=2302 rssMB=46
+[X=0] navier-stokes score=2547 rssMB=12
+[X=0] raytrace score=1926 rssMB=12
+[X=0] regexp score=1155 rssMB=20
+[X=0] richards score=1402 rssMB=12
+[X=0] splay score=5970 rssMB=161
+[QUENCH_GC_MAX_YOUNG=131072] crypto score=2070 rssMB=12
+[QUENCH_GC_MAX_YOUNG=131072] deltablue score=1044 rssMB=12
+[QUENCH_GC_MAX_YOUNG=131072] earley-boyer score=2310 rssMB=28
+[QUENCH_GC_MAX_YOUNG=131072] navier-stokes score=2518 rssMB=12
+[QUENCH_GC_MAX_YOUNG=131072] raytrace score=2132 rssMB=12
+[QUENCH_GC_MAX_YOUNG=131072] regexp score=1292 rssMB=18
+[QUENCH_GC_MAX_YOUNG=131072] richards score=1357 rssMB=12
+[QUENCH_GC_MAX_YOUNG=131072] splay score=5553 rssMB=92
+[QUENCH_GC_MAX_YOUNG=65536] crypto score=2197 rssMB=12
+[QUENCH_GC_MAX_YOUNG=65536] deltablue score=1047 rssMB=12
+[QUENCH_GC_MAX_YOUNG=65536] earley-boyer score=2005 rssMB=18
+[QUENCH_GC_MAX_YOUNG=65536] navier-stokes score=2375 rssMB=12
+[QUENCH_GC_MAX_YOUNG=65536] raytrace score=2273 rssMB=12
+[QUENCH_GC_MAX_YOUNG=65536] regexp score=1172 rssMB=15
+[QUENCH_GC_MAX_YOUNG=65536] richards score=1267 rssMB=12
+[QUENCH_GC_MAX_YOUNG=65536] splay score=6012 rssMB=92

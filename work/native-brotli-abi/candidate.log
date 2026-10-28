@@ -1,0 +1,11 @@
+constructor BrotliEncoder BrotliEncoder 0 true
+constructor BrotliDecoder BrotliDecoder 0 true
+sync 1763140044dd96ea527e6a5317848bf0cf607c18d602180038fd9888bace8d7689470be35b0d00 true
+async 1763140044dd96ea527e6a5317848bf0cf607c18d602180038fd9888bace8d7689470be35b0d00 true
+sync 1763140044dd96ea527e6a5317848bf0cf607c18d602180038fd9888bace8d7689470be35b0d00 true
+async 1763140044dd96ea527e6a5317848bf0cf607c18d602180038fd9888bace8d7689470be35b0d00 true
+error Error ERR__ERROR_FORMAT_PADDING_2 -15 Decompression failed
+error Error Z_BUF_ERROR -5 unexpected end of file
+dictionary reference 12 1004 true
+init callback Setting parameter failed -1 ERR_BROTLI_PARAM_SET_FAILED
+init throw Error ERR_ZLIB_INITIALIZATION_FAILED Initialization failed

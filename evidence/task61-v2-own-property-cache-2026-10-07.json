@@ -1,0 +1,1429 @@
+{
+  "binding_time_decision": {
+    "dynamic": "Property value stays dynamic and is loaded on every hit.",
+    "fallback": "Inherited, accessor, exotic, missing-slot, and non-specialized reads use the generic property resolver.",
+    "lisp_reduction": "FieldCache stores only receiver shape and slot. Method-call guards use their own MethodGuard representation because holder, prototype depth, callee identity, and call target are different facts.",
+    "quasi_static": "Receiver shape and slot are guarded at the site.",
+    "static": "Property atom and field-site id are resolved during lowering."
+  },
+  "candidate": {
+    "baseline_binary": {
+      "path": "target/iteration/stageb-pilots/quench-node-own-field-baseline",
+      "sha256": "cbd7d2d870c2d0e8efdfcaf596e8de0741bae1f12627dc9e5820b129d05e2218"
+    },
+    "candidate_binary": {
+      "path": "target/iteration/stageb-pilots/quench-node-own-cache8",
+      "sha256": "7d1398b46806ee67ab1d7c25929e138d419100ed62f6f3eadc17dde6a2d8650f"
+    },
+    "decision": "retain provisionally for Stage B follow-up; not final qualification",
+    "scope": "V2 task 128-shaped own-property cache plus a distinct method-cache guard representation and callee-identity check. Measurements cannot attribute all effects to field caching alone.",
+    "source_files_sha256": {
+      "crates/quench-runtime-next/src/vm.rs": "3b238b7a58518c7715ccc1ab83a83f86902e911427eaf09d781e581ed16d80cd",
+      "crates/quench-runtime-next/src/vm/field_cache.rs": "90717eeddcbde0affc52adaafb9e0701e19fa45f4b0936cd1eb687e6d86d5f4c",
+      "crates/quench-runtime-next/src/vm/method_cache.rs": "cc2d0746c2ba4974bbbefad6beb346fca23e1d51168916d8a333ca578f18cb7e",
+      "crates/quench-runtime-next/src/vm/object.rs": "3c16c9ee26fc9f595e132bb909a7ec15eaf6c529bfe80f7f0279eb15ac68c647",
+      "crates/quench-runtime-next/src/vm/object_tests.rs": "d1618c40752fd0f07ee4914f9b46aff1f377fd1a55ba470764ae936dc32123ef"
+    }
+  },
+  "correctness": {
+    "cargo_check": "cargo check --profile iteration -p quench-runtime-next --lib passed.",
+    "framework_scenarios": "Express, Koa, and Fastify candidate outputs matched local Node: status sequence 200, 200, 200, 200, 404; Express ETag/304 path matched.",
+    "node_framework_core": "43/43 passed on candidate; no skips, failures, timeouts, crashes, or unclassified cases.",
+    "test262": {
+      "result": "11,669/11,669 and 140/140 passed on candidate; no full Test262 run.",
+      "stages": "8-11 and 35-39"
+    },
+    "unit_tests": "not run"
+  },
+  "created_utc_date": "2026-10-07",
+  "crypto_interleaved_quench_only_screen": {
+    "fixture_sha256": "5321d2ada9b61e01d5f281609513467cbaa7c0effb12c577ed08088d812453af",
+    "method": "5 AB/BA interleaved pairs; direct immutable binaries under /usr/bin/time -l. Output difference comparison included Score, which intentionally varies and is not a semantic-output comparison. No keep/qualification claim from five pairs.",
+    "pairs": [
+      {
+        "baseline": {
+          "instructions": 858423647877,
+          "peak_rss_bytes": 31358976,
+          "score": 125.0
+        },
+        "candidate": {
+          "instructions": 834414452268,
+          "peak_rss_bytes": 37781504,
+          "score": 115.0
+        },
+        "instructions_delta": -24009195609,
+        "pair": 1,
+        "rss_delta_bytes": 6422528,
+        "score_delta": -10.0
+      },
+      {
+        "baseline": {
+          "instructions": 857498594811,
+          "peak_rss_bytes": 35356672,
+          "score": 122.0
+        },
+        "candidate": {
+          "instructions": 858016161935,
+          "peak_rss_bytes": 29392896,
+          "score": 129.0
+        },
+        "instructions_delta": 517567124,
+        "pair": 2,
+        "rss_delta_bytes": -5963776,
+        "score_delta": 7.0
+      },
+      {
+        "baseline": {
+          "instructions": 858178628289,
+          "peak_rss_bytes": 27131904,
+          "score": 131.0
+        },
+        "candidate": {
+          "instructions": 858035535690,
+          "peak_rss_bytes": 29442048,
+          "score": 130.0
+        },
+        "instructions_delta": -143092599,
+        "pair": 3,
+        "rss_delta_bytes": 2310144,
+        "score_delta": -1.0
+      },
+      {
+        "baseline": {
+          "instructions": 858244779587,
+          "peak_rss_bytes": 28327936,
+          "score": 132.0
+        },
+        "candidate": {
+          "instructions": 858008417225,
+          "peak_rss_bytes": 29327360,
+          "score": 132.0
+        },
+        "instructions_delta": -236362362,
+        "pair": 4,
+        "rss_delta_bytes": 999424,
+        "score_delta": 0.0
+      },
+      {
+        "baseline": {
+          "instructions": 858257964154,
+          "peak_rss_bytes": 27000832,
+          "score": 129.0
+        },
+        "candidate": {
+          "instructions": 830661712966,
+          "peak_rss_bytes": 33079296,
+          "score": 85.5
+        },
+        "instructions_delta": -27596251188,
+        "pair": 5,
+        "rss_delta_bytes": 6078464,
+        "score_delta": -43.5
+      }
+    ],
+    "summary": {
+      "instructions": {
+        "baseline_median": 858244779587,
+        "candidate_median": 858008417225,
+        "paired_delta_median": -236362362
+      },
+      "peak_rss_bytes": {
+        "baseline_median": 28327936,
+        "candidate_median": 29442048,
+        "paired_delta_median": 2310144
+      },
+      "score": {
+        "baseline_median": 129.0,
+        "candidate_median": 129.0,
+        "paired_delta_median": -1.0
+      }
+    },
+    "wrapper_sha256": "be34ee88fb6599c8f05415c6a553028079d22df20db1ab304376ea0e1a805438"
+  },
+  "instrumented_profile": {
+    "binary": "target/iteration/cache-profile/production/quench-node",
+    "binary_sha256": "df2dbaafc3431f02f9e73dc2ce1000e91128d95f21687f2758fb70e5d57b0a08",
+    "crypto_counts": {
+      "field_cache_depths": [
+        18705838,
+        0,
+        0
+      ],
+      "field_cache_hits": 18705838,
+      "field_cache_misses": 2705375,
+      "field_cache_tiers": [
+        18641966,
+        0,
+        63872
+      ],
+      "method_cache_hits": 0,
+      "method_cache_misses": 0
+    },
+    "feature": "quench-runtime-next/profile-aggregate",
+    "limitation": "Candidate field entries are own-only, so hits imply own properties; misses conflate initial fills and generic fallback. The profile emits counts then panics in dispatch-opcode accounting (12 recorded vs 1,548,337,832 physical executions). Instrumentation invalidates Score/RSS.",
+    "navier_stokes_attempt": {
+      "status": "timed out after 120 seconds with no Score or profile record; excluded from all performance claims."
+    }
+  },
+  "kind": "stage-b-own-property-field-cache-pre-gate",
+  "paired_quench_samples": {
+    "deltablue": {
+      "fixture_sha256": "74b5a95f4877701073c6efef08e4ae306562747067e292925b69cbd629a511b9",
+      "pairs": [
+        {
+          "baseline": {
+            "instructions": 96552336312,
+            "peak_rss_bytes": 27492352,
+            "score": 66.1,
+            "status": 0,
+            "timed_out": false
+          },
+          "candidate": {
+            "instructions": 101368333251,
+            "peak_rss_bytes": 28573696,
+            "score": 41.2,
+            "status": 0,
+            "timed_out": false
+          },
+          "order": [
+            "baseline",
+            "candidate"
+          ],
+          "pair": 1,
+          "rss_delta_bytes": 1081344,
+          "score_delta": -24.89999999999999
+        },
+        {
+          "baseline": {
+            "instructions": 101137228605,
+            "peak_rss_bytes": 25411584,
+            "score": 70.0,
+            "status": 0,
+            "timed_out": false
+          },
+          "candidate": {
+            "instructions": 101206990217,
+            "peak_rss_bytes": 23822336,
+            "score": 67.0,
+            "status": 0,
+            "timed_out": false
+          },
+          "order": [
+            "candidate",
+            "baseline"
+          ],
+          "pair": 2,
+          "rss_delta_bytes": -1589248,
+          "score_delta": -3.0
+        },
+        {
+          "baseline": {
+            "instructions": 101326795268,
+            "peak_rss_bytes": 28442624,
+            "score": 51.2,
+            "status": 0,
+            "timed_out": false
+          },
+          "candidate": {
+            "instructions": 115404934644,
+            "peak_rss_bytes": 26705920,
+            "score": 62.9,
+            "status": 0,
+            "timed_out": false
+          },
+          "order": [
+            "baseline",
+            "candidate"
+          ],
+          "pair": 3,
+          "rss_delta_bytes": -1736704,
+          "score_delta": 11.699999999999996
+        },
+        {
+          "baseline": {
+            "instructions": 98854440655,
+            "peak_rss_bytes": 26558464,
+            "score": 68.0,
+            "status": 0,
+            "timed_out": false
+          },
+          "candidate": {
+            "instructions": 115334544051,
+            "peak_rss_bytes": 24510464,
+            "score": 62.6,
+            "status": 0,
+            "timed_out": false
+          },
+          "order": [
+            "candidate",
+            "baseline"
+          ],
+          "pair": 4,
+          "rss_delta_bytes": -2048000,
+          "score_delta": -5.399999999999999
+        },
+        {
+          "baseline": {
+            "instructions": 101115951385,
+            "peak_rss_bytes": 24952832,
+            "score": 70.3,
+            "status": 0,
+            "timed_out": false
+          },
+          "candidate": {
+            "instructions": 101198552547,
+            "peak_rss_bytes": 25788416,
+            "score": 67.2,
+            "status": 0,
+            "timed_out": false
+          },
+          "order": [
+            "baseline",
+            "candidate"
+          ],
+          "pair": 5,
+          "rss_delta_bytes": 835584,
+          "score_delta": -3.0999999999999943
+        },
+        {
+          "baseline": {
+            "instructions": 117192192575,
+            "peak_rss_bytes": 26443776,
+            "score": 63.4,
+            "status": 0,
+            "timed_out": false
+          },
+          "candidate": {
+            "instructions": 103551784082,
+            "peak_rss_bytes": 25411584,
+            "score": 66.9,
+            "status": 0,
+            "timed_out": false
+          },
+          "order": [
+            "candidate",
+            "baseline"
+          ],
+          "pair": 6,
+          "rss_delta_bytes": -1032192,
+          "score_delta": 3.500000000000007
+        },
+        {
+          "baseline": {
+            "instructions": 117336032486,
+            "peak_rss_bytes": 26247168,
+            "score": 60.3,
+            "status": 0,
+            "timed_out": false
+          },
+          "candidate": {
+            "instructions": 124724574124,
+            "peak_rss_bytes": 26198016,
+            "score": 64.6,
+            "status": 0,
+            "timed_out": false
+          },
+          "order": [
+            "baseline",
+            "candidate"
+          ],
+          "pair": 7,
+          "rss_delta_bytes": -49152,
+          "score_delta": 4.299999999999997
+        },
+        {
+          "baseline": {
+            "instructions": 101133284533,
+            "peak_rss_bytes": 28098560,
+            "score": 70.2,
+            "status": 0,
+            "timed_out": false
+          },
+          "candidate": {
+            "instructions": 103553277650,
+            "peak_rss_bytes": 25313280,
+            "score": 66.7,
+            "status": 0,
+            "timed_out": false
+          },
+          "order": [
+            "candidate",
+            "baseline"
+          ],
+          "pair": 8,
+          "rss_delta_bytes": -2785280,
+          "score_delta": -3.5
+        },
+        {
+          "baseline": {
+            "instructions": 101139005521,
+            "peak_rss_bytes": 24739840,
+            "score": 70.2,
+            "status": 0,
+            "timed_out": false
+          },
+          "candidate": {
+            "instructions": 103555762006,
+            "peak_rss_bytes": 25198592,
+            "score": 66.3,
+            "status": 0,
+            "timed_out": false
+          },
+          "order": [
+            "baseline",
+            "candidate"
+          ],
+          "pair": 9,
+          "rss_delta_bytes": 458752,
+          "score_delta": -3.9000000000000057
+        },
+        {
+          "baseline": {
+            "instructions": 87546275586,
+            "peak_rss_bytes": 26771456,
+            "score": 54.6,
+            "status": 0,
+            "timed_out": false
+          },
+          "candidate": {
+            "instructions": 117644245635,
+            "peak_rss_bytes": 25133056,
+            "score": 64.2,
+            "status": 0,
+            "timed_out": false
+          },
+          "order": [
+            "candidate",
+            "baseline"
+          ],
+          "pair": 10,
+          "rss_delta_bytes": -1638400,
+          "score_delta": 9.600000000000001
+        },
+        {
+          "baseline": {
+            "instructions": 101127157606,
+            "peak_rss_bytes": 24395776,
+            "score": 67.5,
+            "status": 0,
+            "timed_out": false
+          },
+          "candidate": {
+            "instructions": 117668450018,
+            "peak_rss_bytes": 25788416,
+            "score": 64.8,
+            "status": 0,
+            "timed_out": false
+          },
+          "order": [
+            "baseline",
+            "candidate"
+          ],
+          "pair": 11,
+          "rss_delta_bytes": 1392640,
+          "score_delta": -2.700000000000003
+        }
+      ],
+      "reports": [
+        {
+          "path": "target/iteration/stageb-pilots/own-cache8-deltablue-1-baseline.json",
+          "sha256": "87afc05f0f6a275fcbf74b679331d0c44d9606ae3ce538f4a4dffc3ff9aaa7fa"
+        },
+        {
+          "path": "target/iteration/stageb-pilots/own-cache8-deltablue-1-candidate.json",
+          "sha256": "1b43792927be160583f34ce03d363fe25cca82ab686ae7737b71da8fee2f64a9"
+        },
+        {
+          "path": "target/iteration/stageb-pilots/own-cache8-deltablue-2-baseline.json",
+          "sha256": "1afd667a05fdd3f6ad4c2d4546997af218243e5f62c2e5b0f6df3e110035a555"
+        },
+        {
+          "path": "target/iteration/stageb-pilots/own-cache8-deltablue-2-candidate.json",
+          "sha256": "8f8f34761c9966ecea463343884c3dca56d37f4de72ab23cfcc18c4986d9a512"
+        },
+        {
+          "path": "target/iteration/stageb-pilots/own-cache8-deltablue-3-baseline.json",
+          "sha256": "a9116a910252babb248a05a1033a8d8483650ae03dda4f06863b0bb88a459b54"
+        },
+        {
+          "path": "target/iteration/stageb-pilots/own-cache8-deltablue-3-candidate.json",
+          "sha256": "b8bb46f5f7c633db073dbdfe394100f785c3c46bfb84de2a229570146f083636"
+        },
+        {
+          "path": "target/iteration/stageb-pilots/own-cache8-deltablue-4-baseline.json",
+          "sha256": "dee05c8b64ddba61dd0c1357b386a0355f6c8e17a4caa6adc030bfd321e3ce16"
+        },
+        {
+          "path": "target/iteration/stageb-pilots/own-cache8-deltablue-4-candidate.json",
+          "sha256": "8512526254f148124c473d9235a55354a7e1f3667d187107bc354b1d8f400636"
+        },
+        {
+          "path": "target/iteration/stageb-pilots/own-cache8-deltablue-5-baseline.json",
+          "sha256": "d518c7a2240b01d2ad3fda78b387bcb6d521cdb68b32d7422db265b419eb850b"
+        },
+        {
+          "path": "target/iteration/stageb-pilots/own-cache8-deltablue-5-candidate.json",
+          "sha256": "cd6ae558fc653fb94119d9651da901a289bd3a501e01c2f3ffca78c90f8041c9"
+        },
+        {
+          "path": "target/iteration/stageb-pilots/own-cache8-deltablue-6-baseline.json",
+          "sha256": "13748cc405175c924b9afb4b3dee6bbcb742db33ed2197ccc8a9db9f6d93185d"
+        },
+        {
+          "path": "target/iteration/stageb-pilots/own-cache8-deltablue-6-candidate.json",
+          "sha256": "29bf2772340599fc44d7f98f2d580e6f1ae377d9e60743ecf431b71722eaa010"
+        },
+        {
+          "path": "target/iteration/stageb-pilots/own-cache8-deltablue-7-baseline.json",
+          "sha256": "c600d1c822fda66aa7c9ef182b7510a27a561f5eda1df23d1b9c1d2a140c9655"
+        },
+        {
+          "path": "target/iteration/stageb-pilots/own-cache8-deltablue-7-candidate.json",
+          "sha256": "599e9fd9fec3be649b521c523720b0a12bf7fb68fb654f1b0bd6f8d1b221d010"
+        },
+        {
+          "path": "target/iteration/stageb-pilots/own-cache8-deltablue-8-baseline.json",
+          "sha256": "7a2e938ff963192ca9f33072fb6843f4cb4234d50da18f98c7338f0ff42f41bf"
+        },
+        {
+          "path": "target/iteration/stageb-pilots/own-cache8-deltablue-8-candidate.json",
+          "sha256": "dff9e6fc5f8c18ba9b13f143eaf135b2df747ff08702058cae85f5b3a0c296c5"
+        },
+        {
+          "path": "target/iteration/stageb-pilots/own-cache8-deltablue-9-baseline.json",
+          "sha256": "c3ef8445c318ee6cea79e74b39cd302d833f9b27be9e0be852e6b22327f2607b"
+        },
+        {
+          "path": "target/iteration/stageb-pilots/own-cache8-deltablue-9-candidate.json",
+          "sha256": "e0f1c3abf2a9706cdfa2ca65c5aad8b95b294927f4b26efe8c55f4ac6e8c6d4e"
+        },
+        {
+          "path": "target/iteration/stageb-pilots/own-cache8-deltablue-10-baseline.json",
+          "sha256": "38484d5f11ead56452378302936b9dced78402569eb7b6b4c7576275bddbdc7f"
+        },
+        {
+          "path": "target/iteration/stageb-pilots/own-cache8-deltablue-10-candidate.json",
+          "sha256": "f2bcb0b892fe63e62a3df3abdd73c5b2835cb683b1dee14dff3849a5668c276f"
+        },
+        {
+          "path": "target/iteration/stageb-pilots/own-cache8-deltablue-11-baseline.json",
+          "sha256": "cabcab51d17c844f36d68fe9af6c138f92ec97298d367d508237620751ecab4e"
+        },
+        {
+          "path": "target/iteration/stageb-pilots/own-cache8-deltablue-11-candidate.json",
+          "sha256": "a6cfe417d4c5762300307a448ee4951f14b3e9637eb5ac8807f01151f927c929"
+        }
+      ],
+      "summary": {
+        "maximum_rss_bytes": {
+          "baseline_median": 26443776,
+          "bootstrap_95_percentile_ci": [
+            -1736704,
+            835584
+          ],
+          "candidate_median": 25411584,
+          "paired_delta_median": -1032192
+        },
+        "score": {
+          "baseline_median": 67.5,
+          "bootstrap_95_percentile_ci": [
+            -3.9000000000000057,
+            4.299999999999997
+          ],
+          "candidate_median": 64.8,
+          "paired_delta_median": -3.0
+        }
+      }
+    },
+    "richards": {
+      "fixture_sha256": "d86eac4108343a54ba6e10621a77b46f82f554c3b0a46e8fb4032d5cf65a2a11",
+      "pairs": [
+        {
+          "baseline": {
+            "instructions": 79048074817,
+            "peak_rss_bytes": 23691264,
+            "score": 76.0,
+            "status": 0,
+            "timed_out": false
+          },
+          "candidate": {
+            "instructions": 78096957411,
+            "peak_rss_bytes": 22659072,
+            "score": 75.3,
+            "status": 0,
+            "timed_out": false
+          },
+          "order": [
+            "baseline",
+            "candidate"
+          ],
+          "pair": 1,
+          "rss_delta_bytes": -1032192,
+          "score_delta": -0.7000000000000028
+        },
+        {
+          "baseline": {
+            "instructions": 77863870564,
+            "peak_rss_bytes": 24444928,
+            "score": 74.9,
+            "status": 0,
+            "timed_out": false
+          },
+          "candidate": {
+            "instructions": 79290763190,
+            "peak_rss_bytes": 24494080,
+            "score": 76.2,
+            "status": 0,
+            "timed_out": false
+          },
+          "order": [
+            "candidate",
+            "baseline"
+          ],
+          "pair": 2,
+          "rss_delta_bytes": 49152,
+          "score_delta": 1.2999999999999972
+        },
+        {
+          "baseline": {
+            "instructions": 79037837527,
+            "peak_rss_bytes": 23527424,
+            "score": 76.3,
+            "status": 0,
+            "timed_out": false
+          },
+          "candidate": {
+            "instructions": 79302442289,
+            "peak_rss_bytes": 24412160,
+            "score": 75.9,
+            "status": 0,
+            "timed_out": false
+          },
+          "order": [
+            "baseline",
+            "candidate"
+          ],
+          "pair": 3,
+          "rss_delta_bytes": 884736,
+          "score_delta": -0.3999999999999915
+        },
+        {
+          "baseline": {
+            "instructions": 79023054573,
+            "peak_rss_bytes": 22790144,
+            "score": 76.3,
+            "status": 0,
+            "timed_out": false
+          },
+          "candidate": {
+            "instructions": 79289629963,
+            "peak_rss_bytes": 23576576,
+            "score": 75.7,
+            "status": 0,
+            "timed_out": false
+          },
+          "order": [
+            "candidate",
+            "baseline"
+          ],
+          "pair": 4,
+          "rss_delta_bytes": 786432,
+          "score_delta": -0.5999999999999943
+        },
+        {
+          "baseline": {
+            "instructions": 79038735603,
+            "peak_rss_bytes": 25575424,
+            "score": 76.5,
+            "status": 0,
+            "timed_out": false
+          },
+          "candidate": {
+            "instructions": 79293615996,
+            "peak_rss_bytes": 23494656,
+            "score": 75.6,
+            "status": 0,
+            "timed_out": false
+          },
+          "order": [
+            "baseline",
+            "candidate"
+          ],
+          "pair": 5,
+          "rss_delta_bytes": -2080768,
+          "score_delta": -0.9000000000000057
+        },
+        {
+          "baseline": {
+            "instructions": 80242734875,
+            "peak_rss_bytes": 22560768,
+            "score": 77.2,
+            "status": 0,
+            "timed_out": false
+          },
+          "candidate": {
+            "instructions": 79290709738,
+            "peak_rss_bytes": 22757376,
+            "score": 75.9,
+            "status": 0,
+            "timed_out": false
+          },
+          "order": [
+            "candidate",
+            "baseline"
+          ],
+          "pair": 6,
+          "rss_delta_bytes": 196608,
+          "score_delta": -1.2999999999999972
+        },
+        {
+          "baseline": {
+            "instructions": 79040087943,
+            "peak_rss_bytes": 23920640,
+            "score": 75.8,
+            "status": 0,
+            "timed_out": false
+          },
+          "candidate": {
+            "instructions": 79292078502,
+            "peak_rss_bytes": 23855104,
+            "score": 76.5,
+            "status": 0,
+            "timed_out": false
+          },
+          "order": [
+            "baseline",
+            "candidate"
+          ],
+          "pair": 7,
+          "rss_delta_bytes": -65536,
+          "score_delta": 0.7000000000000028
+        },
+        {
+          "baseline": {
+            "instructions": 76676667120,
+            "peak_rss_bytes": 22904832,
+            "score": 74.0,
+            "status": 0,
+            "timed_out": false
+          },
+          "candidate": {
+            "instructions": 78111692088,
+            "peak_rss_bytes": 24526848,
+            "score": 73.4,
+            "status": 0,
+            "timed_out": false
+          },
+          "order": [
+            "candidate",
+            "baseline"
+          ],
+          "pair": 8,
+          "rss_delta_bytes": 1622016,
+          "score_delta": -0.5999999999999943
+        },
+        {
+          "baseline": {
+            "instructions": 79039345596,
+            "peak_rss_bytes": 23887872,
+            "score": 76.6,
+            "status": 0,
+            "timed_out": false
+          },
+          "candidate": {
+            "instructions": 79306823770,
+            "peak_rss_bytes": 23543808,
+            "score": 75.7,
+            "status": 0,
+            "timed_out": false
+          },
+          "order": [
+            "baseline",
+            "candidate"
+          ],
+          "pair": 9,
+          "rss_delta_bytes": -344064,
+          "score_delta": -0.8999999999999915
+        },
+        {
+          "baseline": {
+            "instructions": 64760337604,
+            "peak_rss_bytes": 26263552,
+            "score": 60.8,
+            "status": 0,
+            "timed_out": false
+          },
+          "candidate": {
+            "instructions": 79289562798,
+            "peak_rss_bytes": 24707072,
+            "score": 75.6,
+            "status": 0,
+            "timed_out": false
+          },
+          "order": [
+            "candidate",
+            "baseline"
+          ],
+          "pair": 10,
+          "rss_delta_bytes": -1556480,
+          "score_delta": 14.799999999999997
+        },
+        {
+          "baseline": {
+            "instructions": 77852894101,
+            "peak_rss_bytes": 23527424,
+            "score": 75.1,
+            "status": 0,
+            "timed_out": false
+          },
+          "candidate": {
+            "instructions": 79305765724,
+            "peak_rss_bytes": 23379968,
+            "score": 75.4,
+            "status": 0,
+            "timed_out": false
+          },
+          "order": [
+            "baseline",
+            "candidate"
+          ],
+          "pair": 11,
+          "rss_delta_bytes": -147456,
+          "score_delta": 0.30000000000001137
+        }
+      ],
+      "reports": [
+        {
+          "path": "target/iteration/stageb-pilots/own-cache8-richards-1-baseline.json",
+          "sha256": "3bd4183d245a2cad879baaa5ef14a817a3209a4ac27209a689a4e58694be24c5"
+        },
+        {
+          "path": "target/iteration/stageb-pilots/own-cache8-richards-1-candidate.json",
+          "sha256": "37c658c0ff15236030b4fc36dbc5b977157f4dc7471fff7ba3c5edbe160e62ad"
+        },
+        {
+          "path": "target/iteration/stageb-pilots/own-cache8-richards-2-baseline.json",
+          "sha256": "af8885b548387ad99db0a957cc39ff590459db42722fd160e91c753be41f8813"
+        },
+        {
+          "path": "target/iteration/stageb-pilots/own-cache8-richards-2-candidate.json",
+          "sha256": "a78dfb0ce4f6ab2610b257c7ed6198b534fd6b813290082e1bf8d9fc2723dc33"
+        },
+        {
+          "path": "target/iteration/stageb-pilots/own-cache8-richards-3-baseline.json",
+          "sha256": "a52ec373a97de4398ff5d0a5093b4e4019ea7971cb96f7c578c69724634b9e6e"
+        },
+        {
+          "path": "target/iteration/stageb-pilots/own-cache8-richards-3-candidate.json",
+          "sha256": "fc2d862326af8e3779c8fad9372e291d5b2671212bc81f05ab5a556a0f9c1ad8"
+        },
+        {
+          "path": "target/iteration/stageb-pilots/own-cache8-richards-4-baseline.json",
+          "sha256": "46df0bffd78134d9fe8778b777b26940a1b6812fa9e07c8ea6db4fe1e6fc75d8"
+        },
+        {
+          "path": "target/iteration/stageb-pilots/own-cache8-richards-4-candidate.json",
+          "sha256": "25a64c967bc864b63ce548cf909e188d907fb75aaec567818d8969f8965a734a"
+        },
+        {
+          "path": "target/iteration/stageb-pilots/own-cache8-richards-5-baseline.json",
+          "sha256": "179d8cd7adc8b7132bb47ebd87d0f68bc2f24eb90d005acba904b135079d84ff"
+        },
+        {
+          "path": "target/iteration/stageb-pilots/own-cache8-richards-5-candidate.json",
+          "sha256": "6bae3980e31cc42d585132be0377175b796af1c11615079ea034f8d8222b460d"
+        },
+        {
+          "path": "target/iteration/stageb-pilots/own-cache8-richards-6-baseline.json",
+          "sha256": "56490ced1fdaa1f93ab96d16aff96b6eb21d37c2256ebeebcf0808b5dc505d22"
+        },
+        {
+          "path": "target/iteration/stageb-pilots/own-cache8-richards-6-candidate.json",
+          "sha256": "c4aee15b5580cf8425bd2c85e3b4092b2a981ccf93f0357b0dabab9cb5a81847"
+        },
+        {
+          "path": "target/iteration/stageb-pilots/own-cache8-richards-7-baseline.json",
+          "sha256": "aff0b68f44f1f76cfd3d15ce19a8d605d0d69928ae3b1c911179abe2fd766145"
+        },
+        {
+          "path": "target/iteration/stageb-pilots/own-cache8-richards-7-candidate.json",
+          "sha256": "9eb7a26fa9069d0bbbb4240eef5f1044fb0bb9812fa11cad78dc69aaadd2cc9a"
+        },
+        {
+          "path": "target/iteration/stageb-pilots/own-cache8-richards-8-baseline.json",
+          "sha256": "e559d279abc27a97a38251dad0341373731ecc6eaf81a4a01893aa4385b242f1"
+        },
+        {
+          "path": "target/iteration/stageb-pilots/own-cache8-richards-8-candidate.json",
+          "sha256": "2bbe9b144491e778e77df5af1c7fe33e2967154b2f371957df341a31b277bae0"
+        },
+        {
+          "path": "target/iteration/stageb-pilots/own-cache8-richards-9-baseline.json",
+          "sha256": "f44c75a2127fbf712465e09dbe96bd48ec48b7e205ca224e9eadde7368dfd84e"
+        },
+        {
+          "path": "target/iteration/stageb-pilots/own-cache8-richards-9-candidate.json",
+          "sha256": "6bb4a7bca9d2f1094fcd0f27ead81711cb080312b6cb243ccb9fc249a0abfcdc"
+        },
+        {
+          "path": "target/iteration/stageb-pilots/own-cache8-richards-10-baseline.json",
+          "sha256": "dbbb79728dd5b28f6fae31113f29e87efedf1c0dfb2c94b86d2c54a069098fe5"
+        },
+        {
+          "path": "target/iteration/stageb-pilots/own-cache8-richards-10-candidate.json",
+          "sha256": "fbf3e0699cc08383f95731b4a6a73be71beb2b873aaeefb731d7b2cb55924336"
+        },
+        {
+          "path": "target/iteration/stageb-pilots/own-cache8-richards-11-baseline.json",
+          "sha256": "73989448b9193c10996ee6694f6a8e03c30e65e46de776d0bbb220649ee5c457"
+        },
+        {
+          "path": "target/iteration/stageb-pilots/own-cache8-richards-11-candidate.json",
+          "sha256": "85b223f0a0f643017c751aa3ab7223b5da5ccad2bc56c6e29c149d3678f0577e"
+        }
+      ],
+      "summary": {
+        "maximum_rss_bytes": {
+          "baseline_median": 23691264,
+          "bootstrap_95_percentile_ci": [
+            -1032192,
+            786432
+          ],
+          "candidate_median": 23576576,
+          "paired_delta_median": -65536
+        },
+        "score": {
+          "baseline_median": 76.0,
+          "bootstrap_95_percentile_ci": [
+            -0.8999999999999915,
+            0.7000000000000028
+          ],
+          "candidate_median": 75.7,
+          "paired_delta_median": -0.5999999999999943
+        }
+      }
+    },
+    "splay": {
+      "fixture_sha256": "1f875cec579d03af40d256ceaeb6823f3ef16c883652650ca51d183472a8185d",
+      "pairs": [
+        {
+          "baseline": {
+            "instructions": 63833321864,
+            "peak_rss_bytes": 309264384,
+            "score": 1223.0,
+            "status": 0,
+            "timed_out": false
+          },
+          "candidate": {
+            "instructions": 61540291662,
+            "peak_rss_bytes": 308527104,
+            "score": 1293.0,
+            "status": 0,
+            "timed_out": false
+          },
+          "order": [
+            "baseline",
+            "candidate"
+          ],
+          "pair": 1,
+          "rss_delta_bytes": -737280,
+          "score_delta": 70.0
+        },
+        {
+          "baseline": {
+            "instructions": 58364481193,
+            "peak_rss_bytes": 308658176,
+            "score": 985.0,
+            "status": 0,
+            "timed_out": false
+          },
+          "candidate": {
+            "instructions": 61000027335,
+            "peak_rss_bytes": 309280768,
+            "score": 1299.0,
+            "status": 0,
+            "timed_out": false
+          },
+          "order": [
+            "candidate",
+            "baseline"
+          ],
+          "pair": 2,
+          "rss_delta_bytes": 622592,
+          "score_delta": 314.0
+        },
+        {
+          "baseline": {
+            "instructions": 56705248855,
+            "peak_rss_bytes": 305577984,
+            "score": 941.0,
+            "status": 0,
+            "timed_out": false
+          },
+          "candidate": {
+            "instructions": 43944515849,
+            "peak_rss_bytes": 299384832,
+            "score": 937.0,
+            "status": 0,
+            "timed_out": false
+          },
+          "order": [
+            "baseline",
+            "candidate"
+          ],
+          "pair": 3,
+          "rss_delta_bytes": -6193152,
+          "score_delta": -4.0
+        },
+        {
+          "baseline": {
+            "instructions": 63376364076,
+            "peak_rss_bytes": 307347456,
+            "score": 1199.0,
+            "status": 0,
+            "timed_out": false
+          },
+          "candidate": {
+            "instructions": 59854360344,
+            "peak_rss_bytes": 308346880,
+            "score": 1233.0,
+            "status": 0,
+            "timed_out": false
+          },
+          "order": [
+            "candidate",
+            "baseline"
+          ],
+          "pair": 4,
+          "rss_delta_bytes": 999424,
+          "score_delta": 34.0
+        },
+        {
+          "baseline": {
+            "instructions": 63238242420,
+            "peak_rss_bytes": 307789824,
+            "score": 1194.0,
+            "status": 0,
+            "timed_out": false
+          },
+          "candidate": {
+            "instructions": 61540207868,
+            "peak_rss_bytes": 308035584,
+            "score": 1305.0,
+            "status": 0,
+            "timed_out": false
+          },
+          "order": [
+            "baseline",
+            "candidate"
+          ],
+          "pair": 5,
+          "rss_delta_bytes": 245760,
+          "score_delta": 111.0
+        },
+        {
+          "baseline": {
+            "instructions": 63243195294,
+            "peak_rss_bytes": 309821440,
+            "score": 1198.0,
+            "status": 0,
+            "timed_out": false
+          },
+          "candidate": {
+            "instructions": 62088519842,
+            "peak_rss_bytes": 307920896,
+            "score": 1306.0,
+            "status": 0,
+            "timed_out": false
+          },
+          "order": [
+            "candidate",
+            "baseline"
+          ],
+          "pair": 6,
+          "rss_delta_bytes": -1900544,
+          "score_delta": 108.0
+        },
+        {
+          "baseline": {
+            "instructions": 63239788636,
+            "peak_rss_bytes": 308445184,
+            "score": 1191.0,
+            "status": 0,
+            "timed_out": false
+          },
+          "candidate": {
+            "instructions": 61685620942,
+            "peak_rss_bytes": 307855360,
+            "score": 1310.0,
+            "status": 0,
+            "timed_out": false
+          },
+          "order": [
+            "baseline",
+            "candidate"
+          ],
+          "pair": 7,
+          "rss_delta_bytes": -589824,
+          "score_delta": 119.0
+        },
+        {
+          "baseline": {
+            "instructions": 63711657219,
+            "peak_rss_bytes": 310132736,
+            "score": 1218.0,
+            "status": 0,
+            "timed_out": false
+          },
+          "candidate": {
+            "instructions": 59879034054,
+            "peak_rss_bytes": 306331648,
+            "score": 1236.0,
+            "status": 0,
+            "timed_out": false
+          },
+          "order": [
+            "candidate",
+            "baseline"
+          ],
+          "pair": 8,
+          "rss_delta_bytes": -3801088,
+          "score_delta": 18.0
+        },
+        {
+          "baseline": {
+            "instructions": 63542216898,
+            "peak_rss_bytes": 308592640,
+            "score": 1214.0,
+            "status": 0,
+            "timed_out": false
+          },
+          "candidate": {
+            "instructions": 61824173387,
+            "peak_rss_bytes": 308740096,
+            "score": 1313.0,
+            "status": 0,
+            "timed_out": false
+          },
+          "order": [
+            "baseline",
+            "candidate"
+          ],
+          "pair": 9,
+          "rss_delta_bytes": 147456,
+          "score_delta": 99.0
+        },
+        {
+          "baseline": {
+            "instructions": 63690746703,
+            "peak_rss_bytes": 307494912,
+            "score": 1217.0,
+            "status": 0,
+            "timed_out": false
+          },
+          "candidate": {
+            "instructions": 61671438527,
+            "peak_rss_bytes": 310083584,
+            "score": 1307.0,
+            "status": 0,
+            "timed_out": false
+          },
+          "order": [
+            "candidate",
+            "baseline"
+          ],
+          "pair": 10,
+          "rss_delta_bytes": 2588672,
+          "score_delta": 90.0
+        },
+        {
+          "baseline": {
+            "instructions": 63419830769,
+            "peak_rss_bytes": 307904512,
+            "score": 1201.0,
+            "status": 0,
+            "timed_out": false
+          },
+          "candidate": {
+            "instructions": 62242742019,
+            "peak_rss_bytes": 310247424,
+            "score": 1331.0,
+            "status": 0,
+            "timed_out": false
+          },
+          "order": [
+            "baseline",
+            "candidate"
+          ],
+          "pair": 11,
+          "rss_delta_bytes": 2342912,
+          "score_delta": 130.0
+        }
+      ],
+      "reports": [
+        {
+          "path": "target/iteration/stageb-pilots/own-cache8-splay-1-baseline.json",
+          "sha256": "4c74744f9af42e3bb1ec164c228bd934c78dba76603dd9edfa226a84b002dff9"
+        },
+        {
+          "path": "target/iteration/stageb-pilots/own-cache8-splay-1-candidate.json",
+          "sha256": "9266399759cd5948fce289559b37c22c9e920e3c621a98a475787ac2bd8a8345"
+        },
+        {
+          "path": "target/iteration/stageb-pilots/own-cache8-splay-2-baseline.json",
+          "sha256": "346ad8a9cacf0d76e1eeb5005a95f16eb89b6c51799d90ae29916eb0a09ff35c"
+        },
+        {
+          "path": "target/iteration/stageb-pilots/own-cache8-splay-2-candidate.json",
+          "sha256": "346586b505ab2c8029dd09ca1adb5107681f95183bc1d23ec2f830db2ec5ebcf"
+        },
+        {
+          "path": "target/iteration/stageb-pilots/own-cache8-splay-3-baseline.json",
+          "sha256": "16e25532a27e2588ca9f1016061ba640d01dde5d90a5384088b6d197a14b3bf5"
+        },
+        {
+          "path": "target/iteration/stageb-pilots/own-cache8-splay-3-candidate.json",
+          "sha256": "00c8a1a4c8387a1f22dd5c8d55f671c4641b3c618369c45028ab7cab6c5034b2"
+        },
+        {
+          "path": "target/iteration/stageb-pilots/own-cache8-splay-4-baseline.json",
+          "sha256": "e0f874b5a6ac7f7744b5886b7210479cd564d3e9426d0e6946223fcad7a3212e"
+        },
+        {
+          "path": "target/iteration/stageb-pilots/own-cache8-splay-4-candidate.json",
+          "sha256": "8d21cabf06f5dab095bcd41df40074e3c3ba1ed88879fe39fde8bb97656422fb"
+        },
+        {
+          "path": "target/iteration/stageb-pilots/own-cache8-splay-5-baseline.json",
+          "sha256": "75e75792cb61918088b193e3f1fadbcb7cd7448ddbaa62b6e7ace12aac80e1b3"
+        },
+        {
+          "path": "target/iteration/stageb-pilots/own-cache8-splay-5-candidate.json",
+          "sha256": "39c4002eef9eda5289c99f1edde066e4440813f057d6185494ae64e0713a919f"
+        },
+        {
+          "path": "target/iteration/stageb-pilots/own-cache8-splay-6-baseline.json",
+          "sha256": "9d00e65c5dea1a9bdad0c77a133c76a5d692c062e06b5b95b83d011fc5359ee2"
+        },
+        {
+          "path": "target/iteration/stageb-pilots/own-cache8-splay-6-candidate.json",
+          "sha256": "9fb1c0763a0a1ef17cc27d5be590f630b56c4c5af703c78cfae146e6161ffb9b"
+        },
+        {
+          "path": "target/iteration/stageb-pilots/own-cache8-splay-7-baseline.json",
+          "sha256": "cb2937971afa60cd40898ec40f1e261f20267f0f3afaaca823ce9c23895a900b"
+        },
+        {
+          "path": "target/iteration/stageb-pilots/own-cache8-splay-7-candidate.json",
+          "sha256": "a49eef2bcd8ce4fee9038ac852880d81b787de665a66fea14672d719c707adf1"
+        },
+        {
+          "path": "target/iteration/stageb-pilots/own-cache8-splay-8-baseline.json",
+          "sha256": "84872e51447af79adc538a77d49f31976e31b82e2c83ae850dde3562dafd7190"
+        },
+        {
+          "path": "target/iteration/stageb-pilots/own-cache8-splay-8-candidate.json",
+          "sha256": "21b2da50faf996729583cc3103ce61323295938c508df637f6ca7d71e42ec86c"
+        },
+        {
+          "path": "target/iteration/stageb-pilots/own-cache8-splay-9-baseline.json",
+          "sha256": "6a3bd552393c2dff2fbd487b7510169070fe6d6c7402887539b869d635c9a90b"
+        },
+        {
+          "path": "target/iteration/stageb-pilots/own-cache8-splay-9-candidate.json",
+          "sha256": "dee6a9ef8496b1d66b667035c654b0e060650117aa3edea1a348cc278f2a2ab0"
+        },
+        {
+          "path": "target/iteration/stageb-pilots/own-cache8-splay-10-baseline.json",
+          "sha256": "4484657464d84b63b90037dc7b92d42e4a2d2cc3a6f282bd71b6bbdc6deaf541"
+        },
+        {
+          "path": "target/iteration/stageb-pilots/own-cache8-splay-10-candidate.json",
+          "sha256": "52477fcf6324961b3c9d4c7fe2eb429268f279db4873ec56e9c6a88927997d40"
+        },
+        {
+          "path": "target/iteration/stageb-pilots/own-cache8-splay-11-baseline.json",
+          "sha256": "5f464679f1e035ca1504bbf7fd01d8968af195ac320a41f85d51271f3e511e12"
+        },
+        {
+          "path": "target/iteration/stageb-pilots/own-cache8-splay-11-candidate.json",
+          "sha256": "96166cff041b4075b9e82e5a6800e6769fe1a289330799f6c474955b173b6ce6"
+        }
+      ],
+      "summary": {
+        "maximum_rss_bytes": {
+          "baseline_median": 308445184,
+          "bootstrap_95_percentile_ci": [
+            -1900544,
+            999424
+          ],
+          "candidate_median": 308346880,
+          "paired_delta_median": 147456
+        },
+        "score": {
+          "baseline_median": 1199.0,
+          "bootstrap_95_percentile_ci": [
+            34.0,
+            119.0
+          ],
+          "candidate_median": 1305.0,
+          "paired_delta_median": 99.0
+        }
+      }
+    }
+  },
+  "remaining_gate": "Run the matched 11-pair task 61 gate across all eight fixtures and all reference engines on a clean, frozen source snapshot; require paired Score and maximum-RSS intervals. Repair or replace the aggregate profile before using depth counters as a baseline census.",
+  "schema": 1,
+  "single_round_cross_screen": {
+    "fixtures": {
+      "crypto": {
+        "baseline": {
+          "instructions": 860868037429,
+          "peak_rss_bytes": 33226752,
+          "score": 131.0,
+          "status": 0,
+          "timed_out": false
+        },
+        "candidate": {
+          "instructions": 856532891801,
+          "peak_rss_bytes": 32178176,
+          "score": 98.0,
+          "status": 0,
+          "timed_out": false
+        },
+        "fixture_sha256": "5321d2ada9b61e01d5f281609513467cbaa7c0effb12c577ed08088d812453af",
+        "output_equal": true,
+        "reports": [
+          {
+            "path": "target/iteration/stageb-pilots/own-cache8-screen-crypto-baseline.json",
+            "sha256": "3d9ad189f8c4ba4ff7601d8205b29a307538b950c1344b5e4ba5b624c614ac52"
+          },
+          {
+            "path": "target/iteration/stageb-pilots/own-cache8-screen-crypto-candidate.json",
+            "sha256": "8bb680f7ef65b59e210ce9723013d6c4fa965b16ef9cd6d5d86210199b7cca0f"
+          }
+        ]
+      },
+      "earley-boyer": {
+        "baseline": {
+          "instructions": 841124543989,
+          "peak_rss_bytes": 70828032,
+          "score": 179.0,
+          "status": 0,
+          "timed_out": false
+        },
+        "candidate": {
+          "instructions": 776745281724,
+          "peak_rss_bytes": 68780032,
+          "score": 176.0,
+          "status": 0,
+          "timed_out": false
+        },
+        "fixture_sha256": "dbf3aeb6b3d056e8ea35b5f19aa8c8a4fb1053e41d07f096c22483b2c1c6ee01",
+        "output_equal": true,
+        "reports": [
+          {
+            "path": "target/iteration/stageb-pilots/own-cache8-screen-earley-boyer-baseline.json",
+            "sha256": "1d01c385ed498ce2c60b15d195dad5bad5cde6c9e472396dc0cf881172bd9f5b"
+          },
+          {
+            "path": "target/iteration/stageb-pilots/own-cache8-screen-earley-boyer-candidate.json",
+            "sha256": "f0e3f10615b484855047ca478c58b87479f5aa6a902ecdadf9a995c0d2f7ff27"
+          }
+        ]
+      },
+      "navier-stokes": {
+        "baseline": {
+          "instructions": 2222359693776,
+          "peak_rss_bytes": 31358976,
+          "score": 48.6,
+          "status": 0,
+          "timed_out": false
+        },
+        "candidate": {
+          "instructions": 2224338821909,
+          "peak_rss_bytes": 31473664,
+          "score": 40.9,
+          "status": 0,
+          "timed_out": false
+        },
+        "fixture_sha256": "ce241465ffeee77b5c4f7119f522aa971fe1fe92c3aed76f7514ea43e07fec84",
+        "output_equal": true,
+        "reports": [
+          {
+            "path": "target/iteration/stageb-pilots/own-cache8-screen-navier-stokes-baseline.json",
+            "sha256": "2acfbd1086e5debb699dd2fc61f8f008ca46907048bd9148c903e779f6584b7f"
+          },
+          {
+            "path": "target/iteration/stageb-pilots/own-cache8-screen-navier-stokes-candidate.json",
+            "sha256": "c3f94dd739e4a77ba75dfa2820ee8835873e92586c92976c56010f20eddf6842"
+          }
+        ]
+      },
+      "raytrace": {
+        "baseline": {
+          "instructions": 285701776785,
+          "peak_rss_bytes": 27049984,
+          "score": 216.0,
+          "status": 0,
+          "timed_out": false
+        },
+        "candidate": {
+          "instructions": 285072016682,
+          "peak_rss_bytes": 30965760,
+          "score": 211.0,
+          "status": 0,
+          "timed_out": false
+        },
+        "fixture_sha256": "d52183ca324cdb88d9ee3e78326433fe2ca28d6436f0a6c3ec013ab67cb798eb",
+        "output_equal": true,
+        "reports": [
+          {
+            "path": "target/iteration/stageb-pilots/own-cache8-screen-raytrace-baseline.json",
+            "sha256": "c3b371e2a48a1cd91c741dcef304c7c2ad02b198c4a7ccc2b8ce2aa13652d728"
+          },
+          {
+            "path": "target/iteration/stageb-pilots/own-cache8-screen-raytrace-candidate.json",
+            "sha256": "094bb1b08a2e73b122364b9677b12033a5621c61c001453b8ad5bf1a1e3f5688"
+          }
+        ]
+      },
+      "regexp": {
+        "baseline": {
+          "instructions": 2343590167155,
+          "peak_rss_bytes": 64929792,
+          "score": 30.1,
+          "status": 0,
+          "timed_out": false
+        },
+        "candidate": {
+          "instructions": 2352392212969,
+          "peak_rss_bytes": 61702144,
+          "score": 28.5,
+          "status": 0,
+          "timed_out": false
+        },
+        "fixture_sha256": "5268b0d15931fda4e331de35fc58e5beded9a250b60764e1cc7cfc898ab53602",
+        "output_equal": true,
+        "reports": [
+          {
+            "path": "target/iteration/stageb-pilots/own-cache8-screen-regexp-baseline.json",
+            "sha256": "ad91edd9157e16d2bcad02ea5620aa75b3088f34c03d780ff138e5a40278390b"
+          },
+          {
+            "path": "target/iteration/stageb-pilots/own-cache8-screen-regexp-candidate.json",
+            "sha256": "65d9d063f91e0269d1017e76db2af2584f28e2a96404a4905707e3323d95399c"
+          }
+        ]
+      }
+    },
+    "limit": "One sample per binary diagnoses only gross crashes/output divergence; score/RSS deltas are exploratory."
+  },
+  "source_dirty": true,
+  "source_revision": "d4f9735255c61b74cb81f80357331ae0d491ea1f",
+  "v2_basis": {
+    "commit": "8b10e72daad0244d1233eda5c3a18eaada24d98e",
+    "task_127": "Depth census showed own-property cache hits exceed 99.89% on Richards, DeltaBlue, and Splay.",
+    "task_128": "Own-only field cache retained; inherited reads returned to generic resolver; smaller cache. Seven-run predecessor comparison reported +27 Richards, +11 DeltaBlue, +36 Splay; RSS rose by one 16-KiB page on Richards/Splay and was flat on DeltaBlue. Later 11-run totals also include task 129."
+  }
+}

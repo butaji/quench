@@ -1,0 +1,251 @@
+{
+  "schema": 1,
+  "kind": "isolated_regexp_realm_legacy_state",
+  "base_commit": "c9b5d037d4daefcf08827e812ae2b5aafcba40d6",
+  "timestamp_utc": "2026-10-05T04:10:24.550685+00:00",
+  "staged_sources": {
+    "crates/quench-runtime-next/src/heap.rs": "5362f849af94c3cf3f67bd72a0e13e4e90bf6a4b7c135e0c0b550a6410dda48f",
+    "crates/quench-runtime-next/src/heap/cell.rs": "7bedceff123dc1a87374f5667537a597fc626b2b8ba7272856d8c2016bc32524",
+    "crates/quench-runtime-next/src/heap/tests.rs": "2a699deab93e0c88f20989a3ef0cc5a92dee9af71f4b123386ba04e155beb345",
+    "crates/quench-runtime-next/src/vm/regexp.rs": "9e99bb03b8586c0e2fabe8f51afac1a003d5a575aa87f89ffa75d4698f013ccf",
+    "crates/quench-runtime-next/src/vm/tests.rs": "3e44742b9c515324046aeed2576840eae4c27e8557aeff8bacf94731d3236c8b"
+  },
+  "suite_pin": "6eec1ac9ee144dafd8f344d73a21f36bfc9f6755",
+  "affected_test262": {
+    "profile": "release",
+    "jobs": 2,
+    "timeout_ms": 10000,
+    "distinct_cases": 1874,
+    "before_passed": 1872,
+    "after_passed": 1873,
+    "regressions": [],
+    "gained": ["staging/sm/statements/regress-642975.js"],
+    "remaining": [
+      "staging/sm/statements/property-reference-self-assignment.js"
+    ],
+    "scopes": [
+      {
+        "scope": "regexp-prototype",
+        "total": 487,
+        "before_passed": 487,
+        "after_passed": 487,
+        "compare_exit": 0
+      },
+      {
+        "scope": "regexp-constructor",
+        "total": 9,
+        "before_passed": 9,
+        "after_passed": 9,
+        "compare_exit": 0
+      },
+      {
+        "scope": "regexp-realm",
+        "total": 10,
+        "before_passed": 10,
+        "after_passed": 10,
+        "compare_exit": 0
+      },
+      {
+        "scope": "regexp-subclass",
+        "total": 2,
+        "before_passed": 2,
+        "after_passed": 2,
+        "compare_exit": 0
+      },
+      {
+        "scope": "regexp-iterator",
+        "total": 17,
+        "before_passed": 17,
+        "after_passed": 17,
+        "compare_exit": 0
+      },
+      {
+        "scope": "annex-regexp",
+        "total": 62,
+        "before_passed": 62,
+        "after_passed": 62,
+        "compare_exit": 0
+      },
+      {
+        "scope": "annex",
+        "total": 845,
+        "before_passed": 845,
+        "after_passed": 845,
+        "compare_exit": 0
+      },
+      {
+        "scope": "string-match",
+        "total": 51,
+        "before_passed": 51,
+        "after_passed": 51,
+        "compare_exit": 0
+      },
+      {
+        "scope": "string-matchAll",
+        "total": 25,
+        "before_passed": 25,
+        "after_passed": 25,
+        "compare_exit": 0
+      },
+      {
+        "scope": "string-replace",
+        "total": 55,
+        "before_passed": 55,
+        "after_passed": 55,
+        "compare_exit": 0
+      },
+      {
+        "scope": "string-replaceAll",
+        "total": 45,
+        "before_passed": 45,
+        "after_passed": 45,
+        "compare_exit": 0
+      },
+      {
+        "scope": "string-search",
+        "total": 43,
+        "before_passed": 43,
+        "after_passed": 43,
+        "compare_exit": 0
+      },
+      {
+        "scope": "string-split",
+        "total": 120,
+        "before_passed": 120,
+        "after_passed": 120,
+        "compare_exit": 0
+      },
+      {
+        "scope": "staged-regexp",
+        "total": 91,
+        "before_passed": 91,
+        "after_passed": 91,
+        "compare_exit": 0
+      },
+      {
+        "scope": "staged-statements",
+        "total": 17,
+        "before_passed": 15,
+        "after_passed": 16,
+        "compare_exit": 0
+      },
+      {
+        "scope": "function-traversal",
+        "total": 1,
+        "before_passed": 1,
+        "after_passed": 1,
+        "compare_exit": 0
+      },
+      {
+        "scope": "intl-collator-statics",
+        "total": 1,
+        "before_passed": 1,
+        "after_passed": 1,
+        "compare_exit": 0
+      },
+      {
+        "scope": "intl-datetime-statics",
+        "total": 1,
+        "before_passed": 1,
+        "after_passed": 1,
+        "compare_exit": 0
+      },
+      {
+        "scope": "intl-number-statics",
+        "total": 1,
+        "before_passed": 1,
+        "after_passed": 1,
+        "compare_exit": 0
+      }
+    ]
+  },
+  "ordinary_node_controls": {
+    "passed": 22,
+    "failed": 0,
+    "scope": "Eleven ordinary cases, normal and generic; raw also retains attempted unsupported CLI realm-host diagnostics and Node proposal differences."
+  },
+  "proposal_controls": {
+    "passed": 8,
+    "failed": 0,
+    "source": "https://github.com/tc39/proposal-regexp-legacy-features",
+    "node_divergences": [
+      "receiver checks",
+      "cross-realm borrowed execution",
+      "derived invalidation"
+    ],
+    "scope": "Receiver and derived-state cases in normal/generic; four cross-realm cases through the generic Test262 host."
+  },
+  "internal_checks": {
+    "passed": 2,
+    "failed": 0,
+    "scope": "Enabled/disabled RegExp constructor ownership and realm intrinsic roots"
+  },
+  "binaries": {
+    "before": {
+      "path": "/Users/admin/Code/GitHub/quench-v2/target/iteration/task20-regexp-realm-commit/before",
+      "sha256": "22eb199204f6e468c49d85ae4154bc1035d86cd01b27a61f93ff02fcea5ad365"
+    },
+    "after": {
+      "path": "/Users/admin/Code/GitHub/quench-v2/target/iteration/task20-regexp-realm-commit/after",
+      "sha256": "617d9b39c768366364cd8004de6003695381ca027e49b80fb250cc0b86519b38"
+    },
+    "quench-next": {
+      "path": "/Users/admin/Code/GitHub/quench-v2/target/iteration/task20-regexp-realm-commit/quench-next",
+      "sha256": "86caf44af3d22ae1a15761895ae9a756d803e4b5c001ba4f7379b9599f499548"
+    },
+    "compare-runs": {
+      "path": "/Users/admin/Code/GitHub/quench-v2/target/iteration/task20-regexp-realm-commit/compare-runs",
+      "sha256": "a5b2d6ad78648bdca9238f0185520217cb9dd195232313005d24c7c1ebe8f132"
+    }
+  },
+  "raw_artifacts": {
+    "target/iteration/task20-regexp-realm-commit/after-annex-regexp.json": "a33311247b419dcf6020f353ee35cc48ea89d4ba377b816a141a0593de3f3d46",
+    "target/iteration/task20-regexp-realm-commit/after-annex.json": "52c167ee8b51690296e2edb2b8c25cd20cd33db63b28bc274d74458a958b84b0",
+    "target/iteration/task20-regexp-realm-commit/after-function-traversal.json": "993401231c7bb166b6c8dd3969892cddc5bbdcfb2b0a4c3373e9f2af77396777",
+    "target/iteration/task20-regexp-realm-commit/after-intl-collator-statics.json": "07e23033ee549e0d1d71dc5e2ac6545e3aeb3df43851eb0d9ce8f4001809dd55",
+    "target/iteration/task20-regexp-realm-commit/after-intl-datetime-statics.json": "bf3fa0ecd8f9bcaf0cc949fb08f1dddb99d9a21bb2c95e7bd049e02f046b7c25",
+    "target/iteration/task20-regexp-realm-commit/after-intl-number-statics.json": "3fa1157ab0aa0b8339ef02ecfce8b0334e912a709d566e4877c4d826b623892d",
+    "target/iteration/task20-regexp-realm-commit/after-regexp-constructor.json": "98bd517d6e70b10910e0b298548ea02592f77bd2290031ec48bdd80c3098d605",
+    "target/iteration/task20-regexp-realm-commit/after-regexp-iterator.json": "eba1985a8be3a8b9ad6ffe796152a3472a26dedec2ff588ad45a0dd6724af40d",
+    "target/iteration/task20-regexp-realm-commit/after-regexp-prototype.json": "5c477bb19869c2932aec45442b3bb53135422edb750116e982e26c3279cdf1e9",
+    "target/iteration/task20-regexp-realm-commit/after-regexp-realm.json": "efaff4c130b6450f43d65e01f49facdf63cf4b14281fdac3cb40d8c76cf868d3",
+    "target/iteration/task20-regexp-realm-commit/after-regexp-subclass.json": "2c4d695e4eaa279ad9ccb6bd42157e8ff341ee81571d0cf43c7b9324935a0923",
+    "target/iteration/task20-regexp-realm-commit/after-staged-regexp.json": "74263c6676ea3b5b6b47812c3f57846fff1aff3c0fec2322576adee3185dc85a",
+    "target/iteration/task20-regexp-realm-commit/after-staged-statements.json": "1298df557801b18e88f2dc1cac6f6b7d04b62adbfa07b2f1ea2b8d037051d5fa",
+    "target/iteration/task20-regexp-realm-commit/after-string-match.json": "78f86cd3aea210a46bce6134117b9dd2960221a29baae480b25837d1a995c246",
+    "target/iteration/task20-regexp-realm-commit/after-string-matchAll.json": "8edcd809abb2f270118df9337f2ac0f493da86c7d84df3c8f0a3bdd12fac32c9",
+    "target/iteration/task20-regexp-realm-commit/after-string-replace.json": "f95122049eac3f472efd92ff804f1d5d087fdaa4529276d987fca1a4aca6aee2",
+    "target/iteration/task20-regexp-realm-commit/after-string-replaceAll.json": "8bbb9e5d281219c48f26bc199e088217f44dbde61b8f70add8c2b34468ad698b",
+    "target/iteration/task20-regexp-realm-commit/after-string-search.json": "32402abb41dd3a7bab4079b687b29acc8e9392588996753f3d1058e5d55da8b8",
+    "target/iteration/task20-regexp-realm-commit/after-string-split.json": "a589f3c57a65697a8d2bedc89bf0f638acbd24a1337dce79692f1bf52c9ff519",
+    "target/iteration/task20-regexp-realm-commit/after-summary.json": "33fc78b439cb2d4ff3baa73acf97ca9ab9722ba23af6df22e8dfcc7c60298c19",
+    "target/iteration/task20-regexp-realm-commit/before-annex-regexp.json": "efc0d8a071d025b909c6803a4f374678961302e53ad91313e0cd04e315f8acdf",
+    "target/iteration/task20-regexp-realm-commit/before-annex.json": "685cb262528f0fe7db77547bae78a31f933145b0befff456d134baac80713224",
+    "target/iteration/task20-regexp-realm-commit/before-function-traversal.json": "7f0dac5b9f145e386f5292056426bed6e9181366a9d995c32efccfced5bcefa0",
+    "target/iteration/task20-regexp-realm-commit/before-intl-collator-statics.json": "6fe2fc1afc932ae7c967dbc35ad2d9fa2789dafea74dab52645645b4d2bf098d",
+    "target/iteration/task20-regexp-realm-commit/before-intl-datetime-statics.json": "290d527cea0d7553df3674dcba8d30420e368f913cead1b1b2c5ba7d18852f1e",
+    "target/iteration/task20-regexp-realm-commit/before-intl-number-statics.json": "15067ecb96e0e25ff9e0145620762b98be5ff47d362102b48d01326e3ad9c29d",
+    "target/iteration/task20-regexp-realm-commit/before-regexp-constructor.json": "8ffdaa308cfedb1df0289be4bfe386bdbbc203948c8a73d2367841a45977c2b4",
+    "target/iteration/task20-regexp-realm-commit/before-regexp-iterator.json": "a5f3dbcb8822364d93ce9757c581fa5dc18b1c459ad0bbaa3b4b98c7144a939b",
+    "target/iteration/task20-regexp-realm-commit/before-regexp-prototype.json": "e5984decf64adc283010548995cb472e8f045c8a40e5973c40e0f13ead9ab4e8",
+    "target/iteration/task20-regexp-realm-commit/before-regexp-realm.json": "ea01b1ac3435924ddfd557110469ad7aa5884911a13567c228dcf743861a8b48",
+    "target/iteration/task20-regexp-realm-commit/before-regexp-subclass.json": "898bb0820c13e9474e79e995281d220d1804154043973dfdd00bded08816daa3",
+    "target/iteration/task20-regexp-realm-commit/before-staged-regexp.json": "3fde02d5106a6f67c049f955bde81e829b22a2bc3b2b6613f32d134f6eeca87b",
+    "target/iteration/task20-regexp-realm-commit/before-staged-statements.json": "e8aedf2955082172a7e99eb074d340fac548e687bcb529f4061f7e087447f92e",
+    "target/iteration/task20-regexp-realm-commit/before-string-match.json": "15e65dc1d60a62239a5014b0199ec703a54add7bee0d158438ea325a51e1f179",
+    "target/iteration/task20-regexp-realm-commit/before-string-matchAll.json": "c96053c7d1ef80868c21d5d3ac56cfcc2c14120e9c92e7d2d201bdd7ec412e1e",
+    "target/iteration/task20-regexp-realm-commit/before-string-replace.json": "387134fc6c2df755d6fe6dc09ffe9f5a05a744b2bca0db4ac1d26a8bb5e6524f",
+    "target/iteration/task20-regexp-realm-commit/before-string-replaceAll.json": "ba1189b6f6bff780668a9b8ca597d3171c86c847ce6cddfaf090020130bedb1c",
+    "target/iteration/task20-regexp-realm-commit/before-string-search.json": "fbd3dc1c2b239f3011cb9f4fef9fd59c3eed34051944c7d5f1d93b9dec351de8",
+    "target/iteration/task20-regexp-realm-commit/before-string-split.json": "81b44bf1af4cd3929df361f234e24288ea129fc4bea1babe3099720e19168461",
+    "target/iteration/task20-regexp-realm-commit/before-summary.json": "072881a1443cd4f01f9a0b17dac2b17d800d25ed86904bb739531b1922a72008",
+    "target/iteration/task20-regexp-realm-commit/controls.json": "2ae4825bbe52937351c541dca63d20ad318a8f64d541e5c008897727cc894f11",
+    "target/iteration/task20-regexp-realm-commit/proposal-controls.json": "9d288d724fb5458bfcf6146ef1109853f8ca486ab1d7af75b9fd0074dd32666f"
+  },
+  "limits": [
+    "Complete Test262 and Stage A qualification remain open.",
+    "Local Node does not implement all pinned proposal restrictions; it is not the oracle for those differences.",
+    "Production build excludes cfg(test); the internal test-source adjustments are separately qualified.",
+    "No suite inputs, harnesses, expectations or pins changed. No full suite or benchmark ran."
+  ]
+}

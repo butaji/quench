@@ -1,0 +1,441 @@
+{
+  "schema": 8,
+  "suite": "jet-stream3",
+  "jit_mode": "jit",
+  "jit_diagnostics": true,
+  "jit_wasm_root": 3,
+  "created_unix_ns": 1792303781899731859,
+  "rounds_requested": 1,
+  "timeout_ms": 600000,
+  "source_revision": "b1f4ec69f9278bc619b9ed79a51b4eb22fc9cda9",
+  "source_dirty": false,
+  "corpus": {
+    "pinned_revision": "06785cf861ac44855f168cbbe829278c2802e6de",
+    "checkout_revision": "06785cf861ac44855f168cbbe829278c2802e6de",
+    "checkout_clean": true,
+    "fixture_set_matches": false
+  },
+  "host": {
+    "uname": "Linux f3da3ef8e0e6 6.18.55 #1 SMP Wed Oct 14 19:45:18 UTC 2026 x86_64 GNU/Linux",
+    "rustc": "rustc 1.99.1 (58cf8f9c3 2026-10-13)\nbinary: rustc\ncommit-hash: 58cf8f9c35b355199727627d07ae34a4e2846d67\ncommit-date: 2026-10-13\nhost: x86_64-unknown-linux-gnu\nrelease: 1.99.1\nLLVM version: 23.1.1",
+    "model": null,
+    "memory_bytes": 18882674688,
+    "memory_limit_bytes": 17179869184,
+    "cpu_quota": "400000 100000",
+    "logical_cpus": 4,
+    "process_metrics_backend": "Linux wait4 rusage"
+  },
+  "engines": [
+    {
+      "name": "quench",
+      "executable": "/tmp/quench-node-root-opt-none",
+      "executable_sha256": "17119325192d8449b7882b14e56e6c5b5d65af1b2e1f275ba180003ea47729bb",
+      "version": "Quench shared-VM JIT build; package 0.1.0",
+      "argv": [
+        "--jit"
+      ],
+      "environment": {
+        "HOME": "/home/agent",
+        "LANG": "C.UTF-8",
+        "LC_ALL": "C.UTF-8",
+        "PATH": "/home/agent/.cargo/bin:/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/override:/opt/codex/runtimes/codex-primary-runtime/dependencies/python/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin:/opt/codex/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/fallback",
+        "QUENCH_WASM_JIT_ROOT": "3",
+        "QUENCH_WASM_JIT_STATS": "1"
+      },
+      "inherits_environment": false,
+      "jit_mode": "enabled-by-cli-flag",
+      "jit_proof_command": [
+        "/tmp/quench-node-root-opt-none",
+        "--jit"
+      ],
+      "jit_proof": "the measured Quench process is launched with --jit and QUENCH_WASM_JIT_STATS=1; diagnostic-only, not for qualification; bounded experimental root compilation selected residual function 3 via QUENCH_WASM_JIT_ROOT; not qualification mode",
+      "webassembly": true
+    },
+    {
+      "name": "bun",
+      "executable": "/workspace/.local/bench-runtimes/bun-v1.4.3/bun-linux-x64/bun",
+      "executable_sha256": "7ce7d6b654eddeec20afddf2396317fba6dc19ab52788a27e894e1806bf8f24b",
+      "version": "1.4.3",
+      "argv": [],
+      "environment": {
+        "BUN_JSC_useJIT": "1",
+        "HOME": "/home/agent",
+        "LANG": "C.UTF-8",
+        "LC_ALL": "C.UTF-8",
+        "PATH": "/home/agent/.cargo/bin:/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/override:/opt/codex/runtimes/codex-primary-runtime/dependencies/python/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin:/opt/codex/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/fallback"
+      },
+      "inherits_environment": false,
+      "jit_mode": "enabled-and-probed",
+      "jit_proof_command": [
+        "BUN_JSC_useJIT=1",
+        "BUN_JSC_dumpOptions=1",
+        "/workspace/.local/bench-runtimes/bun-v1.4.3/bun-linux-x64/bun",
+        "-e",
+        "console.log(Bun.version)"
+      ],
+      "jit_proof": "command succeeded and reported \"useJIT=true\": 1.4.3\n\nModified JSC options:\n   dumpOptions=1 (default: 0)\n   useJIT=true (default: true)",
+      "webassembly": true
+    },
+    {
+      "name": "node",
+      "executable": "/workspace/.local/bench-runtimes/node-v26.12.0-linux-x64/bin/node",
+      "executable_sha256": "caa24debe02770c92a70677e2a62ca98890150e7ac1c17bcfe31bcc98cc89943",
+      "version": "v26.12.0",
+      "argv": [],
+      "environment": {
+        "HOME": "/home/agent",
+        "LANG": "C.UTF-8",
+        "LC_ALL": "C.UTF-8",
+        "PATH": "/home/agent/.cargo/bin:/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/override:/opt/codex/runtimes/codex-primary-runtime/dependencies/python/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin:/opt/codex/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/fallback"
+      },
+      "inherits_environment": false,
+      "jit_mode": "enabled-and-probed",
+      "jit_proof_command": [
+        "/workspace/.local/bench-runtimes/node-v26.12.0-linux-x64/bin/node",
+        "--trace-opt",
+        "--no-concurrent-recompilation",
+        "-e",
+        "function hot(x) { return x + 1; } for (let i = 0; i < 100000; i++) hot(i);"
+      ],
+      "jit_proof": "command succeeded and reported \"completed compiling\": [marking 0x069f186b7a31 <JSFunction hot (sfi = 0x69f186b4211)> for optimization to MAGLEV, ConcurrencyMode::kConcurrent, reason: hot and stable]\n[compiling method 0x069f186b7a31 <JSFunction hot (sfi = 0x69f186b4211)> (target MAGLEV), mode: ConcurrencyMode::kSynchronous]\n[completed compiling 0x069f186b7a31 <JSFunction hot (sfi = 0x69f186b4211)> (target MAGLEV) - took 0.006, 0.165, 0.002 ms]\n[marking 0x069f186b79c1 <JSFunction (sfi = 0x69f186b4169)> for optimization to MAGLEV, ConcurrencyMode::kConcurrent, reason: hot and stable]\n[marking 0x069f186b7a31 <JSFunction hot (sfi = 0x69f186b4211)> for optimization to TURBOFAN_JS, ConcurrencyMode::kConcurrent, reason: hot and stable]\n[compiling method 0x069f186b7a31 <JSFunction hot (sfi = 0x69f186b4211)> (target TURBOFAN_JS), mode: ConcurrencyMode::kSynchronous]\n[completed compiling 0x069f186b7a31 <JSFunction hot (sfi = 0x69f186b4211)> (target TURBOFAN_JS) - took 0.005, 0.487, 0.006 ms]\n[compiling method 0x069f186b79c1 <JSFunction (sfi = 0x69f186b4169)> (target MAGLEV) OSR, mode: ConcurrencyMode::kSynchronous]\n[completed compiling 0x069f186b79c1 <JSFunction (sfi = 0x69f186b4169)> (target MAGLEV) OSR - took 0.000, 0.125, 0.002 ms]",
+      "webassembly": true
+    }
+  ],
+  "suite_inputs": [
+    {
+      "path": "quench-bench/jetstream/cli.js",
+      "size_bytes": 5600,
+      "modified_unix_ns": 1792229119091972874,
+      "sha256": "22ee4b987b07940dd7397ed7f88345c71acc415e2549b64bf45ba43f7572e5f0"
+    },
+    {
+      "path": "quench-bench/jetstream/JetStreamDriver.js",
+      "size_bytes": 110633,
+      "modified_unix_ns": 1792229118593919588,
+      "sha256": "f105bddfd402514b2325fe9ea6e1df5ce776a4ad4570a8006c7c8559159440fc"
+    },
+    {
+      "path": "quench-bench/jetstream/utils/params.js",
+      "size_bytes": 8047,
+      "modified_unix_ns": 1792229119770704165,
+      "sha256": "0e9d28c0fd2de5583c64678ffc61307b10d983bcb419fe2e3bb383c8b7ded647"
+    },
+    {
+      "path": "quench-bench/jetstream/utils/shell-config.js",
+      "size_bytes": 2352,
+      "modified_unix_ns": 1792229119770904880,
+      "sha256": "9a83000be5e6526a3c26a414fc3a23043e57ef8e4cd67aaff459066a2c347bca"
+    }
+  ],
+  "selected_fixtures": [
+    "quench-bench/jetstream/HashSet-wasm"
+  ],
+  "fixtures": {
+    "quench-bench/jetstream/HashSet-wasm": {
+      "source": {
+        "path": "quench-bench/jetstream/HashSet-wasm",
+        "size_bytes": 4096,
+        "modified_unix_ns": 1792229119777721216,
+        "sha256": "33d17f855c0796a2df57c4a5bf959f531a9950b74bf3cb10ae304fb62c13ab9c"
+      },
+      "valid": true,
+      "output_equal": true,
+      "summaries": {
+        "bun": {
+          "median_score": 218.17,
+          "median_max_rss_bytes": 54218752,
+          "valid_samples": 1
+        },
+        "node": {
+          "median_score": 260.0,
+          "median_max_rss_bytes": 116260864,
+          "valid_samples": 1
+        },
+        "quench": {
+          "median_score": 60.6,
+          "median_max_rss_bytes": 272453632,
+          "valid_samples": 1
+        }
+      },
+      "unsupported_engines": {},
+      "rounds": [
+        {
+          "round": 0,
+          "execution_order": [
+            "quench",
+            "bun",
+            "node"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 906668300,
+              "peak_rss_bytes": 54218752,
+              "score": 218.17,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 6394,
+              "page_reclaims": 6394,
+              "involuntary_context_switches": 7,
+              "host_before": {
+                "captured_unix_ns": 1792303784454030096,
+                "load_average": {
+                  "one_minute": 1.64,
+                  "five_minutes": 1.43,
+                  "fifteen_minutes": 1.19
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 315844,
+                    "cpu_percent": 1.1,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 200,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.0,
+                    "command": "containerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792303785364721479,
+                "load_average": {
+                  "one_minute": 1.64,
+                  "five_minutes": 1.43,
+                  "fifteen_minutes": 1.19
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 315844,
+                    "cpu_percent": 1.1,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 200,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.0,
+                    "command": "containerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "Starting JetStream3\nRunning HashSet-wasm:\nHashSet-wasm First-Score                       131.47 pts\nHashSet-wasm Worst-Score                       272.76 pts\nHashSet-wasm Average-Score                     289.61 pts\nHashSet-wasm Score                             218.17 pts\nHashSet-wasm First-Time                         38.03 ms \nHashSet-wasm Worst-Time                         18.33 ms \nHashSet-wasm Average-Time                       17.26 ms \nHashSet-wasm Total-Time                         73.63 ms \nHashSet-wasm Wall-Time                         889.66 ms \n\nOverall:\nOverall First-Score                            131.47 pts\nOverall Worst-Score                            272.76 pts\nOverall Average-Score                          289.61 pts\nOverall First-Time                              38.03 ms \nOverall Worst-Time                              18.33 ms \nOverall Average-Time                            17.26 ms \n\nOverall Score                                  218.17 pts\nOverall Wall-Time                              890.84 ms \n\n",
+              "stderr": ""
+            },
+            "node": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 818997487,
+              "peak_rss_bytes": 116260864,
+              "score": 260.0,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 18834,
+              "page_reclaims": 18834,
+              "involuntary_context_switches": 10,
+              "host_before": {
+                "captured_unix_ns": 1792303785367968155,
+                "load_average": {
+                  "one_minute": 1.64,
+                  "five_minutes": 1.43,
+                  "fifteen_minutes": 1.19
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 315844,
+                    "cpu_percent": 1.1,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 200,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.0,
+                    "command": "containerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792303786190574944,
+                "load_average": {
+                  "one_minute": 1.64,
+                  "five_minutes": 1.43,
+                  "fifteen_minutes": 1.19
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 315844,
+                    "cpu_percent": 1.1,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 200,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.0,
+                    "command": "containerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "Starting JetStream3\nRunning HashSet-wasm:\nHashSet-wasm First-Score                       176.44 pts\nHashSet-wasm Worst-Score                       304.73 pts\nHashSet-wasm Average-Score                     326.89 pts\nHashSet-wasm Score                             260.00 pts\nHashSet-wasm First-Time                         28.34 ms \nHashSet-wasm Worst-Time                         16.41 ms \nHashSet-wasm Average-Time                       15.30 ms \nHashSet-wasm Total-Time                         60.04 ms \nHashSet-wasm Wall-Time                         785.40 ms \n\nOverall:\nOverall First-Score                            176.44 pts\nOverall Worst-Score                            304.73 pts\nOverall Average-Score                          326.89 pts\nOverall First-Time                              28.34 ms \nOverall Worst-Time                              16.41 ms \nOverall Average-Time                            15.30 ms \n\nOverall Score                                  260.00 pts\nOverall Wall-Time                              787.23 ms \n\n",
+              "stderr": ""
+            },
+            "quench": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2444536830,
+              "peak_rss_bytes": 272453632,
+              "score": 60.6,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 84202,
+              "page_reclaims": 84202,
+              "involuntary_context_switches": 21,
+              "host_before": {
+                "captured_unix_ns": 1792303782002482060,
+                "load_average": {
+                  "one_minute": 1.64,
+                  "five_minutes": 1.43,
+                  "fifteen_minutes": 1.19
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 315844,
+                    "cpu_percent": 0.8,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 200,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.0,
+                    "command": "containerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792303784450962525,
+                "load_average": {
+                  "one_minute": 1.64,
+                  "five_minutes": 1.43,
+                  "fifteen_minutes": 1.19
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 315844,
+                    "cpu_percent": 1.1,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 200,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.0,
+                    "command": "containerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "Starting JetStream3\nRunning HashSet-wasm:\nHashSet-wasm First-Score                         4.99 pts\nHashSet-wasm Worst-Score                       201.56 pts\nHashSet-wasm Average-Score                     221.24 pts\nHashSet-wasm Score                              60.60 pts\nHashSet-wasm First-Time                       1001.80 ms \nHashSet-wasm Worst-Time                         24.81 ms \nHashSet-wasm Average-Time                       22.60 ms \nHashSet-wasm Total-Time                       1049.20 ms \nHashSet-wasm Wall-Time                        2136.00 ms \n\nOverall:\nOverall First-Score                              4.99 pts\nOverall Worst-Score                            201.56 pts\nOverall Average-Score                          221.24 pts\nOverall First-Time                            1001.80 ms \nOverall Worst-Time                              24.81 ms \nOverall Average-Time                            22.60 ms \n\nOverall Score                                   60.60 pts\nOverall Wall-Time                             2138.90 ms \n\n",
+              "stderr": "QUENCH_WASM_JIT_PLAN_MEMORY function=1 bytecodes=104 registers=18 reachable=104 stored_slots=103 dense_state_bytes=22464 sparse_state_bytes=4256 elapsed_us=68 rss_kib_before=Some(37208) rss_kib_after=Some(37208) hwm_kib_before=Some(44204) hwm_kib_after=Some(44204)\nQUENCH_WASM_JIT_PLAN_MEMORY function=2 bytecodes=105 registers=18 reachable=105 stored_slots=104 dense_state_bytes=22680 sparse_state_bytes=4280 elapsed_us=23 rss_kib_before=Some(37272) rss_kib_after=Some(37272) hwm_kib_before=Some(44204) hwm_kib_after=Some(44204)\nQUENCH_WASM_JIT_PLAN_MEMORY function=3 bytecodes=66145 registers=97 reachable=66145 stored_slots=333557 dense_state_bytes=76992780 sparse_state_bytes=6962568 elapsed_us=10191 rss_kib_before=Some(37272) rss_kib_after=Some(46580) hwm_kib_before=Some(44204) hwm_kib_after=Some(46580)\nQUENCH_WASM_JIT_PLAN_MEMORY function=4 bytecodes=73 registers=21 reachable=73 stored_slots=72 dense_state_bytes=18396 sparse_state_bytes=3000 elapsed_us=710 rss_kib_before=Some(43476) rss_kib_after=Some(43476) hwm_kib_before=Some(46388) hwm_kib_after=Some(46388)\nQUENCH_WASM_JIT_PLAN_MEMORY function=5 bytecodes=79 registers=22 reachable=79 stored_slots=78 dense_state_bytes=20856 sparse_state_bytes=3256 elapsed_us=24 rss_kib_before=Some(43476) rss_kib_after=Some(43476) hwm_kib_before=Some(46388) hwm_kib_after=Some(46388)\nQUENCH_WASM_JIT_PLAN_MEMORY function=6 bytecodes=6 registers=2 reachable=4 stored_slots=2 dense_state_bytes=96 sparse_state_bytes=176 elapsed_us=12 rss_kib_before=Some(43476) rss_kib_after=Some(43476) hwm_kib_before=Some(46388) hwm_kib_after=Some(46388)\nQUENCH_WASM_JIT_PLAN_MEMORY function=7 bytecodes=20 registers=8 reachable=20 stored_slots=80 dense_state_bytes=1920 sparse_state_bytes=1760 elapsed_us=16 rss_kib_before=Some(43476) rss_kib_after=Some(43476) hwm_kib_before=Some(46388) hwm_kib_after=Some(46388)\nQUENCH_WASM_JIT_PLAN_MEMORY function=8 bytecodes=15 registers=9 reachable=15 stored_slots=27 dense_state_bytes=1620 sparse_state_bytes=792 elapsed_us=13 rss_kib_before=Some(43476) rss_kib_after=Some(43476) hwm_kib_before=Some(46388) hwm_kib_after=Some(46388)\nQUENCH_WASM_JIT_PLAN_MEMORY function=14 bytecodes=22 registers=6 reachable=22 stored_slots=27 dense_state_bytes=1584 sparse_state_bytes=976 elapsed_us=15 rss_kib_before=Some(43476) rss_kib_after=Some(43476) hwm_kib_before=Some(46388) hwm_kib_after=Some(46388)\nQUENCH_WASM_JIT_PLAN_MEMORY function=16 bytecodes=70 registers=10 reachable=70 stored_slots=159 dense_state_bytes=8400 sparse_state_bytes=4368 elapsed_us=21 rss_kib_before=Some(43476) rss_kib_after=Some(43476) hwm_kib_before=Some(46388) hwm_kib_after=Some(46388)\nQUENCH_WASM_JIT_PLAN_MEMORY function=17 bytecodes=79 registers=16 reachable=79 stored_slots=187 dense_state_bytes=15168 sparse_state_bytes=5336 elapsed_us=23 rss_kib_before=Some(43476) rss_kib_after=Some(43476) hwm_kib_before=Some(46388) hwm_kib_after=Some(46388)\nQUENCH_WASM_JIT_PLAN_MEMORY function=18 bytecodes=638 registers=37 reachable=638 stored_slots=3415 dense_state_bytes=283272 sparse_state_bytes=104032 elapsed_us=164 rss_kib_before=Some(43476) rss_kib_after=Some(43476) hwm_kib_before=Some(46388) hwm_kib_after=Some(46388)\nQUENCH_WASM_JIT_REJECTION 19 unsupported-instruction:WasmMemoryCopy@54\nQUENCH_WASM_JIT_PLAN_MEMORY function=20 bytecodes=25 registers=12 reachable=25 stored_slots=24 dense_state_bytes=3600 sparse_state_bytes=1032 elapsed_us=14 rss_kib_before=Some(43476) rss_kib_after=Some(43476) hwm_kib_before=Some(46388) hwm_kib_after=Some(46388)\nQUENCH_WASM_JIT_PLAN_MEMORY function=21 bytecodes=137 registers=7 reachable=137 stored_slots=170 dense_state_bytes=11508 sparse_state_bytes=6040 elapsed_us=57 rss_kib_before=Some(43476) rss_kib_after=Some(43476) hwm_kib_before=Some(46388) hwm_kib_after=Some(46388)\nQUENCH_WASM_JIT_PLAN_MEMORY function=22 bytecodes=35 registers=11 reachable=35 stored_slots=176 dense_state_bytes=4620 sparse_state_bytes=5048 elapsed_us=23 rss_kib_before=Some(43476) rss_kib_after=Some(43476) hwm_kib_before=Some(46388) hwm_kib_after=Some(46388)\nQUENCH_WASM_JIT_PLAN_MEMORY function=23 bytecodes=29 registers=13 reachable=29 stored_slots=28 dense_state_bytes=4524 sparse_state_bytes=1192 elapsed_us=15 rss_kib_before=Some(43476) rss_kib_after=Some(43476) hwm_kib_before=Some(46388) hwm_kib_after=Some(46388)\nQUENCH_WASM_JIT_PLAN_MEMORY function=26 bytecodes=69 registers=6 reachable=69 stored_slots=68 dense_state_bytes=4968 sparse_state_bytes=2808 elapsed_us=21 rss_kib_before=Some(43476) rss_kib_after=Some(43476) hwm_kib_before=Some(46388) hwm_kib_after=Some(46388)\nQUENCH_WASM_JIT_PLAN_MEMORY function=27 bytecodes=1149 registers=20 reachable=1149 stored_slots=2321 dense_state_bytes=275760 sparse_state_bytes=67304 elapsed_us=124 rss_kib_before=Some(43476) rss_kib_after=Some(43476) hwm_kib_before=Some(46388) hwm_kib_after=Some(46388)\nQUENCH_WASM_JIT_PLAN_MEMORY function=28 bytecodes=336 registers=15 reachable=336 stored_slots=341 dense_state_bytes=60480 sparse_state_bytes=13856 elapsed_us=71 rss_kib_before=Some(43476) rss_kib_after=Some(43476) hwm_kib_before=Some(46388) hwm_kib_after=Some(46388)\nQUENCH_WASM_JIT_PLAN_MEMORY function=29 bytecodes=32 registers=8 reachable=32 stored_slots=90 dense_state_bytes=3072 sparse_state_bytes=2336 elapsed_us=19 rss_kib_before=Some(43476) rss_kib_after=Some(43476) hwm_kib_before=Some(46388) hwm_kib_after=Some(46388)\nQUENCH_WASM_JIT_PLAN_MEMORY function=30 bytecodes=33 registers=7 reachable=33 stored_slots=92 dense_state_bytes=2772 sparse_state_bytes=2456 elapsed_us=17 rss_kib_before=Some(43476) rss_kib_after=Some(43476) hwm_kib_before=Some(46388) hwm_kib_after=Some(46388)\nQUENCH_WASM_JIT_PLAN_MEMORY function=31 bytecodes=19 registers=5 reachable=19 stored_slots=22 dense_state_bytes=1140 sparse_state_bytes=840 elapsed_us=14 rss_kib_before=Some(43476) rss_kib_after=Some(43476) hwm_kib_before=Some(46388) hwm_kib_after=Some(46388)\nQUENCH_WASM_JIT_PLAN_MEMORY function=1 bytecodes=104 registers=18 reachable=104 stored_slots=103 dense_state_bytes=22464 sparse_state_bytes=4256 elapsed_us=21 rss_kib_before=Some(43476) rss_kib_after=Some(43476) hwm_kib_before=Some(46388) hwm_kib_after=Some(46388)\nQUENCH_WASM_JIT_PLAN_MEMORY function=2 bytecodes=105 registers=18 reachable=105 stored_slots=104 dense_state_bytes=22680 sparse_state_bytes=4280 elapsed_us=21 rss_kib_before=Some(43476) rss_kib_after=Some(43476) hwm_kib_before=Some(46388) hwm_kib_after=Some(46388)\nQUENCH_WASM_JIT_PLAN_MEMORY function=3 bytecodes=66145 registers=97 reachable=66145 stored_slots=333557 dense_state_bytes=76992780 sparse_state_bytes=6962568 elapsed_us=7215 rss_kib_before=Some(43476) rss_kib_after=Some(46584) hwm_kib_before=Some(46388) hwm_kib_after=Some(46584)\nQUENCH_WASM_JIT_PLAN_MEMORY function=4 bytecodes=73 registers=21 reachable=73 stored_slots=72 dense_state_bytes=18396 sparse_state_bytes=3000 elapsed_us=45 rss_kib_before=Some(45812) rss_kib_after=Some(45812) hwm_kib_before=Some(46400) hwm_kib_after=Some(46400)\nQUENCH_WASM_JIT_PLAN_MEMORY function=5 bytecodes=79 registers=22 reachable=79 stored_slots=78 dense_state_bytes=20856 sparse_state_bytes=3256 elapsed_us=23 rss_kib_before=Some(45812) rss_kib_after=Some(45812) hwm_kib_before=Some(46400) hwm_kib_after=Some(46400)\nQUENCH_WASM_JIT_PLAN_MEMORY function=6 bytecodes=6 registers=2 reachable=4 stored_slots=2 dense_state_bytes=96 sparse_state_bytes=176 elapsed_us=12 rss_kib_before=Some(45812) rss_kib_after=Some(45812) hwm_kib_before=Some(46400) hwm_kib_after=Some(46400)\nQUENCH_WASM_JIT_PLAN_MEMORY function=7 bytecodes=20 registers=8 reachable=20 stored_slots=80 dense_state_bytes=1920 sparse_state_bytes=1760 elapsed_us=16 rss_kib_before=Some(45812) rss_kib_after=Some(45812) hwm_kib_before=Some(46400) hwm_kib_after=Some(46400)\nQUENCH_WASM_JIT_PLAN_MEMORY function=8 bytecodes=15 registers=9 reachable=15 stored_slots=27 dense_state_bytes=1620 sparse_state_bytes=792 elapsed_us=13 rss_kib_before=Some(45812) rss_kib_after=Some(45812) hwm_kib_before=Some(46400) hwm_kib_after=Some(46400)\nQUENCH_WASM_JIT_PLAN_MEMORY function=14 bytecodes=22 registers=6 reachable=22 stored_slots=27 dense_state_bytes=1584 sparse_state_bytes=976 elapsed_us=15 rss_kib_before=Some(45812) rss_kib_after=Some(45812) hwm_kib_before=Some(46400) hwm_kib_after=Some(46400)\nQUENCH_WASM_JIT_PLAN_MEMORY function=16 bytecodes=70 registers=10 reachable=70 stored_slots=159 dense_state_bytes=8400 sparse_state_bytes=4368 elapsed_us=20 rss_kib_before=Some(45812) rss_kib_after=Some(45812) hwm_kib_before=Some(46400) hwm_kib_after=Some(46400)\nQUENCH_WASM_JIT_PLAN_MEMORY function=17 bytecodes=79 registers=16 reachable=79 stored_slots=187 dense_state_bytes=15168 sparse_state_bytes=5336 elapsed_us=23 rss_kib_before=Some(45812) rss_kib_after=Some(45812) hwm_kib_before=Some(46400) hwm_kib_after=Some(46400)\nQUENCH_WASM_JIT_PLAN_MEMORY function=18 bytecodes=638 registers=37 reachable=638 stored_slots=3415 dense_state_bytes=283272 sparse_state_bytes=104032 elapsed_us=160 rss_kib_before=Some(45812) rss_kib_after=Some(45812) hwm_kib_before=Some(46400) hwm_kib_after=Some(46400)\nQUENCH_WASM_JIT_PLAN_MEMORY function=20 bytecodes=25 registers=12 reachable=25 stored_slots=24 dense_state_bytes=3600 sparse_state_bytes=1032 elapsed_us=16 rss_kib_before=Some(45812) rss_kib_after=Some(45812) hwm_kib_before=Some(46400) hwm_kib_after=Some(46400)\nQUENCH_WASM_JIT_PLAN_MEMORY function=21 bytecodes=137 registers=7 reachable=137 stored_slots=170 dense_state_bytes=11508 sparse_state_bytes=6040 elapsed_us=26 rss_kib_before=Some(45812) rss_kib_after=Some(45812) hwm_kib_before=Some(46400) hwm_kib_after=Some(46400)\nQUENCH_WASM_JIT_PLAN_MEMORY function=22 bytecodes=35 registers=11 reachable=35 stored_slots=176 dense_state_bytes=4620 sparse_state_bytes=5048 elapsed_us=22 rss_kib_before=Some(45812) rss_kib_after=Some(45812) hwm_kib_before=Some(46400) hwm_kib_after=Some(46400)\nQUENCH_WASM_JIT_PLAN_MEMORY function=23 bytecodes=29 registers=13 reachable=29 stored_slots=28 dense_state_bytes=4524 sparse_state_bytes=1192 elapsed_us=14 rss_kib_before=Some(45812) rss_kib_after=Some(45812) hwm_kib_before=Some(46400) hwm_kib_after=Some(46400)\nQUENCH_WASM_JIT_PLAN_MEMORY function=26 bytecodes=69 registers=6 reachable=69 stored_slots=68 dense_state_bytes=4968 sparse_state_bytes=2808 elapsed_us=18 rss_kib_before=Some(45812) rss_kib_after=Some(45812) hwm_kib_before=Some(46400) hwm_kib_after=Some(46400)\nQUENCH_WASM_JIT_PLAN_MEMORY function=27 bytecodes=1149 registers=20 reachable=1149 stored_slots=2321 dense_state_bytes=275760 sparse_state_bytes=67304 elapsed_us=125 rss_kib_before=Some(45812) rss_kib_after=Some(45812) hwm_kib_before=Some(46400) hwm_kib_after=Some(46400)\nQUENCH_WASM_JIT_PLAN_MEMORY function=28 bytecodes=336 registers=15 reachable=336 stored_slots=341 dense_state_bytes=60480 sparse_state_bytes=13856 elapsed_us=47 rss_kib_before=Some(45812) rss_kib_after=Some(45812) hwm_kib_before=Some(46400) hwm_kib_after=Some(46400)\nQUENCH_WASM_JIT_PLAN_MEMORY function=29 bytecodes=32 registers=8 reachable=32 stored_slots=90 dense_state_bytes=3072 sparse_state_bytes=2336 elapsed_us=34 rss_kib_before=Some(45812) rss_kib_after=Some(45812) hwm_kib_before=Some(46400) hwm_kib_after=Some(46400)\nQUENCH_WASM_JIT_PLAN_MEMORY function=30 bytecodes=33 registers=7 reachable=33 stored_slots=92 dense_state_bytes=2772 sparse_state_bytes=2456 elapsed_us=17 rss_kib_before=Some(45812) rss_kib_after=Some(45812) hwm_kib_before=Some(46400) hwm_kib_after=Some(46400)\nQUENCH_WASM_JIT_PLAN_MEMORY function=31 bytecodes=19 registers=5 reachable=19 stored_slots=22 dense_state_bytes=1140 sparse_state_bytes=840 elapsed_us=13 rss_kib_before=Some(45812) rss_kib_after=Some(45812) hwm_kib_before=Some(46400) hwm_kib_after=Some(46400)\nQUENCH_WASM_JIT_OPT_LEVEL none\nQUENCH_WASM_JIT_PLAN_MEMORY function=1 bytecodes=104 registers=18 reachable=104 stored_slots=103 dense_state_bytes=22464 sparse_state_bytes=4256 elapsed_us=26 rss_kib_before=Some(46216) rss_kib_after=Some(46216) hwm_kib_before=Some(46400) hwm_kib_after=Some(46400)\nQUENCH_WASM_JIT_PLAN_MEMORY function=2 bytecodes=105 registers=18 reachable=105 stored_slots=104 dense_state_bytes=22680 sparse_state_bytes=4280 elapsed_us=22 rss_kib_before=Some(46216) rss_kib_after=Some(46216) hwm_kib_before=Some(46400) hwm_kib_after=Some(46400)\nQUENCH_WASM_JIT_PLAN_MEMORY function=3 bytecodes=66145 registers=97 reachable=66145 stored_slots=333557 dense_state_bytes=76992780 sparse_state_bytes=6962568 elapsed_us=6695 rss_kib_before=Some(46216) rss_kib_after=Some(48084) hwm_kib_before=Some(46400) hwm_kib_after=Some(48084)\nQUENCH_WASM_JIT_PLAN_MEMORY function=4 bytecodes=73 registers=21 reachable=73 stored_slots=72 dense_state_bytes=18396 sparse_state_bytes=3000 elapsed_us=42 rss_kib_before=Some(47308) rss_kib_after=Some(47308) hwm_kib_before=Some(47856) hwm_kib_after=Some(47856)\nQUENCH_WASM_JIT_PLAN_MEMORY function=5 bytecodes=79 registers=22 reachable=79 stored_slots=78 dense_state_bytes=20856 sparse_state_bytes=3256 elapsed_us=22 rss_kib_before=Some(47308) rss_kib_after=Some(47308) hwm_kib_before=Some(47856) hwm_kib_after=Some(47856)\nQUENCH_WASM_JIT_PLAN_MEMORY function=6 bytecodes=6 registers=2 reachable=4 stored_slots=2 dense_state_bytes=96 sparse_state_bytes=176 elapsed_us=12 rss_kib_before=Some(47308) rss_kib_after=Some(47308) hwm_kib_before=Some(47856) hwm_kib_after=Some(47856)\nQUENCH_WASM_JIT_PLAN_MEMORY function=7 bytecodes=20 registers=8 reachable=20 stored_slots=80 dense_state_bytes=1920 sparse_state_bytes=1760 elapsed_us=17 rss_kib_before=Some(47308) rss_kib_after=Some(47308) hwm_kib_before=Some(47856) hwm_kib_after=Some(47856)\nQUENCH_WASM_JIT_PLAN_MEMORY function=8 bytecodes=15 registers=9 reachable=15 stored_slots=27 dense_state_bytes=1620 sparse_state_bytes=792 elapsed_us=12 rss_kib_before=Some(47308) rss_kib_after=Some(47308) hwm_kib_before=Some(47856) hwm_kib_after=Some(47856)\nQUENCH_WASM_JIT_PLAN_MEMORY function=14 bytecodes=22 registers=6 reachable=22 stored_slots=27 dense_state_bytes=1584 sparse_state_bytes=976 elapsed_us=14 rss_kib_before=Some(47308) rss_kib_after=Some(47308) hwm_kib_before=Some(47856) hwm_kib_after=Some(47856)\nQUENCH_WASM_JIT_PLAN_MEMORY function=16 bytecodes=70 registers=10 reachable=70 stored_slots=159 dense_state_bytes=8400 sparse_state_bytes=4368 elapsed_us=22 rss_kib_before=Some(47308) rss_kib_after=Some(47308) hwm_kib_before=Some(47856) hwm_kib_after=Some(47856)\nQUENCH_WASM_JIT_PLAN_MEMORY function=17 bytecodes=79 registers=16 reachable=79 stored_slots=187 dense_state_bytes=15168 sparse_state_bytes=5336 elapsed_us=23 rss_kib_before=Some(47308) rss_kib_after=Some(47308) hwm_kib_before=Some(47856) hwm_kib_after=Some(47856)\nQUENCH_WASM_JIT_PLAN_MEMORY function=18 bytecodes=638 registers=37 reachable=638 stored_slots=3415 dense_state_bytes=283272 sparse_state_bytes=104032 elapsed_us=159 rss_kib_before=Some(47308) rss_kib_after=Some(47308) hwm_kib_before=Some(47856) hwm_kib_after=Some(47856)\nQUENCH_WASM_JIT_PLAN_MEMORY function=20 bytecodes=25 registers=12 reachable=25 stored_slots=24 dense_state_bytes=3600 sparse_state_bytes=1032 elapsed_us=16 rss_kib_before=Some(47308) rss_kib_after=Some(47308) hwm_kib_before=Some(47856) hwm_kib_after=Some(47856)\nQUENCH_WASM_JIT_PLAN_MEMORY function=21 bytecodes=137 registers=7 reachable=137 stored_slots=170 dense_state_bytes=11508 sparse_state_bytes=6040 elapsed_us=26 rss_kib_before=Some(47308) rss_kib_after=Some(47308) hwm_kib_before=Some(47856) hwm_kib_after=Some(47856)\nQUENCH_WASM_JIT_PLAN_MEMORY function=22 bytecodes=35 registers=11 reachable=35 stored_slots=176 dense_state_bytes=4620 sparse_state_bytes=5048 elapsed_us=22 rss_kib_before=Some(47308) rss_kib_after=Some(47308) hwm_kib_before=Some(47856) hwm_kib_after=Some(47856)\nQUENCH_WASM_JIT_PLAN_MEMORY function=23 bytecodes=29 registers=13 reachable=29 stored_slots=28 dense_state_bytes=4524 sparse_state_bytes=1192 elapsed_us=15 rss_kib_before=Some(47308) rss_kib_after=Some(47308) hwm_kib_before=Some(47856) hwm_kib_after=Some(47856)\nQUENCH_WASM_JIT_PLAN_MEMORY function=26 bytecodes=69 registers=6 reachable=69 stored_slots=68 dense_state_bytes=4968 sparse_state_bytes=2808 elapsed_us=18 rss_kib_before=Some(47308) rss_kib_after=Some(47308) hwm_kib_before=Some(47856) hwm_kib_after=Some(47856)\nQUENCH_WASM_JIT_PLAN_MEMORY function=27 bytecodes=1149 registers=20 reachable=1149 stored_slots=2321 dense_state_bytes=275760 sparse_state_bytes=67304 elapsed_us=161 rss_kib_before=Some(47308) rss_kib_after=Some(47308) hwm_kib_before=Some(47856) hwm_kib_after=Some(47856)\nQUENCH_WASM_JIT_PLAN_MEMORY function=28 bytecodes=336 registers=15 reachable=336 stored_slots=341 dense_state_bytes=60480 sparse_state_bytes=13856 elapsed_us=48 rss_kib_before=Some(47308) rss_kib_after=Some(47308) hwm_kib_before=Some(47856) hwm_kib_after=Some(47856)\nQUENCH_WASM_JIT_PLAN_MEMORY function=29 bytecodes=32 registers=8 reachable=32 stored_slots=90 dense_state_bytes=3072 sparse_state_bytes=2336 elapsed_us=19 rss_kib_before=Some(47308) rss_kib_after=Some(47308) hwm_kib_before=Some(47856) hwm_kib_after=Some(47856)\nQUENCH_WASM_JIT_PLAN_MEMORY function=30 bytecodes=33 registers=7 reachable=33 stored_slots=92 dense_state_bytes=2772 sparse_state_bytes=2456 elapsed_us=17 rss_kib_before=Some(47308) rss_kib_after=Some(47308) hwm_kib_before=Some(47856) hwm_kib_after=Some(47856)\nQUENCH_WASM_JIT_PLAN_MEMORY function=31 bytecodes=19 registers=5 reachable=19 stored_slots=22 dense_state_bytes=1140 sparse_state_bytes=840 elapsed_us=13 rss_kib_before=Some(47308) rss_kib_after=Some(47308) hwm_kib_before=Some(47856) hwm_kib_after=Some(47856)\nQUENCH_WASM_JIT_PLAN_MEMORY function=1 bytecodes=104 registers=18 reachable=104 stored_slots=103 dense_state_bytes=22464 sparse_state_bytes=4256 elapsed_us=21 rss_kib_before=Some(47308) rss_kib_after=Some(47308) hwm_kib_before=Some(47856) hwm_kib_after=Some(47856)\nQUENCH_WASM_JIT_PLAN_MEMORY function=2 bytecodes=105 registers=18 reachable=105 stored_slots=104 dense_state_bytes=22680 sparse_state_bytes=4280 elapsed_us=21 rss_kib_before=Some(47308) rss_kib_after=Some(47308) hwm_kib_before=Some(47856) hwm_kib_after=Some(47856)\nQUENCH_WASM_JIT_PLAN_MEMORY function=3 bytecodes=66145 registers=97 reachable=66145 stored_slots=333557 dense_state_bytes=76992780 sparse_state_bytes=6962568 elapsed_us=5708 rss_kib_before=Some(47308) rss_kib_after=Some(48084) hwm_kib_before=Some(47856) hwm_kib_after=Some(48084)\nQUENCH_WASM_JIT_PLAN_MEMORY function=4 bytecodes=73 registers=21 reachable=73 stored_slots=72 dense_state_bytes=18396 sparse_state_bytes=3000 elapsed_us=34 rss_kib_before=Some(47312) rss_kib_after=Some(47312) hwm_kib_before=Some(47928) hwm_kib_after=Some(47928)\nQUENCH_WASM_JIT_PLAN_MEMORY function=5 bytecodes=79 registers=22 reachable=79 stored_slots=78 dense_state_bytes=20856 sparse_state_bytes=3256 elapsed_us=21 rss_kib_before=Some(47312) rss_kib_after=Some(47312) hwm_kib_before=Some(47928) hwm_kib_after=Some(47928)\nQUENCH_WASM_JIT_PLAN_MEMORY function=6 bytecodes=6 registers=2 reachable=4 stored_slots=2 dense_state_bytes=96 sparse_state_bytes=176 elapsed_us=12 rss_kib_before=Some(47312) rss_kib_after=Some(47312) hwm_kib_before=Some(47928) hwm_kib_after=Some(47928)\nQUENCH_WASM_JIT_PLAN_MEMORY function=7 bytecodes=20 registers=8 reachable=20 stored_slots=80 dense_state_bytes=1920 sparse_state_bytes=1760 elapsed_us=16 rss_kib_before=Some(47312) rss_kib_after=Some(47312) hwm_kib_before=Some(47928) hwm_kib_after=Some(47928)\nQUENCH_WASM_JIT_PLAN_MEMORY function=8 bytecodes=15 registers=9 reachable=15 stored_slots=27 dense_state_bytes=1620 sparse_state_bytes=792 elapsed_us=13 rss_kib_before=Some(47312) rss_kib_after=Some(47312) hwm_kib_before=Some(47928) hwm_kib_after=Some(47928)\nQUENCH_WASM_JIT_PLAN_MEMORY function=14 bytecodes=22 registers=6 reachable=22 stored_slots=27 dense_state_bytes=1584 sparse_state_bytes=976 elapsed_us=13 rss_kib_before=Some(47312) rss_kib_after=Some(47312) hwm_kib_before=Some(47928) hwm_kib_after=Some(47928)\nQUENCH_WASM_JIT_PLAN_MEMORY function=16 bytecodes=70 registers=10 reachable=70 stored_slots=159 dense_state_bytes=8400 sparse_state_bytes=4368 elapsed_us=20 rss_kib_before=Some(47312) rss_kib_after=Some(47312) hwm_kib_before=Some(47928) hwm_kib_after=Some(47928)\nQUENCH_WASM_JIT_PLAN_MEMORY function=17 bytecodes=79 registers=16 reachable=79 stored_slots=187 dense_state_bytes=15168 sparse_state_bytes=5336 elapsed_us=24 rss_kib_before=Some(47312) rss_kib_after=Some(47312) hwm_kib_before=Some(47928) hwm_kib_after=Some(47928)\nQUENCH_WASM_JIT_PLAN_MEMORY function=18 bytecodes=638 registers=37 reachable=638 stored_slots=3415 dense_state_bytes=283272 sparse_state_bytes=104032 elapsed_us=158 rss_kib_before=Some(47312) rss_kib_after=Some(47312) hwm_kib_before=Some(47928) hwm_kib_after=Some(47928)\nQUENCH_WASM_JIT_PLAN_MEMORY function=20 bytecodes=25 registers=12 reachable=25 stored_slots=24 dense_state_bytes=3600 sparse_state_bytes=1032 elapsed_us=16 rss_kib_before=Some(47312) rss_kib_after=Some(47312) hwm_kib_before=Some(47928) hwm_kib_after=Some(47928)\nQUENCH_WASM_JIT_PLAN_MEMORY function=21 bytecodes=137 registers=7 reachable=137 stored_slots=170 dense_state_bytes=11508 sparse_state_bytes=6040 elapsed_us=26 rss_kib_before=Some(47312) rss_kib_after=Some(47312) hwm_kib_before=Some(47928) hwm_kib_after=Some(47928)\nQUENCH_WASM_JIT_PLAN_MEMORY function=22 bytecodes=35 registers=11 reachable=35 stored_slots=176 dense_state_bytes=4620 sparse_state_bytes=5048 elapsed_us=21 rss_kib_before=Some(47312) rss_kib_after=Some(47312) hwm_kib_before=Some(47928) hwm_kib_after=Some(47928)\nQUENCH_WASM_JIT_PLAN_MEMORY function=23 bytecodes=29 registers=13 reachable=29 stored_slots=28 dense_state_bytes=4524 sparse_state_bytes=1192 elapsed_us=15 rss_kib_before=Some(47312) rss_kib_after=Some(47312) hwm_kib_before=Some(47928) hwm_kib_after=Some(47928)\nQUENCH_WASM_JIT_PLAN_MEMORY function=26 bytecodes=69 registers=6 reachable=69 stored_slots=68 dense_state_bytes=4968 sparse_state_bytes=2808 elapsed_us=18 rss_kib_before=Some(47312) rss_kib_after=Some(47312) hwm_kib_before=Some(47928) hwm_kib_after=Some(47928)\nQUENCH_WASM_JIT_PLAN_MEMORY function=27 bytecodes=1149 registers=20 reachable=1149 stored_slots=2321 dense_state_bytes=275760 sparse_state_bytes=67304 elapsed_us=124 rss_kib_before=Some(47312) rss_kib_after=Some(47312) hwm_kib_before=Some(47928) hwm_kib_after=Some(47928)\nQUENCH_WASM_JIT_PLAN_MEMORY function=28 bytecodes=336 registers=15 reachable=336 stored_slots=341 dense_state_bytes=60480 sparse_state_bytes=13856 elapsed_us=48 rss_kib_before=Some(47312) rss_kib_after=Some(47312) hwm_kib_before=Some(47928) hwm_kib_after=Some(47928)\nQUENCH_WASM_JIT_PLAN_MEMORY function=29 bytecodes=32 registers=8 reachable=32 stored_slots=90 dense_state_bytes=3072 sparse_state_bytes=2336 elapsed_us=20 rss_kib_before=Some(47312) rss_kib_after=Some(47312) hwm_kib_before=Some(47928) hwm_kib_after=Some(47928)\nQUENCH_WASM_JIT_PLAN_MEMORY function=30 bytecodes=33 registers=7 reachable=33 stored_slots=92 dense_state_bytes=2772 sparse_state_bytes=2456 elapsed_us=16 rss_kib_before=Some(47312) rss_kib_after=Some(47312) hwm_kib_before=Some(47928) hwm_kib_after=Some(47928)\nQUENCH_WASM_JIT_PLAN_MEMORY function=31 bytecodes=19 registers=5 reachable=19 stored_slots=22 dense_state_bytes=1140 sparse_state_bytes=840 elapsed_us=13 rss_kib_before=Some(47312) rss_kib_after=Some(47312) hwm_kib_before=Some(47928) hwm_kib_after=Some(47928)\nQUENCH_WASM_JIT_PLAN_MEMORY function=1 bytecodes=104 registers=18 reachable=104 stored_slots=103 dense_state_bytes=22464 sparse_state_bytes=4256 elapsed_us=21 rss_kib_before=Some(47312) rss_kib_after=Some(47312) hwm_kib_before=Some(47928) hwm_kib_after=Some(47928)\nQUENCH_WASM_JIT_BODY_MEMORY function=1 elapsed_us=859 rss_kib_before=Some(47312) rss_kib_after=Some(49808) hwm_kib_before=Some(47928) hwm_kib_after=Some(49808)\nQUENCH_WASM_JIT_PLAN_MEMORY function=2 bytecodes=105 registers=18 reachable=105 stored_slots=104 dense_state_bytes=22680 sparse_state_bytes=4280 elapsed_us=56 rss_kib_before=Some(49808) rss_kib_after=Some(49808) hwm_kib_before=Some(49808) hwm_kib_after=Some(49808)\nQUENCH_WASM_JIT_BODY_MEMORY function=2 elapsed_us=530 rss_kib_before=Some(49808) rss_kib_after=Some(49808) hwm_kib_before=Some(49808) hwm_kib_after=Some(49808)\nQUENCH_WASM_JIT_PLAN_MEMORY function=3 bytecodes=66145 registers=97 reachable=66145 stored_slots=333557 dense_state_bytes=76992780 sparse_state_bytes=6962568 elapsed_us=5801 rss_kib_before=Some(49808) rss_kib_after=Some(50592) hwm_kib_before=Some(49808) hwm_kib_after=Some(50592)\nQUENCH_WASM_JIT_BODY_MEMORY function=3 elapsed_us=874659 rss_kib_before=Some(50592) rss_kib_after=Some(76484) hwm_kib_before=Some(50592) hwm_kib_after=Some(266068)\nQUENCH_WASM_JIT_PLAN_MEMORY function=4 bytecodes=73 registers=21 reachable=73 stored_slots=72 dense_state_bytes=18396 sparse_state_bytes=3000 elapsed_us=186 rss_kib_before=Some(74072) rss_kib_after=Some(74072) hwm_kib_before=Some(266068) hwm_kib_after=Some(266068)\nQUENCH_WASM_JIT_BODY_MEMORY function=4 elapsed_us=634 rss_kib_before=Some(74072) rss_kib_after=Some(74072) hwm_kib_before=Some(266068) hwm_kib_after=Some(266068)\nQUENCH_WASM_JIT_PLAN_MEMORY function=5 bytecodes=79 registers=22 reachable=79 stored_slots=78 dense_state_bytes=20856 sparse_state_bytes=3256 elapsed_us=32 rss_kib_before=Some(74072) rss_kib_after=Some(74072) hwm_kib_before=Some(266068) hwm_kib_after=Some(266068)\nQUENCH_WASM_JIT_BODY_MEMORY function=5 elapsed_us=878 rss_kib_before=Some(74072) rss_kib_after=Some(73604) hwm_kib_before=Some(266068) hwm_kib_after=Some(266068)\nQUENCH_WASM_JIT_PLAN_MEMORY function=6 bytecodes=6 registers=2 reachable=4 stored_slots=2 dense_state_bytes=96 sparse_state_bytes=176 elapsed_us=22 rss_kib_before=Some(73604) rss_kib_after=Some(73604) hwm_kib_before=Some(266068) hwm_kib_after=Some(266068)\nQUENCH_WASM_JIT_BODY_MEMORY function=6 elapsed_us=127 rss_kib_before=Some(73604) rss_kib_after=Some(73604) hwm_kib_before=Some(266068) hwm_kib_after=Some(266068)\nQUENCH_WASM_JIT_PLAN_MEMORY function=7 bytecodes=20 registers=8 reachable=20 stored_slots=80 dense_state_bytes=1920 sparse_state_bytes=1760 elapsed_us=23 rss_kib_before=Some(73604) rss_kib_after=Some(73604) hwm_kib_before=Some(266068) hwm_kib_after=Some(266068)\nQUENCH_WASM_JIT_BODY_MEMORY function=7 elapsed_us=148 rss_kib_before=Some(73604) rss_kib_after=Some(73604) hwm_kib_before=Some(266068) hwm_kib_after=Some(266068)\nQUENCH_WASM_JIT_PLAN_MEMORY function=8 bytecodes=15 registers=9 reachable=15 stored_slots=27 dense_state_bytes=1620 sparse_state_bytes=792 elapsed_us=18 rss_kib_before=Some(73604) rss_kib_after=Some(73604) hwm_kib_before=Some(266068) hwm_kib_after=Some(266068)\nQUENCH_WASM_JIT_BODY_MEMORY function=8 elapsed_us=128 rss_kib_before=Some(73604) rss_kib_after=Some(73604) hwm_kib_before=Some(266068) hwm_kib_after=Some(266068)\nQUENCH_WASM_JIT_PLAN_MEMORY function=14 bytecodes=22 registers=6 reachable=22 stored_slots=27 dense_state_bytes=1584 sparse_state_bytes=976 elapsed_us=31 rss_kib_before=Some(73604) rss_kib_after=Some(73604) hwm_kib_before=Some(266068) hwm_kib_after=Some(266068)\nQUENCH_WASM_JIT_BODY_MEMORY function=14 elapsed_us=224 rss_kib_before=Some(73604) rss_kib_after=Some(73604) hwm_kib_before=Some(266068) hwm_kib_after=Some(266068)\nQUENCH_WASM_JIT_PLAN_MEMORY function=16 bytecodes=70 registers=10 reachable=70 stored_slots=159 dense_state_bytes=8400 sparse_state_bytes=4368 elapsed_us=28 rss_kib_before=Some(73604) rss_kib_after=Some(73604) hwm_kib_before=Some(266068) hwm_kib_after=Some(266068)\nQUENCH_WASM_JIT_BODY_MEMORY function=16 elapsed_us=335 rss_kib_before=Some(73604) rss_kib_after=Some(73604) hwm_kib_before=Some(266068) hwm_kib_after=Some(266068)\nQUENCH_WASM_JIT_PLAN_MEMORY function=17 bytecodes=79 registers=16 reachable=79 stored_slots=187 dense_state_bytes=15168 sparse_state_bytes=5336 elapsed_us=31 rss_kib_before=Some(73604) rss_kib_after=Some(73604) hwm_kib_before=Some(266068) hwm_kib_after=Some(266068)\nQUENCH_WASM_JIT_BODY_MEMORY function=17 elapsed_us=499 rss_kib_before=Some(73604) rss_kib_after=Some(73604) hwm_kib_before=Some(266068) hwm_kib_after=Some(266068)\nQUENCH_WASM_JIT_PLAN_MEMORY function=18 bytecodes=638 registers=37 reachable=638 stored_slots=3415 dense_state_bytes=283272 sparse_state_bytes=104032 elapsed_us=171 rss_kib_before=Some(73604) rss_kib_after=Some(73604) hwm_kib_before=Some(266068) hwm_kib_after=Some(266068)\nQUENCH_WASM_JIT_BODY_MEMORY function=18 elapsed_us=5242 rss_kib_before=Some(73604) rss_kib_after=Some(73604) hwm_kib_before=Some(266068) hwm_kib_after=Some(266068)\nQUENCH_WASM_JIT_PLAN_MEMORY function=20 bytecodes=25 registers=12 reachable=25 stored_slots=24 dense_state_bytes=3600 sparse_state_bytes=1032 elapsed_us=26 rss_kib_before=Some(73604) rss_kib_after=Some(73604) hwm_kib_before=Some(266068) hwm_kib_after=Some(266068)\nQUENCH_WASM_JIT_BODY_MEMORY function=20 elapsed_us=205 rss_kib_before=Some(73604) rss_kib_after=Some(73604) hwm_kib_before=Some(266068) hwm_kib_after=Some(266068)\nQUENCH_WASM_JIT_PLAN_MEMORY function=21 bytecodes=137 registers=7 reachable=137 stored_slots=170 dense_state_bytes=11508 sparse_state_bytes=6040 elapsed_us=58 rss_kib_before=Some(73604) rss_kib_after=Some(73604) hwm_kib_before=Some(266068) hwm_kib_after=Some(266068)\nQUENCH_WASM_JIT_BODY_MEMORY function=21 elapsed_us=480 rss_kib_before=Some(73604) rss_kib_after=Some(73604) hwm_kib_before=Some(266068) hwm_kib_after=Some(266068)\nQUENCH_WASM_JIT_PLAN_MEMORY function=22 bytecodes=35 registers=11 reachable=35 stored_slots=176 dense_state_bytes=4620 sparse_state_bytes=5048 elapsed_us=27 rss_kib_before=Some(73604) rss_kib_after=Some(73604) hwm_kib_before=Some(266068) hwm_kib_after=Some(266068)\nQUENCH_WASM_JIT_BODY_MEMORY function=22 elapsed_us=222 rss_kib_before=Some(73604) rss_kib_after=Some(73604) hwm_kib_before=Some(266068) hwm_kib_after=Some(266068)\nQUENCH_WASM_JIT_PLAN_MEMORY function=23 bytecodes=29 registers=13 reachable=29 stored_slots=28 dense_state_bytes=4524 sparse_state_bytes=1192 elapsed_us=21 rss_kib_before=Some(73604) rss_kib_after=Some(73604) hwm_kib_before=Some(266068) hwm_kib_after=Some(266068)\nQUENCH_WASM_JIT_BODY_MEMORY function=23 elapsed_us=267 rss_kib_before=Some(73604) rss_kib_after=Some(73604) hwm_kib_before=Some(266068) hwm_kib_after=Some(266068)\nQUENCH_WASM_JIT_PLAN_MEMORY function=26 bytecodes=69 registers=6 reachable=69 stored_slots=68 dense_state_bytes=4968 sparse_state_bytes=2808 elapsed_us=26 rss_kib_before=Some(73604) rss_kib_after=Some(73604) hwm_kib_before=Some(266068) hwm_kib_after=Some(266068)\nQUENCH_WASM_JIT_BODY_MEMORY function=26 elapsed_us=322 rss_kib_before=Some(73604) rss_kib_after=Some(73604) hwm_kib_before=Some(266068) hwm_kib_after=Some(266068)\nQUENCH_WASM_JIT_PLAN_MEMORY function=27 bytecodes=1149 registers=20 reachable=1149 stored_slots=2321 dense_state_bytes=275760 sparse_state_bytes=67304 elapsed_us=136 rss_kib_before=Some(73604) rss_kib_after=Some(73604) hwm_kib_before=Some(266068) hwm_kib_after=Some(266068)\nQUENCH_WASM_JIT_BODY_MEMORY function=27 elapsed_us=5512 rss_kib_before=Some(73604) rss_kib_after=Some(73604) hwm_kib_before=Some(266068) hwm_kib_after=Some(266068)\nQUENCH_WASM_JIT_PLAN_MEMORY function=28 bytecodes=336 registers=15 reachable=336 stored_slots=341 dense_state_bytes=60480 sparse_state_bytes=13856 elapsed_us=61 rss_kib_before=Some(73604) rss_kib_after=Some(73604) hwm_kib_before=Some(266068) hwm_kib_after=Some(266068)\nQUENCH_WASM_JIT_BODY_MEMORY function=28 elapsed_us=1572 rss_kib_before=Some(73604) rss_kib_after=Some(73604) hwm_kib_before=Some(266068) hwm_kib_after=Some(266068)\nQUENCH_WASM_JIT_PLAN_MEMORY function=29 bytecodes=32 registers=8 reachable=32 stored_slots=90 dense_state_bytes=3072 sparse_state_bytes=2336 elapsed_us=27 rss_kib_before=Some(73604) rss_kib_after=Some(73604) hwm_kib_before=Some(266068) hwm_kib_after=Some(266068)\nQUENCH_WASM_JIT_BODY_MEMORY function=29 elapsed_us=204 rss_kib_before=Some(73604) rss_kib_after=Some(73604) hwm_kib_before=Some(266068) hwm_kib_after=Some(266068)\nQUENCH_WASM_JIT_PLAN_MEMORY function=30 bytecodes=33 registers=7 reachable=33 stored_slots=92 dense_state_bytes=2772 sparse_state_bytes=2456 elapsed_us=25 rss_kib_before=Some(73604) rss_kib_after=Some(73604) hwm_kib_before=Some(266068) hwm_kib_after=Some(266068)\nQUENCH_WASM_JIT_BODY_MEMORY function=30 elapsed_us=192 rss_kib_before=Some(73604) rss_kib_after=Some(73604) hwm_kib_before=Some(266068) hwm_kib_after=Some(266068)\nQUENCH_WASM_JIT_PLAN_MEMORY function=31 bytecodes=19 registers=5 reachable=19 stored_slots=22 dense_state_bytes=1140 sparse_state_bytes=840 elapsed_us=21 rss_kib_before=Some(73604) rss_kib_after=Some(73604) hwm_kib_before=Some(266068) hwm_kib_after=Some(266068)\nQUENCH_WASM_JIT_BODY_MEMORY function=31 elapsed_us=180 rss_kib_before=Some(73604) rss_kib_after=Some(73604) hwm_kib_before=Some(266068) hwm_kib_after=Some(266068)\nQUENCH_WASM_JIT_STATS {\"program\":181,\"compile_attempts\":1,\"compiled_functions\":22,\"total_functions\":35,\"code_bytes\":1544754,\"mapped_bytes\":1548288,\"compile_ns\":943896131,\"native_entry_requests\":[[3,50],[22,100],[23,200]],\"interpreter_fallback_entries\":[[0,1],[15,50],[19,200],[24,50],[25,50]],\"compiled_to_vm_callouts\":300,\"compiled_import_callouts\":100,\"compiled_known_callouts\":150,\"compiled_reference_callouts\":50,\"reference_call_sites\":[[18,544,50,0,50]]}\n"
+            }
+          }
+        }
+      ]
+    }
+  },
+  "complete": true,
+  "qualification_ready": false
+}

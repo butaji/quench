@@ -1,0 +1,129 @@
+{
+  "schema": 1,
+  "tasks": [
+    "08",
+    "13",
+    "20"
+  ],
+  "baseline_source_head": "787a98ad64051001529992dbabbca62b19a5cdd0",
+  "qualification": "Isolated Array length/property authority on the committed shared-VM baseline; unrelated pending host, function, TypedArray, Wasm and rooting changes excluded and preserved.",
+  "source_sha256": {
+    "crates/quench-runtime-next/src/vm/array_builtins.rs": "1c54cccd135aeb6aaa242c58582838c76d4c3c9f9dde2f01c00720bb90553f05",
+    "crates/quench-runtime-next/src/vm/array_indexed.rs": "c1f4ff0a31681028dc6031e800ed91fd1256e3be58538fde775a396f6e0e551f",
+    "crates/quench-runtime-next/src/vm/error.rs": "a5b2c8d4131dcb3c68a0d25134dfafdc1a5765e278c039b76038a280a4f608d7",
+    "crates/quench-runtime-next/src/vm/object.rs": "aad5ea4a8c20822f6dbed451537f1ac67bc65e0ae6594e2b0a64d94875a48dd7",
+    "crates/quench-runtime-next/src/vm/object_array.rs": "ecd7c67b612fa81359d5831c1df0ba146963f12ff5afd04beec3da80dfe3b5e2",
+    "crates/quench-runtime-next/src/vm/object_descriptors.rs": "2c4441e31674327171b2825ab97fdf57d0d3fcf4a84142b00febd08bcf70b3a6",
+    "crates/quench-runtime-next/src/vm/object_get.rs": "cc09c81aa167f69e56c647d5fb02894e8feece6f8353281528e0d5b85af914ac"
+  },
+  "suite_pin": "6eec1ac9ee144dafd8f344d73a21f36bfc9f6755",
+  "suite_clean": true,
+  "representation": {
+    "length": "own_array_length derives the existing dense/sparse owner length and excludes arguments objects. Ordinary own-property reads, LengthOfArrayLike, reflection and ArraySetLength use that operation. The separate property-read branch is removed.",
+    "attributes": "ARRAY_LENGTH_ATTRIBUTES owns the default exotic descriptor. Generic property attributes expose it when no explicit override exists. Reflection, integrity tests and definitions consume the same authority. The non-shape descriptor fallback domain is documented.",
+    "write": "Generic writes use the shared receiver Set before the existing ArraySetLength definition. A non-writable length rejects before coercion, including unchanged values; defining an unchanged value retains its separate coercion/descriptor contract.",
+    "realm": "Each realm Array.prototype is an array exotic cell. Length derives from its storage and default descriptor, replacing a second stored length value and attributes in realm installation.",
+    "reduction": "Removed the generic length-write shortcut, duplicate length reader and repeated storage/attribute derivation. No new side map or public API."
+  },
+  "upstream_node_source": {
+    "tests/node/deps/v8/src/objects/objects.cc": "17ddead52e49c1a5967cbafacd35cbbc3e7c504730ed94789663367866c8ef9c"
+  },
+  "build": {
+    "profile": "release; correctness only, no performance claim",
+    "log": "target/iteration/task13-array-length/build.log",
+    "before_binary_sha256": "6be2c1b558d2c2609482e2f00adcf43f5d41538fcddd149ac433358c7f8c021a",
+    "after_binary_sha256": "819ec99e14fd8ea397e4474f34a758ce45499a3fba40c74535e1889ffe765fdb"
+  },
+  "affected_test262": {
+    "full_suite_run": false,
+    "jobs": 2,
+    "timeout_ms": 10000,
+    "distinct_cases": 7046,
+    "passed_before": 7045,
+    "passed_after": 7046,
+    "gained": [
+      "staging/sm/Array/length-01.js"
+    ],
+    "regressions": 0,
+    "scopes": [
+      {
+        "scope": "array",
+        "total": 3081,
+        "passed_before": 3081,
+        "passed_after": 3081,
+        "regressions": 0,
+        "reports": {
+          "target/iteration/task13-array-length/before-array.json": "a191512193b47507d777bb3dfdac09b058d49828abe0bd78c32c8a9e5b839991",
+          "target/iteration/task13-array-length/after-array.json": "9567367fdf8ccbed8d7bb8a1a09fa257ca70f5399ba9c8b5d025f9ef8cb118d6",
+          "target/iteration/task13-array-length/compare-array.log": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+        }
+      },
+      {
+        "scope": "object",
+        "total": 3411,
+        "passed_before": 3411,
+        "passed_after": 3411,
+        "regressions": 0,
+        "reports": {
+          "target/iteration/task13-array-length/before-object.json": "f7c88d112cfee5504eb86861fb5b28a43218db4daf2413f2c1cf4394c7cb51ad",
+          "target/iteration/task13-array-length/after-object.json": "e88daa87b9377b40fc3650108e84c3a04b01e8101d1d8f3db1d42c9570bc4ec0",
+          "target/iteration/task13-array-length/compare-object.log": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+        }
+      },
+      {
+        "scope": "proxy",
+        "total": 311,
+        "passed_before": 311,
+        "passed_after": 311,
+        "regressions": 0,
+        "reports": {
+          "target/iteration/task13-array-length/before-proxy.json": "6071ca526d21c78608b620ce4b283eaa5492f45c610e926414340583dc1f69ce",
+          "target/iteration/task13-array-length/after-proxy.json": "e7c994c0027977066b364b1130205e53cee43911d73d2084934aa07982773531",
+          "target/iteration/task13-array-length/compare-proxy.log": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+        }
+      },
+      {
+        "scope": "reflect",
+        "total": 153,
+        "passed_before": 153,
+        "passed_after": 153,
+        "regressions": 0,
+        "reports": {
+          "target/iteration/task13-array-length/before-reflect.json": "f57a1fbc2101cb3808bb92795a6727e26892bac06632ddc44e56085e6d166f25",
+          "target/iteration/task13-array-length/after-reflect.json": "ff2a8b0a432b86103790b11325016954aadffcd12433043044a0e4705330ddb5",
+          "target/iteration/task13-array-length/compare-reflect.log": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+        }
+      },
+      {
+        "scope": "staged-array",
+        "total": 90,
+        "passed_before": 89,
+        "passed_after": 90,
+        "regressions": 0,
+        "reports": {
+          "target/iteration/task13-array-length/before-staged-array.json": "86ab8f65a96cfc8108309598082f5cc578cdbf73605aac95af8435055269a1e4",
+          "target/iteration/task13-array-length/after-staged-array.json": "d2c9b004ba4be4bb8e976d673a08ba93f151d3c9450ecfb43f88f47c844b87b1",
+          "target/iteration/task13-array-length/compare-staged-array.log": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+        }
+      }
+    ],
+    "remaining_non_pass": []
+  },
+  "node_controls": {
+    "oracle": "v26.10.0",
+    "controls": 24,
+    "observations_per_build": 44,
+    "before_matches": 25,
+    "after_matches": 44,
+    "regressions": 0,
+    "scope": "20 sources in normal/generic modes plus four foreign-realm sources through the standard Test262 worker. Values, descriptors, own keys, receiver identity, coercion order, throws, partial shrink rollback and arguments-object exclusion. Node evaluates each source separately after installing print, preserving strict directives; Node vm contexts supply the realm oracle.",
+    "report": "target/iteration/task13-array-length/node-controls.json",
+    "sha256": "380b753d4f3a41b2a4891d88b8c66c97354e96ffb473e7d60e438412aedf5be7"
+  },
+  "units": "No duplicate Array/Object units added. Production suite inventories and matched Node observations qualify the semantic change.",
+  "limits": [
+    "Staging Array is 90/90 at this candidate. The last complete staging selection at the baseline revision remains recorded separately; this affected selection does not qualify all staging cases.",
+    "Other conformance gaps, full Wasm and frozen implemented Node qualification, production legacy removal and Stage A remain open.",
+    "Pins, fixtures, harness, expectations, discovery and inventory membership are unchanged."
+  ]
+}

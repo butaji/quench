@@ -1,0 +1,74 @@
+[
+  {
+    "fixture": "crypto",
+    "runs": 1,
+    "startup_base": 268429279,
+    "startup_candidate": 268569701,
+    "per_run_base": 1385468651.0,
+    "per_run_candidate": 1385469513.0,
+    "delta_percent": 6.221721432511864e-05
+  },
+  {
+    "fixture": "deltablue",
+    "runs": 10,
+    "startup_base": 197646201,
+    "startup_candidate": 197809614,
+    "per_run_base": 306582290.2,
+    "per_run_candidate": 306548280.8,
+    "delta_percent": -0.011093073894708665
+  },
+  {
+    "fixture": "earley-boyer",
+    "runs": 1,
+    "startup_base": 439150636,
+    "startup_candidate": 439325069,
+    "per_run_base": 4063444340.0,
+    "per_run_candidate": 4063679105.0,
+    "delta_percent": 0.005777487775309357
+  },
+  {
+    "fixture": "navier-stokes",
+    "runs": 1,
+    "startup_base": 754836368,
+    "startup_candidate": 755023627,
+    "per_run_base": 1239144433.0,
+    "per_run_candidate": 1239148600.0,
+    "delta_percent": 0.0003362804116314018
+  },
+  {
+    "fixture": "raytrace",
+    "runs": 3,
+    "startup_base": 211018517,
+    "startup_candidate": 211200976,
+    "per_run_base": 1067960264.3333334,
+    "per_run_candidate": 1066800678.6666666,
+    "delta_percent": -0.10857947672712423
+  },
+  {
+    "fixture": "regexp",
+    "runs": 1,
+    "startup_base": 3638213379,
+    "startup_candidate": 3639306385,
+    "per_run_base": 1937484802.0,
+    "per_run_candidate": 1934883558.0,
+    "delta_percent": -0.1342588079821232
+  },
+  {
+    "fixture": "richards",
+    "runs": 25,
+    "startup_base": 184079715,
+    "startup_candidate": 184260234,
+    "per_run_base": 146934621.76,
+    "per_run_candidate": 146934655.08,
+    "delta_percent": 2.267675216605789e-05
+  },
+  {
+    "fixture": "splay",
+    "runs": 75,
+    "startup_base": 3019525441,
+    "startup_candidate": 3030933909,
+    "per_run_base": 32107885.48,
+    "per_run_candidate": 32126369.613333333,
+    "delta_percent": 0.05756882789695572
+  }
+]

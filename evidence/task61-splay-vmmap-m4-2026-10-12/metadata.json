@@ -1,0 +1,60 @@
+{
+  "host": {
+    "platform": "macOS-26.5-arm64-arm-64bit",
+    "machine": "arm64",
+    "logical_cpus": 10,
+    "load_average_before": [
+      1.67431640625,
+      2.6591796875,
+      4.9697265625
+    ]
+  },
+  "binary": "/Users/admin/Code/GitHub/quench-v2/target/pinned/afde285b7f8dff56da12f44eb915034b0599d7aec95a2ff39d55ae18a8d7c4cf/quench-node",
+  "binary_sha256": "afde285b7f8dff56da12f44eb915034b0599d7aec95a2ff39d55ae18a8d7c4cf",
+  "base_sha256": "ac383759c3cbf5f3a499ade526a4e296f7925733d8c3889b6d5840ce6867ff51",
+  "fixture_sha256": "1f875cec579d03af40d256ceaeb6823f3ef16c883652650ca51d183472a8185d",
+  "work_runs": 300,
+  "capture_stages": [
+    {
+      "stage": "setup",
+      "pid": 53304,
+      "source": "/private/tmp/quench-task61-record-trunk-fixed/evidence/task61-splay-vmmap-m4-2026-10-12/splay-setup-hold.js",
+      "source_sha256": "36591134de58f2fa1f96c974b6f9a98aee41089a812238763cf08e65d56b0874",
+      "captured_unix_seconds": 1791811520.686839,
+      "marker": "__quenchMemoryHold:setup",
+      "vmmap_exit": 0,
+      "summary_exit": 0,
+      "process_info_exit": 0,
+      "files": [
+        "/private/tmp/quench-task61-record-trunk-fixed/evidence/task61-splay-vmmap-m4-2026-10-12/setup.stdout.txt",
+        "/private/tmp/quench-task61-record-trunk-fixed/evidence/task61-splay-vmmap-m4-2026-10-12/setup.stderr.txt",
+        "/private/tmp/quench-task61-record-trunk-fixed/evidence/task61-splay-vmmap-m4-2026-10-12/setup.vmmap.txt",
+        "/private/tmp/quench-task61-record-trunk-fixed/evidence/task61-splay-vmmap-m4-2026-10-12/setup.vmmap-summary.txt",
+        "/private/tmp/quench-task61-record-trunk-fixed/evidence/task61-splay-vmmap-m4-2026-10-12/setup.process.txt"
+      ]
+    },
+    {
+      "stage": "work",
+      "pid": 53311,
+      "source": "/private/tmp/quench-task61-record-trunk-fixed/evidence/task61-splay-vmmap-m4-2026-10-12/splay-work-hold.js",
+      "source_sha256": "4d7ec15c106a89795448590ab7a8f65afbe30eec1b2b420f67efca434628ab8a",
+      "captured_unix_seconds": 1791811522.9054909,
+      "marker": "__quenchMemoryHold:work",
+      "vmmap_exit": 0,
+      "summary_exit": 0,
+      "process_info_exit": 0,
+      "files": [
+        "/private/tmp/quench-task61-record-trunk-fixed/evidence/task61-splay-vmmap-m4-2026-10-12/work.stdout.txt",
+        "/private/tmp/quench-task61-record-trunk-fixed/evidence/task61-splay-vmmap-m4-2026-10-12/work.stderr.txt",
+        "/private/tmp/quench-task61-record-trunk-fixed/evidence/task61-splay-vmmap-m4-2026-10-12/work.vmmap.txt",
+        "/private/tmp/quench-task61-record-trunk-fixed/evidence/task61-splay-vmmap-m4-2026-10-12/work.vmmap-summary.txt",
+        "/private/tmp/quench-task61-record-trunk-fixed/evidence/task61-splay-vmmap-m4-2026-10-12/work.process.txt"
+      ]
+    }
+  ],
+  "method": "Stop the uninstrumented pinned process immediately after setup or 300 run() calls; capture vmmap and ps before teardown.",
+  "limits": [
+    "This is an OS mapping snapshot, not the profile-memory structural counter build.",
+    "The work snapshot is after the final run(), before TearDown(); it may miss a transient intra-run RSS peak."
+  ]
+}

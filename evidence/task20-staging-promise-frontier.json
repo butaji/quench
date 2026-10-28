@@ -1,0 +1,78 @@
+{
+  "schema": 1,
+  "tasks": [
+    "20",
+    "48",
+    "86"
+  ],
+  "source_head": "7e60169df033dd247f34199e084e3e8080a92a29",
+  "source_state": "dirty worktree; no production semantic changes for this recheck",
+  "host": "Darwin arm64",
+  "rustc": "rustc 1.99.0 (b940084d7 2026-09-28) (Homebrew)",
+  "suite_head": "6eec1ac9ee144dafd8f344d73a21f36bfc9f6755",
+  "suite_clean": true,
+  "build_profile": "dev, correctness only",
+  "build_command": "cargo build -p quench-test262 --bin run-stages-next",
+  "build_log": "target/iteration/task20-staging-promise-frontier-build.log",
+  "scope": "Stage 114, staging/sm/Promise/: recheck two latest stale non-pass observations without running full staging or Test262",
+  "before": {
+    "report": "target/iteration/task20-staging-promise-frontier-before.json",
+    "runner": "/Users/admin/Code/GitHub/quench-v2/target/iteration/task37-wasm-wait-js-runner",
+    "binary_sha256": "70480b3fb810e2336d6cefb0077db5d1fd0051e870a168beef4cda24c9711f5d"
+  },
+  "after": {
+    "report": "target/iteration/task20-staging-promise-frontier-after.json",
+    "runner": "/Users/admin/Code/GitHub/quench-v2/target/iteration/task20-staging-promise-frontier-runner",
+    "binary_sha256": "42fee9d97aa15653033c49adad3daeeaf1e7192d32a003bc8816de10f59a769e"
+  },
+  "comparison": {
+    "command": "target/debug/compare-runs --reports target/iteration/task20-staging-promise-frontier-before.json target/iteration/task20-staging-promise-frontier-after.json",
+    "total": 6,
+    "before_passed": 6,
+    "passed": 6,
+    "failed": 0,
+    "gains": 0,
+    "regressions": 0,
+    "exact_ids_match": true,
+    "all_worker_outcomes_terminal": true,
+    "timeout_ms": 30000
+  },
+  "reports": {
+    "target/iteration/task20-staging-promise-frontier-before.json": "c7f790fb64e9bdf635c3d072d4ce40febd115504deca108d8282a4c099af42a5",
+    "target/iteration/task20-staging-promise-frontier-after.json": "eafa3cc487e6ac723e536b88a8a5c451c8f9cb77dbe3ba1d29be41d49fd0d413",
+    "target/iteration/task20-staging-promise-frontier-comparison.log": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd",
+    "target/iteration/task20-staging-frontier-census.json": "7354c92b93da3d9ef9268098bc36b0a722a967c425e58f4bca29a97fdd473387"
+  },
+  "input_sha256": {
+    "tests/test262/test/staging/sm/Promise/bug-1287334.js": "fb73b86dd5fb63ae5ebecb3abfac0c0841622e2820832c79500587fcb4aef470",
+    "tests/test262/test/staging/sm/Promise/bug-1288382.js": "386672f90a218d1456bea8028cf7a519b06cc6fcdff52b3977c291d1d3bb6e6c",
+    "tests/test262/test/staging/sm/Promise/bug-1289040.js": "a77ba5243eb879aa3653a7209e8f67893a1e83e2e9306191f4915fc0437e2f10",
+    "tests/test262/test/staging/sm/Promise/for-of-iterator-uses-getv.js": "5bff31858b4102d369a82d94da87060409dd1b613e8f670923c10ed36713b7d2",
+    "tests/test262/test/staging/sm/Promise/methods-non-enumerable.js": "355df7eda3b89c1b8a9300139bef693fa8aa05cc9484aa8233c350bbe430abfd",
+    "tests/test262/test/staging/sm/Promise/promise-species.js": "7050154bea6ad095255bb3a530dc6512173f2ffb47f35e70f3c8b2b5796f69b2"
+  },
+  "closes_stale_observations": [
+    "staging/sm/Promise/bug-1289040.js",
+    "staging/sm/Promise/methods-non-enumerable.js"
+  ],
+  "triage": {
+    "cases_observed": 1482,
+    "reports_inspected": 342,
+    "latest_non_pass_before_recheck": 4,
+    "remaining_non_pass_observations": [
+      "staging/sm/lexical-environment/block-scoped-functions-annex-b-arguments.js",
+      "staging/sm/regress/regress-602621.js"
+    ],
+    "qualification": false,
+    "reason": "Latest per-case reports use mixed binary revisions and supply triage only. The 6-case recheck does not establish a current full staging or Test262 pass."
+  },
+  "limits": [
+    "Documented Annex B, immutable-buffer and keyed-Promise corpus conflicts remain unresolved.",
+    "No fixture, helper, expectation, inventory or production rule was modified.",
+    "Full Test262, Stage A, production Node/Wasm cutover and performance qualification remain open."
+  ],
+  "harness_inventory": {
+    "files": 43,
+    "path_sha256_mapping_sha256": "8402ce85977e30f725e6c133360d171a8fda33bba3aff728d217d3b9aad3d8f2"
+  }
+}

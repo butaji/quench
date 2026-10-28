@@ -1,0 +1,65 @@
+richards: WIN (Quench worst 2488 KiB, best other 3592 KiB)
+  quench             2232    2236    2488 KiB
+  quench --jit       2228    2268    2484 KiB
+  qjs                3592    3660    3688 KiB
+  node --jitless    44852   44868   45028 KiB
+  node              52896   53376   53400 KiB
+  bun no-JIT        21632   21812   21832 KiB
+  bun               37640   37916   38312 KiB
+deltablue: WIN (Quench worst 2848 KiB, best other 3964 KiB)
+  quench             2540    2648    2740 KiB
+  quench --jit       2636    2768    2848 KiB
+  qjs                3964    3972    4072 KiB
+  node --jitless    46968   46988   47016 KiB
+  node              66184   74920   83076 KiB
+  bun no-JIT        21740   21768   22232 KiB
+  bun               42476   43520   43708 KiB
+crypto: WIN (Quench worst 3180 KiB, best other 3808 KiB)
+  quench             2760    2828    2876 KiB
+  quench --jit       2744    2916    3180 KiB
+  qjs                3808    3848    3944 KiB
+  node --jitless    45008   45064   45136 KiB
+  node              54104   54424   55500 KiB
+  bun no-JIT        22536   22616   22768 KiB
+  bun               45956   46484   46864 KiB
+raytrace: WIN (Quench worst 2800 KiB, best other 3484 KiB)
+  quench             2588    2728    2800 KiB
+  quench --jit       2588    2640    2784 KiB
+  qjs                3484    3644    3712 KiB
+  node --jitless    47244   47256   51464 KiB
+  node              59872   60308   68444 KiB
+  bun no-JIT        22368   22460   22732 KiB
+  bun               51936   52720   53620 KiB
+earley-boyer: WIN (Quench worst 6364 KiB, best other 17652 KiB)
+  quench             5996    6188    6312 KiB
+  quench --jit       6192    6196    6364 KiB
+  qjs               17652   17824   18060 KiB
+  node --jitless    76112   76248   76384 KiB
+  node              84728   87492   99212 KiB
+  bun no-JIT        25732   26096   26552 KiB
+  bun               66900   69836   72084 KiB
+regexp: WIN (Quench worst 5664 KiB, best other 7160 KiB)
+  quench             5440    5540    5652 KiB
+  quench --jit       5440    5516    5664 KiB
+  qjs                7160    7292    7312 KiB
+  node --jitless    54796   54808   54872 KiB
+  node              63940   65640   66196 KiB
+  bun no-JIT        29824   29860   30224 KiB
+  bun               51092   51964   52560 KiB
+splay: WIN (Quench worst 31640 KiB, best other 61648 KiB)
+  quench            31456   31524   31640 KiB
+  quench --jit      31472   31476   31592 KiB
+  qjs              160056  160104  160292 KiB
+  node --jitless   326556  340132  380956 KiB
+  node             384704  427388  472244 KiB
+  bun no-JIT        61648   61700   61988 KiB
+  bun              185972  189336  193904 KiB
+navier-stokes: WIN (Quench worst 3980 KiB, best other 5324 KiB)
+  quench             3636    3896    3980 KiB
+  quench --jit       3776    3880    3904 KiB
+  qjs                5324    5332    5384 KiB
+  node --jitless    49144   49332   49360 KiB
+  node              56288   56472   56584 KiB
+  bun no-JIT        21764   22000   22216 KiB
+  bun               35492   35720   36508 KiB
+every fixture: Quench below every other engine

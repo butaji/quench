@@ -1,0 +1,128 @@
+{
+  "tasks": [
+    "19",
+    "23",
+    "37",
+    "40",
+    "48"
+  ],
+  "source_head": "7e60169df033dd247f34199e084e3e8080a92a29",
+  "source_state": "dirty worktree",
+  "source_hashes": {
+    "crates/quench-wasm/src/shared.rs": "15082a567ff61c519d37da4faf4372798499f33b2b9d3ce3134cbc3b5e758e4f",
+    "crates/quench-runtime-next/src/wasm.rs": "eebe81d513558df804561cfb14ad6e58c322d38e2bc136193165e4fe5ae5d56f",
+    "crates/quench-runtime-next/src/wasm/types.rs": "f4c3961737e18ed06df017c5c33299c1429f37474e9d8a72f598e81cd9a5eb2b",
+    "crates/quench-runtime-next/src/wasm/scalar.rs": "3dd629ec2fffe7d0797ffc0edecfc0b2863c01f465a9decf5204c2e80e655e48",
+    "crates/quench-runtime-next/src/wasm/control.rs": "0c5262d5f3f0a860b7619c4b6e51d96698d8cbaa74e42142a63257f71f417be7",
+    "crates/quench-runtime-next/src/wasm/table.rs": "979fdaad072eca79fe699ce95bec4d22238341f678510e0cb757741f3c679838",
+    "crates/quench-runtime-next/src/wasm/constant.rs": "3d3a876504664e0831f3c47c03fd9fb19bdc7d6a78dfdc52d580675cd0ce3c74",
+    "crates/quench-runtime-next/src/vm/wasm.rs": "9115b9a2f2af86b45ed72816d88e0da3a9a2c0c79ac555e7f48cae30514af46f",
+    "crates/quench-runtime-next/src/vm/wasm_table.rs": "eb83a63c75c9a2d471124a6796fa08cd59cd281aea466167b20a5749304ef6c5",
+    "crates/quench-runtime-next/src/vm/wasm_host.rs": "36010418264f16dde876193c7e15cf6eeb036dc86d308c7d7baf6d3fe523c44e",
+    "crates/quench-runtime-next/src/lib.rs": "2951e6bad2a66464ffb6ce18eecb30a4677b90b76e94afe4b321e91364dafafb"
+  },
+  "suite_head": "67c8b9dc32c47d61c05a1681df349d01c85fa8ff",
+  "suite_clean": true,
+  "host": "Darwin arm64",
+  "rustc": "rustc 1.99.0 (b940084d7 2026-09-28) (Homebrew)",
+  "profile": "debug",
+  "residual_format": 54,
+  "obligation": "Preserve source type-index order, recursive group boundaries, finality, supertype edges and full composite/reference declarations in one shared immutable authority; derive supported executable signatures without erasing recursive identity.",
+  "representation": "WasmTypes owns Rc<[Vec<SubType>]>; parser RecGroups are consumed into their original group order without a flat FuncType copy. WasmSignatures retains a cheap shared clone and block/indirect-call lowering consults its declarations. WasmModule exposes the same facts. Legacy embedding test inputs declare final unshared singleton function groups. Lookup derives group/member positions; no parallel index cache. Executable signature projection still rejects recursive/non-final/supertype/shared/descriptor types until compatibility and value semantics support them. Unused declarations are retained without forcing rejection of otherwise supported modules. No opcode, executor, Value, cell or residual format added.",
+  "scope": "The previous exact 210-file affected decoded-module inventory plus the previous 3178 focused directives and 34 new type-table controls; no full pinned suite replay.",
+  "reports": {
+    "before": {
+      "path": "target/iteration/task37-wasm-type-admission-after.json",
+      "sha256": "05c77186baf2a01a5ca57b66311560bada93498ef8f20ca30166219c6f2828a7",
+      "binary_sha256": "f80df65b5eb4e92086cee6b0bc9790cf5c879a940f7c80db85aa3a57b2db32a4"
+    },
+    "after": {
+      "path": "target/iteration/task37-wasm-type-graph-after.json",
+      "sha256": "4844e8f8d5dafbfd4ca5b216fe92b1c47c9edaa7a5757944984bbd2c73c032cd",
+      "binary_sha256": "047d0c6a60a71000855852b3e733a2d00841ca240b68fda07fe259e1623ddd54"
+    },
+    "controls_before": {
+      "path": "target/iteration/task37-wasm-type-graph-controls-before.json",
+      "sha256": "58b7bc5b0eb5e12d7fc00898fa592e1c311f06e425263bf93094d68feed40234",
+      "binary_sha256": "f80df65b5eb4e92086cee6b0bc9790cf5c879a940f7c80db85aa3a57b2db32a4"
+    },
+    "controls": {
+      "path": "target/iteration/task37-wasm-type-graph-controls.json",
+      "sha256": "f93944d080e970d7cb76637f15a29cb5390cadb89c7201e5dbfe06399aff69d0",
+      "binary_sha256": "047d0c6a60a71000855852b3e733a2d00841ca240b68fda07fe259e1623ddd54"
+    }
+  },
+  "runner": {
+    "path": "target/iteration/task37-wasm-type-graph-runner",
+    "sha256": "047d0c6a60a71000855852b3e733a2d00841ca240b68fda07fe259e1623ddd54"
+  },
+  "qualification": {
+    "files": 210,
+    "total": 61588,
+    "passed": 60619,
+    "failed": 969,
+    "gains": 0,
+    "regressions": 0,
+    "identical_input_hashes": true,
+    "identical_directive_ids": true,
+    "complete_workers": true
+  },
+  "controls": {
+    "files": 24,
+    "total": 3212,
+    "before_passed": 3179,
+    "before_failed": 33,
+    "passed": 3212,
+    "failed": 0,
+    "gains": 33,
+    "regressions": 0,
+    "new_directives": 34,
+    "obligations": "Recursive mutually referenced struct declarations and derived subtype before a plain function; unused array declaration before an imported function; preserved source block and indirect-call type indices; direct/imported call identity; signed I32 boundary values; type-only recursive module. All earlier scalar/vector/resource/ABI controls retain passes."
+  },
+  "checks": {
+    "wasm_internal": 33,
+    "frontend_internal": 30,
+    "profile_feature_all_target_check": "passed",
+    "new_internal_obligation": "Validated multi-type recursive groups retain member order, nonfinal flag, cross-member reference edge and external supertype index; plain function projection uses the later source type index; cloned modules share the same allocation. Existing boundary rejection test uses actual executable unsupported types, not unused declarations."
+  },
+  "oracle": {
+    "path": "target/iteration/task37-wasm-type-graph-oracle.json",
+    "sha256": "f71e2989690d998d9a42493fcedd03eea580388cbf62d670270da4528cab06ac",
+    "result": {
+      "node": "v26.10.0",
+      "flags": [
+        "--no-sparkplug",
+        "--no-maglev",
+        "--no-turbofan",
+        "--wasm-jitless"
+      ],
+      "checks": 30,
+      "modules": 3,
+      "passed": true
+    },
+    "source": "target/iteration/task37-wasm-type-graph-oracle.cjs",
+    "source_sha256": "26a47c74225e56f9a29701c0dbc45e67c25bad713f417de22a0adc46d2981378"
+  },
+  "fixtures": {
+    "target/iteration/task37-wasm-type-graph-controls.wast": "170133887081dd7b1c73119ae1f9383a88e3b714599a4fb6f7a8eb2541526827",
+    "target/iteration/task37-wasm-type-graph-decls.wat": "09505e6a73173f927369bd942540f938b4d6b42bc957cce062077686554d99af",
+    "target/iteration/task37-wasm-type-graph-decls.wasm": "1637286da532aa55c9913beafb28a1391c218b98704c829c647bf306d5cc8de4",
+    "target/iteration/task37-wasm-type-graph-importer.wat": "4f99142eff5222e2e6c3c94fd0161991655c1fdcd3814a2a93e66b0ed9564475",
+    "target/iteration/task37-wasm-type-graph-importer.wasm": "ba4fe963c2f6674a2174758eff40f3156ca2dc4702722b03c4b2583a21280a6b",
+    "target/iteration/task37-wasm-type-graph-empty.wat": "c6346b894b5f7187d2458bc0809fa29f7c7437495f251a05c8326976a9c03729",
+    "target/iteration/task37-wasm-type-graph-empty.wasm": "4d55e39fd9d46260b10116f12085b725ca581d7777224694520573675c405a95",
+    "target/iteration/task37-wasm-type-graph-oracle-cases.json": "1f56a545b03f113b571cdc7514cd71149d20a047a9514cc78a1c1fa0f8482250"
+  },
+  "logs": {
+    "target/iteration/task37-wasm-type-graph-frontend.log": "bd556cd08bc568fdc4d41bafc1aa18deb1a3a226654a99ee7143d3408b7a6bf5",
+    "target/iteration/task37-wasm-type-graph-runtime.log": "70250e59e2b67f8735c05777cee870b2badb8da8dfdf2bcf6f0a14867b373a8b",
+    "target/iteration/task37-wasm-type-graph-check.log": "3e2481f709198a9ccd00707a26269e148ae89e599a9b760c40cc71500f0bbdce",
+    "target/iteration/task37-wasm-type-graph-build.log": "ff4584e3c42a49fca7178b80cf0c778fec1bb222415a04ccb45d092395a91a6a",
+    "target/iteration/task37-wasm-type-graph-after.log": "fde0941d30af706ffd9c7cd4a3c3914d7945dc1264b9304915aaeb070fdb1d69",
+    "target/iteration/task37-wasm-type-graph-controls.log": "96e53e20d36a2824c4c548067961a9929046da94302822300d8bf23507f64310",
+    "target/iteration/task37-wasm-type-graph-controls-before.log": "ef7d6fe7be2782c9a7ac114a1690988077587a4fe02ffdfac5b8ff03b376db18",
+    "target/iteration/task37-wasm-type-graph-compare.log": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd",
+    "target/iteration/task37-wasm-type-graph-controls-compare.log": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+  },
+  "limitations": "This is a declaration/ownership foundation, not canonical recursive type equivalence or GC execution. The affected pinned scope retains 969 failures. Concrete/non-null reference values, cross-module recursive canonical equivalence/subtyping, GC allocation/operators, typed calls/branches/tail calls, tags/exceptions and broader complete-inventory gaps remain. Final Stage A cutover/cleanup/three-suite gates remain open; no performance claim."
+}

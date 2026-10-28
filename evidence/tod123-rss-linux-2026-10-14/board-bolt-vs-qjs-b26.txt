@@ -1,0 +1,18 @@
+# fixture engine maxrss KiB x3 (evicted), qjs = QuickJS 2026-06-04, qn-b26b = v2-cloud-c2 61d615448 (array payload charged) + retrained orders, static BOLT
+crypto qjs 3516 3668 3584
+crypto qn-b26b 3944 3740 3740
+deltablue qjs 3928 3844 3616
+deltablue qn-b26b 3464 3464 3464
+earley-boyer qjs 16576 16472 16640
+earley-boyer qn-b26b 9920 9832 9956
+navier-stokes qjs 4976 4928 5080
+navier-stokes qn-b26b 4516 4388 4516
+raytrace qjs 3500 3500 3372
+raytrace qn-b26b 3456 3440 3268
+regexp qjs 6636 6848 6752
+regexp qn-b26b 11408 11388 11408
+richards qjs 3480 3396 3276
+richards qn-b26b 3216 3216 3384
+splay qjs 147052 146884 147080
+splay qn-b26b 42056 42184 42056
+# Node 22 / Bun (same host, one run each, KiB): see board-node-bun.txt

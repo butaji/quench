@@ -1,0 +1,289 @@
+{
+  "schema": 1,
+  "task": "61",
+  "kind": "sparse_array_own_index_read_fast_path_candidate",
+  "recorded_at": "2026-10-08",
+  "source": {
+    "revision": "4cfdb6f8eaf97b799ed7fe47fa1be4b0ee11a83b",
+    "tree_dirty": true,
+    "changed_file": "crates/quench-runtime/src/vm/index.rs",
+    "changed_file_sha256": "9b1213e0daae0e95f768a66da28960e9c3b8110b79efe822332af85fee5bad5e",
+    "changed_diff_sha256": "d6766ad75e941d7336432e80d7ab8b423e12ecfb78bbefaea439b02756bb4d95"
+  },
+  "host": {
+    "model": "Mac16,10",
+    "architecture": "aarch64-apple-darwin",
+    "operating_system": "macOS 25.5.0",
+    "memory_bytes": 17179869184,
+    "rustc": "1.99.0 (b940084d7 2026-09-28)",
+    "process_metrics_backend": "macOS /usr/bin/time -l"
+  },
+  "change": {
+    "behavior": "After the existing indexed-accessor check and dense-vector read, return a present, non-deleted sparse own array value directly from the authoritative sparse sidecar. Preserve the generic property path for holes, deleted slots, non-array receivers, and misses.",
+    "representation": "Dense values remain in Cell::Array.elements; overflow/sparse values remain in Heap sparse-array storage. No migration, new flag, or duplicate value store was added.",
+    "binding_time": "Array kind and integer index are known at the access site; present own data shadows the prototype chain. Accessors are checked first; holes and misses retain full lookup semantics.",
+    "file": "crates/quench-runtime/src/vm/index.rs"
+  },
+  "production_build": {
+    "command": "cargo build --profile production -p quench-runtime --bin quench",
+    "baseline_binary": "target/production/quench-array-baseline",
+    "baseline_binary_sha256": "39d659d9f825731d0d5052aa8e6a30437c8c070f8b2a28805f81631244c87439",
+    "candidate_binary": "target/production/quench-array-sparse-candidate",
+    "candidate_binary_sha256": "5b954f7930e4b15c12c70629c804c9b5aed13d41ed063781c7ddabcda506d6bd",
+    "comparison": "Production binaries were built from the same workspace/toolchain; the candidate includes only the sparse-read path change relative to the retained pre-change baseline. Other dirty workspace changes were common to both."
+  },
+  "paired_microbenchmark": {
+    "runner": "tasks/evidence/task61-array-sparse-read-paired-2026-10-08.py",
+    "runner_sha256": "94fbbe95337364bc4dc33f32d44370827cfeba93b47243b8cc14ce84ed5acfe3",
+    "command": "python3 tasks/evidence/task61-array-sparse-read-paired-2026-10-08.py target/production/quench-array-baseline target/production/quench-array-sparse-candidate tasks/evidence/task61-array-sparse-read-fixtures tasks/evidence/task61-array-sparse-read-paired-2026-10-08.csv",
+    "raw_pairs": "tasks/evidence/task61-array-sparse-read-paired-2026-10-08.csv",
+    "raw_pairs_sha256": "0ef4334e836a4eacc67f770e9fcac42c64d425ae5b43a3306d3f19c114a73ee0",
+    "analysis_runner": "tasks/evidence/task61-array-sparse-read-analyze-2026-10-08.py",
+    "analysis_runner_sha256": "11a4607dc79a1a04b124df8402f14760a7427211c8f95fd5a160457af1716830",
+    "summary": "tasks/evidence/task61-array-sparse-read-paired-summary-2026-10-08.json",
+    "summary_sha256": "f06054817e5b7e022aeb2e1b962a1a8399e45313f65d6572f12484d8ff8959e4",
+    "analysis": {
+      "method": "paired bootstrap over per-round candidate-minus-baseline percentages",
+      "bootstrap_samples": 100000,
+      "seed": 61102027,
+      "cases": {
+        "dense-literal": {
+          "pairs": 11,
+          "baseline_instruction_median": 2211785763,
+          "candidate_instruction_median": 2213388341,
+          "instruction_delta_median_percent": 0.08074799987697749,
+          "instruction_delta_95_percentile_interval": [
+            0.06605336847897958,
+            0.13141172534786622
+          ],
+          "candidate_lower_instruction_pairs": 1,
+          "elapsed_delta_median_percent": 0.0,
+          "candidate_faster_elapsed_pairs": 0
+        },
+        "length-setter-filled": {
+          "pairs": 11,
+          "baseline_instruction_median": 10789705942,
+          "candidate_instruction_median": 2399764552,
+          "instruction_delta_median_percent": -77.7586983405937,
+          "instruction_delta_95_percentile_interval": [
+            -77.76173472780437,
+            -77.74094941083769
+          ],
+          "candidate_lower_instruction_pairs": 11,
+          "elapsed_delta_median_percent": -80.95238095238095,
+          "candidate_faster_elapsed_pairs": 11
+        },
+        "map": {
+          "pairs": 11,
+          "baseline_instruction_median": 10837965023,
+          "candidate_instruction_median": 2423290362,
+          "instruction_delta_median_percent": -77.63895392967804,
+          "instruction_delta_95_percentile_interval": [
+            -77.64198530687794,
+            -77.62698977974173
+          ],
+          "candidate_lower_instruction_pairs": 11,
+          "elapsed_delta_median_percent": -80.95238095238095,
+          "candidate_faster_elapsed_pairs": 11
+        },
+        "new-array-filled": {
+          "pairs": 11,
+          "baseline_instruction_median": 10794286528,
+          "candidate_instruction_median": 2403543485,
+          "instruction_delta_median_percent": -77.73462992227866,
+          "instruction_delta_95_percentile_interval": [
+            -77.73794524229842,
+            -77.73053413472991
+          ],
+          "candidate_lower_instruction_pairs": 11,
+          "elapsed_delta_median_percent": -81.3953488372093,
+          "candidate_faster_elapsed_pairs": 11
+        },
+        "single-push-filled": {
+          "pairs": 11,
+          "baseline_instruction_median": 9800318618,
+          "candidate_instruction_median": 2398875425,
+          "instruction_delta_median_percent": -75.52186521166837,
+          "instruction_delta_95_percentile_interval": [
+            -75.52633335535398,
+            -75.51724987589465
+          ],
+          "candidate_lower_instruction_pairs": 11,
+          "elapsed_delta_median_percent": -79.48717948717949,
+          "candidate_faster_elapsed_pairs": 11
+        }
+      }
+    },
+    "fixture_hashes": {
+      "array-fill.js": "11d09c32f28389283b178ddf6a90d452d2338a22434cf5713bef50945f1667b3",
+      "concat.js": "994f751ce356b6d13419d83e8504e0504175c54272e0e2bca7fa382972107d2b",
+      "dense-literal.js": "1d6aa5a5574375c236cb826359e258244a307247dcbc9833249c60c6eb9fb68f",
+      "length-setter-filled.js": "74536215b51c9f6c6f53a0f047fd34dd03ef7443075a09d10a6c6b1001bb087d",
+      "map.js": "c58aaf28b8464a727115fdd629fa5ec13ebd6c930ed7d8bbe31b1b55ad5857be",
+      "new-array-filled.js": "9dfe903b1dfccabfbb6505b6bc409a888b583a2d211d412b0a5f4a3b76a0e214",
+      "single-push-filled.js": "756a51cdefd34ef9fe232ef08d3da2562f99dda6b18f07c2f3b97711592a2daa",
+      "slice.js": "37aa97c9ec5cff95ba34cb1b9c05b73722a915da5969f9b42e2dc6127848b17f"
+    },
+    "interpretation": "Eleven alternating production pairs. The four sparse-builder variants improve in all pairs; the dense-literal control has a small, measured instruction increase and no elapsed-time change at reported precision."
+  },
+  "single_run_builder_screen": {
+    "raw_csv": "tasks/evidence/task61-array-sparse-read-screen-2026-10-08.csv",
+    "raw_csv_sha256": "9709b6b3add17eba330476fdc2d124901718e86ffb2f691c75074758ef75f0d1",
+    "rows": [
+      {
+        "case": "array-fill",
+        "baseline_instructions": "10787350282",
+        "candidate_instructions": "2398311860",
+        "candidate_instruction_delta_percent": "-77.767368",
+        "baseline_elapsed_seconds": "0.44",
+        "candidate_elapsed_seconds": "0.09",
+        "baseline_binary_sha256": "39d659d9f825731d0d5052aa8e6a30437c8c070f8b2a28805f81631244c87439",
+        "candidate_binary_sha256": "5b954f7930e4b15c12c70629c804c9b5aed13d41ed063781c7ddabcda506d6bd",
+        "fixture_sha256": "11d09c32f28389283b178ddf6a90d452d2338a22434cf5713bef50945f1667b3"
+      },
+      {
+        "case": "concat",
+        "baseline_instructions": "10821630964",
+        "candidate_instructions": "2414775862",
+        "candidate_instruction_delta_percent": "-77.685657",
+        "baseline_elapsed_seconds": "0.44",
+        "candidate_elapsed_seconds": "0.08",
+        "baseline_binary_sha256": "39d659d9f825731d0d5052aa8e6a30437c8c070f8b2a28805f81631244c87439",
+        "candidate_binary_sha256": "5b954f7930e4b15c12c70629c804c9b5aed13d41ed063781c7ddabcda506d6bd",
+        "fixture_sha256": "994f751ce356b6d13419d83e8504e0504175c54272e0e2bca7fa382972107d2b"
+      },
+      {
+        "case": "dense-literal",
+        "baseline_instructions": "2213196122",
+        "candidate_instructions": "2214753380",
+        "candidate_instruction_delta_percent": "0.070362",
+        "baseline_elapsed_seconds": "0.07",
+        "candidate_elapsed_seconds": "0.07",
+        "baseline_binary_sha256": "39d659d9f825731d0d5052aa8e6a30437c8c070f8b2a28805f81631244c87439",
+        "candidate_binary_sha256": "5b954f7930e4b15c12c70629c804c9b5aed13d41ed063781c7ddabcda506d6bd",
+        "fixture_sha256": "1d6aa5a5574375c236cb826359e258244a307247dcbc9833249c60c6eb9fb68f"
+      },
+      {
+        "case": "map",
+        "baseline_instructions": "10833539589",
+        "candidate_instructions": "2423521378",
+        "candidate_instruction_delta_percent": "-77.629459",
+        "baseline_elapsed_seconds": "0.42",
+        "candidate_elapsed_seconds": "0.08",
+        "baseline_binary_sha256": "39d659d9f825731d0d5052aa8e6a30437c8c070f8b2a28805f81631244c87439",
+        "candidate_binary_sha256": "5b954f7930e4b15c12c70629c804c9b5aed13d41ed063781c7ddabcda506d6bd",
+        "fixture_sha256": "c58aaf28b8464a727115fdd629fa5ec13ebd6c930ed7d8bbe31b1b55ad5857be"
+      },
+      {
+        "case": "new-array-filled",
+        "baseline_instructions": "10796567552",
+        "candidate_instructions": "2403848834",
+        "candidate_instruction_delta_percent": "-77.735064",
+        "baseline_elapsed_seconds": "0.42",
+        "candidate_elapsed_seconds": "0.08",
+        "baseline_binary_sha256": "39d659d9f825731d0d5052aa8e6a30437c8c070f8b2a28805f81631244c87439",
+        "candidate_binary_sha256": "5b954f7930e4b15c12c70629c804c9b5aed13d41ed063781c7ddabcda506d6bd",
+        "fixture_sha256": "9dfe903b1dfccabfbb6505b6bc409a888b583a2d211d412b0a5f4a3b76a0e214"
+      },
+      {
+        "case": "single-push-filled",
+        "baseline_instructions": "9798704803",
+        "candidate_instructions": "2398126813",
+        "candidate_instruction_delta_percent": "-75.526084",
+        "baseline_elapsed_seconds": "0.45",
+        "candidate_elapsed_seconds": "0.08",
+        "baseline_binary_sha256": "39d659d9f825731d0d5052aa8e6a30437c8c070f8b2a28805f81631244c87439",
+        "candidate_binary_sha256": "5b954f7930e4b15c12c70629c804c9b5aed13d41ed063781c7ddabcda506d6bd",
+        "fixture_sha256": "756a51cdefd34ef9fe232ef08d3da2562f99dda6b18f07c2f3b97711592a2daa"
+      },
+      {
+        "case": "slice",
+        "baseline_instructions": "10827077970",
+        "candidate_instructions": "2419038454",
+        "candidate_instruction_delta_percent": "-77.657513",
+        "baseline_elapsed_seconds": "0.47",
+        "candidate_elapsed_seconds": "0.08",
+        "baseline_binary_sha256": "39d659d9f825731d0d5052aa8e6a30437c8c070f8b2a28805f81631244c87439",
+        "candidate_binary_sha256": "5b954f7930e4b15c12c70629c804c9b5aed13d41ed063781c7ddabcda506d6bd",
+        "fixture_sha256": "37aa97c9ec5cff95ba34cb1b9c05b73722a915da5969f9b42e2dc6127848b17f"
+      }
+    ],
+    "qualification": "One-run screens only; paired evidence is provided separately for dense literal, new Array fill, single push, length setter and map."
+  },
+  "node_oracle": {
+    "script": "tasks/evidence/task61-array-sparse-read-node-oracle-2026-10-08.cjs",
+    "script_sha256": "9b748de20e9b790aea6b4d230fefdcc24341da96fde726975a07271a7e0e73d5",
+    "node_version": "v26.10.0",
+    "baseline_candidate_node_outputs_all_equal": true,
+    "output": "202,9,404,505,undefined,707",
+    "covered": "Array.prototype indexed getter on a hole; own element shadowing an inherited getter; own accessor; non-writable own data read; delete-to-hole; Proxy get trap."
+  },
+  "test262": {
+    "execution": "Sub-agent ran focused stages on the latest source; no Rust unit tests were run.",
+    "runner_sha256": "092747a8ee551cc4567215796a048902e333687b313ba1739da548a12b7f10c0",
+    "source_revision": "4cfdb6f8eaf97b799ed7fe47fa1be4b0ee11a83b",
+    "source_diff_sha256": "d6766ad75e941d7336432e80d7ab8b423e12ecfb78bbefaea439b02756bb4d95",
+    "results_directory": "target/iteration/sparse-array-final-2026-10-08",
+    "stages": {
+      "31": {
+        "passed": 3081,
+        "failed": 0,
+        "total": 3081,
+        "report": "target/iteration/sparse-array-final-2026-10-08/stage-31.json",
+        "report_sha256": "941081e21ef13e936c0753932210e6a06f6c0f0dcb5f91a901e8a962e70496d3"
+      },
+      "60": {
+        "passed": 3411,
+        "failed": 0,
+        "total": 3411,
+        "report": "target/iteration/sparse-array-final-2026-10-08/stage-60.json",
+        "report_sha256": "12423a4d1e164e1356b889e494a4ec9d077c74dd543c49f15d882aff0322a129"
+      },
+      "62": {
+        "passed": 311,
+        "failed": 0,
+        "total": 311,
+        "report": "target/iteration/sparse-array-final-2026-10-08/stage-62.json",
+        "report_sha256": "471b21331480fbba91922da3c69f4335afa084aede6012efb989f67affc57a15"
+      },
+      "63": {
+        "passed": 153,
+        "failed": 0,
+        "total": 153,
+        "report": "target/iteration/sparse-array-final-2026-10-08/stage-63.json",
+        "report_sha256": "f7992e625d197f70f0239497d625568dead220371eb0da47705e8f0c03fe0ac3"
+      }
+    },
+    "total_passed": 6956,
+    "total_failed": 0,
+    "total_cases": 6956
+  },
+  "v8v7_navier_stokes_diagnostic": {
+    "qualification_ready": false,
+    "runner": "target/release/quench-bench",
+    "runner_sha256": "ae347af8d0c9b1e21cca0ee9b8237edbfc5047d774880045929893a29c4a9a7b",
+    "rounds": 1,
+    "fixture": "quench-bench/js-engine-benchmark/v8-v7/navier-stokes.js",
+    "fixture_sha256": "ce241465ffeee77b5c4f7119f522aa971fe1fe92c3aed76f7514ea43e07fec84",
+    "baseline": {
+      "report": "target/iteration/array-sparse-probes/navier-baseline.json",
+      "report_sha256": "fb5da0d806681e18f9649fabd76ecef38398500ae00998dfd5ebc6cdb7025ab2",
+      "score": 52.5,
+      "max_rss_bytes": 26705920,
+      "valid": true,
+      "output_equal": true
+    },
+    "candidate": {
+      "report": "target/iteration/array-sparse-probes/navier-candidate.json",
+      "report_sha256": "f4b902e3a0ddf9db4c0d64f373ff202ca4373fdb59fb8a3201dc993efba4b0f4",
+      "score": 121.0,
+      "max_rss_bytes": 26361856,
+      "valid": true,
+      "output_equal": true
+    },
+    "interpretation": "Diagnostic one-round comparison; candidate and baseline both matched all three reference engines. This is not an 11-round Task 61 qualification.",
+    "score_delta_percent": 130.47619047619048,
+    "rss_delta_bytes": -344064,
+    "rss_delta_percent": -1.2883435582822087
+  }
+}

@@ -1,0 +1,458 @@
+{
+  "scope": "Selected unchanged30s controls for lost timeout cases across frozen7f stable and pinned full audits",
+  "counts": {
+    "pass": 10,
+    "timeout": 2
+  },
+  "rows": [
+    {
+      "label": "baseline321",
+      "case": "test-shadow-realm-gc-module.js",
+      "source": "3218431de1e87a51b63fee8bd3091aa631eec046",
+      "command": [
+        "/workspace/quench/work/sdk-primitives-bin/run-parallel",
+        "--all",
+        "--parallel-dir",
+        "/workspace/work/node-stable-release/node-v26.12.0/test/parallel",
+        "--filter",
+        "test-shadow-realm-gc-module.js",
+        "--jobs",
+        "1",
+        "--timeout-secs",
+        "30",
+        "--results",
+        "/workspace/quench/work/owned-script-timeout-controls/baseline321-test-shadow-realm-gc-module.js.json"
+      ],
+      "exit": 0,
+      "elapsed_seconds": 21.682048002025113,
+      "counts": {
+        "pass": 1
+      }
+    },
+    {
+      "label": "baseline321",
+      "case": "test-stream2-read-sync-stack.js",
+      "source": "3218431de1e87a51b63fee8bd3091aa631eec046",
+      "command": [
+        "/workspace/quench/work/sdk-primitives-bin/run-parallel",
+        "--all",
+        "--parallel-dir",
+        "/workspace/work/node-stable-release/node-v26.12.0/test/parallel",
+        "--filter",
+        "test-stream2-read-sync-stack.js",
+        "--jobs",
+        "1",
+        "--timeout-secs",
+        "30",
+        "--results",
+        "/workspace/quench/work/owned-script-timeout-controls/baseline321-test-stream2-read-sync-stack.js.json"
+      ],
+      "exit": 0,
+      "elapsed_seconds": 24.488098623987753,
+      "counts": {
+        "pass": 1
+      }
+    },
+    {
+      "label": "owned7f",
+      "case": "test-shadow-realm-gc-module.js",
+      "source": "7f8660459256f3552691074c219a14eb031132ba",
+      "command": [
+        "/workspace/quench/work/owned-script-bin/run-parallel",
+        "--all",
+        "--parallel-dir",
+        "/workspace/work/node-stable-release/node-v26.12.0/test/parallel",
+        "--filter",
+        "test-shadow-realm-gc-module.js",
+        "--jobs",
+        "1",
+        "--timeout-secs",
+        "30",
+        "--results",
+        "/workspace/quench/work/owned-script-timeout-controls/owned7f-test-shadow-realm-gc-module.js.json"
+      ],
+      "exit": 0,
+      "elapsed_seconds": 21.968600464053452,
+      "counts": {
+        "pass": 1
+      }
+    },
+    {
+      "label": "owned7f",
+      "case": "test-stream2-read-sync-stack.js",
+      "source": "7f8660459256f3552691074c219a14eb031132ba",
+      "command": [
+        "/workspace/quench/work/owned-script-bin/run-parallel",
+        "--all",
+        "--parallel-dir",
+        "/workspace/work/node-stable-release/node-v26.12.0/test/parallel",
+        "--filter",
+        "test-stream2-read-sync-stack.js",
+        "--jobs",
+        "1",
+        "--timeout-secs",
+        "30",
+        "--results",
+        "/workspace/quench/work/owned-script-timeout-controls/owned7f-test-stream2-read-sync-stack.js.json"
+      ],
+      "exit": 0,
+      "elapsed_seconds": 24.608274848025758,
+      "counts": {
+        "pass": 1
+      }
+    },
+    {
+      "label": "candidate918",
+      "case": "test-shadow-realm-gc-module.js",
+      "source": "91843065e29a0f672319b5a37cf36ba9c6b5a222",
+      "command": [
+        "/workspace/quench/work/fs-readdir-bin/run-parallel",
+        "--all",
+        "--parallel-dir",
+        "/workspace/work/node-stable-release/node-v26.12.0/test/parallel",
+        "--filter",
+        "test-shadow-realm-gc-module.js",
+        "--jobs",
+        "1",
+        "--timeout-secs",
+        "30",
+        "--results",
+        "/workspace/quench/work/owned-script-timeout-controls/candidate918-test-shadow-realm-gc-module.js.json"
+      ],
+      "exit": 0,
+      "elapsed_seconds": 21.408202785998583,
+      "counts": {
+        "pass": 1
+      }
+    },
+    {
+      "label": "candidate918",
+      "case": "test-stream2-read-sync-stack.js",
+      "source": "91843065e29a0f672319b5a37cf36ba9c6b5a222",
+      "command": [
+        "/workspace/quench/work/fs-readdir-bin/run-parallel",
+        "--all",
+        "--parallel-dir",
+        "/workspace/work/node-stable-release/node-v26.12.0/test/parallel",
+        "--filter",
+        "test-stream2-read-sync-stack.js",
+        "--jobs",
+        "1",
+        "--timeout-secs",
+        "30",
+        "--results",
+        "/workspace/quench/work/owned-script-timeout-controls/candidate918-test-stream2-read-sync-stack.js.json"
+      ],
+      "exit": 0,
+      "elapsed_seconds": 22.879722954006866,
+      "counts": {
+        "pass": 1
+      }
+    },
+    {
+      "label": "baseline321",
+      "case": "test-performance-many-marks.js",
+      "source": "3218431de1e87a51b63fee8bd3091aa631eec046",
+      "command": [
+        "/workspace/quench/work/sdk-primitives-bin/run-parallel",
+        "--all",
+        "--parallel-dir",
+        "/workspace/work/node-fixtures/test/parallel",
+        "--filter",
+        "test-performance-many-marks.js",
+        "--jobs",
+        "1",
+        "--timeout-secs",
+        "30",
+        "--results",
+        "/workspace/quench/work/owned-script-timeout-controls/pinned-baseline321-test-performance-many-marks.js.json"
+      ],
+      "exit": 0,
+      "elapsed_seconds": 18.80669786798535,
+      "counts": {
+        "pass": 1
+      }
+    },
+    {
+      "label": "baseline321",
+      "case": "test-stringbytes-external.js",
+      "source": "3218431de1e87a51b63fee8bd3091aa631eec046",
+      "command": [
+        "/workspace/quench/work/sdk-primitives-bin/run-parallel",
+        "--all",
+        "--parallel-dir",
+        "/workspace/work/node-fixtures/test/parallel",
+        "--filter",
+        "test-stringbytes-external.js",
+        "--jobs",
+        "1",
+        "--timeout-secs",
+        "30",
+        "--results",
+        "/workspace/quench/work/owned-script-timeout-controls/pinned-baseline321-test-stringbytes-external.js.json"
+      ],
+      "exit": 0,
+      "elapsed_seconds": 27.02120284497505,
+      "counts": {
+        "pass": 1
+      }
+    },
+    {
+      "label": "owned7f",
+      "case": "test-performance-many-marks.js",
+      "source": "7f8660459256f3552691074c219a14eb031132ba",
+      "command": [
+        "/workspace/quench/work/owned-script-bin/run-parallel",
+        "--all",
+        "--parallel-dir",
+        "/workspace/work/node-fixtures/test/parallel",
+        "--filter",
+        "test-performance-many-marks.js",
+        "--jobs",
+        "1",
+        "--timeout-secs",
+        "30",
+        "--results",
+        "/workspace/quench/work/owned-script-timeout-controls/pinned-owned7f-test-performance-many-marks.js.json"
+      ],
+      "exit": 0,
+      "elapsed_seconds": 19.09909178200178,
+      "counts": {
+        "pass": 1
+      }
+    },
+    {
+      "label": "owned7f",
+      "case": "test-stringbytes-external.js",
+      "source": "7f8660459256f3552691074c219a14eb031132ba",
+      "command": [
+        "/workspace/quench/work/owned-script-bin/run-parallel",
+        "--all",
+        "--parallel-dir",
+        "/workspace/work/node-fixtures/test/parallel",
+        "--filter",
+        "test-stringbytes-external.js",
+        "--jobs",
+        "1",
+        "--timeout-secs",
+        "30",
+        "--results",
+        "/workspace/quench/work/owned-script-timeout-controls/pinned-owned7f-test-stringbytes-external.js.json"
+      ],
+      "exit": 1,
+      "elapsed_seconds": 30.0403752939892,
+      "counts": {
+        "timeout": 1
+      }
+    },
+    {
+      "label": "candidate918",
+      "case": "test-performance-many-marks.js",
+      "source": "91843065e29a0f672319b5a37cf36ba9c6b5a222",
+      "command": [
+        "/workspace/quench/work/fs-readdir-bin/run-parallel",
+        "--all",
+        "--parallel-dir",
+        "/workspace/work/node-fixtures/test/parallel",
+        "--filter",
+        "test-performance-many-marks.js",
+        "--jobs",
+        "1",
+        "--timeout-secs",
+        "30",
+        "--results",
+        "/workspace/quench/work/owned-script-timeout-controls/pinned-candidate918-test-performance-many-marks.js.json"
+      ],
+      "exit": 0,
+      "elapsed_seconds": 16.719523791980464,
+      "counts": {
+        "pass": 1
+      }
+    },
+    {
+      "label": "candidate918",
+      "case": "test-stringbytes-external.js",
+      "source": "91843065e29a0f672319b5a37cf36ba9c6b5a222",
+      "command": [
+        "/workspace/quench/work/fs-readdir-bin/run-parallel",
+        "--all",
+        "--parallel-dir",
+        "/workspace/work/node-fixtures/test/parallel",
+        "--filter",
+        "test-stringbytes-external.js",
+        "--jobs",
+        "1",
+        "--timeout-secs",
+        "30",
+        "--results",
+        "/workspace/quench/work/owned-script-timeout-controls/pinned-candidate918-test-stringbytes-external.js.json"
+      ],
+      "exit": 1,
+      "elapsed_seconds": 30.046055690036155,
+      "counts": {
+        "timeout": 1
+      }
+    }
+  ],
+  "full_counts_unchanged": {
+    "stable": "1793/5015",
+    "pinned": "1821/4727"
+  },
+  "persistent_regression": "Pinned stringbytes-external:321 PASS27.02s;7f and918 TIMEOUT30s in quiet controls; not attributed solely to contention.",
+  "limitations": [
+    "Selected outcomes never replace or add to full totals.",
+    "Single-job controls retain original30s timeout and fixture/skip/step budgets."
+  ],
+  "raw": [
+    {
+      "path": "work/owned-script-timeout-controls/baseline321-test-shadow-realm-gc-module.js.json",
+      "bytes": 680,
+      "sha256": "d3ec6600cc7d0fb167c747f5e1e80ddde2e2bff20a5008c3c0964a42b6f2a0a2"
+    },
+    {
+      "path": "work/owned-script-timeout-controls/baseline321-test-shadow-realm-gc-module.js.log",
+      "bytes": 199,
+      "sha256": "646ad2afab0069bbed84fb269a26e4af37bd90b887d0401b80e2f3a780684287"
+    },
+    {
+      "path": "work/owned-script-timeout-controls/baseline321-test-stream2-read-sync-stack.js.json",
+      "bytes": 1133,
+      "sha256": "05c42ea38150bbb77bba9adf4cc96d36dfcc028671b97b2ed48ede8135ff3d80"
+    },
+    {
+      "path": "work/owned-script-timeout-controls/baseline321-test-stream2-read-sync-stack.js.log",
+      "bytes": 200,
+      "sha256": "8ab7382c364429aef6f16f66e36a18b5e610f31cbfcb5f900b962583ec9c1b9d"
+    },
+    {
+      "path": "work/owned-script-timeout-controls/candidate918-test-shadow-realm-gc-module.js.json",
+      "bytes": 680,
+      "sha256": "d3ec6600cc7d0fb167c747f5e1e80ddde2e2bff20a5008c3c0964a42b6f2a0a2"
+    },
+    {
+      "path": "work/owned-script-timeout-controls/candidate918-test-shadow-realm-gc-module.js.log",
+      "bytes": 199,
+      "sha256": "646ad2afab0069bbed84fb269a26e4af37bd90b887d0401b80e2f3a780684287"
+    },
+    {
+      "path": "work/owned-script-timeout-controls/candidate918-test-stream2-read-sync-stack.js.json",
+      "bytes": 1133,
+      "sha256": "05c42ea38150bbb77bba9adf4cc96d36dfcc028671b97b2ed48ede8135ff3d80"
+    },
+    {
+      "path": "work/owned-script-timeout-controls/candidate918-test-stream2-read-sync-stack.js.log",
+      "bytes": 200,
+      "sha256": "8ab7382c364429aef6f16f66e36a18b5e610f31cbfcb5f900b962583ec9c1b9d"
+    },
+    {
+      "path": "work/owned-script-timeout-controls/owned7f-test-shadow-realm-gc-module.js.json",
+      "bytes": 680,
+      "sha256": "d3ec6600cc7d0fb167c747f5e1e80ddde2e2bff20a5008c3c0964a42b6f2a0a2"
+    },
+    {
+      "path": "work/owned-script-timeout-controls/owned7f-test-shadow-realm-gc-module.js.log",
+      "bytes": 199,
+      "sha256": "646ad2afab0069bbed84fb269a26e4af37bd90b887d0401b80e2f3a780684287"
+    },
+    {
+      "path": "work/owned-script-timeout-controls/owned7f-test-stream2-read-sync-stack.js.json",
+      "bytes": 1133,
+      "sha256": "05c42ea38150bbb77bba9adf4cc96d36dfcc028671b97b2ed48ede8135ff3d80"
+    },
+    {
+      "path": "work/owned-script-timeout-controls/owned7f-test-stream2-read-sync-stack.js.log",
+      "bytes": 200,
+      "sha256": "8ab7382c364429aef6f16f66e36a18b5e610f31cbfcb5f900b962583ec9c1b9d"
+    },
+    {
+      "path": "work/owned-script-timeout-controls/pinned-baseline321-test-performance-many-marks.js.json",
+      "bytes": 718,
+      "sha256": "3638daae9b0eb600309d33874222e11b23f98725b9ce7ee1284199a6b25e89c5"
+    },
+    {
+      "path": "work/owned-script-timeout-controls/pinned-baseline321-test-performance-many-marks.js.log",
+      "bytes": 179,
+      "sha256": "f5f4653e6163c850385a44fd0ea66a8f4fb924f8eb5c40c4c8bb961efe806f12"
+    },
+    {
+      "path": "work/owned-script-timeout-controls/pinned-baseline321-test-stringbytes-external.js.json",
+      "bytes": 716,
+      "sha256": "45b87413a741195e71eb15b9ae2453a1c5003772270fa78992bdfe5752f0bfce"
+    },
+    {
+      "path": "work/owned-script-timeout-controls/pinned-baseline321-test-stringbytes-external.js.log",
+      "bytes": 177,
+      "sha256": "4cdb85731d481180999a1c078da55519ec0e326acf41f0aca565fb59248ebdd1"
+    },
+    {
+      "path": "work/owned-script-timeout-controls/pinned-candidate918-test-performance-many-marks.js.json",
+      "bytes": 718,
+      "sha256": "3638daae9b0eb600309d33874222e11b23f98725b9ce7ee1284199a6b25e89c5"
+    },
+    {
+      "path": "work/owned-script-timeout-controls/pinned-candidate918-test-performance-many-marks.js.log",
+      "bytes": 179,
+      "sha256": "f5f4653e6163c850385a44fd0ea66a8f4fb924f8eb5c40c4c8bb961efe806f12"
+    },
+    {
+      "path": "work/owned-script-timeout-controls/pinned-candidate918-test-stringbytes-external.js.json",
+      "bytes": 679,
+      "sha256": "1798a23b6f68a3dbaec85c2b373120af72712111bd4bc7853dd7efef820d0725"
+    },
+    {
+      "path": "work/owned-script-timeout-controls/pinned-candidate918-test-stringbytes-external.js.log",
+      "bytes": 180,
+      "sha256": "866ec95b11f91c6d7a529a623a713e442cbe211e3d53a6ddb0fa70969dd280d1"
+    },
+    {
+      "path": "work/owned-script-timeout-controls/pinned-extra-receipt.json",
+      "bytes": 4404,
+      "sha256": "f5f37986368520503cf12596f98f5b3deb9f4c9701e297b9c0925c39845d87cc"
+    },
+    {
+      "path": "work/owned-script-timeout-controls/pinned-extra-supervisor.log",
+      "bytes": 3247,
+      "sha256": "c2d0ca4cdac37654a798caa1a2b84935601f5599271abdcae60242f2d03747dd"
+    },
+    {
+      "path": "work/owned-script-timeout-controls/pinned-extra.py",
+      "bytes": 1525,
+      "sha256": "be351244e75f9994e02c2e1233de70d585d5d4897e6809e0edf2121f4d51edcb"
+    },
+    {
+      "path": "work/owned-script-timeout-controls/pinned-owned7f-test-performance-many-marks.js.json",
+      "bytes": 718,
+      "sha256": "3638daae9b0eb600309d33874222e11b23f98725b9ce7ee1284199a6b25e89c5"
+    },
+    {
+      "path": "work/owned-script-timeout-controls/pinned-owned7f-test-performance-many-marks.js.log",
+      "bytes": 179,
+      "sha256": "f5f4653e6163c850385a44fd0ea66a8f4fb924f8eb5c40c4c8bb961efe806f12"
+    },
+    {
+      "path": "work/owned-script-timeout-controls/pinned-owned7f-test-stringbytes-external.js.json",
+      "bytes": 679,
+      "sha256": "1798a23b6f68a3dbaec85c2b373120af72712111bd4bc7853dd7efef820d0725"
+    },
+    {
+      "path": "work/owned-script-timeout-controls/pinned-owned7f-test-stringbytes-external.js.log",
+      "bytes": 180,
+      "sha256": "866ec95b11f91c6d7a529a623a713e442cbe211e3d53a6ddb0fa70969dd280d1"
+    },
+    {
+      "path": "work/owned-script-timeout-controls/receipt.json",
+      "bytes": 4547,
+      "sha256": "6abf2c6e057a32e129338d2eb02435ec90f1a5dd24b3b28fb48407caa8cd7aba"
+    },
+    {
+      "path": "work/owned-script-timeout-controls/run.py",
+      "bytes": 1751,
+      "sha256": "1a4bb9525636535729086bfdbfbc08e5e9caf8dffa57bf503b7126c01eaffea7"
+    },
+    {
+      "path": "work/owned-script-timeout-controls/supervisor.log",
+      "bytes": 3351,
+      "sha256": "46c5a35bd324c6f87de7074764077c7492a288ce59b5bbaa7cdf1f98e7ebe833"
+    }
+  ]
+}

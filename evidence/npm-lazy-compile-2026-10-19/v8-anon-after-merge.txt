@@ -1,0 +1,19 @@
+# V8-v7 peak RssAnon/VmHWM KiB, three runs each, sampled every 2 ms; dynamic release quench-node
+# quench-trunk = origin/v2-merged 527466653 (replay gated to verify-replay by b55033746); quench-mg2 = v2-npm merge with replay restored
+# fixed work: crypto 4, deltablue 40, earley-boyer 3, navier-stokes 5, raytrace 10, regexp 1, richards 100, splay 300
+crypto quench-trunk 2084/5000 2092/5000 2212/5204
+crypto quench-mg2 2056/4992 2060/4988 2060/4972
+deltablue quench-trunk 1932/4484 1944/4488 1936/4484
+deltablue quench-mg2 1880/4368 1880/4500 1880/4384
+earley-boyer quench-trunk 9688/11360 9688/11360 9692/11424
+earley-boyer quench-mg2 9528/11164 9528/11164 9524/11176
+navier-stokes quench-trunk 3276/5092 3280/5092 3280/5132
+navier-stokes quench-mg2 3244/5060 3244/5060 3244/5064
+raytrace quench-trunk 1720/4484 1724/4484 1724/4568
+raytrace quench-mg2 1676/4472 1672/4472 1676/4476
+regexp quench-trunk 5720/7516 5724/7516 5720/7516
+regexp quench-mg2 5700/7488 5704/7488 5708/7484
+richards quench-trunk 1524/4356 1520/4356 1520/4416
+richards quench-mg2 1484/4396 1484/4388 1488/4388
+splay quench-trunk 39004/40004 39048/40048 38724/39876
+splay quench-mg2 38776/39840 38700/39848 38712/39848

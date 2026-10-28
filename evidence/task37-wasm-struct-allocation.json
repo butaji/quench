@@ -1,0 +1,128 @@
+{
+  "schema": 1,
+  "source_head": "7e60169df033dd247f34199e084e3e8080a92a29",
+  "dirty_worktree": true,
+  "source_hashes": {
+    "crates/quench-runtime-next/src/wasm/gc.rs": "ac5da4e2dd11733e5bf9690af4e3acc57d7b3a77d77f80812ba26de42be0ded0",
+    "crates/quench-runtime-next/src/wasm/types.rs": "da2d739f29a8b49944703bd867a4943f71edbb580d4200ccb3536453f7319487",
+    "crates/quench-runtime-next/src/wasm/scalar.rs": "013a6fd9254fc39b49e5509b26ee66a8b36b03ac50390448b8b86de514a809cc",
+    "crates/quench-runtime-next/src/wasm.rs": "7001784872913a7cafe83208d4d8b74efe17b3d7e89d3a595b2e82cf8554db82",
+    "crates/quench-runtime-next/src/bytecode.rs": "c29d4217d9cd91436c6566f7b69328984f6ab12b2008b4b097848f055848f9b8",
+    "crates/quench-runtime-next/src/bytecode/validate.rs": "c77fd8e5fe99c72f8a9bd4409e73e5273ebc1e7e7abac91f84b744352e0cf9aa",
+    "crates/quench-runtime-next/src/bytecode/disassemble.rs": "176e3dddc5832d57582dbc47924075e4a24e26526dd6d1087e18e339280c4039",
+    "crates/quench-runtime-next/src/heap/cell.rs": "bf041fa3851337dc9f7cc546b73fb63b44035bbbabb3c330e035f5fd77928faf",
+    "crates/quench-runtime-next/src/heap.rs": "08db03bf2b2009c8e1d081b32b644adf193f93be2ebd0b8e7cf4308abd7c8f20",
+    "crates/quench-runtime-next/src/heap/memory_profile.rs": "fc70b6021e848cd6f8afd76d7ab22296c9d23b4f76b341993d5a79a04541cad9",
+    "crates/quench-runtime-next/src/heap/tests.rs": "d91b4243d7fb5050451d7d27052c20072219926ca1203cf33a996307c9b69086",
+    "crates/quench-runtime-next/src/vm/wasm_gc.rs": "af5044c17eac34911c8c6d369e9654e3f2221a73c35968d6e09320851f770ca3",
+    "crates/quench-runtime-next/src/vm/wasm.rs": "54113983c43538e4bf14189f489b022e94ea6f04ac178402da1fc369a6f59609",
+    "crates/quench-runtime-next/src/vm/wasm_table.rs": "cc0adc8486aa7add214d1852c6b44b9ca6dbf0ddd9b83a0f4b963cbfca39d8ae",
+    "crates/quench-runtime-next/src/vm/program_store.rs": "8956c06d9c3c430c230ba6b1c4fe141389c54ae6fb3e88c8bd2c62235bd03212",
+    "crates/quench-runtime-next/src/vm/dispatch.rs": "f55c7db7a12afd11a90965752eadf022f30880e744bcc84ad32ca308dc3e7b7b",
+    "crates/quench-runtime-next/src/vm/json.rs": "a7b5fe84191a0dbe669636bd165efd3153428a7e57fe190080183c2878f0b738",
+    "crates/quench-runtime-next/src/vm.rs": "94904d969102db15ec2199311e88854f3226e9f8d3c75f88dc29c0bbf2519506"
+  },
+  "suite_head": "67c8b9dc32c47d61c05a1681df349d01c85fa8ff",
+  "residual_format": 59,
+  "obligation": "Execute ordinary unshared struct.new and struct.new_default on the single VM with original declaration identity and strong field tracing.",
+  "representation": "One WasmGc cell owns original shared declaration graph, type index and field Values. Admission derives fields and register windows from that graph; construction normalizes packed fields and uses shared scalar defaults and typed reference decoding. The existing collector traces fields. Exact/subtype matching projects the original cell declaration; externrefs continue accepting live opaque GC values. Two appended opcodes use the shared activation; no side map or second executor.",
+  "scope": "230 matching affected pinned files plus43 focused files; no full suite. Controls observe construction/defaults, exact/parent identity, distinct/same references and retained objects across 50000 transient allocations.",
+  "affected": {
+    "before": {
+      "path": "target/iteration/task37-wasm-cast-branches-after.json",
+      "sha256": "aee6d185ce3e7aef1d974ebc71ce680244f3794a1557b987f666917e5b4ee556",
+      "binary_sha256": "bc02fbf18442cd0788ab2dcfa6e35f8c6188e45e21bda47f79ae72d6693ad490"
+    },
+    "after": {
+      "path": "target/iteration/task37-wasm-struct-allocation-after.json",
+      "sha256": "9fb4569d1b205f84a69f09a4578a811459b7cfabf83fab9e35193c885b2cdcce",
+      "binary_sha256": "01b9bc721c059731b28ae165267e1316207cc5eff7d105b6f181c0d0ca480f3b"
+    },
+    "files": 230,
+    "total": 62758,
+    "before_passed": 61623,
+    "passed": 61641,
+    "failed": 1117,
+    "gains": 18,
+    "gains_by_file": {
+      "crates/quench-wasm-test/testsuite/br_on_cast.wast": 3,
+      "crates/quench-wasm-test/testsuite/br_on_cast_fail.wast": 3,
+      "crates/quench-wasm-test/testsuite/proposals/custom-descriptors/br_on_cast.wast": 3,
+      "crates/quench-wasm-test/testsuite/proposals/custom-descriptors/br_on_cast_fail.wast": 3,
+      "crates/quench-wasm-test/testsuite/ref_cast.wast": 3,
+      "crates/quench-wasm-test/testsuite/ref_test.wast": 3
+    },
+    "regressions": 0,
+    "same_ids_and_input_hashes": true,
+    "all_workers_completed": true
+  },
+  "controls": {
+    "before": {
+      "path": "target/iteration/task37-wasm-struct-allocation-controls-before.json",
+      "sha256": "d91b4a8cdd56d7fdc3c383365792b1f194b90fba862933c0147e6a37edd289fb",
+      "binary_sha256": "bc02fbf18442cd0788ab2dcfa6e35f8c6188e45e21bda47f79ae72d6693ad490"
+    },
+    "after": {
+      "path": "target/iteration/task37-wasm-struct-allocation-controls-after.json",
+      "sha256": "34034ba03622f059458d116a2c744d7d7c43564705c55215185fdff8d64d569e",
+      "binary_sha256": "01b9bc721c059731b28ae165267e1316207cc5eff7d105b6f181c0d0ca480f3b"
+    },
+    "files": 43,
+    "total": 3718,
+    "before_passed": 3711,
+    "passed": 3718,
+    "failed": 0,
+    "gains": 7,
+    "gains_by_file": {
+      "target/iteration/proposals/custom-descriptors/task37-wasm-struct-allocation-controls.wast": 7
+    },
+    "regressions": 0,
+    "same_ids_and_input_hashes": true,
+    "all_workers_completed": true
+  },
+  "runner": {
+    "path": "target/iteration/task37-wasm-struct-allocation-runner",
+    "sha256": "01b9bc721c059731b28ae165267e1316207cc5eff7d105b6f181c0d0ca480f3b"
+  },
+  "checks": {
+    "runtime": {
+      "path": "target/iteration/task37-wasm-struct-allocation-runtime.log",
+      "sha256": "81c7644a66e81deec04059d52c55cc2b34503aec42b42f1bb4512cb3fc3af5ca",
+      "passed": 33
+    },
+    "internals": {
+      "path": "target/iteration/task37-wasm-struct-allocation-internals.log",
+      "sha256": "222dd71e3c7f8b66b62011def24c4b96ca5e51aca9f19bd68dc100f48df1b5d8",
+      "passed": 481
+    },
+    "frontend": {
+      "path": "target/iteration/task37-wasm-struct-allocation-frontend.log",
+      "sha256": "1489e8e9002d301c7135e33c8ba7847bf0270664f422b3383047cc5209121571",
+      "passed": 31
+    },
+    "check": {
+      "path": "target/iteration/task37-wasm-struct-allocation-check.log",
+      "sha256": "01a18b130e412454377cd4d215c73ba7f4a4015d02f7d370e5a65c4ebfe8fced",
+      "passed": null
+    }
+  },
+  "oracle": {
+    "path": "target/iteration/task37-wasm-struct-allocation-oracle.json",
+    "sha256": "93c16883dd1c193356d6e15a7c3404b8f9c358010943b3057f9a70c40c385722",
+    "node": "v26.10.0",
+    "flags": [
+      "--no-sparkplug",
+      "--no-maglev",
+      "--no-turbofan",
+      "--wasm-jitless",
+      "--experimental-wasm-custom-descriptors"
+    ],
+    "matched": 7,
+    "input_hashes": {
+      "target/iteration/task37-wasm-struct-allocation-a.wat": "782765f24f84cbe62d788507dfa899e7f55b876991db829c3f940e8d8cdd26fa",
+      "target/iteration/task37-wasm-struct-allocation-a.wasm": "6647db5be44b0ac43049f51358798487e999d782a24589ffa416334490e09334"
+    }
+  },
+  "internal_obligation": "Existing strong-root lifecycle regression now retains an allocated GC owner and its boxed scalar field through collection and releases both. All481 retained runtime internal checks pass. No ordinary conformance unit added.",
+  "limits": "Struct constant initializers, field access/mutation, arrays, descriptor constructors, any/extern conversions, shared references/resources, exceptions and JS embedding remain open. The Wast result protocol still lacks an authoritative RefStruct/RefArray heap-kind projection; controls observe allocated references inside guest code and return I32, without weakening result predicates. Six earlier callable-type Node discrepancies remain recorded. Full suite qualification, frozen implemented Node inventory, production cutover and Stage A remain incomplete."
+}

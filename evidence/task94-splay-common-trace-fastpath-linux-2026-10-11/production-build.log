@@ -1,0 +1,7 @@
+   Compiling oxc_parser v0.153.0 (/workspace/quench/vendor/oxc-parser)
+   Compiling oxc v0.153.0
+   Compiling quench-regexp v0.1.0 (/workspace/quench/crates/quench-regexp)
+   Compiling quench-js-check v0.1.0 (/workspace/quench/crates/quench-js-check)
+   Compiling quench-runtime v0.1.0 (/workspace/quench/crates/quench-runtime)
+   Compiling quench-node v0.1.0 (/workspace/quench/crates/quench-node)
+    Finished `production` profile [optimized] target(s) in 2m 08s

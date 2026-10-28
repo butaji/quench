@@ -1,0 +1,42 @@
+diff --git a/crates/quench-node/src/modules/process_shared_vm.rs b/crates/quench-node/src/modules/process_shared_vm.rs
+index 576497a46..9e9227755 100644
+--- a/crates/quench-node/src/modules/process_shared_vm.rs
++++ b/crates/quench-node/src/modules/process_shared_vm.rs
+@@ -896,7 +896,7 @@ fn apply_groups(
+ 
+ #[cfg(unix)]
+ fn initgroups_syscall(user: &std::ffi::CString, group: u32) -> i32 {
+-    unsafe { libc::initgroups(user.as_ptr(), group as libc::gid_t) }
++    unsafe { libc::initgroups(user.as_ptr(), group as libc::c_int) }
+ }
+ 
+ #[cfg(not(unix))]
+@@ -911,7 +911,7 @@ fn setgroups_syscall(groups: &[u32]) -> i32 {
+         .copied()
+         .map(|group| group as libc::gid_t)
+         .collect::<Vec<_>>();
+-    unsafe { libc::setgroups(groups.len(), groups.as_ptr()) }
++    unsafe { libc::setgroups(groups.len() as libc::c_int, groups.as_ptr()) }
+ }
+ 
+ #[cfg(not(unix))]
+diff --git a/crates/quench-runtime/src/vm/compiled.rs b/crates/quench-runtime/src/vm/compiled.rs
+index eda02596e..bd4da3ff4 100644
+--- a/crates/quench-runtime/src/vm/compiled.rs
++++ b/crates/quench-runtime/src/vm/compiled.rs
+@@ -248,6 +248,7 @@ enum Raised {
+ 
+ const CONTEXT_STACK_LIMIT: i32 = std::mem::offset_of!(CallContext, stack_limit) as i32;
+ const CONTEXT_TABLE: i32 = std::mem::offset_of!(CallContext, table) as i32;
++#[allow(dead_code)]
+ const CONTEXT_ENTRY_STACK: u8 = std::mem::offset_of!(CallContext, entry_stack) as u8;
+ const CONTEXT_GLOBALS: i32 = std::mem::offset_of!(CallContext, globals) as i32;
+ const CONTEXT_CALLOUT: i32 = std::mem::offset_of!(CallContext, callout) as i32;
+@@ -2003,6 +2004,7 @@ type Trampoline =
+ struct GuardSupport {
+     _code: CodeMemory,
+     trampoline: Trampoline,
++    #[allow(dead_code)]
+     landing: usize,
+ }
+ 

@@ -1,0 +1,1 @@
+const incrementCount=18000;const body='let result=0;if(flag){'+ 'result+=1;'.repeat(incrementCount)+'}return result;';const run=new Function('flag',body);console.log(JSON.stringify([run(false),run(true)]));

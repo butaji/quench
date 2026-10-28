@@ -1,0 +1,159 @@
+{
+  "task": "07",
+  "producer_owner": "18",
+  "obligation": "Dynamic-import result Promises survive queued and taken-batch lifetimes, then become collectible after settlement without external roots.",
+  "representation": "Persistent dynamic_import_jobs is the queue authority. GC derives queued Promise roots from each job.promises. Taking a batch transfers every waiter into the existing with_call_roots scope until settlement or transfer to a persistent queue/module record. No second persistent waiter registry.",
+  "allocation_purpose": "The taken batch derives one temporary Vec<Value> to transfer all pending waiter handles into the existing scoped root mechanism. Empty batches allocate no backing storage. No persistent duplicate metadata.",
+  "source_head": "7e60169df033dd247f34199e084e3e8080a92a29",
+  "source_state": "dirty worktree",
+  "source_hashes": {
+    "crates/quench-runtime-next/src/vm/gc.rs": "35f4c7041c3c734ef57de335f09385adc6c0c6fad38220f5aabee9c695534a17",
+    "crates/quench-runtime-next/src/vm/promise.rs": "3f99dd05819e98ee26f5301af6073dc8cb782eb799d6d9ea63f4579153b1c390",
+    "crates/quench-runtime-next/src/vm/tests.rs": "f81b5d7713903e38dbe32e529871155822398b4d500e8c0e571f93e7813475bc"
+  },
+  "suite_head": "6eec1ac9ee144dafd8f344d73a21f36bfc9f6755",
+  "suite_clean": true,
+  "profile": "release",
+  "timeout_ms": 10000,
+  "rustc": "rustc 1.99.0 (b940084d7 2026-09-28) (Homebrew)",
+  "host": "macOS-26.5-arm64-arm-64bit",
+  "content_hash_algorithm": "Sorted repository-relative path UTF-8, NUL, file bytes, NUL; SHA-256.",
+  "affected_fixture_content_sha256": "f92ff9dfbb35c63475d9968c7e22ff39ff5af1b9a49d61cb946137ec426aae33",
+  "harness_content_sha256": "40b587274265218d1cffa27dd83c55046e0bdca1ddc67118f24ebf63362e975a",
+  "inventory_sha256": "3c0e49fbb37a10fe453e0f52c9176d237c905069c76c73637f22c61ad6989066",
+  "runners": {
+    "before": {
+      "path": "target/iteration/task07-async-yield-preparation-run-stages-next",
+      "sha256": "069908d4a6287081eb3ca107f4acabfe831041c81082951095da0733d625d764"
+    },
+    "after": {
+      "path": "target/iteration/task07-dynamic-import-owner-run-stages-next",
+      "sha256": "99eb129b6cfcc7570ce081e9ef43601945a399c3c49494762a3b1513a5bc4b10"
+    }
+  },
+  "commands": {
+    "suite": "TEST262_REPORT=<report> TEST262_TEST_TIMEOUT_MS=10000 <runner> <stage> <stage> [filter]",
+    "compare": "target/debug/compare-runs --reports <before> <after>",
+    "units": "cargo test -p quench-runtime-next --lib --test subset",
+    "features": "cargo check -p quench-runtime-next --features profile-memory,profile-aggregate"
+  },
+  "scopes": [
+    {
+      "name": "import",
+      "stage": 16,
+      "filter": null,
+      "cases": 127,
+      "before_passed": 127,
+      "after_passed": 127,
+      "regressions": 0,
+      "before_report": "target/iteration/task07-dynamic-import-owner-before-import.json",
+      "before_sha256": "dfe44362adc12ad85588f911780cf43893e2178e56cb1dcf4d6998f73f8c9e72",
+      "after_report": "target/iteration/task07-dynamic-import-owner-after-import.json",
+      "after_sha256": "761b618fc0395fdbc0921b11935e7b2402e3725dffb77df871047792d57251f5",
+      "compare_log": "target/iteration/task07-dynamic-import-owner-compare-import.log"
+    },
+    {
+      "name": "module",
+      "stage": 20,
+      "filter": null,
+      "cases": 599,
+      "before_passed": 599,
+      "after_passed": 599,
+      "regressions": 0,
+      "before_report": "target/iteration/task07-dynamic-import-owner-before-module.json",
+      "before_sha256": "a38e95971550b1a7d9acb5e47dbaa8152142389c648a9f768fd1834140bf999f",
+      "after_report": "target/iteration/task07-dynamic-import-owner-after-module.json",
+      "after_sha256": "5f051099a787b18c664941ab1c5662bdfc90eb746e172637182da9cc3f3da89e",
+      "compare_log": "target/iteration/task07-dynamic-import-owner-compare-module.log"
+    },
+    {
+      "name": "dynamic-import",
+      "stage": 10,
+      "filter": "dynamic-import/",
+      "cases": 1004,
+      "before_passed": 1004,
+      "after_passed": 1004,
+      "regressions": 0,
+      "before_report": "target/iteration/task07-dynamic-import-owner-before-dynamic-import.json",
+      "before_sha256": "4a79d4e257610f3b56270805036a019620ecdc7ce8f50c4955adb157b3027cda",
+      "after_report": "target/iteration/task07-dynamic-import-owner-after-dynamic-import.json",
+      "after_sha256": "307ed48509890d31a59c083861d9cc030be817f433448b446f3d439fe7c627a4",
+      "compare_log": "target/iteration/task07-dynamic-import-owner-compare-dynamic-import.log"
+    },
+    {
+      "name": "promise",
+      "stage": 61,
+      "filter": null,
+      "cases": 729,
+      "before_passed": 728,
+      "after_passed": 728,
+      "regressions": 0,
+      "before_report": "target/iteration/task07-dynamic-import-owner-before-promise.json",
+      "before_sha256": "42502c66109175819ebdbca6ecdeeb2e7c4d149170454d738d04447052bd2fdb",
+      "after_report": "target/iteration/task07-dynamic-import-owner-after-promise.json",
+      "after_sha256": "394972e2d163e8814d4f3c0469c3ed05476cbcbee96e5f94e9d7a264735a3bf4",
+      "compare_log": "target/iteration/task07-dynamic-import-owner-compare-promise.log"
+    }
+  ],
+  "total": 2459,
+  "passed": 2458,
+  "regressions": 0,
+  "known_failure": "Unchanged allSettledKeyed result-property-descriptors.js helper-deletion conflict; see tasks/evidence/task20-all-settled-keyed-conflict.json.",
+  "units": {
+    "library_passed": 462,
+    "integration_passed": 6,
+    "failed": 0,
+    "ignored": 0,
+    "log": "target/iteration/task07-dynamic-import-owner-units.log",
+    "sha256": "60e08fd6cfe20d14d07652ce13e760003f712ea4ae685916bfc0ea42e35f5023",
+    "regression": "dynamic_import_waiters_are_rooted_while_queued_and_during_batch_evaluation",
+    "coverage": "Two jobs, collection before queued processing and inside both module evaluations, deferred requeue, correct settlement, scoped-root release and weak-handle collection. Internal root observations are not duplicate conformance cases.",
+    "before_failure_log": "target/iteration/task07-dynamic-import-owner-before.log",
+    "before_failure_sha256": "e9a0da300dae332134526bd8e0d14253dfc0169f711df9bfdd46ca04aedbb39d",
+    "before_failure": "invalid Promise state during settlement after forced collection in module body"
+  },
+  "features": {
+    "passed": true,
+    "log": "target/iteration/task07-dynamic-import-owner-features.log",
+    "sha256": "80f91e14cc1cb33daaa3d1ce6d2edac06ac4b85291cf7c324a432ff91e124c26"
+  },
+  "node_controls": {
+    "scenarios": [
+      "queued",
+      "batch",
+      "rejected"
+    ],
+    "comparisons": 6,
+    "matches": 6,
+    "modes": [
+      "normal",
+      "generic"
+    ],
+    "node_version": "v26.10.0",
+    "oracle_command": "node --jitless --expose-gc --import <setup.mjs> <main.mjs>",
+    "sources": "target/iteration/task07-dynamic-import-owner-controls",
+    "source_hashes": {
+      "target/iteration/task07-dynamic-import-owner-controls/setup.mjs": "98d196af641eb365e7118175628e9e4bd75f0e5425dfadca880bc58e5329ef70",
+      "target/iteration/task07-dynamic-import-owner-controls/queued/one.mjs": "dfedb91a6e9dbdd117cb49a6b084dd9b5ab2ccdb6325c4996d7dcb7e62efa805",
+      "target/iteration/task07-dynamic-import-owner-controls/queued/main.mjs": "0a2a855171de4f2008642d561ae419d6a7b230423751b1dcb703cfe0b5e4da14",
+      "target/iteration/task07-dynamic-import-owner-controls/queued/dependency.mjs": "21af6b43a708161709b5fe071892fb8117a689d89436718ec7b97412e25809be",
+      "target/iteration/task07-dynamic-import-owner-controls/queued/two.mjs": "a7c76cd71733684ee02cc890fa649e0e49ffd40c2004e726098df1487a483127",
+      "target/iteration/task07-dynamic-import-owner-controls/rejected/one.mjs": "cbb12523c97ee5a14724343457c0259754ea805744b6ba27f99f183f04adf4c4",
+      "target/iteration/task07-dynamic-import-owner-controls/rejected/main.mjs": "0a2a855171de4f2008642d561ae419d6a7b230423751b1dcb703cfe0b5e4da14",
+      "target/iteration/task07-dynamic-import-owner-controls/rejected/dependency.mjs": "876641d614737147c1bf4ab22a0afe00dbdd78009c2fe539918a891e042c681f",
+      "target/iteration/task07-dynamic-import-owner-controls/rejected/two.mjs": "672a0af49b64929728ab5b4c52e23c0f024f543abd94d5943dd8815023c87367",
+      "target/iteration/task07-dynamic-import-owner-controls/batch/one.mjs": "b6076a0744c704701a1349d566682bf5db9857490054e93631d5191e7cf93c95",
+      "target/iteration/task07-dynamic-import-owner-controls/batch/main.mjs": "0a2a855171de4f2008642d561ae419d6a7b230423751b1dcb703cfe0b5e4da14",
+      "target/iteration/task07-dynamic-import-owner-controls/batch/dependency.mjs": "876641d614737147c1bf4ab22a0afe00dbdd78009c2fe539918a891e042c681f",
+      "target/iteration/task07-dynamic-import-owner-controls/batch/two.mjs": "672a0af49b64929728ab5b4c52e23c0f024f543abd94d5943dd8815023c87367"
+    },
+    "results": "target/iteration/task07-dynamic-import-owner-node-results.json",
+    "results_sha256": "7f115f2e23441b957fa1061a8ec12e222dfbdbf7dfbd532dd13950362fc19854",
+    "host_source": "target/iteration/task07-dynamic-import-owner-control-host.rs",
+    "host_source_sha256": "c760987627b9a7f826ea80fdcf58c8878badd646a2063dab8ae0323e4bdd2d43",
+    "host": "target/iteration/task07-dynamic-import-owner-control-host",
+    "host_sha256": "24af344d4575d40d33dcbd11da2c0543379bfd7ae43e5db23b9ea8f4adfea6ee"
+  },
+  "scope_rationale": "Root transfer affects deferred-batch dynamic imports and their static module evaluation/settlement paths. Cover static import, module-code, dynamic-import and Promise scopes; forced-GC controls execute module-source loading and success/rejection ordering in the sole next VM.",
+  "limits": "Closes this queued/taken-batch producer handoff only. No full-suite, implemented Node compatibility, Wasm closure or performance claim; Stage A remains open."
+}

@@ -1,0 +1,35 @@
+verdicts {"behavior-pass":286,"declarations-pass":13,"oracle-failed":1}
+passing 299  fastest wall 107  fastest cpu 155  lowest rss 283
+wall median (ms) quench 54.5 node 93.0 bun 50.9
+cpu median (ms) quench 51.9 node 105.7 bun 53.0
+rss median (MiB) quench 14.9 node 70.2 bun 34.5
+slowest relative to the faster of Node and Bun (wall ms):
+  require-from-string                      q     308 n     73 b     49  x6.3
+  color-convert                            q     319 n    161 b     70  x4.6
+  date-fns                                 q     308 n   1318 b     69  x4.5
+  jiti                                     q     336 n    251 b     80  x4.2
+  undici                                   q     169 n    154 b     44  x3.8
+  @babel/core                              q     530 n    271 b    175  x3.0
+  semver                                   q     299 n    139 b    100  x3.0
+  typescript-eslint                        q    1973 n   1013 b    682  x2.9
+  @typescript-eslint/eslint-plugin         q    2037 n    975 b    713  x2.9
+  @typescript-eslint/type-utils            q    1334 n    790 b    476  x2.8
+  @babel/helper-compilation-targets        q     196 n    106 b     71  x2.8
+  ws                                       q     115 n     90 b     41  x2.8
+not lowest rss: 16
+  @types/node                              q 72.6 n 72.5 b 72.9
+  type-fest                                q 53.5 n 72.1 b 53.4
+  undici-types                             q 76.2 n 74.7 b 75.0
+  typescript                               q 42.0 n 71.9 b 42.0
+  @typescript-eslint/typescript-estree     q 106.8 n 133.1 b 84.2
+  @typescript-eslint/scope-manager         q 111.6 n 135.3 b 87.4
+  @types/react-dom                         q 54.2 n 68.0 b 54.2
+  @typescript-eslint/parser                q 105.5 n 133.4 b 92.5
+  @typescript-eslint/type-utils            q 173.3 n 193.5 b 120.3
+  @typescript-eslint/project-service       q 104.8 n 113.1 b 70.8
+  @typescript-eslint/tsconfig-utils        q 112.8 n 129.9 b 76.5
+  @eslint/core                             q 45.6 n 68.1 b 44.9
+  @types/chai                              q 45.8 n 68.3 b 45.3
+  @types/babel__traverse                   q 55.4 n 68.0 b 55.0
+  @types/yargs                             q 45.7 n 68.1 b 45.5
+  @types/ws                                q 73.0 n 72.1 b 72.4

@@ -1,0 +1,135 @@
+{
+  "tasks": [
+    "23",
+    "37",
+    "48"
+  ],
+  "source_head": "7e60169df033dd247f34199e084e3e8080a92a29",
+  "source_dirty": true,
+  "source_hashes": {
+    "crates/quench-runtime-next/src/wasm.rs": "007734667097600308a1154d4df4d773247fd551a8ed4e13ddef1aee94608918",
+    "crates/quench-runtime-next/src/wasm/types.rs": "4209e8fc4487c3343492789a8d3f074032328a0e149ee1cd5e0e40a31b3f9f1c",
+    "crates/quench-runtime-next/src/wasm/constant.rs": "b85b404d06e8362765d4a8834d24aa0bd25c26c38f97d191f9cce4efe28aa28f",
+    "crates/quench-runtime-next/src/heap/cell.rs": "cc6ce8d99c17717c0c07bef394ec05adca63931166d775e43de71654f06535ac",
+    "crates/quench-runtime-next/src/vm/wasm.rs": "ab8a9500c124269e9eae93a9915ff4e276415656ae92addf2135d3ccd81efaac",
+    "crates/quench-runtime-next/src/vm/wasm_table.rs": "5d4a04f45a6d6c5552956de3b9f0ae83640bb4cb449288877a77c892ec708f90",
+    "crates/quench-wasm/src/shared.rs": "ce1553562fd3fd90725636a4a6dfe64cb0844000b6fe20afd0ef98289f88374b",
+    "crates/quench-wasm/src/shared_wast.rs": "c22c9a0c0f3891ebd065ec45a750e0a2e340eef485a48bdfcdb4b20d2c1d06ae"
+  },
+  "suite_head": "67c8b9dc32c47d61c05a1681df349d01c85fa8ff",
+  "residual_format": 55,
+  "obligation": "Concrete function-reference globals retain original declaration context through imports and immutable initializer dependencies.",
+  "representation": "Existing global cells own their original type graph. Immutable imports use graph-aware covariance, mutable imports require bidirectional matching. Reads and initializer evaluation decode against the original cell/module graph. Null operators retain source heap type until full module validation; function/global initializer dependencies are rechecked against the completed signature pool. All expression result contracts remain authoritative across Known/Dependent views. Ownerless standalone concrete constant evaluation rejects. Validated guest writes retain the existing store path. No side map, opcode, executor or format change.",
+  "sources": [
+    "https://webassembly.github.io/spec/core/valid/matching.html#match-globaltype"
+  ],
+  "scope": "230 affected pinned files plus36 focused files. No full suite.",
+  "reports": {
+    "affected": {
+      "before": {
+        "path": "target/iteration/task37-wasm-concrete-globals-before.json",
+        "sha256": "02e6353433b36f21562ca629e421a975abf82d4521a486f5062adcffc23cf0c0",
+        "binary_sha256": "fe6e06b753f29d4f939ddd2155176909dc0e2ec49d62886c758577c49bc6b58c"
+      },
+      "after": {
+        "path": "target/iteration/task37-wasm-concrete-globals-after.json",
+        "sha256": "35c1ec4fb50038d5c6ab78e27a88a48887905d04914a58dca50072057ba6ef0d",
+        "binary_sha256": "69398940610d2260245e50f087df1420ecc36577440be1daed546d43257d12c8"
+      }
+    },
+    "controls": {
+      "before": {
+        "path": "target/iteration/task37-wasm-concrete-globals-controls-before.json",
+        "sha256": "a648724f9257f707c20ebef2fee2d69e08604e2b385ee73bb78ccb14f94789b1",
+        "binary_sha256": "fe6e06b753f29d4f939ddd2155176909dc0e2ec49d62886c758577c49bc6b58c"
+      },
+      "after": {
+        "path": "target/iteration/task37-wasm-concrete-globals-controls-after.json",
+        "sha256": "7dc8b040a3840ff3a4bf39252947f3e0b6326681e6ebbbf3569f3622f279e897",
+        "binary_sha256": "69398940610d2260245e50f087df1420ecc36577440be1daed546d43257d12c8"
+      }
+    }
+  },
+  "results": {
+    "affected": {
+      "files": 230,
+      "total": 62758,
+      "before_passed": 61400,
+      "passed": 61487,
+      "failed": 1271,
+      "gains": 87,
+      "gains_by_file": {
+        "crates/quench-wasm-test/testsuite/call_ref.wast": 24,
+        "crates/quench-wasm-test/testsuite/linking.wast": 18,
+        "crates/quench-wasm-test/testsuite/return_call_ref.wast": 32,
+        "crates/quench-wasm-test/testsuite/table.wast": 2,
+        "crates/quench-wasm-test/testsuite/type-rec.wast": 5,
+        "crates/quench-wasm-test/testsuite/type-subtyping.wast": 6
+      },
+      "regressions": 0,
+      "all_workers_completed": true,
+      "same_ids_and_input_hashes": true
+    },
+    "controls": {
+      "files": 36,
+      "total": 3569,
+      "before_passed": 3553,
+      "passed": 3569,
+      "failed": 0,
+      "gains": 16,
+      "gains_by_file": {
+        "target/iteration/task37-wasm-concrete-globals-controls.wast": 16
+      },
+      "regressions": 0,
+      "all_workers_completed": true,
+      "same_ids_and_input_hashes": true
+    }
+  },
+  "runner": {
+    "path": "target/iteration/task37-wasm-concrete-globals-runner",
+    "sha256": "69398940610d2260245e50f087df1420ecc36577440be1daed546d43257d12c8"
+  },
+  "checks": {
+    "runtime": {
+      "path": "target/iteration/task37-wasm-concrete-globals-runtime.log",
+      "sha256": "ae63ca30672d513dbbbce6d641b167f8fee34d0922d1caa2d78055738d35ea28",
+      "passed": 33
+    },
+    "frontend": {
+      "path": "target/iteration/task37-wasm-concrete-globals-frontend.log",
+      "sha256": "221a33606a8bf4ddae094bf74e1eab15d9187da2b11ca85ba597ce313480c430",
+      "passed": 31
+    },
+    "check": {
+      "path": "target/iteration/task37-wasm-concrete-globals-check.log",
+      "sha256": "d295d2013defd4a888605cf0c5457b41b823198227edcfba4c22da70a9392f52",
+      "passed": null
+    }
+  },
+  "limits": "Exact/shared/GC resource families, other GC callable types, general concrete reference table/element initializer expressions, casts, exceptions and JS embedding adapters remain open. Earlier six subtype table-call Node discrepancies remain. This affected scope does not close a full suite or Stage A.",
+  "internal_obligation": "Existing serialized import/capture/root-transfer/GC test now declares all four original function/global-derived initializer globals as concrete non-null references and preserves original identity/capture through GC. No ordinary conformance unit added. Existing initializer internal coverage also verifies ownerless concrete standalone evaluation rejects with its owner diagnostic.",
+  "oracle": {
+    "path": "target/iteration/task37-wasm-concrete-globals-oracle.json",
+    "sha256": "108ed71e4e0062dfcf28c5a5071778b642db4611b499077d9415951f9c3d50cb",
+    "input_hashes": {
+      "target/iteration/task37-wasm-concrete-globals-a.wat": "64fac2dc1b1a561fd5e09e75a22d774406687bdc10048002ac114e3f1da08950",
+      "target/iteration/task37-wasm-concrete-globals-a.wasm": "7e02acc4620602946a3ce2f8f8a13358a2e0d4771ebe1c0ae623d106bedb768f",
+      "target/iteration/task37-wasm-concrete-globals-b.wat": "dc99a873247451f91885ef2c4a1fced26e93e8d7af6e9402041299dc9d8acc69",
+      "target/iteration/task37-wasm-concrete-globals-b.wasm": "e2a44c4aa3baa2d429bd40f3223150617e7a686640218bde47f49f49647c5f7e",
+      "target/iteration/task37-wasm-concrete-globals-c.wat": "bab000ab00293dba732c24c2501234c8bd0cff00b2a89e8b5cda710ffac98f83",
+      "target/iteration/task37-wasm-concrete-globals-c.wasm": "38e8593c32f134cff821548844a653dbba1848163438be825920798aeab9101b",
+      "target/iteration/task37-wasm-concrete-globals-d.wat": "3a30c82ce0b03dec223f0e610667203c62f9f9c9e110b9eaea79d4df62b369e1",
+      "target/iteration/task37-wasm-concrete-globals-d.wasm": "59f2a3f887ec9198d0f1b78c7e52b24521a578c756918c586a02ccab0585d928",
+      "target/iteration/task37-wasm-concrete-globals-bad.wat": "19cd6ebe22fed955d901ca6ce9a67ce15dac7e1ee7cd638dde3f5d8f9fed02da",
+      "target/iteration/task37-wasm-concrete-globals-bad.wasm": "c8c913b89809b2de2377b121465e12768fb6cc2dfff5e2dff7871d1fefaf9aea"
+    },
+    "node": "v26.10.0",
+    "flags": [
+      "--no-sparkplug",
+      "--no-maglev",
+      "--no-turbofan",
+      "--wasm-jitless"
+    ],
+    "matched": 10
+  }
+}

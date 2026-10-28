@@ -1,0 +1,151 @@
+{
+  "schema": 1,
+  "tasks": [
+    "17",
+    "20"
+  ],
+  "baseline_source_head": "149c2c76cdcd8918abec192e97ec02292d68745b",
+  "qualification": "Isolated async-from-sync disposal mode; Promise cell-state, parser/arrow cleanup, Node and Wasm pending changes excluded.",
+  "source_sha256": {
+    "crates/quench-runtime-next/src/vm/disposal.rs": "0b0179b5839561e5f9d1d6400a8270f410d3f80f5796feb55ad1197a2801abd2"
+  },
+  "suite_pin": "6eec1ac9ee144dafd8f344d73a21f36bfc9f6755",
+  "suite_clean": true,
+  "representation": {
+    "authority": "Existing disposal entries record a named async-from-sync mode when Symbol.asyncDispose is nullish and the synchronous fallback is selected. Existing mode dispatch invokes the captured synchronous callback once, discards its successful return and represents thrown completion with the shared result-promise operation.",
+    "invariant": "Never assimilate a synchronous fallback return, including unresolved promises and thenable getters. Preserve receiver, rejection identity, LIFO ordering and the asynchronous disposal boundary. Explicit async/adopt/defer callbacks keep their existing awaited-result behavior.",
+    "scope": "No guest-JavaScript wrapper, new callback map, cache, enum ABI/serializer change, duplicate semantic unit test or fixture branch."
+  },
+  "contract": "https://tc39.es/ecma262/multipage/abstract-operations.html#sec-getdisposemethod",
+  "upstream_node_source": {
+    "tests/node/deps/v8/src/builtins/builtins-async-disposable-stack.cc": "e996950e4648bcf5004baedd4e9e7ddcf6427e3058aa45fe3772220fe4610116",
+    "tests/node/deps/v8/src/objects/js-disposable-stack-inl.h": "e5d40a2c60d67ddef4d54d6ed62bffdae6942d4e3588805d297314efde619c02"
+  },
+  "build": {
+    "profile": "release; correctness only, no Stage B performance claim",
+    "log": "target/iteration/task17-async-from-sync-disposal/build.log",
+    "before_binary_sha256": "3721ee1f16fbd925700aa5446d2b0afe0443cb855f57ba0a4e82463bc150d5d5",
+    "after_binary_sha256": "984f7ab3ee0fb633ebd9404e6834f2189faa8f78b745b6b0b40e73c383521c35"
+  },
+  "affected_test262": {
+    "full_suite_run": false,
+    "selection": "AsyncDisposableStack, DisposableStack, Promise, staged explicit resource management, await-using and using statements.",
+    "jobs_per_scope": 2,
+    "timeout_ms": 10000,
+    "distinct_cases": 1157,
+    "passed_before": 1155,
+    "passed_after": 1156,
+    "gained": [
+      "staging/explicit-resource-management/async-disposal-from-sync-method-returning-a-promise.js"
+    ],
+    "regressions": [],
+    "remaining": [
+      "built-ins/Promise/allSettledKeyed/result-property-descriptors.js"
+    ],
+    "scopes": [
+      {
+        "scope": "async-stack",
+        "total": 104,
+        "passed_before": 104,
+        "passed_after": 104,
+        "gained": [],
+        "regressions": [],
+        "reports": {
+          "target/iteration/task17-async-from-sync-disposal/before-async-stack.json": "1d716e2be597e23d95be5119ea1539861a7fd717ab1f7d8cae993d5e719d6b77",
+          "target/iteration/task17-async-from-sync-disposal/after-async-stack.json": "055acc146768754ea81b1c539ec47840184f6465077202dc92642e10b4ee58c7",
+          "target/iteration/task17-async-from-sync-disposal/compare-async-stack.log": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+        }
+      },
+      {
+        "scope": "sync-stack",
+        "total": 93,
+        "passed_before": 93,
+        "passed_after": 93,
+        "gained": [],
+        "regressions": [],
+        "reports": {
+          "target/iteration/task17-async-from-sync-disposal/before-sync-stack.json": "e3ab612d6fdf9d4209a1c7c2fbe6def1348a6944fcc9566b16630bd0c09ae5aa",
+          "target/iteration/task17-async-from-sync-disposal/after-sync-stack.json": "7540c61975f81d47dc36197b8f98f8593f46f3a871265fe39f804974fde6601e",
+          "target/iteration/task17-async-from-sync-disposal/compare-sync-stack.log": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+        }
+      },
+      {
+        "scope": "promise",
+        "total": 729,
+        "passed_before": 728,
+        "passed_after": 728,
+        "gained": [],
+        "regressions": [],
+        "reports": {
+          "target/iteration/task17-async-from-sync-disposal/before-promise.json": "a5b7b66d899256a06280dc20a588a3824ee354f2a948adf3294872d6a5c606c2",
+          "target/iteration/task17-async-from-sync-disposal/after-promise.json": "d997a92c19ce97113a07ee8b851715953f3fb63a416fd8736236376b38ae3415",
+          "target/iteration/task17-async-from-sync-disposal/compare-promise.log": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+        }
+      },
+      {
+        "scope": "staged-disposal",
+        "total": 53,
+        "passed_before": 52,
+        "passed_after": 53,
+        "gained": [
+          "staging/explicit-resource-management/async-disposal-from-sync-method-returning-a-promise.js"
+        ],
+        "regressions": [],
+        "reports": {
+          "target/iteration/task17-async-from-sync-disposal/before-staged-disposal.json": "3b26615d21c3c3d14d07fe2036fec32879e08b05b500353ec4c707980afc041a",
+          "target/iteration/task17-async-from-sync-disposal/after-staged-disposal.json": "b5edb2c080830fef6fc443dbe50791f558f2c28895786aba79c368b997ecff3e",
+          "target/iteration/task17-async-from-sync-disposal/compare-staged-disposal.log": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+        }
+      },
+      {
+        "scope": "await-using",
+        "total": 100,
+        "passed_before": 100,
+        "passed_after": 100,
+        "gained": [],
+        "regressions": [],
+        "reports": {
+          "target/iteration/task17-async-from-sync-disposal/before-await-using.json": "d906a9812c475c2c1686712d68ea025fd9de41906b08a33a92835090150a5bd1",
+          "target/iteration/task17-async-from-sync-disposal/after-await-using.json": "7232d7e7a113828f28a437c257365b124ba277fc69ab4501d0996bf5687f7cba",
+          "target/iteration/task17-async-from-sync-disposal/compare-await-using.log": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+        }
+      },
+      {
+        "scope": "using",
+        "total": 78,
+        "passed_before": 78,
+        "passed_after": 78,
+        "gained": [],
+        "regressions": [],
+        "reports": {
+          "target/iteration/task17-async-from-sync-disposal/before-using.json": "cf19c7d71e3678d7949de448084e85c44efa30398a6f06ba2b802e6548abd2aa",
+          "target/iteration/task17-async-from-sync-disposal/after-using.json": "1972b6a1cb11fd45a7ca33c0f784a88873b89469d11ef7f6bb37836662a18cdd",
+          "target/iteration/task17-async-from-sync-disposal/compare-using.log": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+        }
+      }
+    ]
+  },
+  "node_controls": {
+    "node_version": "v26.10.0",
+    "sources": 28,
+    "observations_per_build": 56,
+    "before_matches": 40,
+    "after_matches": 50,
+    "losses": 0,
+    "report": "target/iteration/task17-async-from-sync-disposal/node-controls.json",
+    "sha256": "c766b11d4dd19bd4452c2d4ad74e1f4010177ec3a75529a35f8acc9b344e8927",
+    "remaining_cases": [
+      "await-using-ignore-then",
+      "receiver-await-using",
+      "await-using-throw"
+    ],
+    "scope": "Promises/thenables returned by sync fallbacks, explicit async precedence and awaiting, callback receiver and getter order, throws/undefined throws, suppression, LIFO, repeated disposal/move, adopt/defer, synchronous stacks, microtask traces and nullish resources; normal/generic modes.",
+    "remaining_gap": "Three unchanged async-arrow await-using controls do not run the end-of-body synchronous disposer. Six observations remain unmatched; capture as a compiler cleanup gap, not a passing family claim. Zero losses."
+  },
+  "verification": "Changed guest semantics covered by the pinned affected suites and external controls; release compile, identical inventories and compare-runs pass. No duplicated unit tests added.",
+  "limits": [
+    "Pinned inputs, discovery, harnesses, exclusions, expectations and deadlines unchanged.",
+    "The existing allSettledKeyed descriptor fixture failure and async-arrow cleanup gap remain.",
+    "Complete Test262, Wasm, implemented Node, single production VM cutover and Stage A remain open."
+  ]
+}

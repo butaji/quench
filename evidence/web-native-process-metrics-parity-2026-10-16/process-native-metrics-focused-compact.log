@@ -1,0 +1,6 @@
+
+running 1 test
+test process_report_native_compact_uses_truthiness_without_coercion_hooks ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 409 filtered out; finished in 0.35s
+

@@ -1,0 +1,65 @@
+[
+  {
+    "fixture": "test-shadow-realm-gc-module.js",
+    "command": [
+      "/workspace/quench/work/native-buffer-pool-bin/run-parallel",
+      "--all",
+      "--parallel-dir",
+      "/workspace/work/node-stable-release/node-v26.12.0/test/parallel",
+      "--filter",
+      "test-shadow-realm-gc-module.js",
+      "--jobs",
+      "1",
+      "--timeout-secs",
+      "30",
+      "--results",
+      "/workspace/quench/work/full-shadow-stack-modern-buffer-stable/baseline-control-test-shadow-realm-gc-module.js.json"
+    ],
+    "exit": 0,
+    "counts": {
+      "pass": 1
+    }
+  },
+  {
+    "fixture": "test-stream2-read-sync-stack.js",
+    "command": [
+      "/workspace/quench/work/native-buffer-pool-bin/run-parallel",
+      "--all",
+      "--parallel-dir",
+      "/workspace/work/node-stable-release/node-v26.12.0/test/parallel",
+      "--filter",
+      "test-stream2-read-sync-stack.js",
+      "--jobs",
+      "1",
+      "--timeout-secs",
+      "30",
+      "--results",
+      "/workspace/quench/work/full-shadow-stack-modern-buffer-stable/baseline-control-test-stream2-read-sync-stack.js.json"
+    ],
+    "exit": 0,
+    "counts": {
+      "pass": 1
+    }
+  },
+  {
+    "fixture": "test-stringbytes-external.js",
+    "command": [
+      "/workspace/quench/work/native-buffer-pool-bin/run-parallel",
+      "--all",
+      "--parallel-dir",
+      "/workspace/work/node-stable-release/node-v26.12.0/test/parallel",
+      "--filter",
+      "test-stringbytes-external.js",
+      "--jobs",
+      "1",
+      "--timeout-secs",
+      "30",
+      "--results",
+      "/workspace/quench/work/full-shadow-stack-modern-buffer-stable/baseline-control-test-stringbytes-external.js.json"
+    ],
+    "exit": 1,
+    "counts": {
+      "timeout": 1
+    }
+  }
+]

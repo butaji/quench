@@ -1,0 +1,383 @@
+{
+  "candidate": {
+    "codegen_gate": "The hot latch assembly was not retained or verified for removal of the Frame.pc load/store; no codegen claim is made.",
+    "decision": "REJECT this implementation and restore unconditional per-instruction Frame.pc publication. This does not refute the measured V2 mechanism.",
+    "mechanism": "Keep a local instruction PC in general dispatch and publish Frame.pc only when Op::Effect is not PURE.",
+    "transfer_limit": "This was a coarse per-instruction effect guard, not the V2 task 383 codegen-verified synchronization at explicit call, construction, GC, return, error, and other observer edges."
+  },
+  "focused_correctness": {
+    "node_framework_core": {
+      "command": "cargo run --profile iteration -p quench-node-test --bin run-parallel-next -- --profile framework-core --timeout-secs 60",
+      "failed": 0,
+      "passed": 43,
+      "qualification": "Focused framework-core run, not the full Node compatibility inventory."
+    },
+    "test262": {
+      "failed": 0,
+      "passed": 28082,
+      "qualification": "Affected-stage checks only; reports are local target artifacts and do not constitute a full Test262 gate.",
+      "reports": [
+        {
+          "failed": 0,
+          "passed": 1327,
+          "report": "target/iteration/task61-native-pc-stages-16-20.json",
+          "report_sha256": "63b3e2d9bd64013b99feb99aa0e50833ec3e3d3523bfc8aeec588c9ade647e0b",
+          "stages": {
+            "16": {
+              "failed": 0,
+              "passed": 128,
+              "total": 128
+            },
+            "17": {
+              "failed": 0,
+              "passed": 25,
+              "total": 25
+            },
+            "18": {
+              "failed": 0,
+              "passed": 41,
+              "total": 41
+            },
+            "19": {
+              "failed": 0,
+              "passed": 534,
+              "total": 534
+            },
+            "20": {
+              "failed": 0,
+              "passed": 599,
+              "total": 599
+            }
+          }
+        },
+        {
+          "failed": 0,
+          "passed": 9337,
+          "report": "target/iteration/task61-native-pc-stages-26-26.json",
+          "report_sha256": "627df15a2d20df23cef6c1be2254db2ce3a387674ada7f50feef5c3e16164298",
+          "stages": {
+            "26": {
+              "failed": 0,
+              "passed": 9337,
+              "total": 9337
+            }
+          }
+        },
+        {
+          "failed": 0,
+          "passed": 102,
+          "report": "target/iteration/task61-native-pc-stages-36-39.json",
+          "report_sha256": "93925dd4a3d656be9cb901b11a089bd76ff1465c70814614005bd4a55acd58a1",
+          "stages": {
+            "36": {
+              "failed": 0,
+              "passed": 18,
+              "total": 18
+            },
+            "37": {
+              "failed": 0,
+              "passed": 23,
+              "total": 23
+            },
+            "38": {
+              "failed": 0,
+              "passed": 48,
+              "total": 48
+            },
+            "39": {
+              "failed": 0,
+              "passed": 13,
+              "total": 13
+            }
+          }
+        },
+        {
+          "failed": 0,
+          "passed": 733,
+          "report": "target/iteration/task61-native-pc-stages-46-50.json",
+          "report_sha256": "97ee71aba61277d0b352d6866d89de4025561c138f334cf34e3161389a57f08a",
+          "stages": {
+            "46": {
+              "failed": 0,
+              "passed": 93,
+              "total": 93
+            },
+            "47": {
+              "failed": 0,
+              "passed": 47,
+              "total": 47
+            },
+            "48": {
+              "failed": 0,
+              "passed": 509,
+              "total": 509
+            },
+            "49": {
+              "failed": 0,
+              "passed": 23,
+              "total": 23
+            },
+            "50": {
+              "failed": 0,
+              "passed": 61,
+              "total": 61
+            }
+          }
+        },
+        {
+          "failed": 0,
+          "passed": 4885,
+          "report": "target/iteration/task61-native-pc-stages-58-62.json",
+          "report_sha256": "e1f855df87618dafd55308ac2c46699ce7be48d7fcf535af4e6229154564d678",
+          "stages": {
+            "58": {
+              "failed": 0,
+              "passed": 94,
+              "total": 94
+            },
+            "59": {
+              "failed": 0,
+              "passed": 340,
+              "total": 340
+            },
+            "60": {
+              "failed": 0,
+              "passed": 3411,
+              "total": 3411
+            },
+            "61": {
+              "failed": 0,
+              "passed": 729,
+              "total": 729
+            },
+            "62": {
+              "failed": 0,
+              "passed": 311,
+              "total": 311
+            }
+          }
+        },
+        {
+          "failed": 0,
+          "passed": 11669,
+          "report": "target/iteration/task61-native-pc-stages-8-11.json",
+          "report_sha256": "d51ae1243bc7b442ec29e40e8af457a8259b31fc93fc1f57fb0ff1b813a972c5",
+          "stages": {
+            "10": {
+              "failed": 0,
+              "passed": 11102,
+              "total": 11102
+            },
+            "11": {
+              "failed": 0,
+              "passed": 217,
+              "total": 217
+            },
+            "8": {
+              "failed": 0,
+              "passed": 347,
+              "total": 347
+            },
+            "9": {
+              "failed": 0,
+              "passed": 3,
+              "total": 3
+            }
+          }
+        },
+        {
+          "failed": 0,
+          "passed": 29,
+          "report": "target/iteration/task61-native-pc-stages-80-80.json",
+          "report_sha256": "cc0c6aacb0fa6c107e9d2d818acf5a3d7903e78597af00adb0b60d9703c20e6e",
+          "stages": {
+            "80": {
+              "failed": 0,
+              "passed": 29,
+              "total": 29
+            }
+          }
+        }
+      ],
+      "selected_stages": "8-11, 16-20, 26, 36-39, 46-50, 58-62, 80"
+    },
+    "wasm": {
+      "failed": 0,
+      "passed": 415,
+      "report": "target/iteration/task61-native-pc-wasm.json",
+      "report_sha256": "6e408a60e0319263b20544b1e3afc35474b6086b46b2aaabad8e88b977f321a6",
+      "suite": "five focused call/reentry/trap files, not full Wasm suite"
+    }
+  },
+  "kind": "native-local-program-counter-screen",
+  "paired_screen": {
+    "baseline_binary_sha256": "6dde9036930b0dd9148303ea35ca9dd854639fff94a18326b1146071c99d7ace",
+    "candidate_binary_sha256": "70f2bf1dda658a578bb64621ff70bd7311fc20a56bb7d04ea03b4014a5091204",
+    "combined_source_sha256": "84999b27d4bc2b4c694d5f05b2f5a40c852f9c2fc73e264b867cf81f34e1fd4b",
+    "fixture": "quench-bench/js-engine-benchmark/v8-v7/richards.js",
+    "fixture_sha256": "d86eac4108343a54ba6e10621a77b46f82f554c3b0a46e8fb4032d5cf65a2a11",
+    "interpretation": "Screen only, not the required eleven-pair/eight-benchmark/all-engine qualification. Candidate median paired Score delta is -0.4, median max-RSS delta is +2179072 bytes, and median retired-instruction delta is +81314369.",
+    "method": "Five balanced alternating Quench-only baseline/candidate pairs; same fixture and wrapper; stdout semantic equality checked in every pair.",
+    "pairs": [
+      {
+        "baseline": {
+          "cycles": 11967832632,
+          "instructions": 74534368372,
+          "rss_bytes": 23805952,
+          "score": 70.5,
+          "status": 0,
+          "wall_ns": 3151019709
+        },
+        "candidate": {
+          "cycles": 11790291041,
+          "instructions": 73424123859,
+          "rss_bytes": 25427968,
+          "score": 70.1,
+          "status": 0,
+          "wall_ns": 3097487167
+        },
+        "instructions_delta": -1110244513,
+        "order": [
+          "baseline",
+          "candidate"
+        ],
+        "pair": 1,
+        "rss_delta_bytes": 1622016,
+        "score_delta": -0.4000000000000057,
+        "semantic_equal": true
+      },
+      {
+        "baseline": {
+          "cycles": 11901630209,
+          "instructions": 75705944758,
+          "rss_bytes": 23920640,
+          "score": 72.2,
+          "status": 0,
+          "wall_ns": 3118047208
+        },
+        "candidate": {
+          "cycles": 11907567488,
+          "instructions": 75793903674,
+          "rss_bytes": 26099712,
+          "score": 73.1,
+          "status": 0,
+          "wall_ns": 3099619792
+        },
+        "instructions_delta": 87958916,
+        "order": [
+          "candidate",
+          "baseline"
+        ],
+        "pair": 2,
+        "rss_delta_bytes": 2179072,
+        "score_delta": 0.8999999999999915,
+        "semantic_equal": true
+      },
+      {
+        "baseline": {
+          "cycles": 11957590273,
+          "instructions": 75701978914,
+          "rss_bytes": 25247744,
+          "score": 71.6,
+          "status": 0,
+          "wall_ns": 3139056208
+        },
+        "candidate": {
+          "cycles": 11766062354,
+          "instructions": 75792295572,
+          "rss_bytes": 24248320,
+          "score": 73.6,
+          "status": 0,
+          "wall_ns": 3058978500
+        },
+        "instructions_delta": 90316658,
+        "order": [
+          "baseline",
+          "candidate"
+        ],
+        "pair": 3,
+        "rss_delta_bytes": -999424,
+        "score_delta": 2.0,
+        "semantic_equal": true
+      },
+      {
+        "baseline": {
+          "cycles": 11822454899,
+          "instructions": 73332235449,
+          "rss_bytes": 24510464,
+          "score": 67.5,
+          "status": 0,
+          "wall_ns": 3156550291
+        },
+        "candidate": {
+          "cycles": 11742736413,
+          "instructions": 69862257563,
+          "rss_bytes": 27934720,
+          "score": 64.6,
+          "status": 0,
+          "wall_ns": 3148960083
+        },
+        "instructions_delta": -3469977886,
+        "order": [
+          "candidate",
+          "baseline"
+        ],
+        "pair": 4,
+        "rss_delta_bytes": 3424256,
+        "score_delta": -2.9000000000000057,
+        "semantic_equal": true
+      },
+      {
+        "baseline": {
+          "cycles": 11851622589,
+          "instructions": 74534527328,
+          "rss_bytes": 24313856,
+          "score": 71.9,
+          "status": 0,
+          "wall_ns": 3125506375
+        },
+        "candidate": {
+          "cycles": 11788593583,
+          "instructions": 74615841697,
+          "rss_bytes": 28147712,
+          "score": 70.3,
+          "status": 0,
+          "wall_ns": 3095392459
+        },
+        "instructions_delta": 81314369,
+        "order": [
+          "baseline",
+          "candidate"
+        ],
+        "pair": 5,
+        "rss_delta_bytes": 3833856,
+        "score_delta": -1.6000000000000085,
+        "semantic_equal": true
+      }
+    ],
+    "raw_report": "target/iteration/stageb-pilots/native-pc-richards-pairs-5.json",
+    "raw_report_sha256": "cccfd6f903f5c55b44d186b03c8c31a33159ec7309d6857624abd8e389013182",
+    "rounds": 5,
+    "summary": {
+      "all_semantic_equal": true,
+      "all_status_zero": true,
+      "median_instructions_delta": 81314369,
+      "median_rss_delta_bytes": 2179072,
+      "median_score_delta": -0.4000000000000057
+    }
+  },
+  "recorded_on": "2026-10-07",
+  "restoration": {
+    "production_binary_sha256": "6dde9036930b0dd9148303ea35ca9dd854639fff94a18326b1146071c99d7ace",
+    "source": "The temporary Effect-based Frame.pc guard was reverted; dispatch_frame.rs again publishes Frame.pc for each general-dispatch instruction.",
+    "verification": "cargo check --profile iteration -p quench-runtime-next --lib passed after restoration."
+  },
+  "schema": 1,
+  "source": {
+    "dirty": true,
+    "platform": "macOS arm64 (Apple M4)",
+    "revision": "d4f9735255c61b74cb81f80357331ae0d491ea1f",
+    "v2_reference": "../v2/tasks/383-local-general-program-counter.md"
+  },
+  "task": "61"
+}

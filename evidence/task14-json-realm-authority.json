@@ -1,0 +1,190 @@
+{
+  "schema": 1,
+  "tasks": [
+    "14",
+    "18",
+    "20",
+    "43"
+  ],
+  "baseline_source_head": "4ca383f6109d85b51e1a6f118b696382e357c9e6",
+  "qualification": "Isolated changes on the committed baseline; broader pending main-tree work excluded and preserved.",
+  "source_sha256": {
+    "crates/quench-runtime-next/src/vm/builtins.rs": "cb0e916b3cdfc2541b1884297ecc74f48fc60a4b15b9cba586190fdcfb2f8875",
+    "crates/quench-runtime-next/src/vm/construction.rs": "69909817c54791038d3355fe8203df68c01345472382b4d85782e5fa68ee823f",
+    "crates/quench-runtime-next/src/vm/error.rs": "de041d860469d0b453aa3eb71bebac4950eaad8fdffe5f0175f6112ed030850d",
+    "crates/quench-runtime-next/src/vm/json.rs": "bdd06ab11090b9c8cd09c17100f26939d631baef961b631f8a7a2ddf6418954a",
+    "crates/quench-runtime-next/src/vm/promise.rs": "e42fe5a4a21c401ae40dbb04f0b66800c24d93aa05f2c11c65f2862354d3c93c"
+  },
+  "pin": "6eec1ac9ee144dafd8f344d73a21f36bfc9f6755",
+  "build_profile": "release, correctness only; no speed/RSS claim",
+  "build_log": "target/iteration/task14-json-realm-final-build.log",
+  "binary_sha256": "8a46931113f75f6b569f0441a7baf2bad79a5d7035d876527f3531beef1b6225",
+  "representation": {
+    "json_namespace": "Root and foreign namespaces derive their method table from the same intrinsic installer. Native methods carry their creation realm.",
+    "allocation": "JSON holders, parsed objects/arrays and reviver contexts derive prototypes from existing realm intrinsic records, never guest global constructor properties.",
+    "native_functions": "All native function allocations use the shared realm_function_prototype projection, matching ordinary function ownership. No additional realm state or callback map.",
+    "errors": "Foreign Error.prototype derives from its Object prototype, owns its Error.toString method, and is the parent of its TypeError prototype. TypeError constructors inherit their own Error constructor; they no longer expose caller-realm ancestry."
+  },
+  "affected_test262": {
+    "full_suite_run": false,
+    "jobs": 2,
+    "timeout_ms": 10000,
+    "distinct_cases": 595,
+    "passed_before": 594,
+    "passed_after": 595,
+    "regressions": 0,
+    "gained": [
+      {
+        "stage": "114",
+        "path": "staging/sm/JSON/parse-with-source.js"
+      }
+    ],
+    "scopes": [
+      {
+        "scope": "json",
+        "stages": [
+          53,
+          53
+        ],
+        "filter": "",
+        "before": {
+          "total": 165,
+          "passed": 165,
+          "failed": 0
+        },
+        "after": {
+          "total": 165,
+          "passed": 165,
+          "failed": 0
+        },
+        "compare_exit": 0,
+        "regressions": 0,
+        "before_report": "target/iteration/task14-json-realm/before-json.json",
+        "before_sha256": "21a129c0307f73770b32816240960f6e514d58bf43d3a125b38ccaeca896bed0",
+        "after_report": "target/iteration/task14-json-realm/after-json.json",
+        "after_sha256": "63aaa3eb6835774f3565e96e57d4b2a1925efa3b74270d1fa84674d0b80d4e58"
+      },
+      {
+        "scope": "staged-json",
+        "stages": [
+          114,
+          114
+        ],
+        "filter": "staging/sm/JSON/",
+        "before": {
+          "total": 39,
+          "passed": 38,
+          "failed": 1
+        },
+        "after": {
+          "total": 39,
+          "passed": 39,
+          "failed": 0
+        },
+        "compare_exit": 0,
+        "regressions": 0,
+        "before_report": "target/iteration/task14-json-realm/before-staged-json.json",
+        "before_sha256": "0109827acf6cc565fe3f11698f531270035ad28102856819fd0e64dcefcb240a",
+        "after_report": "target/iteration/task14-json-realm/after-staged-json.json",
+        "after_sha256": "fceb8650f8b84e9e45fc49ba173c179ad5299a0aca70f89c78450312d754b40f"
+      },
+      {
+        "scope": "realm-paths",
+        "stages": [
+          0,
+          113
+        ],
+        "filter": "realm",
+        "before": {
+          "total": 217,
+          "passed": 217,
+          "failed": 0
+        },
+        "after": {
+          "total": 217,
+          "passed": 217,
+          "failed": 0
+        },
+        "compare_exit": 0,
+        "regressions": 0,
+        "before_report": "target/iteration/task14-json-realm/before-realm-paths.json",
+        "before_sha256": "c0cd73ca97b2bfd6dd5f284316ebc3200b64de8da7c9fcd61a497da64dd8b09d",
+        "after_report": "target/iteration/task14-json-realm/after-realm-paths.json",
+        "after_sha256": "45bf226f7e6888a3f35c5f623387853aff53608a420fe52d06214f746b46a885"
+      },
+      {
+        "scope": "error",
+        "stages": [
+          46,
+          46
+        ],
+        "filter": "",
+        "before": {
+          "total": 93,
+          "passed": 93,
+          "failed": 0
+        },
+        "after": {
+          "total": 93,
+          "passed": 93,
+          "failed": 0
+        },
+        "compare_exit": 0,
+        "regressions": 0,
+        "before_report": "target/iteration/task14-json-realm/before-error.json",
+        "before_sha256": "d2689a182da27910d4c4f039862db342b1f056da400a83503e0da8e0f1d52a39",
+        "after_report": "target/iteration/task14-json-realm/after-error.json",
+        "after_sha256": "65f972d3f5ed735d2bce5d34b8e4f87007818ee0b5da1a195c2246887b51f087"
+      },
+      {
+        "scope": "native-errors",
+        "stages": [
+          58,
+          58
+        ],
+        "filter": "",
+        "before": {
+          "total": 94,
+          "passed": 94,
+          "failed": 0
+        },
+        "after": {
+          "total": 94,
+          "passed": 94,
+          "failed": 0
+        },
+        "compare_exit": 0,
+        "regressions": 0,
+        "before_report": "target/iteration/task14-json-realm/before-native-errors.json",
+        "before_sha256": "3293e4bf38201623e9e53a91f14169ea0f2af72db87705f56d20cdbda4d1f750",
+        "after_report": "target/iteration/task14-json-realm/after-native-errors.json",
+        "after_sha256": "a47032ed0e8161715ab4d159c80acdaa569851e56c028b61119e0fb20d05d868"
+      }
+    ],
+    "selection": "JSON, staged JSON, Error and NativeErrors stages, plus only paths containing realm across official stages. The realm filter is a bounded affected subset, not a complete stage run."
+  },
+  "node_controls": {
+    "count": 13,
+    "passed": 13,
+    "oracle": "Local Node vm.runInNewContext; v26.10.0",
+    "data": "target/iteration/task14-json-realm/realm-controls.json",
+    "data_sha256": "d957cf00e8cbdf0e437f8bfca2867b528e853d672265c2182e22d9d966e9b05a",
+    "qualification_report": "target/iteration/task14-json-realm/final-controls.json",
+    "qualification_sha256": "bc91e6adcbf42ed0fb480c5b56ef82b62927e74b1b17d911ee03345da6dec540",
+    "scope": "Namespace/method identity and prototypes, parsed objects/arrays, reviver holders/contexts, syntax/type errors, raw JSON brand, abrupt identity, caller realm restoration, callback errors, tampered globals and Error/TypeError ancestry.",
+    "input_policy": "Independent ignored qualification inputs use Node-computed expected values and the existing Test262 embedding/harness. Empty directory structure satisfies stage-catalog validation; no pinned suite case, helper, exclusion or expectation changed. These are Node oracle controls, not additions to pinned conformance coverage."
+  },
+  "internal_checks": {
+    "library_checks": 7,
+    "logs": [
+      "target/iteration/task14-json-realm-internal.log",
+      "target/iteration/task14-json-realm-native-internal.log"
+    ],
+    "gc_control": "The fourteenth control retains an extracted foreign JSON.parse after discarding its global reference, then collects before parsing and in every reviver callback. Parsed/context prototypes retain the creation realm.",
+    "scope": "Realm intrinsic error roots under stack failure/collection, scoped/promoted/foreign roots, typed errors, native construction, captured data and guest re-entry."
+  },
+  "limits": [
+    "No new Rust unit tests duplicating conformance fixtures. Existing internal lifecycle checks are reused.",
+    "The selected JSON staging family now passes 39/39, but complete current Test262, Wasm and implemented Node gates remain open. Stage A is not complete."
+  ]
+}

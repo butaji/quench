@@ -1,0 +1,56 @@
+[
+  {
+    "path": "tools/build-node-icu.py",
+    "sha256": "8856554419072cd690afcfa4ba901ddc86f0490d9ca64cc20c081303af88d565",
+    "file": "tools__build-node-icu.py.gz",
+    "bytes": 5307
+  },
+  {
+    "path": "tests/npm-top300/inventory.json",
+    "sha256": "d75fd451e8fe84c11eb1e1c0522745ae99a3deed4e03841a3567e147a933e303",
+    "file": "tests__npm-top300__inventory.json.gz",
+    "bytes": 176152
+  },
+  {
+    "path": "tests/npm-top300/package-lock.json",
+    "sha256": "62e8fa517a95fd709da2c1ed7bca2ff63cb7b9133d8444ec590f08b680634d4d",
+    "file": "tests__npm-top300__package-lock.json.gz",
+    "bytes": 387717
+  },
+  {
+    "path": "tests/npm-top300/scenario.mjs",
+    "sha256": "2e3d7ed66d05eb4f88209f00647093b30de256ed421f9a2f31f4758c501e401b",
+    "file": "tests__npm-top300__scenario.mjs.gz",
+    "bytes": 55603
+  },
+  {
+    "path": "tests/npm-top300/surface.mjs",
+    "sha256": "1c84e7ad8124edebae130476c74b1f05fa0eb486e7d67b2c771b6e063b9a6595",
+    "file": "tests__npm-top300__surface.mjs.gz",
+    "bytes": 6725
+  },
+  {
+    "path": "crates/quench-node-test/tests/child_entry.rs",
+    "sha256": "43db595c2b9227d03236b945197af54ea7b5bde2ca38634aa0f3df3132a51702",
+    "file": "crates__quench-node-test__tests__child_entry.rs.gz",
+    "bytes": 554089
+  },
+  {
+    "path": "crates/quench-runtime/src/vm/startup_intrinsics.rs",
+    "sha256": "0b1fb5381076034dc5f9cf5021e1d760142767bf170b612ec55a34645d0daa2a",
+    "file": "crates__quench-runtime__src__vm__startup_intrinsics.rs.gz",
+    "bytes": 13782
+  },
+  {
+    "path": "crates/quench-node/src/modules/icu_binding_shared_vm.rs",
+    "sha256": "cc412ff2c03337202d79e97ca13e6c137c9fa6d52b5490a957e333073002c390",
+    "file": "crates__quench-node__src__modules__icu_binding_shared_vm.rs.gz",
+    "bytes": 6881
+  },
+  {
+    "path": "crates/quench-node/src/modules/text_decoder_icu.rs",
+    "sha256": "c0ffd1a79426cca4e410fe5e4fda4fcab2790b36771db1f16ad8868a65016577",
+    "file": "crates__quench-node__src__modules__text_decoder_icu.rs.gz",
+    "bytes": 15134
+  }
+]

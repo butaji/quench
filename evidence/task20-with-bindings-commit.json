@@ -1,0 +1,313 @@
+{
+  "change": "Resolve local lexical bindings through static binding-site facts after nearer with-object environments; preserve resolved slot ownership",
+  "qualification": "Isolated committed-source candidate; no full suite, Node suite closure or Stage A closure claim",
+  "source": {
+    "parent": "015a47516ee80c0e88d74da3813cdc50183bf1a8",
+    "candidate_source_dirty": true,
+    "candidate_diff_sha256": "6bc874f22b611028868ba1cb97f8039e377b4e8cc31d589420f0e65a123d2762",
+    "files": {
+      "crates/quench-runtime-next/src/bytecode.rs": "240b5a18c1aecce72757979c337b6f245f8df6f7a1b29e4f053741a679efb2b0",
+      "crates/quench-runtime-next/src/bytecode/binary.rs": "5c0de202b88076febbd8544f9909b772e81ebfe51ff818275a33eff695c37850",
+      "crates/quench-runtime-next/src/bytecode/tests.rs": "ccb6b5401ddecea09c58645992818645e5b4caabdb42d419e2a6832837963d79",
+      "crates/quench-runtime-next/src/bytecode/validate.rs": "2616b7479f28e799b8983ad0199fdefc989a7836d4291fafa96d975361a2750a",
+      "crates/quench-runtime-next/src/compile/ast.rs": "be6b41b0678bac2dd2a6f44c5095dcc6a44fbf1d681f51a01ef93d949c891ec7",
+      "crates/quench-runtime-next/src/compile/ast/call.rs": "6d8a6bdc9fdfb87bc07a42f9773c85b367ce04620c78a8b3adc770f63491a5bf",
+      "crates/quench-runtime-next/src/compile/numeric.rs": "d16ecccbc2586becc5fe5f9dc918dd64b30982fdcf7df0a0d34cc62392148668",
+      "crates/quench-runtime-next/src/compile/rewrite.rs": "97a4d5ace2a0046887db6640a1420bc5e1321243001a8e8bc7ba198cc23d0c86",
+      "crates/quench-runtime-next/src/heap.rs": "ce21c3c3e22eeb35e48f1d0fc25c9665504682b9622bef4d01ae7fb6b4503c85",
+      "crates/quench-runtime-next/src/heap/cell.rs": "ddbea9c96765abee245f272962fcd61518dce174a05b82291d3b957a6c306940",
+      "crates/quench-runtime-next/src/heap/memory_profile.rs": "c72abf633ebe9dca44c1323903e8305452fd90d04b7bc678a77bc24ef1f8f6d0",
+      "crates/quench-runtime-next/src/heap/tests.rs": "06829afedd27cad9c3c9483bc3c00214c022dc10d8b0809cbc16b3eec6ea6c26",
+      "crates/quench-runtime-next/src/vm.rs": "c51fab2c4d60c8d160864708a877be5de40a2bc64c1266224bea0e8ad768e540",
+      "crates/quench-runtime-next/src/vm/activation.rs": "4cba2db57a7944ad70012ace93f23b4e5c4288aa1847cf0f1ace5533bba05f7d",
+      "crates/quench-runtime-next/src/vm/dispatch.rs": "240311eb5b40a1fc16ae8cd37ef4c45b2fb1580e075be5e616fe1ed71960f90f",
+      "crates/quench-runtime-next/src/vm/dispatch_frame.rs": "cadb4afff2e2f4ac250d634a9e3bde5b2e665508017f4ed567a2e0d498e22488",
+      "crates/quench-runtime-next/src/vm/dispatch_numeric.rs": "0772d84ea751a2132aec69c5dfbdd3d3e1759a551780ace20e0cf5d3e3eac297",
+      "crates/quench-runtime-next/src/vm/environment.rs": "5eb107d6e83543efd65aa50f937ec2ac72be34097363c9a13c49c819557115cd",
+      "crates/quench-runtime-next/src/vm/eval.rs": "ced84e5395d3cdbffd34970582e07152f7e018dc137242e9a90801da2688f5de",
+      "crates/quench-runtime-next/src/vm/generator.rs": "40ee66dcfca202d4ef0568df17001e56752aaf03feb08a8d6dd4e4580406174c",
+      "crates/quench-runtime-next/src/vm/json.rs": "514242bb3e7c394583ce9f1d5ba21c274e831e3ba8d4803de4094347f0166cd1",
+      "crates/quench-runtime-next/src/vm/profile_edges.rs": "9d09a57198d1c537bd9083c29169e420cafa87c25fe17d4706b86bb7f37c1ec1",
+      "crates/quench-runtime-next/src/vm/tests.rs": "aab599d514d641ed53f95492edf12ed1125c05af293140244bb7d60f4e5d23ea"
+    }
+  },
+  "baseline": {
+    "revision": "5a784709b7bfb6e54a6a2eda9569ab203f246765",
+    "relationship_to_parent": "015a47516 only renamed binding-site identifiers; task20-binding-site-domain.json verifies identifier-projection equivalence",
+    "runner_sha256": "b271d621ce3840f39472c350b559095ed384038cb58853c2bd3d673bd87eec51",
+    "cli_sha256": "c6ba283315442651aa535f084437b4cc7df6c50bdf56fb86e57a001836aa8d00"
+  },
+  "candidate": {
+    "runner_sha256": "e9f3934a89b958029f306a91dc63a0a6e30e96d0c127a15d6de727cf50afcce4",
+    "cli_sha256": "4478a5a625ee16e1f2b5fb3d1788546e95a4b223b83491f795a43d842a953a6f",
+    "residual_format": 38
+  },
+  "test262": {
+    "pin": "6eec1ac9ee144dafd8f344d73a21f36bfc9f6755",
+    "jobs": 2,
+    "timeout_ms": 10000,
+    "scope_count": 22,
+    "selection_reports": [
+      {
+        "scope": "blocks",
+        "total": 21,
+        "before_passed": 21,
+        "after_passed": 21,
+        "compare_exit": 0
+      },
+      {
+        "scope": "functions",
+        "total": 451,
+        "before_passed": 451,
+        "after_passed": 451,
+        "compare_exit": 0
+      },
+      {
+        "scope": "labels",
+        "total": 24,
+        "before_passed": 24,
+        "after_passed": 24,
+        "compare_exit": 0
+      },
+      {
+        "scope": "switch",
+        "total": 111,
+        "before_passed": 111,
+        "after_passed": 111,
+        "compare_exit": 0
+      },
+      {
+        "scope": "with",
+        "total": 181,
+        "before_passed": 181,
+        "after_passed": 181,
+        "compare_exit": 0
+      },
+      {
+        "scope": "annex-language",
+        "total": 845,
+        "before_passed": 845,
+        "after_passed": 845,
+        "compare_exit": 0
+      },
+      {
+        "scope": "staged-lexical",
+        "total": 34,
+        "before_passed": 27,
+        "after_passed": 29,
+        "compare_exit": 0
+      },
+      {
+        "scope": "eval",
+        "total": 347,
+        "before_passed": 347,
+        "after_passed": 347,
+        "compare_exit": 0
+      },
+      {
+        "scope": "block-scope",
+        "total": 145,
+        "before_passed": 145,
+        "after_passed": 145,
+        "compare_exit": 0
+      },
+      {
+        "scope": "destructuring",
+        "total": 19,
+        "before_passed": 19,
+        "after_passed": 19,
+        "compare_exit": 0
+      },
+      {
+        "scope": "identifier-resolution",
+        "total": 14,
+        "before_passed": 14,
+        "after_passed": 14,
+        "compare_exit": 0
+      },
+      {
+        "scope": "let",
+        "total": 145,
+        "before_passed": 145,
+        "after_passed": 145,
+        "compare_exit": 0
+      },
+      {
+        "scope": "const",
+        "total": 136,
+        "before_passed": 136,
+        "after_passed": 136,
+        "compare_exit": 0
+      },
+      {
+        "scope": "try",
+        "total": 201,
+        "before_passed": 201,
+        "after_passed": 201,
+        "compare_exit": 0
+      },
+      {
+        "scope": "assignment",
+        "total": 485,
+        "before_passed": 485,
+        "after_passed": 485,
+        "compare_exit": 0
+      },
+      {
+        "scope": "prefix-increment",
+        "total": 33,
+        "before_passed": 33,
+        "after_passed": 33,
+        "compare_exit": 0
+      },
+      {
+        "scope": "postfix-increment",
+        "total": 38,
+        "before_passed": 38,
+        "after_passed": 38,
+        "compare_exit": 0
+      },
+      {
+        "scope": "prefix-decrement",
+        "total": 34,
+        "before_passed": 34,
+        "after_passed": 34,
+        "compare_exit": 0
+      },
+      {
+        "scope": "postfix-decrement",
+        "total": 37,
+        "before_passed": 37,
+        "after_passed": 37,
+        "compare_exit": 0
+      },
+      {
+        "scope": "typeof",
+        "total": 16,
+        "before_passed": 16,
+        "after_passed": 16,
+        "compare_exit": 0
+      },
+      {
+        "scope": "delete",
+        "total": 165,
+        "before_passed": 165,
+        "after_passed": 165,
+        "compare_exit": 0
+      },
+      {
+        "scope": "function-code",
+        "total": 217,
+        "before_passed": 217,
+        "after_passed": 217,
+        "compare_exit": 0
+      }
+    ],
+    "distinct": {
+      "total": 3699,
+      "before_passed": 3692,
+      "after_passed": 3694,
+      "regressions": [],
+      "gains": [
+        [
+          "114",
+          "staging/sm/lexical-environment/unscopables-basics.js"
+        ],
+        [
+          "114",
+          "staging/sm/lexical-environment/unscopables-mutation-frozen.js"
+        ]
+      ],
+      "remaining_failures": [
+        [
+          "114",
+          "staging/sm/lexical-environment/block-scoped-functions-annex-b-arguments.js"
+        ],
+        [
+          "114",
+          "staging/sm/lexical-environment/block-scoped-functions-annex-b-eval.js"
+        ],
+        [
+          "114",
+          "staging/sm/lexical-environment/block-scoped-functions-annex-b-with.js"
+        ],
+        [
+          "114",
+          "staging/sm/lexical-environment/unscopables-global.js"
+        ],
+        [
+          "114",
+          "staging/sm/lexical-environment/var-in-catch-body-annex-b-eval.js"
+        ]
+      ]
+    },
+    "comparison": "compare-runs --reports BEFORE AFTER; all matching inventories, zero regressions"
+  },
+  "controls": {
+    "node_version": "v26.10.0",
+    "matched_cases": [
+      "falsey-unscopables-loop",
+      "lexical-write",
+      "compound-write",
+      "postfix-write",
+      "prefix-write",
+      "blocked-object-binding",
+      "object-before-lexical",
+      "lexical-call-receiver",
+      "object-call-receiver",
+      "nested-with",
+      "inner-lexical-before-outer-with",
+      "inner-with-before-inner-lexical",
+      "lexical-typeof",
+      "lexical-typeof-tdz",
+      "const-assignment",
+      "const-compound",
+      "const-update",
+      "lexical-delete",
+      "object-delete",
+      "function-body-lexical",
+      "catch-lexical-read",
+      "loop-lexical-write"
+    ],
+    "new_matches": [
+      "falsey-unscopables-loop",
+      "inner-lexical-before-outer-with",
+      "catch-lexical-read",
+      "loop-lexical-write"
+    ],
+    "modes": [
+      "normal",
+      "generic"
+    ],
+    "unchanged_differences": [
+      {
+        "case": "resolved-before-rhs",
+        "node_stdout": "[1,3]\n",
+        "quench_stdout": "[3,100]\n"
+      },
+      {
+        "case": "assignment-before-rhs",
+        "node_stdout": "[1,3]\n",
+        "quench_stdout": "[3,100]\n"
+      }
+    ],
+    "reference_contract": "https://tc39.es/ecma262/multipage/executable-code-and-execution-contexts.html#sec-getidentifierreference"
+  },
+  "internal_checks": {
+    "decoder_and_round_trip": {
+      "passed": 5,
+      "failed": 0
+    },
+    "binding_reference_gc": {
+      "passed": 1,
+      "failed": 0
+    }
+  },
+  "consumer_check": [
+    "quench-test262",
+    "quench-wasm",
+    "quench-node"
+  ],
+  "reduction": "Eval and dynamic name sites share lexical-slot projection and named assignment checks; compaction derives site PCs by relocation; slot owners trace resolved references",
+  "raw_artifacts": "target/iteration/task20-with-bindings-commit"
+}

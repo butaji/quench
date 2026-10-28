@@ -1,0 +1,18 @@
+undefined
+[
+  'ModuleWrap',
+  'setImportModuleDynamicallyCallback',
+  'setInitializeImportMetaObjectCallback',
+  'setImportMetaResolveInitializer',
+  'createRequiredModuleFacade',
+  'throwIfPromiseRejected',
+  'kUninstantiated',
+  'kInstantiating',
+  'kInstantiated',
+  'kEvaluating',
+  'kEvaluated',
+  'kErrored',
+  'kEvaluationPhase',
+  'kDeferPhase',
+  'kSourcePhase'
+]

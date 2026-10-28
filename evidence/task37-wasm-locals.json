@@ -1,0 +1,139 @@
+{
+  "tasks": [
+    "23",
+    "37",
+    "48"
+  ],
+  "source_head": "7e60169df033dd247f34199e084e3e8080a92a29",
+  "source_dirty": true,
+  "source_hashes": {
+    "crates/quench-runtime-next/src/wasm.rs": "ad74a1cc82bf4e729cbc29f0221b680cbe85f52d03ea33af01cd9a0bd8962a98",
+    "crates/quench-runtime-next/src/wasm/scalar.rs": "c8cfa7711e8e65afa718156cde1773aec45e9b9a08c0017d39193fc7b147cb81",
+    "crates/quench-wasm/src/shared.rs": "6a089ba0375e40287fa7e8bcc8e9393c391da0747581f6a8f881330197c96f6f",
+    "crates/quench-runtime-next/src/vm/wasm.rs": "c80baced71670e1a751e3322b8c6157812ed8ee5c770183aa35be7093d756b6a"
+  },
+  "suite_head": "67c8b9dc32c47d61c05a1681df349d01c85fa8ff",
+  "residual_format": 55,
+  "obligation": "Keep frontend-validated local ValType declarations, including concrete and GC references, and derive initialization without runtime signature guards.",
+  "representation": "WasmFunctionBody owns original local ValTypes. Lowering derives the slot count from parameter count plus locals; no concatenated type table. wasmparser is_defaultable owns initialization eligibility. Nullable references use the existing null constant; numeric/vector locals retain bit-exact zero lowering. Nondefaultable locals remain uninitialized until validated assignment. Callable/resource boundary types remain independently admitted; this does not admit GC operations or concrete signatures. No opcode, executor or format change.",
+  "sources": [
+    "https://webassembly.github.io/spec/core/valid/instructions.html#valid-local-get",
+    "https://webassembly.github.io/spec/core/exec/instructions.html#exec-local-get"
+  ],
+  "scope": "227 previously affected pinned files plus three local-owner files not previously covered; previous31 controls plus one new local fixture. No full suite.",
+  "reports": {
+    "affected": {
+      "before": {
+        "path": "target/iteration/task37-wasm-tail-after.json",
+        "sha256": "d5054b2ee4caf4518062abd49b915a2d34ac0ed8211509fec46eccbc53e508c8",
+        "binary_sha256": "f8f2e63a96cd47843bfb2bb9affa274fa0ac39022c421a9f0360cacd6fd6a4cc"
+      },
+      "after": {
+        "path": "target/iteration/task37-wasm-locals-after.json",
+        "sha256": "33740d0860f6407405a95ebea658bf27710155df5460c2b260769d4569214421",
+        "binary_sha256": "fcc1c5d93e181c0a8ef88d34726e3432665a1f2c05e6b9a1e7bf691ec0184dac"
+      }
+    },
+    "local_owners": {
+      "before": {
+        "path": "target/iteration/task37-wasm-locals-owners-before.json",
+        "sha256": "591eab540c673209d2399ade19178e85cf821ae8759ece57a413ba674052f177",
+        "binary_sha256": "f8f2e63a96cd47843bfb2bb9affa274fa0ac39022c421a9f0360cacd6fd6a4cc"
+      },
+      "after": {
+        "path": "target/iteration/task37-wasm-locals-owners-after.json",
+        "sha256": "1c4bbd723c483026b39c219262b8bd3f868ce0f8f5eaeb2bc9a9000465f57ecc",
+        "binary_sha256": "fcc1c5d93e181c0a8ef88d34726e3432665a1f2c05e6b9a1e7bf691ec0184dac"
+      }
+    },
+    "controls": {
+      "before": {
+        "path": "target/iteration/task37-wasm-locals-controls-before.json",
+        "sha256": "e7cafb969855cf269674b89ae553309af075ba9fd2cab8e795ce714da17d2bec",
+        "binary_sha256": "f8f2e63a96cd47843bfb2bb9affa274fa0ac39022c421a9f0360cacd6fd6a4cc"
+      },
+      "after": {
+        "path": "target/iteration/task37-wasm-locals-controls-after.json",
+        "sha256": "7c0c5418b284da0094b28a6bf6d6f67e52fab2d45663f1fdc86f874def1deb22",
+        "binary_sha256": "fcc1c5d93e181c0a8ef88d34726e3432665a1f2c05e6b9a1e7bf691ec0184dac"
+      }
+    }
+  },
+  "results": {
+    "affected": {
+      "files": 227,
+      "total": 62659,
+      "before_passed": 60983,
+      "passed": 60983,
+      "failed": 1676,
+      "gains": 0,
+      "regressions": 0,
+      "same_ids_and_input_hashes": true,
+      "all_workers_completed": true
+    },
+    "local_owners": {
+      "files": 3,
+      "total": 99,
+      "before_passed": 99,
+      "passed": 99,
+      "failed": 0,
+      "gains": 0,
+      "regressions": 0,
+      "same_ids_and_input_hashes": true,
+      "all_workers_completed": true
+    },
+    "controls": {
+      "files": 32,
+      "total": 3518,
+      "before_passed": 3511,
+      "passed": 3518,
+      "failed": 0,
+      "gains": 7,
+      "regressions": 0,
+      "same_ids_and_input_hashes": true,
+      "all_workers_completed": true
+    }
+  },
+  "runner": {
+    "path": "target/iteration/task37-wasm-locals-runner",
+    "sha256": "fcc1c5d93e181c0a8ef88d34726e3432665a1f2c05e6b9a1e7bf691ec0184dac"
+  },
+  "oracle": {
+    "path": "target/iteration/task37-wasm-locals-oracle.json",
+    "sha256": "22901ed1274a1dd0b040fe0a7f03ad4a4d7015f783808688bd0d0b7daa273be1",
+    "wasm_sha256": "6a2f95c00a203c17a7ff1a5f0ee551fe7d097fb32f5a1b00745c853a79eef7f9",
+    "wat_sha256": "f2d17523adefb36edf4f44f6033693cb76c2d75c08c6590ebbbcc9c4a10aecaa",
+    "node": "v26.10.0",
+    "flags": [
+      "--no-sparkplug",
+      "--no-maglev",
+      "--no-turbofan",
+      "--wasm-jitless"
+    ],
+    "observations": 7,
+    "matched": 7
+  },
+  "checks": {
+    "runtime": {
+      "path": "target/iteration/task37-wasm-locals-runtime.log",
+      "sha256": "443d0191911afc15b48c4db02789457c2e527d095ee616c2d561855e169fb9ef",
+      "passed": 33
+    },
+    "bytecode": {
+      "path": "target/iteration/task37-wasm-locals-bytecode.log",
+      "sha256": "4f5fb3d88d9f75cc7b07f83f5cdac9564000128d724871a9cb18c26b8485b059",
+      "passed": 19
+    },
+    "frontend": {
+      "path": "target/iteration/task37-wasm-locals-frontend.log",
+      "sha256": "4604575626204465d8022403626a89e64ca155992863e99369998bb372a318a8",
+      "passed": 31
+    },
+    "check": {
+      "path": "target/iteration/task37-wasm-locals-check.log",
+      "sha256": "aae3a90c32040570aaaec3232cb4ed9a727d505b0dc09cd6c58ffed18fcd9941",
+      "passed": null
+    }
+  },
+  "limits": "All pinned counts unchanged: broad modules still blocked on concrete/GC boundary types and GC operators. Seven new focused assertions pass; module directive was already accepted by the worker before execution. Stage A remains open. Earlier six callable-type Node discrepancies remain recorded in prior evidence."
+}

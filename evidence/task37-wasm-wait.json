@@ -1,0 +1,221 @@
+{
+  "tasks": [
+    "23",
+    "37",
+    "40",
+    "48",
+    "86"
+  ],
+  "source_head": "7e60169df033dd247f34199e084e3e8080a92a29",
+  "source_state": "dirty shared worktree",
+  "source_hashes": {
+    "crates/quench-runtime-next/src/wasm/wait.rs": "10bf2efb28ecc6ebb6c18cae2fb5f6506de73dbc2285c88d27ae4ac6f973c448",
+    "crates/quench-runtime-next/src/wasm/atomic.rs": "5e0bc3bd3de95e043d34b820289b3399f7c4d5a503633d49df05f5d8dd5c1502",
+    "crates/quench-runtime-next/src/wasm/memory.rs": "9510a8311c7ed3452d23d99d6ecff49209c0dbef45af7aaf10e9c23596f09cef",
+    "crates/quench-runtime-next/src/wasm.rs": "267f9dce1fbe29a524ddf048d5dc67f089384dee55d013915dca703a4a41c918",
+    "crates/quench-runtime-next/src/bytecode.rs": "30d90f1ece4d1fa72928c7bb775c04264a771329589ba3dd36709a32204374d1",
+    "crates/quench-runtime-next/src/bytecode/validate.rs": "575d43e09d0c6508ae0cbd53f6401cfa32522cc0d6a47295b8b5681c06ace9b4",
+    "crates/quench-runtime-next/src/vm/wasm.rs": "700784f78eb6784921ced57c545386c12d5e21005106dea3df5c8f0d31063f78",
+    "crates/quench-runtime-next/src/vm/dispatch.rs": "82ae9df71835a80838b5138cce02c990f2de814fcc0833f882d4a034ea22672d"
+  },
+  "suite_head": "67c8b9dc32c47d61c05a1681df349d01c85fa8ff",
+  "suite_clean": true,
+  "host": "macOS-26.5-arm64-arm-64bit",
+  "rustc": "rustc 1.99.0 (b940084d7 2026-09-28) (Homebrew)",
+  "profile": "debug",
+  "residual_format": 71,
+  "obligation": "Execute wait32/wait64/notify through the existing shared VM with exact integer/nanosecond transport, shared-memory admission, real blocking, address-based cross-width notification, bounded unsigned notify counts, timeout races and no spurious completion.",
+  "representation": "Append three operators to the existing flat atomic table; arity, expected-value type and auxiliary timeout type derive from kind. Named WaitResult owns protocol codes 0/1/2. The original MemoryStorage now has one mutex-protected state containing bytes and waiter registrations; its byte guard derives the existing Vec view. Waiter identity derives from the blocked native thread, with Waiting/Notified transitions under that same mutex. No VM keyed waiter map, counter cache, per-waiter condition-variable allocation, second executor or suite-dependent rule is added. Profiling derives current waiter vector capacity; the vector is released when its last registration completes.",
+  "lifecycle": "Alignment and bounds use the same atomic read admission as load/store/RMW, before unshared-memory rejection; mismatch returns without registering. Comparison and registration share one global-order/backing-lock transition. Before suspension both locks are released. Native unpark retains a permit across the unlock-to-park gap; spurious permits do not change waiter state. Notify marks only Waiting registrations at the exact address, up to unsigned count, before unparking. Each wake rechecks the authoritative state; it does not reread the expected word. Negative signed timeouts never expire; finite remaining duration derives from monotonic elapsed time without f64 conversion or overflowing absolute deadlines. Notification or timeout removes the registration and the final removal releases queue storage. The protocol per-address waiter maximum derives from u32::MAX; reserve failure traps without registering.",
+  "scope": "The same 92 affected pinned files cover integer/vector memory, bulk/data, growth, imports/exports/linking/start, array data segments and threads/custom-page-sizes. All pass; this is not a complete Wasm inventory run.",
+  "files": {
+    "path": "target/iteration/task37-wasm-shared-memory-files.json",
+    "sha256": "15192f61f1048ce390f4894d5a06daaafbe499b4921425154572103bf457e691"
+  },
+  "qualification": {
+    "total": 14679,
+    "before_passed": 14673,
+    "passed": 14679,
+    "failed": 0,
+    "gains": 6,
+    "regressions": 0,
+    "same_ids": true,
+    "same_input_hashes": true,
+    "all_workers_completed": true
+  },
+  "before": {
+    "path": "target/iteration/task37-wasm-atomics-after.json",
+    "sha256": "453cc751244b37b6922fc081bb79459407cfcf5ea4136a39b07c85e4c72e7698"
+  },
+  "after": {
+    "path": "target/iteration/task37-wasm-wait-after.json",
+    "sha256": "f3814b0c213ca750ca4090e0bb571ea6e8aecc257835d3e4174fa33c4c2f313b"
+  },
+  "before_runner": {
+    "path": "target/iteration/task37-wasm-atomics-runner",
+    "sha256": "d714941f1758e26d1de8ba5388285fbdc0cd79d11d1a9f167400048f93cb046e"
+  },
+  "after_runner": {
+    "path": "target/iteration/task37-wasm-wait-runner",
+    "sha256": "3643a45de758c98f1af910cd70d1b5b619d6dc72310909a9aa28d533069d936c"
+  },
+  "focused_controls": {
+    "total": 21,
+    "before_passed": 0,
+    "passed": 21,
+    "failed": 0,
+    "gains": 21,
+    "regressions": 0,
+    "same_ids": true,
+    "same_input_hashes": true,
+    "all_workers_completed": true,
+    "source": {
+      "path": "target/iteration/proposals/threads/task37-wait-controls.wast",
+      "sha256": "f22ebb9425cac25a9f7ebeb08aec2227b38bded68de1b8aa519181404a5aa582"
+    },
+    "before": {
+      "path": "target/iteration/task37-wasm-wait-controls-before.json",
+      "sha256": "cdddd8e9d4776b98937c842c811c26b4d27bf292c2d6ad0866b8c2430c0b101f"
+    },
+    "after": {
+      "path": "target/iteration/task37-wasm-wait-controls-after.json",
+      "sha256": "df9de8c882b874ab90c3e2c50af9536ff26087272142a6f1df62a6d813b46063"
+    }
+  },
+  "oracle": {
+    "path": "target/iteration/task37-wasm-wait-oracle.json",
+    "sha256": "271dcb4f6898d42c0066972d4c14c7151f40134aa04c411bb6224b1c9e23f2cd",
+    "script": {
+      "path": "target/iteration/task37-wasm-wait-oracle.cjs",
+      "sha256": "24a5ed45a8cae8b936958da0ca0415081c90066658b7066055784ee45598f0c6"
+    },
+    "observations": 20,
+    "node": "v26.10.0",
+    "flags": [
+      "--no-sparkplug",
+      "--no-maglev",
+      "--no-turbofan",
+      "--wasm-jitless"
+    ],
+    "module_inputs": [
+      {
+        "path": "target/iteration/task37-wasm-wait-control.wat",
+        "sha256": "dcbf677af27eca73d5c3884eee21e877ba363a6ba58ac14ea5567efad191d6f1"
+      },
+      {
+        "path": "target/iteration/task37-wasm-wait-control.wasm",
+        "sha256": "8a82ff87252985d1ea687abde2f3fdbca348609709b03b856d195881b54fb1f1"
+      },
+      {
+        "path": "target/iteration/task37-wasm-wait-plain.wat",
+        "sha256": "ccdb35a64acae4e7ab08684a58f86333208d57886c07c1268e9b74a1ea2cd6fd"
+      },
+      {
+        "path": "target/iteration/task37-wasm-wait-plain.wasm",
+        "sha256": "c446f3177a13edeaa3c8ee82b8d9bada8fae5d7aa457df18aa54c468af5698f5"
+      },
+      {
+        "path": "target/iteration/task37-wasm-wait-import.wat",
+        "sha256": "d12af4fa0bf520e1855b62b68e83f64b57f6b18194ad7950d2acfd19eb4854a8"
+      },
+      {
+        "path": "target/iteration/task37-wasm-wait-import.wasm",
+        "sha256": "2a7e1e93b0ac34ac903da13adcab32cee6cdd79291494a47cd91329f8f29499b"
+      }
+    ],
+    "worker": "An imported shared memory aliases the parent owner; a negative-timeout wait64 is woken by the parent Wasm notify. Worker-reported flags prove the inherited no-JIT mode. This supplies the Node oracle contract; Quench cross-agent embedding/JS facade is not qualified by it.",
+    "primary_sources": [
+      "https://github.com/WebAssembly/threads/blob/main/proposals/threads/Overview.md",
+      "https://github.com/v8/v8/blob/main/src/wasm/interpreter/wasm-interpreter-runtime.cc"
+    ]
+  },
+  "javascript": {
+    "total": 217,
+    "before_passed": 217,
+    "passed": 217,
+    "failed": 0,
+    "gains": 0,
+    "regressions": 0,
+    "same_ids": true,
+    "stage": 11,
+    "reason": "Updated selector vocabulary, I64 timeout decoding, complete operand windows and shared dispatch warrant the function/call scope. JavaScript buffer/Atomics semantics and heap tracing are unchanged.",
+    "before": {
+      "path": "target/iteration/task37-wasm-wait-js-before.json",
+      "sha256": "918c72b9e8060571f9c68c65ea69332701a1aec90ed364cacce608785ebd685d"
+    },
+    "after": {
+      "path": "target/iteration/task37-wasm-wait-js-after.json",
+      "sha256": "968208d0ad227630e40a75d258b4881c6fd7e083855f64166e7701d591550e5e"
+    },
+    "before_runner": {
+      "path": "target/iteration/task37-wasm-atomics-js-runner",
+      "sha256": "6ec81b7f3559da64850a169d6b9f252e0d354d1209266bd4f8b26105693366c6"
+    },
+    "after_runner": {
+      "path": "target/iteration/task37-wasm-wait-js-runner",
+      "sha256": "70480b3fb810e2336d6cefb0077db5d1fd0051e870a168beef4cda24c9711f5d"
+    },
+    "suite_head": "6eec1ac9ee144dafd8f344d73a21f36bfc9f6755",
+    "suite_clean": true,
+    "fixture_content_sha256": "fd95684f50ed4cd3609490fd74637792cb95459cf76cf1ffd54e9acf2a0d36d1",
+    "harness_content_sha256": "4bad26740650b342a9c0f9d80bd0ebe387b38a4c98f39ab40531b9afce4581a5"
+  },
+  "checks": {
+    "runtime": {
+      "path": "target/iteration/task37-wasm-wait-runtime.log",
+      "sha256": "59b5b8df5813dbcf3a5c7ec6276526ac7da2f747bfda492fd7bd15b568d592be",
+      "passed": 38
+    },
+    "bytecode": {
+      "path": "target/iteration/task37-wasm-wait-bytecode.log",
+      "sha256": "7045578850ef1d0fb7cf85cd05591347eaea970c0e77ea170b84449e0025bad3",
+      "passed": 18
+    },
+    "roots": {
+      "path": "target/iteration/task37-wasm-wait-roots.log",
+      "sha256": "1bc804a5c55c889c9c76a49d816944aa453816e3f3b30d57e34ec6a6e7d12786",
+      "passed": 1
+    },
+    "heap": {
+      "path": "target/iteration/task37-wasm-wait-heap.log",
+      "sha256": "ae15cea73a8a1b073b2142348fb7d12dd3a04fd28ed75305bddb27524b690897",
+      "passed": 19
+    },
+    "frontend": {
+      "path": "target/iteration/task37-wasm-wait-frontend.log",
+      "sha256": "939d561ca474d47e109e240d5427c82df20fdc21496429a718a2efecc9cabd04",
+      "passed": 19
+    },
+    "check": {
+      "path": "target/iteration/task37-wasm-wait-check.log",
+      "sha256": "3acb375624769ed64c798a5e10b1ce42bc43934498e6f592e1548cb9c8f0601b",
+      "passed": null
+    },
+    "build": {
+      "path": "target/iteration/task37-wasm-wait-build.log",
+      "sha256": "a5373d1900f456e6a3c7fac76e6d98f0c45dd3ed1efd8437219309f6a9f939f0",
+      "passed": null
+    },
+    "js-build": {
+      "path": "target/iteration/task37-wasm-wait-js-build.log",
+      "sha256": "3b5b5488275fed15f9711c37d2556c0b867cbf03a7871c1bbc992e9c7d0f5b6a",
+      "passed": null
+    }
+  },
+  "comparisons": [
+    {
+      "path": "target/iteration/task37-wasm-wait-compare.log",
+      "sha256": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+    },
+    {
+      "path": "target/iteration/task37-wasm-wait-controls-compare.log",
+      "sha256": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+    },
+    {
+      "path": "target/iteration/task37-wasm-wait-js-compare.log",
+      "sha256": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+    }
+  ],
+  "unit_scope": "Extend existing selector/window admission to all three new forms. One new internal lifecycle unit exercises simultaneous wait32/wait64 registration, finite and infinite native suspension, spurious permits, changed bytes without notification, wrong-address/zero-count notification, bounded wake count and queue release after notification/timeout. These native synchronization/storage obligations are absent from the pinned suite; ordinary result/trap cases remain in Wast/Node controls.",
+  "limits": "No complete Test262/Wasm/implemented Node inventory or performance campaign ran. JS Atomics interoperability, cross-agent embedding and JS memory views remain task 40 integration work. Production drivers still use legacy until task 27; Stage A remains open."
+}

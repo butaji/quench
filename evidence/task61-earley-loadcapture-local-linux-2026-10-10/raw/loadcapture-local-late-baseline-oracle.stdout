@@ -1,0 +1,1 @@
+[["before",17,17,"number"],["after","changed","changed","string"],["null",null,null,"object"],["negative-zero",0,0,"number"],["nested",40,5,45],["nested-string","x",7,"x7"]]

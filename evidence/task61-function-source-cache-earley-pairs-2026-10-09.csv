@@ -1,0 +1,474 @@
+pair,order,baseline_binary_sha256,candidate_binary_sha256,fixture_sha256,source_diff_sha256,baseline_score,baseline_instructions,baseline_max_rss_bytes,baseline_elapsed_seconds,baseline_user_seconds,baseline_system_seconds,baseline_exit,baseline_stdout_sha256,baseline_normalized_stdout_sha256,baseline_stdout,baseline_normalized_stdout,baseline_time_stderr,candidate_score,candidate_instructions,candidate_max_rss_bytes,candidate_elapsed_seconds,candidate_user_seconds,candidate_system_seconds,candidate_exit,candidate_stdout_sha256,candidate_normalized_stdout_sha256,candidate_stdout,candidate_normalized_stdout,candidate_time_stderr,normalized_outputs_match
+1,candidate>baseline,eabe4cb354506920ef9ef217bcc935403ec49b2d61748b8ff476b0efde334d28,cf3916764bd3b59ac3dcb91bd9787cb31ec01537245eaa785ae1cd9e7d6d1d57,aa379c1d54f5d13de32ebf2b50729d0cbc64bb23de5e524256c7b2270213cc0b,2098220c345f5a6df8db0827e207c59237389741c60c55263366ae0c59ad4f27,640.0,355374279780,56410112,14.17,14.13,0.03,0,160d5bdb8dab16c065be0ac514c652daa3a1b4bd8db6633f8bf42de8e6e942d2,6fcb1d418c3c25c120f3225d0fa46ffa2513ad1ff616d80c1dd05134e971a721,"__quenchBenchResult: EarleyBoyer: 640
+----
+Score: 640
+",__quenchBenchResult: EarleyBoyer: <score>,"       14.17 real        14.13 user         0.03 sys
+            56410112  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+                3625  page reclaims
+                  14  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+                 618  involuntary context switches
+        355374279780  instructions retired
+         57608176210  cycles elapsed
+            46678472  peak memory footprint
+",776.0,328102744805,51544064,12.68,12.64,0.02,0,8b33d167494553c46c233edbdddd08f0cc90b57dc1cc58e409a848a3ca6c6a26,6fcb1d418c3c25c120f3225d0fa46ffa2513ad1ff616d80c1dd05134e971a721,"__quenchBenchResult: EarleyBoyer: 776
+----
+Score: 776
+",__quenchBenchResult: EarleyBoyer: <score>,"       12.68 real        12.64 user         0.02 sys
+            51544064  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+                3329  page reclaims
+                  14  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   4  voluntary context switches
+                 825  involuntary context switches
+        328102744805  instructions retired
+         51466425498  cycles elapsed
+            41828808  peak memory footprint
+",True
+2,baseline>candidate,eabe4cb354506920ef9ef217bcc935403ec49b2d61748b8ff476b0efde334d28,cf3916764bd3b59ac3dcb91bd9787cb31ec01537245eaa785ae1cd9e7d6d1d57,aa379c1d54f5d13de32ebf2b50729d0cbc64bb23de5e524256c7b2270213cc0b,2098220c345f5a6df8db0827e207c59237389741c60c55263366ae0c59ad4f27,643.0,355368097790,56131584,14.12,14.08,0.03,0,ff9862b2b0cc7dc5371db06c326790dea84357e4fa434578904592edda5c8ce2,6fcb1d418c3c25c120f3225d0fa46ffa2513ad1ff616d80c1dd05134e971a721,"__quenchBenchResult: EarleyBoyer: 643
+----
+Score: 643
+",__quenchBenchResult: EarleyBoyer: <score>,"       14.12 real        14.08 user         0.03 sys
+            56131584  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+                3608  page reclaims
+                  14  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+                 846  involuntary context switches
+        355368097790  instructions retired
+         57175895235  cycles elapsed
+            46416352  peak memory footprint
+",765.0,328100556585,51609600,12.88,12.85,0.02,0,c80280fbd43a89d535802d5a7e40df7c427f942cadd696925304bed5b1eba222,6fcb1d418c3c25c120f3225d0fa46ffa2513ad1ff616d80c1dd05134e971a721,"__quenchBenchResult: EarleyBoyer: 765
+----
+Score: 765
+",__quenchBenchResult: EarleyBoyer: <score>,"       12.88 real        12.85 user         0.02 sys
+            51609600  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+                3333  page reclaims
+                  14  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+                 617  involuntary context switches
+        328100556585  instructions retired
+         51903956140  cycles elapsed
+            41894344  peak memory footprint
+",True
+3,candidate>baseline,eabe4cb354506920ef9ef217bcc935403ec49b2d61748b8ff476b0efde334d28,cf3916764bd3b59ac3dcb91bd9787cb31ec01537245eaa785ae1cd9e7d6d1d57,aa379c1d54f5d13de32ebf2b50729d0cbc64bb23de5e524256c7b2270213cc0b,2098220c345f5a6df8db0827e207c59237389741c60c55263366ae0c59ad4f27,636.0,354417541098,56016896,14.19,14.16,0.03,0,7b4cbb86257c6c807ba1409f8dde6bea24390880ae9635f1ee78afa042a7657e,6fcb1d418c3c25c120f3225d0fa46ffa2513ad1ff616d80c1dd05134e971a721,"__quenchBenchResult: EarleyBoyer: 636
+----
+Score: 636
+",__quenchBenchResult: EarleyBoyer: <score>,"       14.19 real        14.16 user         0.03 sys
+            56016896  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+                3601  page reclaims
+                  14  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+                 599  involuntary context switches
+        354417541098  instructions retired
+         57227283394  cycles elapsed
+            46285256  peak memory footprint
+",765.0,328093737885,51544064,12.86,12.82,0.03,0,c80280fbd43a89d535802d5a7e40df7c427f942cadd696925304bed5b1eba222,6fcb1d418c3c25c120f3225d0fa46ffa2513ad1ff616d80c1dd05134e971a721,"__quenchBenchResult: EarleyBoyer: 765
+----
+Score: 765
+",__quenchBenchResult: EarleyBoyer: <score>,"       12.86 real        12.82 user         0.03 sys
+            51544064  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+                3329  page reclaims
+                  14  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+                 815  involuntary context switches
+        328093737885  instructions retired
+         51713491159  cycles elapsed
+            41828808  peak memory footprint
+",True
+4,baseline>candidate,eabe4cb354506920ef9ef217bcc935403ec49b2d61748b8ff476b0efde334d28,cf3916764bd3b59ac3dcb91bd9787cb31ec01537245eaa785ae1cd9e7d6d1d57,aa379c1d54f5d13de32ebf2b50729d0cbc64bb23de5e524256c7b2270213cc0b,2098220c345f5a6df8db0827e207c59237389741c60c55263366ae0c59ad4f27,634.0,352912418574,56164352,14.19,14.15,0.03,0,064cda0682fd4ad7f64849be6beb9a6eca90154db4f67024f189df5683107b1c,6fcb1d418c3c25c120f3225d0fa46ffa2513ad1ff616d80c1dd05134e971a721,"__quenchBenchResult: EarleyBoyer: 634
+----
+Score: 634
+",__quenchBenchResult: EarleyBoyer: <score>,"       14.19 real        14.15 user         0.03 sys
+            56164352  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+                3610  page reclaims
+                  14  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+                 851  involuntary context switches
+        352912418574  instructions retired
+         57224354310  cycles elapsed
+            46432712  peak memory footprint
+",766.0,328092422939,51806208,12.79,12.76,0.02,0,61b4a1f614262c96cc24482edc882cdd8d8eec7a6c75ab6f77a2e7bbd98ba1a8,6fcb1d418c3c25c120f3225d0fa46ffa2513ad1ff616d80c1dd05134e971a721,"__quenchBenchResult: EarleyBoyer: 766
+----
+Score: 766
+",__quenchBenchResult: EarleyBoyer: <score>,"       12.79 real        12.76 user         0.02 sys
+            51806208  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+                3345  page reclaims
+                  14  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+                 606  involuntary context switches
+        328092422939  instructions retired
+         51422052275  cycles elapsed
+            42090952  peak memory footprint
+",True
+5,candidate>baseline,eabe4cb354506920ef9ef217bcc935403ec49b2d61748b8ff476b0efde334d28,cf3916764bd3b59ac3dcb91bd9787cb31ec01537245eaa785ae1cd9e7d6d1d57,aa379c1d54f5d13de32ebf2b50729d0cbc64bb23de5e524256c7b2270213cc0b,2098220c345f5a6df8db0827e207c59237389741c60c55263366ae0c59ad4f27,637.0,352920797357,56803328,14.1,14.06,0.03,0,9ed4fcfb77d1b1f2ed811a44067dd0722365a976cc095160bf6d601d139ca56d,6fcb1d418c3c25c120f3225d0fa46ffa2513ad1ff616d80c1dd05134e971a721,"__quenchBenchResult: EarleyBoyer: 637
+----
+Score: 637
+",__quenchBenchResult: EarleyBoyer: <score>,"       14.10 real        14.06 user         0.03 sys
+            56803328  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+                3649  page reclaims
+                  14  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+                 796  involuntary context switches
+        352920797357  instructions retired
+         56726373476  cycles elapsed
+            47071688  peak memory footprint
+",758.0,328378140761,52690944,12.96,12.92,0.03,0,4cc6f2a07178e06dd5dec89b40fb710b2a4783d3da3f8971006682fd2d92d8ab,6fcb1d418c3c25c120f3225d0fa46ffa2513ad1ff616d80c1dd05134e971a721,"__quenchBenchResult: EarleyBoyer: 758
+----
+Score: 758
+",__quenchBenchResult: EarleyBoyer: <score>,"       12.96 real        12.92 user         0.03 sys
+            52690944  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+                3399  page reclaims
+                  14  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+                 818  involuntary context switches
+        328378140761  instructions retired
+         52128019293  cycles elapsed
+            42975688  peak memory footprint
+",True
+6,baseline>candidate,eabe4cb354506920ef9ef217bcc935403ec49b2d61748b8ff476b0efde334d28,cf3916764bd3b59ac3dcb91bd9787cb31ec01537245eaa785ae1cd9e7d6d1d57,aa379c1d54f5d13de32ebf2b50729d0cbc64bb23de5e524256c7b2270213cc0b,2098220c345f5a6df8db0827e207c59237389741c60c55263366ae0c59ad4f27,626.0,352927864358,56672256,14.34,14.29,0.04,0,e889d16a0b226dfc4b2b0caac58ace387969e63b64a0d74bfd38328390bb4eed,6fcb1d418c3c25c120f3225d0fa46ffa2513ad1ff616d80c1dd05134e971a721,"__quenchBenchResult: EarleyBoyer: 626
+----
+Score: 626
+",__quenchBenchResult: EarleyBoyer: <score>,"       14.34 real        14.29 user         0.04 sys
+            56672256  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+                3641  page reclaims
+                  14  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+                1095  involuntary context switches
+        352927864358  instructions retired
+         57253570649  cycles elapsed
+            46940616  peak memory footprint
+",764.0,328110425450,51642368,12.89,12.85,0.03,0,50bffdb8b879453d8ef7d7b9135cff9c25953dec03a23725fb19bbc982fbeb6b,6fcb1d418c3c25c120f3225d0fa46ffa2513ad1ff616d80c1dd05134e971a721,"__quenchBenchResult: EarleyBoyer: 764
+----
+Score: 764
+",__quenchBenchResult: EarleyBoyer: <score>,"       12.89 real        12.85 user         0.03 sys
+            51642368  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+                3335  page reclaims
+                  14  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+                 640  involuntary context switches
+        328110425450  instructions retired
+         51678638695  cycles elapsed
+            41927112  peak memory footprint
+",True
+7,candidate>baseline,eabe4cb354506920ef9ef217bcc935403ec49b2d61748b8ff476b0efde334d28,cf3916764bd3b59ac3dcb91bd9787cb31ec01537245eaa785ae1cd9e7d6d1d57,aa379c1d54f5d13de32ebf2b50729d0cbc64bb23de5e524256c7b2270213cc0b,2098220c345f5a6df8db0827e207c59237389741c60c55263366ae0c59ad4f27,633.0,352956472344,56246272,14.21,14.16,0.03,0,0f518991d0d3549a7c40295981a4b4a92a080842c9d7cdd0e893356271ba0a9b,6fcb1d418c3c25c120f3225d0fa46ffa2513ad1ff616d80c1dd05134e971a721,"__quenchBenchResult: EarleyBoyer: 633
+----
+Score: 633
+",__quenchBenchResult: EarleyBoyer: <score>,"       14.21 real        14.16 user         0.03 sys
+            56246272  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+                3615  page reclaims
+                  14  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+                 887  involuntary context switches
+        352956472344  instructions retired
+         57085982374  cycles elapsed
+            46514632  peak memory footprint
+",762.0,328885302649,51625984,12.89,12.78,0.1,0,4b110b4f84765144f1ab4ac7738f18b8e972b923e0f296ec8dcd89616f338f67,6fcb1d418c3c25c120f3225d0fa46ffa2513ad1ff616d80c1dd05134e971a721,"__quenchBenchResult: EarleyBoyer: 762
+----
+Score: 762
+",__quenchBenchResult: EarleyBoyer: <score>,"       12.89 real        12.78 user         0.10 sys
+            51625984  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+                3334  page reclaims
+                  14  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+                 666  involuntary context switches
+        328885302649  instructions retired
+         51659188272  cycles elapsed
+            41910728  peak memory footprint
+",True
+8,baseline>candidate,eabe4cb354506920ef9ef217bcc935403ec49b2d61748b8ff476b0efde334d28,cf3916764bd3b59ac3dcb91bd9787cb31ec01537245eaa785ae1cd9e7d6d1d57,aa379c1d54f5d13de32ebf2b50729d0cbc64bb23de5e524256c7b2270213cc0b,2098220c345f5a6df8db0827e207c59237389741c60c55263366ae0c59ad4f27,632.0,354431161798,56213504,14.29,14.25,0.03,0,56b99ce44978a2502903d1101418a62ed263e320120ca90209e2daedc05e8996,6fcb1d418c3c25c120f3225d0fa46ffa2513ad1ff616d80c1dd05134e971a721,"__quenchBenchResult: EarleyBoyer: 632
+----
+Score: 632
+",__quenchBenchResult: EarleyBoyer: <score>,"       14.29 real        14.25 user         0.03 sys
+            56213504  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+                3613  page reclaims
+                  14  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+                 659  involuntary context switches
+        354431161798  instructions retired
+         57459975436  cycles elapsed
+            46481864  peak memory footprint
+",765.0,328087690323,51757056,12.86,12.82,0.03,0,c80280fbd43a89d535802d5a7e40df7c427f942cadd696925304bed5b1eba222,6fcb1d418c3c25c120f3225d0fa46ffa2513ad1ff616d80c1dd05134e971a721,"__quenchBenchResult: EarleyBoyer: 765
+----
+Score: 765
+",__quenchBenchResult: EarleyBoyer: <score>,"       12.86 real        12.82 user         0.03 sys
+            51757056  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+                3341  page reclaims
+                  14  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+                 828  involuntary context switches
+        328087690323  instructions retired
+         51622803624  cycles elapsed
+            42025416  peak memory footprint
+",True
+9,candidate>baseline,eabe4cb354506920ef9ef217bcc935403ec49b2d61748b8ff476b0efde334d28,cf3916764bd3b59ac3dcb91bd9787cb31ec01537245eaa785ae1cd9e7d6d1d57,aa379c1d54f5d13de32ebf2b50729d0cbc64bb23de5e524256c7b2270213cc0b,2098220c345f5a6df8db0827e207c59237389741c60c55263366ae0c59ad4f27,634.0,352954864762,56246272,14.19,14.15,0.03,0,064cda0682fd4ad7f64849be6beb9a6eca90154db4f67024f189df5683107b1c,6fcb1d418c3c25c120f3225d0fa46ffa2513ad1ff616d80c1dd05134e971a721,"__quenchBenchResult: EarleyBoyer: 634
+----
+Score: 634
+",__quenchBenchResult: EarleyBoyer: <score>,"       14.19 real        14.15 user         0.03 sys
+            56246272  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+                3614  page reclaims
+                  14  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+                 854  involuntary context switches
+        352954864762  instructions retired
+         57048455929  cycles elapsed
+            46498248  peak memory footprint
+",762.0,328374093927,51658752,12.83,12.79,0.03,0,4b110b4f84765144f1ab4ac7738f18b8e972b923e0f296ec8dcd89616f338f67,6fcb1d418c3c25c120f3225d0fa46ffa2513ad1ff616d80c1dd05134e971a721,"__quenchBenchResult: EarleyBoyer: 762
+----
+Score: 762
+",__quenchBenchResult: EarleyBoyer: <score>,"       12.83 real        12.79 user         0.03 sys
+            51658752  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+                3335  page reclaims
+                  14  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+                 695  involuntary context switches
+        328374093927  instructions retired
+         51490902666  cycles elapsed
+            41910704  peak memory footprint
+",True
+10,baseline>candidate,eabe4cb354506920ef9ef217bcc935403ec49b2d61748b8ff476b0efde334d28,cf3916764bd3b59ac3dcb91bd9787cb31ec01537245eaa785ae1cd9e7d6d1d57,aa379c1d54f5d13de32ebf2b50729d0cbc64bb23de5e524256c7b2270213cc0b,2098220c345f5a6df8db0827e207c59237389741c60c55263366ae0c59ad4f27,634.0,352905466587,56590336,14.17,14.13,0.03,0,064cda0682fd4ad7f64849be6beb9a6eca90154db4f67024f189df5683107b1c,6fcb1d418c3c25c120f3225d0fa46ffa2513ad1ff616d80c1dd05134e971a721,"__quenchBenchResult: EarleyBoyer: 634
+----
+Score: 634
+",__quenchBenchResult: EarleyBoyer: <score>,"       14.17 real        14.13 user         0.03 sys
+            56590336  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+                3636  page reclaims
+                  14  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+                 622  involuntary context switches
+        352905466587  instructions retired
+         56982457425  cycles elapsed
+            46858696  peak memory footprint
+",762.0,328832674518,51396608,12.87,12.83,0.03,0,4b110b4f84765144f1ab4ac7738f18b8e972b923e0f296ec8dcd89616f338f67,6fcb1d418c3c25c120f3225d0fa46ffa2513ad1ff616d80c1dd05134e971a721,"__quenchBenchResult: EarleyBoyer: 762
+----
+Score: 762
+",__quenchBenchResult: EarleyBoyer: <score>,"       12.87 real        12.83 user         0.03 sys
+            51396608  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+                3320  page reclaims
+                  14  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+                 788  involuntary context switches
+        328832674518  instructions retired
+         51634753774  cycles elapsed
+            41681352  peak memory footprint
+",True
+11,candidate>baseline,eabe4cb354506920ef9ef217bcc935403ec49b2d61748b8ff476b0efde334d28,cf3916764bd3b59ac3dcb91bd9787cb31ec01537245eaa785ae1cd9e7d6d1d57,aa379c1d54f5d13de32ebf2b50729d0cbc64bb23de5e524256c7b2270213cc0b,2098220c345f5a6df8db0827e207c59237389741c60c55263366ae0c59ad4f27,636.0,354415738468,56262656,14.19,14.14,0.03,0,7b4cbb86257c6c807ba1409f8dde6bea24390880ae9635f1ee78afa042a7657e,6fcb1d418c3c25c120f3225d0fa46ffa2513ad1ff616d80c1dd05134e971a721,"__quenchBenchResult: EarleyBoyer: 636
+----
+Score: 636
+",__quenchBenchResult: EarleyBoyer: <score>,"       14.19 real        14.14 user         0.03 sys
+            56262656  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+                3616  page reclaims
+                  14  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+                 870  involuntary context switches
+        354415738468  instructions retired
+         57005523391  cycles elapsed
+            46531016  peak memory footprint
+",757.0,328822950677,51249152,12.98,12.95,0.03,0,37171e239398be57019512cb1fab51eef37392973f580c3f6e8cae343e3af413,6fcb1d418c3c25c120f3225d0fa46ffa2513ad1ff616d80c1dd05134e971a721,"__quenchBenchResult: EarleyBoyer: 757
+----
+Score: 757
+",__quenchBenchResult: EarleyBoyer: <score>,"       12.98 real        12.95 user         0.03 sys
+            51249152  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+                3311  page reclaims
+                  14  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+                 723  involuntary context switches
+        328822950677  instructions retired
+         52025166076  cycles elapsed
+            41533896  peak memory footprint
+",True

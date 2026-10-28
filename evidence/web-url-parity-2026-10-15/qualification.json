@@ -1,0 +1,21 @@
+{
+  "integration_source": "7e47ca977f06729c355396887b5d285f70cbe753",
+  "repair_source": "7c628a92c",
+  "oracle": "Node v26.12.0",
+  "total_node_parity": false,
+  "benchmark_win": false,
+  "binaries": {
+    "baseline": {
+      "path": "work/quench-http-blockers-integrated",
+      "sha256": "700cb9c953c1ebbbefb0931d1cc48421d32f29399b7f9d13f0f59bd1f4b39352"
+    },
+    "integration": {
+      "path": "work/quench-url-integrated",
+      "sha256": "85271ee2d6231d1562605198a3d793a0d823d4b14fd921fb445e93abed30b44f"
+    },
+    "node": {
+      "path": "work/node-v26.12.0-linux-x64/bin/node",
+      "sha256": "caa24debe02770c92a70677e2a62ca98890150e7ac1c17bcfe31bcc98cc89943"
+    }
+  }
+}

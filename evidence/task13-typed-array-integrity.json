@@ -1,0 +1,189 @@
+{
+  "schema": 1,
+  "tasks": [
+    "08",
+    "13",
+    "20"
+  ],
+  "baseline_source_head": "b45b05966aa6818356f408881b715d09123cbd00",
+  "qualification": "Isolated TypedArray integrity dispatch on the committed shared-VM baseline; unrelated pending with binding, named-key, descriptor, backing, host and Wasm changes excluded and preserved.",
+  "source_sha256": {
+    "crates/quench-runtime-next/src/vm/object_integrity.rs": "e9cd85bce3f26cf9b08f0c1538efeea676849e35940fd0a93bcb9ce1eeb92435"
+  },
+  "suite_pin": "6eec1ac9ee144dafd8f344d73a21f36bfc9f6755",
+  "representation": {
+    "integrity": "TypedArrays, proxies and module namespaces use the existing rooted SetIntegrityLevel/TestIntegrityLevel algorithms. Extensibility, ordered own keys, descriptors and definition behavior determine results; no second typed-view sealed/frozen state is introduced.",
+    "effects": "PreventExtensions precedes index definitions and their failures. Empty views process named and Symbol properties through the same operation. Descriptor queries derive sealed/frozen state from current indexed backing and named properties.",
+    "reduction": "Removed early typed freeze rejection, separate seal handling and typed queries through ordinary-object flags."
+  },
+  "contracts": [
+    "https://tc39.es/ecma262/multipage/abstract-operations.html#sec-setintegritylevel",
+    "https://tc39.es/ecma262/multipage/abstract-operations.html#sec-testintegritylevel",
+    "https://tc39.es/ecma262/multipage/ordinary-and-exotic-objects-behaviours.html#sec-integer-indexed-exotic-objects-getownproperty-p",
+    "https://tc39.es/ecma262/multipage/ordinary-and-exotic-objects-behaviours.html#sec-integer-indexed-exotic-objects-defineownproperty-p-desc"
+  ],
+  "upstream_node_source": {
+    "tests/node/deps/v8/src/objects/js-objects.cc": "b9b77eec122059b1408f35cc3122d72e01375a784af4d6cb019ad0df83b00bff"
+  },
+  "build": {
+    "profile": "release; correctness only, no performance claim",
+    "log": "target/iteration/task13-typed-array-integrity/build.log",
+    "before_binary_sha256": "819ec99e14fd8ea397e4474f34a758ce45499a3fba40c74535e1889ffe765fdb",
+    "after_binary_sha256": "c9ffb90447d0627e160eaa412520821566071c446b555ddbb318ed04a1169911"
+  },
+  "affected_test262": {
+    "full_suite_run": false,
+    "jobs": 2,
+    "timeout_ms": 10000,
+    "distinct_cases": 5264,
+    "passed_before": 5253,
+    "passed_after": 5255,
+    "gained": [
+      "staging/sm/TypedArray/seal-and-freeze.js",
+      "staging/sm/TypedArray/test-integrity-level.js"
+    ],
+    "regressions": 0,
+    "scopes": [
+      {
+        "scope": "object",
+        "total": 3411,
+        "passed_before": 3411,
+        "passed_after": 3411,
+        "regressions": 0,
+        "reports": {
+          "target/iteration/task13-typed-array-integrity/before-object.json": "95e3ec4592491d7316c9f8959189166cf0fdc46e386aaa8003125ac621c9e0e8",
+          "target/iteration/task13-typed-array-integrity/after-object.json": "59db19119c05a0193f7c733ca9762c3771e0729d2ca304efda9282cdb6d204fd",
+          "target/iteration/task13-typed-array-integrity/compare-object.log": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+        }
+      },
+      {
+        "scope": "typed-array",
+        "total": 1446,
+        "passed_before": 1443,
+        "passed_after": 1443,
+        "regressions": 0,
+        "reports": {
+          "target/iteration/task13-typed-array-integrity/before-typed-array.json": "0885ea2cdc54ec2a58dee5d4404fe0f76985db3994793a52ffdde2f218108c56",
+          "target/iteration/task13-typed-array-integrity/after-typed-array.json": "596029c4cc327c8478cec089cb820ad8ca690b25d5e297fb25b14318f84b7c8f",
+          "target/iteration/task13-typed-array-integrity/compare-typed-array.log": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+        }
+      },
+      {
+        "scope": "proxy",
+        "total": 311,
+        "passed_before": 311,
+        "passed_after": 311,
+        "regressions": 0,
+        "reports": {
+          "target/iteration/task13-typed-array-integrity/before-proxy.json": "abf1e24cd8edc5d19aed85e4c77c312065ced07b132da88c3cffcf4ee27f70de",
+          "target/iteration/task13-typed-array-integrity/after-proxy.json": "153df634feacfedd22d1130ad0fc286baa121d31d4bb90e849220b5d8944143c",
+          "target/iteration/task13-typed-array-integrity/compare-proxy.log": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+        }
+      },
+      {
+        "scope": "staged-typed-array",
+        "total": 96,
+        "passed_before": 88,
+        "passed_after": 90,
+        "regressions": 0,
+        "reports": {
+          "target/iteration/task13-typed-array-integrity/before-staged-typed-array.json": "8fad0d83e653e6188db2289106e4f3aefe0f4b9eb53bf3a05901153cb4505df1",
+          "target/iteration/task13-typed-array-integrity/after-staged-typed-array.json": "e92057d46e04cedcf1ebcf946cb308b7a13508f9524c4e0210626376aaaaf750",
+          "target/iteration/task13-typed-array-integrity/compare-staged-typed-array.log": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+        }
+      }
+    ],
+    "remaining_non_pass": [
+      {
+        "outcome": "timed_out",
+        "path": "built-ins/TypedArray/prototype/copyWithin/coerced-values-end-detached-prototype.js",
+        "reason": "test timed out after 10000ms",
+        "stage": "76"
+      },
+      {
+        "outcome": "timed_out",
+        "path": "built-ins/TypedArray/prototype/copyWithin/coerced-values-end-detached.js",
+        "reason": "test timed out after 10000ms",
+        "stage": "76"
+      },
+      {
+        "outcome": "timed_out",
+        "path": "built-ins/TypedArray/prototype/copyWithin/coerced-values-start-detached.js",
+        "reason": "test timed out after 10000ms",
+        "stage": "76"
+      },
+      {
+        "outcome": "failed",
+        "path": "staging/sm/TypedArray/constructor-ArrayBuffer-species-wrap.js",
+        "reason": "next runtime: TypeError: property descriptor is not an object",
+        "stage": "114"
+      },
+      {
+        "outcome": "failed",
+        "path": "staging/sm/TypedArray/constructor-buffer-sequence.js",
+        "reason": "next runtime: Test262Error: Expected a ExpectedError but got a Error",
+        "stage": "114"
+      },
+      {
+        "outcome": "failed",
+        "path": "staging/sm/TypedArray/iterator-next-with-detached.js",
+        "reason": "next runtime: TypeError: cannot read properties of undefined",
+        "stage": "114"
+      },
+      {
+        "outcome": "failed",
+        "path": "staging/sm/TypedArray/set-detached.js",
+        "reason": "next runtime: Test262Error: Expected a ExpectedError but got a TypeError",
+        "stage": "114"
+      },
+      {
+        "outcome": "failed",
+        "path": "staging/sm/TypedArray/set-wrapped.js",
+        "reason": "next runtime: TypeError: cannot read properties of undefined",
+        "stage": "114"
+      },
+      {
+        "outcome": "failed",
+        "path": "staging/sm/TypedArray/slice-bitwise-same.js",
+        "reason": "next runtime: Test262Error: Expected SameValue(\u00ab2143289344\u00bb, \u00ab2139095041\u00bb) to be true",
+        "stage": "114"
+      }
+    ]
+  },
+  "node_controls": {
+    "oracle": "v26.10.0",
+    "total_observations_per_build": 128,
+    "total_matches_before": 100,
+    "total_matches_after": 108,
+    "total_node_match_losses": 2,
+    "ordinary": {
+      "controls": 54,
+      "observations_per_build": 108,
+      "before_matches": 98,
+      "after_matches": 108,
+      "node_match_losses": 0
+    },
+    "node-fast-divergence": {
+      "controls": 10,
+      "observations_per_build": 20,
+      "before_matches": 2,
+      "after_matches": 0,
+      "node_match_losses": 2
+    },
+    "scope": "Four element kinds; empty/non-empty fixed views, proxies, fixed/tracking resizable views and detached views. Both normal and generic execution observe exceptions, identity, extensibility, integrity queries and descriptor side effects.",
+    "report": "target/iteration/task13-typed-array-integrity/node-controls.json",
+    "sha256": "9ee224058ad1d8a40a6c1149837031b41c9ea751fd889c452556fd973c4ad8fa",
+    "retained_differences": {
+      "direct_proxy_query": "Node reports the direct non-empty non-extensible view sealed while its transparent proxy is not sealed, despite configurable index descriptors. Quench uses the shared descriptor algorithm for both. The two former direct-query Node matches are deliberately lost under the pinned contract, not hidden.",
+      "partial_named_mutation": "Node failed direct seal/freeze changes later named-property attributes; the shared algorithm encounters index-definition failure first and leaves those later properties unchanged.",
+      "detached_frozen_query": "Node frozen classification uses stored view byte_length; detached own keys no longer contain indices. Quench derives frozen classification from current descriptors. This additional difference was initially in the ordinary group; all observations remain retained.",
+      "completion": "These differences follow the pinned descriptor algorithm but remain compatibility differences. They do not prove frozen implemented Node suite completion."
+    }
+  },
+  "units": "No unit tests added that duplicate suite cases. Affected production inventories and observable controls qualify the change.",
+  "limits": [
+    "Nine selected non-pass cases remain: three official copyWithin detachment cases and six staged TypedArray cases, all unchanged.",
+    "No fixture, helper, pin, inventory or expectation changed.",
+    "Full Test262, pinned Wasm, implemented Node, single-production-VM cutover and Stage A remain open."
+  ]
+}

@@ -1,0 +1,193 @@
+{
+  "schema": 1,
+  "tasks": [
+    "20",
+    "21",
+    "43"
+  ],
+  "baseline_source_head": "13c7efcc4022b257a7eeb9af5e7c53e816f7374b",
+  "qualification": "Four isolated shared-runtime files on the committed baseline; broader pending work excluded and preserved. Final cfg(test) ownership assertions do not change release code.",
+  "source_sha256": {
+    "crates/quench-runtime-next/src/api_native.rs": "0e5f04760925d0bcb2f7546402dcf7247435b7fb17cd11f9f086c38cfb12df89",
+    "crates/quench-runtime-next/src/api_native_tests.rs": "a5a123400ed5a39c41ea011a59086af14689aa209991680a7df4df4af6bdbf5f",
+    "crates/quench-runtime-next/src/vm/embedding.rs": "fb4fda019c91e92c08853a0ce4a18e01195907f7c6b21c1e82795ea7947ae1b9",
+    "crates/quench-runtime-next/src/vm/equality.rs": "2d76af097dfcf9d1a629373ee830651cd1b2750066e0f478158b9df7bf217ab2"
+  },
+  "suite_pin": "6eec1ac9ee144dafd8f344d73a21f36bfc9f6755",
+  "representation": {
+    "native_boundary": "ToBoolean, SameValue and abstract equality validate scoped roots then call the existing VM operation. Guest coercion exceptions share native completion retention.",
+    "core_fix": "Only a pair of numbers can finish at numeric comparison. NaN paired with an object follows ToPrimitive, preserving effects and throws. Numeric equality delegates to the shared strict comparison.",
+    "node_policy": "Pinned lib/assert.js uses SameValue for strict assertions and abstract equality plus its NaN policy for loose assertions. These Node rules remain in quench-node; the builtin migration is still open."
+  },
+  "spec": "https://tc39.es/ecma262/multipage/abstract-operations.html#sec-islooselyequal",
+  "upstream_node_source": {
+    "tests/node/lib/assert.js": "e87a46a29cc96a9bc6025475220ca0c54e083a7d9aa53708919d0971506e87e2",
+    "tests/node/lib/internal/assert/utils.js": "ba5e3fb23642dbd2973efac622a9bef88afeba93e25f15d6927fb111251c16d7"
+  },
+  "build": {
+    "profile": "release, correctness only; no performance claim",
+    "log": "target/iteration/task43-native-comparison/build.log",
+    "before_binary_sha256": "8a46931113f75f6b569f0441a7baf2bad79a5d7035d876527f3531beef1b6225",
+    "after_binary_sha256": "cb2ec1f35f247021a3e30ebdf6900a70dbcaa209dc8f908038b378be9849fd74"
+  },
+  "affected_test262": {
+    "full_suite_run": false,
+    "timeout_ms": 10000,
+    "jobs": 2,
+    "distinct_cases": 490,
+    "passed_before": 480,
+    "passed_after": 480,
+    "gains": 0,
+    "regressions": 0,
+    "scopes": [
+      {
+        "scope": "equals",
+        "total": 47,
+        "before_passed": 47,
+        "after_passed": 47,
+        "regressions": 0,
+        "compare_exit": 0,
+        "reports": {
+          "target/iteration/task43-native-comparison/before-equals.json": "72a648dc68ba5d5a34d00b0b639534b69eeddb81f3e8761004973731561504d7",
+          "target/iteration/task43-native-comparison/after-equals.json": "362db1a2d004766c3e0ffc2fba02fa30b151f65192bb8d786c968e46aa255c3c",
+          "target/iteration/task43-native-comparison/compare-equals.log": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+        }
+      },
+      {
+        "scope": "not-equals",
+        "total": 38,
+        "before_passed": 38,
+        "after_passed": 38,
+        "regressions": 0,
+        "compare_exit": 0,
+        "reports": {
+          "target/iteration/task43-native-comparison/before-not-equals.json": "04aa0bbae832e2156d59996db9b03e4206dc9628febf6a16d8a1462f8b3260b1",
+          "target/iteration/task43-native-comparison/after-not-equals.json": "fe6468103374a922df1f6301fe8416db17345fcd914beb41d68442ed86993dfb",
+          "target/iteration/task43-native-comparison/compare-not-equals.log": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+        }
+      },
+      {
+        "scope": "eval",
+        "total": 347,
+        "before_passed": 347,
+        "after_passed": 347,
+        "regressions": 0,
+        "compare_exit": 0,
+        "reports": {
+          "target/iteration/task43-native-comparison/before-eval.json": "4afde897ffb6dad7b4ec273dd18cc9e4784d004807d685a1f14c0bfb3ead3f4d",
+          "target/iteration/task43-native-comparison/after-eval.json": "46632c698c68eecde7b783affccead5b87de407f8757f937fdeaf6eaecd1ebe9",
+          "target/iteration/task43-native-comparison/compare-eval.log": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+        }
+      },
+      {
+        "scope": "staged-symbol",
+        "total": 30,
+        "before_passed": 29,
+        "after_passed": 29,
+        "regressions": 0,
+        "compare_exit": 0,
+        "reports": {
+          "target/iteration/task43-native-comparison/before-staged-symbol.json": "0ac39184e2812a7d54f1ee1a1a3a0617a5dfb077f190bdaf6990dc2bbb8f1c4f",
+          "target/iteration/task43-native-comparison/after-staged-symbol.json": "ccb83335ae7553e1e54af4bb1b67161265bdd9a5116ab74a3835b3b6e9e2d8ed",
+          "target/iteration/task43-native-comparison/compare-staged-symbol.log": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+        }
+      },
+      {
+        "scope": "staged-date",
+        "total": 28,
+        "before_passed": 19,
+        "after_passed": 19,
+        "regressions": 0,
+        "compare_exit": 0,
+        "reports": {
+          "target/iteration/task43-native-comparison/before-staged-date.json": "1bd45e284489a876d9992d22db8871e316d67ef8c0f04a165f205c185cb4b1ae",
+          "target/iteration/task43-native-comparison/after-staged-date.json": "2e76440504f1c2cd9ef5494ecdd9e532c9233e405eaacc334735c28399dfcc87",
+          "target/iteration/task43-native-comparison/compare-staged-date.log": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+        }
+      }
+    ],
+    "remaining_non_pass": [
+      {
+        "outcome": "failed",
+        "path": "staging/sm/Symbol/surfaces.js",
+        "reason": "next runtime: Test262Error: Expected SameValue(\u00abtrue\u00bb, \u00abfalse\u00bb) to be true",
+        "stage": "114"
+      },
+      {
+        "outcome": "timed_out",
+        "path": "staging/sm/Date/dst-offset-caching-1-of-8.js",
+        "reason": "test timed out after 10000ms",
+        "stage": "114"
+      },
+      {
+        "outcome": "timed_out",
+        "path": "staging/sm/Date/dst-offset-caching-2-of-8.js",
+        "reason": "test timed out after 10000ms",
+        "stage": "114"
+      },
+      {
+        "outcome": "timed_out",
+        "path": "staging/sm/Date/dst-offset-caching-3-of-8.js",
+        "reason": "test timed out after 10000ms",
+        "stage": "114"
+      },
+      {
+        "outcome": "timed_out",
+        "path": "staging/sm/Date/dst-offset-caching-4-of-8.js",
+        "reason": "test timed out after 10000ms",
+        "stage": "114"
+      },
+      {
+        "outcome": "timed_out",
+        "path": "staging/sm/Date/dst-offset-caching-5-of-8.js",
+        "reason": "test timed out after 10000ms",
+        "stage": "114"
+      },
+      {
+        "outcome": "timed_out",
+        "path": "staging/sm/Date/dst-offset-caching-6-of-8.js",
+        "reason": "test timed out after 10000ms",
+        "stage": "114"
+      },
+      {
+        "outcome": "timed_out",
+        "path": "staging/sm/Date/dst-offset-caching-7-of-8.js",
+        "reason": "test timed out after 10000ms",
+        "stage": "114"
+      },
+      {
+        "outcome": "timed_out",
+        "path": "staging/sm/Date/dst-offset-caching-8-of-8.js",
+        "reason": "test timed out after 10000ms",
+        "stage": "114"
+      },
+      {
+        "outcome": "failed",
+        "path": "staging/sm/Date/non-iso.js",
+        "reason": "next runtime: Test262Error: Expected SameValue(\u00abNaN\u00bb, \u00ab857800861010\u00bb) to be true",
+        "stage": "114"
+      }
+    ]
+  },
+  "node_controls": {
+    "controls": 32,
+    "observations_per_build": 64,
+    "before_matches": 24,
+    "after_matches": 64,
+    "oracle": "v26.10.0",
+    "report": "target/iteration/task43-native-comparison/node-controls.json",
+    "report_sha256": "f3c830bbe36f003d1ee92818964a37ebf659cb335ca485bf1e7da1095012bd62",
+    "scope": "Sixteen scenarios as Script and direct eval, each normal/generic: coercion order, thrown identity, getters/fallback, NaN, signed zero, BigInt, Symbol, boxed values and no-coercion cases."
+  },
+  "internal_checks": {
+    "passed": 8,
+    "before_regression": "The new native coercion/exception ownership check fails on baseline semantics with NaN: it receives a normal completion rather than the retained guest exception.",
+    "before_log": "target/iteration/task43-native-comparison/before-internal.log",
+    "after_log": "target/iteration/task43-native-comparison/after-internal.log",
+    "scope": "Two new ownership tests cover invalid/released/foreign roots and coercion exception GC retention; six existing boundary tests reused. No general equality suite duplicated."
+  },
+  "limits": [
+    "Stage A and Node assert migration remain open; no implemented Node suite closure claimed.",
+    "Ten pre-existing selected staging failures remain: Symbol/surfaces, Date/non-iso and eight Date stress timeouts at the matched 10-second deadline. No inputs or expectations changed."
+  ]
+}

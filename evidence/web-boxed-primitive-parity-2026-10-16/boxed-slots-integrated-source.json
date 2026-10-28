@@ -1,0 +1,11 @@
+{
+  "base_source": "2131dd1b3c872bd9917255f9492b2dab3df922ee",
+  "patch": "work/boxed-slots-integrated-source.patch",
+  "patch_sha256": "12f837bc41cbc9ba13655c4c4724719aa9691901eddde5b9eec1c102dd815122",
+  "extra_fixture_sha256": "f4ebedc52aa29ba2d9f3aebbe32674eaad15fdec41c25f887760b399fd947127",
+  "sdk_provenance": [
+    "work/brotli-node/provenance.json",
+    "work/zlib-node/provenance.json"
+  ],
+  "verification": "combined workspace passed; runtime and API harness compilation in progress"
+}

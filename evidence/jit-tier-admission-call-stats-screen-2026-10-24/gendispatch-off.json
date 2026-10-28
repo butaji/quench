@@ -1,0 +1,2705 @@
+{
+  "schema": 16,
+  "suite": "jet-stream3",
+  "jit_mode": "jit",
+  "jit_diagnostics": false,
+  "jit_js_general_dispatch": false,
+  "jit_wasm_root": null,
+  "jit_wasm_root_only": false,
+  "jit_wasm_root_first": false,
+  "jit_wasm_selective": false,
+  "jit_wasm_memcpy_ab": false,
+  "jit_wasm_memcpy_raw_ab": false,
+  "jit_wasm_memcpy_early_ab": false,
+  "jit_wasm_compare_branch_ab": false,
+  "jit_wasm_affine_pair_ab": false,
+  "jit_wasm_reference_body_cache_ab": false,
+  "jit_wasm_memcpy_leaf_ab": false,
+  "jit_wasm_selective_ab": false,
+  "created_unix_ns": 1792872174045885117,
+  "rounds_requested": 3,
+  "timeout_ms": 600000,
+  "source_revision": "e51e55b7c9add08ab6f1917703974794aefd42b2",
+  "source_dirty": false,
+  "corpus": {
+    "pinned_revision": "06785cf861ac44855f168cbbe829278c2802e6de",
+    "checkout_revision": "06785cf861ac44855f168cbbe829278c2802e6de",
+    "checkout_clean": true,
+    "fixture_set_matches": false
+  },
+  "host": {
+    "uname": "Linux 84df38a4553d 6.18.55 #1 SMP Wed Oct 14 19:45:18 UTC 2026 x86_64 GNU/Linux",
+    "rustc": "",
+    "model": null,
+    "memory_bytes": 18882674688,
+    "memory_limit_bytes": 17179869184,
+    "cpu_quota": "400000 100000",
+    "logical_cpus": 4,
+    "process_metrics_backend": "Linux wait4 rusage"
+  },
+  "engines": [
+    {
+      "name": "quench",
+      "executable": "/workspace/quench/target/production/quench-node",
+      "executable_sha256": "4ec9e0cd86a7de55c492423502fc1e0cc72ccdd511f3ac5738c35303952e4552",
+      "version": "Quench shared-VM JIT build; package 0.1.0",
+      "argv": [
+        "--jit"
+      ],
+      "environment": {
+        "HOME": "/home/agent",
+        "LANG": "C.UTF-8",
+        "LC_ALL": "C.UTF-8",
+        "PATH": "/run/codex-environment/codex-home/tmp/arg0/codex-arg0OQhcWJ:/opt/codex/codex-path:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/override:/opt/codex/runtimes/codex-primary-runtime/dependencies/python/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin:/opt/codex/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/fallback"
+      },
+      "inherits_environment": false,
+      "jit_mode": "enabled-by-cli-flag",
+      "jit_proof_command": [
+        "/workspace/quench/target/production/quench-node",
+        "--jit"
+      ],
+      "jit_proof": "the measured Quench process is launched with --jit",
+      "webassembly": true
+    },
+    {
+      "name": "bun",
+      "executable": "/workspace/bun-cache-1.4.4/bun-linux-x64/bun",
+      "executable_sha256": "10702245766b225e70bbf6235fd6b47214fd94b4760d00ffaed8ab0df57ac235",
+      "version": "1.4.4",
+      "argv": [],
+      "environment": {
+        "BUN_JSC_useJIT": "1",
+        "HOME": "/home/agent",
+        "LANG": "C.UTF-8",
+        "LC_ALL": "C.UTF-8",
+        "PATH": "/run/codex-environment/codex-home/tmp/arg0/codex-arg0OQhcWJ:/opt/codex/codex-path:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/override:/opt/codex/runtimes/codex-primary-runtime/dependencies/python/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin:/opt/codex/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/fallback"
+      },
+      "inherits_environment": false,
+      "jit_mode": "enabled-and-probed",
+      "jit_proof_command": [
+        "BUN_JSC_useJIT=1",
+        "BUN_JSC_dumpOptions=1",
+        "/workspace/bun-cache-1.4.4/bun-linux-x64/bun",
+        "-e",
+        "console.log(Bun.version)"
+      ],
+      "jit_proof": "command succeeded and reported \"useJIT=true\": 1.4.4\n\nModified JSC options:\n   dumpOptions=1 (default: 0)\n   useJIT=true (default: true)",
+      "webassembly": true
+    },
+    {
+      "name": "node",
+      "executable": "/workspace/node-v26.12.0-linux-x64/bin/node",
+      "executable_sha256": "caa24debe02770c92a70677e2a62ca98890150e7ac1c17bcfe31bcc98cc89943",
+      "version": "v26.12.0",
+      "argv": [],
+      "environment": {
+        "HOME": "/home/agent",
+        "LANG": "C.UTF-8",
+        "LC_ALL": "C.UTF-8",
+        "PATH": "/run/codex-environment/codex-home/tmp/arg0/codex-arg0OQhcWJ:/opt/codex/codex-path:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/override:/opt/codex/runtimes/codex-primary-runtime/dependencies/python/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin:/opt/codex/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/fallback"
+      },
+      "inherits_environment": false,
+      "jit_mode": "enabled-and-probed",
+      "jit_proof_command": [
+        "/workspace/node-v26.12.0-linux-x64/bin/node",
+        "--trace-opt",
+        "--no-concurrent-recompilation",
+        "-e",
+        "function hot(x) { return x + 1; } for (let i = 0; i < 100000; i++) hot(i);"
+      ],
+      "jit_proof": "command succeeded and reported \"completed compiling\": [marking 0x1ef4620b7a31 <JSFunction hot (sfi = 0x1ef4620b4211)> for optimization to MAGLEV, ConcurrencyMode::kConcurrent, reason: hot and stable]\n[compiling method 0x1ef4620b7a31 <JSFunction hot (sfi = 0x1ef4620b4211)> (target MAGLEV), mode: ConcurrencyMode::kSynchronous]\n[completed compiling 0x1ef4620b7a31 <JSFunction hot (sfi = 0x1ef4620b4211)> (target MAGLEV) - took 0.006, 0.798, 0.009 ms]\n[marking 0x1ef4620b79c1 <JSFunction (sfi = 0x1ef4620b4169)> for optimization to MAGLEV, ConcurrencyMode::kConcurrent, reason: hot and stable]\n[marking 0x1ef4620b7a31 <JSFunction hot (sfi = 0x1ef4620b4211)> for optimization to TURBOFAN_JS, ConcurrencyMode::kConcurrent, reason: hot and stable]\n[compiling method 0x1ef4620b7a31 <JSFunction hot (sfi = 0x1ef4620b4211)> (target TURBOFAN_JS), mode: ConcurrencyMode::kSynchronous]\n[completed compiling 0x1ef4620b7a31 <JSFunction hot (sfi = 0x1ef4620b4211)> (target TURBOFAN_JS) - took 0.026, 2.050, 0.015 ms]\n[compiling method 0x1ef4620b79c1 <JSFunction (sfi = 0x1ef4620b4169)> (target MAGLEV) OSR, mode: ConcurrencyMode::kSynchronous]\n[completed compiling 0x1ef4620b79c1 <JSFunction (sfi = 0x1ef4620b4169)> (target MAGLEV) OSR - took 0.000, 0.678, 0.005 ms]",
+      "webassembly": true
+    }
+  ],
+  "suite_inputs": [
+    {
+      "path": "quench-bench/jetstream/cli.js",
+      "size_bytes": 5600,
+      "modified_unix_ns": 1792524360887412696,
+      "sha256": "22ee4b987b07940dd7397ed7f88345c71acc415e2549b64bf45ba43f7572e5f0"
+    },
+    {
+      "path": "quench-bench/jetstream/JetStreamDriver.js",
+      "size_bytes": 110633,
+      "modified_unix_ns": 1792524359981088811,
+      "sha256": "f105bddfd402514b2325fe9ea6e1df5ce776a4ad4570a8006c7c8559159440fc"
+    },
+    {
+      "path": "quench-bench/jetstream/utils/params.js",
+      "size_bytes": 8047,
+      "modified_unix_ns": 1792524362115334866,
+      "sha256": "0e9d28c0fd2de5583c64678ffc61307b10d983bcb419fe2e3bb383c8b7ded647"
+    },
+    {
+      "path": "quench-bench/jetstream/utils/shell-config.js",
+      "size_bytes": 2352,
+      "modified_unix_ns": 1792524362115736207,
+      "sha256": "9a83000be5e6526a3c26a414fc3a23043e57ef8e4cd67aaff459066a2c347bca"
+    }
+  ],
+  "selected_fixtures": [
+    "quench-bench/jetstream/web-ssr",
+    "quench-bench/jetstream/hash-map",
+    "quench-bench/jetstream/stanford-crypto-sha256"
+  ],
+  "fixtures": {
+    "quench-bench/jetstream/hash-map": {
+      "source": {
+        "path": "quench-bench/jetstream/hash-map",
+        "size_bytes": 4096,
+        "modified_unix_ns": 1792524363121554381,
+        "sha256": "4311c39dd7f2d2e7dac6bcc09189098605edde278c3f6eb1849ae72cac716de0"
+      },
+      "valid": true,
+      "output_equal": true,
+      "summaries": {
+        "bun": {
+          "median_score": 205.15,
+          "median_max_rss_bytes": 110006272,
+          "valid_samples": 3
+        },
+        "node": {
+          "median_score": 185.98,
+          "median_max_rss_bytes": 181026816,
+          "valid_samples": 3
+        },
+        "quench": {
+          "median_score": 16.24,
+          "median_max_rss_bytes": 38510592,
+          "valid_samples": 3
+        }
+      },
+      "unsupported_engines": {},
+      "rounds": [
+        {
+          "round": 0,
+          "execution_order": [
+            "quench",
+            "bun",
+            "node"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 1732243435,
+              "peak_rss_bytes": 108429312,
+              "score": 130.01,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 23637,
+              "page_reclaims": 23637,
+              "involuntary_context_switches": 102,
+              "host_before": {
+                "captured_unix_ns": 1792872253329247814,
+                "load_average": {
+                  "one_minute": 1.58,
+                  "five_minutes": 1.42,
+                  "fifteen_minutes": 1.4
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 23948,
+                    "cpu_percent": 2.0,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 205,
+                    "cpu_percent": 0.3,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 121,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792872255067555342,
+                "load_average": {
+                  "one_minute": 1.53,
+                  "five_minutes": 1.42,
+                  "fifteen_minutes": 1.39
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 23948,
+                    "cpu_percent": 2.0,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 205,
+                    "cpu_percent": 0.3,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 121,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "Starting JetStream3\nRunning hash-map:\nhash-map First-Score                           123.86 pts\nhash-map Worst-Score                            47.89 pts\nhash-map Average-Score                         370.44 pts\nhash-map Score                                 130.01 pts\nhash-map First-Time                             40.37 ms \nhash-map Worst-Time                            104.40 ms \nhash-map Average-Time                           13.50 ms \nhash-map Total-Time                            158.27 ms \nhash-map Wall-Time                            1655.86 ms \n\nOverall:\nOverall First-Score                            123.86 pts\nOverall Worst-Score                             47.89 pts\nOverall Average-Score                          370.44 pts\nOverall First-Time                              40.37 ms \nOverall Worst-Time                             104.40 ms \nOverall Average-Time                            13.50 ms \n\nOverall Score                                  130.01 pts\nOverall Wall-Time                             1658.29 ms \n\n",
+              "stderr": ""
+            },
+            "node": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 1472531242,
+              "peak_rss_bytes": 169811968,
+              "score": 194.61,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 32714,
+              "page_reclaims": 32714,
+              "involuntary_context_switches": 16,
+              "host_before": {
+                "captured_unix_ns": 1792872255071236360,
+                "load_average": {
+                  "one_minute": 1.53,
+                  "five_minutes": 1.42,
+                  "fifteen_minutes": 1.39
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 23948,
+                    "cpu_percent": 2.0,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 205,
+                    "cpu_percent": 0.3,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 121,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792872256548181319,
+                "load_average": {
+                  "one_minute": 1.53,
+                  "five_minutes": 1.42,
+                  "fifteen_minutes": 1.39
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 23948,
+                    "cpu_percent": 2.0,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 205,
+                    "cpu_percent": 0.3,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 121,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "Starting JetStream3\nRunning hash-map:\nhash-map First-Score                            94.08 pts\nhash-map Worst-Score                           170.33 pts\nhash-map Average-Score                         459.91 pts\nhash-map Score                                 194.61 pts\nhash-map First-Time                             53.14 ms \nhash-map Worst-Time                             29.36 ms \nhash-map Average-Time                           10.87 ms \nhash-map Total-Time                             93.37 ms \nhash-map Wall-Time                            1357.08 ms \n\nOverall:\nOverall First-Score                             94.08 pts\nOverall Worst-Score                            170.33 pts\nOverall Average-Score                          459.91 pts\nOverall First-Time                              53.14 ms \nOverall Worst-Time                              29.36 ms \nOverall Average-Time                            10.87 ms \n\nOverall Score                                  194.61 pts\nOverall Wall-Time                             1360.51 ms \n\n",
+              "stderr": ""
+            },
+            "quench": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 34081737440,
+              "peak_rss_bytes": 38645760,
+              "score": 12.71,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 99504,
+              "page_reclaims": 99504,
+              "involuntary_context_switches": 192,
+              "host_before": {
+                "captured_unix_ns": 1792872219230747813,
+                "load_average": {
+                  "one_minute": 1.96,
+                  "five_minutes": 1.47,
+                  "fifteen_minutes": 1.41
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 24118,
+                    "cpu_percent": 50.0,
+                    "command": "ps"
+                  },
+                  {
+                    "pid": 23948,
+                    "cpu_percent": 2.3,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 205,
+                    "cpu_percent": 0.3,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792872253324527184,
+                "load_average": {
+                  "one_minute": 1.58,
+                  "five_minutes": 1.42,
+                  "fifteen_minutes": 1.4
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 23948,
+                    "cpu_percent": 2.0,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 205,
+                    "cpu_percent": 0.3,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 121,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "Starting JetStream3\nRunning hash-map:\nhash-map First-Score                            13.65 pts\nhash-map Worst-Score                             8.38 pts\nhash-map Average-Score                          17.95 pts\nhash-map Score                                  12.71 pts\nhash-map First-Time                            366.43 ms \nhash-map Worst-Time                            596.81 ms \nhash-map Average-Time                          278.49 ms \nhash-map Total-Time                           1241.73 ms \nhash-map Wall-Time                            33585.59 ms \n\nOverall:\nOverall First-Score                             13.65 pts\nOverall Worst-Score                              8.38 pts\nOverall Average-Score                           17.95 pts\nOverall First-Time                             366.43 ms \nOverall Worst-Time                             596.81 ms \nOverall Average-Time                           278.49 ms \n\nOverall Score                                   12.71 pts\nOverall Wall-Time                             33616.62 ms \n\n",
+              "stderr": ""
+            }
+          }
+        },
+        {
+          "round": 1,
+          "execution_order": [
+            "bun",
+            "node",
+            "quench"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 1219791145,
+              "peak_rss_bytes": 111820800,
+              "score": 205.15,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 22874,
+              "page_reclaims": 22874,
+              "involuntary_context_switches": 85,
+              "host_before": {
+                "captured_unix_ns": 1792872256551594783,
+                "load_average": {
+                  "one_minute": 1.53,
+                  "five_minutes": 1.42,
+                  "fifteen_minutes": 1.39
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 23948,
+                    "cpu_percent": 2.0,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 205,
+                    "cpu_percent": 0.3,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 121,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792872257777467523,
+                "load_average": {
+                  "one_minute": 1.53,
+                  "five_minutes": 1.42,
+                  "fifteen_minutes": 1.39
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 23948,
+                    "cpu_percent": 2.0,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 205,
+                    "cpu_percent": 0.3,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 121,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "Starting JetStream3\nRunning hash-map:\nhash-map First-Score                            92.73 pts\nhash-map Worst-Score                           173.11 pts\nhash-map Average-Score                         537.88 pts\nhash-map Score                                 205.15 pts\nhash-map First-Time                             53.92 ms \nhash-map Worst-Time                             28.88 ms \nhash-map Average-Time                            9.30 ms \nhash-map Total-Time                             92.10 ms \nhash-map Wall-Time                            1174.67 ms \n\nOverall:\nOverall First-Score                             92.73 pts\nOverall Worst-Score                            173.11 pts\nOverall Average-Score                          537.88 pts\nOverall First-Time                              53.92 ms \nOverall Worst-Time                              28.88 ms \nOverall Average-Time                             9.30 ms \n\nOverall Score                                  205.15 pts\nOverall Wall-Time                             1177.33 ms \n\n",
+              "stderr": ""
+            },
+            "node": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 1412848512,
+              "peak_rss_bytes": 182136832,
+              "score": 185.98,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 37877,
+              "page_reclaims": 37877,
+              "involuntary_context_switches": 26,
+              "host_before": {
+                "captured_unix_ns": 1792872257781276223,
+                "load_average": {
+                  "one_minute": 1.53,
+                  "five_minutes": 1.42,
+                  "fifteen_minutes": 1.39
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 23948,
+                    "cpu_percent": 2.0,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 205,
+                    "cpu_percent": 0.3,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 121,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792872259198753176,
+                "load_average": {
+                  "one_minute": 1.65,
+                  "five_minutes": 1.44,
+                  "fifteen_minutes": 1.4
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 23948,
+                    "cpu_percent": 2.0,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 205,
+                    "cpu_percent": 0.3,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 121,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "Starting JetStream3\nRunning hash-map:\nhash-map First-Score                           102.97 pts\nhash-map Worst-Score                           133.41 pts\nhash-map Average-Score                         468.29 pts\nhash-map Score                                 185.98 pts\nhash-map First-Time                             48.56 ms \nhash-map Worst-Time                             37.48 ms \nhash-map Average-Time                           10.68 ms \nhash-map Total-Time                             96.71 ms \nhash-map Wall-Time                            1329.43 ms \n\nOverall:\nOverall First-Score                            102.97 pts\nOverall Worst-Score                            133.41 pts\nOverall Average-Score                          468.29 pts\nOverall First-Time                              48.56 ms \nOverall Worst-Time                              37.48 ms \nOverall Average-Time                            10.68 ms \n\nOverall Score                                  185.98 pts\nOverall Wall-Time                             1333.16 ms \n\n",
+              "stderr": ""
+            },
+            "quench": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 29798598228,
+              "peak_rss_bytes": 38510592,
+              "score": 16.24,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 94545,
+              "page_reclaims": 94545,
+              "involuntary_context_switches": 206,
+              "host_before": {
+                "captured_unix_ns": 1792872259203244654,
+                "load_average": {
+                  "one_minute": 1.65,
+                  "five_minutes": 1.44,
+                  "fifteen_minutes": 1.4
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 23948,
+                    "cpu_percent": 2.0,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 205,
+                    "cpu_percent": 0.3,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 121,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792872289008450932,
+                "load_average": {
+                  "one_minute": 1.39,
+                  "five_minutes": 1.4,
+                  "fifteen_minutes": 1.39
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 23948,
+                    "cpu_percent": 1.8,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 205,
+                    "cpu_percent": 0.3,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 121,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "Starting JetStream3\nRunning hash-map:\nhash-map First-Score                            19.35 pts\nhash-map Worst-Score                            10.91 pts\nhash-map Average-Score                          20.29 pts\nhash-map Score                                  16.24 pts\nhash-map First-Time                            258.35 ms \nhash-map Worst-Time                            458.36 ms \nhash-map Average-Time                          246.45 ms \nhash-map Total-Time                            963.15 ms \nhash-map Wall-Time                            29628.98 ms \n\nOverall:\nOverall First-Score                             19.35 pts\nOverall Worst-Score                             10.91 pts\nOverall Average-Score                           20.29 pts\nOverall First-Time                             258.35 ms \nOverall Worst-Time                             458.36 ms \nOverall Average-Time                           246.45 ms \n\nOverall Score                                   16.24 pts\nOverall Wall-Time                             29652.16 ms \n\n",
+              "stderr": ""
+            }
+          }
+        },
+        {
+          "round": 2,
+          "execution_order": [
+            "node",
+            "quench",
+            "bun"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 1328864206,
+              "peak_rss_bytes": 110006272,
+              "score": 276.29,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 24448,
+              "page_reclaims": 24448,
+              "involuntary_context_switches": 160,
+              "host_before": {
+                "captured_unix_ns": 1792872320874735200,
+                "load_average": {
+                  "one_minute": 1.24,
+                  "five_minutes": 1.36,
+                  "fifteen_minutes": 1.37
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 23948,
+                    "cpu_percent": 1.8,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 205,
+                    "cpu_percent": 0.3,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 121,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792872322210271589,
+                "load_average": {
+                  "one_minute": 1.24,
+                  "five_minutes": 1.36,
+                  "fifteen_minutes": 1.37
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 23948,
+                    "cpu_percent": 1.8,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 205,
+                    "cpu_percent": 0.3,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 121,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "Starting JetStream3\nRunning hash-map:\nhash-map First-Score                           170.98 pts\nhash-map Worst-Score                           227.33 pts\nhash-map Average-Score                         542.60 pts\nhash-map Score                                 276.29 pts\nhash-map First-Time                             29.24 ms \nhash-map Worst-Time                             21.99 ms \nhash-map Average-Time                            9.21 ms \nhash-map Total-Time                             60.45 ms \nhash-map Wall-Time                            1135.94 ms \n\nOverall:\nOverall First-Score                            170.98 pts\nOverall Worst-Score                            227.33 pts\nOverall Average-Score                          542.60 pts\nOverall First-Time                              29.24 ms \nOverall Worst-Time                              21.99 ms \nOverall Average-Time                             9.21 ms \n\nOverall Score                                  276.29 pts\nOverall Wall-Time                             1139.01 ms \n\n",
+              "stderr": ""
+            },
+            "node": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2828583829,
+              "peak_rss_bytes": 181026816,
+              "score": 96.76,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 36531,
+              "page_reclaims": 36531,
+              "involuntary_context_switches": 85,
+              "host_before": {
+                "captured_unix_ns": 1792872289014708100,
+                "load_average": {
+                  "one_minute": 1.39,
+                  "five_minutes": 1.4,
+                  "fifteen_minutes": 1.39
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 23948,
+                    "cpu_percent": 1.8,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 205,
+                    "cpu_percent": 0.3,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 121,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792872291848155863,
+                "load_average": {
+                  "one_minute": 1.39,
+                  "five_minutes": 1.4,
+                  "fifteen_minutes": 1.39
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 23948,
+                    "cpu_percent": 1.8,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 205,
+                    "cpu_percent": 0.3,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 121,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "Starting JetStream3\nRunning hash-map:\nhash-map First-Score                            76.16 pts\nhash-map Worst-Score                            52.17 pts\nhash-map Average-Score                         228.03 pts\nhash-map Score                                  96.76 pts\nhash-map First-Time                             65.65 ms \nhash-map Worst-Time                             95.85 ms \nhash-map Average-Time                           21.93 ms \nhash-map Total-Time                            183.43 ms \nhash-map Wall-Time                            2693.15 ms \n\nOverall:\nOverall First-Score                             76.16 pts\nOverall Worst-Score                             52.17 pts\nOverall Average-Score                          228.03 pts\nOverall First-Time                              65.65 ms \nOverall Worst-Time                              95.85 ms \nOverall Average-Time                            21.93 ms \n\nOverall Score                                   96.76 pts\nOverall Wall-Time                             2697.78 ms \n\n",
+              "stderr": ""
+            },
+            "quench": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 29004418346,
+              "peak_rss_bytes": 38420480,
+              "score": 16.78,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 94593,
+              "page_reclaims": 94593,
+              "involuntary_context_switches": 110,
+              "host_before": {
+                "captured_unix_ns": 1792872291854582826,
+                "load_average": {
+                  "one_minute": 1.39,
+                  "five_minutes": 1.4,
+                  "fifteen_minutes": 1.39
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 23948,
+                    "cpu_percent": 1.8,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 205,
+                    "cpu_percent": 0.3,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 121,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792872320865600581,
+                "load_average": {
+                  "one_minute": 1.24,
+                  "five_minutes": 1.36,
+                  "fifteen_minutes": 1.37
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 23948,
+                    "cpu_percent": 1.8,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 205,
+                    "cpu_percent": 0.3,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 121,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "Starting JetStream3\nRunning hash-map:\nhash-map First-Score                            22.46 pts\nhash-map Worst-Score                            10.09 pts\nhash-map Average-Score                          20.86 pts\nhash-map Score                                  16.78 pts\nhash-map First-Time                            222.65 ms \nhash-map Worst-Time                            495.48 ms \nhash-map Average-Time                          239.70 ms \nhash-map Total-Time                            957.82 ms \nhash-map Wall-Time                            28783.31 ms \n\nOverall:\nOverall First-Score                             22.46 pts\nOverall Worst-Score                             10.09 pts\nOverall Average-Score                           20.86 pts\nOverall First-Time                             222.65 ms \nOverall Worst-Time                             495.48 ms \nOverall Average-Time                           239.70 ms \n\nOverall Score                                   16.78 pts\nOverall Wall-Time                             28804.26 ms \n\n",
+              "stderr": ""
+            }
+          }
+        }
+      ]
+    },
+    "quench-bench/jetstream/stanford-crypto-sha256": {
+      "source": {
+        "path": "quench-bench/jetstream/stanford-crypto-sha256",
+        "size_bytes": 4096,
+        "modified_unix_ns": 1792524363121554381,
+        "sha256": "4311c39dd7f2d2e7dac6bcc09189098605edde278c3f6eb1849ae72cac716de0"
+      },
+      "valid": true,
+      "output_equal": true,
+      "summaries": {
+        "bun": {
+          "median_score": 434.31,
+          "median_max_rss_bytes": 56336384,
+          "valid_samples": 3
+        },
+        "node": {
+          "median_score": 247.29,
+          "median_max_rss_bytes": 62406656,
+          "valid_samples": 3
+        },
+        "quench": {
+          "median_score": 30.66,
+          "median_max_rss_bytes": 36913152,
+          "valid_samples": 3
+        }
+      },
+      "unsupported_engines": {},
+      "rounds": [
+        {
+          "round": 0,
+          "execution_order": [
+            "quench",
+            "bun",
+            "node"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 1005337365,
+              "peak_rss_bytes": 60469248,
+              "score": 434.31,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 7487,
+              "page_reclaims": 7487,
+              "involuntary_context_switches": 80,
+              "host_before": {
+                "captured_unix_ns": 1792872341302731409,
+                "load_average": {
+                  "one_minute": 1.17,
+                  "five_minutes": 1.34,
+                  "fifteen_minutes": 1.36
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 23948,
+                    "cpu_percent": 2.6,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 205,
+                    "cpu_percent": 0.3,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 121,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792872342313247225,
+                "load_average": {
+                  "one_minute": 1.17,
+                  "five_minutes": 1.34,
+                  "fifteen_minutes": 1.36
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 23948,
+                    "cpu_percent": 2.6,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 205,
+                    "cpu_percent": 0.3,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 121,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "Starting JetStream3\nRunning stanford-crypto-sha256:\nstanford-crypto-sha256 First-Score             366.18 pts\nstanford-crypto-sha256 Worst-Score             353.15 pts\nstanford-crypto-sha256 Average-Score           633.49 pts\nstanford-crypto-sha256 Score                   434.31 pts\nstanford-crypto-sha256 First-Time               13.65 ms \nstanford-crypto-sha256 Worst-Time               14.16 ms \nstanford-crypto-sha256 Average-Time              7.89 ms \nstanford-crypto-sha256 Total-Time               35.71 ms \nstanford-crypto-sha256 Wall-Time               961.01 ms \n\nOverall:\nOverall First-Score                            366.18 pts\nOverall Worst-Score                            353.15 pts\nOverall Average-Score                          633.49 pts\nOverall First-Time                              13.65 ms \nOverall Worst-Time                              14.16 ms \nOverall Average-Time                             7.89 ms \n\nOverall Score                                  434.31 pts\nOverall Wall-Time                              963.31 ms \n\n",
+              "stderr": ""
+            },
+            "node": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 1887492734,
+              "peak_rss_bytes": 63369216,
+              "score": 247.29,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 5889,
+              "page_reclaims": 5889,
+              "involuntary_context_switches": 24,
+              "host_before": {
+                "captured_unix_ns": 1792872342317817080,
+                "load_average": {
+                  "one_minute": 1.17,
+                  "five_minutes": 1.34,
+                  "fifteen_minutes": 1.36
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 23948,
+                    "cpu_percent": 2.6,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 205,
+                    "cpu_percent": 0.3,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 121,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792872344210573693,
+                "load_average": {
+                  "one_minute": 1.16,
+                  "five_minutes": 1.33,
+                  "fifteen_minutes": 1.36
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 23948,
+                    "cpu_percent": 2.6,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 205,
+                    "cpu_percent": 0.3,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 121,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "Starting JetStream3\nRunning stanford-crypto-sha256:\nstanford-crypto-sha256 First-Score             187.98 pts\nstanford-crypto-sha256 Worst-Score             236.95 pts\nstanford-crypto-sha256 Average-Score           339.54 pts\nstanford-crypto-sha256 Score                   247.29 pts\nstanford-crypto-sha256 First-Time               26.60 ms \nstanford-crypto-sha256 Worst-Time               21.10 ms \nstanford-crypto-sha256 Average-Time             14.73 ms \nstanford-crypto-sha256 Total-Time               62.43 ms \nstanford-crypto-sha256 Wall-Time              1789.40 ms \n\nOverall:\nOverall First-Score                            187.98 pts\nOverall Worst-Score                            236.95 pts\nOverall Average-Score                          339.54 pts\nOverall First-Time                              26.60 ms \nOverall Worst-Time                              21.10 ms \nOverall Average-Time                            14.73 ms \n\nOverall Score                                  247.29 pts\nOverall Wall-Time                             1792.79 ms \n\n",
+              "stderr": ""
+            },
+            "quench": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 17226899385,
+              "peak_rss_bytes": 37036032,
+              "score": 28.57,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 19589,
+              "page_reclaims": 19589,
+              "involuntary_context_switches": 37,
+              "host_before": {
+                "captured_unix_ns": 1792872324066735556,
+                "load_average": {
+                  "one_minute": 1.22,
+                  "five_minutes": 1.35,
+                  "fifteen_minutes": 1.37
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 23948,
+                    "cpu_percent": 2.8,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 205,
+                    "cpu_percent": 0.3,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 121,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792872341298485459,
+                "load_average": {
+                  "one_minute": 1.17,
+                  "five_minutes": 1.34,
+                  "fifteen_minutes": 1.36
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 23948,
+                    "cpu_percent": 2.6,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 205,
+                    "cpu_percent": 0.3,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 121,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "Starting JetStream3\nRunning stanford-crypto-sha256:\nstanford-crypto-sha256 First-Score              37.94 pts\nstanford-crypto-sha256 Worst-Score              17.44 pts\nstanford-crypto-sha256 Average-Score            35.23 pts\nstanford-crypto-sha256 Score                    28.57 pts\nstanford-crypto-sha256 First-Time              131.80 ms \nstanford-crypto-sha256 Worst-Time              286.64 ms \nstanford-crypto-sha256 Average-Time            141.92 ms \nstanford-crypto-sha256 Total-Time              560.36 ms \nstanford-crypto-sha256 Wall-Time              17051.90 ms \n\nOverall:\nOverall First-Score                             37.94 pts\nOverall Worst-Score                             17.44 pts\nOverall Average-Score                           35.23 pts\nOverall First-Time                             131.80 ms \nOverall Worst-Time                             286.64 ms \nOverall Average-Time                           141.92 ms \n\nOverall Score                                   28.57 pts\nOverall Wall-Time                             17064.41 ms \n\n",
+              "stderr": ""
+            }
+          }
+        },
+        {
+          "round": 1,
+          "execution_order": [
+            "bun",
+            "node",
+            "quench"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 1123826139,
+              "peak_rss_bytes": 55549952,
+              "score": 307.28,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 6384,
+              "page_reclaims": 6384,
+              "involuntary_context_switches": 12,
+              "host_before": {
+                "captured_unix_ns": 1792872344215174525,
+                "load_average": {
+                  "one_minute": 1.16,
+                  "five_minutes": 1.33,
+                  "fifteen_minutes": 1.36
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 23948,
+                    "cpu_percent": 2.6,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 205,
+                    "cpu_percent": 0.3,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 121,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792872345343829335,
+                "load_average": {
+                  "one_minute": 1.16,
+                  "five_minutes": 1.33,
+                  "fifteen_minutes": 1.36
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 23948,
+                    "cpu_percent": 2.6,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 205,
+                    "cpu_percent": 0.3,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 121,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "Starting JetStream3\nRunning stanford-crypto-sha256:\nstanford-crypto-sha256 First-Score             233.81 pts\nstanford-crypto-sha256 Worst-Score             217.24 pts\nstanford-crypto-sha256 Average-Score           571.23 pts\nstanford-crypto-sha256 Score                   307.28 pts\nstanford-crypto-sha256 First-Time               21.38 ms \nstanford-crypto-sha256 Worst-Time               23.02 ms \nstanford-crypto-sha256 Average-Time              8.75 ms \nstanford-crypto-sha256 Total-Time               53.15 ms \nstanford-crypto-sha256 Wall-Time              1073.71 ms \n\nOverall:\nOverall First-Score                            233.81 pts\nOverall Worst-Score                            217.24 pts\nOverall Average-Score                          571.23 pts\nOverall First-Time                              21.38 ms \nOverall Worst-Time                              23.02 ms \nOverall Average-Time                             8.75 ms \n\nOverall Score                                  307.28 pts\nOverall Wall-Time                             1077.23 ms \n\n",
+              "stderr": ""
+            },
+            "node": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2038097979,
+              "peak_rss_bytes": 62361600,
+              "score": 195.67,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 5819,
+              "page_reclaims": 5819,
+              "involuntary_context_switches": 8,
+              "host_before": {
+                "captured_unix_ns": 1792872345348735506,
+                "load_average": {
+                  "one_minute": 1.16,
+                  "five_minutes": 1.33,
+                  "fifteen_minutes": 1.36
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 23948,
+                    "cpu_percent": 2.6,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 205,
+                    "cpu_percent": 0.3,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 121,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792872347391191355,
+                "load_average": {
+                  "one_minute": 1.16,
+                  "five_minutes": 1.33,
+                  "fifteen_minutes": 1.36
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 23948,
+                    "cpu_percent": 2.6,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 205,
+                    "cpu_percent": 0.3,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 121,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "Starting JetStream3\nRunning stanford-crypto-sha256:\nstanford-crypto-sha256 First-Score             158.54 pts\nstanford-crypto-sha256 Worst-Score             152.29 pts\nstanford-crypto-sha256 Average-Score           310.32 pts\nstanford-crypto-sha256 Score                   195.67 pts\nstanford-crypto-sha256 First-Time               31.54 ms \nstanford-crypto-sha256 Worst-Time               32.83 ms \nstanford-crypto-sha256 Average-Time             16.11 ms \nstanford-crypto-sha256 Total-Time               80.48 ms \nstanford-crypto-sha256 Wall-Time              1960.09 ms \n\nOverall:\nOverall First-Score                            158.54 pts\nOverall Worst-Score                            152.29 pts\nOverall Average-Score                          310.32 pts\nOverall First-Time                              31.54 ms \nOverall Worst-Time                              32.83 ms \nOverall Average-Time                            16.11 ms \n\nOverall Score                                  195.67 pts\nOverall Wall-Time                             1962.78 ms \n\n",
+              "stderr": ""
+            },
+            "quench": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 14127931308,
+              "peak_rss_bytes": 36913152,
+              "score": 37.19,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 19261,
+              "page_reclaims": 19261,
+              "involuntary_context_switches": 49,
+              "host_before": {
+                "captured_unix_ns": 1792872347394913764,
+                "load_average": {
+                  "one_minute": 1.16,
+                  "five_minutes": 1.33,
+                  "fifteen_minutes": 1.36
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 23948,
+                    "cpu_percent": 2.6,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 205,
+                    "cpu_percent": 0.3,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 121,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792872361526465336,
+                "load_average": {
+                  "one_minute": 1.12,
+                  "five_minutes": 1.31,
+                  "fifteen_minutes": 1.36
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 23948,
+                    "cpu_percent": 2.5,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 205,
+                    "cpu_percent": 0.3,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 121,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "Starting JetStream3\nRunning stanford-crypto-sha256:\nstanford-crypto-sha256 First-Score              39.08 pts\nstanford-crypto-sha256 Worst-Score              30.64 pts\nstanford-crypto-sha256 Average-Score            42.94 pts\nstanford-crypto-sha256 Score                    37.19 pts\nstanford-crypto-sha256 First-Time              127.95 ms \nstanford-crypto-sha256 Worst-Time              163.17 ms \nstanford-crypto-sha256 Average-Time            116.44 ms \nstanford-crypto-sha256 Total-Time              407.56 ms \nstanford-crypto-sha256 Wall-Time              14012.19 ms \n\nOverall:\nOverall First-Score                             39.08 pts\nOverall Worst-Score                             30.64 pts\nOverall Average-Score                           42.94 pts\nOverall First-Time                             127.95 ms \nOverall Worst-Time                             163.17 ms \nOverall Average-Time                           116.44 ms \n\nOverall Score                                   37.19 pts\nOverall Wall-Time                             14021.61 ms \n\n",
+              "stderr": ""
+            }
+          }
+        },
+        {
+          "round": 2,
+          "execution_order": [
+            "node",
+            "quench",
+            "bun"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 920151970,
+              "peak_rss_bytes": 56336384,
+              "score": 446.56,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 6107,
+              "page_reclaims": 6107,
+              "involuntary_context_switches": 273,
+              "host_before": {
+                "captured_unix_ns": 1792872379967823202,
+                "load_average": {
+                  "one_minute": 1.08,
+                  "five_minutes": 1.29,
+                  "fifteen_minutes": 1.35
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 23948,
+                    "cpu_percent": 2.4,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 205,
+                    "cpu_percent": 0.3,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 121,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792872380893322964,
+                "load_average": {
+                  "one_minute": 1.08,
+                  "five_minutes": 1.29,
+                  "fifteen_minutes": 1.35
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 23948,
+                    "cpu_percent": 2.4,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 205,
+                    "cpu_percent": 0.3,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 121,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "Starting JetStream3\nRunning stanford-crypto-sha256:\nstanford-crypto-sha256 First-Score             422.44 pts\nstanford-crypto-sha256 Worst-Score             306.95 pts\nstanford-crypto-sha256 Average-Score           686.75 pts\nstanford-crypto-sha256 Score                   446.56 pts\nstanford-crypto-sha256 First-Time               11.84 ms \nstanford-crypto-sha256 Worst-Time               16.29 ms \nstanford-crypto-sha256 Average-Time              7.28 ms \nstanford-crypto-sha256 Total-Time               35.41 ms \nstanford-crypto-sha256 Wall-Time               886.37 ms \n\nOverall:\nOverall First-Score                            422.44 pts\nOverall Worst-Score                            306.95 pts\nOverall Average-Score                          686.75 pts\nOverall First-Time                              11.84 ms \nOverall Worst-Time                              16.29 ms \nOverall Average-Time                             7.28 ms \n\nOverall Score                                  446.56 pts\nOverall Wall-Time                              888.50 ms \n\n",
+              "stderr": ""
+            },
+            "node": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 1849567630,
+              "peak_rss_bytes": 62406656,
+              "score": 251.44,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 5815,
+              "page_reclaims": 5815,
+              "involuntary_context_switches": 16,
+              "host_before": {
+                "captured_unix_ns": 1792872361530497922,
+                "load_average": {
+                  "one_minute": 1.12,
+                  "five_minutes": 1.31,
+                  "fifteen_minutes": 1.36
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 23948,
+                    "cpu_percent": 2.5,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 205,
+                    "cpu_percent": 0.3,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 121,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792872363384330501,
+                "load_average": {
+                  "one_minute": 1.12,
+                  "five_minutes": 1.31,
+                  "fifteen_minutes": 1.36
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 23948,
+                    "cpu_percent": 2.5,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 205,
+                    "cpu_percent": 0.3,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 121,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "Starting JetStream3\nRunning stanford-crypto-sha256:\nstanford-crypto-sha256 First-Score             198.90 pts\nstanford-crypto-sha256 Worst-Score             233.12 pts\nstanford-crypto-sha256 Average-Score           342.82 pts\nstanford-crypto-sha256 Score                   251.44 pts\nstanford-crypto-sha256 First-Time               25.14 ms \nstanford-crypto-sha256 Worst-Time               21.45 ms \nstanford-crypto-sha256 Average-Time             14.58 ms \nstanford-crypto-sha256 Total-Time               61.17 ms \nstanford-crypto-sha256 Wall-Time              1773.44 ms \n\nOverall:\nOverall First-Score                            198.90 pts\nOverall Worst-Score                            233.12 pts\nOverall Average-Score                          342.82 pts\nOverall First-Time                              25.14 ms \nOverall Worst-Time                              21.45 ms \nOverall Average-Time                            14.58 ms \n\nOverall Score                                  251.44 pts\nOverall Wall-Time                             1778.25 ms \n\n",
+              "stderr": ""
+            },
+            "quench": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 16565086263,
+              "peak_rss_bytes": 36913152,
+              "score": 30.66,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 19300,
+              "page_reclaims": 19300,
+              "involuntary_context_switches": 132,
+              "host_before": {
+                "captured_unix_ns": 1792872363391857497,
+                "load_average": {
+                  "one_minute": 1.12,
+                  "five_minutes": 1.31,
+                  "fifteen_minutes": 1.36
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 23948,
+                    "cpu_percent": 2.5,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 205,
+                    "cpu_percent": 0.3,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 121,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792872379962215214,
+                "load_average": {
+                  "one_minute": 1.08,
+                  "five_minutes": 1.29,
+                  "fifteen_minutes": 1.35
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 23948,
+                    "cpu_percent": 2.4,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 205,
+                    "cpu_percent": 0.3,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 121,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "Starting JetStream3\nRunning stanford-crypto-sha256:\nstanford-crypto-sha256 First-Score              32.83 pts\nstanford-crypto-sha256 Worst-Score              23.96 pts\nstanford-crypto-sha256 Average-Score            36.65 pts\nstanford-crypto-sha256 Score                    30.66 pts\nstanford-crypto-sha256 First-Time              152.31 ms \nstanford-crypto-sha256 Worst-Time              208.65 ms \nstanford-crypto-sha256 Average-Time            136.42 ms \nstanford-crypto-sha256 Total-Time              497.39 ms \nstanford-crypto-sha256 Wall-Time              16417.42 ms \n\nOverall:\nOverall First-Score                             32.83 pts\nOverall Worst-Score                             23.96 pts\nOverall Average-Score                           36.65 pts\nOverall First-Time                             152.31 ms \nOverall Worst-Time                             208.65 ms \nOverall Average-Time                           136.42 ms \n\nOverall Score                                   30.66 pts\nOverall Wall-Time                             16427.95 ms \n\n",
+              "stderr": ""
+            }
+          }
+        }
+      ]
+    },
+    "quench-bench/jetstream/web-ssr": {
+      "source": {
+        "path": "quench-bench/jetstream/web-ssr",
+        "size_bytes": 4096,
+        "modified_unix_ns": 1792524363005313319,
+        "sha256": "1bf00853c893a1b4b497ac8b785ff913bc63ab9787a69aeb1c4409e31653dc39"
+      },
+      "valid": true,
+      "output_equal": true,
+      "summaries": {
+        "bun": {
+          "median_score": 69.43,
+          "median_max_rss_bytes": 236580864,
+          "valid_samples": 3
+        },
+        "node": {
+          "median_score": 55.48,
+          "median_max_rss_bytes": 225288192,
+          "valid_samples": 3
+        },
+        "quench": {
+          "median_score": 12.43,
+          "median_max_rss_bytes": 119402496,
+          "valid_samples": 3
+        }
+      },
+      "unsupported_engines": {},
+      "rounds": [
+        {
+          "round": 0,
+          "execution_order": [
+            "quench",
+            "bun",
+            "node"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 1436248012,
+              "peak_rss_bytes": 226619392,
+              "score": 103.77,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 50128,
+              "page_reclaims": 50128,
+              "involuntary_context_switches": 169,
+              "host_before": {
+                "captured_unix_ns": 1792872182898907716,
+                "load_average": {
+                  "one_minute": 1.69,
+                  "five_minutes": 1.35,
+                  "fifteen_minutes": 1.37
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 23948,
+                    "cpu_percent": 1.5,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 205,
+                    "cpu_percent": 0.3,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 121,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792872184340900164,
+                "load_average": {
+                  "one_minute": 2.2,
+                  "five_minutes": 1.46,
+                  "fifteen_minutes": 1.41
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 23948,
+                    "cpu_percent": 1.5,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 205,
+                    "cpu_percent": 0.3,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 121,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "Starting JetStream3\nRunning web-ssr:\nweb-ssr First-Score                            124.83 pts\nweb-ssr Worst-Score                             80.26 pts\nweb-ssr Average-Score                          111.52 pts\nweb-ssr Score                                  103.77 pts\nweb-ssr First-Time                              40.05 ms \nweb-ssr Worst-Time                              62.29 ms \nweb-ssr Average-Time                            44.84 ms \nweb-ssr Total-Time                             147.19 ms \nweb-ssr Wall-Time                             1387.20 ms \n\nOverall:\nOverall First-Score                            124.83 pts\nOverall Worst-Score                             80.26 pts\nOverall Average-Score                          111.52 pts\nOverall First-Time                              40.05 ms \nOverall Worst-Time                              62.29 ms \nOverall Average-Time                            44.84 ms \n\nOverall Score                                  103.77 pts\nOverall Wall-Time                             1389.02 ms \n\n",
+              "stderr": ""
+            },
+            "node": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 1816491387,
+              "peak_rss_bytes": 230096896,
+              "score": 80.57,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 63697,
+              "page_reclaims": 63697,
+              "involuntary_context_switches": 98,
+              "host_before": {
+                "captured_unix_ns": 1792872184346533049,
+                "load_average": {
+                  "one_minute": 2.2,
+                  "five_minutes": 1.46,
+                  "fifteen_minutes": 1.41
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 23948,
+                    "cpu_percent": 1.5,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 205,
+                    "cpu_percent": 0.3,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 121,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792872186184562464,
+                "load_average": {
+                  "one_minute": 2.2,
+                  "five_minutes": 1.46,
+                  "fifteen_minutes": 1.41
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 24056,
+                    "cpu_percent": 50.0,
+                    "command": "ps"
+                  },
+                  {
+                    "pid": 23948,
+                    "cpu_percent": 1.5,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 205,
+                    "cpu_percent": 0.3,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "Starting JetStream3\nRunning web-ssr:\nweb-ssr First-Score                             96.32 pts\nweb-ssr Worst-Score                             61.90 pts\nweb-ssr Average-Score                           87.71 pts\nweb-ssr Score                                   80.57 pts\nweb-ssr First-Time                              51.91 ms \nweb-ssr Worst-Time                              80.78 ms \nweb-ssr Average-Time                            57.01 ms \nweb-ssr Total-Time                             189.69 ms \nweb-ssr Wall-Time                             1735.11 ms \n\nOverall:\nOverall First-Score                             96.32 pts\nOverall Worst-Score                             61.90 pts\nOverall Average-Score                           87.71 pts\nOverall First-Time                              51.91 ms \nOverall Worst-Time                              80.78 ms \nOverall Average-Time                            57.01 ms \n\nOverall Score                                   80.57 pts\nOverall Wall-Time                             1737.54 ms \n\n",
+              "stderr": ""
+            },
+            "quench": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 8688323021,
+              "peak_rss_bytes": 119541760,
+              "score": 16.86,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 324700,
+              "page_reclaims": 324700,
+              "involuntary_context_switches": 40,
+              "host_before": {
+                "captured_unix_ns": 1792872174199451935,
+                "load_average": {
+                  "one_minute": 1.75,
+                  "five_minutes": 1.35,
+                  "fifteen_minutes": 1.37
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 23948,
+                    "cpu_percent": 0.9,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 205,
+                    "cpu_percent": 0.3,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 121,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792872182894450389,
+                "load_average": {
+                  "one_minute": 1.69,
+                  "five_minutes": 1.35,
+                  "fifteen_minutes": 1.37
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 23948,
+                    "cpu_percent": 1.5,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 205,
+                    "cpu_percent": 0.3,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 121,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "Starting JetStream3\nRunning web-ssr:\nweb-ssr First-Score                             18.22 pts\nweb-ssr Worst-Score                             14.92 pts\nweb-ssr Average-Score                           17.63 pts\nweb-ssr Score                                   16.86 pts\nweb-ssr First-Time                             274.38 ms \nweb-ssr Worst-Time                             335.11 ms \nweb-ssr Average-Time                           283.57 ms \nweb-ssr Total-Time                             893.06 ms \nweb-ssr Wall-Time                             8562.70 ms \n\nOverall:\nOverall First-Score                             18.22 pts\nOverall Worst-Score                             14.92 pts\nOverall Average-Score                           17.63 pts\nOverall First-Time                             274.38 ms \nOverall Worst-Time                             335.11 ms \nOverall Average-Time                           283.57 ms \n\nOverall Score                                   16.86 pts\nOverall Wall-Time                             8572.89 ms \n\n",
+              "stderr": ""
+            }
+          }
+        },
+        {
+          "round": 1,
+          "execution_order": [
+            "bun",
+            "node",
+            "quench"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 1782749144,
+              "peak_rss_bytes": 244215808,
+              "score": 69.43,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 58947,
+              "page_reclaims": 58947,
+              "involuntary_context_switches": 195,
+              "host_before": {
+                "captured_unix_ns": 1792872186189601192,
+                "load_average": {
+                  "one_minute": 2.2,
+                  "five_minutes": 1.46,
+                  "fifteen_minutes": 1.41
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 23948,
+                    "cpu_percent": 1.5,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 205,
+                    "cpu_percent": 0.3,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 121,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792872187981158258,
+                "load_average": {
+                  "one_minute": 2.2,
+                  "five_minutes": 1.46,
+                  "fifteen_minutes": 1.41
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 23948,
+                    "cpu_percent": 1.6,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 205,
+                    "cpu_percent": 0.3,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 121,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "Starting JetStream3\nRunning web-ssr:\nweb-ssr First-Score                             62.92 pts\nweb-ssr Worst-Score                             59.23 pts\nweb-ssr Average-Score                           89.82 pts\nweb-ssr Score                                   69.43 pts\nweb-ssr First-Time                              79.47 ms \nweb-ssr Worst-Time                              84.42 ms \nweb-ssr Average-Time                            55.66 ms \nweb-ssr Total-Time                             219.55 ms \nweb-ssr Wall-Time                             1728.27 ms \n\nOverall:\nOverall First-Score                             62.92 pts\nOverall Worst-Score                             59.23 pts\nOverall Average-Score                           89.82 pts\nOverall First-Time                              79.47 ms \nOverall Worst-Time                              84.42 ms \nOverall Average-Time                            55.66 ms \n\nOverall Score                                   69.43 pts\nOverall Wall-Time                             1730.81 ms \n\n",
+              "stderr": ""
+            },
+            "node": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2147081893,
+              "peak_rss_bytes": 211320832,
+              "score": 55.48,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 59814,
+              "page_reclaims": 59814,
+              "involuntary_context_switches": 139,
+              "host_before": {
+                "captured_unix_ns": 1792872187984930203,
+                "load_average": {
+                  "one_minute": 2.2,
+                  "five_minutes": 1.46,
+                  "fifteen_minutes": 1.41
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 23948,
+                    "cpu_percent": 1.6,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 205,
+                    "cpu_percent": 0.3,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 121,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792872190138010225,
+                "load_average": {
+                  "one_minute": 2.1,
+                  "five_minutes": 1.45,
+                  "fifteen_minutes": 1.4
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 23948,
+                    "cpu_percent": 1.6,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 205,
+                    "cpu_percent": 0.3,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 121,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "Starting JetStream3\nRunning web-ssr:\nweb-ssr First-Score                             35.89 pts\nweb-ssr Worst-Score                             58.32 pts\nweb-ssr Average-Score                           81.56 pts\nweb-ssr Score                                   55.48 pts\nweb-ssr First-Time                             139.31 ms \nweb-ssr Worst-Time                              85.73 ms \nweb-ssr Average-Time                            61.30 ms \nweb-ssr Total-Time                             286.34 ms \nweb-ssr Wall-Time                             1963.24 ms \n\nOverall:\nOverall First-Score                             35.89 pts\nOverall Worst-Score                             58.32 pts\nOverall Average-Score                           81.56 pts\nOverall First-Time                             139.31 ms \nOverall Worst-Time                              85.73 ms \nOverall Average-Time                            61.30 ms \n\nOverall Score                                   55.48 pts\nOverall Wall-Time                             1966.37 ms \n\n",
+              "stderr": ""
+            },
+            "quench": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 13278480390,
+              "peak_rss_bytes": 119402496,
+              "score": 9.7,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 330427,
+              "page_reclaims": 330427,
+              "involuntary_context_switches": 76,
+              "host_before": {
+                "captured_unix_ns": 1792872190146513751,
+                "load_average": {
+                  "one_minute": 2.1,
+                  "five_minutes": 1.45,
+                  "fifteen_minutes": 1.4
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 23948,
+                    "cpu_percent": 1.6,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 205,
+                    "cpu_percent": 0.3,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 121,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792872203435598266,
+                "load_average": {
+                  "one_minute": 1.92,
+                  "five_minutes": 1.44,
+                  "fifteen_minutes": 1.4
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 23948,
+                    "cpu_percent": 2.3,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 205,
+                    "cpu_percent": 0.3,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 121,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "Starting JetStream3\nRunning web-ssr:\nweb-ssr First-Score                             14.07 pts\nweb-ssr Worst-Score                              5.68 pts\nweb-ssr Average-Score                           11.44 pts\nweb-ssr Score                                    9.70 pts\nweb-ssr First-Time                             355.39 ms \nweb-ssr Worst-Time                             880.48 ms \nweb-ssr Average-Time                           437.15 ms \nweb-ssr Total-Time                            1673.02 ms \nweb-ssr Wall-Time                             13119.76 ms \n\nOverall:\nOverall First-Score                             14.07 pts\nOverall Worst-Score                              5.68 pts\nOverall Average-Score                           11.44 pts\nOverall First-Time                             355.39 ms \nOverall Worst-Time                             880.48 ms \nOverall Average-Time                           437.15 ms \n\nOverall Score                                    9.70 pts\nOverall Wall-Time                             13133.71 ms \n\n",
+              "stderr": ""
+            }
+          }
+        },
+        {
+          "round": 2,
+          "execution_order": [
+            "node",
+            "quench",
+            "bun"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2051793672,
+              "peak_rss_bytes": 236580864,
+              "score": 66.19,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 57509,
+              "page_reclaims": 57509,
+              "involuntary_context_switches": 149,
+              "host_before": {
+                "captured_unix_ns": 1792872217105438472,
+                "load_average": {
+                  "one_minute": 1.78,
+                  "five_minutes": 1.43,
+                  "fifteen_minutes": 1.4
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 23948,
+                    "cpu_percent": 2.3,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 205,
+                    "cpu_percent": 0.3,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 121,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792872219162352654,
+                "load_average": {
+                  "one_minute": 1.96,
+                  "five_minutes": 1.47,
+                  "fifteen_minutes": 1.41
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 23948,
+                    "cpu_percent": 2.3,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 205,
+                    "cpu_percent": 0.3,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 121,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "Starting JetStream3\nRunning web-ssr:\nweb-ssr First-Score                             57.34 pts\nweb-ssr Worst-Score                             62.42 pts\nweb-ssr Average-Score                           81.00 pts\nweb-ssr Score                                   66.19 pts\nweb-ssr First-Time                              87.19 ms \nweb-ssr Worst-Time                              80.10 ms \nweb-ssr Average-Time                            61.73 ms \nweb-ssr Total-Time                             229.02 ms \nweb-ssr Wall-Time                             1918.14 ms \n\nOverall:\nOverall First-Score                             57.34 pts\nOverall Worst-Score                             62.42 pts\nOverall Average-Score                           81.00 pts\nOverall First-Time                              87.19 ms \nOverall Worst-Time                              80.10 ms \nOverall Average-Time                            61.73 ms \n\nOverall Score                                   66.19 pts\nOverall Wall-Time                             1919.96 ms \n\n",
+              "stderr": ""
+            },
+            "node": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2768617089,
+              "peak_rss_bytes": 225288192,
+              "score": 51.68,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 62284,
+              "page_reclaims": 62284,
+              "involuntary_context_switches": 85,
+              "host_before": {
+                "captured_unix_ns": 1792872203442067909,
+                "load_average": {
+                  "one_minute": 1.92,
+                  "five_minutes": 1.44,
+                  "fifteen_minutes": 1.4
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 23948,
+                    "cpu_percent": 2.3,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 205,
+                    "cpu_percent": 0.3,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 121,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792872206221325643,
+                "load_average": {
+                  "one_minute": 1.92,
+                  "five_minutes": 1.44,
+                  "fifteen_minutes": 1.4
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 23948,
+                    "cpu_percent": 2.3,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 205,
+                    "cpu_percent": 0.3,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 121,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "Starting JetStream3\nRunning web-ssr:\nweb-ssr First-Score                             75.16 pts\nweb-ssr Worst-Score                             32.44 pts\nweb-ssr Average-Score                           56.59 pts\nweb-ssr Score                                   51.68 pts\nweb-ssr First-Time                              66.52 ms \nweb-ssr Worst-Time                             154.13 ms \nweb-ssr Average-Time                            88.35 ms \nweb-ssr Total-Time                             309.00 ms \nweb-ssr Wall-Time                             2663.94 ms \n\nOverall:\nOverall First-Score                             75.16 pts\nOverall Worst-Score                             32.44 pts\nOverall Average-Score                           56.59 pts\nOverall First-Time                              66.52 ms \nOverall Worst-Time                             154.13 ms \nOverall Average-Time                            88.35 ms \n\nOverall Score                                   51.68 pts\nOverall Wall-Time                             2666.79 ms \n\n",
+              "stderr": ""
+            },
+            "quench": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 10866144100,
+              "peak_rss_bytes": 119382016,
+              "score": 12.43,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 330429,
+              "page_reclaims": 330429,
+              "involuntary_context_switches": 63,
+              "host_before": {
+                "captured_unix_ns": 1792872206225169700,
+                "load_average": {
+                  "one_minute": 1.92,
+                  "five_minutes": 1.44,
+                  "fifteen_minutes": 1.4
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 23948,
+                    "cpu_percent": 2.3,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 205,
+                    "cpu_percent": 0.3,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 121,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792872217100722960,
+                "load_average": {
+                  "one_minute": 1.78,
+                  "five_minutes": 1.43,
+                  "fifteen_minutes": 1.4
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 23948,
+                    "cpu_percent": 2.3,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 205,
+                    "cpu_percent": 0.3,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 121,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "Starting JetStream3\nRunning web-ssr:\nweb-ssr First-Score                             14.61 pts\nweb-ssr Worst-Score                              9.32 pts\nweb-ssr Average-Score                           14.09 pts\nweb-ssr Score                                   12.43 pts\nweb-ssr First-Time                             342.30 ms \nweb-ssr Worst-Time                             536.37 ms \nweb-ssr Average-Time                           354.90 ms \nweb-ssr Total-Time                            1233.57 ms \nweb-ssr Wall-Time                             10704.58 ms \n\nOverall:\nOverall First-Score                             14.61 pts\nOverall Worst-Score                              9.32 pts\nOverall Average-Score                           14.09 pts\nOverall First-Time                             342.30 ms \nOverall Worst-Time                             536.37 ms \nOverall Average-Time                           354.90 ms \n\nOverall Score                                   12.43 pts\nOverall Wall-Time                             10716.51 ms \n\n",
+              "stderr": ""
+            }
+          }
+        }
+      ]
+    }
+  },
+  "complete": true,
+  "qualification_ready": false
+}

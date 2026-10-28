@@ -1,0 +1,49 @@
+{
+  "schema": 1,
+  "task": "21",
+  "kind": "node_parallel_affected_case",
+  "reviewed_on": "2026-10-07",
+  "source_revision": "b4b3ca277daf0edb739129fc4315f3ffd5dfb9ac",
+  "source_state": "Dirty shared worktree; binary, source-owner, fixture, and manifest hashes bind this result to current bytes.",
+  "runner": {
+    "command": "target/iteration/run-parallel-next --filter test-stream-readable-async-iterators.js --timeout-secs 60",
+    "engine": "shared VM through run-parallel-next",
+    "binary": "target/iteration/run-parallel-next",
+    "binary_sha256": "ec1f7396f00b842afc5244714191e026a0fc4b9f195734182fe6670b4928f9f9",
+    "timeout_seconds_per_fixture": 60
+  },
+  "suite": {
+    "path": "tests/node/test/parallel",
+    "submodule_revision": "55e4ca33f3a6dfe364bd9558b726576a6d1a2fba",
+    "manifest": "crates/quench-node-test/node-tests/parallel.txt",
+    "manifest_sha256": "21eb06a33c2a0aa606ab673358ba5e73a42c24a84fd7be050276a77cb821f30f",
+    "fixture": "tests/node/test/parallel/test-stream-readable-async-iterators.js",
+    "fixture_sha256": "053c89c514f3b58eed64e5ec0b789078b366a203b8af00e315813766c3a80655",
+    "inventory_status": "included",
+    "framework_core_member": false
+  },
+  "result": {
+    "pass": 1,
+    "skip": 0,
+    "fail": 0,
+    "timeout": 0,
+    "crash": 0,
+    "unclassified": 0,
+    "total": 1,
+    "exit_code": 0
+  },
+  "changed_owner_sha256": {
+    "crates/quench-node/src/modules/stream.rs": "6139556c6298f999e4d1e1182c478d6dfbbc256435dd9f8dc5523b7c0d395e87",
+    "crates/quench-node/src/modules/fs.rs": "3c03533471e8638b5634dcd45d1412a594ff43db093cf1f6ff56f7f986f64e56",
+    "crates/quench-node/src/modules/http/shared_vm/poll.rs": "a929c9e216beae5d4ea00cae69e45391440a6c3e609f7b0c0dda83ca3b999c41",
+    "crates/quench-node/src/modules/http/shared_vm/protocol.rs": "23407e4dbb4fb09675bcea463668a5bbf527bd033474fad6dca41ac545b7ae5c"
+  },
+  "local_node_oracle": {
+    "node_version": "v26.10.0",
+    "command": "/opt/homebrew/bin/node /tmp/quench-run-parallel-fixture.cjs <absolute fixture path>",
+    "invocation": "The runner compiled the unchanged upstream fixture source as CommonJS under its original absolute filename so relative ../common resolution and __filename stayed fixture-correct despite the workspace root package type.",
+    "result": "pass",
+    "exit_code": 0
+  },
+  "qualification_limit": "This is one affected included upstream Node fixture on the development shared VM. It is not a complete Node inventory, local Node comparison, Test262, Wasm, or Stage A qualification."
+}

@@ -1,0 +1,924 @@
+diff --git a/crates/quench-runtime/src/vm.rs b/crates/quench-runtime/src/vm.rs
+index 5ec2019fb..8e4c830c8 100644
+--- a/crates/quench-runtime/src/vm.rs
++++ b/crates/quench-runtime/src/vm.rs
+@@ -28,10 +28,36 @@ pub(super) const MAX_SAFE_INTEGER: f64 = 9_007_199_254_740_991.0;
+ pub(super) const MAX_ARRAY_LENGTH: usize = u32::MAX as usize;
+ pub(super) const ROOT_FUNCTION_ID: u32 = 0;
+ 
+-#[derive(Clone, Copy, Default)]
+-struct RuntimeAtoms {
+-    lexical_this: Atom,
+-    new_target: Atom,
++macro_rules! define_well_known_atoms {
++    ($($field:ident => $name:expr),+ $(,)?) => {
++        #[derive(Clone, Copy, Default)]
++        struct WellKnownAtoms {
++            $($field: Atom,)+
++        }
++
++        impl WellKnownAtoms {
++            fn intern<H: Host>(vm: &mut Vm<H>) -> Self {
++                Self {
++                    $($field: vm.intern_atom($name),)+
++                }
++            }
++        }
++    };
++}
++
++define_well_known_atoms! {
++    lexical_this => LEXICAL_THIS_BINDING,
++    new_target => NEW_TARGET_BINDING,
++    length => "length",
++    size => "size",
++    byte_length => "byteLength",
++    byte_offset => "byteOffset",
++    buffer => "buffer",
++    to_fixed => "toFixed",
++    to_precision => "toPrecision",
++    exec => "exec",
++    flags => "flags",
++    last_index => "lastIndex",
+ }
+ pub(crate) mod activation;
+ mod activation_lifecycle;
+@@ -632,14 +658,7 @@ pub(crate) struct Vm<H> {
+     field_add_caches: FxHashMap<usize, FieldAddCache>,
+     megamorphic_field_indices: Vec<u32>,
+     megamorphic_fields: Vec<FieldCacheSet>,
+-    length_atom: Atom,
+-    size_atom: Atom,
+-    byte_length_atom: Atom,
+-    byte_offset_atom: Atom,
+-    buffer_atom: Atom,
+-    to_fixed_atom: Atom,
+-    to_precision_atom: Atom,
+-    runtime_atoms: RuntimeAtoms,
++    well_known_atoms: WellKnownAtoms,
+     method_caches: Vec<[MethodCache; 2]>,
+     megamorphic_methods: Vec<MethodCacheSet>,
+     #[cfg(feature = "profile-aggregate")]
+@@ -1075,23 +1094,11 @@ impl<H: Host> Vm<H> {
+         for (id, name) in atom_text.iter().enumerate() {
+             self.index_atom(Self::atom_hash_str(name), id as Atom);
+         }
+-        let lexical_this = self.intern_atom(LEXICAL_THIS_BINDING);
+-        let new_target = self.intern_atom(NEW_TARGET_BINDING);
+-        self.runtime_atoms = RuntimeAtoms {
+-            lexical_this,
+-            new_target,
+-        };
++        self.well_known_atoms = WellKnownAtoms::intern(self);
+         self.field_caches = vec![EMPTY_CACHE; program.cache_sites as usize];
+         self.field_add_caches.clear();
+         self.megamorphic_field_indices = vec![NO_MEGAMORPHIC_FIELD; program.cache_sites as usize];
+         self.megamorphic_fields.clear();
+-        self.length_atom = self.intern_atom("length");
+-        self.size_atom = self.intern_atom("size");
+-        self.byte_length_atom = self.intern_atom("byteLength");
+-        self.byte_offset_atom = self.intern_atom("byteOffset");
+-        self.buffer_atom = self.intern_atom("buffer");
+-        self.to_fixed_atom = self.intern_atom("toFixed");
+-        self.to_precision_atom = self.intern_atom("toPrecision");
+         self.method_caches = vec![[EMPTY_METHOD_CACHE; 2]; program.method_sites.len()];
+         self.megamorphic_methods.clear();
+         self.object_shapes = vec![u32::MAX; program.object_sites.len()];
+diff --git a/crates/quench-runtime/src/vm/agent.rs b/crates/quench-runtime/src/vm/agent.rs
+index 2983823ef..62e691915 100644
+--- a/crates/quench-runtime/src/vm/agent.rs
++++ b/crates/quench-runtime/src/vm/agent.rs
+@@ -72,7 +72,7 @@ impl<H: Host> Vm<H> {
+     }
+ 
+     fn set_agent_function_length(&mut self, function: Value, length: f64) {
+-        let atom = self.intern_atom("length");
++        let atom = self.well_known_atoms.length;
+         let _ = self.set_property(function, atom, Value::number(length));
+         self.set_property_attributes(
+             function,
+diff --git a/crates/quench-runtime/src/vm/array.rs b/crates/quench-runtime/src/vm/array.rs
+index 8cd041c50..eb7ff563d 100644
+--- a/crates/quench-runtime/src/vm/array.rs
++++ b/crates/quench-runtime/src/vm/array.rs
+@@ -397,7 +397,7 @@ impl<H: Host> Vm<H> {
+         object: Value,
+         length: usize,
+     ) -> Result<(), JsError> {
+-        let atom = self.intern_atom("length");
++        let atom = self.well_known_atoms.length;
+         if matches!(self.heap.get(object), Some(Cell::Array { .. }))
+             && !self
+                 .object_data(object)
+diff --git a/crates/quench-runtime/src/vm/array_buffer.rs b/crates/quench-runtime/src/vm/array_buffer.rs
+index 02816d8d0..5016e5771 100644
+--- a/crates/quench-runtime/src/vm/array_buffer.rs
++++ b/crates/quench-runtime/src/vm/array_buffer.rs
+@@ -485,7 +485,6 @@ impl<H: Host> Vm<H> {
+             resizable,
+             immutable: false,
+         });
+-        self.intern_atom("byteLength");
+         Ok(buffer)
+     }
+ 
+diff --git a/crates/quench-runtime/src/vm/array_builtins.rs b/crates/quench-runtime/src/vm/array_builtins.rs
+index dfa64ba47..9c6bd4eb1 100644
+--- a/crates/quench-runtime/src/vm/array_builtins.rs
++++ b/crates/quench-runtime/src/vm/array_builtins.rs
+@@ -67,7 +67,7 @@ impl<H: Host> Vm<H> {
+         }
+         self.set_builtin_named(program, self.array_proto, "constructor", Native::Array)?;
+         self.set_builtin_value_named(array, "length", Value::number(ARRAY_CONSTRUCTOR_LENGTH))?;
+-        let length_atom = self.intern_atom("length");
++        let length_atom = self.well_known_atoms.length;
+         self.set_property_attributes(
+             array,
+             PropertyKey::string(length_atom),
+@@ -114,7 +114,7 @@ impl<H: Host> Vm<H> {
+         self.set_builtin_function_name(array, "Array")?;
+         self.set_builtin_value_named(array, "prototype", prototype)?;
+         self.set_builtin_value_named(prototype, "constructor", array)?;
+-        let length = self.intern_atom("length");
++        let length = self.well_known_atoms.length;
+         self.set_property_attributes(
+             array,
+             PropertyKey::string(length),
+diff --git a/crates/quench-runtime/src/vm/array_indexed.rs b/crates/quench-runtime/src/vm/array_indexed.rs
+index 510e46323..13b9ecba1 100644
+--- a/crates/quench-runtime/src/vm/array_indexed.rs
++++ b/crates/quench-runtime/src/vm/array_indexed.rs
+@@ -373,7 +373,7 @@ impl<H: Host> Vm<H> {
+         if let Some(length) = self.own_array_length(object) {
+             return Ok(length);
+         }
+-        let length_atom = self.intern_atom("length");
++        let length_atom = self.well_known_atoms.length;
+         let value = self.get_property(p, object, length_atom)?;
+         let number = self.to_number(p, value)?;
+         if number.is_nan() || number <= 0.0 {
+diff --git a/crates/quench-runtime/src/vm/array_modern.rs b/crates/quench-runtime/src/vm/array_modern.rs
+index 1ef864348..4f98c835a 100644
+--- a/crates/quench-runtime/src/vm/array_modern.rs
++++ b/crates/quench-runtime/src/vm/array_modern.rs
+@@ -444,7 +444,7 @@ impl<H: Host> Vm<H> {
+         }
+ 
+         {
+-            let length_atom = self.intern_atom("length");
++            let length_atom = self.well_known_atoms.length;
+             let length_value = self.get_property(p, source, length_atom)?;
+             let number = self.to_number(p, length_value)?;
+             let length = if number.is_nan() || number <= 0.0 {
+@@ -698,7 +698,7 @@ impl<H: Host> Vm<H> {
+         if matches!(self.heap.get(target), Some(Cell::Array { .. })) {
+             return Ok(());
+         }
+-        let length_atom = self.intern_atom("length");
++        let length_atom = self.well_known_atoms.length;
+         let succeeded = self.set_property_with_receiver(
+             p,
+             target,
+diff --git a/crates/quench-runtime/src/vm/collections.rs b/crates/quench-runtime/src/vm/collections.rs
+index d6e656961..2daf47ae2 100644
+--- a/crates/quench-runtime/src/vm/collections.rs
++++ b/crates/quench-runtime/src/vm/collections.rs
+@@ -393,7 +393,7 @@ impl<H: Host> Vm<H> {
+         let size_getter = self.native_value(Native::MapSizeGetter);
+         self.set_builtin_function_name(size_getter, "get size")?;
+         self.set_named(program, self.map_proto, "size", size_getter)?;
+-        let size_atom = self.intern_atom("size");
++        let size_atom = self.well_known_atoms.size;
+         self.set_property_attributes(
+             self.map_proto,
+             PropertyKey::string(size_atom),
+@@ -440,7 +440,7 @@ impl<H: Host> Vm<H> {
+         let size_getter = self.native_value(Native::SetSizeGetter);
+         self.set_builtin_function_name(size_getter, "get size")?;
+         self.set_named(program, set_proto, "size", size_getter)?;
+-        let size_atom = self.intern_atom("size");
++        let size_atom = self.well_known_atoms.size;
+         self.set_property_attributes(
+             set_proto,
+             PropertyKey::string(size_atom),
+diff --git a/crates/quench-runtime/src/vm/collections_set_relations.rs b/crates/quench-runtime/src/vm/collections_set_relations.rs
+index 201b01a9e..6a22f0cc0 100644
+--- a/crates/quench-runtime/src/vm/collections_set_relations.rs
++++ b/crates/quench-runtime/src/vm/collections_set_relations.rs
+@@ -106,7 +106,7 @@ impl<H: Host> Vm<H> {
+                 root: receiver_root,
+             });
+         }
+-        let size_atom = self.intern_atom("size");
++        let size_atom = self.well_known_atoms.size;
+         let size = match self
+             .get_property(p, value, size_atom)
+             .and_then(|value| self.to_number(p, value))
+diff --git a/crates/quench-runtime/src/vm/construction.rs b/crates/quench-runtime/src/vm/construction.rs
+index 670d5f3f8..eeb6dbdff 100644
+--- a/crates/quench-runtime/src/vm/construction.rs
++++ b/crates/quench-runtime/src/vm/construction.rs
+@@ -334,7 +334,7 @@ impl<H: Host> Vm<H> {
+                 .weak_handle(function)
+                 .expect("new closure is live"),
+         );
+-        let length = self.intern_atom("length");
++        let length = self.well_known_atoms.length;
+         self.set_property(function, length, Value::number(function_plan.length as f64))?;
+         self.set_property_attributes(
+             function,
+@@ -799,7 +799,7 @@ impl<H: Host> Vm<H> {
+         if !self.is_constructable(p, superclass) {
+             return Err(self.type_error(p, "superclass is not a constructor".into()));
+         }
+-        let new_target_atom = self.runtime_atoms.new_target;
++        let new_target_atom = self.well_known_atoms.new_target;
+         let new_target = self
+             .frames
+             .len()
+diff --git a/crates/quench-runtime/src/vm/dispatch_frame.rs b/crates/quench-runtime/src/vm/dispatch_frame.rs
+index 34c07e445..12f4582d3 100644
+--- a/crates/quench-runtime/src/vm/dispatch_frame.rs
++++ b/crates/quench-runtime/src/vm/dispatch_frame.rs
+@@ -55,7 +55,7 @@ impl<H: Host> Vm<H> {
+         new_target: Value,
+     ) {
+         if !arrow && frame.function != super::ROOT_FUNCTION_ID {
+-            let atom = self.runtime_atoms.new_target;
++            let atom = self.well_known_atoms.new_target;
+             frame.dynamic_bindings.push((atom, new_target));
+         }
+         let inherits_this = arrow
+@@ -66,7 +66,7 @@ impl<H: Host> Vm<H> {
+                     .get(frame.program)
+                     .is_some_and(|program| program.kind == crate::bytecode::ProgramKind::Eval));
+         if !inherits_this {
+-            let atom = self.runtime_atoms.lexical_this;
++            let atom = self.well_known_atoms.lexical_this;
+             frame.dynamic_bindings.push((atom, frame.this));
+         }
+     }
+@@ -523,7 +523,7 @@ impl<H: Host> Vm<H> {
+         if let Some(object) = self.object_data_mut(arguments) {
+             object.set_arguments_object();
+         }
+-        let length = self.intern_atom("length");
++        let length = self.well_known_atoms.length;
+         self.set_property(arguments, length, Value::number(args.len() as f64))?;
+         self.set_property_attributes(
+             arguments,
+diff --git a/crates/quench-runtime/src/vm/environment.rs b/crates/quench-runtime/src/vm/environment.rs
+index 1a94b8297..96e9ef058 100644
+--- a/crates/quench-runtime/src/vm/environment.rs
++++ b/crates/quench-runtime/src/vm/environment.rs
+@@ -173,7 +173,7 @@ impl<H: Host> Vm<H> {
+         frame: usize,
+         value: Value,
+     ) -> Result<(), JsError> {
+-        let atom = self.runtime_atoms.lexical_this;
++        let atom = self.well_known_atoms.lexical_this;
+         let owner = self.lexical_this_owner(frame, atom);
+         if !self.store_own_dynamic_binding(frame, atom, value)
+             && !self.store_outer_dynamic_binding(frame, atom, value)
+@@ -643,7 +643,7 @@ impl<H: Host> Vm<H> {
+             if let Some((_, value)) = dynamic_bindings
+                 .iter()
+                 .rev()
+-                .find(|(atom, _)| *atom == self.runtime_atoms.lexical_this)
++                .find(|(atom, _)| *atom == self.well_known_atoms.lexical_this)
+             {
+                 return Some(*value);
+             }
+@@ -653,7 +653,7 @@ impl<H: Host> Vm<H> {
+     }
+ 
+     pub(super) fn check_super_call(&mut self, p: &ResidualProgram) -> Result<(), JsError> {
+-        let atom = self.runtime_atoms.lexical_this;
++        let atom = self.well_known_atoms.lexical_this;
+         let frame = self
+             .frames
+             .len()
+@@ -1358,7 +1358,7 @@ impl<H: Host> Vm<H> {
+                 && slots.is_empty()
+                 && (dynamic_bindings.is_empty()
+                     || (dynamic_bindings.len() == 1
+-                        && dynamic_bindings[0].0 == self.runtime_atoms.lexical_this));
++                        && dynamic_bindings[0].0 == self.well_known_atoms.lexical_this));
+             if with_objects.is_empty() && !lexical_this_wrapper {
+                 break;
+             }
+diff --git a/crates/quench-runtime/src/vm/error.rs b/crates/quench-runtime/src/vm/error.rs
+index 01da99430..40c0d55bd 100644
+--- a/crates/quench-runtime/src/vm/error.rs
++++ b/crates/quench-runtime/src/vm/error.rs
+@@ -748,7 +748,7 @@ impl<H: Host> Vm<H> {
+                     },
+                 );
+             }
+-            let length = self.intern_atom("length");
++            let length = self.well_known_atoms.length;
+             self.set_property(object, length, Value::number(text.units().len() as f64))?;
+             self.set_property_attributes(
+                 object,
+@@ -812,7 +812,7 @@ impl<H: Host> Vm<H> {
+             "length",
+             Value::number(FUNCTION_PROTOTYPE_LENGTH),
+         )?;
+-        let prototype_length = self.intern_atom("length");
++        let prototype_length = self.well_known_atoms.length;
+         self.set_property_attributes(
+             self.function_proto,
+             PropertyKey::string(prototype_length),
+@@ -826,7 +826,7 @@ impl<H: Host> Vm<H> {
+             },
+         );
+         self.set_builtin_function_name(self.function_proto, "")?;
+-        let length = self.intern_atom("length");
++        let length = self.well_known_atoms.length;
+         self.set_builtin_value_named(function, "length", Value::number(1.0))?;
+         self.set_property_attributes(
+             function,
+@@ -1751,7 +1751,7 @@ impl<H: Host> Vm<H> {
+     ) -> Result<(), JsError> {
+         self.set_builtin_function_name(constructor, "Function")?;
+         self.set_builtin_value_named(constructor, "length", Value::number(1.0))?;
+-        let constructor_length = self.intern_atom("length");
++        let constructor_length = self.well_known_atoms.length;
+         self.set_property_attributes(
+             constructor,
+             PropertyKey::string(constructor_length),
+@@ -1790,7 +1790,7 @@ impl<H: Host> Vm<H> {
+         );
+         self.set_builtin_value_named(prototype, "constructor", constructor)?;
+         self.set_builtin_value_named(prototype, "length", Value::number(0.0))?;
+-        let length = self.intern_atom("length");
++        let length = self.well_known_atoms.length;
+         self.set_property_attributes(
+             prototype,
+             PropertyKey::string(length),
+diff --git a/crates/quench-runtime/src/vm/eval.rs b/crates/quench-runtime/src/vm/eval.rs
+index ba17a7534..4563fe315 100644
+--- a/crates/quench-runtime/src/vm/eval.rs
++++ b/crates/quench-runtime/src/vm/eval.rs
+@@ -455,9 +455,9 @@ impl<H: Host> Vm<H> {
+             let parent = if direct_eval && (root_scope || field_initializer) {
+                 let dynamic_bindings = if field_initializer {
+                     vec![
+-                        (self.runtime_atoms.new_target, Value::UNDEFINED),
++                        (self.well_known_atoms.new_target, Value::UNDEFINED),
+                         (
+-                            self.runtime_atoms.lexical_this,
++                            self.well_known_atoms.lexical_this,
+                             self.frames
+                                 .last()
+                                 .map_or(self.realm.globals, |frame| frame.this),
+@@ -674,7 +674,7 @@ impl<H: Host> Vm<H> {
+         if self.in_class_field_initializer(p) {
+             return true;
+         }
+-        let new_target = self.runtime_atoms.new_target;
++        let new_target = self.well_known_atoms.new_target;
+         self.frames
+             .len()
+             .checked_sub(1)
+@@ -733,7 +733,7 @@ impl<H: Host> Vm<H> {
+             if self.direct_eval && self.in_class_field_initializer(p) {
+                 return Ok(Value::UNDEFINED);
+             }
+-            let atom = self.runtime_atoms.new_target;
++            let atom = self.well_known_atoms.new_target;
+             return Ok(self
+                 .frames
+                 .len()
+@@ -1100,7 +1100,7 @@ impl<H: Host> Vm<H> {
+             .get(self.frames[frame].function as usize)?
+             .super_home_atom;
+         let field_initializer = self.in_class_field_initializer(p);
+-        let atom = self.runtime_atoms.lexical_this;
++        let atom = self.well_known_atoms.lexical_this;
+         let super_calls = home_atom.is_some()
+             && !field_initializer
+             && self
+diff --git a/crates/quench-runtime/src/vm/field_cache.rs b/crates/quench-runtime/src/vm/field_cache.rs
+index 206e4023e..f03b7d2ae 100644
+--- a/crates/quench-runtime/src/vm/field_cache.rs
++++ b/crates/quench-runtime/src/vm/field_cache.rs
+@@ -4,11 +4,11 @@ impl<H: Host> Vm<H> {
+     #[inline(always)]
+     pub(super) fn field_cache_atom_eligible(&self, atom: Atom) -> bool {
+         !self.is_private_name(atom)
+-            && atom != self.length_atom
+-            && atom != self.size_atom
+-            && atom != self.byte_length_atom
+-            && atom != self.byte_offset_atom
+-            && atom != self.buffer_atom
++            && atom != self.well_known_atoms.length
++            && atom != self.well_known_atoms.size
++            && atom != self.well_known_atoms.byte_length
++            && atom != self.well_known_atoms.byte_offset
++            && atom != self.well_known_atoms.buffer
+     }
+ 
+     // Shapes prove ordinary data storage only when no exotic or virtual lookup intervenes.
+diff --git a/crates/quench-runtime/src/vm/function.rs b/crates/quench-runtime/src/vm/function.rs
+index 727da5c97..4550a0c6f 100644
+--- a/crates/quench-runtime/src/vm/function.rs
++++ b/crates/quench-runtime/src/vm/function.rs
+@@ -172,7 +172,7 @@ impl<H: Host> Vm<H> {
+             .heap
+             .root_value(target_root)
+             .expect("bound target root remains live");
+-        let length_atom = self.intern_atom("length");
++        let length_atom = self.well_known_atoms.length;
+         let length_key = self.heap.alloc(Cell::String(self.atom_value(length_atom)));
+         let descriptor = self.object_get_own_property_descriptor(p, &[target, length_key])?;
+         let bound_length = if !descriptor.is_undefined() {
+diff --git a/crates/quench-runtime/src/vm/host_function.rs b/crates/quench-runtime/src/vm/host_function.rs
+index 5ac0eedaf..9bad6f1f6 100644
+--- a/crates/quench-runtime/src/vm/host_function.rs
++++ b/crates/quench-runtime/src/vm/host_function.rs
+@@ -61,7 +61,7 @@ impl<H: Host> Vm<H> {
+         };
+         let function = self.native_with_env(Native::HostFunction, environment);
+         self.set_builtin_function_name(function, name)?;
+-        let atom = self.intern_atom("length");
++        let atom = self.well_known_atoms.length;
+         self.set_property(function, atom, Value::number(f64::from(length)))?;
+         self.set_property_attributes(
+             function,
+diff --git a/crates/quench-runtime/src/vm/iterators.rs b/crates/quench-runtime/src/vm/iterators.rs
+index bc5c60c6f..8d31b475e 100644
+--- a/crates/quench-runtime/src/vm/iterators.rs
++++ b/crates/quench-runtime/src/vm/iterators.rs
+@@ -2944,7 +2944,7 @@ impl<H: Host> Vm<H> {
+                         let matched_atom = vm.intern_atom("0");
+                         let matched = vm.get_property(p, result, matched_atom)?;
+                         if vm.coerce_js_string(p, matched)?.units().is_empty() {
+-                            let last_index_atom = vm.intern_atom("lastIndex");
++                            let last_index_atom = vm.well_known_atoms.last_index;
+                             let last_index = vm.get_property(p, source, last_index_atom)?;
+                             let index = vm.regexp_to_length_value(p, last_index)?;
+                             let next = super::regexp::advance_string_index_units(
+diff --git a/crates/quench-runtime/src/vm/object.rs b/crates/quench-runtime/src/vm/object.rs
+index aad5c1e79..dee1db54b 100644
+--- a/crates/quench-runtime/src/vm/object.rs
++++ b/crates/quench-runtime/src/vm/object.rs
+@@ -211,7 +211,7 @@ impl<H: Host> Vm<H> {
+         // keep explicit attributes in descriptors. Array length always exists;
+         // its unchanged attributes derive from the array exotic contract.
+         self.descriptors.get(&(object, key)).copied().or_else(|| {
+-            (key == PropertyKey::string(self.length_atom)
++            (key == PropertyKey::string(self.well_known_atoms.length)
+                 && self.own_array_length(object).is_some())
+             .then_some(super::object_array::ARRAY_LENGTH_ATTRIBUTES)
+         })
+@@ -282,7 +282,7 @@ impl<H: Host> Vm<H> {
+         p: &ResidualProgram,
+         frame: usize,
+     ) -> Result<Value, JsError> {
+-        let atom = self.runtime_atoms.lexical_this;
++        let atom = self.well_known_atoms.lexical_this;
+         let value = self
+             .dynamic_binding(frame, atom)
+             .unwrap_or(self.frames[frame].this);
+@@ -400,7 +400,7 @@ impl<H: Host> Vm<H> {
+             .alloc_object_pair(self.object_proto, shape, first, second)
+     }
+     pub(super) fn own_property(&self, object: Value, atom: Atom) -> Option<Value> {
+-        if atom == self.length_atom
++        if atom == self.well_known_atoms.length
+             && let Some(length) = self.own_array_length(object)
+         {
+             return Some(Value::number(length as f64));
+@@ -917,7 +917,7 @@ impl<H: Host> Vm<H> {
+         if !matches!(self.heap.get(receiver), Some(Cell::Array { .. })) {
+             return Ok(None);
+         }
+-        if atom == self.length_atom
++        if atom == self.well_known_atoms.length
+             && !self
+                 .object_data(receiver)
+                 .is_some_and(Object::is_arguments_object)
+@@ -1163,7 +1163,7 @@ impl<H: Host> Vm<H> {
+                 Ok(())
+             };
+         }
+-        if atom == self.length_atom
++        if atom == self.well_known_atoms.length
+             && matches!(self.heap.get(object), Some(Cell::Array { .. }))
+             && !self
+                 .object_data(object)
+diff --git a/crates/quench-runtime/src/vm/object_array.rs b/crates/quench-runtime/src/vm/object_array.rs
+index 81fe91096..c476e4867 100644
+--- a/crates/quench-runtime/src/vm/object_array.rs
++++ b/crates/quench-runtime/src/vm/object_array.rs
+@@ -75,7 +75,7 @@ impl<H: Host> Vm<H> {
+             }
+             let current_len = self.own_array_length(target).expect("array length owner");
+             let current_writable = self
+-                .property_attributes(target, PropertyKey::string(self.length_atom))
++                .property_attributes(target, PropertyKey::string(self.well_known_atoms.length))
+                 .expect("array length has attributes")
+                 .writable;
+             let next_len = requested_len.unwrap_or(current_len);
+@@ -90,7 +90,7 @@ impl<H: Host> Vm<H> {
+                     .filter_map(|((object, key), attributes)| {
+                         (*object == target
+                             && matches!(key, PropertyKey::String(atom)
+-                            if *atom != self.length_atom
++                            if *atom != self.well_known_atoms.length
+                                 && self.atom_name(*atom).parse::<usize>().is_ok_and(|index| {
+                                     index >= next_len && !attributes.configurable
+                                 })))
+@@ -115,7 +115,7 @@ impl<H: Host> Vm<H> {
+                     .filter_map(|(object, key)| {
+                         (*object == target
+                             && matches!(key, PropertyKey::String(atom)
+-                                if *atom != self.length_atom
++                                if *atom != self.well_known_atoms.length
+                                     && self.atom_name(*atom).parse::<usize>().is_ok_and(|index| index > blocked_index)))
+                         .then_some((*object, *key))
+                     })
+@@ -125,7 +125,7 @@ impl<H: Host> Vm<H> {
+                     }
+                     if !writable {
+                         self.descriptors.insert(
+-                            (target, PropertyKey::string(self.length_atom)),
++                            (target, PropertyKey::string(self.well_known_atoms.length)),
+                             PropertyAttributes {
+                                 writable: false,
+                                 ..ARRAY_LENGTH_ATTRIBUTES
+@@ -143,7 +143,7 @@ impl<H: Host> Vm<H> {
+                 .filter_map(|(object, key)| {
+                     (*object == target
+                         && matches!(key, PropertyKey::String(atom)
+-                            if *atom != self.length_atom
++                            if *atom != self.well_known_atoms.length
+                                 && self.atom_name(*atom).parse::<usize>().is_ok_and(|index| index >= next_len)))
+                     .then_some((*object, *key))
+                 })
+@@ -154,7 +154,7 @@ impl<H: Host> Vm<H> {
+             }
+             self.heap.sparse_set_length(target, next_len);
+             self.descriptors.insert(
+-                (target, PropertyKey::string(self.length_atom)),
++                (target, PropertyKey::string(self.well_known_atoms.length)),
+                 PropertyAttributes {
+                     writable,
+                     ..ARRAY_LENGTH_ATTRIBUTES
+@@ -260,7 +260,7 @@ impl<H: Host> Vm<H> {
+                 .object_data(target)
+                 .is_some_and(Object::is_arguments_object)
+         {
+-            atoms.push(self.length_atom);
++            atoms.push(self.well_known_atoms.length);
+         }
+         atoms
+     }
+@@ -276,7 +276,7 @@ impl<H: Host> Vm<H> {
+             return true;
+         }
+         let length_attributes = self
+-            .property_attributes(target, PropertyKey::string(self.length_atom))
++            .property_attributes(target, PropertyKey::string(self.well_known_atoms.length))
+             .expect("array length has attributes");
+         !length_attributes.configurable
+             && (!freeze || !length_attributes.writable)
+@@ -328,7 +328,7 @@ impl<H: Host> Vm<H> {
+             && index >= current_len
+             && self
+                 .descriptors
+-                .get(&(target, PropertyKey::string(self.length_atom)))
++                .get(&(target, PropertyKey::string(self.well_known_atoms.length)))
+                 .is_some_and(|attributes| !attributes.writable)
+         {
+             return Ok(false);
+diff --git a/crates/quench-runtime/src/vm/object_descriptors.rs b/crates/quench-runtime/src/vm/object_descriptors.rs
+index c0cae6e00..17261744d 100644
+--- a/crates/quench-runtime/src/vm/object_descriptors.rs
++++ b/crates/quench-runtime/src/vm/object_descriptors.rs
+@@ -466,11 +466,11 @@ impl<H: Host> Vm<H> {
+             let atom = self.intern_js_atom(&key);
+             self.evaluate_deferred_namespace_for_key(p, target, Some(PropertyKey::string(atom)))?;
+             let target = self.heap.root_value(source).unwrap();
+-            if atom == self.length_atom
++            if atom == self.well_known_atoms.length
+                 && let Some(length) = self.own_array_length(target)
+             {
+                 let length_attributes = self
+-                    .property_attributes(target, PropertyKey::string(self.length_atom))
++                    .property_attributes(target, PropertyKey::string(self.well_known_atoms.length))
+                     .expect("array length has attributes");
+                 return self.property_descriptor_object(
+                     Value::number(length as f64),
+diff --git a/crates/quench-runtime/src/vm/object_get.rs b/crates/quench-runtime/src/vm/object_get.rs
+index 77d1ae58c..3d1823ae2 100644
+--- a/crates/quench-runtime/src/vm/object_get.rs
++++ b/crates/quench-runtime/src/vm/object_get.rs
+@@ -374,9 +374,9 @@ impl<H: Host> Vm<H> {
+             let method = self.own_property(prototype, atom);
+             let builtin = if self.lookup_atom("toString") == Some(atom) {
+                 Some(Native::NumberString)
+-            } else if atom == self.to_fixed_atom {
++            } else if atom == self.well_known_atoms.to_fixed {
+                 Some(Native::NumberFixed)
+-            } else if atom == self.to_precision_atom {
++            } else if atom == self.well_known_atoms.to_precision {
+                 Some(Native::NumberPrecision)
+             } else {
+                 None
+@@ -476,7 +476,7 @@ impl<H: Host> Vm<H> {
+                     {
+                         return Ok(self.heap.alloc(Cell::String(JsString::from_units(&[unit]))));
+                     }
+-                    if atom == self.length_atom {
++                    if atom == self.well_known_atoms.length {
+                         return Ok(Value::number(v.units().len() as f64));
+                     }
+                     let prototype = self
+diff --git a/crates/quench-runtime/src/vm/operations.rs b/crates/quench-runtime/src/vm/operations.rs
+index 8fc5e6dd5..46962da6e 100644
+--- a/crates/quench-runtime/src/vm/operations.rs
++++ b/crates/quench-runtime/src/vm/operations.rs
+@@ -1504,7 +1504,7 @@ impl<H: Host> Vm<H> {
+         let object = self.heap.root(list);
+         let mut elements = Vec::new();
+         let outcome = (|| {
+-            let length_atom = self.intern_atom("length");
++            let length_atom = self.well_known_atoms.length;
+             let length_value =
+                 self.get_property(p, self.heap.root_value(object).unwrap(), length_atom)?;
+             let length_value = self.heap.root(length_value);
+diff --git a/crates/quench-runtime/src/vm/promise.rs b/crates/quench-runtime/src/vm/promise.rs
+index 935c0a0da..466f90de4 100644
+--- a/crates/quench-runtime/src/vm/promise.rs
++++ b/crates/quench-runtime/src/vm/promise.rs
+@@ -1213,7 +1213,7 @@ impl<H: Host> Vm<H> {
+             .then_some(1.0)
+             .or_else(|| native_length(kind));
+         if let Some(length) = length {
+-            let atom = self.intern_atom("length");
++            let atom = self.well_known_atoms.length;
+             let _ = self.set_property(function, atom, Value::number(length));
+             self.set_property_attributes(
+                 function,
+diff --git a/crates/quench-runtime/src/vm/property_definition.rs b/crates/quench-runtime/src/vm/property_definition.rs
+index 9db91d47f..18f247b89 100644
+--- a/crates/quench-runtime/src/vm/property_definition.rs
++++ b/crates/quench-runtime/src/vm/property_definition.rs
+@@ -147,7 +147,7 @@ impl<H: Host> Vm<H> {
+                     }
+                 }
+                 if matches!(self.heap.get(object), Some(Cell::Array { .. })) {
+-                    if atom == self.length_atom
++                    if atom == self.well_known_atoms.length
+                         && !self
+                             .object_data(object)
+                             .is_some_and(Object::is_arguments_object)
+diff --git a/crates/quench-runtime/src/vm/regexp.rs b/crates/quench-runtime/src/vm/regexp.rs
+index c997a1342..3f2998285 100644
+--- a/crates/quench-runtime/src/vm/regexp.rs
++++ b/crates/quench-runtime/src/vm/regexp.rs
+@@ -384,13 +384,13 @@ impl<H: Host> Vm<H> {
+                             p, receiver, &input, template, &matcher, &flags,
+                         );
+                     }
+-                    let atom = vm.intern_atom("flags");
++                    let atom = vm.well_known_atoms.flags;
+                     let flags = vm.get_property(p, receiver, atom)?;
+                     let flags = vm.coerce_js_string(p, flags)?;
+                     let global = flags.host_string().contains('g');
+                     let unicode =
+                         flags.host_string().contains('u') || flags.host_string().contains('v');
+-                    let last_index_atom = vm.intern_atom("lastIndex");
++                    let last_index_atom = vm.well_known_atoms.last_index;
+                     if global {
+                         vm.set_property_with_program_mode(
+                             p,
+@@ -433,7 +433,7 @@ impl<H: Host> Vm<H> {
+                     let mut next_source = 0;
+                     for result in results {
+                         vm.with_call_roots([result], |vm| {
+-                            let atom = vm.intern_atom("length");
++                            let atom = vm.well_known_atoms.length;
+                             let length = vm.get_property(p, result, atom)?;
+                             let length = vm.regexp_to_length_value(p, length)?;
+                             let atom = vm.intern_atom("0");
+@@ -773,7 +773,7 @@ impl<H: Host> Vm<H> {
+                 }
+                 let input =
+                     vm.coerce_js_string(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
+-                let atom = vm.intern_atom("lastIndex");
++                let atom = vm.well_known_atoms.last_index;
+                 let previous = vm.get_property(p, receiver, atom)?;
+                 vm.with_call_roots([previous], |vm| {
+                     if !vm.same_value(previous, Value::number(0.0)) {
+@@ -822,7 +822,7 @@ impl<H: Host> Vm<H> {
+                     vm.coerce_js_string(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
+                 let constructor = vm.regexp_species_constructor(p, receiver)?;
+                 let (unicode, splitter) = vm.with_call_roots([constructor], |vm| {
+-                    let atom = vm.intern_atom("flags");
++                    let atom = vm.well_known_atoms.flags;
+                     let value = vm.get_property(p, receiver, atom)?;
+                     let mut flags = vm.coerce_js_string(p, value)?;
+                     let unicode =
+@@ -848,8 +848,8 @@ impl<H: Host> Vm<H> {
+                         }
+                         return Ok(array);
+                     }
+-                    let last_index_atom = vm.intern_atom("lastIndex");
+-                    let length_atom = vm.intern_atom("length");
++                    let last_index_atom = vm.well_known_atoms.last_index;
++                    let length_atom = vm.well_known_atoms.length;
+                     let mut p_index = 0usize;
+                     let mut q = 0usize;
+                     while q < size {
+@@ -974,7 +974,7 @@ impl<H: Host> Vm<H> {
+                     vm.coerce_js_string(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
+                 let constructor = vm.regexp_species_constructor(p, receiver)?;
+                 let (flags, matcher) = vm.with_call_roots([constructor], |vm| {
+-                    let atom = vm.intern_atom("flags");
++                    let atom = vm.well_known_atoms.flags;
+                     let value = vm.get_property(p, receiver, atom)?;
+                     let flags = vm.coerce_js_string(p, value)?;
+                     let value = vm.heap.alloc(Cell::String(flags.clone()));
+@@ -982,7 +982,7 @@ impl<H: Host> Vm<H> {
+                     Ok::<_, JsError>((flags, matcher))
+                 })?;
+                 vm.with_call_roots([matcher], |vm| {
+-                    let atom = vm.intern_atom("lastIndex");
++                    let atom = vm.well_known_atoms.last_index;
+                     let value = vm.get_property(p, receiver, atom)?;
+                     let index = vm.regexp_to_length_value(p, value)?;
+                     vm.set_property_with_program_mode(
+@@ -1061,7 +1061,7 @@ impl<H: Host> Vm<H> {
+                 }
+                 let input =
+                     vm.coerce_js_string(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
+-                let atom = vm.intern_atom("flags");
++                let atom = vm.well_known_atoms.flags;
+                 let value = vm.get_property(p, receiver, atom)?;
+                 let flags = vm.coerce_js_string(p, value)?;
+                 if !flags.host_string().contains('g') {
+@@ -1070,7 +1070,7 @@ impl<H: Host> Vm<H> {
+                 }
+                 let unicode =
+                     flags.host_string().contains('u') || flags.host_string().contains('v');
+-                let last_index = vm.intern_atom("lastIndex");
++                let last_index = vm.well_known_atoms.last_index;
+                 vm.set_property_with_program_mode(
+                     p,
+                     receiver,
+@@ -1127,7 +1127,7 @@ impl<H: Host> Vm<H> {
+         input: Value,
+     ) -> Result<Value, JsError> {
+         self.with_call_roots([receiver, input], |vm| {
+-            let exec = vm.intern_atom("exec");
++            let exec = vm.well_known_atoms.exec;
+             let method = vm.get_property(p, receiver, exec)?;
+             if vm.is_function(method) {
+                 let result = vm.call_value(p, method, receiver, &[input])?;
+@@ -1337,7 +1337,7 @@ impl<H: Host> Vm<H> {
+                 };
+                 vm.active_call_roots.push(source);
+                 let flags = if flags_omitted && pattern_is_regexp {
+-                    let flags_atom = vm.intern_atom("flags");
++                    let flags_atom = vm.well_known_atoms.flags;
+                     vm.get_property(p, pattern_value, flags_atom)?
+                 } else {
+                     flags_value
+@@ -1513,7 +1513,7 @@ impl<H: Host> Vm<H> {
+             matcher,
+             legacy_constructor,
+         });
+-        let last_index_atom = self.intern_atom("lastIndex");
++        let last_index_atom = self.well_known_atoms.last_index;
+         self.set_property(object, last_index_atom, Value::number(0.0))?;
+         self.set_property_attributes(
+             object,
+@@ -1588,7 +1588,7 @@ impl<H: Host> Vm<H> {
+                 *current_source = source;
+                 *current_flags = flags;
+                 *current_matcher = matcher;
+-                let last_index = vm.intern_atom("lastIndex");
++                let last_index = vm.well_known_atoms.last_index;
+                 vm.set_property_with_program_mode(p, receiver, last_index, Value::number(0.0), true)?;
+                 Ok(receiver)
+             },
+@@ -1608,7 +1608,7 @@ impl<H: Host> Vm<H> {
+                 ));
+             }
+             let source_atom = vm.intern_atom("source");
+-            let flags_atom = vm.intern_atom("flags");
++            let flags_atom = vm.well_known_atoms.flags;
+             let source = vm.get_property(p, receiver, source_atom)?;
+             let source = vm.coerce_js_string(p, source)?;
+             let flags = vm.get_property(p, receiver, flags_atom)?;
+@@ -1675,7 +1675,7 @@ impl<H: Host> Vm<H> {
+             }
+             let input =
+                 vm.coerce_js_string(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
+-            let last_index_atom = vm.intern_atom("lastIndex");
++            let last_index_atom = vm.well_known_atoms.last_index;
+             let last_index = vm.get_property(p, this, last_index_atom)?;
+             let last_index = vm.regexp_to_length_value(p, last_index)?;
+             let (regex, flags) = match vm.heap.get(this) {
+diff --git a/crates/quench-runtime/src/vm/shadow_realm.rs b/crates/quench-runtime/src/vm/shadow_realm.rs
+index bc2e20dbd..093a47851 100644
+--- a/crates/quench-runtime/src/vm/shadow_realm.rs
++++ b/crates/quench-runtime/src/vm/shadow_realm.rs
+@@ -92,7 +92,7 @@ impl<H: Host> Vm<H> {
+     }
+ 
+     fn set_builtin_function_length(&mut self, function: Value, length: f64) -> Result<(), JsError> {
+-        let atom = self.intern_atom("length");
++        let atom = self.well_known_atoms.length;
+         if self
+             .own_property(function, atom)
+             .and_then(|value| value.as_number())
+@@ -443,7 +443,7 @@ impl<H: Host> Vm<H> {
+     ) -> Result<Value, JsError> {
+         let target_root = self.heap.root(target);
+         let name_atom = self.intern_atom("name");
+-        let length_atom = self.intern_atom("length");
++        let length_atom = self.well_known_atoms.length;
+         let target_realm = match self.function_realm(p, target) {
+             Ok(realm) => realm,
+             Err(_) => {
+diff --git a/crates/quench-runtime/src/vm/string.rs b/crates/quench-runtime/src/vm/string.rs
+index 7236ce477..6456b8c0f 100644
+--- a/crates/quench-runtime/src/vm/string.rs
++++ b/crates/quench-runtime/src/vm/string.rs
+@@ -388,7 +388,7 @@ impl<H: Host> Vm<H> {
+                 vm.box_primitive_object(raw)?
+             };
+             vm.with_call_roots([raw], |vm| {
+-                let atom = vm.intern_atom("length");
++                let atom = vm.well_known_atoms.length;
+                 let length = vm.get_property(p, raw, atom)?;
+                 let length = vm.regexp_to_length_value(p, length)?;
+                 let mut output = JsString::from_str("");
+@@ -639,7 +639,7 @@ impl<H: Host> Vm<H> {
+                 .ok_or_else(|| vm.type_error(p, "RegExp matchAll symbol is unavailable".into()))?;
+             if vm.is_object_like(pattern) {
+                 if vm.regexp_is_regexp(p, pattern)? {
+-                    let atom = vm.intern_atom("flags");
++                    let atom = vm.well_known_atoms.flags;
+                     let flags = vm.get_property(p, pattern, atom)?;
+                     vm.require_object_coercible(p, flags)?;
+                     let flags = vm.coerce_js_string(p, flags)?;
+@@ -700,7 +700,7 @@ impl<H: Host> Vm<H> {
+             let replacement_value = args.get(1).copied().unwrap_or(Value::UNDEFINED);
+             if vm.is_object_like(search_value) {
+                 if replace_all && vm.regexp_is_regexp(p, search_value)? {
+-                    let atom = vm.intern_atom("flags");
++                    let atom = vm.well_known_atoms.flags;
+                     let flags = vm.get_property(p, search_value, atom)?;
+                     vm.require_object_coercible(p, flags)?;
+                     let flags = vm.coerce_js_string(p, flags)?;
+diff --git a/crates/quench-runtime/src/vm/tests.rs b/crates/quench-runtime/src/vm/tests.rs
+index 795a0619c..e88dfa6a1 100644
+--- a/crates/quench-runtime/src/vm/tests.rs
++++ b/crates/quench-runtime/src/vm/tests.rs
+@@ -3451,7 +3451,7 @@ fn bound_function_proxy_metadata_roots_survive_gc_and_abrupt_completion() {
+                 Ok(function) => {
+                     assert_eq!(phase, "accept");
+                     assert!(vm.object_data(function).unwrap().proto.is_null());
+-                    let atom = vm.intern_atom("length");
++                    let atom = vm.well_known_atoms.length;
+                     assert_eq!(vm.own_property(function, atom), Some(Value::number(3.0)));
+                     let handle = vm.heap.weak_handle(function).unwrap();
+                     vm.collect_now(&program);
+diff --git a/crates/quench-runtime/src/vm/vm_init.rs b/crates/quench-runtime/src/vm/vm_init.rs
+index 190d6c15f..44a9e3d70 100644
+--- a/crates/quench-runtime/src/vm/vm_init.rs
++++ b/crates/quench-runtime/src/vm/vm_init.rs
+@@ -91,14 +91,7 @@ impl<H: Host> Vm<H> {
+             field_add_caches: FxHashMap::default(),
+             megamorphic_field_indices: vec![],
+             megamorphic_fields: vec![],
+-            length_atom: u32::MAX,
+-            size_atom: u32::MAX,
+-            byte_length_atom: u32::MAX,
+-            byte_offset_atom: u32::MAX,
+-            buffer_atom: u32::MAX,
+-            to_fixed_atom: u32::MAX,
+-            to_precision_atom: u32::MAX,
+-            runtime_atoms: RuntimeAtoms::default(),
++            well_known_atoms: WellKnownAtoms::default(),
+             method_caches: vec![],
+             megamorphic_methods: vec![],
+             #[cfg(feature = "profile-aggregate")]
+diff --git a/crates/quench-runtime/src/vm/wasm_host.rs b/crates/quench-runtime/src/vm/wasm_host.rs
+index 852b641ba..d9503e50d 100644
+--- a/crates/quench-runtime/src/vm/wasm_host.rs
++++ b/crates/quench-runtime/src/vm/wasm_host.rs
+@@ -40,7 +40,7 @@ impl<H: Host> Vm<H> {
+         });
+         let function = self.native_with_env(Native::WasmHost, environment);
+         self.set_builtin_function_name(function, name)?;
+-        let atom = self.intern_atom("length");
++        let atom = self.well_known_atoms.length;
+         self.set_property(function, atom, Value::number(length as f64))?;
+         self.set_property_attributes(
+             function,

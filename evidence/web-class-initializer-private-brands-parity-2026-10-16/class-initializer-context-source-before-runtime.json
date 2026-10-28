@@ -1,0 +1,31 @@
+{
+  "base": "6ded4eada9ecd399601ad59078f57251e5549b85",
+  "source_files": {
+    "crates/quench-node-test/tests/child_entry.rs": "d79d0b15578af36f02db6b06be0c9e288b756dc5c45cf49de152c82a7f75aa0c",
+    "crates/quench-runtime/src/bytecode.rs": "b81ffec204451262ae4bacddee966eba472d0a31e19f3ba61c25c5337376b491",
+    "crates/quench-runtime/src/bytecode/binary.rs": "1af85f930381f0663900abca962e7d587649439c44d70c2f97324f1061a4e0d1",
+    "crates/quench-runtime/src/bytecode/tests.rs": "5f1dabc494c909a19fd3108b28c0d72b4396fa0d9f6d23c098a78c784eb5a901",
+    "crates/quench-runtime/src/bytecode/validate.rs": "201ddf62201ae63ceaccf30a57fd83276fa69eee30bc73f55434561d0ae1dbed",
+    "crates/quench-runtime/src/compile.rs": "b94aef39a082a6c76d29290e228e8230b70e12710bd62fb39045dcf263746703",
+    "crates/quench-runtime/src/compile/arrow.rs": "0fd95d3450ee16499407dc8e9e36a5cf27c21b2f58fb56412aa6b992f8225360",
+    "crates/quench-runtime/src/compile/ast.rs": "b50c45ff0ba6643c6989b0f19f641acb47fe92546c8a14dd39e697ade57dfe94",
+    "crates/quench-runtime/src/compile/ast/expression.rs": "11473d84e333adb16bfe4bb5806a61616986f3de9f0ea30b1ba1c436ad868446",
+    "crates/quench-runtime/src/compile/capture_layout.rs": "a09982ba9d6a3d808ccdce6d6d27dc16f2c21c7f402a7ebe4002fd1562348096",
+    "crates/quench-runtime/src/compile/class.rs": "2c4ae2d23c14341ede957867b92e736f5ebaffd033a3fd43104dbcd00ace96ce",
+    "crates/quench-runtime/src/compile/early.rs": "984139ed0ad5182486bf289d915f9a9bcdfc4612f8c88061720e385a822ebfcb",
+    "crates/quench-runtime/src/compile/liveness.rs": "6941a78a1a0ee216dbc50bcbb86d9312825bf4612f8a001f574513d0b9cdfdd1",
+    "crates/quench-runtime/src/compile/numeric.rs": "b78d5d7555a609e7bb99482b0562e814f5e17045b93b4a7102a9fc9f41f24fff",
+    "crates/quench-runtime/src/profile/dispatch_pairs.rs": "d7ab8443f65fcc9f82363c473c17798aa5133ab1d069266ab171100f925dec76",
+    "crates/quench-runtime/src/vm/construction.rs": "b50b7eea81e604c72a81b9d1de9fa0a08681ef3cd4d50f12c554a20c0b058da1",
+    "crates/quench-runtime/src/vm/eval.rs": "fd52e3155bcca6eda84424f529d71c05cb21b4cd93b105d4c32b0955976982bf",
+    "crates/quench-runtime/src/vm/tests.rs": "46688126f48a1f7710f4ac4834fc5275be07426cd78900694e35c8d24e49d75e",
+    "crates/quench-runtime/src/wasm.rs": "87b26cd2c9d5de634aa3f4beb3c7222e179f8ab8f59440e4a20fedd15659ae24",
+    "docs/node-host-contracts.md": "b59a6f319b8a2b8f0ef0c36e2a17e71d81587933ec9a810ae653fef7aa4a2930",
+    "crates/quench-node-test/node-tests/test-private-brand-initialization.js": "fcadd4f3dbc2330dd68e4ff0032d5ae73f4513150af4cb3bc82d9e75c6b21e07",
+    "crates/quench-node-test/node-tests/test-static-block-context.js": "f5fd75650f4956bbc4de525be6f2cff7300e3fb6839a637edc9b7b63fadfbc7c"
+  },
+  "core_log": "class-initializer-context-runtime.log",
+  "bytecode_format": 93,
+  "previous_runtime_failure_retained": "private-brand-static-context-runtime.log",
+  "parent_instruction_measurements_exclude_this_source": true
+}

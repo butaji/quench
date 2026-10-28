@@ -1,0 +1,654 @@
+{
+  "cases": 131088,
+  "differences": 54,
+  "rows": [
+    {
+      "input": {
+        "op": "width",
+        "units": [
+          6863
+        ],
+        "ambiguous": false,
+        "expand": true
+      },
+      "node": 0,
+      "draft": 1
+    },
+    {
+      "input": {
+        "op": "width",
+        "units": [
+          6863
+        ],
+        "ambiguous": true,
+        "expand": false
+      },
+      "node": 0,
+      "draft": 1
+    },
+    {
+      "input": {
+        "op": "width",
+        "units": [
+          6864
+        ],
+        "ambiguous": false,
+        "expand": true
+      },
+      "node": 0,
+      "draft": 1
+    },
+    {
+      "input": {
+        "op": "width",
+        "units": [
+          6864
+        ],
+        "ambiguous": true,
+        "expand": false
+      },
+      "node": 0,
+      "draft": 1
+    },
+    {
+      "input": {
+        "op": "width",
+        "units": [
+          6865
+        ],
+        "ambiguous": false,
+        "expand": true
+      },
+      "node": 0,
+      "draft": 1
+    },
+    {
+      "input": {
+        "op": "width",
+        "units": [
+          6865
+        ],
+        "ambiguous": true,
+        "expand": false
+      },
+      "node": 0,
+      "draft": 1
+    },
+    {
+      "input": {
+        "op": "width",
+        "units": [
+          6866
+        ],
+        "ambiguous": false,
+        "expand": true
+      },
+      "node": 0,
+      "draft": 1
+    },
+    {
+      "input": {
+        "op": "width",
+        "units": [
+          6866
+        ],
+        "ambiguous": true,
+        "expand": false
+      },
+      "node": 0,
+      "draft": 1
+    },
+    {
+      "input": {
+        "op": "width",
+        "units": [
+          6867
+        ],
+        "ambiguous": false,
+        "expand": true
+      },
+      "node": 0,
+      "draft": 1
+    },
+    {
+      "input": {
+        "op": "width",
+        "units": [
+          6867
+        ],
+        "ambiguous": true,
+        "expand": false
+      },
+      "node": 0,
+      "draft": 1
+    },
+    {
+      "input": {
+        "op": "width",
+        "units": [
+          6868
+        ],
+        "ambiguous": false,
+        "expand": true
+      },
+      "node": 0,
+      "draft": 1
+    },
+    {
+      "input": {
+        "op": "width",
+        "units": [
+          6868
+        ],
+        "ambiguous": true,
+        "expand": false
+      },
+      "node": 0,
+      "draft": 1
+    },
+    {
+      "input": {
+        "op": "width",
+        "units": [
+          6869
+        ],
+        "ambiguous": false,
+        "expand": true
+      },
+      "node": 0,
+      "draft": 1
+    },
+    {
+      "input": {
+        "op": "width",
+        "units": [
+          6869
+        ],
+        "ambiguous": true,
+        "expand": false
+      },
+      "node": 0,
+      "draft": 1
+    },
+    {
+      "input": {
+        "op": "width",
+        "units": [
+          6870
+        ],
+        "ambiguous": false,
+        "expand": true
+      },
+      "node": 0,
+      "draft": 1
+    },
+    {
+      "input": {
+        "op": "width",
+        "units": [
+          6870
+        ],
+        "ambiguous": true,
+        "expand": false
+      },
+      "node": 0,
+      "draft": 1
+    },
+    {
+      "input": {
+        "op": "width",
+        "units": [
+          6871
+        ],
+        "ambiguous": false,
+        "expand": true
+      },
+      "node": 0,
+      "draft": 1
+    },
+    {
+      "input": {
+        "op": "width",
+        "units": [
+          6871
+        ],
+        "ambiguous": true,
+        "expand": false
+      },
+      "node": 0,
+      "draft": 1
+    },
+    {
+      "input": {
+        "op": "width",
+        "units": [
+          6872
+        ],
+        "ambiguous": false,
+        "expand": true
+      },
+      "node": 0,
+      "draft": 1
+    },
+    {
+      "input": {
+        "op": "width",
+        "units": [
+          6872
+        ],
+        "ambiguous": true,
+        "expand": false
+      },
+      "node": 0,
+      "draft": 1
+    },
+    {
+      "input": {
+        "op": "width",
+        "units": [
+          6873
+        ],
+        "ambiguous": false,
+        "expand": true
+      },
+      "node": 0,
+      "draft": 1
+    },
+    {
+      "input": {
+        "op": "width",
+        "units": [
+          6873
+        ],
+        "ambiguous": true,
+        "expand": false
+      },
+      "node": 0,
+      "draft": 1
+    },
+    {
+      "input": {
+        "op": "width",
+        "units": [
+          6874
+        ],
+        "ambiguous": false,
+        "expand": true
+      },
+      "node": 0,
+      "draft": 1
+    },
+    {
+      "input": {
+        "op": "width",
+        "units": [
+          6874
+        ],
+        "ambiguous": true,
+        "expand": false
+      },
+      "node": 0,
+      "draft": 1
+    },
+    {
+      "input": {
+        "op": "width",
+        "units": [
+          6875
+        ],
+        "ambiguous": false,
+        "expand": true
+      },
+      "node": 0,
+      "draft": 1
+    },
+    {
+      "input": {
+        "op": "width",
+        "units": [
+          6875
+        ],
+        "ambiguous": true,
+        "expand": false
+      },
+      "node": 0,
+      "draft": 1
+    },
+    {
+      "input": {
+        "op": "width",
+        "units": [
+          6876
+        ],
+        "ambiguous": false,
+        "expand": true
+      },
+      "node": 0,
+      "draft": 1
+    },
+    {
+      "input": {
+        "op": "width",
+        "units": [
+          6876
+        ],
+        "ambiguous": true,
+        "expand": false
+      },
+      "node": 0,
+      "draft": 1
+    },
+    {
+      "input": {
+        "op": "width",
+        "units": [
+          6877
+        ],
+        "ambiguous": false,
+        "expand": true
+      },
+      "node": 0,
+      "draft": 1
+    },
+    {
+      "input": {
+        "op": "width",
+        "units": [
+          6877
+        ],
+        "ambiguous": true,
+        "expand": false
+      },
+      "node": 0,
+      "draft": 1
+    },
+    {
+      "input": {
+        "op": "width",
+        "units": [
+          6880
+        ],
+        "ambiguous": false,
+        "expand": true
+      },
+      "node": 0,
+      "draft": 1
+    },
+    {
+      "input": {
+        "op": "width",
+        "units": [
+          6880
+        ],
+        "ambiguous": true,
+        "expand": false
+      },
+      "node": 0,
+      "draft": 1
+    },
+    {
+      "input": {
+        "op": "width",
+        "units": [
+          6881
+        ],
+        "ambiguous": false,
+        "expand": true
+      },
+      "node": 0,
+      "draft": 1
+    },
+    {
+      "input": {
+        "op": "width",
+        "units": [
+          6881
+        ],
+        "ambiguous": true,
+        "expand": false
+      },
+      "node": 0,
+      "draft": 1
+    },
+    {
+      "input": {
+        "op": "width",
+        "units": [
+          6882
+        ],
+        "ambiguous": false,
+        "expand": true
+      },
+      "node": 0,
+      "draft": 1
+    },
+    {
+      "input": {
+        "op": "width",
+        "units": [
+          6882
+        ],
+        "ambiguous": true,
+        "expand": false
+      },
+      "node": 0,
+      "draft": 1
+    },
+    {
+      "input": {
+        "op": "width",
+        "units": [
+          6883
+        ],
+        "ambiguous": false,
+        "expand": true
+      },
+      "node": 0,
+      "draft": 1
+    },
+    {
+      "input": {
+        "op": "width",
+        "units": [
+          6883
+        ],
+        "ambiguous": true,
+        "expand": false
+      },
+      "node": 0,
+      "draft": 1
+    },
+    {
+      "input": {
+        "op": "width",
+        "units": [
+          6884
+        ],
+        "ambiguous": false,
+        "expand": true
+      },
+      "node": 0,
+      "draft": 1
+    },
+    {
+      "input": {
+        "op": "width",
+        "units": [
+          6884
+        ],
+        "ambiguous": true,
+        "expand": false
+      },
+      "node": 0,
+      "draft": 1
+    },
+    {
+      "input": {
+        "op": "width",
+        "units": [
+          6885
+        ],
+        "ambiguous": false,
+        "expand": true
+      },
+      "node": 0,
+      "draft": 1
+    },
+    {
+      "input": {
+        "op": "width",
+        "units": [
+          6885
+        ],
+        "ambiguous": true,
+        "expand": false
+      },
+      "node": 0,
+      "draft": 1
+    },
+    {
+      "input": {
+        "op": "width",
+        "units": [
+          6886
+        ],
+        "ambiguous": false,
+        "expand": true
+      },
+      "node": 0,
+      "draft": 1
+    },
+    {
+      "input": {
+        "op": "width",
+        "units": [
+          6886
+        ],
+        "ambiguous": true,
+        "expand": false
+      },
+      "node": 0,
+      "draft": 1
+    },
+    {
+      "input": {
+        "op": "width",
+        "units": [
+          6887
+        ],
+        "ambiguous": false,
+        "expand": true
+      },
+      "node": 0,
+      "draft": 1
+    },
+    {
+      "input": {
+        "op": "width",
+        "units": [
+          6887
+        ],
+        "ambiguous": true,
+        "expand": false
+      },
+      "node": 0,
+      "draft": 1
+    },
+    {
+      "input": {
+        "op": "width",
+        "units": [
+          6888
+        ],
+        "ambiguous": false,
+        "expand": true
+      },
+      "node": 0,
+      "draft": 1
+    },
+    {
+      "input": {
+        "op": "width",
+        "units": [
+          6888
+        ],
+        "ambiguous": true,
+        "expand": false
+      },
+      "node": 0,
+      "draft": 1
+    },
+    {
+      "input": {
+        "op": "width",
+        "units": [
+          6889
+        ],
+        "ambiguous": false,
+        "expand": true
+      },
+      "node": 0,
+      "draft": 1
+    },
+    {
+      "input": {
+        "op": "width",
+        "units": [
+          6889
+        ],
+        "ambiguous": true,
+        "expand": false
+      },
+      "node": 0,
+      "draft": 1
+    },
+    {
+      "input": {
+        "op": "width",
+        "units": [
+          6890
+        ],
+        "ambiguous": false,
+        "expand": true
+      },
+      "node": 0,
+      "draft": 1
+    },
+    {
+      "input": {
+        "op": "width",
+        "units": [
+          6890
+        ],
+        "ambiguous": true,
+        "expand": false
+      },
+      "node": 0,
+      "draft": 1
+    },
+    {
+      "input": {
+        "op": "width",
+        "units": [
+          6891
+        ],
+        "ambiguous": false,
+        "expand": true
+      },
+      "node": 0,
+      "draft": 1
+    },
+    {
+      "input": {
+        "op": "width",
+        "units": [
+          6891
+        ],
+        "ambiguous": true,
+        "expand": false
+      },
+      "node": 0,
+      "draft": 1
+    }
+  ]
+}

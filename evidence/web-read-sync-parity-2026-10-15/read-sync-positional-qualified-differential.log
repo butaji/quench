@@ -1,0 +1,12 @@
+   Compiling quench-node v0.1.0 (/workspace/quench/crates/quench-node)
+   Compiling quench-node-test v0.1.0 (/workspace/quench/crates/quench-node-test)
+    Finished `iteration` profile [optimized] target(s) in 44.52s
+     Running tests/child_entry.rs (work/host-build/iteration/deps/child_entry-0c4d472d0248eb46)
+
+running 3 tests
+test read_sync_positional_directory_errors_preserve_kernel_errno ... ok
+test read_sync_copies_raw_bytes_without_public_set_or_metadata_hooks ... ok
+test read_sync_overloads_validation_order_and_bigint_positions_match_node ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 279 filtered out; finished in 0.54s
+

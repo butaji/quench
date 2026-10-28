@@ -1,0 +1,20 @@
+[
+  {
+    "engine": "/workspace/shared/node-v26.11.1-linux-x64/bin/node",
+    "exit_code": 0,
+    "stdout": "[[[\"SyntaxError\",\"The requested module './effect.mjs' does not provide an export named 'missing'\"],[\"SyntaxError\",\"The requested module './effect.mjs' does not provide an export named 'missing'\"],[\"SyntaxError\",\"The requested module './effect.mjs' does not provide an export named 'missing'\"],[\"SyntaxError\",\"The requested module './effect.mjs' does not provide an export named 'missing'\"],[\"SyntaxError\",\"The requested module './effect.mjs' does not provide an export named 'missing'\"]],[[true,true,false,false,true],[true,true,false,false,true],[false,false,true,true,false],[false,false,true,true,false],[true,true,false,false,true]],1,0,43]\n",
+    "stderr": ""
+  },
+  {
+    "engine": "/workspace/shared/node-v26.12.0-linux-x64/bin/node",
+    "exit_code": 0,
+    "stdout": "[[[\"SyntaxError\",\"The requested module './effect.mjs' does not provide an export named 'missing'\"],[\"SyntaxError\",\"The requested module './effect.mjs' does not provide an export named 'missing'\"],[\"SyntaxError\",\"The requested module './effect.mjs' does not provide an export named 'missing'\"],[\"SyntaxError\",\"The requested module './effect.mjs' does not provide an export named 'missing'\"],[\"SyntaxError\",\"The requested module './effect.mjs' does not provide an export named 'missing'\"]],[[true,false,false,false,false],[false,true,false,false,false],[false,false,true,false,false],[false,false,false,true,false],[false,false,false,false,true]],1,0,43]\n",
+    "stderr": ""
+  },
+  {
+    "engine": "/workspace/scratch/npm-cycle-matched-candidate",
+    "exit_code": 0,
+    "stdout": "[[[\"SyntaxError\",\"module import binding could not be resolved\"],[\"SyntaxError\",\"module import binding could not be resolved\"],[\"SyntaxError\",\"module import binding could not be resolved\"],[\"SyntaxError\",\"module import binding could not be resolved\"],[\"SyntaxError\",\"module import binding could not be resolved\"]],[[true,true,false,false,true],[true,true,false,false,true],[false,false,true,true,false],[false,false,true,true,false],[true,true,false,false,true]],1,0,43]\n",
+    "stderr": ""
+  }
+]

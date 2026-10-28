@@ -1,0 +1,27 @@
+{
+  "scope": "Native custom promisified exec and execFile with captured Promise capability factory",
+  "oracle": "v27.0.0-nightly20260819c79868f102",
+  "validation": {
+    "child_entry": {
+      "pass": 16,
+      "fail": 0,
+      "log": "work/exec-promise-integration.log"
+    },
+    "execution_subset": {
+      "counts": {
+        "timeout": 3,
+        "skip": 1,
+        "pass": 11,
+        "fail": 3
+      },
+      "total": 18,
+      "inventory_hash": "33b0084ac9056ec4",
+      "raw_results": "work/exec-promise-subset.json",
+      "timeout_secs": 10,
+      "jobs": 2
+    }
+  },
+  "gain": "11 execution passes, up from 10; promisified execFile abortController case passes.",
+  "remaining": "Promisified exec abort fixture now times out; shell descendants retaining stdio delay host close. Full parallel goal remains open.",
+  "performance_claim": false
+}

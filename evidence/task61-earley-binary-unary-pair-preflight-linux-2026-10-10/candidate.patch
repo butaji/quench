@@ -1,0 +1,306 @@
+diff --git a/crates/quench-runtime/src/bytecode.rs b/crates/quench-runtime/src/bytecode.rs
+index 315d451f8..bc73f253b 100644
+--- a/crates/quench-runtime/src/bytecode.rs
++++ b/crates/quench-runtime/src/bytecode.rs
+@@ -104,6 +104,7 @@ pub(crate) enum FieldLayout {
+     NumericLocalTarget,
+     NumericLocalStoreMarker,
+     FunctionIndex,
++    SuperinstructionIndex,
+     ConstructArguments,
+     ElementCount,
+     RegisterWindowBase,
+@@ -533,6 +534,8 @@ opcodes!(
+     MakeObject2 => CALL_EFFECT; layout Scalar; meaning ObjectSiteIndex, @ Returnable, @ fields(ResultRegister, Register, Register),
+     MakeObjectLiteral => CALL_EFFECT; layout Scalar; meaning ObjectSiteIndex, @ Returnable, @ fields(ResultRegister, RegisterWindowBase, RegisterCount),
+     SuperConstArrayObject2 => CALL_EFFECT; layout Scalar; meaning SuperinstructionIndex, @ Returnable, @ fields(ResultRegister, Unused, Unused),
++    SuperBinaryUnary => READ_THROW; layout Scalar; meaning SuperinstructionIndex, @ Register, @ fields(Unused, Unused, Unused),
++    SuperBinaryUnaryJumpFalse => READ_THROW.union(Effect::CONTROL); layout Scalar; meaning JumpTarget; flow ConditionalJump, @ Register, @ fields(SuperinstructionIndex, Register, Unused),
+     GetIterator => READ_THROW; layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, Register, Unused),
+     GetAsyncIterator => READ_THROW; layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, Register, Unused),
+     CreateRegExpLiteral => CALL_EFFECT; layout Scalar; meaning RegExpLiteralSiteIndex, @ Register, @ fields(ResultRegister, Unused, Unused),
+diff --git a/crates/quench-runtime/src/bytecode/disassemble.rs b/crates/quench-runtime/src/bytecode/disassemble.rs
+index a465c2c08..78f35f973 100644
+--- a/crates/quench-runtime/src/bytecode/disassemble.rs
++++ b/crates/quench-runtime/src/bytecode/disassemble.rs
+@@ -87,6 +87,7 @@ fn write_field(
+         | FieldLayout::ReadWriteRegister
+         | FieldLayout::OptionalRegister
+         | FieldLayout::FunctionIndex
++        | FieldLayout::SuperinstructionIndex
+         | FieldLayout::LocalSlot
+         | FieldLayout::ElementCount
+         | FieldLayout::CacheSiteIndex
+@@ -147,6 +148,9 @@ fn write_scalar_field(
+         (InstructionField::B, FieldLayout::FunctionIndex) => {
+             write!(output, " b=function:{}", instruction.known_function_index())
+         }
++        (InstructionField::A, FieldLayout::SuperinstructionIndex) => {
++            write!(output, " a=superinstruction:{}", instruction.superinstruction_index_field())
++        }
+         (InstructionField::A, FieldLayout::LocalSlot) => {
+             write!(output, " source-local={}", instruction.field_value(field))
+         }
+diff --git a/crates/quench-runtime/src/bytecode/instruction.rs b/crates/quench-runtime/src/bytecode/instruction.rs
+index f78fbaa05..6c47f62c3 100644
+--- a/crates/quench-runtime/src/bytecode/instruction.rs
++++ b/crates/quench-runtime/src/bytecode/instruction.rs
+@@ -634,6 +634,15 @@ macro_rules! layout_accessors {
+                 self.imm() as usize
+             }
+ 
++            #[allow(dead_code)]
++            pub(crate) fn superinstruction_index_field(self) -> usize {
++                debug_assert_eq!(
++                    self.op().field_layout(InstructionField::A),
++                    FieldLayout::SuperinstructionIndex
++                );
++                self.a() as usize
++            }
++
+             #[allow(dead_code)]
+             pub(crate) fn capture_depth(self) -> u16 {
+                 debug_assert_eq!(
+diff --git a/crates/quench-runtime/src/bytecode/validate.rs b/crates/quench-runtime/src/bytecode/validate.rs
+index 7378d54b3..694546b52 100644
+--- a/crates/quench-runtime/src/bytecode/validate.rs
++++ b/crates/quench-runtime/src/bytecode/validate.rs
+@@ -141,6 +141,9 @@ fn field_domains_in_bounds(instruction: super::WideInstruction, bounds: Validati
+             FieldLayout::FieldLookupCacheSiteIndex => true,
+             FieldLayout::BooleanFlag => instruction.boolean_field(field).is_some(),
+             FieldLayout::FunctionIndex => usize::from(value) < bounds.functions,
++            FieldLayout::SuperinstructionIndex => {
++                usize::from(value) < bounds.superinstructions
++            }
+             FieldLayout::ElementCount => instruction
+                 .constant_index()
+                 .checked_add(usize::from(value))
+diff --git a/crates/quench-runtime/src/compile/liveness.rs b/crates/quench-runtime/src/compile/liveness.rs
+index 6cacb13b0..3d8025400 100644
+--- a/crates/quench-runtime/src/compile/liveness.rs
++++ b/crates/quench-runtime/src/compile/liveness.rs
+@@ -1,6 +1,6 @@
+ use crate::bytecode::{
+     ControlFlowLayout, FieldLayout, FieldLookup, FieldSite, Function, ImmediateLayout,
+-    ImmediateRole, Instr, InstructionField, Operand, Register, Superinstruction,
++    ImmediateRole, Instr, InstructionField, Op, Operand, Register, Superinstruction,
+ };
+ 
+ pub(super) type MethodSite = (u32, u16, Vec<Register>, Option<(u32, u16)>);
+@@ -136,6 +136,13 @@ pub(super) fn uses(
+         .fold(0, |mask, nested| {
+             mask | uses(*nested, methods, fields, superinstructions)
+         }),
++        _ if instruction.op() == Op::SuperBinaryUnaryJumpFalse => superinstructions
++            [instruction.superinstruction_index_field()]
++        .code
++        .iter()
++        .fold(0, |mask, nested| {
++            mask | uses(*nested, methods, fields, superinstructions)
++        }),
+         _ => 0,
+     };
+     field_reads | result | packed_uses | indexed_uses
+@@ -198,6 +205,13 @@ pub(super) fn definitions(instruction: Instr, superinstructions: &[Superinstruct
+         .fold(0, |mask, nested| {
+             mask | definitions(*nested, superinstructions)
+         }),
++        _ if instruction.op() == Op::SuperBinaryUnaryJumpFalse => superinstructions
++            [instruction.superinstruction_index_field()]
++        .code
++        .iter()
++        .fold(0, |mask, nested| {
++            mask | definitions(*nested, superinstructions)
++        }),
+         _ => 0,
+     };
+     result | field_writes | packed_definitions | indexed_definitions
+diff --git a/crates/quench-runtime/src/compile/rewrite.rs b/crates/quench-runtime/src/compile/rewrite.rs
+index 44e54a12a..3bf401fed 100644
+--- a/crates/quench-runtime/src/compile/rewrite.rs
++++ b/crates/quench-runtime/src/compile/rewrite.rs
+@@ -190,15 +190,26 @@ pub(super) fn apply(
+ 
+ struct SuperRule {
+     pattern: &'static [Op],
+-    fuse: fn(&[Instr], &mut Vec<Superinstruction>) -> Option<Instr>,
++    fuse: fn(&[Instr], Option<Instr>, &mut Vec<Superinstruction>) -> Option<Instr>,
+ }
+ 
+ const CONST_ARRAY_OBJECT2: [Op; 4] = [Op::MakeConstArray, Op::Binary, Op::Binary, Op::MakeObject2];
+-
+-const SUPER_RULES: &[SuperRule] = &[SuperRule {
+-    pattern: &[Op::MakeConstArray, Op::Binary, Op::Binary, Op::MakeObject2],
+-    fuse: fuse_const_array_object2,
+-}];
++const BINARY_UNARY_JUMP_FALSE: [Op; 3] = [Op::Binary, Op::Unary, Op::JumpFalse];
++
++const SUPER_RULES: &[SuperRule] = &[
++    SuperRule {
++        pattern: &BINARY_UNARY_JUMP_FALSE,
++        fuse: fuse_binary_unary_jump_false,
++    },
++    SuperRule {
++        pattern: &[Op::Binary, Op::Unary],
++        fuse: fuse_binary_unary,
++    },
++    SuperRule {
++        pattern: &[Op::MakeConstArray, Op::Binary, Op::Binary, Op::MakeObject2],
++        fuse: fuse_const_array_object2,
++    },
++];
+ 
+ fn rewrite_super_window(
+     function: &mut BcFunction,
+@@ -228,7 +239,8 @@ fn rewrite_super_window(
+             {
+                 return None;
+             }
+-            (rule.fuse)(window, superinstructions).map(|instruction| (instruction, width))
++            (rule.fuse)(window, old.get(index + width).copied(), superinstructions)
++                .map(|instruction| (instruction, width))
+         });
+         if let Some((instruction, width)) = replacement {
+             for offset in 1..width {
+@@ -258,6 +270,7 @@ fn rewrite_super_window(
+ 
+ fn fuse_const_array_object2(
+     window: &[Instr],
++    _: Option<Instr>,
+     superinstructions: &mut Vec<Superinstruction>,
+ ) -> Option<Instr> {
+     let code: [Instr; 4] = window.try_into().ok()?;
+@@ -285,6 +298,64 @@ fn fuse_const_array_object2(
+     ))
+ }
+ 
++fn fuse_binary_unary_jump_false(
++    window: &[Instr],
++    _: Option<Instr>,
++    superinstructions: &mut Vec<Superinstruction>,
++) -> Option<Instr> {
++    let [binary, unary, branch]: [Instr; 3] = window.try_into().ok()?;
++    if binary.result_flags() != 0
++        || unary.result_flags() != 0
++        || binary.result_register() != unary.register_b()
++        || unary.result_register() != branch.register_a()
++    {
++        return None;
++    }
++    let site = u16::try_from(superinstructions.len()).ok()?;
++    let instruction = Instr::try_new(
++        Op::SuperBinaryUnaryJumpFalse,
++        site,
++        branch.register_a(),
++        0,
++        branch.jump_target(),
++    )?;
++    let nop = Instr::new(Op::Nop, 0, 0, 0, 0);
++    superinstructions.push(Superinstruction {
++        code: [binary, unary, nop, nop],
++    });
++    Some(instruction)
++}
++
++fn fuse_binary_unary(
++    window: &[Instr],
++    next: Option<Instr>,
++    superinstructions: &mut Vec<Superinstruction>,
++) -> Option<Instr> {
++    let [binary, unary]: [Instr; 2] = window.try_into().ok()?;
++    if binary.result_flags() != 0
++        || unary.result_flags() != 0
++        || next.is_some_and(|instruction| {
++            instruction.op() == Op::JumpFalse
++                && instruction.register_a() == unary.result_register()
++        })
++    {
++        return None;
++    }
++    let site = superinstructions.len();
++    let instruction = Instr::try_new(
++        Op::SuperBinaryUnary,
++        0,
++        0,
++        0,
++        u32::try_from(site).ok()?,
++    )?;
++    let nop = Instr::new(Op::Nop, 0, 0, 0, 0);
++    superinstructions.push(Superinstruction {
++        code: [binary, unary, nop, nop],
++    });
++    Some(instruction)
++}
++
+ pub(super) fn protected_positions(
+     code: &[Instr],
+     handlers: &[crate::bytecode::Handler],
+diff --git a/crates/quench-runtime/src/vm/dispatch.rs b/crates/quench-runtime/src/vm/dispatch.rs
+index 46ba9a381..57f50f1c8 100644
+--- a/crates/quench-runtime/src/vm/dispatch.rs
++++ b/crates/quench-runtime/src/vm/dispatch.rs
+@@ -400,6 +400,12 @@ impl<H: Host> Vm<H> {
+                     return Ok(StepResult::Return(value));
+                 }
+             }
++            Op::SuperBinaryUnaryJumpFalse => {
++                self.execute_binary_unary_jump_false(p, f, i, pc)?;
++            }
++            Op::SuperBinaryUnary => {
++                self.execute_binary_unary(p, f, i)?;
++            }
+             Op::MakeArray => {
+                 let v = self.heap.alloc(Cell::Array {
+                     object: Self::empty_object(self.array_prototype_for_realm(self.realm.globals)),
+diff --git a/crates/quench-runtime/src/vm/superinstruction.rs b/crates/quench-runtime/src/vm/superinstruction.rs
+index 0b6eecb45..ff87f80ad 100644
+--- a/crates/quench-runtime/src/vm/superinstruction.rs
++++ b/crates/quench-runtime/src/vm/superinstruction.rs
+@@ -1,6 +1,47 @@
+ use super::*;
+ 
+ impl<H: Host> Vm<H> {
++    pub(super) fn execute_binary_unary(
++        &mut self,
++        program: &ResidualProgram,
++        frame: usize,
++        instruction: WideInstruction,
++    ) -> Result<(), JsError> {
++        let [binary, unary, _, _] =
++            program.superinstructions[instruction.superinstruction_index()].code;
++        debug_assert_eq!(binary.op(), Op::Binary);
++        debug_assert_eq!(unary.op(), Op::Unary);
++        self.execute_super_binary(program, frame, binary)?;
++        let value = self.unary(program, unary.unary_operator(), self.read(frame, unary.register_b()))?;
++        self.write(frame, unary.result_register(), value);
++        Ok(())
++    }
++
++    pub(super) fn execute_binary_unary_jump_false(
++        &mut self,
++        program: &ResidualProgram,
++        frame: usize,
++        instruction: WideInstruction,
++        pc: &mut usize,
++    ) -> Result<(), JsError> {
++        let [binary, unary, _, _] =
++            program.superinstructions[instruction.superinstruction_index_field()].code;
++        debug_assert_eq!(binary.op(), Op::Binary);
++        debug_assert_eq!(unary.op(), Op::Unary);
++        self.execute_super_binary(program, frame, binary)?;
++        let value = self.unary(program, unary.unary_operator(), self.read(frame, unary.register_b()))?;
++        self.write(frame, unary.result_register(), value);
++        let branch_value = self.read(frame, instruction.register_b());
++        let truthy = self.truthy(branch_value);
++        #[cfg(feature = "profile-aggregate")]
++        self.profile
++            .branch_value(branch_value.profile_kind() as usize, truthy);
++        if !truthy {
++            *pc = instruction.jump_target() as usize;
++        }
++        Ok(())
++    }
++
+     pub(super) fn execute_const_array_object2(
+         &mut self,
+         program: &ResidualProgram,

@@ -1,0 +1,65 @@
+{
+  "schema": 1,
+  "task": "21",
+  "source_head": "44b1079562f67c7c3ad9e573d0148720816a84a4",
+  "source_state": "dirty shared worktree",
+  "qualification": "Focused shared-VM Node compatibility slice; unrelated pending work was preserved and the full implemented inventory was not run.",
+  "platform": "Apple M4, Darwin arm64",
+  "node": "v26.10.0",
+  "build": {
+    "command": "cargo build -p quench-node --bin quench-node-next",
+    "profile": "dev",
+    "binary": "target/debug/quench-node-next",
+    "binary_sha256": "c549fdaaaacfacba9450dd2f5553f6329a31f1c39f69ad81ffa63fd9527ac6e2"
+  },
+  "source_sha256": {
+    "crates/quench-node/src/host.rs": "1e94689dd8ab06be455bac2defc9c50c1c7fe9ae3690239738acdc0063cca522",
+    "crates/quench-node/src/host/shared_vm.rs": "0abcbfc503aa5f336b82e5701f5ffa2f22180f3a3a4179cc36917066eb470394",
+    "crates/quench-node/src/host/shared_vm/commonjs.rs": "0659e2f5fe672a8875013b192249e8b16b0bca81a999b6ef444c726afd5e8e1e",
+    "crates/quench-node/src/modules/assert.rs": "ef88dc97f9ac7ef3758ead75274fd404929049a07ab2a273954773f6371e5464",
+    "crates/quench-node/src/modules/assert/shared_vm.rs": "7a90f7d0c7cc9fd7846bf5444801aba12bb336c5ce7f550d604fe8c1ac3e38c6"
+  },
+  "cases": [
+    {
+      "path": "tests/node-compat/stage-2782/process-uptime-shape.js",
+      "source_sha256": "4cb8e53af95293d652cdc60a13a8615211567695e7ca8a8b923be4dc6cdae08b",
+      "invoked_copy": "target/iteration/process-uptime-shape.cjs",
+      "node": { "exit": 0, "stdout": "", "stderr": "" },
+      "quench": { "exit": 0, "stdout": "", "stderr": "" }
+    },
+    {
+      "path": "tests/node-compat/stage-2070/require-missing-package-error.js",
+      "source_sha256": "b9047862f087e487ff90c60bf276ec5ea829261340dfbf67e329a4e7954be462",
+      "invoked_copy": "target/iteration/require-missing-package-error.cjs",
+      "node": { "exit": 0, "stdout": "", "stderr": "" },
+      "quench": { "exit": 0, "stdout": "", "stderr": "" }
+    }
+  ],
+  "identity_control": {
+    "copy": "target/iteration/assert-module-identity.cjs",
+    "checks": [
+      "assert === node:assert",
+      "assert.strict === assert/strict === node:assert/strict",
+      "assert.ok === assert/strict.ok",
+      "assert.strictEqual === assert/strict.strictEqual"
+    ],
+    "node_exit": 0,
+    "quench_exit": 0
+  },
+  "matcher_validation_control": {
+    "copy": "target/iteration/assert-throws-empty-matcher.cjs",
+    "control": "assert.throws invokes the callback before rejecting an empty expected object when the callback throws.",
+    "node_exit": 0,
+    "quench_exit": 0
+  },
+  "invocation": "Fixture bytes were copied unchanged to .cjs paths so Node and quench-node-next execute CommonJS under the repository's package type:module boundary.",
+  "implemented_slice": [
+    "One retained shared-VM assert export serves assert and node:assert; assert/strict and node:assert/strict derive from its strict property.",
+    "Callable assert/ok, strictEqual using SameValue, and synchronous throws with enumerable object-property matching."
+  ],
+  "limits": [
+    "This is not full assert compatibility or the implemented Node suite gate.",
+    "throws constructor, RegExp and predicate matching, function messages, doesNotThrow, async assertions, deep/loose comparisons, and detailed failure formatting remain open.",
+    "No Test262, Wasm, full Node compatibility suite, performance or RSS claim is made."
+  ]
+}

@@ -1,0 +1,13 @@
+{
+  "status": "complete",
+  "commands": [
+    [
+      "bash",
+      "/workspace/quench/work/owned-script-policy/extras.sh"
+    ]
+  ],
+  "exit": 0,
+  "supervisor_pid": 3286976,
+  "session_id": 3286975,
+  "utc": "2026-10-16T11:35:45.538773+00:00"
+}

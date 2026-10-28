@@ -1,0 +1,57 @@
+{
+  "scope": "Complete unchanged parallel inventory measured with frozen b926a42b5 binaries",
+  "source_commit": "b926a42b5e208cac84c120c9ac8336330e04a334",
+  "oracle": "v27.0.0-nightly20260819c79868f102",
+  "inventory_hash": "1e51ca4121020d14",
+  "fixture_commit": "55e4ca33f3a6dfe364bd9558b726576a6d1a2fba",
+  "total": 4727,
+  "counts": {
+    "timeout": 129,
+    "fail": 2751,
+    "pass": 1165,
+    "skip": 678,
+    "crash": 4
+  },
+  "jobs": 4,
+  "timeout_secs": 10,
+  "raw_results": "work/parallel-child.json",
+  "log": "work/parallel-child.log",
+  "frozen_binary_hashes": [
+    "3c4b1f447432de4bcdc4468dbc5a91683f198d23abf7e48e3b13700d77764c09  work/sweep-child-bin/run-parallel",
+    "3d80f2955aa24052bb6ba68b77734af35c68e18c6669cea7cae9897240ecb3ad  work/sweep-child-bin/quench-node"
+  ],
+  "new_passes": [
+    "test-child-process-exec-abortcontroller-promisified.js",
+    "test-child-process-exec-cwd.js",
+    "test-child-process-exec-encoding.js",
+    "test-child-process-exec-error.js",
+    "test-child-process-exec-kill-throws.js",
+    "test-child-process-exec-maxbuf.js",
+    "test-child-process-exec-std-encoding.js",
+    "test-child-process-exec-stdout-stderr-data-string.js",
+    "test-child-process-exec-timeout-expire.js",
+    "test-child-process-exec-timeout-kill.js",
+    "test-child-process-exec-timeout-not-expired.js",
+    "test-child-process-execFile-promisified-abortController.js",
+    "test-child-process-execfilesync-maxbuf.js",
+    "test-child-process-execsync-maxbuf.js",
+    "test-child-process-spawnsync-maxbuf.js",
+    "test-fs-readfile-eof.js",
+    "test-fs-readfile-pipe-large.js",
+    "test-fs-readfile-pipe.js",
+    "test-fs-readfilesync-pipe-large.js",
+    "test-net-socket-destroy-twice.js",
+    "test-pipe-head.js"
+  ],
+  "prior_passes_lost": [
+    [
+      "test-weakref.js",
+      "fail"
+    ]
+  ],
+  "memory_events_before": "low 0\nhigh 0\nmax 4329128\noom 167\noom_kill 40\noom_group_kill 0\n",
+  "memory_events_after": "low 0\nhigh 0\nmax 4357924\noom 168\noom_kill 41\noom_group_kill 0\n",
+  "memory_qualification": "max pressure increased 28796; one additional OOM kill (net-write-fully-async-buffer signal 9).",
+  "remaining": "Parallel goal incomplete; weakref follow-up pending, fs readFile oversized allocation and net write backpressure being fixed.",
+  "performance_claim": false
+}

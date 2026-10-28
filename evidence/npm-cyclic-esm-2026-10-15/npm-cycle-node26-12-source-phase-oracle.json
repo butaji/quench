@@ -1,0 +1,13 @@
+{
+  "exit_code": 0,
+  "stdout": "true\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ndone\n",
+  "stderr": "",
+  "modules": {
+    "bad.mjs": "import source x from './leaf.mjs';globalThis.qq_bad_runs++;\\n",
+    "effect.mjs": "globalThis.qq_effect_runs++;export const value=43;\\n",
+    "leaf.mjs": "globalThis.qq_source_runs++;export let answer=42;export function bump(){answer++;}\\n",
+    "mixed.mjs": "import './effect.mjs';import source x from './leaf.mjs';globalThis.qq_bad_runs++;\\n",
+    "parent.mjs": "import './bad.mjs';globalThis.qq_bad_runs++;\\n",
+    "reexport.mjs": "import source x from './leaf.mjs';export {x};\\n"
+  }
+}

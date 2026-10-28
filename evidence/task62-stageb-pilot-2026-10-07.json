@@ -1,0 +1,97 @@
+{
+  "schema": 1,
+  "status": "diagnostic-only",
+  "source_revision": "33fcbb7342af541aa8ac4003db7f45a119894f0e",
+  "source_dirty": true,
+  "host": {
+    "model": "Mac16,10",
+    "os": "Darwin 25.5.0 arm64",
+    "memory_bytes": 17179869184,
+    "rustc": "1.99.0"
+  },
+  "corpus": {
+    "repository_pin": "1664850413f0dcf79a25c9fc02c50ee52ae70d0a",
+    "checkout": "44115f9c2bdc6725677f44e40f149d9478d215b1",
+    "checkout_clean": false,
+    "fixture_set_matches": true
+  },
+  "campaign": {
+    "rounds": 1,
+    "timeout_ms": 300000,
+    "all_eight_fixtures_valid": true,
+    "all_outputs_equal": true,
+    "paired_intervals_calculated": false,
+    "qualification_ready": false,
+    "runner_source_sha256": "b4fb220d9d83718cab0d9bf175a02ef085ccb2103f9677ec3f9a1dba5a8342c2",
+    "runner_binary_sha256": "54f89dd9a6a489031d4369955f2150ee9802944f61c2e4a4d5b7e6dece84f327",
+    "raw_report": "target/iteration/stageb-pilots/all-2026-10-07-sanitized.json",
+    "raw_report_sha256": "24d4ff05fde77455b2c646cee677fcc3da4a69e97875efcbc6238cdd43f64a7f"
+  },
+  "engines": {
+    "quench": {
+      "version": "shared-VM interpreter candidate",
+      "binary_sha256": "4ce017390cf7eea9966499b1ab565c2154e171f6ca91c8e533e8c66e20729e84",
+      "jit_mode": "interpreter"
+    },
+    "quickjs": {
+      "version": "2026-06-04",
+      "binary_sha256": "60baacdd677a07f27b0aa95b9ad640de33c3442cbf65c9fb4d803017ab3c4811",
+      "jit_mode": "interpreter"
+    },
+    "bun_jsc": {
+      "version": "1.4.2",
+      "binary_sha256": "b36d2e9d9bd50e3a3b6a8f2d481839417d6600d4c1753411b094ee0da3222cef",
+      "jit_mode": "disabled",
+      "proof": "JSC option dump reports useJIT=false"
+    },
+    "node_v8": {
+      "version": "26.10.0",
+      "binary_sha256": "4ca2a42d6d55a834b04d0892c5bc646a6869fcebec57f91c849dac0aa1031610",
+      "jit_mode": "disabled",
+      "proof": "Node process.execArgv includes --jitless"
+    }
+  },
+  "fixtures": [
+    {
+      "name": "Crypto",
+      "score": { "quench": 136.0, "quickjs": 2546.0, "bun_jsc": 4187.0, "node_v8": 2581.0 },
+      "max_rss_bytes": { "quench": 26591232, "quickjs": 3211264, "bun_jsc": 36061184, "node_v8": 44974080 }
+    },
+    {
+      "name": "DeltaBlue",
+      "score": { "quench": 65.0, "quickjs": 1859.0, "bun_jsc": 2277.0, "node_v8": 2801.0 },
+      "max_rss_bytes": { "quench": 29016064, "quickjs": 3145728, "bun_jsc": 38027264, "node_v8": 51363840 }
+    },
+    {
+      "name": "EarleyBoyer",
+      "score": { "quench": 207.0, "quickjs": 5610.0, "bun_jsc": 9758.0, "node_v8": 12502.0 },
+      "max_rss_bytes": { "quench": 68255744, "quickjs": 17498112, "bun_jsc": 37699584, "node_v8": 112443392 }
+    },
+    {
+      "name": "NavierStokes",
+      "score": { "quench": 54.6, "quickjs": 4773.0, "bun_jsc": 4759.0, "node_v8": 3575.0 },
+      "max_rss_bytes": { "quench": 29523968, "quickjs": 5636096, "bun_jsc": 20611072, "node_v8": 49922048 }
+    },
+    {
+      "name": "RayTrace",
+      "score": { "quench": 195.0, "quickjs": 4340.0, "bun_jsc": 6099.0, "node_v8": 8354.0 },
+      "max_rss_bytes": { "quench": 24035328, "quickjs": 2834432, "bun_jsc": 36945920, "node_v8": 52264960 }
+    },
+    {
+      "name": "RegExp",
+      "score": { "quench": 20.2, "quickjs": 1048.0, "bun_jsc": 1690.0, "node_v8": 6049.0 },
+      "max_rss_bytes": { "quench": 65601536, "quickjs": 7962624, "bun_jsc": 34947072, "node_v8": 55345152 }
+    },
+    {
+      "name": "Richards",
+      "score": { "quench": 67.0, "quickjs": 1970.0, "bun_jsc": 3064.0, "node_v8": 2626.0 },
+      "max_rss_bytes": { "quench": 22446080, "quickjs": 2736128, "bun_jsc": 22020096, "node_v8": 44843008 }
+    },
+    {
+      "name": "Splay",
+      "score": { "quench": 1022.0, "quickjs": 9396.0, "bun_jsc": 10121.0, "node_v8": 15051.0 },
+      "max_rss_bytes": { "quench": 307101696, "quickjs": 151207936, "bun_jsc": 58441728, "node_v8": 404783104 }
+    }
+  ],
+  "interpretation": "Single-round values are gap-finding only. Quench scores trail all references and QuickJS has lower RSS in every fixture; use repeated matched rounds on the pinned corpus and clean Stage-A-qualified source before ranking or optimizing."
+}

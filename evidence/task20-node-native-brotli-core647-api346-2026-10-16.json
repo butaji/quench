@@ -1,0 +1,178 @@
+{
+  "scope": "Rust-owned Brotli native ABI with unchanged configured Node stream algorithms",
+  "source_commit": "77f37473211c15e28d547bf7706efe2b51d7f9a2",
+  "branch": "v2-cloud-node",
+  "latest_stable": "v26.12.0",
+  "checks": {
+    "core647": {
+      "path": "work/native-brotli-abi/core-default.log",
+      "bytes": 56732,
+      "sha256": "eb2f06866cfc3869a76ddeed88a701e138906094919418b2c5f45ffb0e04412a"
+    },
+    "api346": {
+      "path": "work/native-brotli-abi/all-api.log",
+      "bytes": 28256,
+      "sha256": "6e23e9665ed23540bb54489366bdadd0d9bed4ff75aa151d6035354c812b316a"
+    },
+    "targeted": {
+      "path": "work/native-brotli-abi/targeted.log",
+      "bytes": 423,
+      "sha256": "dc5a440461781cc3ee74893ce98a108a2a44614d3d1617fa672eaa32c308aa93"
+    },
+    "framework43": {
+      "path": "work/native-brotli-abi/framework.log",
+      "bytes": 3798,
+      "sha256": "b41881f94821125815bc87efbbbd7d26b13fd072686394014795864fa55f2ae8"
+    },
+    "shared7": {
+      "path": "work/native-brotli-abi/shared.log",
+      "bytes": 1008,
+      "sha256": "d4c0cf68927e0f2abb23c35e62b83a317688802501654d5cadbd2466c08bffbb"
+    },
+    "workspace": {
+      "path": "work/native-brotli-abi/workspace.log",
+      "bytes": 519,
+      "sha256": "b4306b12c91f6c63bb031ef6d4ca140e96b174b95fe282372489ebacbbc8868d"
+    },
+    "paired": {
+      "path": "work/native-brotli-abi/paired-final-build.log",
+      "bytes": 365,
+      "sha256": "e743e45b9de67a80f248b2e457a1cc6833ffb1b6ccebc1098b1c716473f4ce0a"
+    },
+    "portable": {
+      "path": "work/native-brotli-abi/portable-fallback.log",
+      "bytes": 284,
+      "sha256": "8b3bbd2714ad2401bbf47ce48ece7b4b38414d43b168faa73dd45dcdda798497"
+    }
+  },
+  "source": {
+    "path": "work/native-brotli-bin/source-sha256.json",
+    "bytes": 76176,
+    "sha256": "dc331b06abb02a4885b07e416a1e7586bfd9d98b24ba2949228b3af5fcc60b22"
+  },
+  "binaries": {
+    "path": "work/native-brotli-bin/sha256.txt",
+    "bytes": 304,
+    "sha256": "e50d94107216863f11215d8b1c021e2ec7c15b017203522d3ac58e41cf64a21e"
+  },
+  "brotli": {
+    "provenance": {
+      "node_source": "26e72d85a611e222e3f06025de8a3c496923bacd",
+      "version": "1.2.0",
+      "source_sha256": {
+        "deps/brotli/c/common/constants.c": "630f40ca2ac787025175eaf39b9569a60aff6ddec7e5085197e4cb0d43641b0d",
+        "deps/brotli/c/common/context.c": "c9aa1acb35af38c90c4a38ba168885b649838236b2d57adb5e76d687bdbe252e",
+        "deps/brotli/c/common/dictionary.c": "0890056e4ae595efab6bbf3bf1fd244332e2cfad3adcb9f5793ee29a8f3a18c5",
+        "deps/brotli/c/common/platform.c": "fce95889e6b1d1a91c0baa2ee0f3b83a41b670a4f51a5053185ffbed6bde71fd",
+        "deps/brotli/c/common/shared_dictionary.c": "0cf405b0155230e060b9e0855bb22379037362948828b98338f203be07923d0e",
+        "deps/brotli/c/common/transform.c": "47f229a79c3542ea57ec07145d7eaf77300a02816d95695332f9911ea19d6ab3",
+        "deps/brotli/c/dec/bit_reader.c": "ad4a7608173afe62bc7b36d83768e4ac73dadc4a6272437340ee46e8a61a0d92",
+        "deps/brotli/c/dec/decode.c": "f7749b1296128c0add4eaa454b9d82ee1c7b0451c1c9ed47d96733e6de6f2d7b",
+        "deps/brotli/c/dec/huffman.c": "b7c973c2918c6765c4eb534c3ae314055d535b6d1fafb021cee5f7eae170aae6",
+        "deps/brotli/c/dec/prefix.c": "0a31304f440f7bb2017d52b83ae35cb428cbc5ac2fc172c8eec2fea449c2f7cd",
+        "deps/brotli/c/dec/state.c": "66a7c3d9c01cda374d33d3693ba45d059ff00b12114a8844ee4f2519ba2af14e",
+        "deps/brotli/c/dec/static_init.c": "a4a308e394fe05a124d919977b3f457a06363615a882dce058f329edcf7dc851",
+        "deps/brotli/c/enc/backward_references.c": "2e4320bf880dd0e03781fbd56159da069325da73ad47c1fdae46872b1db41463",
+        "deps/brotli/c/enc/backward_references_hq.c": "fd418f50cea8f5a579d20b40ff7040e9ff4029e151095f4eaf9c1b6bcf15c680",
+        "deps/brotli/c/enc/bit_cost.c": "544c6af87753f9e540873c2b7984d73297a53576fc0b352b34121687be2f08e4",
+        "deps/brotli/c/enc/block_splitter.c": "34699e570f752cf0bd2643cb8d6a6b17e79add6856bdaf0b6007927fe509c5b1",
+        "deps/brotli/c/enc/brotli_bit_stream.c": "ea95e71753a6b1b651e5315013900c5d79eb074245be750d1afc3ec5a8b19982",
+        "deps/brotli/c/enc/cluster.c": "23d58bc8b628c9d168f8911d9304d4964e0f992f68e6d62daefe7eb837b07cb4",
+        "deps/brotli/c/enc/command.c": "3f72daa062889ce5e662993095da5477f47815896867476b3f7b34d3a67fbd9d",
+        "deps/brotli/c/enc/compound_dictionary.c": "4046dd0040ad51d4a550a747e5c4643d7cf801de426698e7566e8e2fc0c1c9ae",
+        "deps/brotli/c/enc/compress_fragment.c": "0e14cfce93c2a461a5d6be626e9ed30340bab980ccc76f502a23d2c112c7c94f",
+        "deps/brotli/c/enc/compress_fragment_two_pass.c": "938fc18b7a5f1e41f360a167a31a7297920160f08bff92f04d97788c3d32bfd6",
+        "deps/brotli/c/enc/dictionary_hash.c": "1225337a2bad9cc08d72671757682ec90ab99388f00bfa73cd469a5e6e5e9778",
+        "deps/brotli/c/enc/encode.c": "79c4bca6f88d3c8725642c01c7a470d768312d573193a600bd13a02d657b06f7",
+        "deps/brotli/c/enc/encoder_dict.c": "2c538ce0bf35bce2f05b270a2f165793661fc7a427d91f355c2722a3dd345b11",
+        "deps/brotli/c/enc/entropy_encode.c": "ea15125ed036547e57553a56b04ac50eb91a48424ccc5cf29d13433419fa4723",
+        "deps/brotli/c/enc/fast_log.c": "7e08232d781a8e4a92f59869a492b0a8982cb3e3c51b2d4be808f59f8643dc88",
+        "deps/brotli/c/enc/histogram.c": "cf8cbd4310f9b41a718ca200bfd8f7c07159729e51a5aeda1f2f809a954260bf",
+        "deps/brotli/c/enc/literal_cost.c": "70b9efae900d89ba610087113bea9225debbae5db21825a9bad0051c1ea5451b",
+        "deps/brotli/c/enc/memory.c": "a491c8110e9e68db26c10e008abfc69c07d6756f2b9c1f56611295aad7a817d2",
+        "deps/brotli/c/enc/metablock.c": "8217f29edd2366110cb235e2e3e7e714ba89c256701bfd0b9bb001e83a7b9391",
+        "deps/brotli/c/enc/static_dict.c": "9810eb7f9ab63a5720bb4a7fd089f3cbe787b10875129f1d1ed1021bc2416724",
+        "deps/brotli/c/enc/static_dict_lut.c": "c06f693a31fe244858d0ec8268387657800ef42c768571be9e96fef26951d988",
+        "deps/brotli/c/enc/static_init.c": "c62f0f3c81ea6bd198e5dff2f804e78a94ac10bf78cf5c1dbb72b28ab5a0cddd",
+        "deps/brotli/c/enc/utf8_util.c": "15c394fe3284863e026511f8ba62dfe75148f286f59e2a8fd2f744bc00c8cda9"
+      },
+      "archive_sha256": "dd9005f7541ab4de214fb7bb133a15a67f277a3f6ccb7e9384d6526f0d348cb8",
+      "compiler": "gcc (Debian 14.2.0-19) 14.2.0",
+      "platform": "Linux-6.18.44-x86_64-with-glibc2.41"
+    },
+    "build": {
+      "path": "work/native-zlib-abi/matching-brotli-build.log",
+      "bytes": 39,
+      "sha256": "c476f1d0fa4cd5222c747c468dad14ba8317ddf763ab56fc1b00b07c897949a2"
+    },
+    "oracle": {
+      "path": "work/native-brotli-abi/oracle.log",
+      "bytes": 741,
+      "sha256": "b305135a4636a87ef2119542d33a1603bb33ec84e7556d59858e00cf49eb9a37"
+    },
+    "candidate": {
+      "path": "work/native-brotli-abi/candidate.log",
+      "bytes": 741,
+      "sha256": "b305135a4636a87ef2119542d33a1603bb33ec84e7556d59858e00cf49eb9a37"
+    }
+  },
+  "family": {
+    "counts": {
+      "pass": 44,
+      "timeout": 1,
+      "fail": 8
+    },
+    "total": 53,
+    "inventory": "647b9535ab7f6745",
+    "gained": [
+      "test-stream-iter-transform-buffering.js"
+    ],
+    "lost": [],
+    "raw": {
+      "path": "work/native-brotli-abi/canonical-family.json",
+      "bytes": 130399,
+      "sha256": "d1f4219982dd2f7245b18a2b4d155304d1090576bcfd87c57074f8b15bcad25d"
+    },
+    "official_control": {
+      "path": "work/cli-options-policy/official-family.json",
+      "bytes": 19167,
+      "sha256": "2df2983c29f673e872c96e36592c8d2d18b8f6792f56f16e18df25c658efbbff"
+    }
+  },
+  "fixed_work": {
+    "valid": 8,
+    "clean": 0,
+    "speed_claim": false,
+    "raw": {
+      "path": "work/native-brotli-fixed-work.json",
+      "bytes": 153054,
+      "sha256": "4b82746c25bbf1b1844e741b6e89d45d155c9e8cd8520cdf03ef7b4f821e377f"
+    }
+  },
+  "design": [
+    "Matching Brotli1.2.0 built from actual configured Node checkout; Rust owns encoder/decoder, prepared raw dictionary and dictionary bytes with correct destruction order.",
+    "The existing real native handle identity, WeakMap payload, reusable worker pool, input/output counts and deferred close lifecycle are shared across codecs. No fake callbacks or guest Node engine.",
+    "Actual C compression and decoder errors feed native completion, initialization both emits onerror and throws the stable Node initialization exception.",
+    "Normal integration1a1cc82f6 includes genuine CallSite, Core return-boundary and actual ICU metadata changes, covered by fresh647 Core and346 latest-stable API tests."
+  ],
+  "limitations": [
+    "Goal remains open. Latest completed full inventories remain1770/5015stable and1799/4727pinned on earlier frozen63bb54bdd. Selected gain is not added to full totals.",
+    "Selected family44/53 still has8failures and1timeout. Most compression failures now reach missing Zstd constructors.",
+    "Brotli native handles are enabled when the explicitly built matching native dependency is present; other hosts retain existing behavior. Portable check covers buildability without optional native codecs, not byte parity or complete API parity there.",
+    "Native reset/params/CRC and full public compression-provider convergence remain incomplete; no fabricated methods are exported.",
+    "Core first link exhausted disk before any test execution; failed log and incomplete output hash retained. Reclaimed redundant clean worktree evidence checkout and reran unchanged settings successfully.",
+    "All8 fixed-work valid, zero clean rounds, no performance claim."
+  ],
+  "disk_recovery": {
+    "failed": {
+      "path": "work/native-brotli-abi/core-default-disk-full.log",
+      "bytes": 5764,
+      "sha256": "901553d38a5d634b818e5ec3073306aa7fe1ddad857e5b3e50c107091fa60e8e"
+    },
+    "removed_incomplete": {
+      "path": "work/native-brotli-abi/failed-core-link-reclamation.json",
+      "bytes": 254,
+      "sha256": "52d567fbbfcd6aec5a55eaf474ec4bb452430fbd2570172135c685dbbd9063bf"
+    }
+  }
+}

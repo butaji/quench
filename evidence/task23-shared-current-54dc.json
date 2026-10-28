@@ -1,0 +1,42 @@
+{
+  "task": "23",
+  "scope": "Complete pinned Wasm suite through the explicit shared-VM runner.",
+  "command": "WASM_FILE_TIMEOUT_MS=60000 cargo run --profile iteration -p quench-wasm-test --bin run-shared -- --report target/iteration/task23-shared-current-54dc.json crates/quench-wasm-test/testsuite",
+  "result": {
+    "files": 288,
+    "directives": 67124,
+    "passed": 67124,
+    "failed": 0,
+    "file_errors": 0,
+    "inventory_complete": true,
+    "manifest_algorithm": "json-array-v1",
+    "input_manifest_sha256": "253015f865d28ed95454418307549925d84275d7f7a15556973fdbcd76ec240b",
+    "outcome_manifest_sha256": "561f4182b049bb7c7e95286f611d6a418c5f959ade6d74885e7c158cb25f220e",
+    "matches_previous_complete_report": true
+  },
+  "inputs": {
+    "suite_revision": "67c8b9dc32c47d61c05a1681df349d01c85fa8ff",
+    "suite_clean": true,
+    "same_288_path_hash_pairs_as_previous_report": true,
+    "same_288_per_file_execution_records_as_previous_report": true,
+    "same_67124_directive_identities_and_classifications_as_previous_report": true,
+    "previous_report": "target/iteration/task23-shared-current.json",
+    "previous_report_sha256": "c8e73cec7b720f4c31805b7447663ad3b22c3a4326b148a114ed3dfede07c75c"
+  },
+  "provenance": {
+    "source_revision": "54dc3d72d3ea64df96674d4020489707c78b6454",
+    "source_dirty": true,
+    "profile": "iteration",
+    "runner": {
+      "path": "target/iteration/run-shared",
+      "sha256": "5838205c2dba17401c595829344188e532a7e02bcb86445fa50349df8778d087"
+    },
+    "report": {
+      "path": "target/iteration/task23-shared-current-54dc.json",
+      "sha256": "72f8cb955467b9d9ab08a1f4b90fbde0738b6c7dea63fa86c39b0138fa8dc476"
+    },
+    "host": "macos-aarch64",
+    "file_timeout_ms": 60000
+  },
+  "limitations": "The current complete run uses a dirty source snapshot. Its 288 input path/hash pairs and 67,124 directive identity/classification rows exactly match the previous complete report, but it is not a repeated run of the same binary. This is not the integrated task24 build. Tasks 37 and 40 remain dependencies of task 23; production runner promotion and legacy removal remain at task 27."
+}

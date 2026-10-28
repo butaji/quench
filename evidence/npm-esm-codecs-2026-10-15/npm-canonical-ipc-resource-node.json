@@ -1,0 +1,5 @@
+{"stage":"setup","fd":25,"connected":true,"ref":false,"resources":["PipeWrap","PipeWrap","PipeWrap"]}
+{"stage":"tick","elapsed":103,"fd":25,"connected":true,"resources":["PipeWrap","PipeWrap","PipeWrap","Timeout"]}
+{"stage":"tick","elapsed":204,"fd":25,"connected":true,"resources":["PipeWrap","PipeWrap","PipeWrap","Timeout"]}
+{"stage":"tick","elapsed":304,"fd":25,"connected":true,"resources":["PipeWrap","PipeWrap","PipeWrap","Timeout"]}
+{"complete":true,"code":0,"signal":null,"stdout":"child-start\nchild-end\n","stderr":"","elapsed":328}

@@ -1,0 +1,722 @@
+{
+  "schema": 13,
+  "suite": "jet-stream3",
+  "jit_mode": "no-jit",
+  "jit_diagnostics": false,
+  "jit_wasm_root": null,
+  "jit_wasm_root_only": false,
+  "jit_wasm_root_first": false,
+  "jit_wasm_selective": false,
+  "jit_wasm_memcpy_ab": false,
+  "jit_wasm_memcpy_raw_ab": false,
+  "jit_wasm_memcpy_early_ab": false,
+  "jit_wasm_compare_branch_ab": false,
+  "created_unix_ns": 1792357296556240154,
+  "rounds_requested": 3,
+  "timeout_ms": 600000,
+  "source_revision": "7ed0663efad8ffb26c6007f546d51ae19b7d7a38",
+  "source_dirty": true,
+  "corpus": {
+    "pinned_revision": "06785cf861ac44855f168cbbe829278c2802e6de",
+    "checkout_revision": "06785cf861ac44855f168cbbe829278c2802e6de",
+    "checkout_clean": true,
+    "fixture_set_matches": false
+  },
+  "host": {
+    "uname": "Linux f3da3ef8e0e6 6.18.55 #1 SMP Wed Oct 14 19:45:18 UTC 2026 x86_64 GNU/Linux",
+    "rustc": "rustc 1.99.1 (58cf8f9c3 2026-10-13)\nbinary: rustc\ncommit-hash: 58cf8f9c35b355199727627d07ae34a4e2846d67\ncommit-date: 2026-10-13\nhost: x86_64-unknown-linux-gnu\nrelease: 1.99.1\nLLVM version: 23.1.1",
+    "model": null,
+    "memory_bytes": 18882674688,
+    "memory_limit_bytes": 17179869184,
+    "cpu_quota": "400000 100000",
+    "logical_cpus": 4,
+    "process_metrics_backend": "Linux wait4 rusage"
+  },
+  "engines": [
+    {
+      "name": "quench",
+      "executable": "/workspace/quench/target/production/quench-node",
+      "executable_sha256": "e919e2a3ce0e62026a55bbc1242553e084022afa74b80ff06aadcd26e2272473",
+      "version": "Quench shared-VM interpreter build; package 0.1.0",
+      "argv": [],
+      "environment": {
+        "HOME": "/home/agent",
+        "LANG": "C.UTF-8",
+        "LC_ALL": "C.UTF-8",
+        "PATH": "/home/agent/.cargo/bin:/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/override:/opt/codex/runtimes/codex-primary-runtime/dependencies/python/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin:/opt/codex/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/fallback"
+      },
+      "inherits_environment": false,
+      "jit_mode": "interpreter",
+      "jit_proof_command": [
+        "/workspace/quench/target/production/quench-node"
+      ],
+      "jit_proof": "the measured shared VM executes interpreter bytecode; no guest JIT path is enabled",
+      "webassembly": true
+    },
+    {
+      "name": "bun",
+      "executable": "/workspace/.local/bench-runtimes/bun-v1.4.3/bun-linux-x64/bun",
+      "executable_sha256": "7ce7d6b654eddeec20afddf2396317fba6dc19ab52788a27e894e1806bf8f24b",
+      "version": "1.4.3",
+      "argv": [],
+      "environment": {
+        "BUN_JSC_useJIT": "0",
+        "HOME": "/home/agent",
+        "LANG": "C.UTF-8",
+        "LC_ALL": "C.UTF-8",
+        "PATH": "/home/agent/.cargo/bin:/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/override:/opt/codex/runtimes/codex-primary-runtime/dependencies/python/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin:/opt/codex/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/fallback"
+      },
+      "inherits_environment": false,
+      "jit_mode": "disabled-and-probed",
+      "jit_proof_command": [
+        "BUN_JSC_useJIT=0",
+        "BUN_JSC_dumpOptions=1",
+        "/workspace/.local/bench-runtimes/bun-v1.4.3/bun-linux-x64/bun",
+        "-e",
+        "console.log(Bun.version)"
+      ],
+      "jit_proof": "command succeeded and reported \"useJIT=false\": 1.4.3\n\nModified JSC options:\n   dumpOptions=1 (default: 0)\n   useJIT=false (default: true)",
+      "webassembly": true
+    },
+    {
+      "name": "node",
+      "executable": "/workspace/.local/bench-runtimes/node-v26.12.0-linux-x64/bin/node",
+      "executable_sha256": "caa24debe02770c92a70677e2a62ca98890150e7ac1c17bcfe31bcc98cc89943",
+      "version": "v26.12.0",
+      "argv": [
+        "--jitless"
+      ],
+      "environment": {
+        "HOME": "/home/agent",
+        "LANG": "C.UTF-8",
+        "LC_ALL": "C.UTF-8",
+        "PATH": "/home/agent/.cargo/bin:/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/override:/opt/codex/runtimes/codex-primary-runtime/dependencies/python/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin:/opt/codex/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/fallback"
+      },
+      "inherits_environment": false,
+      "jit_mode": "disabled-and-probed",
+      "jit_proof_command": [
+        "/workspace/.local/bench-runtimes/node-v26.12.0-linux-x64/bin/node",
+        "--jitless",
+        "-e",
+        "console.log(process.execArgv.includes('--jitless'))"
+      ],
+      "jit_proof": "command succeeded and reported \"true\": true",
+      "webassembly": false
+    }
+  ],
+  "suite_inputs": [
+    {
+      "path": "quench-bench/jetstream/cli.js",
+      "size_bytes": 5600,
+      "modified_unix_ns": 1792229119091972874,
+      "sha256": "22ee4b987b07940dd7397ed7f88345c71acc415e2549b64bf45ba43f7572e5f0"
+    },
+    {
+      "path": "quench-bench/jetstream/JetStreamDriver.js",
+      "size_bytes": 110633,
+      "modified_unix_ns": 1792229118593919588,
+      "sha256": "f105bddfd402514b2325fe9ea6e1df5ce776a4ad4570a8006c7c8559159440fc"
+    },
+    {
+      "path": "quench-bench/jetstream/utils/params.js",
+      "size_bytes": 8047,
+      "modified_unix_ns": 1792229119770704165,
+      "sha256": "0e9d28c0fd2de5583c64678ffc61307b10d983bcb419fe2e3bb383c8b7ded647"
+    },
+    {
+      "path": "quench-bench/jetstream/utils/shell-config.js",
+      "size_bytes": 2352,
+      "modified_unix_ns": 1792229119770904880,
+      "sha256": "9a83000be5e6526a3c26a414fc3a23043e57ef8e4cd67aaff459066a2c347bca"
+    }
+  ],
+  "selected_fixtures": [
+    "quench-bench/jetstream/zlib-wasm"
+  ],
+  "fixtures": {
+    "quench-bench/jetstream/zlib-wasm": {
+      "source": {
+        "path": "quench-bench/jetstream/zlib-wasm",
+        "size_bytes": 4096,
+        "modified_unix_ns": 1792229120207823858,
+        "sha256": "811132ae4026d7290d20a94fcd055745462d4f9d338360ef32f38bd0197583e1"
+      },
+      "valid": true,
+      "output_equal": true,
+      "summaries": {
+        "bun": {
+          "median_score": 7.07,
+          "median_max_rss_bytes": 45432832,
+          "valid_samples": 3
+        },
+        "quench": {
+          "median_score": 12.15,
+          "median_max_rss_bytes": 98521088,
+          "valid_samples": 3
+        }
+      },
+      "unsupported_engines": {
+        "node": "the test is tagged Wasm and the engine has no WebAssembly"
+      },
+      "rounds": [
+        {
+          "round": 0,
+          "execution_order": [
+            "quench",
+            "bun"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 27726062660,
+              "peak_rss_bytes": 45117440,
+              "score": 7.07,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 12960,
+              "page_reclaims": 12960,
+              "involuntary_context_switches": 543,
+              "host_before": {
+                "captured_unix_ns": 1792357313002286059,
+                "load_average": {
+                  "one_minute": 1.01,
+                  "five_minutes": 1.0,
+                  "fifteen_minutes": 0.83
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 579686,
+                    "cpu_percent": 1.1,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 200,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.0,
+                    "command": "containerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792357340733346687,
+                "load_average": {
+                  "one_minute": 1.01,
+                  "five_minutes": 1.0,
+                  "fifteen_minutes": 0.84
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 579686,
+                    "cpu_percent": 1.3,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 200,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.0,
+                    "command": "containerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "Starting JetStream3\nRunning zlib-wasm:\nzlib-wasm First-Score                            7.26 pts\nzlib-wasm Worst-Score                            6.75 pts\nzlib-wasm Average-Score                          7.22 pts\nzlib-wasm Score                                  7.07 pts\nzlib-wasm First-Time                           689.16 ms \nzlib-wasm Worst-Time                           740.37 ms \nzlib-wasm Average-Time                         692.57 ms \nzlib-wasm Total-Time                          2122.10 ms \nzlib-wasm Wall-Time                           27710.94 ms \n\nOverall:\nOverall First-Score                              7.26 pts\nOverall Worst-Score                              6.75 pts\nOverall Average-Score                            7.22 pts\nOverall First-Time                             689.16 ms \nOverall Worst-Time                             740.37 ms \nOverall Average-Time                           692.57 ms \n\nOverall Score                                    7.07 pts\nOverall Wall-Time                             27712.74 ms \n\n",
+              "stderr": ""
+            },
+            "quench": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 16325232726,
+              "peak_rss_bytes": 98545664,
+              "score": 11.96,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 3329860,
+              "page_reclaims": 3329860,
+              "involuntary_context_switches": 45,
+              "host_before": {
+                "captured_unix_ns": 1792357296667206127,
+                "load_average": {
+                  "one_minute": 1.02,
+                  "five_minutes": 1.0,
+                  "fifteen_minutes": 0.83
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 200,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.0,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 539830,
+                    "cpu_percent": 0.0,
+                    "command": "codex"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792357312998165759,
+                "load_average": {
+                  "one_minute": 1.01,
+                  "five_minutes": 1.0,
+                  "fifteen_minutes": 0.83
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 579686,
+                    "cpu_percent": 1.1,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 200,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.0,
+                    "command": "containerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "Starting JetStream3\nRunning zlib-wasm:\nzlib-wasm First-Score                           11.92 pts\nzlib-wasm Worst-Score                           11.44 pts\nzlib-wasm Average-Score                         12.54 pts\nzlib-wasm Score                                 11.96 pts\nzlib-wasm First-Time                           419.34 ms \nzlib-wasm Worst-Time                           437.07 ms \nzlib-wasm Average-Time                         398.65 ms \nzlib-wasm Total-Time                          1255.06 ms \nzlib-wasm Wall-Time                           16030.96 ms \n\nOverall:\nOverall First-Score                             11.92 pts\nOverall Worst-Score                             11.44 pts\nOverall Average-Score                           12.54 pts\nOverall First-Time                             419.34 ms \nOverall Worst-Time                             437.07 ms \nOverall Average-Time                           398.65 ms \n\nOverall Score                                   11.96 pts\nOverall Wall-Time                             16034.17 ms \n\n",
+              "stderr": ""
+            }
+          }
+        },
+        {
+          "round": 1,
+          "execution_order": [
+            "bun",
+            "quench"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 28024272157,
+              "peak_rss_bytes": 45432832,
+              "score": 6.85,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 13274,
+              "page_reclaims": 13274,
+              "involuntary_context_switches": 97,
+              "host_before": {
+                "captured_unix_ns": 1792357340736997994,
+                "load_average": {
+                  "one_minute": 1.01,
+                  "five_minutes": 1.0,
+                  "fifteen_minutes": 0.84
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 579686,
+                    "cpu_percent": 1.3,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 200,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.0,
+                    "command": "containerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792357368766192695,
+                "load_average": {
+                  "one_minute": 1.0,
+                  "five_minutes": 1.0,
+                  "fifteen_minutes": 0.84
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 579686,
+                    "cpu_percent": 1.3,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 200,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.0,
+                    "command": "containerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "Starting JetStream3\nRunning zlib-wasm:\nzlib-wasm First-Score                            6.92 pts\nzlib-wasm Worst-Score                            6.48 pts\nzlib-wasm Average-Score                          7.15 pts\nzlib-wasm Score                                  6.85 pts\nzlib-wasm First-Time                           722.25 ms \nzlib-wasm Worst-Time                           771.07 ms \nzlib-wasm Average-Time                         699.25 ms \nzlib-wasm Total-Time                          2192.57 ms \nzlib-wasm Wall-Time                           28007.04 ms \n\nOverall:\nOverall First-Score                              6.92 pts\nOverall Worst-Score                              6.48 pts\nOverall Average-Score                            7.15 pts\nOverall First-Time                             722.25 ms \nOverall Worst-Time                             771.07 ms \nOverall Average-Time                           699.25 ms \n\nOverall Score                                    6.85 pts\nOverall Wall-Time                             28009.43 ms \n\n",
+              "stderr": ""
+            },
+            "quench": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 15782709437,
+              "peak_rss_bytes": 98516992,
+              "score": 12.41,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 3329831,
+              "page_reclaims": 3329831,
+              "involuntary_context_switches": 55,
+              "host_before": {
+                "captured_unix_ns": 1792357368770687069,
+                "load_average": {
+                  "one_minute": 1.0,
+                  "five_minutes": 1.0,
+                  "fifteen_minutes": 0.84
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 579686,
+                    "cpu_percent": 1.3,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 200,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.0,
+                    "command": "containerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792357384558313696,
+                "load_average": {
+                  "one_minute": 1.0,
+                  "five_minutes": 1.0,
+                  "fifteen_minutes": 0.84
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 579686,
+                    "cpu_percent": 1.3,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 200,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.0,
+                    "command": "containerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "Starting JetStream3\nRunning zlib-wasm:\nzlib-wasm First-Score                           11.94 pts\nzlib-wasm Worst-Score                           12.30 pts\nzlib-wasm Average-Score                         13.00 pts\nzlib-wasm Score                                 12.41 pts\nzlib-wasm First-Time                           418.75 ms \nzlib-wasm Worst-Time                           406.54 ms \nzlib-wasm Average-Time                         384.58 ms \nzlib-wasm Total-Time                          1209.88 ms \nzlib-wasm Wall-Time                           15485.15 ms \n\nOverall:\nOverall First-Score                             11.94 pts\nOverall Worst-Score                             12.30 pts\nOverall Average-Score                           13.00 pts\nOverall First-Time                             418.75 ms \nOverall Worst-Time                             406.54 ms \nOverall Average-Time                           384.58 ms \n\nOverall Score                                   12.41 pts\nOverall Wall-Time                             15488.63 ms \n\n",
+              "stderr": ""
+            }
+          }
+        },
+        {
+          "round": 2,
+          "execution_order": [
+            "quench",
+            "bun"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 26310540214,
+              "peak_rss_bytes": 45465600,
+              "score": 7.24,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 13136,
+              "page_reclaims": 13136,
+              "involuntary_context_switches": 91,
+              "host_before": {
+                "captured_unix_ns": 1792357401021468154,
+                "load_average": {
+                  "one_minute": 1.0,
+                  "five_minutes": 1.0,
+                  "fifteen_minutes": 0.85
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 579927,
+                    "cpu_percent": 200.0,
+                    "command": "rg"
+                  },
+                  {
+                    "pid": 579928,
+                    "cpu_percent": 10.0,
+                    "command": "head"
+                  },
+                  {
+                    "pid": 579686,
+                    "cpu_percent": 1.3,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792357427337322547,
+                "load_average": {
+                  "one_minute": 1.0,
+                  "five_minutes": 1.0,
+                  "fifteen_minutes": 0.85
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 579686,
+                    "cpu_percent": 1.3,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 200,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.0,
+                    "command": "containerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "Starting JetStream3\nRunning zlib-wasm:\nzlib-wasm First-Score                            6.87 pts\nzlib-wasm Worst-Score                            7.25 pts\nzlib-wasm Average-Score                          7.64 pts\nzlib-wasm Score                                  7.24 pts\nzlib-wasm First-Time                           728.12 ms \nzlib-wasm Worst-Time                           689.77 ms \nzlib-wasm Average-Time                         654.71 ms \nzlib-wasm Total-Time                          2072.59 ms \nzlib-wasm Wall-Time                           26278.72 ms \n\nOverall:\nOverall First-Score                              6.87 pts\nOverall Worst-Score                              7.25 pts\nOverall Average-Score                            7.64 pts\nOverall First-Time                             728.12 ms \nOverall Worst-Time                             689.77 ms \nOverall Average-Time                           654.71 ms \n\nOverall Score                                    7.24 pts\nOverall Wall-Time                             26281.42 ms \n\n",
+              "stderr": ""
+            },
+            "quench": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 16443992320,
+              "peak_rss_bytes": 98521088,
+              "score": 12.15,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 3329846,
+              "page_reclaims": 3329846,
+              "involuntary_context_switches": 768,
+              "host_before": {
+                "captured_unix_ns": 1792357384562366311,
+                "load_average": {
+                  "one_minute": 1.0,
+                  "five_minutes": 1.0,
+                  "fifteen_minutes": 0.84
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 579686,
+                    "cpu_percent": 1.3,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  },
+                  {
+                    "pid": 200,
+                    "cpu_percent": 0.0,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.0,
+                    "command": "containerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792357401015553809,
+                "load_average": {
+                  "one_minute": 1.0,
+                  "five_minutes": 1.0,
+                  "fifteen_minutes": 0.85
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 579927,
+                    "cpu_percent": 222.0,
+                    "command": "rg"
+                  },
+                  {
+                    "pid": 579928,
+                    "cpu_percent": 11.1,
+                    "command": "head"
+                  },
+                  {
+                    "pid": 579686,
+                    "cpu_percent": 1.3,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "Starting JetStream3\nRunning zlib-wasm:\nzlib-wasm First-Score                           11.88 pts\nzlib-wasm Worst-Score                           12.04 pts\nzlib-wasm Average-Score                         12.54 pts\nzlib-wasm Score                                 12.15 pts\nzlib-wasm First-Time                           420.94 ms \nzlib-wasm Worst-Time                           415.21 ms \nzlib-wasm Average-Time                         398.61 ms \nzlib-wasm Total-Time                          1234.76 ms \nzlib-wasm Wall-Time                           16057.09 ms \n\nOverall:\nOverall First-Score                             11.88 pts\nOverall Worst-Score                             12.04 pts\nOverall Average-Score                           12.54 pts\nOverall First-Time                             420.94 ms \nOverall Worst-Time                             415.21 ms \nOverall Average-Time                           398.61 ms \n\nOverall Score                                   12.15 pts\nOverall Wall-Time                             16060.96 ms \n\n",
+              "stderr": ""
+            }
+          }
+        }
+      ]
+    }
+  },
+  "complete": true,
+  "qualification_ready": false
+}

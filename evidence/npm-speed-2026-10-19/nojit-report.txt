@@ -1,0 +1,54 @@
+verdicts {"behavior-pass":286,"declarations-pass":13,"oracle-failed":1}
+passing 299  fastest wall 0  fastest cpu 0  lowest rss 282
+wall median (ms) quench 203.7 node 93.6 bun 63.0
+cpu median (ms) quench 201.8 node 110.4 bun 66.6
+rss median (MiB) quench 19.4 node 63.3 bun 38.3
+slowest relative to the faster of Node and Bun (wall ms):
+  jiti                                     q     954 n    247 b     73  x13.1
+  undici                                   q     573 n    165 b     50  x11.5
+  @typescript-eslint/project-service       q    1862 n    267 b    255  x7.3
+  color-convert                            q     581 n    124 b     82  x7.1
+  tar-stream                               q     430 n    100 b     64  x6.7
+  @typescript-eslint/tsconfig-utils        q    1902 n    367 b    284  x6.7
+  playwright                               q    2512 n    398 b    391  x6.4
+  typescript-eslint                        q    4158 n    957 b    702  x5.9
+  p-map                                    q     330 n     97 b     57  x5.8
+  date-fns                                 q     455 n   1434 b     80  x5.7
+  ws                                       q     319 n     98 b     56  x5.7
+  node-fetch                               q     309 n     99 b     55  x5.6
+  vitest                                   q    2856 n    634 b    529  x5.4
+  esbuild                                  q     626 n    139 b    117  x5.4
+  make-dir                                 q     307 n     86 b     57  x5.4
+  @eslint/js                               q     295 n     85 b     55  x5.4
+  signal-exit                              q     338 n     91 b     63  x5.3
+  rollup                                   q     555 n    170 b    106  x5.2
+  schema-utils                             q     879 n    172 b    168  x5.2
+  resolve-pkg-maps                         q     256 n     88 b     49  x5.2
+  ajv                                      q     643 n    169 b    124  x5.2
+  @typescript-eslint/type-utils            q    2680 n    556 b    522  x5.1
+  @testing-library/dom                     q    3026 n    800 b    592  x5.1
+  @babel/helper-module-transforms          q     908 n    252 b    178  x5.1
+  baseline-browser-mapping                 q     350 n     87 b     69  x5.1
+  lucide-react                             q     739 n    222 b    146  x5.1
+  @typescript-eslint/parser                q    1968 n    455 b    390  x5.0
+  is-regex                                 q     291 n     87 b     58  x5.0
+  wrap-ansi                                q     292 n    124 b     58  x5.0
+  axios                                    q     503 n    211 b    100  x5.0
+not lowest rss: 17
+  type-fest                                q 53.3 n 62.8 b 53.1
+  undici-types                             q 75.0 n 74.5 b 74.6
+  typescript                               q 42.0 n 63.0 b 41.7
+  jiti                                     q 48.6 n 89.9 b 43.1
+  @typescript-eslint/typescript-estree     q 111.4 n 129.3 b 92.4
+  @typescript-eslint/scope-manager         q 116.7 n 129.5 b 91.4
+  @types/react-dom                         q 54.1 n 62.9 b 53.5
+  @typescript-eslint/parser                q 110.2 n 130.1 b 95.1
+  @typescript-eslint/eslint-plugin         q 148.2 n 211.5 b 146.5
+  @typescript-eslint/type-utils            q 189.6 n 189.7 b 125.8
+  @typescript-eslint/project-service       q 111.2 n 108.7 b 82.0
+  @typescript-eslint/tsconfig-utils        q 116.9 n 125.4 b 81.8
+  @eslint/core                             q 45.5 n 63.1 b 45.5
+  @types/babel__template                   q 53.7 n 62.9 b 53.6
+  @types/yargs                             q 46.0 n 63.0 b 45.3
+  typescript-eslint                        q 146.7 n 218.3 b 146.1
+  @types/ws                                q 72.3 n 71.9 b 72.3

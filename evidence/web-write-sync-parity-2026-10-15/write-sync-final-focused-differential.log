@@ -1,0 +1,11 @@
+   Compiling quench-node v0.1.0 (/workspace/quench/crates/quench-node)
+   Compiling quench-node-test v0.1.0 (/workspace/quench/crates/quench-node-test)
+    Finished `iteration` profile [optimized] target(s) in 31.35s
+     Running tests/child_entry.rs (work/host-build/iteration/deps/child_entry-0c4d472d0248eb46)
+
+running 2 tests
+test write_sync_raw_views_positions_encoding_fallbacks_and_native_errors_match_node ... ok
+test write_sync_reports_partial_nonblocking_pipe_progress_and_kernel_errors ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 284 filtered out; finished in 0.56s
+

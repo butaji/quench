@@ -1,0 +1,33 @@
+   Compiling npm-zlib-stream-probe v0.0.0 (/workspace/scratch/npm-zlib-draft)
+warning: variants `Partial`, `Sync`, `Full`, and `Block` are never constructed
+  --> native-codec.rs:58:5
+   |
+56 | pub enum Flush {
+   |          ----- variants in this enum
+57 |     None = 0,
+58 |     Partial = 1,
+   |     ^^^^^^^
+59 |     Sync = 2,
+   |     ^^^^
+60 |     Full = 3,
+   |     ^^^^
+61 |     Finish = 4,
+62 |     Block = 5,
+   |     ^^^^^
+   |
+   = note: `Flush` has a derived impl for the trait `Clone`, but this is intentionally ignored during dead code analysis
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: field `status` is never read
+  --> native-codec.rs:66:9
+   |
+65 | pub struct Error {
+   |            ----- field in this struct
+66 |     pub status: i32,
+   |         ^^^^^^
+   |
+   = note: `Error` has a derived impl for the trait `Debug`, but this is intentionally ignored during dead code analysis
+
+warning: `npm-zlib-stream-probe` (bin "npm-zlib-oneshot-probe") generated 2 warnings
+    Finished `dev` profile [unoptimized] target(s) in 0.14s
+     Running `quench/target/npm-zlib-native-probe/debug/npm-zlib-oneshot-probe`

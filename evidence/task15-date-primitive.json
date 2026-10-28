@@ -1,0 +1,198 @@
+{
+  "schema": 1,
+  "tasks": [
+    "15",
+    "20"
+  ],
+  "baseline_source_head": "2e07c0f584d9804a0a158314cafc2ee14d097d0a",
+  "qualification": "Isolated shared ordinary coercion and Date hint repair; pending main-tree Date constant reordering, Node, Wasm and other changes excluded.",
+  "source_sha256": {
+    "crates/quench-runtime-next/src/vm/coercion.rs": "7af4fa1d0983d47f37e5da286177e755d4d6f81f3de9901fc5e54e2cf3dcebd0",
+    "crates/quench-runtime-next/src/vm/date.rs": "b5a1c8d41c5f74c748c5a93d5ded34ab7149677f3f50ebad27842799f2f474cf"
+  },
+  "suite_pin": "6eec1ac9ee144dafd8f344d73a21f36bfc9f6755",
+  "representation": {
+    "authority": "One ordinary_to_primitive operation owns method lookup, callable filtering, receiver-preserving calls, primitive-result selection and abrupt completion. Generic ToPrimitive and Date.prototype[Symbol.toPrimitive] both use it.",
+    "invariant": "Forward the requested hint unchanged to an exotic conversion hook. Without a hook, default means ordinary number ordering, including Date objects. Only the Date intrinsic method owns its special default/string mapping. Deleting or overriding that method changes ordinary conversion naturally.",
+    "reduction": "Removed the Date-cell default-hint branch and duplicate Date conversion loop; no new representation, cache, layout field, guest shim, fixture branch or duplicated semantic unit test."
+  },
+  "contracts": [
+    "https://tc39.es/ecma262/multipage/abstract-operations.html#sec-toprimitive",
+    "https://tc39.es/ecma262/multipage/numbers-and-dates.html#sec-date.prototype-%symbol.toprimitive%"
+  ],
+  "upstream_node_pin": "55e4ca33f3a6dfe364bd9558b726576a6d1a2fba",
+  "upstream_node_source": {
+    "tests/node/deps/v8/src/objects/js-objects.cc": "b9b77eec122059b1408f35cc3122d72e01375a784af4d6cb019ad0df83b00bff",
+    "tests/node/deps/v8/src/builtins/builtins-date-gen.cc": "3750bf820c95f86f97ee41fba48ed96b843bfb3d61fcbae1963e184aaf6e4538"
+  },
+  "build": {
+    "profile": "release; correctness only, no Stage B performance claim",
+    "log": "target/iteration/task15-date-primitive/build.log",
+    "before_binary_sha256": "58933479b90cf5d6bc741170463fa4b989e3b7fbb0c0290fdb4513a57cc2f90a",
+    "after_binary_sha256": "0f1d16fc2a9297126c2475c101b4967b42d51ccea42be27ffc0364721de27c6e"
+  },
+  "affected_test262": {
+    "full_suite_run": false,
+    "jobs_per_scope": 2,
+    "timeout_ms": 10000,
+    "distinct_cases": 1272,
+    "passed_before": 1271,
+    "passed_after": 1272,
+    "gained": [
+      "staging/sm/object/toPrimitive.js"
+    ],
+    "regressions": [],
+    "scopes": [
+      {
+        "scope": "addition",
+        "total": 48,
+        "passed_before": 48,
+        "passed_after": 48,
+        "gained": [],
+        "regressions": [],
+        "reports": {
+          "target/iteration/task15-date-primitive/before-addition.json": "9103f331087b23455a6fd52b405298ca5d5b1dd9ea695de9f25850fe5a01c369",
+          "target/iteration/task15-date-primitive/after-addition.json": "7551da8052831049568eaf6fef0bd8867b878dc8b6eb498b191dda620fa56630",
+          "target/iteration/task15-date-primitive/compare-addition.log": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+        }
+      },
+      {
+        "scope": "bigint",
+        "total": 77,
+        "passed_before": 77,
+        "passed_after": 77,
+        "gained": [],
+        "regressions": [],
+        "reports": {
+          "target/iteration/task15-date-primitive/before-bigint.json": "ff0a4a18d1f1b17145f8ef1f896a3e12196deb4b2003b01b052377f1e6d30013",
+          "target/iteration/task15-date-primitive/after-bigint.json": "8c4079d336e7960596dab37cf2cdc8e7b70fee3802259830a986fa671bee86f5",
+          "target/iteration/task15-date-primitive/compare-bigint.log": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+        }
+      },
+      {
+        "scope": "date",
+        "total": 594,
+        "passed_before": 594,
+        "passed_after": 594,
+        "gained": [],
+        "regressions": [],
+        "reports": {
+          "target/iteration/task15-date-primitive/before-date.json": "4b7758562196b228b81576f0cf22d399aaf20f9661f0d034137a7acc5fd7a522",
+          "target/iteration/task15-date-primitive/after-date.json": "ba81ac043e56f43c55dd3bee3b04da013ed411058a9bc6f18ccb6a64eafe9e64",
+          "target/iteration/task15-date-primitive/compare-date.log": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+        }
+      },
+      {
+        "scope": "equals",
+        "total": 47,
+        "passed_before": 47,
+        "passed_after": 47,
+        "gained": [],
+        "regressions": [],
+        "reports": {
+          "target/iteration/task15-date-primitive/before-equals.json": "43ec5edd62f7bc7e515e0f95d1cc12e877047a1f7b17aea7ed29f24b8db3a723",
+          "target/iteration/task15-date-primitive/after-equals.json": "36e0e84dc514e5319dd28eb02f582d3c00e3f461ff01483030bc8e67ac1ee3c0",
+          "target/iteration/task15-date-primitive/compare-equals.log": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+        }
+      },
+      {
+        "scope": "number",
+        "total": 340,
+        "passed_before": 340,
+        "passed_after": 340,
+        "gained": [],
+        "regressions": [],
+        "reports": {
+          "target/iteration/task15-date-primitive/before-number.json": "e76af1adb02fecc90fbd498eabd9adcab860b5d137e6c13ce50c5209795fefcf",
+          "target/iteration/task15-date-primitive/after-number.json": "361ebef0bb6e1980b0a13a616fb0a41170423a9ffabf26942eb0794a6d740e9d",
+          "target/iteration/task15-date-primitive/compare-number.log": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+        }
+      },
+      {
+        "scope": "staged-date-default",
+        "total": 1,
+        "passed_before": 1,
+        "passed_after": 1,
+        "gained": [],
+        "regressions": [],
+        "reports": {
+          "target/iteration/task15-date-primitive/before-staged-date-default.json": "f7af92d1a4d4d0fa0d76860b269bc56f3e5182dbc77aeb9667b7de0a2173aa95",
+          "target/iteration/task15-date-primitive/after-staged-date-default.json": "cc7d2f68a749eed8acaad5ca8df2c936d4b0042c44f86cde06ac969edbbe90c7",
+          "target/iteration/task15-date-primitive/compare-staged-date-default.log": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+        }
+      },
+      {
+        "scope": "staged-date-equality",
+        "total": 1,
+        "passed_before": 1,
+        "passed_after": 1,
+        "gained": [],
+        "regressions": [],
+        "reports": {
+          "target/iteration/task15-date-primitive/before-staged-date-equality.json": "ce60bfcdc1c455af06ed10162a0eaf914c2b2e541398e4dd6f5711de88865da6",
+          "target/iteration/task15-date-primitive/after-staged-date-equality.json": "778d382b1dcfba745e84a6c059de3c73cbcde24f8f71c4b9daf9114dc8bdb048",
+          "target/iteration/task15-date-primitive/compare-staged-date-equality.log": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+        }
+      },
+      {
+        "scope": "staged-date-primitive",
+        "total": 1,
+        "passed_before": 1,
+        "passed_after": 1,
+        "gained": [],
+        "regressions": [],
+        "reports": {
+          "target/iteration/task15-date-primitive/before-staged-date-primitive.json": "8706a2ed018edfa764d38c48b43517e23c1d8e1a2f9afb5c06f93cdd26466901",
+          "target/iteration/task15-date-primitive/after-staged-date-primitive.json": "04ffec2ff0d66e8b36ea1a27262f818da57c2b0451c75a9172263f20d97d54df",
+          "target/iteration/task15-date-primitive/compare-staged-date-primitive.log": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+        }
+      },
+      {
+        "scope": "staged-object",
+        "total": 65,
+        "passed_before": 64,
+        "passed_after": 65,
+        "gained": [
+          "staging/sm/object/toPrimitive.js"
+        ],
+        "regressions": [],
+        "reports": {
+          "target/iteration/task15-date-primitive/before-staged-object.json": "038f2b971e9dc24a9e66cb1d9ba73590ee76fabdef149866347ae6c3ffeb2400",
+          "target/iteration/task15-date-primitive/after-staged-object.json": "fedc1da9ded62d90748fbe14534cd22ee2f32b84405c4188ce4e8f4c644fc8eb",
+          "target/iteration/task15-date-primitive/compare-staged-object.log": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+        }
+      },
+      {
+        "scope": "symbol",
+        "total": 98,
+        "passed_before": 98,
+        "passed_after": 98,
+        "gained": [],
+        "regressions": [],
+        "reports": {
+          "target/iteration/task15-date-primitive/before-symbol.json": "c9ce24f8991b50c1b3d2c514d6588ab9b6f746ed873964e21d217187cc1cb5b9",
+          "target/iteration/task15-date-primitive/after-symbol.json": "51eab98e98070df69cfbb96225c6a1ce1ad6b2ff21921d1f101c5da7ab147c67",
+          "target/iteration/task15-date-primitive/compare-symbol.log": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+        }
+      }
+    ]
+  },
+  "node_controls": {
+    "sources": 63,
+    "observations_per_build": 126,
+    "before_matches": 90,
+    "after_matches": 126,
+    "losses": 0,
+    "node_version": "v26.10.0",
+    "report": "target/iteration/task15-date-primitive/node-controls.json",
+    "sha256": "3ebda5e60ebbd2b19266d301ed77bf2250af59c8d2ae511530332255bb2d12af",
+    "remaining_cases": [],
+    "scope": "Deleted/null/undefined/replaced Date hooks, default/string/number hints, arithmetic/equality/construction, method/getter ordering, callable and primitive-result checks, receiver identity, proxy and borrowed Date methods, invalid hints/receivers, symbol/BigInt results and thrown identity in normal/generic modes."
+  },
+  "verification": "Matching inventories and compare-runs --reports pass; 63 external Node sources cover protocol effects and errors. No duplicated unit tests added.",
+  "limits": [
+    "Pinned inputs, discovery, harnesses, exclusions, expectations and deadlines unchanged.",
+    "Existing Date stress/timezone gaps are outside this selected qualification and remain recorded in task 15.",
+    "Complete Test262/Wasm, frozen implemented Node, single production VM cutover and Stage A remain open."
+  ]
+}

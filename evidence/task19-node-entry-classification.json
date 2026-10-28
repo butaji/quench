@@ -1,0 +1,327 @@
+{
+  "schema": 1,
+  "tasks": [
+    "19",
+    "21",
+    "22",
+    "48"
+  ],
+  "source_head": "7e60169df033dd247f34199e084e3e8080a92a29",
+  "source_state": "dirty worktree",
+  "classification": {
+    "manifest": "tasks/node-compat-inventory.json",
+    "sha256": "1e51832bac11e65a18e7e19d32a59f91c34a1ce5f1ab11867a0ea51b56060235",
+    "tracked_inputs": 865,
+    "assertion_case_candidates": 858,
+    "observation_case_candidates": 3,
+    "support_inputs": 4,
+    "implemented_membership_frozen": false,
+    "membership_basis": "Entry roles are audited from checks and import/child consumers, independently of outcomes. Static module specifiers locate pending implementation-owner review; they do not establish implemented membership."
+  },
+  "controls": {
+    "scope": "12 entry cases without static imports, plus three observation probes: 15 cases total",
+    "node_version": "v26.10.0",
+    "node_binary": "/opt/homebrew/bin/node",
+    "legacy_binary": "target/iteration/task19-node-entry-legacy",
+    "legacy_sha256": "c41fe86aa20185fefd420d0bb772b103f5ac11fef6187749d73443d215dcf20f",
+    "host": "Darwin arm64",
+    "rustc": "rustc 1.99.0 (b940084d7 2026-09-28) (Homebrew)",
+    "source_hashes": "target/iteration/task19-node-entry-controls/source-hashes.json",
+    "source_hashes_sha256": "f1a8cd85364a3d3d7bd41ac364daa27fb7e74f39ee4065f3642735df0a502a78",
+    "report": "target/iteration/task19-node-entry-controls/report.json",
+    "report_sha256": "585d90db1208aebf9818efdcad53eece1a55953b6f8b0f275be7c7e2e457dcea",
+    "case_outcomes": [
+      {
+        "path": "tests/node-compat/stage-2042/esm-top-level-await.mjs",
+        "source_sha256": "04fbc3ec2d31d55d5209312b26d071055ffd033bc2213bcea38115f7581d4210",
+        "results": [
+          {
+            "engine": "node",
+            "exit": 0,
+            "complete": true
+          },
+          {
+            "engine": "legacy",
+            "exit": 1,
+            "complete": true
+          }
+        ]
+      },
+      {
+        "path": "tests/node-compat/stage-2225/timer-handle-primitive.js",
+        "source_sha256": "fc9ea4c69753fb10d015dfc09a7de835825a73084ca8c84c2334f6fd3e6b9ed5",
+        "results": [
+          {
+            "engine": "node",
+            "exit": 0,
+            "complete": true
+          },
+          {
+            "engine": "legacy",
+            "exit": 0,
+            "complete": true
+          }
+        ]
+      },
+      {
+        "path": "tests/node-compat/stage-2226/timer-dispose.js",
+        "source_sha256": "92319e8e130e001d1c77bbe50f20fc1ec523e1d454a2daae7982c6592046a06a",
+        "results": [
+          {
+            "engine": "node",
+            "exit": 0,
+            "complete": true
+          },
+          {
+            "engine": "legacy",
+            "exit": 0,
+            "complete": true
+          }
+        ]
+      },
+      {
+        "path": "tests/node-compat/stage-2231/fetch-response-body.js",
+        "source_sha256": "77d2be6c8f25b46fb147c935123c14636f9dbb984fcfb4124a02899f6b05642d",
+        "results": [
+          {
+            "engine": "node",
+            "exit": 1,
+            "complete": true
+          },
+          {
+            "engine": "legacy",
+            "exit": 0,
+            "complete": true
+          }
+        ]
+      },
+      {
+        "path": "tests/node-compat/stage-2232/fetch-request-body.js",
+        "source_sha256": "23acbd32494b78f28a9f70877d795e70037c0874babecbe7d48986eaee3287d9",
+        "results": [
+          {
+            "engine": "node",
+            "exit": 1,
+            "complete": true
+          },
+          {
+            "engine": "legacy",
+            "exit": 0,
+            "complete": true
+          }
+        ]
+      },
+      {
+        "path": "tests/node-compat/stage-2681/environment-closure-tdz.js",
+        "source_sha256": "1a8424207f4f9b588aa66479051f169ed96c9e3f55a146546a04d00ced962b11",
+        "results": [
+          {
+            "engine": "node",
+            "exit": 0,
+            "complete": true
+          },
+          {
+            "engine": "legacy",
+            "exit": 0,
+            "complete": true
+          }
+        ]
+      },
+      {
+        "path": "tests/node-compat/stage-2681/event-target-core.js",
+        "source_sha256": "ab770c49230d8accec25f79874d305ac275c1c276ff7080a34976f5741b4620b",
+        "results": [
+          {
+            "engine": "node",
+            "exit": 0,
+            "complete": true
+          },
+          {
+            "engine": "legacy",
+            "exit": 0,
+            "complete": true
+          }
+        ]
+      },
+      {
+        "path": "tests/node-compat/stage-2681/timer-nexttick-resource.js",
+        "source_sha256": "d4c2bd83f6896f7bbdb5e0952d2276620526873e5db0c85968a899502cbaf019",
+        "results": [
+          {
+            "engine": "node",
+            "exit": 0,
+            "complete": true
+          },
+          {
+            "engine": "legacy",
+            "exit": 0,
+            "complete": true
+          }
+        ]
+      },
+      {
+        "path": "tests/node-compat/stage-2708/arguments-object.js",
+        "source_sha256": "a359ea53a5c5d738b9486b1c2587f20f98863ff407a9dffc3991749013fc917f",
+        "results": [
+          {
+            "engine": "node",
+            "exit": 0,
+            "complete": true
+          },
+          {
+            "engine": "legacy",
+            "exit": 0,
+            "complete": true
+          }
+        ]
+      },
+      {
+        "path": "tests/node-compat/stage-3049/async-for-await-state.js",
+        "source_sha256": "02179ee7c570c008a97ea992e2787c2bdba84fa5baec264035eeef3cbb959bc3",
+        "results": [
+          {
+            "engine": "node",
+            "exit": 1,
+            "complete": true
+          },
+          {
+            "engine": "legacy",
+            "exit": 1,
+            "complete": true
+          }
+        ]
+      },
+      {
+        "path": "tests/node-compat/stage-470/timer-refresh-behavior.js",
+        "source_sha256": "9647c42478677e77f575f520c4f0771c81f7cc438df2cea0a15d0f56672d5223",
+        "results": [
+          {
+            "engine": "node",
+            "exit": 0,
+            "complete": true
+          },
+          {
+            "engine": "legacy",
+            "exit": 0,
+            "complete": true
+          }
+        ]
+      },
+      {
+        "path": "tests/node-compat/stage-471/interval-refresh-behavior.js",
+        "source_sha256": "85b521f48a3f23a3ab8e5b81a53d10607e9039eecb3a02243944c3f36be2afd9",
+        "results": [
+          {
+            "engine": "node",
+            "exit": 0,
+            "complete": true
+          },
+          {
+            "engine": "legacy",
+            "exit": 0,
+            "complete": true
+          }
+        ]
+      },
+      {
+        "path": "tests/node-compat/stage-2344/stream-backpressure-trace.js",
+        "source_sha256": "94ef451b31b19a47ad7c5878c129fdd068ee59e709ba4b914fc624771bbaae6f",
+        "results": [
+          {
+            "engine": "node",
+            "exit": 0,
+            "complete": true
+          },
+          {
+            "engine": "legacy",
+            "exit": -6,
+            "complete": false
+          }
+        ]
+      },
+      {
+        "path": "tests/node-compat/stage-2442/stream-backpressure-trace.js",
+        "source_sha256": "19d7bbf6b3cd8a3d4e94c811f0b5a144bc80518586ad0b16e1d0a224f75ae6bc",
+        "results": [
+          {
+            "engine": "node",
+            "exit": 0,
+            "complete": true
+          },
+          {
+            "engine": "legacy",
+            "exit": -6,
+            "complete": false
+          }
+        ]
+      },
+      {
+        "path": "tests/node-compat/stage-2445/stream-backpressure-eleven.js",
+        "source_sha256": "e13bc0975c64aa933d094233c55c102db0510336c2ccb6b435a9cca76ee11aec",
+        "results": [
+          {
+            "engine": "node",
+            "exit": 0,
+            "complete": true
+          },
+          {
+            "engine": "legacy",
+            "exit": -6,
+            "complete": false
+          }
+        ]
+      }
+    ],
+    "interpretation": "These are completed raw observations, not a compatibility pass gate. Matching failures never establish case success. Crashes fail observation completion. CJS fixtures use Node --input-type=commonjs --eval with exact source; ESM uses the original file. This invocation is scoped to inputs without path/argv dependencies and does not qualify a full Node host runner."
+  },
+  "findings": [
+    {
+      "path": "tests/node-compat/stage-2042/esm-top-level-await.mjs",
+      "kind": "migration_obligation",
+      "detail": "Node passes; legacy CLI rejects top-level await syntax. Keep this failing candidate in implementation-owner review; failure alone cannot establish that the exercised scenario is unimplemented or justify exclusion."
+    },
+    {
+      "paths": [
+        "tests/node-compat/stage-2344/stream-backpressure-trace.js",
+        "tests/node-compat/stage-2442/stream-backpressure-trace.js",
+        "tests/node-compat/stage-2445/stream-backpressure-eleven.js"
+      ],
+      "kind": "migration_obligation",
+      "detail": "Node completes and prints observations; legacy CLI aborts with a worker stack overflow. Retain these failing candidates for implementation-owner review. Observation-only cases require oracle observations; exit-zero acceptance alone cannot qualify them."
+    },
+    {
+      "path": "tests/node-compat/stage-2231/fetch-response-body.js",
+      "kind": "fixture_oracle_conflict",
+      "detail": "After consuming response.json(), the fixture expects clone() to succeed. Node throws TypeError for the consumed body; legacy passes the assertion, confirming its existing behavior disagrees with the standard.",
+      "source": "https://fetch.spec.whatwg.org/#dom-response-clone"
+    },
+    {
+      "path": "tests/node-compat/stage-2232/fetch-request-body.js",
+      "kind": "fixture_oracle_conflict",
+      "detail": "The fixture requires Request.signal to be identical to the supplied controller.signal. Node supplies a dependent signal; legacy preserves the original identity and passes.",
+      "source": "https://fetch.spec.whatwg.org/#dom-request"
+    },
+    {
+      "path": "tests/node-compat/stage-3049/async-for-await-state.js",
+      "kind": "fixture_oracle_conflict",
+      "detail": "The iterator returns done:true on its first next(), but the fixture expects that value to enter the loop body. Node and legacy both fail the assertion.",
+      "source": "https://tc39.es/ecma262/multipage/ecmascript-language-statements-and-declarations.html#sec-runtime-semantics-forinofbodyevaluation-lhs-stmt-iterator-lhskind-labelset"
+    }
+  ],
+  "limits": [
+    "No expectations, fixtures, inventories or production behavior changed",
+    "No full suite or performance campaign run",
+    "Implemented membership/host migration and Stage A remain open"
+  ],
+  "validator_checks": {
+    "command": "node tools/check-task-coherence.mjs",
+    "positive": "pass",
+    "deliberate_corruptions_rejected": 5,
+    "controls": "target/iteration/task19-node-inventory-negative-controls.json",
+    "controls_sha256": "533983b2bffbaa89d5b8c9966d6b6c76dc295c9f939e3b016779818470cb7d15",
+    "checker_sha256": "355e7bb0c55fa4529c297e4ca8e81e9af60480902835d1c0aa2412aad670ff79",
+    "internal_fix": "Dependency-cycle detection now returns after detecting a visiting node, so a rejected cycle reports an error without overflowing the native stack.",
+    "syntax_and_format": "node --check and deno fmt passed",
+    "diff_check": "git diff --check passed"
+  }
+}

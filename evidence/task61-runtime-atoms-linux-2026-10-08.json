@@ -1,0 +1,383 @@
+{
+  "schema": 1,
+  "task": "61",
+  "experiment": "Linux Richards paired validation of RuntimeAtoms lexical-this/new-target cache",
+  "decision": "retain as a measured candidate; it is one fixture only and does not qualify Task 61",
+  "source": {
+    "measured_revision_recorded_by_runner": "78954f81b48df60c05d50c18fa7013cf11f95ce3",
+    "candidate_commit": "8e0c5b23f7ce609383215f814c8f51b26e40414c",
+    "candidate_files": [
+      "crates/quench-runtime/src/bytecode.rs",
+      "crates/quench-runtime/src/compile/ast/expression.rs",
+      "crates/quench-runtime/src/vm.rs",
+      "crates/quench-runtime/src/vm/construction.rs",
+      "crates/quench-runtime/src/vm/dispatch_frame.rs",
+      "crates/quench-runtime/src/vm/environment.rs",
+      "crates/quench-runtime/src/vm/eval.rs",
+      "crates/quench-runtime/src/vm/object.rs",
+      "crates/quench-runtime/src/vm/vm_init.rs"
+    ]
+  },
+  "host": {
+    "uname": "Linux 8d342269933b 6.18.44 #1 SMP Sat Sep 26 20:02:31 UTC 2026 x86_64 GNU/Linux",
+    "rustc": "rustc 1.99.0 (b940084d7 2026-09-28)\nbinary: rustc\ncommit-hash: b940084d7eb6a299eb4bfeb8e34901bc051e7ac4\ncommit-date: 2026-09-28\nhost: x86_64-unknown-linux-gnu\nrelease: 1.99.0\nLLVM version: 23.1.1",
+    "cpu_quota": "400000 100000",
+    "memory_limit_bytes": 17179869184,
+    "metrics": "Linux wait4 rusage"
+  },
+  "measurement": {
+    "fixture": "V8-v7 Richards materialized input",
+    "pairs": 11,
+    "order": "alternating baseline/candidate",
+    "baseline_score_samples": [
+      62.7,
+      63.8,
+      65.0,
+      65.1,
+      66.4,
+      64.1,
+      65.3,
+      61.4,
+      63.8,
+      63.4,
+      55.5
+    ],
+    "candidate_score_samples": [
+      90.1,
+      79.9,
+      90.5,
+      92.2,
+      96.0,
+      91.5,
+      94.3,
+      89.6,
+      85.4,
+      91.1,
+      96.8
+    ],
+    "baseline_max_rss_bytes_samples": [
+      21512192,
+      21250048,
+      21475328,
+      21405696,
+      21426176,
+      21590016,
+      21434368,
+      21598208,
+      21454848,
+      21512192,
+      21512192
+    ],
+    "candidate_max_rss_bytes_samples": [
+      21385216,
+      21254144,
+      21352448,
+      21385216,
+      21483520,
+      21528576,
+      21540864,
+      20815872,
+      21463040,
+      21385216,
+      21516288
+    ],
+    "summary": {
+      "baseline_score_median": 63.8,
+      "candidate_score_median": 91.1,
+      "score_delta_95_ci": [
+        25.5,
+        30.2
+      ],
+      "score_median_relative_change_percent": 42.79,
+      "baseline_max_rss_median_bytes": 21475328,
+      "candidate_max_rss_median_bytes": 21385216,
+      "max_rss_delta_95_ci": [
+        -126976,
+        49152
+      ],
+      "all_outputs_equal": true,
+      "score_difference_of_medians": 27.299999999999997,
+      "paired_score_delta_median": 27.400000000000006,
+      "max_rss_difference_of_medians_bytes": -90112,
+      "paired_max_rss_delta_median_bytes": -20480
+    },
+    "interval_method": "paired percentile bootstrap of median paired delta; 100000 resamples; recorded Linux campaign seed",
+    "rows": [
+      {
+        "pair": 1,
+        "order": [
+          "baseline",
+          "candidate"
+        ],
+        "baseline": {
+          "report": "target/production/stageb-v2-cloud-2026-10-08/runtime-atoms-richards-paired/p00-baseline.json",
+          "report_sha256": "750cbb6b10f86bc21c870c4418c778148a43b868d81e5d239a23c0d07614155f",
+          "score": 62.7,
+          "max_rss_bytes": 21512192,
+          "binary_sha256": "10e7a8fc68924c93d40c3ccb4e23814496767ca5424be2761c70988e8fcf08e4",
+          "valid": true,
+          "output_equal": true
+        },
+        "candidate": {
+          "report": "target/production/stageb-v2-cloud-2026-10-08/runtime-atoms-richards-paired/p00-candidate.json",
+          "report_sha256": "e639a1c7c3e47a7345c97a261948efe9fdfc120a41a73145d945fdcdbb524630",
+          "score": 90.1,
+          "max_rss_bytes": 21385216,
+          "binary_sha256": "f96b825482d3f158f624fed98a386f370dd0cc2acc8b840a557c8980c23291c2",
+          "valid": true,
+          "output_equal": true
+        }
+      },
+      {
+        "pair": 2,
+        "order": [
+          "candidate",
+          "baseline"
+        ],
+        "baseline": {
+          "report": "target/production/stageb-v2-cloud-2026-10-08/runtime-atoms-richards-paired/p01-baseline.json",
+          "report_sha256": "8e48855938fc2e6789913137383bb88b10d3faf40fb296f8c692fb14fc638e3b",
+          "score": 63.8,
+          "max_rss_bytes": 21250048,
+          "binary_sha256": "10e7a8fc68924c93d40c3ccb4e23814496767ca5424be2761c70988e8fcf08e4",
+          "valid": true,
+          "output_equal": true
+        },
+        "candidate": {
+          "report": "target/production/stageb-v2-cloud-2026-10-08/runtime-atoms-richards-paired/p01-candidate.json",
+          "report_sha256": "46938aefaa738235e8c4e3584e72efa55066f0b07fcc574df0b77b975aa8ea2b",
+          "score": 79.9,
+          "max_rss_bytes": 21254144,
+          "binary_sha256": "f96b825482d3f158f624fed98a386f370dd0cc2acc8b840a557c8980c23291c2",
+          "valid": true,
+          "output_equal": true
+        }
+      },
+      {
+        "pair": 3,
+        "order": [
+          "baseline",
+          "candidate"
+        ],
+        "baseline": {
+          "report": "target/production/stageb-v2-cloud-2026-10-08/runtime-atoms-richards-paired/p02-baseline.json",
+          "report_sha256": "33fb0cd002955d4e27fb6a8554a17a1c1f6da3bbdadd83a354e75d4aebf47eb6",
+          "score": 65.0,
+          "max_rss_bytes": 21475328,
+          "binary_sha256": "10e7a8fc68924c93d40c3ccb4e23814496767ca5424be2761c70988e8fcf08e4",
+          "valid": true,
+          "output_equal": true
+        },
+        "candidate": {
+          "report": "target/production/stageb-v2-cloud-2026-10-08/runtime-atoms-richards-paired/p02-candidate.json",
+          "report_sha256": "dfa2203817c0c6ccda345dde8bf7810b5375386f5195b5c8a717c8da817e3174",
+          "score": 90.5,
+          "max_rss_bytes": 21352448,
+          "binary_sha256": "f96b825482d3f158f624fed98a386f370dd0cc2acc8b840a557c8980c23291c2",
+          "valid": true,
+          "output_equal": true
+        }
+      },
+      {
+        "pair": 4,
+        "order": [
+          "candidate",
+          "baseline"
+        ],
+        "baseline": {
+          "report": "target/production/stageb-v2-cloud-2026-10-08/runtime-atoms-richards-paired/p03-baseline.json",
+          "report_sha256": "ec56bc6446941759c4a45de190e6608af8b1c7994f724e71424c48f1b8f0c84b",
+          "score": 65.1,
+          "max_rss_bytes": 21405696,
+          "binary_sha256": "10e7a8fc68924c93d40c3ccb4e23814496767ca5424be2761c70988e8fcf08e4",
+          "valid": true,
+          "output_equal": true
+        },
+        "candidate": {
+          "report": "target/production/stageb-v2-cloud-2026-10-08/runtime-atoms-richards-paired/p03-candidate.json",
+          "report_sha256": "3a794a00a04ed5f740954fb1af711ae36c813f640b7e9384c3351f8bc4507116",
+          "score": 92.2,
+          "max_rss_bytes": 21385216,
+          "binary_sha256": "f96b825482d3f158f624fed98a386f370dd0cc2acc8b840a557c8980c23291c2",
+          "valid": true,
+          "output_equal": true
+        }
+      },
+      {
+        "pair": 5,
+        "order": [
+          "baseline",
+          "candidate"
+        ],
+        "baseline": {
+          "report": "target/production/stageb-v2-cloud-2026-10-08/runtime-atoms-richards-paired/p04-baseline.json",
+          "report_sha256": "e6ecb16b0e14c69c1a70a9146a5c479f417b00c90e17c59b88f098990aa09f8b",
+          "score": 66.4,
+          "max_rss_bytes": 21426176,
+          "binary_sha256": "10e7a8fc68924c93d40c3ccb4e23814496767ca5424be2761c70988e8fcf08e4",
+          "valid": true,
+          "output_equal": true
+        },
+        "candidate": {
+          "report": "target/production/stageb-v2-cloud-2026-10-08/runtime-atoms-richards-paired/p04-candidate.json",
+          "report_sha256": "fbbd2e40077e59c4407ab58f0b1b79041441fb74cdb8afed7d496dcc17a69128",
+          "score": 96.0,
+          "max_rss_bytes": 21483520,
+          "binary_sha256": "f96b825482d3f158f624fed98a386f370dd0cc2acc8b840a557c8980c23291c2",
+          "valid": true,
+          "output_equal": true
+        }
+      },
+      {
+        "pair": 6,
+        "order": [
+          "candidate",
+          "baseline"
+        ],
+        "baseline": {
+          "report": "target/production/stageb-v2-cloud-2026-10-08/runtime-atoms-richards-paired/p05-baseline.json",
+          "report_sha256": "6fa2f238195d4b0098a330743da5172c4c18bc00cb0748fe90155d558351b1ea",
+          "score": 64.1,
+          "max_rss_bytes": 21590016,
+          "binary_sha256": "10e7a8fc68924c93d40c3ccb4e23814496767ca5424be2761c70988e8fcf08e4",
+          "valid": true,
+          "output_equal": true
+        },
+        "candidate": {
+          "report": "target/production/stageb-v2-cloud-2026-10-08/runtime-atoms-richards-paired/p05-candidate.json",
+          "report_sha256": "056015e0519b9877bbd29c391b6d97a7eaa5887e9d75b45daa2ce043e7e7b5a8",
+          "score": 91.5,
+          "max_rss_bytes": 21528576,
+          "binary_sha256": "f96b825482d3f158f624fed98a386f370dd0cc2acc8b840a557c8980c23291c2",
+          "valid": true,
+          "output_equal": true
+        }
+      },
+      {
+        "pair": 7,
+        "order": [
+          "baseline",
+          "candidate"
+        ],
+        "baseline": {
+          "report": "target/production/stageb-v2-cloud-2026-10-08/runtime-atoms-richards-paired/p06-baseline.json",
+          "report_sha256": "dcd3e43326d1eb124c7cedc910efc7593bb25463767ef5a4d177d4cfbc3ec9d3",
+          "score": 65.3,
+          "max_rss_bytes": 21434368,
+          "binary_sha256": "10e7a8fc68924c93d40c3ccb4e23814496767ca5424be2761c70988e8fcf08e4",
+          "valid": true,
+          "output_equal": true
+        },
+        "candidate": {
+          "report": "target/production/stageb-v2-cloud-2026-10-08/runtime-atoms-richards-paired/p06-candidate.json",
+          "report_sha256": "7bbda90fe691422104362c59fb5a17c5d12761590a140de500a1238be2bf1b8c",
+          "score": 94.3,
+          "max_rss_bytes": 21540864,
+          "binary_sha256": "f96b825482d3f158f624fed98a386f370dd0cc2acc8b840a557c8980c23291c2",
+          "valid": true,
+          "output_equal": true
+        }
+      },
+      {
+        "pair": 8,
+        "order": [
+          "candidate",
+          "baseline"
+        ],
+        "baseline": {
+          "report": "target/production/stageb-v2-cloud-2026-10-08/runtime-atoms-richards-paired/p07-baseline.json",
+          "report_sha256": "2ba481a5101c9c473841bc3aef4405dac6811006de0a8285c8dd3c70b1f3985b",
+          "score": 61.4,
+          "max_rss_bytes": 21598208,
+          "binary_sha256": "10e7a8fc68924c93d40c3ccb4e23814496767ca5424be2761c70988e8fcf08e4",
+          "valid": true,
+          "output_equal": true
+        },
+        "candidate": {
+          "report": "target/production/stageb-v2-cloud-2026-10-08/runtime-atoms-richards-paired/p07-candidate.json",
+          "report_sha256": "c3ed7f0522638725f72249810ab154708684dad0ef53d1e315c222eec9a07368",
+          "score": 89.6,
+          "max_rss_bytes": 20815872,
+          "binary_sha256": "f96b825482d3f158f624fed98a386f370dd0cc2acc8b840a557c8980c23291c2",
+          "valid": true,
+          "output_equal": true
+        }
+      },
+      {
+        "pair": 9,
+        "order": [
+          "baseline",
+          "candidate"
+        ],
+        "baseline": {
+          "report": "target/production/stageb-v2-cloud-2026-10-08/runtime-atoms-richards-paired/p08-baseline.json",
+          "report_sha256": "10fe9e147fb3adb6ef8744765a0551b6986e531830eccd0ac942c789e284ecbf",
+          "score": 63.8,
+          "max_rss_bytes": 21454848,
+          "binary_sha256": "10e7a8fc68924c93d40c3ccb4e23814496767ca5424be2761c70988e8fcf08e4",
+          "valid": true,
+          "output_equal": true
+        },
+        "candidate": {
+          "report": "target/production/stageb-v2-cloud-2026-10-08/runtime-atoms-richards-paired/p08-candidate.json",
+          "report_sha256": "083aa60086a14e90bba86dff164baa372e92e98fadbfb697a43720abf55d5194",
+          "score": 85.4,
+          "max_rss_bytes": 21463040,
+          "binary_sha256": "f96b825482d3f158f624fed98a386f370dd0cc2acc8b840a557c8980c23291c2",
+          "valid": true,
+          "output_equal": true
+        }
+      },
+      {
+        "pair": 10,
+        "order": [
+          "candidate",
+          "baseline"
+        ],
+        "baseline": {
+          "report": "target/production/stageb-v2-cloud-2026-10-08/runtime-atoms-richards-paired/p09-baseline.json",
+          "report_sha256": "59a5b278baf09af947cbb1f5693ccca587eba258c021d97cd4123e3f70ff587f",
+          "score": 63.4,
+          "max_rss_bytes": 21512192,
+          "binary_sha256": "10e7a8fc68924c93d40c3ccb4e23814496767ca5424be2761c70988e8fcf08e4",
+          "valid": true,
+          "output_equal": true
+        },
+        "candidate": {
+          "report": "target/production/stageb-v2-cloud-2026-10-08/runtime-atoms-richards-paired/p09-candidate.json",
+          "report_sha256": "af580ef0a0452bd2b9190ae25eefb564504d16e9a9dc0ed3192bac810313e429",
+          "score": 91.1,
+          "max_rss_bytes": 21385216,
+          "binary_sha256": "f96b825482d3f158f624fed98a386f370dd0cc2acc8b840a557c8980c23291c2",
+          "valid": true,
+          "output_equal": true
+        }
+      },
+      {
+        "pair": 11,
+        "order": [
+          "baseline",
+          "candidate"
+        ],
+        "baseline": {
+          "report": "target/production/stageb-v2-cloud-2026-10-08/runtime-atoms-richards-paired/p10-baseline.json",
+          "report_sha256": "20ca37528cfc621bb8edc2473500c47566d57ae280fe45f14c7d0471d8189d96",
+          "score": 55.5,
+          "max_rss_bytes": 21512192,
+          "binary_sha256": "10e7a8fc68924c93d40c3ccb4e23814496767ca5424be2761c70988e8fcf08e4",
+          "valid": true,
+          "output_equal": true
+        },
+        "candidate": {
+          "report": "target/production/stageb-v2-cloud-2026-10-08/runtime-atoms-richards-paired/p10-candidate.json",
+          "report_sha256": "b83d067fe73cc17a1260ea8f8be7398df63b4fb54f6d49d27d3fe678492812bc",
+          "score": 96.8,
+          "max_rss_bytes": 21516288,
+          "binary_sha256": "f96b825482d3f158f624fed98a386f370dd0cc2acc8b840a557c8980c23291c2",
+          "valid": true,
+          "output_equal": true
+        }
+      }
+    ]
+  }
+}

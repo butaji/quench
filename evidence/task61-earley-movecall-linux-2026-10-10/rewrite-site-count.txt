@@ -1,0 +1,22 @@
+Candidate-only instrumentation on EarleyBoyer:
+static Move -> Call rewrites selected: 18
+This is a compile-time static-site count, not a dynamic execution count.
+
+move-call-rewrite destination=4 source=3 arguments=1
+move-call-rewrite destination=9 source=8 arguments=1
+move-call-rewrite destination=10 source=9 arguments=1
+move-call-rewrite destination=6 source=3 arguments=1
+move-call-rewrite destination=10 source=9 arguments=1
+move-call-rewrite destination=8 source=7 arguments=1
+move-call-rewrite destination=5 source=4 arguments=1
+move-call-rewrite destination=9 source=8 arguments=1
+move-call-rewrite destination=3 source=2 arguments=1
+move-call-rewrite destination=6 source=4 arguments=1
+move-call-rewrite destination=5 source=4 arguments=1
+move-call-rewrite destination=5 source=4 arguments=1
+move-call-rewrite destination=5 source=4 arguments=1
+move-call-rewrite destination=5 source=4 arguments=1
+move-call-rewrite destination=40 source=39 arguments=1
+move-call-rewrite destination=22 source=21 arguments=1
+move-call-rewrite destination=31 source=30 arguments=1
+move-call-rewrite destination=7 source=6 arguments=1

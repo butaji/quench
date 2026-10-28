@@ -1,0 +1,22 @@
+{
+  "source_archive_sha256": "ce59f9038dda0e637656fb1c36cf52c07c637922fd81d419dbba2ec129afbd35",
+  "source_version": "v26.12.0",
+  "runner_binary_sha256": "5830e108c140a28db6cf9cd759bfae49388e5d825251ad98c964101a1223a864",
+  "raw_report_sha256": "aa900de215bb2d19bf09348ecedff9c292db76d39de909a58cd548bbd34d2fe5",
+  "counts": {
+    "timeout": 124,
+    "fail": 2874,
+    "pass": 1418,
+    "skip": 599
+  },
+  "fixture_timeout_secs": 3,
+  "jobs": 4,
+  "full_node_parity": false,
+  "optimization_allowed": false,
+  "limitations": [
+    "Diagnostic broad sweep, not a full oracle-paired conformance result; short timeouts are not automatically semantic failures.",
+    "The raw legacy runner node_version field is the preinstalled CLI version, not an oracle execution. The fixture source is the checksum-verified v26.12.0 archive.",
+    "The raw legacy runner tests_node_commit resolves the enclosing repository for an archive checkout; the source archive hash above is authoritative.",
+    "This binary predates the embedded web API and clone-marker repairs."
+  ]
+}

@@ -1,0 +1,168 @@
+{
+  "schema": 1,
+  "task": "61",
+  "date": "2026-10-08",
+  "kind": "outline WebAssembly opcode arms from JavaScript dispatch step",
+  "decision": "reject",
+  "reason": "The candidate retired more instructions in all 22 paired observations: +11.14% for the local-store loop and +5.84% for the CommonJS call loop. Maximum-RSS intervals span zero. The source change passed Wasm correctness but fails its JS hot-path performance objective.",
+  "source": {
+    "base_revision": "9c0e5a48ceeb378d0990c2e1d993ceb0823251cf",
+    "candidate_dispatch_sha256": "cefa20711a54bf9131548043b09bbd38ed6ea031c87158dd18f780abd45f6cbe",
+    "candidate_combined_worktree_patch_sha256": "b27b435de5392b620154350a0c5b710bc8b764b26ef36e0f1c80e1b20d4db2f1",
+    "baseline_binary_sha256": "6e5807544369d9dab11e4ae9a9979ede734f1b03e06e6ea0da3f219e44877187",
+    "candidate_binary_sha256": "927f5ed6502d482e5147c1903be7adacaf440bc445c9fdf7fdb6056356313910",
+    "profile": "production, feature-free",
+    "build_command": "CARGO_INCREMENTAL=0 cargo build --profile production -p quench-node --bin quench-node"
+  },
+  "host": {
+    "cpu": "Apple M4 ARM64",
+    "os": "macOS 26.5 (25F71)",
+    "model": "Mac16,10",
+    "logical_cpus": 10,
+    "memory_bytes": 17179869184,
+    "measurement_backend": "/usr/bin/time -l"
+  },
+  "binary_size": {
+    "baseline_text_segment_bytes": 10354688,
+    "candidate_text_segment_bytes": 10338304,
+    "delta_text_segment_bytes": -16384,
+    "baseline_text_section_bytes": 7103824,
+    "candidate_text_section_bytes": 7093584,
+    "delta_text_section_bytes": -10240
+  },
+  "measurement": {
+    "method": "11 alternating production binary pairs for each CJS microloop; retired instructions primary; elapsed time and maximum RSS secondary",
+    "pair_runner": "tasks/evidence/task61-dispatch-executing-program-pairs.py",
+    "pair_runner_sha256": "c66de51db82ca46ca3762275ad3885c6d7176e7dc4722b90f64b22fb51a03a01",
+    "fixtures": [
+      {
+        "path": "tasks/evidence/task61-dispatch-executing-program-local-store-10m-2026-10-08.cjs",
+        "sha256": "cbb15d2006c400cea5393e55234cdc5952998f9c194f74e830bc60b2c854366e"
+      },
+      {
+        "path": "tasks/evidence/task61-dispatch-executing-program-cjs-call-10m-2026-10-08.cjs",
+        "sha256": "9ca4e9511fa1cce15a96ed1acaedf9f9757a8613392e9d4d3f8c46195b553ee9"
+      }
+    ],
+    "bootstrap": {
+      "method": "paired percentile bootstrap of median per-pair deltas",
+      "replicates": 100000,
+      "seed": 610824,
+      "empirical_interval_order_statistics": [
+        2500,
+        97500
+      ]
+    },
+    "raw_csv": {
+      "path": "task61-dispatch-wasm-outline-pairs-2026-10-08.csv",
+      "sha256": "0bc31e528e9159d6ccfbe990097c88766671abbba39dcebca81df452b7fdb9d8",
+      "rows": 22
+    },
+    "summary": [
+      {
+        "fixture": "cjs_call",
+        "pairs": 11,
+        "instructions": {
+          "baseline_median": 32504434251.0,
+          "candidate_median": 34403635384.0,
+          "median_paired_delta_percent": 5.842700661499971,
+          "paired_bootstrap_95_percentile_interval": [
+            5.841074559908683,
+            5.844411969383689
+          ],
+          "candidate_lower_pairs": 0
+        },
+        "elapsed_seconds": {
+          "baseline_median": 1.08,
+          "candidate_median": 1.18,
+          "median_paired_delta_percent": 9.259259259259247,
+          "paired_bootstrap_95_percentile_interval": [
+            8.33333333333332,
+            10.185185185185173
+          ],
+          "candidate_lower_pairs": 0
+        },
+        "user_seconds": {
+          "baseline_median": 1.08,
+          "candidate_median": 1.17,
+          "median_paired_delta_percent": 9.259259259259247,
+          "paired_bootstrap_95_percentile_interval": [
+            8.33333333333332,
+            9.259259259259247
+          ],
+          "candidate_lower_pairs": 0
+        },
+        "maximum_rss_bytes": {
+          "baseline_median": 19824640,
+          "candidate_median": 19791872,
+          "median_paired_delta_bytes": -32768,
+          "paired_bootstrap_95_percentile_interval_bytes": [
+            -81920,
+            65536
+          ],
+          "candidate_lower_pairs": 7
+        }
+      },
+      {
+        "fixture": "local_store",
+        "pairs": 11,
+        "instructions": {
+          "baseline_median": 9773174994.0,
+          "candidate_median": 10861735342.0,
+          "median_paired_delta_percent": 11.138805447143413,
+          "paired_bootstrap_95_percentile_interval": [
+            11.136589063371138,
+            11.143847832878448
+          ],
+          "candidate_lower_pairs": 0
+        },
+        "elapsed_seconds": {
+          "baseline_median": 0.27,
+          "candidate_median": 0.3,
+          "median_paired_delta_percent": 11.1111111111111,
+          "paired_bootstrap_95_percentile_interval": [
+            11.1111111111111,
+            14.814814814814806
+          ],
+          "candidate_lower_pairs": 0
+        },
+        "user_seconds": {
+          "baseline_median": 0.26,
+          "candidate_median": 0.3,
+          "median_paired_delta_percent": 15.384615384615378,
+          "paired_bootstrap_95_percentile_interval": [
+            15.384615384615378,
+            17.85714285714285
+          ],
+          "candidate_lower_pairs": 0
+        },
+        "maximum_rss_bytes": {
+          "baseline_median": 19791872,
+          "candidate_median": 19857408,
+          "median_paired_delta_bytes": 65536,
+          "paired_bootstrap_95_percentile_interval_bytes": [
+            -49152,
+            131072
+          ],
+          "candidate_lower_pairs": 4
+        }
+      }
+    ],
+    "command": "python3.14 tasks/evidence/task61-dispatch-executing-program-pairs.py --baseline target/iteration/task61-wasm-outline/baseline/quench-node --candidate target/production/quench-node --output target/iteration/task61-wasm-outline/pairs.csv"
+  },
+  "correctness": {
+    "wasm_suite": {
+      "passed": 67124,
+      "failed": 0,
+      "file_errors": 0,
+      "report": "target/iteration/wasm-step-wasm-arms-2026-10-08.json",
+      "command": "WASM_FILE_TIMEOUT_MS=60000 cargo run --profile iteration -p quench-wasm-test --bin run -- --report target/iteration/wasm-step-wasm-arms-2026-10-08.json crates/quench-wasm-test/testsuite"
+    },
+    "counter_unit_test": {
+      "passed": 1,
+      "failed": 0,
+      "command": "cargo test -p quench-runtime --features profile-aggregate,profile-memory physical_dispatch_counts_exclude_virtual_fusion_steps"
+    }
+  },
+  "census": "task61-v8-v7-dispatch-opcode-census-2026-10-08.json"
+}

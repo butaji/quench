@@ -1,0 +1,72 @@
+{
+  "method": "paired bootstrap over per-round candidate-minus-baseline percentages",
+  "bootstrap_samples": 100000,
+  "seed": 61102027,
+  "cases": {
+    "dense-literal": {
+      "pairs": 11,
+      "baseline_instruction_median": 2211785763,
+      "candidate_instruction_median": 2213388341,
+      "instruction_delta_median_percent": 0.08074799987697749,
+      "instruction_delta_95_percentile_interval": [
+        0.06605336847897958,
+        0.13141172534786622
+      ],
+      "candidate_lower_instruction_pairs": 1,
+      "elapsed_delta_median_percent": 0.0,
+      "candidate_faster_elapsed_pairs": 0
+    },
+    "length-setter-filled": {
+      "pairs": 11,
+      "baseline_instruction_median": 10789705942,
+      "candidate_instruction_median": 2399764552,
+      "instruction_delta_median_percent": -77.7586983405937,
+      "instruction_delta_95_percentile_interval": [
+        -77.76173472780437,
+        -77.74094941083769
+      ],
+      "candidate_lower_instruction_pairs": 11,
+      "elapsed_delta_median_percent": -80.95238095238095,
+      "candidate_faster_elapsed_pairs": 11
+    },
+    "map": {
+      "pairs": 11,
+      "baseline_instruction_median": 10837965023,
+      "candidate_instruction_median": 2423290362,
+      "instruction_delta_median_percent": -77.63895392967804,
+      "instruction_delta_95_percentile_interval": [
+        -77.64198530687794,
+        -77.62698977974173
+      ],
+      "candidate_lower_instruction_pairs": 11,
+      "elapsed_delta_median_percent": -80.95238095238095,
+      "candidate_faster_elapsed_pairs": 11
+    },
+    "new-array-filled": {
+      "pairs": 11,
+      "baseline_instruction_median": 10794286528,
+      "candidate_instruction_median": 2403543485,
+      "instruction_delta_median_percent": -77.73462992227866,
+      "instruction_delta_95_percentile_interval": [
+        -77.73794524229842,
+        -77.73053413472991
+      ],
+      "candidate_lower_instruction_pairs": 11,
+      "elapsed_delta_median_percent": -81.3953488372093,
+      "candidate_faster_elapsed_pairs": 11
+    },
+    "single-push-filled": {
+      "pairs": 11,
+      "baseline_instruction_median": 9800318618,
+      "candidate_instruction_median": 2398875425,
+      "instruction_delta_median_percent": -75.52186521166837,
+      "instruction_delta_95_percentile_interval": [
+        -75.52633335535398,
+        -75.51724987589465
+      ],
+      "candidate_lower_instruction_pairs": 11,
+      "elapsed_delta_median_percent": -79.48717948717949,
+      "candidate_faster_elapsed_pairs": 11
+    }
+  }
+}

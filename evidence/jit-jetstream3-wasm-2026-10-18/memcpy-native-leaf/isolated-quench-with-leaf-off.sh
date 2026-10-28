@@ -1,0 +1,7 @@
+#!/bin/sh
+set -eu
+export QUENCH_WASM_EMSCRIPTEN_MEMCPY_DIRECT=1
+export QUENCH_WASM_EMSCRIPTEN_MEMCPY_RAW_I32=1
+export QUENCH_WASM_EMSCRIPTEN_MEMCPY_EARLY_IMPORT=1
+export QUENCH_WASM_JIT_EMSCRIPTEN_MEMCPY_LEAF=0
+exec /workspace/quench/target/production/quench-node "$@"

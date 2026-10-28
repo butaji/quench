@@ -1,0 +1,40 @@
+{
+  "objective": "Keep uncaptured locals in activation frames when the function creates closures.",
+  "source_revision": "a54307c10fb55db37e725744d03b03abff59455c",
+  "host": {
+    "os": "macOS",
+    "architecture": "aarch64",
+    "cpu": "Apple M4"
+  },
+  "performance": {
+    "profile": "production",
+    "pairs": 11,
+    "candidate_binary_sha256": "317db04fd285dc2905f3cfc92fab2c0d0e04c6c801a7fbf6b2c7b452538ec0e9",
+    "baseline_binary_sha256": "839abc9f707908ca5d944926e0783156997df166123bf911fa036aec0b3fea7d",
+    "fixture_sha256": "bc1fbe26bddb20ca140008d9204a05cfbc873d0be6e2569a16aff8354cd31196",
+    "candidate_median_instructions": 1070752915,
+    "baseline_median_instructions": 4075829204,
+    "retired_instruction_change_percent": -73.73,
+    "candidate_median_elapsed_seconds": 0.03,
+    "baseline_median_elapsed_seconds": 0.13,
+    "elapsed_change_percent": -76.92,
+    "control": "No-closure local loop was instruction-neutral in the one-run control screen; elapsed measurements at this duration are coarse.",
+    "pairs_csv": "task61-selective-capture-paired-2026-10-08.csv"
+  },
+  "test262": {
+    "runner_sha256": "6f7407d1af5dc12a7a0d7da253a099b73b121d293371e627f5a911eb85cb59ca",
+    "platform": "macos-aarch64",
+    "jobs": 4,
+    "timeout_ms": 900000,
+    "ranges": [
+      {"stages": "1-20", "passed": 14066, "failed": 0, "report_sha256": "0039d0870b05bd889a85c687c097f35718de7a82f3eb1acab8c97fca6284ff4e"},
+      {"stages": "36-38", "passed": 89, "failed": 0, "report_sha256": "836c8939b405c551264354626fd1134ce19d4d71cb8a45c6ef1b520cf16bac7f"},
+      {"stages": "49-50", "passed": 84, "failed": 0, "report_sha256": "cb2be23a7acde504d45ddf6bb0b93be65c40d794fadc8456f730260b0ba5f221"},
+      {"stages": "86", "passed": 10, "failed": 0, "report_sha256": "9abb218f316adadad91f2b2e0363ea6b0aa4368daed4474eab8ec86e30d0ed28"},
+      {"stages": "94", "passed": 844, "failed": 1, "report_sha256": "b1bacbeece9b04f64cd15910e5c93a1ede5c4e481c87719a7f9da710b091c506"}
+    ],
+    "total_passed": 15093,
+    "total_failed": 1,
+    "known_failure": "annexB/language/function-code/block-decl-func-skip-arguments.js: Quench returns the function string where the fixture expects the Arguments object string; this mismatch predates the selective-capture change and is recorded in task20-node-oracle-current-2026-10-07.json."
+  }
+}

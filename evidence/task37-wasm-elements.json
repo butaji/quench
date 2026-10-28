@@ -1,0 +1,247 @@
+{
+  "tasks": [
+    "19",
+    "23",
+    "37",
+    "40",
+    "48",
+    "86"
+  ],
+  "source_head": "7e60169df033dd247f34199e084e3e8080a92a29",
+  "source_state": "dirty worktree",
+  "source_hashes": {
+    "crates/quench-runtime-next/src/wasm.rs": "b481d99972b877f3fb244d3d55510e944ce3644ae64e9f25164a7ad8c2f301f9",
+    "crates/quench-runtime-next/src/wasm/scalar.rs": "1bbd4bd8eba978819f753e8d8239bc1ae49102344469b4d96876adaa63cbc9f8",
+    "crates/quench-runtime-next/src/wasm/element.rs": "152bad279ece7899ac49f33ff1c9575eddc52589e7fa94acdd017f230f80976a",
+    "crates/quench-runtime-next/src/wasm/table.rs": "7071bda9b7be0293a33df9f607926857d4f4a779dc1076b4f80c4b03583a3126",
+    "crates/quench-runtime-next/src/wasm/memory.rs": "7344bbf4899c3070c099ff8793c1504185420f5c153f6897c606ccbf566f23b8",
+    "crates/quench-runtime-next/src/lib.rs": "063791f521a850a9d37f8d2dc89852ae4c9e40be5a10ff76dfc43079bee5d87b",
+    "crates/quench-runtime-next/src/bytecode.rs": "74511b99990ba05a1000f2c2a810a12079a51e9b81aee968bfcd8713bc5e48d4",
+    "crates/quench-runtime-next/src/bytecode/disassemble.rs": "6ff5c9a681a5a95ecaf6dceaca4cf7f0ced671beacf8aaefad8f3d0f743a50bb",
+    "crates/quench-runtime-next/src/bytecode/validate.rs": "feb40afada4328bca4ad072a01c0ce2f934fe04cacb24367a1a8192af006676d",
+    "crates/quench-runtime-next/src/heap.rs": "7003503472137df6bac028618f0b6868e276319b52d182921bca54697f654847",
+    "crates/quench-runtime-next/src/heap/cell.rs": "297ce064514a77e69d56bc3c317a9cf6932f7fdad26cecdba899fc215965109e",
+    "crates/quench-runtime-next/src/heap/memory_profile.rs": "c8d152aae0c9147a62ea89d59729184690516a1d9475a14fe08cc70b20289d2f",
+    "crates/quench-runtime-next/src/vm/dispatch.rs": "fef784a7812f2c78cc2273fac420a032c8d7cff4a224e43d851c0361ba92fd95",
+    "crates/quench-runtime-next/src/vm/json.rs": "49981fb5006a10db0e9b1a5ea01b2cf002ed656d52e490b166e4594632b231e5",
+    "crates/quench-runtime-next/src/vm/wasm.rs": "494507d1854ee3d42841045fed7564397e6f6983a384df6291696fa2f7c7e0b0",
+    "crates/quench-runtime-next/src/vm/wasm_table.rs": "09f87f80c5132fff85a6b02f4c20bee04fe5ed6880fc9ac546cb2e6ddd7150d5",
+    "crates/quench-runtime-next/src/vm/program_store.rs": "520c2dffb166b0e15eaaff6f30cf6ae202ec973e6f33690d6ba50a81f4cd10aa",
+    "crates/quench-wasm/src/shared.rs": "55d484c90ea4714eb4b59cb61796ba26397c024f1e66b08c6bc65b7a8dfa1518",
+    "crates/quench-wasm/src/shared_wast.rs": "0e30cd1858fef8e4a1c8a1306549bbc13855e70e269296bc14ffb5394ee10af9",
+    "crates/quench-wasm-test/Cargo.toml": "9d070637f746ebf95f65b7d08a1fe025535b2758e3e97b480e646b71aa0c27da",
+    "crates/quench-wasm-test/src/bin/run-shared.rs": "cbb9799f595c39c3e1a9a33b1eee67b7123c3eb5d42ff9f7ebdad0579066b607",
+    "Cargo.lock": "15702c51da20d1812f207249b38bfe24acbb000a109adc690df69f1096d767d4"
+  },
+  "suite_head": "67c8b9dc32c47d61c05a1681df349d01c85fa8ff",
+  "suite_clean": true,
+  "host": "macOS-26.5-arm64-arm-64bit",
+  "rustc": "rustc 1.99.0 (b940084d7 2026-09-28) (Homebrew)",
+  "profile": "debug",
+  "residual_format": 50,
+  "obligation": "Implement active/passive/declarative element lifecycle and structural indirect calls in the single VM, with complete affected inventories, safe exhaustion and traced cross-instance/program ownership.",
+  "representation": "WasmElement stores static mode, type and reference expressions as module facts. Captured bindings own passive WasmElements cells or Undefined dropped state; active segments initialize in declaration order after bounds prechecks and start dropped. ElemDrop and DataDrop share one dropped-binding transition. Function references use ordinary Function cells and the existing weak identity cache. One WasmSignatures pool interns structural types; function indices project into it, and module type indices resolve during lowering. Registered programs share that Rc authority and validate pool-index domains once. Indirect target lookup checks bounds/null/structural type, then direct and indirect calls share argument-window and result-bundle lowering plus the existing dispatcher/activations. Ordinary Wasm calls preserve stack-exhaustion semantics.",
+  "worker_stack": "Each shared-suite subprocess reserves a runtime execution thread with quench_stack::WORKER_STACK_SIZE, derived from the same native recursion budget and headroom that the VM guard uses. This is runner reservation, not an alternate executor or altered guest exhaustion threshold.",
+  "runner": {
+    "path": "target/iteration/task37-wasm-elements-final-runner",
+    "sha256": "2e41656fc19b2d1104a9f09e008de4d56d34abcd51d9f99a3c4cab0f56c4019a"
+  },
+  "before": {
+    "path": "target/iteration/task37-wasm-elements-before.json",
+    "sha256": "a6af150cbcac64037d7b26624db6d361d0e7dc2ac77cfb5d73a8952eaa3e6f22"
+  },
+  "after": {
+    "path": "target/iteration/task37-wasm-elements-final-after.json",
+    "sha256": "208a881f1f998e5e6edd547cc4120df2cea51577bfa8880ee1f3834f77018773"
+  },
+  "comparison": {
+    "path": "target/iteration/task37-wasm-elements-final-compare.log",
+    "sha256": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+  },
+  "exact_inventory_match": true,
+  "input_hashes_match": true,
+  "workers_complete": true,
+  "scope_files": 65,
+  "total": 23509,
+  "passed": 21722,
+  "failed": 1787,
+  "gains": 2136,
+  "regressions": 0,
+  "gains_by_file": {
+    "crates/quench-wasm-test/testsuite/block.wast": 53,
+    "crates/quench-wasm-test/testsuite/br.wast": 77,
+    "crates/quench-wasm-test/testsuite/br_if.wast": 89,
+    "crates/quench-wasm-test/testsuite/call.wast": 73,
+    "crates/quench-wasm-test/testsuite/call_indirect.wast": 137,
+    "crates/quench-wasm-test/testsuite/elem.wast": 63,
+    "crates/quench-wasm-test/testsuite/func.wast": 5,
+    "crates/quench-wasm-test/testsuite/if.wast": 125,
+    "crates/quench-wasm-test/testsuite/load.wast": 38,
+    "crates/quench-wasm-test/testsuite/load2.wast": 38,
+    "crates/quench-wasm-test/testsuite/loop.wast": 79,
+    "crates/quench-wasm-test/testsuite/return.wast": 64,
+    "crates/quench-wasm-test/testsuite/select.wast": 126,
+    "crates/quench-wasm-test/testsuite/table_copy.wast": 610,
+    "crates/quench-wasm-test/testsuite/table_get.wast": 11,
+    "crates/quench-wasm-test/testsuite/table_init.wast": 529,
+    "crates/quench-wasm-test/testsuite/table_set.wast": 19
+  },
+  "complete_selected_files": {
+    "crates/quench-wasm-test/testsuite/call.wast": {
+      "total": 91,
+      "passed": 91,
+      "failed": 0
+    },
+    "crates/quench-wasm-test/testsuite/call_indirect.wast": {
+      "total": 172,
+      "passed": 172,
+      "failed": 0
+    },
+    "crates/quench-wasm-test/testsuite/table_fill.wast": {
+      "total": 45,
+      "passed": 45,
+      "failed": 0
+    },
+    "crates/quench-wasm-test/testsuite/table_get.wast": {
+      "total": 16,
+      "passed": 16,
+      "failed": 0
+    },
+    "crates/quench-wasm-test/testsuite/table_set.wast": {
+      "total": 26,
+      "passed": 26,
+      "failed": 0
+    },
+    "crates/quench-wasm-test/testsuite/table_size.wast": {
+      "total": 39,
+      "passed": 39,
+      "failed": 0
+    }
+  },
+  "verification": {
+    "runtime_library_default": {
+      "passed": 476,
+      "failed": 0,
+      "ignored": 0,
+      "log": {
+        "path": "target/iteration/task37-wasm-elements-runtime-final.log",
+        "sha256": "63ff4d17c15b2cfdabc1fed84a8f3372bc627199a95fea02d7da8b60680a6f9d"
+      }
+    },
+    "frontend_library": {
+      "passed": 39,
+      "failed": 0,
+      "ignored": 0,
+      "log": {
+        "path": "target/iteration/task37-wasm-elements-frontend-final.log",
+        "sha256": "f2f7ca255e83a8f4bad07c9cb4a9507cb4552ce27c2b82495137d823a375f925"
+      }
+    },
+    "suite_runner_library": {
+      "passed": 3,
+      "failed": 0,
+      "ignored": 0,
+      "log": {
+        "path": "target/iteration/task37-wasm-elements-frontend-final.log",
+        "sha256": "f2f7ca255e83a8f4bad07c9cb4a9507cb4552ce27c2b82495137d823a375f925"
+      }
+    },
+    "all_targets_memory_aggregate_features": {
+      "path": "target/iteration/task37-wasm-elements-check-final.log",
+      "sha256": "7bf0d1dea3ca9e71b6de5d2e14d1393a05e85846f9707f603a598f6926e82f5b"
+    },
+    "controls": {
+      "controls": {
+        "total": 31,
+        "passed": 31,
+        "input": {
+          "path": "target/iteration/task37-wasm-elements-controls.wast",
+          "sha256": "f3e74ac64cd283918effdf1df97dcb7bb9177855184933245d59579cc690544c"
+        },
+        "report": {
+          "path": "target/iteration/task37-wasm-elements-final-controls.json",
+          "sha256": "f307ad51faf8c687c36f79c0c77515260ccdcf499ae1219c196dd91bd2e5c813"
+        }
+      },
+      "table-controls": {
+        "total": 34,
+        "passed": 34,
+        "input": {
+          "path": "target/iteration/task37-wasm-tables-controls.wast",
+          "sha256": "7ae56f9b03ec6aa48e92e5cfb165243d06c3b7e4cf80d20c9fcb44fc0a4eae4d"
+        },
+        "report": {
+          "path": "target/iteration/task37-wasm-elements-final-table-controls.json",
+          "sha256": "fcb7c435144f1614677090905dd8d9e6107fc3aedff38e7883490597656b547e"
+        }
+      },
+      "bulk-controls": {
+        "total": 26,
+        "passed": 26,
+        "input": {
+          "path": "target/iteration/task37-wasm-bulk-controls.wast",
+          "sha256": "6dfef9857d0582cc05c9bd22156546d530096ff52017e7a6257784aa6d446a98"
+        },
+        "report": {
+          "path": "target/iteration/task37-wasm-elements-final-bulk-controls.json",
+          "sha256": "6d4815adbdd5b92149efc2045936ba529c7fe03da0cd34a7d3b78c0e29a7e56d"
+        }
+      },
+      "memory-controls": {
+        "total": 423,
+        "passed": 423,
+        "input": {
+          "path": "target/iteration/task37-wasm-memory-controls.wast",
+          "sha256": "e9addb8e719c850dd3e84f9a6033c5c3a3bff5499fcdb4ae3b3912fa0bfff5cd"
+        },
+        "report": {
+          "path": "target/iteration/task37-wasm-elements-final-memory-controls.json",
+          "sha256": "d402e7bc8c075d77a68582a12187ba48d3c37304695150853b6827a2242397fe"
+        }
+      }
+    },
+    "node_oracle": {
+      "report": {
+        "path": "target/iteration/task37-wasm-elements-oracle.json",
+        "sha256": "ac854f05178dfa9b496c7126ab550a06afcd5c09972449364b0e10564ded8e47"
+      },
+      "script": {
+        "path": "target/iteration/task37-wasm-elements-oracle.cjs",
+        "sha256": "945364d4d7f89f1e360cea1989b73196247ae42907dc78a9ba26d8ffd159ae07"
+      },
+      "input": {
+        "path": "target/iteration/task37-wasm-elements-oracle.wat",
+        "sha256": "26efc8184ed1f195faccad58916fa88ee488836c2ae9fceaab2750d54ea874ee"
+      },
+      "binary": {
+        "path": "target/iteration/task37-wasm-elements-oracle.wasm",
+        "sha256": "bd354d8a4bfb105bc289c0be33f174c085927578d26747c1c6eea0343ab795d6"
+      }
+    }
+  },
+  "retained_unit_rationale": {
+    "equal_function_facts_share_one_signature_and_unused_types_do_not_become_functions": "Checks canonical allocation sharing and distinct function/type index domains, including facts that have no function entry.",
+    "serialized_elements_preserve_foreign_capture_ownership_and_reject_unregistered_type_facts": "Checks serialized residual rows with canonical module facts, active/declared dropped bindings, shared closure identity in passive arrays, foreign-instance/program captures, different type interning orders, collection after root/drop/removal transitions and rejection of an unknown type index before execution. These are internal representation and ownership obligations, not duplicated guest conformance."
+  },
+  "removed_obsolete_case": {
+    "path": "crates/quench-wasm/src/shared.rs",
+    "old_test": "shared_lowering_rejects_unsupported_semantics",
+    "retained_test": "shared_boundary_rejects_unsupported_imports_start_and_i32_misuse",
+    "reason": "The call_indirect unsupported-path assertion became obsolete; its complete 172-directive pinned file now supplies conformance coverage."
+  },
+  "rejected_trial": {
+    "report": {
+      "path": "target/iteration/task37-wasm-elements-trial-after.json",
+      "sha256": "9f44792ccdfef30e614b0433e23e6b92d7f217ed8e779b1103871250f08f8330"
+    },
+    "reason": "Main-thread stacks aborted during newly admitted direct/indirect exhaustion cases. The trial had missing directives and two failed workers, so it was not qualifying evidence. The final reserved workers return every matching directive with no crashes/timeouts."
+  },
+  "scope_rationale": "Retain the prior 64 scalar/control/memory/table/element/reference files and add pinned call_indirect.wast. The new state and call paths also admit existing block/branch/loop/return/selection/load/function modules; the unchanged scope protects their transitions. Exact directive IDs and pinned bytes match. Library invariants cover shared heap tracing and bytecode validation/serialization. No JavaScript semantic or Node host/API behavior changed; ordinary JS tail-call conditions remain identical. No full Test262, Wasm or Node inventory run.",
+  "limits": [
+    "1,787 directives still fail in this affected scope; it is not complete pinned Wasm qualification.",
+    "Imports, table initializer expressions, typed/non-null/GC references, SIMD, table64, other memory forms and remaining proposals are open. Imported table/memory effects explain observed stale cells and loads.",
+    "Residual round trips preserve the canonical module/instance facts alongside the program; this does not claim standalone serialization of an entire Wasm module definition.",
+    "Optional profiling accounting failures recorded by the preceding table qualification remain open; only feature-enabled compilation is claimed here.",
+    "JS WebAssembly host interoperation, the frozen implemented Node gate, production cutover/legacy removal and Stage A remain open. No performance or Stage B claim."
+  ]
+}

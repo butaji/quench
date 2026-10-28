@@ -1,0 +1,142 @@
+{
+  "task": "07",
+  "obligation": "Fallback descriptor edges are children of their object, not global GC roots. Trace them during ordinary marking and the ephemeron fixpoint; prune dead-owner metadata after sweep.",
+  "source_head": "7e60169df033dd247f34199e084e3e8080a92a29",
+  "source_state": "dirty worktree",
+  "recorded_source_hashes": {
+    "crates/quench-runtime-next/src/heap.rs": "21c6151d57152cdf79961ca5090afe6aa0822961c5b40e6584d0aa089df11feb",
+    "crates/quench-runtime-next/src/heap/weak.rs": "ef569542850091b0ca301f458e3d4ca09b1493a24109d6e661379611f5dd28e9",
+    "crates/quench-runtime-next/src/vm/gc.rs": "907e011300ee6574aebaa1a39dae778986399a8158005b9034d1f95218c6139b",
+    "crates/quench-runtime-next/src/vm/tests.rs": "02c78384ddeaf938416f469b49b6506427060a52fc3b384e8a799564023666d5"
+  },
+  "source_record_note": "Hashes describe the recorded tree. Rust formatting and the ephemeron extension to the internal regression followed the tested release build; production semantics did not change. This is affected-scope evidence, not final Stage A build qualification.",
+  "suite_head": "6eec1ac9ee144dafd8f344d73a21f36bfc9f6755",
+  "suite_clean": true,
+  "fixture_content_sha256": "517409a998e24d7b68ed7e859dd14803d3cd857c165afbc954892a073141c8ef",
+  "harness_content_sha256": "ccdcb17a61f58a601c5ee12d0c540ac4c62a687ef4b519e2fad09ab2a12c1cb6",
+  "inventory_sha256": "de6b3a9356d854ff08613a7c149f7fdf3d95f921681b295f544c7a01e61bc321",
+  "profile": "release",
+  "timeout_ms": 10000,
+  "rustc": "rustc 1.99.0 (b940084d7 2026-09-28) (Homebrew)",
+  "host": "macOS-26.5-arm64-arm-64bit",
+  "cpu": "Apple M4",
+  "runners": {
+    "before": {
+      "path": "target/iteration/task20-regexp-matcher-run-stages-next",
+      "sha256": "06425edc9c8d0ef95424c1eea1e361d1e052fb3d19070def136c012b4aa203ca"
+    },
+    "after": {
+      "path": "target/iteration/task07-descriptor-owner-run-stages-next",
+      "sha256": "834f48a50b789790aa7c4b228f60996914393ad5c88dbe5611a5123d8238bc78"
+    }
+  },
+  "commands": {
+    "suite": "TEST262_REPORT=<report> TEST262_TEST_TIMEOUT_MS=10000 <runner> <stage> <stage>",
+    "compare": "target/debug/compare-runs --reports <before> <after>",
+    "units": "cargo test -p quench-runtime-next --lib --test subset",
+    "internal_regression": "cargo test -p quench-runtime-next --lib fallback_descriptor_edges_follow_their_owner_lifetime",
+    "features": "cargo check -p quench-runtime-next --features profile-memory,profile-aggregate"
+  },
+  "scopes": [
+    {
+      "name": "array",
+      "stage": 31,
+      "cases": 3081,
+      "before_passed": 3081,
+      "after_passed": 3081,
+      "regressions": 0,
+      "before_report_sha256": "382f34c4f64fa8cca4eae59407437329e0fa636c069566e03539899906b6e585",
+      "after_report_sha256": "6fdda7f53cf9a8cf00a52cddf1c7a6c2f32cb03420328278b4471d7c602cd46c"
+    },
+    {
+      "name": "object",
+      "stage": 60,
+      "cases": 3411,
+      "before_passed": 3411,
+      "after_passed": 3411,
+      "regressions": 0,
+      "before_report_sha256": "0fe8608add18db28dbb0f0df86b10b0d75e718043c4c13494a7798deb79a012d",
+      "after_report_sha256": "ff829eb37190fadfe3807b7c67ee7238a4d2f7d0512222059ac2e1c9abecb7bc"
+    },
+    {
+      "name": "reflect",
+      "stage": 63,
+      "cases": 153,
+      "before_passed": 153,
+      "after_passed": 153,
+      "regressions": 0,
+      "before_report_sha256": "0963fe925ae83e52fb395a8aee2723d5e88ff1b684fc4e3f379220da1ed0a377",
+      "after_report_sha256": "aa8caf935671a9d6f3a2d2491aeee08d98f4a5ed3934cf9b01a9ea909d6e47e9"
+    },
+    {
+      "name": "weak-map",
+      "stage": 79,
+      "cases": 141,
+      "before_passed": 141,
+      "after_passed": 141,
+      "regressions": 0,
+      "before_report_sha256": "c879d6dee2f903ced4eb8c54195348f2dc83df743cafcc7fd399c7304b7012b1",
+      "after_report_sha256": "0299d653f50afa2e8829f628154727a946b964b7f6deff91056e2c2b74abe336"
+    },
+    {
+      "name": "weak-ref",
+      "stage": 80,
+      "cases": 29,
+      "before_passed": 29,
+      "after_passed": 29,
+      "regressions": 0,
+      "before_report_sha256": "c6b12967c9e620c93dda122c82c8bc31855c5db5972e1a904d3bd4e05e986ec9",
+      "after_report_sha256": "71b82e7dd49b0e833e3e9b56ad62694e4b9655d48cf06732a4c96d99b3b8743b"
+    },
+    {
+      "name": "weak-set",
+      "stage": 81,
+      "cases": 85,
+      "before_passed": 85,
+      "after_passed": 85,
+      "regressions": 0,
+      "before_report_sha256": "5c9c0347505047eec0386b7920cbab3ee51704d88cc1f804ba31d9cd3150f0cd",
+      "after_report_sha256": "2ae7d2128ba8013385ddca932c9974e1023183e280ab7d36a142ba2f7c9111b6"
+    },
+    {
+      "name": "finalization",
+      "stage": 47,
+      "cases": 47,
+      "before_passed": 47,
+      "after_passed": 47,
+      "regressions": 0,
+      "before_report_sha256": "d2a9af3aac3d328826e76ddb42af7391688409bf20ede7fdf80966c507bcc846",
+      "after_report_sha256": "912c98f921860db65b3e7c1a217d432f6a6c5b4b1f75823c14b29b3f025eef28"
+    },
+    {
+      "name": "symbol",
+      "stage": 73,
+      "cases": 98,
+      "before_passed": 98,
+      "after_passed": 98,
+      "regressions": 0,
+      "before_report_sha256": "7ce5ad4853f0f1ed8b74368b9c8e5db0a1aebbb047066939ed51e6a88722aedf",
+      "after_report_sha256": "1db2a90a7807bd02c54b7154ed515e445dcd25970af45fd099cd92870ea01e0b"
+    }
+  ],
+  "distinct_cases": 7045,
+  "regressions": 0,
+  "internal_regression": {
+    "before": "Fails: unreachable owner cycle retained",
+    "after": "Passes: rooted owner retains setter; WeakMap ephemeron retains owner and setter; releasing key collects owner and setter and prunes descriptor",
+    "retention_reason": "Deterministic GC ownership and ephemeron-phase behavior cannot be established by suite descriptor assertions alone."
+  },
+  "runtime_library": {
+    "passed": 459,
+    "failed": 0,
+    "ignored": 0
+  },
+  "integration": {
+    "passed": 6,
+    "failed": 0,
+    "ignored": 0
+  },
+  "feature_check": "passed",
+  "raw_artifact_prefix": "target/iteration/task07-descriptor-owner",
+  "stage_a_closed": false
+}

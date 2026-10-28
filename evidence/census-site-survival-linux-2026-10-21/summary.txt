@@ -1,0 +1,16 @@
+fw-express                 alloc=    37963 young-death= 48.0% survive= 52.0% pretenurable= 41.2% of survivors | object:66%/25148 array:37%/7649 iterator:1%/1569 function:11%/1451 regexp:5%/2081
+fw-fastify                 alloc=    36702 young-death= 45.6% survive= 54.4% pretenurable= 28.6% of survivors | object:62%/27723 array:44%/5579 function:3%/1739
+fw-hono                    alloc=    31504 young-death= 26.2% survive= 73.8% pretenurable= 33.6% of survivors | object:81%/25774 array:52%/4067
+js3-acorn-wtb              alloc=  8390974 young-death= 76.2% survive= 23.8% pretenurable=  0.3% of survivors | object:22%/6806385 array:33%/1555932 iterator:1%/3086 regexp:3%/24676
+js3-chai-wtb               alloc=  1403519 young-death= 95.4% survive=  4.6% pretenurable=  9.2% of survivors | object:4%/1146544 array:5%/126606 iterator:3%/41735 weak_map:5%/2090 function:13%/74340 regexp:2%/11812
+js3-doxbee-promise         alloc=  2318487 young-death= 74.5% survive= 25.5% pretenurable=  0.9% of survivors | object:22%/1463020 array:46%/3791 function:32%/850590
+js3-hash-map               alloc=   468339 young-death= 24.1% survive= 75.9% pretenurable=  1.5% of survivors | object:76%/462865 array:46%/3849
+js3-json-parse-inspector   alloc=   546174 young-death= 17.5% survive= 82.5% pretenurable= 20.7% of survivors | object:83%/442905 array:82%/101605
+js3-lazy-collections       alloc=  3183681 young-death= 98.5% survive=  1.5% pretenurable= 11.6% of survivors | object:1%/3039979 array:34%/5658 iterator:17%/49284 function:11%/88158
+js3-source-map-wtb         alloc=  2082097 young-death= 81.9% survive= 18.1% pretenurable= 97.8% of survivors | object:17%/1622899 array:22%/456587 iterator:3%/1053
+js3-web-ssr                alloc=   491189 young-death= 92.6% survive=  7.4% pretenurable= 35.3% of survivors | object:8%/329804 array:6%/104214 iterator:0%/48550 function:31%/7787
+v8-deltablue               alloc=   326436 young-death= 82.0% survive= 18.0% pretenurable=  2.3% of survivors | object:21%/207786 array:12%/118457
+v8-earley-boyer            alloc= 11509035 young-death= 66.8% survive= 33.2% pretenurable=  2.6% of survivors | object:34%/11136726 array:99%/13268 function:9%/358898
+v8-raytrace                alloc=  3332586 young-death= 97.7% survive=  2.3% pretenurable=  1.8% of survivors | object:2%/3332201
+v8-richards                alloc=    12689 young-death= 76.2% survive= 23.8% pretenurable= 44.5% of survivors | object:29%/9125 array:12%/3170
+v8-splay                   alloc=  2911107 young-death= 23.6% survive= 76.4% pretenurable=  0.1% of survivors | object:75%/1981489 array:80%/929310

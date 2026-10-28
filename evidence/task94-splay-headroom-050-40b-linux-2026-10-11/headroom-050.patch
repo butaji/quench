@@ -1,0 +1,26 @@
+diff --git a/crates/quench-runtime/src/heap.rs b/crates/quench-runtime/src/heap.rs
+index c6edfea6d..92d7f361e 100644
+--- a/crates/quench-runtime/src/heap.rs
++++ b/crates/quench-runtime/src/heap.rs
+@@ -50,7 +50,7 @@ const SMALL_HEAP_GC_HEADROOM: GcHeadroomFactor = GcHeadroomFactor {
+ // occupied high-water); 3/4 targets 1.75x and 1/2 targets 1.5x.
+ const LARGE_HEAP_GC_HEADROOM: GcHeadroomFactor = GcHeadroomFactor {
+     numerator: 1,
+-    denominator: 1,
++    denominator: 2,
+ };
+ 
+ #[derive(Clone, Copy)]
+diff --git a/crates/quench-runtime/src/heap/tests.rs b/crates/quench-runtime/src/heap/tests.rs
+index 1a1ec3fd5..420c0822f 100644
+--- a/crates/quench-runtime/src/heap/tests.rs
++++ b/crates/quench-runtime/src/heap/tests.rs
+@@ -121,7 +121,7 @@ fn gc_headroom_factors_scale_live_cells_without_overflow() {
+     );
+     assert_eq!(
+         gc_allocation_headroom(LARGE_HEAP_MINIMUM_LIVE_CELLS),
+-        65_536
++        32_768
+     );
+ }
+ 

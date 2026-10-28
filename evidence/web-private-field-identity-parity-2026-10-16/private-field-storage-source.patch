@@ -1,0 +1,394 @@
+diff --git a/crates/quench-node-test/tests/child_entry.rs b/crates/quench-node-test/tests/child_entry.rs
+index 6fe238606..8a50537a6 100644
+--- a/crates/quench-node-test/tests/child_entry.rs
++++ b/crates/quench-node-test/tests/child_entry.rs
+@@ -9607,3 +9607,8 @@ fn function_prototype_info_lookups_preserve_native_accessor_layout_and_descripto
+ fn function_constructor_sources_preserve_whitespace_parameter_positions_and_synthetic_name_scope() {
+     compare_node_source_with_args(include_str!("../node-tests/test-function-constructor-source-layout.js"), &[]);
+ }
++
++#[test]
++fn private_fields_keep_class_creation_identity_and_atomic_internal_initialization() {
++    compare_node_source_with_args(include_str!("../node-tests/test-private-field-identity.js"), &[]);
++}
+diff --git a/crates/quench-runtime/src/bytecode.rs b/crates/quench-runtime/src/bytecode.rs
+index 6c0a17934..cab6bbf18 100644
+--- a/crates/quench-runtime/src/bytecode.rs
++++ b/crates/quench-runtime/src/bytecode.rs
+@@ -623,7 +623,8 @@ opcodes!(
+     ToPropertyKey => READ_THROW; layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, Register, Unused),
+     ToNumeric => READ_THROW; layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, Register, Unused),
+     CopyDataProperties => CALL_EFFECT; layout Scalar; meaning Unused, @ Register, @ fields(Register, Register, Register),
+-    MarkPrivateName => Effect::WRITES_HEAP; layout Scalar; meaning AtomIndex, @ Register, @ fields(Unused, Register, Register),
++    MarkPrivateName => WRITE_THROW; layout Scalar; meaning AtomIndex, @ Register, @ fields(Unused, Register, Register),
++    DefinePrivateField => WRITE_THROW; layout Scalar; meaning AtomIndex, @ Register, @ fields(Register, Register, Register),
+     SetField => WRITE_THROW; layout Scalar; meaning AtomIndex, @ Register, @ fields(Register, Register, CacheSiteIndex),
+     DefineComputedField => WRITE_THROW; layout Scalar; meaning Unused, @ Register, @ fields(Register, Register, Register),
+     SetThisField => WRITE_THROW; layout Scalar; meaning AtomIndex, @ Register, @ fields(Register, Unused, CacheSiteIndex),
+@@ -2135,7 +2136,7 @@ impl ResidualProgram {
+         Some(position)
+     }
+ 
+-    pub const FORMAT_VERSION: u8 = 91;
++    pub const FORMAT_VERSION: u8 = 92;
+     pub const RUNTIME_ABI_FINGERPRINT: u64 = {
+         const ABI_SIGNATURE: u64 = 0x5251_4a00_0000_0000;
+         const FORMAT_VERSION_SHIFT: u32 = 16;
+diff --git a/crates/quench-runtime/src/compile/ast/call.rs b/crates/quench-runtime/src/compile/ast/call.rs
+index fd135b695..3dd124739 100644
+--- a/crates/quench-runtime/src/compile/ast/call.rs
++++ b/crates/quench-runtime/src/compile/ast/call.rs
+@@ -359,6 +359,26 @@ impl FunctionCompiler<'_, '_> {
+                 }
+             }
+         }
++        // Eval may mention private names only in its string. Its class home
++        // still needs the same lexical capture that compiled super access uses.
++        if self.dynamic_eval && let Some(atom) = self.super_home_atom {
++            let location = self.local_slots.get(&atom).copied()
++                .map(crate::bytecode::EvalBindingLocation::Local)
++                .or_else(|| self.scopes.iter().enumerate().find_map(|(depth, scope)| {
++                    let slot = *scope.get(&atom)?;
++                    let depth = u16::try_from(depth).ok()?;
++                    Some(crate::bytecode::EvalBindingLocation::Capture { depth, slot })
++                }));
++            if let Some(location) = location
++                && !direct.iter().any(|binding| binding.atom == atom)
++            {
++                direct.push(crate::bytecode::EvalBinding {
++                    atom, location, with_depth: 0,
++                    kind: LexicalBindingKind::Mutable,
++                    declaration: crate::bytecode::EvalBindingDeclaration::Variable,
++                });
++            }
++        }
+         direct.sort_unstable_by_key(|binding| binding.atom);
+         let captured = self.owner.captured_names(&self.scopes);
+         let mut hidden: Vec<Atom> = self
+diff --git a/crates/quench-runtime/src/compile/class.rs b/crates/quench-runtime/src/compile/class.rs
+index cb448709c..8020319d3 100644
+--- a/crates/quench-runtime/src/compile/class.rs
++++ b/crates/quench-runtime/src/compile/class.rs
+@@ -592,7 +592,9 @@ impl FunctionCompiler<'_, '_> {
+                         self.literal(Constant::Undefined)
+                     };
+                     self.set_class_field_function_name(field, value);
+-                    if let Some(key) =
++                    if matches!(field, ClassField::Property(field) if matches!(&field.key, PropertyKey::PrivateIdentifier(_))) {
++                        self.emit(Op::DefinePrivateField, value, class_value, class_value, name.unwrap());
++                    } else if let Some(key) =
+                         computed_key.filter(|_| matches!(field, ClassField::Property(_)))
+                     {
+                         self.emit(Op::SetIndex, value, class_value, key, 1);
+@@ -769,9 +771,7 @@ impl FunctionCompiler<'_, '_> {
+             );
+             if private {
+                 let field_atom = name.unwrap();
+-                let cache = self.owner.cache_site();
+-                self.emit(Op::SetField, value, this, cache, field_atom);
+-                self.emit(Op::MarkPrivateName, 0, this, home, field_atom);
++                self.emit(Op::DefinePrivateField, value, this, home, field_atom);
+             } else if let Some(key) = computed_key {
+                 self.emit(Op::DefineComputedField, value, this, key, 0);
+             } else if matches!(field, ClassField::AutoAccessor { .. }) {
+diff --git a/crates/quench-runtime/src/heap/cell.rs b/crates/quench-runtime/src/heap/cell.rs
+index d0f0c715e..815d69093 100644
+--- a/crates/quench-runtime/src/heap/cell.rs
++++ b/crates/quench-runtime/src/heap/cell.rs
+@@ -1280,7 +1280,7 @@ struct ObjectExtras {
+     structured_transfer_forbidden: bool,
+     module_bindings: Vec<(Atom, ProgramId, u16)>,
+     deferred_module: Option<crate::ModuleSource>,
+-    private_names: Vec<PrivateBrand>,
++    private_elements: Vec<PrivateElement>,
+     stack_data: Option<StackData>,
+     /// An index-keyed property descriptor has been recorded for this object; never cleared.
+     indexed_descriptors: bool,
+@@ -1297,7 +1297,7 @@ impl ObjectExtras {
+             + self.deferred_module.as_ref().map_or(0, |module| {
+                 module.name.capacity() + module.source.capacity() + module.bytes.capacity()
+             })
+-            + self.private_names.capacity() * std::mem::size_of::<PrivateBrand>()
++            + self.private_elements.capacity() * std::mem::size_of::<PrivateElement>()
+             + self
+                 .stack_data
+                 .as_ref()
+@@ -1328,6 +1328,14 @@ pub(crate) struct PrivateBrand {
+     pub home: Value,
+     pub name: Atom,
+ }
++/// A name's actual class home and its data share one lifetime-owned entry.
++#[derive(Clone, Copy, Debug)]
++struct PrivateElement {
++    brand: PrivateBrand,
++    // Brand-only entries name methods/accessors or reserve a class-home declaration.
++    data: Option<Value>,
++}
++
+ #[derive(Clone, Debug)]
+ pub(crate) struct FinalizationEntry {
+     pub target: WeakHandle,
+@@ -1633,8 +1641,9 @@ impl Object {
+             return;
+         };
+         if let Some(value) = extras.boxed_primitive { visit(value); }
+-        for brand in &extras.private_names {
+-            visit(brand.home);
++        for element in &extras.private_elements {
++            visit(element.brand.home);
++            if let Some(value) = element.data { visit(value); }
+         }
+         match extras.stack_data.as_ref() {
+             Some(StackData::Captured(records)) => {
+@@ -1753,17 +1762,34 @@ impl Object {
+     pub(crate) fn set_deferred_module(&mut self, module: Option<crate::ModuleSource>) {
+         self.extras_mut().deferred_module = module;
+     }
+-    pub(crate) fn private_names(&self) -> &[PrivateBrand] {
+-        self.extras().map_or(&[], |extras| &extras.private_names)
++    pub(crate) fn private_names(&self) -> impl Iterator<Item = PrivateBrand> + '_ {
++        self.extras().into_iter().flat_map(|extras| extras.private_elements.iter().map(|element| element.brand))
+     }
+     pub(crate) fn has_private_name(&self, brand: PrivateBrand) -> bool {
+-        self.private_names().contains(&brand)
++        self.private_names().any(|candidate| candidate == brand)
+     }
+     pub(crate) fn add_private_name(&mut self, brand: PrivateBrand) {
+-        let names = &mut self.extras_mut().private_names;
+-        if !names.contains(&brand) {
+-            names.push(brand);
++        if !self.has_private_name(brand) {
++            self.extras_mut().private_elements.push(PrivateElement { brand, data: None });
++        }
++    }
++    pub(crate) fn private_field(&self, brand: PrivateBrand) -> Option<Value> {
++        self.extras()?.private_elements.iter().find(|element| element.brand == brand)?.data
++    }
++    pub(crate) fn set_private_field(&mut self, brand: PrivateBrand, value: Value) -> bool {
++        let Some(element) = self.extras_mut().private_elements.iter_mut().find(|element| element.brand == brand && element.data.is_some()) else { return false; };
++        element.data = Some(value);
++        true
++    }
++    pub(crate) fn initialize_private_field(&mut self, brand: PrivateBrand, value: Value) -> bool {
++        let elements = &mut self.extras_mut().private_elements;
++        if let Some(element) = elements.iter_mut().find(|element| element.brand == brand) {
++            if element.data.is_some() { return false; }
++            element.data = Some(value);
++        } else {
++            elements.push(PrivateElement { brand, data: Some(value) });
+         }
++        true
+     }
+     #[cfg(any(feature = "profile-memory", feature = "profile-aggregate"))]
+     pub(crate) fn allocated_extra_bytes(&self) -> usize {
+diff --git a/crates/quench-runtime/src/vm/dispatch.rs b/crates/quench-runtime/src/vm/dispatch.rs
+index 39d14dbae..03474ec11 100644
+--- a/crates/quench-runtime/src/vm/dispatch.rs
++++ b/crates/quench-runtime/src/vm/dispatch.rs
+@@ -690,7 +690,8 @@ impl<H: Host> Vm<H> {
+                 let object = self.read(f, i.register_a());
+                 let atom = i.atom_index();
+                 self.check_private_brand(p, object, atom)?;
+-                if self.own_property(object, atom).is_none()
++                if self.private_field_value(p, object, atom).is_none()
++                    && self.own_property(object, atom).is_none()
+                     && self.property_accessor(object, atom).is_none()
+                 {
+                     return Err(
+@@ -718,16 +719,9 @@ impl<H: Host> Vm<H> {
+                 let atom = i.atom_index();
+                 let brand = PrivateBrand { home, name: atom };
+                 if object != home {
+-                    let extensible = self.object_data(object).is_some_and(Object::is_extensible);
+                     let already_branded = self
+                         .object_data(object)
+                         .is_some_and(|object| object.has_private_name(brand));
+-                    if !extensible {
+-                        return Err(self.type_error(
+-                            p,
+-                            "Cannot add private field to a non-extensible object".into(),
+-                        ));
+-                    }
+                     if already_branded {
+                         return Err(self.type_error(
+                             p,
+@@ -994,6 +988,9 @@ impl<H: Host> Vm<H> {
+                     );
+                 self.define_property_or_throw(p, target, key, descriptor)?;
+             }
++            Op::DefinePrivateField => {
++                self.initialize_private_field(p, self.read(f, i.register_b()), self.read(f, i.register_c()), i.atom_index(), self.read(f, i.register_a()))?;
++            }
+             Op::DefineField => {
+                 let object = self.read(f, i.register_b());
+                 let value = self.read(f, i.register_a());
+diff --git a/crates/quench-runtime/src/vm/eval.rs b/crates/quench-runtime/src/vm/eval.rs
+index 3992f3cfb..6a475e00e 100644
+--- a/crates/quench-runtime/src/vm/eval.rs
++++ b/crates/quench-runtime/src/vm/eval.rs
+@@ -792,7 +792,7 @@ impl<H: Host> Vm<H> {
+     }
+ }
+ 
+-fn private_identity_label(identity: &str) -> Option<String> {
++pub(super) fn private_identity_label(identity: &str) -> Option<String> {
+     let identity = identity.strip_prefix("\0quench:private:")?;
+     let (_, label) = identity.rsplit_once(':')?;
+     (!label.is_empty()).then(|| label.to_owned())
+diff --git a/crates/quench-runtime/src/vm/object.rs b/crates/quench-runtime/src/vm/object.rs
+index 70ca8e9b9..9d71de2ee 100644
+--- a/crates/quench-runtime/src/vm/object.rs
++++ b/crates/quench-runtime/src/vm/object.rs
+@@ -1372,6 +1372,7 @@ impl<H: Host> Vm<H> {
+         let _stack = self.enter_stack()?;
+         if self.is_private_name(atom) {
+             self.check_private_brand(p, target, atom)?;
++            if self.set_private_field_value(p, target, atom, value) { return Ok(true); }
+         }
+         let typed_array_index = if matches!(self.heap.get(target), Some(Cell::TypedArray { .. })) {
+             match Self::typed_array_index_key(self.atom_name(atom)) {
+@@ -1851,6 +1852,7 @@ impl<H: Host> Vm<H> {
+             let key = self.atom_name(atom).to_owned();
+             return Err(self.nullish_assignment_error(p, object, &key));
+         }
++        if self.is_private_name(atom) && self.set_private_field_value(p, object, atom, value) { return Ok(()); }
+         if let Some((target, handler)) = self.proxy_parts(object) {
+             if self.is_private_name(atom) {
+                 if self.own_property(object, atom).is_none() {
+diff --git a/crates/quench-runtime/src/vm/object_get.rs b/crates/quench-runtime/src/vm/object_get.rs
+index e865b48f2..eda9f2fb8 100644
+--- a/crates/quench-runtime/src/vm/object_get.rs
++++ b/crates/quench-runtime/src/vm/object_get.rs
+@@ -459,6 +459,7 @@ impl<H: Host> Vm<H> {
+         )?;
+         if private_name {
+             self.check_private_brand(p, private_target, atom)?;
++            if let Some(value) = self.private_field_value(p, private_target, atom) { return Ok(value); }
+         }
+         loop {
+             self.evaluate_deferred_namespace_for_key(
+@@ -633,6 +634,25 @@ impl<H: Host> Vm<H> {
+         }
+     }
+ 
++    pub(super) fn private_field_value(&mut self, p: &ResidualProgram, target: Value, atom: Atom) -> Option<Value> {
++        let home = self.private_brand_home(p, target, atom)?;
++        self.object_data(target)?.private_field(PrivateBrand { home, name: atom })
++    }
++
++    pub(super) fn set_private_field_value(&mut self, p: &ResidualProgram, target: Value, atom: Atom, value: Value) -> bool {
++        let Some(home) = self.private_brand_home(p, target, atom) else { return false; };
++        self.object_data_mut(target).is_some_and(|object| object.set_private_field(PrivateBrand { home, name: atom }, value))
++    }
++
++    pub(super) fn initialize_private_field(&mut self, p: &ResidualProgram, target: Value, home: Value, atom: Atom, value: Value) -> Result<(), JsError> {
++        let Some(object) = self.object_data_mut(target) else {
++            return Err(self.type_error(p, "Cannot add private field to a non-object".into()));
++        };
++        if object.initialize_private_field(PrivateBrand { home, name: atom }, value) { return Ok(()); }
++        let name = super::eval::private_identity_label(self.atom_name(atom)).unwrap_or_else(|| self.atom_name(atom).to_owned());
++        Err(self.type_error(p, format!("Cannot initialize #{name} twice on the same object")))
++    }
++
+     pub(super) fn check_private_brand(
+         &mut self,
+         p: &ResidualProgram,
+@@ -762,6 +782,7 @@ impl<H: Host> Vm<H> {
+         proxy: Value,
+         atom: Atom,
+     ) -> Result<Value, JsError> {
++        if let Some(value) = self.private_field_value(p, proxy, atom) { return Ok(value); }
+         let Some(home) = self.private_brand_home(p, proxy, atom) else {
+             return Err(self.type_error(p, "private member is not present on this object".into()));
+         };
+diff --git a/crates/quench-runtime/src/vm/tests.rs b/crates/quench-runtime/src/vm/tests.rs
+index f506a9ad1..725fcccfe 100644
+--- a/crates/quench-runtime/src/vm/tests.rs
++++ b/crates/quench-runtime/src/vm/tests.rs
+@@ -10178,3 +10178,62 @@ if(!threw)throw Error('strict synthetic self binding');
+         Vm::new(SilentHost).execute(&program).unwrap();
+     }
+ }
++
++#[test]
++fn private_data_fields_keep_distinct_homes_and_duplicate_values_in_both_modes() {
++    let source = r#"
++class Base {constructor(object){return object}}
++function make(){return class extends Base {#x;constructor(object,value){super(object);this.#x=value}read(){return this.#x}write(value){this.#x=value}evaluate(){return eval('this.#x')}}}
++const A=make(),B=make();
++for(const object of [{},[],function(){},Object.create(null),Object.freeze({}),Object.seal({}),Object.preventExtensions({})]) {
++ new A(object,1);new B(object,2);
++ if(A.prototype.read.call(object)!==1||B.prototype.read.call(object)!==2)throw Error('aliased class home');
++ A.prototype.write.call(object,3);let duplicate;
++ try{new A(object,4)}catch(error){duplicate=error.message}
++ if(duplicate!=='Cannot initialize #x twice on the same object')throw Error('duplicate error');
++ if(A.prototype.read.call(object)!==3||B.prototype.read.call(object)!==2)throw Error('duplicate overwrote data');
++ if(A.prototype.evaluate.call(object)!==3||B.prototype.evaluate.call(object)!==2)throw Error('private eval home');
++}
++"#;
++    for program in [Engine::compile(crate::ExecutionRequest { source, name: "private-field-identity.js", kind: crate::SourceKind::Script }).unwrap(), Engine::specialize(source, "private-field-identity.js").unwrap()] {
++        Vm::new(SilentHost).execute(&program).unwrap();
++        let path = std::env::temp_dir().join(format!("quench-private-data-{}-{}", std::process::id(), program.specialized));
++        program.write_binary(&path).unwrap();
++        let decoded = crate::ResidualProgram::read_binary(&path).unwrap();
++        Vm::new(SilentHost).execute(&decoded).unwrap();
++        std::fs::remove_file(path).unwrap();
++    }
++}
++
++#[test]
++fn private_data_values_survive_collection_and_release_without_their_receiver() {
++    let source = r#"
++class Base {constructor(object){return object}}
++function make(){return class extends Base {#x;constructor(object,value){super(object);this.#x=value}read(){return this.#x}}}
++globalThis.A=make();globalThis.B=make();globalThis.first={value:1};globalThis.second={value:2};globalThis.instance={};
++new A(instance,first);new B(instance,second);
++"#;
++    for compile in [Engine::specialize, Engine::specialize_unspecialized] {
++        let program = compile(source, "private-data-roots.js").unwrap();
++        let mut vm = Vm::new(SilentHost);
++        vm.execute(&program).unwrap();
++        let mut weak = Vec::new();
++        for name in ["first", "second"] {
++            let atom = vm.intern_atom(name);
++            let value = vm.own_property(vm.realm.globals, atom).unwrap();
++            let strong = vm.heap.root(value);
++            weak.push(vm.embedding_host_weak_root(strong).unwrap());
++            vm.heap.release_root(strong);
++            vm.set_property(vm.realm.globals, atom, Value::UNDEFINED).unwrap();
++        }
++        vm.collect_now(&program);
++        for root in &weak { assert!(vm.embedding_host_weak_value(*root).is_some()); }
++        let instance = vm.intern_atom("instance");
++        vm.set_property(vm.realm.globals, instance, Value::UNDEFINED).unwrap();
++        vm.collect_now(&program);
++        for root in weak {
++            assert!(vm.embedding_host_weak_value(root).is_none());
++            vm.heap.release_root(root);
++        }
++    }
++}
+diff --git a/docs/node-host-contracts.md b/docs/node-host-contracts.md
+index 6e9af7bff..f85281d76 100644
+--- a/docs/node-host-contracts.md
++++ b/docs/node-host-contracts.md
+@@ -833,3 +833,19 @@ native reentry and collection. Node policy derives display strings from them.
+ The native class fallback reads builtin slots and data tags without public
+ constructor or tag getters. Original user-constructor provenance after mutation
+ and exact Node stack rendering remain separate compatibility gaps.
++
++## Private data fields
++
++Private data lives with its receiver, keyed by the actual declaring home and
++logical name. A private element retains both that home and its data through
++collection. Different creations of one class expression can stamp the same
++object without sharing values. Initialization checks duplicates before changing
++the stored value; private data and method brands do not consult public
++extensibility or Proxy traps, including revoked Proxy receivers.
++
++The atomic private-data definition operation is serialized in bytecode format
++92. Round-trip execution and generic/specialized collection tests cover the
++representation. Eval-capable methods retain their synthetic class-home capture
++in dynamic-name metadata, even when private syntax appears only inside eval's
++string. Complete private-environment contexts and the ordinary NUL string-key
++namespace remain separate conformance work.

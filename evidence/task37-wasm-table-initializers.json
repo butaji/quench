@@ -1,0 +1,106 @@
+{
+  "tasks": [
+    "23",
+    "37",
+    "40",
+    "48",
+    "86"
+  ],
+  "source_head": "7e60169df033dd247f34199e084e3e8080a92a29",
+  "source_state": "dirty worktree",
+  "source_hashes": {
+    "crates/quench-runtime-next/src/wasm.rs": "ac58ead36b5734a6a907e7b505a6586a90cbf7507803c2972c7e1c437d2278ce",
+    "crates/quench-runtime-next/src/wasm/table.rs": "02b1b9661853fc97b956a2ad763e64fc8e13ea806c1119411221db0411a7488b",
+    "crates/quench-runtime-next/src/wasm/element.rs": "84747665614d39cfcc742ee4d6aec9b462469f673bc11bd26754bebb8b41e5d5",
+    "crates/quench-runtime-next/src/lib.rs": "fe1dc91bfc6cbfa0312d4e476d03d2b39ac01cc6c0fd3dc56982248e2bd7fef3",
+    "crates/quench-runtime-next/src/vm/wasm.rs": "9b512b1316364ac138146fc0028ec9c2d5d488ddbd4f233c5b022be5e8ebf9f2",
+    "crates/quench-runtime-next/src/vm/wasm_table.rs": "fd6fea76060f169951b0440c0193a5f0518a8f19d18cdccbe31a2ddb3c50d6b3",
+    "crates/quench-wasm/src/shared.rs": "e5232e32a4a7041d7728587e9ce35e43b1a29ae29ba8eee35920e3e249941dc6"
+  },
+  "suite_head": "67c8b9dc32c47d61c05a1681df349d01c85fa8ff",
+  "suite_clean": true,
+  "host": "macOS-26.5-arm64-arm-64bit",
+  "rustc": "rustc 1.99.0 (b940084d7 2026-09-28) (Homebrew)",
+  "profile": "debug",
+  "residual_format": 50,
+  "obligation": "Table32 reference initializer expressions and supported func/extern table nullability on the sole shared VM, preserving captured instance/function identity and initialization order.",
+  "representation": "WasmTable owns TableType and one WasmReferenceInitializer. Null/Function(index) facts are shared with element items; one frontend decoder, canonical-pool/domain validator and VM evaluation operation own their semantics. Instantiation creates/root environment, initializes tables, applies active elements, then calls start. The existing closure cache owns identity; no new reference encoding or executor. A shared reference_subtype operation checks supported func/extern heap type and nullability in table.copy lowering/runtime and element/table initialization. Function-index segments use the validator authoritative non-null RefType::FUNC; explicit expression segments retain their declared type.",
+  "api_change": "Runtime-next table lowering accepts WasmTable definitions; TableType.into() supplies the implicit-null initializer. WasmElementValue is replaced by the broader WasmReferenceInitializer shared by table and element facts. All repository callers migrated.",
+  "scope": "69 pinned files from the preceding start/element/table ratchet, including table.wast/ref_func.wast and every top-level start file. Shared instantiation callers and non-null table declarations in elem.wast/table.wast are included. No full suite.",
+  "qualification": {
+    "files": 69,
+    "total": 23715,
+    "before_passed": 21784,
+    "passed": 21802,
+    "failed": 1913,
+    "gains": 18,
+    "regressions": 0,
+    "exact_case_ids": true,
+    "identical_input_hashes": true,
+    "complete_workers": true,
+    "gains_by_file": {
+      "crates/quench-wasm-test/testsuite/elem.wast": 15,
+      "crates/quench-wasm-test/testsuite/table.wast": 3
+    }
+  },
+  "controls": {
+    "controls": {
+      "total": 20,
+      "passed": 20,
+      "failed": 0
+    },
+    "start-controls": {
+      "total": 7,
+      "passed": 7,
+      "failed": 0
+    },
+    "element-controls": {
+      "total": 31,
+      "passed": 31,
+      "failed": 0
+    },
+    "table-controls": {
+      "total": 34,
+      "passed": 34,
+      "failed": 0
+    }
+  },
+  "checks": {
+    "runtime_affected_internal": 29,
+    "frontend": 39,
+    "all_targets_profile_memory_and_aggregate_build": "passed; legacy compiler warnings remain",
+    "node_oracle": "jitless Node: initializer values, shared function identities, active-element overwrite, start order, non-null source copy to nullable table, non-null init/grow/fill, per-instance independence"
+  },
+  "unit_test_policy": "Extended serialized_elements_preserve_foreign_capture_ownership_and_reject_unregistered_type_facts with a Function initializer and table/element identity assertion; serialization/GC/cross-instance ownership remain internal checks. No new ordinary suite-duplicating unit tests.",
+  "upstream_semantic_source": "Pinned wasmparser validator/core.rs: function-index element items have RefType::FUNC, active segment type must subtype the target; table initializer expression checked against declared reference type.",
+  "runner": {
+    "path": "target/iteration/task37-wasm-table-initializers-runner",
+    "sha256": "2f02bde7f09ce15ef1cbd998991c8f2dda43e75f120bf0aa702651d87341d955"
+  },
+  "artifacts": {
+    "target/iteration/task37-wasm-table-initializers-before.json": "83ddb85710a2fc1719ad8363fbddb4d1c9f5bb8d741e25b9466cc2acc02098ed",
+    "target/iteration/task37-wasm-table-initializers-after.json": "03437124968b7ebce08b6fd6a6f1a5a3b3a1321a3038217965b390bc1da95707",
+    "target/iteration/task37-wasm-table-initializers-files.json": "e39a8d1b5cf5284267016dbd3c89edf947d64747139a38825d18c1904abf8d2c",
+    "target/iteration/task37-wasm-table-initializers-compare.log": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd",
+    "target/iteration/task37-wasm-table-initializers-build.log": "f25e568b01dded8b2cf5aca645979fb8bd3e7796c65aa57b7060163470b7c7bc",
+    "target/iteration/task37-wasm-table-initializers-runtime.log": "44692527d485c03b6f4f4af61d7649fe85a8639d424d0b72b72d6a901c029a24",
+    "target/iteration/task37-wasm-table-initializers-frontend.log": "320b81501821556023542c7a61d984e28dc2ba63749a05ff1faa12c44c084dd8",
+    "target/iteration/task37-wasm-table-initializers-check.log": "8c4300300c233139c565f5f4f0233e1f4d2154cc6fbc69ef115876146b37281b",
+    "target/iteration/task37-wasm-table-initializers-controls.wast": "37e036f902e02196b64ef845c0895f3ee7b2ffb5691e18efcd4c0524c472081e",
+    "target/iteration/task37-wasm-table-initializers-controls.json": "e066211b8ec6c7b4a873e9d583a232f7f6ddf703392d94d545449d1122189a02",
+    "target/iteration/task37-wasm-table-initializers-start-controls.json": "69c13dd0b18b556c385f5464465ff33c291038894bc280a95cdb12cecde7096b",
+    "target/iteration/task37-wasm-table-initializers-element-controls.json": "737bfb249a9cdfd0c4da14feadee083a1f63f1a33cdd30c95ae770a0cb393e24",
+    "target/iteration/task37-wasm-table-initializers-table-controls.json": "d1aa77103a040d3a9828660c12c5818f85e7c8182f8ccbcb6de037ea2087d4a3",
+    "target/iteration/task37-wasm-table-initializers-oracle.wat": "a9cf6d8db3a475660c8023e8ae34fe479529101d95a6535c7b4f378200ffe434",
+    "target/iteration/task37-wasm-table-initializers-oracle.wasm": "eb537c0bded92cd76507f828309efc1c12ebe0946a7140b140bf81118ccf91f8",
+    "target/iteration/task37-wasm-table-initializers-oracle.cjs": "4e55aa0314ee206bcb21f5be2cde9a9b91931c70ffc62dfb68326b4e96e89c07",
+    "target/iteration/task37-wasm-table-initializers-oracle.json": "c9f9a1f732d82d77e536b19bc9ea10a28474c370e362a4acfee04cc19b875a49"
+  },
+  "limitations": [
+    "Imports and imported/global-dependent reference initializers remain unsupported.",
+    "Concrete typed/GC heap types, non-null function-boundary signatures, SIMD, table64/shared and remaining memory/proposal forms still incomplete.",
+    "Standalone whole-module serialization is not implemented; canonical module facts accompany the residual.",
+    "Optional profile execution accounting issue remains open; feature checks prove build compatibility only.",
+    "No final full-suite proof, implemented Node gate, legacy cleanup/cutover or performance claim; Stage A remains open."
+  ]
+}

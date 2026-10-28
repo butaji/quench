@@ -1,0 +1,192 @@
+{
+  "schema": 1,
+  "kind": "node_reviewed_membership_selection",
+  "date": "2026-10-04",
+  "source_revision": "7e60169df033dd247f34199e084e3e8080a92a29",
+  "inventory": {
+    "path": "tasks/node-compat-inventory.json",
+    "sha256": "60543dc6f7b92454f0d070467db3fcc81ecda679ad61b2f4f850518f94ad9ba7",
+    "case_candidates": 1576,
+    "reviewed_included": 6,
+    "excluded": 0,
+    "pending": 1570,
+    "state": "input_sources_classified_capability_audit_pending",
+    "support_inputs": 13
+  },
+  "implementation_files": {
+    "crates/quench-node-test/src/inventory.rs": "beb9916fe6a7d13cfac86e60fe0207390fef05c0a292cdde3a1fc14ebb32cb7b",
+    "crates/quench-node-test/src/lib.rs": "714ee4a711149b34bec2a04c0b23c1a415c9d9b124271d8beba532679c1beb99",
+    "crates/quench-node-test/src/bin/run-compat.rs": "33a0504ae2cdfd902670bd8ac8bcb7d83e2de42abb368c9327378e88d939d331",
+    "crates/quench-node-test/Cargo.toml": "705d1ab0238cdb105ad8af27b28846e03a51833e0965ad714e970012c402a0ca"
+  },
+  "owner_sources": {
+    "crates/quench-node/src/modules/assert.rs": "60c121a163777f4f0302901c2907f06908526d801cc88d226e55c8d89c8a1985",
+    "crates/quench-node/src/modules/assert_validate.rs": "7306e215678ac6c75a1273e8bcb8edd75023ca279da1b5dd40c8546df4a6ffd4",
+    "crates/quench-node/src/modules/buffer.rs": "00e9f7a575f119e9a14a7c6d42efb933c56d23e32006831a80526366abd6af38",
+    "crates/quench-node/src/modules/buffer_from.rs": "9762a39be4a212b8cfe68a8651b5020601e6d40d90c5f0c911fc2f17d5e404fa",
+    "crates/quench-node/src/modules/buffer_methods.rs": "62847833d9932c67d17dc4ac9c31417c4f045a7c97acadb9a6288e272644a510",
+    "crates/quench-node/src/modules/console.rs": "baace22aa73ed5e31dfb971b0245e7cd1230e8fc9373247351b9466b16b7329f",
+    "crates/quench-node/src/modules/events.rs": "efd23b6917ab6779dd5fc314279a220045f9dc0f59fac5ffaed31ea59a67fa1c",
+    "crates/quench-node/src/modules/path.rs": "ec50f94786edcc23b345bfd30ad8b5f4235dca07001aa08ff4efa8d1886197bf",
+    "crates/quench-node/src/modules/path_posix.rs": "90570790eda6a9d9956bd007cb31bd9aef7bf8ad185e9e85cfc7265064692913",
+    "crates/quench-node/src/modules/path_win32.rs": "845692652347992b2cca33adf8da22c54c8cb8372709776431a8783775c49190",
+    "crates/quench-node/src/modules/querystring.rs": "4f7aa2380297ba73a2c6c7b02d2a53235c4d8dc8bf7cf77dbac65d6564766f7b",
+    "crates/quench-node/src/modules/require.rs": "15ec772d4ad41ddfcf603adbd3eebedc78b12992529a4c123d5e89ca4a6d5131",
+    "crates/quench-node/src/modules/url.rs": "c8a0e457a29ace43092d3a18082fd351fd5558eb9958697adfbea08d0e405de8"
+  },
+  "upstream_sources": {
+    "tests/node/lib/assert.js": "e87a46a29cc96a9bc6025475220ca0c54e083a7d9aa53708919d0971506e87e2",
+    "tests/node/lib/internal/assert/utils.js": "ba5e3fb23642dbd2973efac622a9bef88afeba93e25f15d6927fb111251c16d7",
+    "tests/node/lib/buffer.js": "5fedd0fc314f0fd7bb405cc91e60ffe63bd9f982f26dd3be7584baf904aa0ef8",
+    "tests/node/lib/events.js": "1e974008f9c43a046124557f170ff1af23d239eb107f883b0420598f465611f3",
+    "tests/node/lib/path.js": "dd326ecdc2d6ad2025c4991f4b480d76a9f1d52b7f6d0988a5dc0a1d02de5209",
+    "tests/node/lib/querystring.js": "513ace4440c97fcaf3da958598be85f136eb044c6045b06dcac945395c4a7b56",
+    "tests/node/lib/url.js": "9037c1cae0efe6af02ea18da109ff0c406496cccaf9df4c3308ef057d009150f"
+  },
+  "selected_paths": [
+    "crates/quench-node-test/node-tests/test-assert.js",
+    "crates/quench-node-test/node-tests/test-buffer.js",
+    "crates/quench-node-test/node-tests/test-events.js",
+    "crates/quench-node-test/node-tests/test-path.js",
+    "crates/quench-node-test/node-tests/test-querystring.js",
+    "crates/quench-node-test/node-tests/test-url.js"
+  ],
+  "checks": {
+    "internal_tests": {
+      "passed": 5,
+      "failed": 0,
+      "ignored": 0
+    },
+    "cli_controls": [
+      {
+        "name": "reviewed_listing",
+        "exit": 0,
+        "expected_exit": 0
+      },
+      {
+        "name": "affected_listing",
+        "exit": 0,
+        "expected_exit": 0
+      },
+      {
+        "name": "unfrozen_execution",
+        "exit": 2,
+        "expected_exit": 2
+      },
+      {
+        "name": "empty_selection",
+        "exit": 2,
+        "expected_exit": 2
+      },
+      {
+        "name": "conflicting_roots",
+        "exit": 2,
+        "expected_exit": 2
+      },
+      {
+        "name": "pending_cases_in_frozen_document",
+        "exit": 2,
+        "expected_exit": 2
+      },
+      {
+        "name": "changed_input",
+        "exit": 2,
+        "expected_exit": 2
+      },
+      {
+        "name": "changed_support",
+        "exit": 2,
+        "expected_exit": 2
+      },
+      {
+        "name": "support_member",
+        "exit": 2,
+        "expected_exit": 2
+      },
+      {
+        "name": "missing_owner",
+        "exit": 2,
+        "expected_exit": 2
+      },
+      {
+        "name": "unsupported_exclusion",
+        "exit": 2,
+        "expected_exit": 2
+      },
+      {
+        "name": "parent_path",
+        "exit": 2,
+        "expected_exit": 2
+      },
+      {
+        "name": "duplicate_input",
+        "exit": 2,
+        "expected_exit": 2
+      },
+      {
+        "name": "unsupported_schema",
+        "exit": 2,
+        "expected_exit": 2
+      }
+    ],
+    "crate_only_clippy": "passed",
+    "task_coherence": "passed",
+    "oracle": {
+      "mode": "CommonJS fixture compilation; unchanged source and filename; workspace package type does not determine fixture goal",
+      "node_version": "v26.10.0",
+      "node_revision": "55e4ca33f3a6dfe364bd9558b726576a6d1a2fba",
+      "completed": 6,
+      "zero_exit": 5,
+      "nonzero_exit": 1
+    }
+  },
+  "binary": {
+    "path": "/Users/admin/Code/GitHub/quench-v2/target/iteration/run-compat",
+    "sha256": "ba1c18ae9d084e09ff9c5c0aaa459abebdb5bd057c9cb86ed7e2cc63632a641d"
+  },
+  "raw_artifacts": [
+    {
+      "path": "target/iteration/task19-inventory-selection-units.log",
+      "sha256": "e894cff9d85a1400de92c5667a570c43391ac00105c31269c79fe853ba1758ad"
+    },
+    {
+      "path": "target/iteration/task19-inventory-selection-build.log",
+      "sha256": "a576ee333de8b5e3d4dba15e47951d8d691da6b3f3cad8f0e2d662a75565f72c"
+    },
+    {
+      "path": "target/iteration/task19-inventory-selection-clippy.log",
+      "sha256": "a7f721d96ed1b836695a49ff16a250a73ba91c37bb97cc1146e188b5a411bee8"
+    },
+    {
+      "path": "target/iteration/task19-inventory-selection-controls/results.json",
+      "sha256": "6d59f98198749c439d9bcab9469320ac47717fa5e1190e4ab40a3d8498d36d59"
+    },
+    {
+      "path": "target/iteration/task19-owner-review/oracle.json",
+      "sha256": "6eab3381923cad08c4c974a6d2f689829b0cf5f778a7287b639e0e4e435de7b3"
+    },
+    {
+      "path": "target/iteration/task19-owner-review/oracle-direct.json",
+      "sha256": "850c01f2d9f22a6de52ea2623a36a9b453df4c41a0669a40e5b1e9189289f3be"
+    }
+  ],
+  "corpus_conflicts": [
+    {
+      "case": "crates/quench-node-test/node-tests/test-assert.js",
+      "issues": [
+        "Fixture expects assert(false) AssertionError.operator == ok; local Node and pinned innerOk use ==.",
+        "Fixture expects assert.strict === assert; local Node and pinned assert.js expose a distinct strict function, equal to require(node:assert/strict)."
+      ],
+      "decision": "Included by existing implementation ownership. Preserve input, failure and expectations; resolve corpus conflict before qualification."
+    }
+  ],
+  "limits": [
+    "Membership is not frozen: 1,570 candidates remain unreviewed. Six reviewed cases do not replace the complete candidate inventory.",
+    "Coherence checker owns source-completeness and upstream revision checks; Rust selection checks every declared input hash and membership metadata.",
+    "Inventory listing and altered JSON controls are diagnostics, not suite passes. Execution fails before fixture effects while membership is unfrozen.",
+    "Observation cases still require matched oracle traces; this assertion runner refuses to qualify them.",
+    "The directory runner remains diagnostic; child-process isolation, deadlines and complete provenance for inventory execution remain adapter work.",
+    "Oracle outcomes qualify invocation/fixture observations only. No shared-VM Node host migration or implemented-set pass is established.",
+    "No suite fixture, pin, expectation or helper was modified. No full suite or benchmark ran."
+  ]
+}

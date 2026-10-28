@@ -1,0 +1,36 @@
+{
+  "schema": 1,
+  "task": "27",
+  "kind": "canonical_test262_all_runner",
+  "recorded_on": "2026-10-07",
+  "source": {
+    "revision": "d2d0dadde5641bf272fd55140b1783db6f2c0275",
+    "worktree_dirty": true,
+    "host": "macOS-26.5-arm64-arm-64bit",
+    "rustc": "rustc 1.99.0 (b940084d7 2026-09-28) (Homebrew)",
+    "run_all_source_sha256": "e1f31a23c577358be8895e54b62dfa57e65911ba6d9c96d6b37cd3b7bf79c549",
+    "binary": "target/iteration/run-all",
+    "binary_sha256": "db21faddc25e8dd17d384abc135e02af4fa4818000c718d93064966dec852ddc"
+  },
+  "verification": {
+    "compile": {
+      "command": "cargo check --profile iteration -p quench-test262 --bin run-all",
+      "exit_code": 0
+    },
+    "cargo_bin_targets": [
+      "compare-runs",
+      "run-all",
+      "run-stages",
+      "run-test",
+      "triage"
+    ],
+    "preflight": {
+      "command": "TEST262_TEST_TIMEOUT_MS=30000 target/iteration/run-all --invalid",
+      "exit_code": 2,
+      "output": "FAIL: usage: run-all [--freeze-expected-pass-set]",
+      "cases_started": false
+    },
+    "full_test262_run": false
+  },
+  "result": "The canonical run-all target compiles and rejects invalid CLI input before starting tests; run-all-next is no longer a Cargo binary target. No Test262 cases were run."
+}

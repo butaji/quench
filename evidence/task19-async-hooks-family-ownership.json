@@ -1,0 +1,51 @@
+{
+  "schema": 1,
+  "task": "19",
+  "kind": "node_api_family_ownership",
+  "reviewed_on": "2026-10-06",
+  "source_revision": "4e03e77b68cd767f49e441f60d04785eac73daa1",
+  "source_state": "dirty worktree; input and owner hashes bind the review to current bytes",
+  "inventory": {
+    "path": "tasks/node-compat-inventory.json",
+    "sha256": "d48c7702438de26c92f69e6eb6563ede8dd4d48a418c1991e2b177cdee7a617e",
+    "source_head": "62109e265221b718a2b0c4680e057453d0f3941a",
+    "candidate_assertions": 20,
+    "candidate_observations": 0
+  },
+  "projection": {
+    "family": "AsyncHooks",
+    "direct_specifier_candidates": 27,
+    "pending_candidates_reviewed": 20,
+    "newly_included_assertions": 20,
+    "excluded": 0,
+    "held_for_other_owners": 0,
+    "membership_frozen": false
+  },
+  "membership_rule": "Owner review follows asserted behavior across transitive helpers and additive APIs. Include implemented legacy behavior regardless of outcome; shared-VM migration is a separate Task 21 obligation.",
+  "active_route": {
+    "legacy_summary": "The active require/NodeSpec/dispatch route exposes modules/async_hooks.rs; ALS capture uses the active core_head bootstrap. Promise, timer, Worker, diagnostics, process, child-process and GC obligations route through the owner files recorded on each inventory entry.",
+    "shared_vm_gap": "Shared NodeHost implementations for async_hooks, timers and diagnostics remain partial; Worker is not installed as the legacy implementation. These 20 memberships still require Task 21 migration and Task 22 shared-VM qualification."
+  },
+  "owner_sources_sha256": {
+    "crates/quench-node/src/dispatch.rs": "8d2a0006c8906181c99947d0f2b15f009231bf25da4ddb91bcd7cf2cead6fd28",
+    "crates/quench-node/src/dispatch_handlers.rs": "4b0f84d62c2cb22b8c5fafe297316512cfddfef759b7c818a09caabe3d89a026",
+    "crates/quench-node/src/host.rs": "301cee4a20d9537f395a530e0d71ffa733f0202377027a5da709934b1ff2734e",
+    "crates/quench-node/src/modules/async_hooks.rs": "f51ef79af7b2f387003fd2e3b56887d021ce68aa814127f0519c47d5eb8e1090",
+    "crates/quench-node/src/modules/child_process.rs": "5ad7b1a43e3347e50f377cb387f6117ff8d8d44e28eba08fc8f32e4a27558903",
+    "crates/quench-node/src/modules/diagnostics_channel.rs": "4ba5ebc5008ae297a237b7890afcef520b8cc4fa37dd88a63235aacfc58f1616",
+    "crates/quench-node/src/modules/event_loop.rs": "b776a1682d3909c7599e7407e04915c1721885c76a2c732dfda5716e1a8662d2",
+    "crates/quench-node/src/modules/events.rs": "977139e351d4b0a8d06eae014ecec6cdb5408c99e9bc782774494fe9c710c368",
+    "crates/quench-node/src/modules/process.rs": "fc5e285ed5b6f02c2e06de7133cd34a55666cb4e32cfb5226140cb85d262144b",
+    "crates/quench-node/src/modules/pump.rs": "ead9e5cf83a558f2e7bdf69d97943b95f3adc23d31e6fbc6e9cbb4a71cdc8e2f",
+    "crates/quench-node/src/modules/require.rs": "edabc2dae189ae01575c09dec41a16100d0051bff2842a1e503ed6a6225b5225",
+    "crates/quench-node/src/modules/timers.rs": "40208fbacfaecc5be68df27d2b8299b8bfd60bf99cb14640f5e3f34458ec8cce",
+    "crates/quench-node/src/modules/timers_promises.rs": "523786e8655276ca8b79d4d7ef788cdee931da44bff8535f50cf747f47cb7050",
+    "crates/quench-node/src/modules/worker_threads.rs": "4dc1bad7c82cf88c9361fe1b26919fadf8f58dfddfc0435d47df3bcd1e433ae6",
+    "crates/quench-node/src/polyfills/bootstrap/core_head.rs": "d0e12854694ec4e1ff81f1beb86e647cd82c4e164b55309fe572ffb720e882f2",
+    "crates/quench-node/src/registry.rs": "41a90d1ce79bfb694ae1108d138648ffd5c64c4878ded5bb2ae91982b8f226c7",
+    "crates/quench-runtime/src/construct_builtins.rs": "c687d4d7140d6913c0a49d74ff9289c01025152818005856a24cd26e919c3381",
+    "crates/quench-runtime/src/execute.rs": "021a0ac93ac1a4b716388267cc53aec960c367344be9c0e7024adca9b7269d7f",
+    "crates/quench-runtime/src/promise.rs": "0537134c4e92c0c2faf033a6498497d1461f58527acb30b9af131ac2fe56e139",
+    "crates/quench-runtime/src/vm/vm_builtin_numeric.rs": "d4a41509e5f8ad54b31cf88bb1d0dfbb9b3c9bf2da07dde8b7e4f0386a091fc1"
+  }
+}

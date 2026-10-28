@@ -1,0 +1,107 @@
+{
+  "schema": 1,
+  "task": "61",
+  "experiment": "Primitive String GetField cache against the intrinsic String.prototype",
+  "decision": "retain as a focused candidate: paired CJS instruction counts improve substantially and correctness checks pass; ordinary-object control is +1.21%, RSS ranges overlap, and fixture score evidence remains diagnostic",
+  "source": {
+    "base_revision": "301f91d6aeeefee821805f5ff380e385548b7581",
+    "candidate_source_dirty_during_checks": true,
+    "candidate_binary_sha256": "210fad51c44319062187858678d98115fd3dfe969019326d096ff5c646b228b5",
+    "baseline_binary_sha256": "49d528644afa2b7dae41e68d95908a934eb68c47bded32fbd3dfc7baf8a93ac1",
+    "diff_sha256": "5363b2ef1bdc44f6aabab6294c2ecfb1fa95dc097dcd486f19c593efa11e18a2",
+    "files": {
+      "crates/quench-runtime/src/vm/field_cache.rs": "acfaa5ab15a890f48ffa2878249f9de67244b41e5c8740e0879359db8ae04837",
+      "crates/quench-runtime/src/vm/index.rs": "0e825f3f18ccf297fba9675d23dbe0ae7d3e9936f6caf3d0eaa373e81fc50aa7",
+      "crates/quench-runtime/src/vm/object.rs": "23ee4b82ee2175dafdf5b4eccb9d70f878325dfdc21ac6e99f1b0f3a59c43681",
+      "crates/quench-runtime/src/vm/tests.rs": "ce83f2208ae6b5cf4791dc8cccf12a3c6b61c2ae2d91b42cf5719fe6da75b1a5"
+    },
+    "binary_paths": {
+      "candidate": "target/iteration/getfield-final-20261008/build/production/quench-node",
+      "baseline": "target/iteration/primitive-field-cache-20261008/quench-node-baseline-49d528644afa2b7dae41e68d95908a934eb68c47bded32fbd3dfc7baf8a93ac1"
+    },
+    "candidate_scope": "Use the VM's intrinsic string_proto for primitive-string prototype resolution and cache eligible own data-property slots at the existing GetField site. Accessors and special properties keep the generic receiver-aware path. No persistent cache storage or per-shape index was added."
+  },
+  "host": {
+    "platform": "macOS 26.5",
+    "architecture": "arm64 Apple M4",
+    "kernel": "Darwin 25.5.0",
+    "rustc": "1.99.0 (b940084d7 2026-09-28)",
+    "cargo": "1.99.0",
+    "node": "v26.10.0"
+  },
+  "correctness": {
+    "focused_unit_test": {
+      "name": "primitive_strings_keep_the_intrinsic_prototype_after_global_reassignment",
+      "passed": 1,
+      "failed": 0,
+      "command_record": "target/iteration/primitive-field-cache-validation-20261008/validation-commands.txt",
+      "log": "target/iteration/primitive-field-cache-validation-20261008/focused-unit-profile-memory.log"
+    },
+    "test262": {
+      "stage70_string_methods": {"passed": 148, "total": 148},
+      "stage114_primitive_this": {"passed": 1, "total": 1},
+      "stage64_poisoned_stdlib": {"passed": 1, "total": 1},
+      "stage60_inherited_string_properties": {"passed": 2, "total": 2},
+      "report_directory": "target/iteration/primitive-field-cache-validation-20261008"
+    },
+    "node_oracle": {
+      "matched": true,
+      "cases": [
+        "warm property read",
+        "live data-property replacement",
+        "accessor replacement and primitive this receiver",
+        "delete and re-add",
+        "proxy in the prototype chain",
+        "String.prototype descriptor",
+        "replace the global String binding while retaining the intrinsic prototype"
+      ],
+      "report_directory": "target/iteration/primitive-field-cache-validation-20261008"
+    }
+  },
+  "measurement": {
+    "kind": "11 alternating production binary pairs; focused CJS microbenchmarks",
+    "protocol": "For each workload and pair, alternate baseline/candidate. Measure a 1,000,000-iteration script and a same-binary matched control using /usr/bin/time -l; subtract control retired instructions from target instructions.",
+    "paired_report": "target/iteration/primitive-field-cache-validation-20261008/paired/manifest.json",
+    "results": [
+      {
+        "workload": "s.charCodeAt(i & 15)",
+        "baseline_median_control_corrected_instructions": 13049194825,
+        "candidate_median_control_corrected_instructions": 1574227919,
+        "median_change_percent": -87.93596528282349,
+        "candidate_lower_pairs": 11,
+        "pairs": 11
+      },
+      {
+        "workload": "r = s.charCodeAt",
+        "baseline_median_control_corrected_instructions": 11896762529,
+        "candidate_median_control_corrected_instructions": 422155335,
+        "median_change_percent": -96.45270117839804,
+        "candidate_lower_pairs": 11,
+        "pairs": 11
+      },
+      {
+        "workload": "ordinary object r = o.x control",
+        "baseline_median_control_corrected_instructions": 332206391,
+        "candidate_median_control_corrected_instructions": 336170900,
+        "median_change_percent": 1.213413741940925,
+        "candidate_lower_pairs": 0,
+        "pairs": 11
+      }
+    ],
+    "rss": "Baseline and candidate maximum-RSS ranges overlap for all workloads; no measurable RSS change was found.",
+    "fixture_screen": {
+      "kind": "single-round diagnostic only",
+      "status": "complete; directional only",
+      "baseline_report": "target/iteration/primitive-field-cache-validation-20261008/fixture-screen/baseline-49d528-diagnostic.json",
+      "candidate_report": "target/iteration/primitive-field-cache-validation-20261008/fixture-screen/candidate-210fad-diagnostic.json",
+      "scores": {
+        "crypto": {"baseline": 393, "candidate": 409},
+        "earley-boyer": {"baseline": 352, "candidate": 356},
+        "regexp": {"baseline": 54.3, "candidate": 52.5}
+      },
+      "all_runs_valid": true,
+      "any_timed_out": false,
+      "note": "Single-round diagnostic. Output equality is false because printed benchmark scores/timing differ; every run is valid and exited successfully. These scores do not qualify performance or establish a causal fixture change."
+    }
+  }
+}

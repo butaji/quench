@@ -1,0 +1,127 @@
+{
+  "profile_binary_sha256": "c393736fab60f48d7f0fb04e1c1fbf3f74070fe8734af2a9747a23958a24e22f",
+  "profile_process_max_rss_bytes": 160366592,
+  "phases": {
+    "gc_18_before": {
+      "composition": {
+        "collection": 17,
+        "occupied_slots": 1562162,
+        "slot_arena_reserved_bytes": 87506944,
+        "free_slot_metadata_bytes": 205824,
+        "fully_empty_slot_pages": 5,
+        "property_arena_values_bytes": 2209328,
+        "property_arena_metadata_bytes": 262240,
+        "dense_array_elements_bytes": 392,
+        "dense_array_headers_bytes": 840,
+        "string_buffers_bytes": 3137082,
+        "other_cell_payload_bytes": 191615,
+        "shape_table_bytes": 327680,
+        "shape_lookup_bytes": 675240,
+        "transition_table_bytes": 57344,
+        "descriptor_side_table_bytes": 114688,
+        "cache_side_table_bytes": 71744,
+        "atom_side_table_bytes": 232351,
+        "frame_bytes": 2888,
+        "profile_instrumentation_bytes": 60856976,
+        "accounted_runtime_bytes": 95056920,
+        "accounted_with_profile_bytes": 155913896
+      },
+      "allocator": {
+        "arena_bytes": 106786816,
+        "free_chunks": 3865,
+        "mapped_chunks": 7,
+        "mapped_bytes": 59207680,
+        "in_use_bytes": 99660832,
+        "free_bytes": 7125984,
+        "releasable_bytes": 233104,
+        "rss_bytes": 160280576,
+        "anonymous_bytes": 149417984,
+        "private_dirty_bytes": 149417984
+      }
+    },
+    "gc_18_after": {
+      "composition": {
+        "collection": 18,
+        "occupied_slots": 781058,
+        "slot_arena_reserved_bytes": 87506944,
+        "free_slot_metadata_bytes": 205824,
+        "fully_empty_slot_pages": 4199,
+        "property_arena_values_bytes": 2209328,
+        "property_arena_metadata_bytes": 262240,
+        "dense_array_elements_bytes": 392,
+        "dense_array_headers_bytes": 840,
+        "string_buffers_bytes": 1298352,
+        "other_cell_payload_bytes": 191615,
+        "shape_table_bytes": 327680,
+        "shape_lookup_bytes": 675240,
+        "transition_table_bytes": 57344,
+        "descriptor_side_table_bytes": 114688,
+        "cache_side_table_bytes": 71744,
+        "atom_side_table_bytes": 232351,
+        "frame_bytes": 2888,
+        "profile_instrumentation_bytes": 60856976,
+        "accounted_runtime_bytes": 93218190,
+        "accounted_with_profile_bytes": 154075166
+      },
+      "allocator": {
+        "arena_bytes": 106786816,
+        "free_chunks": 8570,
+        "mapped_chunks": 7,
+        "mapped_bytes": 59207680,
+        "in_use_bytes": 101673808,
+        "free_bytes": 5113008,
+        "releasable_bytes": 233104,
+        "rss_bytes": 160280576,
+        "anonymous_bytes": 149417984,
+        "private_dirty_bytes": 149417984
+      }
+    },
+    "complete": {
+      "composition": {
+        "collection": 19,
+        "occupied_slots": 784052,
+        "slot_arena_reserved_bytes": 87506944,
+        "free_slot_metadata_bytes": 205824,
+        "fully_empty_slot_pages": 4117,
+        "property_arena_values_bytes": 2209328,
+        "property_arena_metadata_bytes": 262240,
+        "dense_array_elements_bytes": 66040,
+        "dense_array_headers_bytes": 1160,
+        "string_buffers_bytes": 1306911,
+        "other_cell_payload_bytes": 192687,
+        "shape_table_bytes": 327680,
+        "shape_lookup_bytes": 680808,
+        "transition_table_bytes": 57344,
+        "descriptor_side_table_bytes": 114688,
+        "cache_side_table_bytes": 71744,
+        "atom_side_table_bytes": 232389,
+        "frame_bytes": 5592,
+        "profile_instrumentation_bytes": 60856976,
+        "accounted_runtime_bytes": 93302179,
+        "accounted_with_profile_bytes": 154159155
+      },
+      "allocator": {
+        "arena_bytes": 106786816,
+        "free_chunks": 8291,
+        "mapped_chunks": 7,
+        "mapped_bytes": 59207680,
+        "in_use_bytes": 97572784,
+        "free_bytes": 9214032,
+        "releasable_bytes": 233104,
+        "rss_bytes": 160509952,
+        "anonymous_bytes": 149417984,
+        "private_dirty_bytes": 149417984
+      }
+    }
+  },
+  "stock_candidate": {
+    "peak_rss_bytes": 114819072,
+    "score": 2736,
+    "node_score": 5433,
+    "bun_peak_rss_bytes": 62672896,
+    "slot_arena_reserved_bytes": 87506944,
+    "outside_slot_arena_bytes": 27312128,
+    "accounted_runtime_bytes_gc18_before": 95056920,
+    "outside_accounted_runtime_bytes": 19762152
+  }
+}

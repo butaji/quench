@@ -1,0 +1,4972 @@
+{
+  "scope": "Top-level export presence and descriptor shape only; not full behavioral parity",
+  "latest_stable": "v26.12.0",
+  "modules": {
+    "assert": {
+      "missing": [],
+      "extra": [],
+      "different": {}
+    },
+    "buffer": {
+      "missing": [
+        "isLatin1",
+        "resolveObjectURL",
+        "transcode"
+      ],
+      "extra": [
+        "SlowBuffer"
+      ],
+      "different": {
+        "File": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 2,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 0,
+            "prototype": true
+          }
+        },
+        "constants": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": false,
+            "writable": false,
+            "type": "object"
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "object"
+          }
+        },
+        "isAscii": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 1,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 1,
+            "prototype": false
+          }
+        },
+        "isUtf8": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 1,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 1,
+            "prototype": false
+          }
+        }
+      }
+    },
+    "crypto": {
+      "missing": [
+        "Certificate",
+        "X509Certificate",
+        "argon2",
+        "argon2Sync",
+        "createMac",
+        "decapsulate",
+        "diffieHellman",
+        "encapsulate",
+        "fips",
+        "generateKey",
+        "generateKeySync",
+        "getMacs",
+        "getRandomValues",
+        "parsePKCS12",
+        "secureHeapUsed",
+        "setFips",
+        "subtle"
+      ],
+      "extra": [],
+      "different": {
+        "Cipheriv": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 4,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 3,
+            "prototype": true
+          }
+        },
+        "Decipheriv": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 4,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 3,
+            "prototype": true
+          }
+        },
+        "Hmac": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 3,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 2,
+            "prototype": true
+          }
+        },
+        "KeyObject": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 2,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 7,
+            "prototype": true
+          }
+        },
+        "Sign": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 2,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 1,
+            "prototype": true
+          }
+        },
+        "Verify": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 2,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 1,
+            "prototype": true
+          }
+        },
+        "checkPrime": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 1,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 3,
+            "prototype": false
+          }
+        },
+        "checkPrimeSync": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 1,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 1,
+            "prototype": false
+          }
+        },
+        "constants": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": false,
+            "writable": false,
+            "type": "object"
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "object"
+          }
+        },
+        "createDiffieHellman": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 4,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 4,
+            "prototype": false
+          }
+        },
+        "createDiffieHellmanGroup": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 1,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 1,
+            "prototype": false
+          }
+        },
+        "createECDH": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 1,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 1,
+            "prototype": false
+          }
+        },
+        "createHash": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 2,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 2,
+            "prototype": false
+          }
+        },
+        "createHmac": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 3,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 2,
+            "prototype": false
+          }
+        },
+        "createPrivateKey": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 1,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 1,
+            "prototype": false
+          }
+        },
+        "createPublicKey": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 1,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 1,
+            "prototype": false
+          }
+        },
+        "createSecretKey": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 2,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 1,
+            "prototype": true
+          }
+        },
+        "createSign": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 2,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 1,
+            "prototype": false
+          }
+        },
+        "createVerify": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 2,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 1,
+            "prototype": false
+          }
+        },
+        "generateKeyPair": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 3,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 3,
+            "prototype": false
+          }
+        },
+        "generateKeyPairSync": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 2,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 1,
+            "prototype": false
+          }
+        },
+        "generatePrime": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 3,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 3,
+            "prototype": false
+          }
+        },
+        "generatePrimeSync": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 1,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 2,
+            "prototype": false
+          }
+        },
+        "getCiphers": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 0,
+            "prototype": false
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 0,
+            "prototype": true
+          }
+        },
+        "getCurves": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 0,
+            "prototype": false
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 0,
+            "prototype": true
+          }
+        },
+        "getDiffieHellman": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 1,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 1,
+            "prototype": false
+          }
+        },
+        "getFips": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 0,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 0,
+            "prototype": false
+          }
+        },
+        "getHashes": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 0,
+            "prototype": false
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 0,
+            "prototype": true
+          }
+        },
+        "hkdf": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 6,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 6,
+            "prototype": false
+          }
+        },
+        "hkdfSync": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 5,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 5,
+            "prototype": false
+          }
+        },
+        "pbkdf2": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 6,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 6,
+            "prototype": false
+          }
+        },
+        "pbkdf2Sync": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 5,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 5,
+            "prototype": false
+          }
+        },
+        "prng": {
+          "oracle": {
+            "enumerable": false,
+            "configurable": true,
+            "get": true,
+            "set": true
+          },
+          "candidate": {
+            "enumerable": false,
+            "configurable": true,
+            "writable": false,
+            "type": "function",
+            "arity": 2,
+            "prototype": false
+          }
+        },
+        "pseudoRandomBytes": {
+          "oracle": {
+            "enumerable": false,
+            "configurable": true,
+            "get": true,
+            "set": true
+          },
+          "candidate": {
+            "enumerable": false,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 2,
+            "prototype": false
+          }
+        },
+        "randomBytes": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 2,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 2,
+            "prototype": false
+          }
+        },
+        "randomFill": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 4,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 4,
+            "prototype": false
+          }
+        },
+        "randomFillSync": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 1,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 3,
+            "prototype": false
+          }
+        },
+        "randomInt": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 3,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 3,
+            "prototype": false
+          }
+        },
+        "randomUUID": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 1,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 1,
+            "prototype": false
+          }
+        },
+        "randomUUIDv7": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 1,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 1,
+            "prototype": false
+          }
+        },
+        "rng": {
+          "oracle": {
+            "enumerable": false,
+            "configurable": true,
+            "get": true,
+            "set": true
+          },
+          "candidate": {
+            "enumerable": false,
+            "configurable": true,
+            "writable": false,
+            "type": "function",
+            "arity": 2,
+            "prototype": false
+          }
+        },
+        "scrypt": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 4,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 5,
+            "prototype": false
+          }
+        },
+        "scryptSync": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 3,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 4,
+            "prototype": false
+          }
+        },
+        "sign": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 4,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 4,
+            "prototype": false
+          }
+        },
+        "timingSafeEqual": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 0,
+            "prototype": false
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 2,
+            "prototype": false
+          }
+        },
+        "verify": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 5,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 5,
+            "prototype": false
+          }
+        }
+      }
+    },
+    "dns": {
+      "missing": [
+        "ADDRCONFIG",
+        "ADDRGETNETWORKPARAMS",
+        "ALL",
+        "BADFAMILY",
+        "BADFLAGS",
+        "BADHINTS",
+        "BADNAME",
+        "BADQUERY",
+        "BADRESP",
+        "BADSTR",
+        "CANCELLED",
+        "CONNREFUSED",
+        "DESTRUCTION",
+        "EOF",
+        "FILE",
+        "FORMERR",
+        "LOADIPHLPAPI",
+        "NODATA",
+        "NOMEM",
+        "NONAME",
+        "NOTFOUND",
+        "NOTIMP",
+        "NOTINITIALIZED",
+        "REFUSED",
+        "Resolver",
+        "SERVFAIL",
+        "TIMEOUT",
+        "V4MAPPED",
+        "getDefaultResultOrder",
+        "getServers",
+        "lookupService",
+        "promises",
+        "resolve",
+        "resolve4",
+        "resolve6",
+        "resolveAny",
+        "resolveCaa",
+        "resolveCname",
+        "resolveMx",
+        "resolveNaptr",
+        "resolveNs",
+        "resolvePtr",
+        "resolveSoa",
+        "resolveSrv",
+        "resolveTlsa",
+        "resolveTxt",
+        "reverse",
+        "setDefaultResultOrder",
+        "setServers"
+      ],
+      "extra": [],
+      "different": {
+        "lookup": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 3,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 3,
+            "prototype": false
+          }
+        }
+      }
+    },
+    "events": {
+      "missing": [
+        "usingDomains"
+      ],
+      "extra": [],
+      "different": {
+        "once": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 2,
+            "prototype": false
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 3,
+            "prototype": false
+          }
+        }
+      }
+    },
+    "fs": {
+      "missing": [
+        "FileReadStream",
+        "FileWriteStream",
+        "Utf8Stream",
+        "_toUnixTimestamp",
+        "glob",
+        "globSync",
+        "lchmod",
+        "lchmodSync",
+        "openAsBlob",
+        "openAsBlobSync"
+      ],
+      "extra": [],
+      "different": {
+        "Dir": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 3,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 2,
+            "prototype": true
+          }
+        },
+        "Dirent": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 3,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 2,
+            "prototype": true
+          }
+        },
+        "ReadStream": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "get": true,
+            "set": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 2,
+            "prototype": true
+          }
+        },
+        "WriteStream": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "get": true,
+            "set": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 2,
+            "prototype": true
+          }
+        },
+        "accessSync": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 2,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 1,
+            "prototype": true
+          }
+        },
+        "appendFileSync": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 3,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 3,
+            "prototype": false
+          }
+        },
+        "chownSync": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 3,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 3,
+            "prototype": false
+          }
+        },
+        "close": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 1,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 2,
+            "prototype": false
+          }
+        },
+        "closeSync": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 1,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 1,
+            "prototype": false
+          }
+        },
+        "copyFileSync": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 3,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 3,
+            "prototype": false
+          }
+        },
+        "cpSync": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 3,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 2,
+            "prototype": true
+          }
+        },
+        "createReadStream": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 2,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 2,
+            "prototype": false
+          }
+        },
+        "fchownSync": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 3,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 3,
+            "prototype": false
+          }
+        },
+        "fdatasyncSync": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 1,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 1,
+            "prototype": false
+          }
+        },
+        "fstat": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 1,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 3,
+            "prototype": false
+          }
+        },
+        "fstatSync": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 1,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 2,
+            "prototype": false
+          }
+        },
+        "fsyncSync": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 1,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 1,
+            "prototype": false
+          }
+        },
+        "ftruncate": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 1,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 3,
+            "prototype": true
+          }
+        },
+        "ftruncateSync": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 1,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 2,
+            "prototype": false
+          }
+        },
+        "futimes": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 4,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": false,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 0,
+            "prototype": false
+          }
+        },
+        "futimesSync": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 3,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": false,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 0,
+            "prototype": false
+          }
+        },
+        "lchownSync": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 3,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 3,
+            "prototype": false
+          }
+        },
+        "linkSync": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 2,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 2,
+            "prototype": false
+          }
+        },
+        "lstat": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 1,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 3,
+            "prototype": true
+          }
+        },
+        "lutimes": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 4,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": false,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 0,
+            "prototype": false
+          }
+        },
+        "lutimesSync": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 3,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": false,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 0,
+            "prototype": false
+          }
+        },
+        "mkdirSync": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 2,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 2,
+            "prototype": false
+          }
+        },
+        "mkdtempDisposableSync": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 2,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 1,
+            "prototype": false
+          }
+        },
+        "mkdtempSync": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 2,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 1,
+            "prototype": false
+          }
+        },
+        "open": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 4,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 4,
+            "prototype": false
+          }
+        },
+        "openSync": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 3,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 3,
+            "prototype": false
+          }
+        },
+        "promises": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "get": true,
+            "set": false
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "object"
+          }
+        },
+        "read": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 6,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 6,
+            "prototype": false
+          }
+        },
+        "readFileSync": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 2,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 2,
+            "prototype": false
+          }
+        },
+        "readSync": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 5,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 5,
+            "prototype": false
+          }
+        },
+        "readdirSync": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 2,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 2,
+            "prototype": false
+          }
+        },
+        "readvSync": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 3,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 2,
+            "prototype": true
+          }
+        },
+        "renameSync": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 2,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 2,
+            "prototype": false
+          }
+        },
+        "rmSync": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 2,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 2,
+            "prototype": false
+          }
+        },
+        "rmdirSync": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 2,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 2,
+            "prototype": false
+          }
+        },
+        "stat": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 1,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 3,
+            "prototype": true
+          }
+        },
+        "statfs": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 1,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 3,
+            "prototype": true
+          }
+        },
+        "symlinkSync": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 3,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 3,
+            "prototype": false
+          }
+        },
+        "truncateSync": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 2,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 2,
+            "prototype": false
+          }
+        },
+        "unlinkSync": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 1,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 1,
+            "prototype": false
+          }
+        },
+        "utimes": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 4,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": false,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 0,
+            "prototype": false
+          }
+        },
+        "utimesSync": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 3,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 3,
+            "prototype": false
+          }
+        },
+        "write": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 6,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": false,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 0,
+            "prototype": false
+          }
+        },
+        "writeFileSync": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 3,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 3,
+            "prototype": false
+          }
+        },
+        "writeSync": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 5,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 5,
+            "prototype": false
+          }
+        },
+        "writevSync": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 3,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 2,
+            "prototype": true
+          }
+        }
+      }
+    },
+    "fs/promises": {
+      "missing": [
+        "glob"
+      ],
+      "extra": [],
+      "different": {
+        "access": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 1,
+            "prototype": false
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 0,
+            "prototype": false
+          }
+        },
+        "appendFile": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 3,
+            "prototype": false
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 0,
+            "prototype": false
+          }
+        },
+        "chmod": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 2,
+            "prototype": false
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 0,
+            "prototype": false
+          }
+        },
+        "chown": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 3,
+            "prototype": false
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 0,
+            "prototype": false
+          }
+        },
+        "copyFile": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 3,
+            "prototype": false
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 0,
+            "prototype": false
+          }
+        },
+        "lchmod": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 2,
+            "prototype": false
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 0,
+            "prototype": false
+          }
+        },
+        "lchown": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 3,
+            "prototype": false
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 0,
+            "prototype": false
+          }
+        },
+        "link": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 2,
+            "prototype": false
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 0,
+            "prototype": false
+          }
+        },
+        "lstat": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 1,
+            "prototype": false
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 0,
+            "prototype": false
+          }
+        },
+        "lutimes": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 3,
+            "prototype": false
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 0,
+            "prototype": false
+          }
+        },
+        "mkdir": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 2,
+            "prototype": false
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 0,
+            "prototype": false
+          }
+        },
+        "mkdtemp": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 2,
+            "prototype": false
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 0,
+            "prototype": false
+          }
+        },
+        "mkdtempDisposable": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 2,
+            "prototype": false
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 1,
+            "prototype": false
+          }
+        },
+        "open": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 3,
+            "prototype": false
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 0,
+            "prototype": false
+          }
+        },
+        "opendir": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 3,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 2,
+            "prototype": false
+          }
+        },
+        "readFile": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 2,
+            "prototype": false
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 0,
+            "prototype": false
+          }
+        },
+        "readdir": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 2,
+            "prototype": false
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 0,
+            "prototype": false
+          }
+        },
+        "readlink": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 2,
+            "prototype": false
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 0,
+            "prototype": false
+          }
+        },
+        "realpath": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 2,
+            "prototype": false
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 0,
+            "prototype": false
+          }
+        },
+        "rename": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 2,
+            "prototype": false
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 0,
+            "prototype": false
+          }
+        },
+        "rm": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 2,
+            "prototype": false
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 0,
+            "prototype": false
+          }
+        },
+        "rmdir": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 2,
+            "prototype": false
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 0,
+            "prototype": false
+          }
+        },
+        "stat": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 1,
+            "prototype": false
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 0,
+            "prototype": false
+          }
+        },
+        "statfs": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 1,
+            "prototype": false
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 0,
+            "prototype": false
+          }
+        },
+        "symlink": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 3,
+            "prototype": false
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 0,
+            "prototype": false
+          }
+        },
+        "truncate": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 1,
+            "prototype": false
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 0,
+            "prototype": false
+          }
+        },
+        "unlink": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 1,
+            "prototype": false
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 0,
+            "prototype": false
+          }
+        },
+        "utimes": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 3,
+            "prototype": false
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 0,
+            "prototype": false
+          }
+        },
+        "writeFile": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 3,
+            "prototype": false
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 0,
+            "prototype": false
+          }
+        }
+      }
+    },
+    "http": {
+      "missing": [
+        "ClientRequest",
+        "CloseEvent",
+        "MessageEvent",
+        "OutgoingMessage",
+        "WebSocket",
+        "_connectionListener",
+        "globalAgent",
+        "isValidHeaderName",
+        "isValidHeaderValue",
+        "maxHeaderSize",
+        "setGlobalProxyFromEnv",
+        "setMaxIdleHTTPParsers",
+        "websocketMask",
+        "websocketUnmask"
+      ],
+      "extra": [],
+      "different": {
+        "ServerResponse": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 2,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 5,
+            "prototype": true
+          }
+        },
+        "createServer": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 2,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 0,
+            "prototype": false
+          }
+        },
+        "get": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 3,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 3,
+            "prototype": false
+          }
+        },
+        "request": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 3,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 0,
+            "prototype": false
+          }
+        }
+      }
+    },
+    "http2": {
+      "missing": [
+        "connect",
+        "createSecureServer",
+        "createServer",
+        "getDefaultSettings",
+        "getPackedSettings",
+        "getUnpackedSettings",
+        "performServerHandshake",
+        "sensitiveHeaders"
+      ],
+      "extra": [],
+      "different": {}
+    },
+    "https": {
+      "missing": [
+        "Agent",
+        "Server",
+        "createServer",
+        "globalAgent"
+      ],
+      "extra": [],
+      "different": {
+        "get": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 3,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 0,
+            "prototype": true
+          }
+        }
+      }
+    },
+    "module": {
+      "missing": [
+        "SourceMap",
+        "_extensions",
+        "_findPath",
+        "_initPaths",
+        "_load",
+        "_pathCache",
+        "_preloadModules",
+        "_readPackage",
+        "_resolveLookupPaths",
+        "_stat",
+        "constants",
+        "enableCompileCache",
+        "findSourceMap",
+        "flushCompileCache",
+        "getCompileCacheDir",
+        "getSourceMapsSupport",
+        "globalPaths",
+        "register",
+        "registerHooks",
+        "runMain",
+        "setSourceMapsSupport",
+        "stripTypeScriptTypes",
+        "syncBuiltinESMExports",
+        "wrap",
+        "wrapper"
+      ],
+      "extra": [],
+      "different": {
+        "_resolveFilename": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 4,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 4,
+            "prototype": false
+          }
+        },
+        "findPackageJSON": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 1,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 1,
+            "prototype": false
+          }
+        }
+      }
+    },
+    "net": {
+      "missing": [
+        "BoundSocket",
+        "_TransferredBoundSocket",
+        "_createServerHandle",
+        "_normalizeArgs"
+      ],
+      "extra": [],
+      "different": {
+        "BlockList": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "get": true,
+            "set": false
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 0,
+            "prototype": true
+          }
+        },
+        "Socket": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 1,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 0,
+            "prototype": true
+          }
+        },
+        "SocketAddress": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "get": true,
+            "set": false
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 0,
+            "prototype": true
+          }
+        },
+        "connect": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 0,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 3,
+            "prototype": true
+          }
+        },
+        "createConnection": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 0,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 3,
+            "prototype": true
+          }
+        }
+      }
+    },
+    "os": {
+      "missing": [],
+      "extra": [],
+      "different": {}
+    },
+    "path": {
+      "missing": [],
+      "extra": [],
+      "different": {}
+    },
+    "perf_hooks": {
+      "missing": [
+        "Performance",
+        "PerformanceEntry",
+        "PerformanceMark",
+        "PerformanceMeasure",
+        "PerformanceObserver",
+        "PerformanceObserverEntryList",
+        "PerformanceResourceTiming",
+        "constants",
+        "createHistogram",
+        "createSlidingWindowHistogram",
+        "eventLoopUtilization",
+        "importHistogram",
+        "monitorEventLoopDelay",
+        "timerify"
+      ],
+      "extra": [],
+      "different": {}
+    },
+    "process": {
+      "missing": [
+        "_debugEnd",
+        "_debugProcess",
+        "_events",
+        "_fatalException",
+        "_linkedBinding",
+        "_maxListeners",
+        "_preload_modules",
+        "_startProfilerIdleNotifier",
+        "_stopProfilerIdleNotifier",
+        "_tickCallback",
+        "addUncaughtExceptionCaptureCallback",
+        "binding",
+        "dlopen",
+        "domain",
+        "execve",
+        "moduleLoadList",
+        "noProcessWarnings",
+        "report"
+      ],
+      "extra": [
+        "__quenchDeleteEnv",
+        "__quenchGetActiveNetworkResources",
+        "__quenchGetActiveTimerResources",
+        "__quenchSetEnv",
+        "addListener",
+        "emit",
+        "noDeprecation",
+        "off",
+        "on",
+        "once",
+        "permission",
+        "removeAllListeners",
+        "removeListener",
+        "throwDeprecation",
+        "traceDeprecation"
+      ],
+      "different": {
+        "_exiting": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "get": true,
+            "set": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "boolean"
+          }
+        },
+        "_kill": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 0,
+            "prototype": false
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 2,
+            "prototype": false
+          }
+        },
+        "_rawDebug": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 0,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 0,
+            "prototype": false
+          }
+        },
+        "arch": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": false,
+            "type": "string"
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "string"
+          }
+        },
+        "argv0": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": false,
+            "writable": false,
+            "type": "string"
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "string"
+          }
+        },
+        "chdir": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 1,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 1,
+            "prototype": false
+          }
+        },
+        "config": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": false,
+            "type": "object"
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "object"
+          }
+        },
+        "cpuUsage": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 1,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 1,
+            "prototype": false
+          }
+        },
+        "cwd": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 0,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 0,
+            "prototype": false
+          }
+        },
+        "emitWarning": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 4,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 2,
+            "prototype": false
+          }
+        },
+        "exit": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 1,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 1,
+            "prototype": false
+          }
+        },
+        "features": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": false,
+            "writable": false,
+            "type": "object"
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "object"
+          }
+        },
+        "finalization": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "get": true,
+            "set": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "object"
+          }
+        },
+        "getBuiltinModule": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 1,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 1,
+            "prototype": false
+          }
+        },
+        "hasUncaughtExceptionCaptureCallback": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 0,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 0,
+            "prototype": false
+          }
+        },
+        "hrtime": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 1,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 1,
+            "prototype": false
+          }
+        },
+        "initgroups": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 2,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 2,
+            "prototype": false
+          }
+        },
+        "loadEnvFile": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 0,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 1,
+            "prototype": false
+          }
+        },
+        "memoryUsage": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 0,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 0,
+            "prototype": false
+          }
+        },
+        "nextTick": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 1,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 1,
+            "prototype": false
+          }
+        },
+        "pid": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": false,
+            "type": "number"
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "number"
+          }
+        },
+        "platform": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": false,
+            "type": "string"
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "string"
+          }
+        },
+        "reallyExit": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 0,
+            "prototype": false
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 1,
+            "prototype": false
+          }
+        },
+        "ref": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 1,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 1,
+            "prototype": false
+          }
+        },
+        "release": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": false,
+            "type": "object"
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "object"
+          }
+        },
+        "resourceUsage": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 0,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 0,
+            "prototype": false
+          }
+        },
+        "setSourceMapsEnabled": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 1,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 1,
+            "prototype": false
+          }
+        },
+        "setUncaughtExceptionCaptureCallback": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 1,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 1,
+            "prototype": false
+          }
+        },
+        "setegid": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 1,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 1,
+            "prototype": false
+          }
+        },
+        "seteuid": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 1,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 1,
+            "prototype": false
+          }
+        },
+        "setgid": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 1,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 1,
+            "prototype": false
+          }
+        },
+        "setgroups": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 1,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 1,
+            "prototype": false
+          }
+        },
+        "setuid": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 1,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 1,
+            "prototype": false
+          }
+        },
+        "sourceMapsEnabled": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "get": true,
+            "set": false
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "boolean"
+          }
+        },
+        "stderr": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "get": true,
+            "set": false
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "object"
+          }
+        },
+        "stdout": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "get": true,
+            "set": false
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "object"
+          }
+        },
+        "threadCpuUsage": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 1,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 1,
+            "prototype": false
+          }
+        },
+        "umask": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 1,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 0,
+            "prototype": false
+          }
+        },
+        "unref": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 1,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 1,
+            "prototype": false
+          }
+        }
+      }
+    },
+    "stream": {
+      "missing": [],
+      "extra": [],
+      "different": {}
+    },
+    "stream/iter": {
+      "missing": [],
+      "extra": [],
+      "different": {}
+    },
+    "test": {
+      "missing": [
+        "assert",
+        "expectFailure",
+        "getTestContext",
+        "only",
+        "run",
+        "snapshot"
+      ],
+      "extra": [],
+      "different": {
+        "after": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 2,
+            "prototype": false
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 0,
+            "prototype": false
+          }
+        },
+        "afterEach": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 2,
+            "prototype": false
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 0,
+            "prototype": false
+          }
+        },
+        "before": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 2,
+            "prototype": false
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 0,
+            "prototype": false
+          }
+        },
+        "beforeEach": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 2,
+            "prototype": false
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 0,
+            "prototype": false
+          }
+        },
+        "describe": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 3,
+            "prototype": false
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 0,
+            "prototype": false
+          }
+        },
+        "it": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 3,
+            "prototype": false
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 0,
+            "prototype": false
+          }
+        },
+        "mock": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "get": true,
+            "set": false
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "object"
+          }
+        },
+        "skip": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 3,
+            "prototype": false
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 0,
+            "prototype": false
+          }
+        },
+        "suite": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 3,
+            "prototype": false
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 0,
+            "prototype": false
+          }
+        },
+        "test": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 3,
+            "prototype": false
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 0,
+            "prototype": false
+          }
+        },
+        "todo": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 3,
+            "prototype": false
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 0,
+            "prototype": false
+          }
+        }
+      }
+    },
+    "timers": {
+      "missing": [],
+      "extra": [],
+      "different": {
+        "clearImmediate": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 1,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 1,
+            "prototype": false
+          }
+        },
+        "clearInterval": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 1,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 1,
+            "prototype": false
+          }
+        },
+        "clearTimeout": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 1,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 1,
+            "prototype": false
+          }
+        },
+        "promises": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "get": true,
+            "set": false
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "object"
+          }
+        },
+        "setImmediate": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 1,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 1,
+            "prototype": false
+          }
+        },
+        "setInterval": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 2,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 1,
+            "prototype": false
+          }
+        },
+        "setTimeout": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 2,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 1,
+            "prototype": false
+          }
+        }
+      }
+    },
+    "tls": {
+      "missing": [
+        "CLIENT_RENEG_LIMIT",
+        "CLIENT_RENEG_WINDOW",
+        "convertALPNProtocols",
+        "getCACertificates",
+        "getCertificateCompressionAlgorithms",
+        "setDefaultCACertificates"
+      ],
+      "extra": [],
+      "different": {}
+    },
+    "util": {
+      "missing": [
+        "MIMEParams",
+        "MIMEType",
+        "_errnoException",
+        "_exceptionWithHostPort",
+        "aborted",
+        "convertProcessSignalToExitCode",
+        "debounce",
+        "debug",
+        "diff",
+        "getSystemErrorMap",
+        "getSystemErrorMessage",
+        "isArray",
+        "isPartialDeepStrictEqual",
+        "markPromiseAsHandled",
+        "setTraceSigInt",
+        "throttle",
+        "toUSVString",
+        "transferableAbortController",
+        "transferableAbortSignal"
+      ],
+      "extra": [],
+      "different": {
+        "callbackify": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 1,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 1,
+            "prototype": false
+          }
+        },
+        "debuglog": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 2,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 1,
+            "prototype": false
+          }
+        },
+        "deprecate": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 3,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 1,
+            "prototype": false
+          }
+        },
+        "getCallSites": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 0,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 0,
+            "prototype": false
+          }
+        },
+        "getSystemErrorName": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 1,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 1,
+            "prototype": false
+          }
+        },
+        "inherits": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 2,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 2,
+            "prototype": false
+          }
+        },
+        "parseEnv": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 1,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 1,
+            "prototype": false
+          }
+        },
+        "promisify": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 1,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 1,
+            "prototype": false
+          }
+        },
+        "stripVTControlCharacters": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 1,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 1,
+            "prototype": false
+          }
+        },
+        "styleText": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 3,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 3,
+            "prototype": false
+          }
+        }
+      }
+    },
+    "v8": {
+      "missing": [
+        "DefaultDeserializer",
+        "DefaultSerializer",
+        "Deserializer",
+        "GCProfiler",
+        "Serializer",
+        "cachedDataVersionTag",
+        "deserialize",
+        "getCppHeapStatistics",
+        "getHeapCodeStatistics",
+        "getHeapSnapshot",
+        "getHeapSpaceStatistics",
+        "getHeapStatistics",
+        "isStringOneByteRepresentation",
+        "promiseHooks",
+        "queryObjects",
+        "serialize",
+        "setFlagsFromString",
+        "setHeapProfileNearHeapLimit",
+        "setHeapSnapshotNearHeapLimit",
+        "startCpuProfile",
+        "startHeapProfile",
+        "stopCoverage",
+        "takeCoverage",
+        "writeHeapSnapshot"
+      ],
+      "extra": [],
+      "different": {}
+    },
+    "vm": {
+      "missing": [],
+      "extra": [],
+      "different": {
+        "compileFunction": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 2,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 1,
+            "prototype": true
+          }
+        },
+        "createScript": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 2,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 2,
+            "prototype": false
+          }
+        },
+        "measureMemory": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 0,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 0,
+            "prototype": false
+          }
+        },
+        "runInContext": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 3,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 2,
+            "prototype": true
+          }
+        },
+        "runInNewContext": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 3,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 1,
+            "prototype": true
+          }
+        }
+      }
+    },
+    "wasi": {
+      "missing": [
+        "WASI"
+      ],
+      "extra": [],
+      "different": {}
+    },
+    "worker_threads": {
+      "missing": [
+        "BroadcastChannel",
+        "SHARE_ENV",
+        "getEnvironmentData",
+        "isInternalThread",
+        "locks",
+        "moveMessagePortToContext",
+        "parentPort",
+        "postMessageToThread",
+        "receiveMessageOnPort",
+        "resourceLimits",
+        "setEnvironmentData",
+        "threadId",
+        "threadName",
+        "workerData"
+      ],
+      "extra": [],
+      "different": {
+        "Worker": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 1,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 0,
+            "prototype": true
+          }
+        }
+      }
+    },
+    "zlib": {
+      "missing": [
+        "DEFLATE",
+        "DEFLATERAW",
+        "GUNZIP",
+        "GZIP",
+        "INFLATE",
+        "INFLATERAW",
+        "UNZIP",
+        "ZLIB_VERNUM",
+        "ZSTD_CLEVEL_DEFAULT",
+        "ZSTD_COMPRESS",
+        "ZSTD_DECOMPRESS",
+        "ZSTD_btlazy2",
+        "ZSTD_btopt",
+        "ZSTD_btultra",
+        "ZSTD_btultra2",
+        "ZSTD_c_chainLog",
+        "ZSTD_c_checksumFlag",
+        "ZSTD_c_compressionLevel",
+        "ZSTD_c_contentSizeFlag",
+        "ZSTD_c_dictIDFlag",
+        "ZSTD_c_enableLongDistanceMatching",
+        "ZSTD_c_hashLog",
+        "ZSTD_c_jobSize",
+        "ZSTD_c_ldmBucketSizeLog",
+        "ZSTD_c_ldmHashLog",
+        "ZSTD_c_ldmHashRateLog",
+        "ZSTD_c_ldmMinMatch",
+        "ZSTD_c_minMatch",
+        "ZSTD_c_nbWorkers",
+        "ZSTD_c_overlapLog",
+        "ZSTD_c_searchLog",
+        "ZSTD_c_strategy",
+        "ZSTD_c_targetLength",
+        "ZSTD_c_windowLog",
+        "ZSTD_d_windowLogMax",
+        "ZSTD_dfast",
+        "ZSTD_e_continue",
+        "ZSTD_e_end",
+        "ZSTD_e_flush",
+        "ZSTD_error_GENERIC",
+        "ZSTD_error_checksum_wrong",
+        "ZSTD_error_corruption_detected",
+        "ZSTD_error_dictionaryCreation_failed",
+        "ZSTD_error_dictionary_corrupted",
+        "ZSTD_error_dictionary_wrong",
+        "ZSTD_error_dstBuffer_null",
+        "ZSTD_error_dstSize_tooSmall",
+        "ZSTD_error_frameParameter_unsupported",
+        "ZSTD_error_frameParameter_windowTooLarge",
+        "ZSTD_error_init_missing",
+        "ZSTD_error_literals_headerWrong",
+        "ZSTD_error_maxSymbolValue_tooLarge",
+        "ZSTD_error_maxSymbolValue_tooSmall",
+        "ZSTD_error_memory_allocation",
+        "ZSTD_error_noForwardProgress_destFull",
+        "ZSTD_error_noForwardProgress_inputEmpty",
+        "ZSTD_error_no_error",
+        "ZSTD_error_parameter_combination_unsupported",
+        "ZSTD_error_parameter_outOfBound",
+        "ZSTD_error_parameter_unsupported",
+        "ZSTD_error_prefix_unknown",
+        "ZSTD_error_srcSize_wrong",
+        "ZSTD_error_stabilityCondition_notRespected",
+        "ZSTD_error_stage_wrong",
+        "ZSTD_error_tableLog_tooLarge",
+        "ZSTD_error_version_unsupported",
+        "ZSTD_error_workSpace_tooSmall",
+        "ZSTD_fast",
+        "ZSTD_greedy",
+        "ZSTD_lazy",
+        "ZSTD_lazy2",
+        "Z_BEST_COMPRESSION",
+        "Z_BEST_SPEED",
+        "Z_BLOCK",
+        "Z_BUF_ERROR",
+        "Z_DATA_ERROR",
+        "Z_DEFAULT_CHUNK",
+        "Z_DEFAULT_COMPRESSION",
+        "Z_DEFAULT_LEVEL",
+        "Z_DEFAULT_MEMLEVEL",
+        "Z_DEFAULT_STRATEGY",
+        "Z_DEFAULT_WINDOWBITS",
+        "Z_ERRNO",
+        "Z_FILTERED",
+        "Z_FINISH",
+        "Z_FIXED",
+        "Z_FULL_FLUSH",
+        "Z_HUFFMAN_ONLY",
+        "Z_MAX_CHUNK",
+        "Z_MAX_LEVEL",
+        "Z_MAX_MEMLEVEL",
+        "Z_MAX_WINDOWBITS",
+        "Z_MEM_ERROR",
+        "Z_MIN_CHUNK",
+        "Z_MIN_LEVEL",
+        "Z_MIN_MEMLEVEL",
+        "Z_MIN_WINDOWBITS",
+        "Z_NEED_DICT",
+        "Z_NO_COMPRESSION",
+        "Z_NO_FLUSH",
+        "Z_OK",
+        "Z_PARTIAL_FLUSH",
+        "Z_RLE",
+        "Z_STREAM_END",
+        "Z_STREAM_ERROR",
+        "Z_SYNC_FLUSH",
+        "Z_VERSION_ERROR",
+        "ZipBuffer",
+        "ZipEntry",
+        "ZipFile",
+        "createZipArchive",
+        "createZipArchiveSync",
+        "getMaxZipContentSize",
+        "setMaxZipContentSize",
+        "zipFiles"
+      ],
+      "extra": [],
+      "different": {
+        "brotliCompress": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 3,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 3,
+            "prototype": false
+          }
+        },
+        "brotliCompressSync": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 2,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 2,
+            "prototype": false
+          }
+        },
+        "brotliDecompress": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 3,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 3,
+            "prototype": false
+          }
+        },
+        "brotliDecompressSync": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 2,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 2,
+            "prototype": false
+          }
+        },
+        "createBrotliCompress": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": false,
+            "type": "function",
+            "arity": 1,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 1,
+            "prototype": false
+          }
+        },
+        "createBrotliDecompress": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": false,
+            "type": "function",
+            "arity": 1,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 1,
+            "prototype": false
+          }
+        },
+        "createDeflate": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": false,
+            "type": "function",
+            "arity": 1,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 1,
+            "prototype": false
+          }
+        },
+        "createDeflateRaw": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": false,
+            "type": "function",
+            "arity": 1,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 1,
+            "prototype": false
+          }
+        },
+        "createGunzip": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": false,
+            "type": "function",
+            "arity": 1,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 1,
+            "prototype": false
+          }
+        },
+        "createGzip": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": false,
+            "type": "function",
+            "arity": 1,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 1,
+            "prototype": false
+          }
+        },
+        "createInflate": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": false,
+            "type": "function",
+            "arity": 1,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 1,
+            "prototype": false
+          }
+        },
+        "createInflateRaw": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": false,
+            "type": "function",
+            "arity": 1,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 1,
+            "prototype": false
+          }
+        },
+        "createUnzip": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": false,
+            "type": "function",
+            "arity": 1,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 1,
+            "prototype": false
+          }
+        },
+        "createZstdCompress": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": false,
+            "type": "function",
+            "arity": 1,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 1,
+            "prototype": false
+          }
+        },
+        "createZstdDecompress": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": false,
+            "type": "function",
+            "arity": 1,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 1,
+            "prototype": false
+          }
+        },
+        "deflate": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 3,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 3,
+            "prototype": false
+          }
+        },
+        "deflateRaw": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 3,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 3,
+            "prototype": false
+          }
+        },
+        "deflateRawSync": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 2,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 2,
+            "prototype": false
+          }
+        },
+        "deflateSync": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 2,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 2,
+            "prototype": false
+          }
+        },
+        "gunzip": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 3,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 3,
+            "prototype": false
+          }
+        },
+        "gunzipSync": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 2,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 2,
+            "prototype": false
+          }
+        },
+        "gzip": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 3,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 3,
+            "prototype": false
+          }
+        },
+        "gzipSync": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 2,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 2,
+            "prototype": false
+          }
+        },
+        "inflate": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 3,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 3,
+            "prototype": false
+          }
+        },
+        "inflateRaw": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 3,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 3,
+            "prototype": false
+          }
+        },
+        "inflateRawSync": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 2,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 2,
+            "prototype": false
+          }
+        },
+        "inflateSync": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 2,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 2,
+            "prototype": false
+          }
+        },
+        "unzip": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 3,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 3,
+            "prototype": false
+          }
+        },
+        "unzipSync": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 2,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 2,
+            "prototype": false
+          }
+        },
+        "zstdCompress": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 3,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 3,
+            "prototype": false
+          }
+        },
+        "zstdCompressSync": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 2,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 2,
+            "prototype": false
+          }
+        },
+        "zstdDecompress": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 3,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 3,
+            "prototype": false
+          }
+        },
+        "zstdDecompressSync": {
+          "oracle": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 2,
+            "prototype": true
+          },
+          "candidate": {
+            "enumerable": true,
+            "configurable": true,
+            "writable": true,
+            "type": "function",
+            "arity": 2,
+            "prototype": false
+          }
+        }
+      }
+    },
+    "zlib/iter": {
+      "missing": [],
+      "extra": [],
+      "different": {}
+    }
+  }
+}

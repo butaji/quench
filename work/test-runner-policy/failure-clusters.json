@@ -1,0 +1,4816 @@
+[
+  {
+    "count": 783,
+    "error": "TypeError: value is not callable",
+    "fixtures": [
+      "test-aborted-util.js",
+      "test-abortsignal-cloneable.js",
+      "test-async-hooks-destroy-on-gc.js",
+      "test-async-local-storage-weak-asyncwrap-leak.js",
+      "test-async-wrap-destroyid.js",
+      "test-async-wrap-tlssocket-asyncreset.js",
+      "test-blob-createobjecturl.js",
+      "test-blob-file-backed.js",
+      "test-buffer-backing-arraybuffer.js",
+      "test-buffer-stringlength.js",
+      "test-cli-options-negation.js",
+      "test-cluster-cwd.js",
+      "test-cluster-disconnect-race.js",
+      "test-cluster-disconnect-with-no-workers.js",
+      "test-cluster-eaccess.js",
+      "test-cluster-ipc-throw.js",
+      "test-cluster-net-listen-backlog.js",
+      "test-cluster-net-send.js",
+      "test-cluster-net-server-drop-connection.js",
+      "test-cluster-process-disconnect.js",
+      "test-cluster-rr-ref.js",
+      "test-cluster-send-handle-twice.js",
+      "test-cluster-setup-primary-argv.js",
+      "test-cluster-setup-primary-cumulative.js",
+      "test-cluster-setup-primary-emit.js",
+      "test-cluster-setup-primary-multiple.js",
+      "test-cluster-shared-handle-bind-error.js",
+      "test-cluster-worker-events.js",
+      "test-cluster-worker-forced-exit.js",
+      "test-console-diagnostics-channels.js",
+      "test-constants.js",
+      "test-cppheap-stats.js",
+      "test-crypto-fips.js",
+      "test-crypto-job-error-parity.js",
+      "test-crypto-key-objects-messageport.js",
+      "test-crypto-key-objects-raw.js",
+      "test-crypto-key-objects-to-crypto-key.js",
+      "test-crypto-keygen-async-encrypted-private-key.js",
+      "test-crypto-keyobject-no-own-symbols.js",
+      "test-crypto-mac-errors.js",
+      "test-crypto-mac-vectors.js",
+      "test-crypto-mac.js",
+      "test-crypto-no-algorithm.js",
+      "test-crypto-pkcs12.js",
+      "test-crypto-prepare-asymmetric-cryptokey.js",
+      "test-crypto-prepare-asymmetric-key.js",
+      "test-crypto-provider-cache.js",
+      "test-crypto-worker-thread.js",
+      "test-crypto-x509-brand-check.js",
+      "test-crypto-x509-clone-transfer.js",
+      "test-crypto-x509.js",
+      "test-data-url.js",
+      "test-dgram-create-socket-handle-fd.js",
+      "test-dgram-custom-lookup.js",
+      "test-dgram-default-lookup-ip.js",
+      "test-dgram-exclusive-implicit-bind.js",
+      "test-dgram-multicast-set-interface.js",
+      "test-dgram-send-cb-quelches-error.js",
+      "test-dgram-unref-in-cluster.js",
+      "test-diagnostic-channel-http-request-created.js",
+      "test-diagnostics-channel-bounded-channel-run-transform-error.js",
+      "test-diagnostics-channel-bounded-channel-run.js",
+      "test-diagnostics-channel-bounded-channel-scope-error.js",
+      "test-diagnostics-channel-bounded-channel-scope-nested.js",
+      "test-diagnostics-channel-bounded-channel-scope-transform-error.js",
+      "test-diagnostics-channel-bounded-channel-scope.js",
+      "test-diagnostics-channel-http2-client-stream-body-multiple-buffers-and-strings.js",
+      "test-diagnostics-channel-http2-client-stream-body-multiple-buffers.js",
+      "test-diagnostics-channel-http2-client-stream-body-no-chunks.js",
+      "test-diagnostics-channel-http2-client-stream-body-single-buffer.js",
+      "test-diagnostics-channel-http2-client-stream-body-single-string.js",
+      "test-diagnostics-channel-http2-client-stream-close-error.js",
+      "test-diagnostics-channel-http2-client-stream-close.js",
+      "test-diagnostics-channel-http2-client-stream-created.js",
+      "test-diagnostics-channel-http2-client-stream-error.js",
+      "test-diagnostics-channel-http2-client-stream-finish.js",
+      "test-diagnostics-channel-http2-client-stream-start.js",
+      "test-diagnostics-channel-http2-server-stream-close-error.js",
+      "test-diagnostics-channel-http2-server-stream-close.js",
+      "test-diagnostics-channel-http2-server-stream-created-start-timing.js",
+      "test-diagnostics-channel-http2-server-stream-created.js",
+      "test-diagnostics-channel-http2-server-stream-error.js",
+      "test-diagnostics-channel-http2-server-stream-finish.js",
+      "test-diagnostics-channel-http2-server-stream-start.js",
+      "test-diagnostics-channel-memory-leak.js",
+      "test-dns-negative-zero.js",
+      "test-dns-resolveany.js",
+      "test-dns.js",
+      "test-domexception-subclass.js",
+      "test-err-name-deprecation.js",
+      "test-filehandle-autoclose.mjs",
+      "test-filehandle-readablestream.js",
+      "test-fileurltopathbuffer.js",
+      "test-force-repl-with-eval.js",
+      "test-fs-append-file-flush.js",
+      "test-fs-cp-sync-dereference-nested-symlink.mjs",
+      "test-fs-glob-no-follow-symlink-globstar.mjs",
+      "test-fs-promises-file-handle-dispose.js",
+      "test-fs-promises-file-handle-pull.js",
+      "test-fs-promises-file-handle-pullsync.js",
+      "test-fs-promises-file-handle-readLines.mjs",
+      "test-fs-promises-file-handle-stream.js",
+      "test-fs-promises-file-handle-truncate.js",
+      "test-fs-promises-file-handle-writer.js",
+      "test-fs-readdir-recursive-permission.js",
+      "test-fs-readdir-types.js",
+      "test-fs-utimes.js",
+      "test-fs-write-file-flush.js",
+      "test-fs-write-stream-eagain.mjs",
+      "test-fs-write-stream-flush.js",
+      "test-h2-large-header-cause-client-to-hangup.js",
+      "test-h2leak-destroy-session-on-socket-ended.js",
+      "test-handle-wrap-hasref.js",
+      "test-heap-embedder-graph.js",
+      "test-heapdump-fs-mkdir-recursive.js",
+      "test-heapsnapshot-near-heap-limit-by-api-in-worker.js",
+      "test-heapsnapshot-near-heap-limit-worker.js",
+      "test-http-abort-before-end.js",
+      "test-http-aborted.js",
+      "test-http-agent-abort-controller.js",
+      "test-http-agent-destroyed-socket.js",
+      "test-http-agent-maxsockets-respected.js",
+      "test-http-agent-remove.js",
+      "test-http-agent-timeout.js",
+      "test-http-client-abort-event.js",
+      "test-http-client-abort-keep-alive-queued-tcp-socket.js",
+      "test-http-client-abort-no-agent.js",
+      "test-http-client-abort-response-event.js",
+      "test-http-client-abort.js",
+      "test-http-client-abort2.js",
+      "test-http-client-abort3.js",
+      "test-http-client-agent-abort-close-event.js",
+      "test-http-client-leaky-with-double-response.js",
+      "test-http-client-response-timeout.js",
+      "test-http-client-set-timeout-after-end.js",
+      "test-http-client-set-timeout.js",
+      "test-http-client-timeout-agent.js",
+      "test-http-client-timeout-connect-listener.js",
+      "test-http-client-timeout-event.js",
+      "test-http-client-timeout-on-connect.js",
+      "test-http-client-timeout-with-data.js",
+      "test-http-client-timeout.js",
+      "test-http-common.js",
+      "test-http-connect-default-host-header.js",
+      "test-http-correct-hostname.js",
+      "test-http-dont-set-default-headers-with-set-header.js",
+      "test-http-dump-req-when-res-ends.js",
+      "test-http-early-hints.js",
+      "test-http-flush-headers.js",
+      "test-http-flush-response-headers.js",
+      "test-http-generic-streams.js",
+      "test-http-information-headers.js",
+      "test-http-information-processing.js",
+      "test-http-invalidheaderfield2.js",
+      "test-http-is-valid-header.js",
+      "test-http-localaddress.js",
+      "test-http-many-ended-pipelines.js",
+      "test-http-multiple-headers.js",
+      "test-http-mutable-headers.js",
+      "test-http-outgoing-message-write-callback.js",
+      "test-http-outgoing-renderHeaders.js",
+      "test-http-raw-headers.js",
+      "test-http-request-agent.js",
+      "test-http-request-signal.js",
+      "test-http-response-socket-error.js",
+      "test-http-server-async-dispose.js",
+      "test-http-server-close-all.js",
+      "test-http-server-close-idle-wait-response.js",
+      "test-http-server-close-idle.js",
+      "test-http-server-options-incoming-message.js",
+      "test-http-server-options-server-response.js",
+      "test-http-server-response-standalone.js",
+      "test-http-set-header-chain.js",
+      "test-http-set-timeout.js",
+      "test-http-socket-encoding-error.js",
+      "test-http-timeout-client-warning.js",
+      "test-http-timeout-overflow.js",
+      "test-http-timeout.js",
+      "test-http-url.parse-https.request.js",
+      "test-http-websocket-mask.js",
+      "test-http-writable-true-after-close.js",
+      "test-http-write-information.js",
+      "test-http.js",
+      "test-http2-allow-http1-upgrade-ws.js",
+      "test-http2-allow-http1.js",
+      "test-http2-altsvc.js",
+      "test-http2-async-local-storage.js",
+      "test-http2-autoselect-protocol.js",
+      "test-http2-backpressure.js",
+      "test-http2-bidirectional-write-deadlock.js",
+      "test-http2-binding.js",
+      "test-http2-buffersize.js",
+      "test-http2-byteswritten-server.js",
+      "test-http2-cancel-while-client-reading.js",
+      "test-http2-capture-rejection.js",
+      "test-http2-client-connection-tunnelling.js",
+      "test-http2-client-data-end.js",
+      "test-http2-client-destroy.js",
+      "test-http2-client-http1-server.js",
+      "test-http2-client-jsstream-destroy.js",
+      "test-http2-client-onconnect-errors.js",
+      "test-http2-client-port-80.js",
+      "test-http2-client-priority-before-connect.js",
+      "test-http2-client-promisify-connect.js",
+      "test-http2-client-proxy-over-http2.js",
+      "test-http2-client-request-listeners-warning.js",
+      "test-http2-client-request-options-errors.js",
+      "test-http2-client-rststream-before-connect.js",
+      "test-http2-client-session-close-before-stream-close.js",
+      "test-http2-client-set-priority.js",
+      "test-http2-client-setLocalWindowSize.js",
+      "test-http2-client-setNextStreamID-errors.js",
+      "test-http2-client-settings-before-connect.js",
+      "test-http2-client-shutdown-before-connect.js",
+      "test-http2-client-socket-destroy.js",
+      "test-http2-client-stream-destroy-before-connect.js",
+      "test-http2-client-unescaped-path.js",
+      "test-http2-client-upload-reject.js",
+      "test-http2-client-upload.js",
+      "test-http2-client-write-before-connect.js",
+      "test-http2-client-write-empty-string.js",
+      "test-http2-close-while-writing.js",
+      "test-http2-compat-aborted.js",
+      "test-http2-compat-client-upload-reject.js",
+      "test-http2-compat-errors.js",
+      "test-http2-compat-expect-continue-check.js",
+      "test-http2-compat-expect-continue.js",
+      "test-http2-compat-expect-handling.js",
+      "test-http2-compat-get-headers.js",
+      "test-http2-compat-method-connect.js",
+      "test-http2-compat-serverrequest-end.js",
+      "test-http2-compat-serverrequest-headers.js",
+      "test-http2-compat-serverrequest-host.js",
+      "test-http2-compat-serverrequest-pause.js",
+      "test-http2-compat-serverrequest-pipe.js",
+      "test-http2-compat-serverrequest-settimeout.js",
+      "test-http2-compat-serverrequest-trailers.js",
+      "test-http2-compat-serverrequest.js",
+      "test-http2-compat-serverresponse-close.js",
+      "test-http2-compat-serverresponse-createpushresponse.js",
+      "test-http2-compat-serverresponse-destroy.js",
+      "test-http2-compat-serverresponse-drain.js",
+      "test-http2-compat-serverresponse-end-after-statuses-without-body.js",
+      "test-http2-compat-serverresponse-end.js",
+      "test-http2-compat-serverresponse-finished.js",
+      "test-http2-compat-serverresponse-flushheaders.js",
+      "test-http2-compat-serverresponse-headers-after-destroy.js",
+      "test-http2-compat-serverresponse-headers-send-date.js",
+      "test-http2-compat-serverresponse-headers.js",
+      "test-http2-compat-serverresponse-settimeout.js",
+      "test-http2-compat-serverresponse-statuscode.js",
+      "test-http2-compat-serverresponse-statusmessage-property-set.js",
+      "test-http2-compat-serverresponse-statusmessage-property.js",
+      "test-http2-compat-serverresponse-statusmessage.js",
+      "test-http2-compat-serverresponse-trailers.js",
+      "test-http2-compat-serverresponse-write.js",
+      "test-http2-compat-serverresponse-writehead-array.js",
+      "test-http2-compat-serverresponse-writehead.js",
+      "test-http2-compat-serverresponse.js",
+      "test-http2-compat-short-stream-client-server.js",
+      "test-http2-compat-socket-destroy-delayed.js",
+      "test-http2-compat-socket-set.js",
+      "test-http2-compat-socket.js",
+      "test-http2-compat-write-early-hints-invalid-argument-type.js",
+      "test-http2-compat-write-early-hints-invalid-argument-value.js",
+      "test-http2-compat-write-early-hints-invalid-header.js",
+      "test-http2-compat-write-early-hints.js",
+      "test-http2-compat-write-head-after-close.js",
+      "test-http2-compat-write-head-destroyed.js",
+      "test-http2-compat-write-information.js",
+      "test-http2-connect-method-extended-cant-turn-off.js",
+      "test-http2-connect-method-extended.js",
+      "test-http2-connect-method.js",
+      "test-http2-connect-options.js",
+      "test-http2-connect-tls-with-delay.js",
+      "test-http2-connect.js",
+      "test-http2-connection-window-size-option.js",
+      "test-http2-cookies.js",
+      "test-http2-create-client-connect.js",
+      "test-http2-create-client-secure-session.js",
+      "test-http2-create-client-session.js",
+      "test-http2-createwritereq.js",
+      "test-http2-date-header.js",
+      "test-http2-destroy-after-write.js",
+      "test-http2-dont-lose-data.js",
+      "test-http2-dont-override.js",
+      "test-http2-empty-frame-without-eof.js",
+      "test-http2-endafterheaders.js",
+      "test-http2-error-order.js",
+      "test-http2-exceeds-server-trailer-size.js",
+      "test-http2-forget-closed-streams.js",
+      "test-http2-generic-streams-sendfile.js",
+      "test-http2-generic-streams.js",
+      "test-http2-getpackedsettings.js",
+      "test-http2-goaway-delayed-request.js",
+      "test-http2-goaway-opaquedata.js",
+      "test-http2-graceful-close.js",
+      "test-http2-head-request.js",
+      "test-http2-https-fallback-http-server-options.js",
+      "test-http2-https-fallback.js",
+      "test-http2-info-headers-errors.js",
+      "test-http2-info-headers.js",
+      "test-http2-invalid-last-stream-id.js",
+      "test-http2-invalidargtypes-errors.js",
+      "test-http2-invalidheaderfield.js",
+      "test-http2-invalidheaderfields-client.js",
+      "test-http2-ip-address-host.js",
+      "test-http2-large-write-close.js",
+      "test-http2-large-write-destroy.js",
+      "test-http2-large-write-multiple-requests.js",
+      "test-http2-large-writes-session-memory-leak.js",
+      "test-http2-malformed-altsvc.js",
+      "test-http2-many-writes-and-destroy.js",
+      "test-http2-max-concurrent-streams.js",
+      "test-http2-max-invalid-frames.js",
+      "test-http2-max-session-memory-leak.js",
+      "test-http2-max-session-memory-stalled-headers.js",
+      "test-http2-max-settings.js",
+      "test-http2-methods.js",
+      "test-http2-misbehaving-flow-control-paused.js",
+      "test-http2-misbehaving-flow-control.js",
+      "test-http2-misbehaving-multiplex.js",
+      "test-http2-misused-pseudoheaders.js",
+      "test-http2-multi-content-length.js",
+      "test-http2-multiheaders-raw.js",
+      "test-http2-multiheaders.js",
+      "test-http2-multiplex.js",
+      "test-http2-multistream-destroy-on-read-tls.js",
+      "test-http2-no-more-streams.js",
+      "test-http2-no-wanttrailers-listener.js",
+      "test-http2-onping.js",
+      "test-http2-options-max-headers-block-length.js",
+      "test-http2-options-max-headers-exceeds-nghttp2.js",
+      "test-http2-options-max-reserved-streams.js",
+      "test-http2-options-server-request.js",
+      "test-http2-options-server-response.js",
+      "test-http2-origin-set-max-size.mjs",
+      "test-http2-origin.js",
+      "test-http2-pack-end-stream-flag.js",
+      "test-http2-padding-aligned.js",
+      "test-http2-perform-server-handshake.js",
+      "test-http2-ping-settings-heapdump.js",
+      "test-http2-ping-unsolicited-ack.js",
+      "test-http2-pipe-named-pipe.js",
+      "test-http2-pipe.js",
+      "test-http2-premature-close.js",
+      "test-http2-priority-cycle-.js",
+      "test-http2-priority-event.js",
+      "test-http2-propagate-session-destroy-code.js",
+      "test-http2-raw-headers-defaults.js",
+      "test-http2-raw-headers.js",
+      "test-http2-removed-header-stays-removed.js",
+      "test-http2-request-remove-connect-listener.js",
+      "test-http2-res-corked.js",
+      "test-http2-res-writable-properties.js",
+      "test-http2-reset-buffered-read.js",
+      "test-http2-reset-pending-write.js",
+      "test-http2-respond-errors.js",
+      "test-http2-respond-file-204.js",
+      "test-http2-respond-file-304.js",
+      "test-http2-respond-file-404.js",
+      "test-http2-respond-file-compat.js",
+      "test-http2-respond-file-error-dir.js",
+      "test-http2-respond-file-error-pipe-offset.js",
+      "test-http2-respond-file-errors.js",
+      "test-http2-respond-file-fd-errors.js",
+      "test-http2-respond-file-fd-invalid.js",
+      "test-http2-respond-file-fd-leak.js",
+      "test-http2-respond-file-fd-range.js",
+      "test-http2-respond-file-fd.js",
+      "test-http2-respond-file-filehandle.js",
+      "test-http2-respond-file-push.js",
+      "test-http2-respond-file-range.js",
+      "test-http2-respond-file-with-pipe.js",
+      "test-http2-respond-file.js",
+      "test-http2-respond-nghttperrors.js",
+      "test-http2-respond-no-data.js",
+      "test-http2-respond-with-fd-errors.js",
+      "test-http2-respond-with-file-connection-abort.js",
+      "test-http2-response-splitting.js",
+      "test-http2-rst-stream-reentrancy.js",
+      "test-http2-sensitive-headers.js",
+      "test-http2-sent-headers.js",
+      "test-http2-serve-file.js",
+      "test-http2-server-async-dispose.js",
+      "test-http2-server-close-callback.js",
+      "test-http2-server-close-idle-connection.js",
+      "test-http2-server-errors.js",
+      "test-http2-server-http1-client.js",
+      "test-http2-server-push-disabled.js",
+      "test-http2-server-push-stream-errors-args.js",
+      "test-http2-server-push-stream-errors.js",
+      "test-http2-server-push-stream-head.js",
+      "test-http2-server-push-stream.js",
+      "test-http2-server-rfc-9113-client.js",
+      "test-http2-server-rfc-9113-server.js",
+      "test-http2-server-rst-before-respond.js",
+      "test-http2-server-rst-stream.js",
+      "test-http2-server-session-destroy.js",
+      "test-http2-server-sessionerror.js",
+      "test-http2-server-set-header.js",
+      "test-http2-server-setLocalWindowSize.js",
+      "test-http2-server-settimeout-no-callback.js",
+      "test-http2-server-shutdown-before-respond.js",
+      "test-http2-server-shutdown-options-errors.js",
+      "test-http2-server-shutdown-redundant.js",
+      "test-http2-server-socket-destroy.js",
+      "test-http2-server-startup.js",
+      "test-http2-server-stream-session-destroy.js",
+      "test-http2-server-timeout.js",
+      "test-http2-server-unknown-protocol.js",
+      "test-http2-session-cleanup-on-nghttp2-goaway.js",
+      "test-http2-session-destroy-stream-handler.js",
+      "test-http2-session-gc-while-write-scheduled.js",
+      "test-http2-session-graceful-close.js",
+      "test-http2-session-reuse-different-authority.js",
+      "test-http2-session-settings.js",
+      "test-http2-session-stream-state.js",
+      "test-http2-session-timeout.js",
+      "test-http2-session-unref.js",
+      "test-http2-settings-unsolicited-ack.js",
+      "test-http2-short-stream-client-server.js",
+      "test-http2-single-headers-validation-disabled.js",
+      "test-http2-single-headers-validation.js",
+      "test-http2-socket-close.js",
+      "test-http2-socket-proxy-destroy.js",
+      "test-http2-socket-proxy-handler-for-has.js",
+      "test-http2-socket-proxy.js",
+      "test-http2-status-code-invalid.js",
+      "test-http2-status-code.js",
+      "test-http2-stream-backpressure-unread-peer.js",
+      "test-http2-stream-client.js",
+      "test-http2-stream-destroy-event-order.js",
+      "test-http2-stream-removelisteners-after-close.js",
+      "test-http2-timeouts.js",
+      "test-http2-tls-disconnect.js",
+      "test-http2-too-large-headers.js",
+      "test-http2-too-many-headers.js",
+      "test-http2-too-many-settings.js",
+      "test-http2-too-many-streams.js",
+      "test-http2-trailers-after-session-close.js",
+      "test-http2-trailers.js",
+      "test-http2-unbound-socket-proxy.js",
+      "test-http2-update-settings.js",
+      "test-http2-util-headers-list.js",
+      "test-http2-window-size.js",
+      "test-http2-window-update-overflow.js",
+      "test-http2-write-callbacks.js",
+      "test-http2-write-empty-string.js",
+      "test-http2-write-finishes-after-stream-destroy.js",
+      "test-http2-zero-length-header.js",
+      "test-http2-zero-length-write.js",
+      "test-https-abortcontroller.js",
+      "test-https-agent-additional-options.js",
+      "test-https-agent-checkserveridentity-reuse.js",
+      "test-https-agent-constructor.js",
+      "test-https-agent-keylog.js",
+      "test-https-agent-pfx-object-array-reuse.js",
+      "test-https-agent-servername.js",
+      "test-https-agent-session-eviction.js",
+      "test-https-agent-session-injection.js",
+      "test-https-agent-sni.js",
+      "test-https-agent-sockets-leak.js",
+      "test-https-agent.js",
+      "test-https-argument-of-creating.js",
+      "test-https-byteswritten.js",
+      "test-https-client-checkServerIdentity.js",
+      "test-https-client-get-url.js",
+      "test-https-client-override-global-agent.js",
+      "test-https-client-reject.js",
+      "test-https-client-renegotiation-limit.js",
+      "test-https-client-resume.js",
+      "test-https-close.js",
+      "test-https-connect-address-family.js",
+      "test-https-drain.js",
+      "test-https-foafssl.js",
+      "test-https-host-headers.js",
+      "test-https-hwm.js",
+      "test-https-keep-alive-drop-requests.js",
+      "test-https-localaddress-bind-error.js",
+      "test-https-localaddress.js",
+      "test-https-max-headers-count.js",
+      "test-https-options-boolean-check.js",
+      "test-https-pfx.js",
+      "test-https-request-arguments.js",
+      "test-https-response-tls-error.js",
+      "test-https-resume-after-renew.js",
+      "test-https-selfsigned-no-keycertsign-no-crash.js",
+      "test-https-server-async-dispose.js",
+      "test-https-server-close-all.js",
+      "test-https-server-close-destroy-timeout.js",
+      "test-https-server-close-idle.js",
+      "test-https-server-connections-checking-leak.js",
+      "test-https-server-headers-timeout.js",
+      "test-https-server-options-incoming-message.js",
+      "test-https-server-options-server-response.js",
+      "test-https-server-request-timeout.js",
+      "test-https-session-reuse-different-servername.js",
+      "test-https-set-timeout-server.js",
+      "test-https-socket-options.js",
+      "test-https-timeout-server-2.js",
+      "test-https-timeout-server.js",
+      "test-https-timeout.js",
+      "test-https-truncate.js",
+      "test-https-unix-socket-self-signed.js",
+      "test-icu-env.js",
+      "test-icu-transcode.js",
+      "test-internal-async-context-frame-enabled.js",
+      "test-internal-util-isinsidenodemodules.js",
+      "test-internal-webidl-buffer-source.js",
+      "test-mark-promise-handled.js",
+      "test-math-random.js",
+      "test-memory-usage.js",
+      "test-messaging-marktransfermode.js",
+      "test-module-builtin-policies.js",
+      "test-module-globalpaths-nodepath.js",
+      "test-module-main-preserve-symlinks-fail.js",
+      "test-module-relative-lookup.js",
+      "test-module-relative-resolve-cache.js",
+      "test-module-run-main-monkey-patch.js",
+      "test-module-stat.js",
+      "test-net-connect-reset-after-destroy.js",
+      "test-net-connect-reset-before-connected.js",
+      "test-net-connect-reset-until-connected.js",
+      "test-net-connect-reset.js",
+      "test-net-listen-exclusive-random-ports.js",
+      "test-net-listen-handle-in-cluster-2.js",
+      "test-net-normalize-args.js",
+      "test-net-server-async-dispose.mjs",
+      "test-net-server-listen-handle.js",
+      "test-net-server-reset.js",
+      "test-net-socket-reset-send.js",
+      "test-net-socket-reset-twice.js",
+      "test-net-socket-tos.js",
+      "test-net-socket-unref-timer-parent-chain.js",
+      "test-npm-install.js",
+      "test-perf-hooks-eventlooputilization.js",
+      "test-perf-hooks-histogram-analysis.js",
+      "test-perf-hooks-histogram-diff.js",
+      "test-perf-hooks-histogram-fast-calls.js",
+      "test-perf-hooks-histogram-import.js",
+      "test-perf-hooks-histogram-qrde-oracle.js",
+      "test-perf-hooks-histogram-qrde.js",
+      "test-perf-hooks-histogram-record-zero.js",
+      "test-perf-hooks-histogram-snapshot.js",
+      "test-perf-hooks-histogram-stats.js",
+      "test-perf-hooks-histogram.js",
+      "test-perf-hooks-monitor-event-loop-delay-fast-calls.js",
+      "test-perf-hooks-monitor-event-loop-delay-options.js",
+      "test-perf-hooks-monitor-event-loop-delay-resolution.js",
+      "test-perf-hooks-resourcetiming-attributes.js",
+      "test-perf-hooks-resourcetiming-fetch.mjs",
+      "test-perf-hooks-resourcetiming.js",
+      "test-perf-hooks-sliding-window-histogram-fast-calls.js",
+      "test-perf-hooks-sliding-window-histogram.js",
+      "test-perf-hooks-timerify-basic.js",
+      "test-perf-hooks-timerify-constructor.js",
+      "test-perf-hooks-timerify-histogram-async.mjs",
+      "test-perf-hooks-timerify-histogram-sync.mjs",
+      "test-perf-hooks-timerify-multiple-wrapping.js",
+      "test-perf-hooks-timerify-return-value.js",
+      "test-perf-hooks-usertiming.js",
+      "test-performance-nodetiming-uvmetricsinfo-buffer.js",
+      "test-performance-resourcetimingbufferfull.js",
+      "test-performanceobserver-observer-counts.js",
+      "test-permission-allow-child-process-cli.js",
+      "test-permission-allow-wasi-cli.js",
+      "test-permission-allow-worker-cli.js",
+      "test-permission-child-process-inherit-flags-substring.js",
+      "test-permission-child-process-inherit-flags.js",
+      "test-permission-drop-child-process.js",
+      "test-permission-drop-diagnostics-channel.js",
+      "test-permission-drop-fs-all.js",
+      "test-permission-drop-fs-read.js",
+      "test-permission-drop-fs-scope.js",
+      "test-permission-drop-fs-write.js",
+      "test-permission-drop-net.js",
+      "test-permission-drop-worker.js",
+      "test-permission-fs-filehandle-utimes.js",
+      "test-permission-fs-internal-module-stat.js",
+      "test-permission-net-allowed.js",
+      "test-permission-net-cluster.js",
+      "test-permission-net-https.js",
+      "test-process-binding-internalbinding-allowlist.js",
+      "test-process-binding-util.js",
+      "test-process-exception-capture-should-abort-on-uncaught-setflagsfromstring.js",
+      "test-process-execve-permission-granted.js",
+      "test-process-execve.js",
+      "test-punycode.js",
+      "test-readline-async-iterators-backpressure.js",
+      "test-readline-csi.js",
+      "test-readline-emit-keypress-events.js",
+      "test-readline-set-raw-mode.js",
+      "test-repl-async-iife.js",
+      "test-repl-autolibs.js",
+      "test-repl-completion-on-getters-disabled.js",
+      "test-repl-context.js",
+      "test-repl-custom-eval.js",
+      "test-repl-definecommand.js",
+      "test-repl-domain.js",
+      "test-repl-empty.js",
+      "test-repl-eval-error-after-close.js",
+      "test-repl-function-definition-edge-case.js",
+      "test-repl-let-process.js",
+      "test-repl-multiline.js",
+      "test-repl-multiple-instances-async-error.js",
+      "test-repl-no-terminal-restore-process-listeners.js",
+      "test-repl-no-terminal.js",
+      "test-repl-null-thrown.js",
+      "test-repl-options.js",
+      "test-repl-pretty-custom-stack.js",
+      "test-repl-pretty-stack-custom-writer.js",
+      "test-repl-pretty-stack.js",
+      "test-repl-recoverable.js",
+      "test-repl-require-after-write.js",
+      "test-repl-require-cache.js",
+      "test-repl-require.js",
+      "test-repl-reset-event.js",
+      "test-repl-save-load-editor-mode.js",
+      "test-repl-save-load-invalid-save.js",
+      "test-repl-save-load-load-dir.js",
+      "test-repl-save-load-load-non-existent.js",
+      "test-repl-save-load-load-without-name.js",
+      "test-repl-save-load-save-without-name.js",
+      "test-repl-save-load.js",
+      "test-repl-tab-complete-buffer.js",
+      "test-repl-tab-complete-computed-props.js",
+      "test-repl-tab-complete-crash.js",
+      "test-repl-tab-complete-custom-completer.js",
+      "test-repl-tab-complete-files.js",
+      "test-repl-tab-complete-import.js",
+      "test-repl-tab-complete-new-expression.js",
+      "test-repl-tab-complete-no-warn.js",
+      "test-repl-tab-complete-nosideeffects.js",
+      "test-repl-tab-complete-on-editor-mode.js",
+      "test-repl-tab-complete-require.js",
+      "test-repl-tab-complete-unary-expressions.js",
+      "test-repl-tab-complete.js",
+      "test-repl-tab.js",
+      "test-repl-throw-null-or-undefined.js",
+      "test-repl-uncaught-exception-after-input-ended.js",
+      "test-repl-uncaught-exception-async.js",
+      "test-repl-uncaught-exception-evalcallback.js",
+      "test-repl-underscore.js",
+      "test-repl-user-error-handler.js",
+      "test-repl.js",
+      "test-require-dot.js",
+      "test-runner-aftereach-runtime-skip.js",
+      "test-runner-coverage-isolation-none-api.mjs",
+      "test-runner-enqueue-file-syntax-error.js",
+      "test-runner-entry-file.mjs",
+      "test-runner-execution-ordered-bypass.mjs",
+      "test-runner-expect-error-but-pass.js",
+      "test-runner-expect-error.js",
+      "test-runner-filetest-location.js",
+      "test-runner-get-test-context.js",
+      "test-runner-module-mocking.js",
+      "test-runner-no-isolation-load-error.js",
+      "test-runner-randomize-first-draw.mjs",
+      "test-runner-subtest-after-hook.js",
+      "test-runner-tags-events.mjs",
+      "test-runner-test-id.js",
+      "test-runner-test-rerun-failures.js",
+      "test-runner-todo-skip-tests.js",
+      "test-safe-get-env.js",
+      "test-source-map-cjs-require-cache.js",
+      "test-stream-consumers.js",
+      "test-stream-pipeline-http2.js",
+      "test-tcp-wrap-listen.js",
+      "test-tcp-wrap.js",
+      "test-tick-processor-arguments.js",
+      "test-tls-add-context.js",
+      "test-tls-async-cb-after-socket-end.js",
+      "test-tls-canonical-ip.js",
+      "test-tls-certificate-compression.js",
+      "test-tls-cli-min-max-conflict.js",
+      "test-tls-client-destroy-soon.js",
+      "test-tls-client-renegotiation-13.js",
+      "test-tls-client-renegotiation-limit.js",
+      "test-tls-client-resume-12.js",
+      "test-tls-client-resume.js",
+      "test-tls-finished.js",
+      "test-tls-get-ca-certificates-bundled-subset.js",
+      "test-tls-get-ca-certificates-bundled.js",
+      "test-tls-get-ca-certificates-default.js",
+      "test-tls-get-ca-certificates-node-use-system-ca.js",
+      "test-tls-get-ca-certificates-system-without-flag.js",
+      "test-tls-get-ca-certificates-system.js",
+      "test-tls-get-ca-certificates-worker-no-use-system-ca.js",
+      "test-tls-get-ca-certificates-worker-use-system-ca.js",
+      "test-tls-getcertificate-x509.js",
+      "test-tls-getcipher.js",
+      "test-tls-honorcipherorder.js",
+      "test-tls-multi-key.js",
+      "test-tls-multi-pfx.js",
+      "test-tls-multiple-cas-as-string.js",
+      "test-tls-off-thread-cert-loading-system.js",
+      "test-tls-off-thread-cert-loading.js",
+      "test-tls-over-http-tunnel.js",
+      "test-tls-peer-certificate-multi-keys.js",
+      "test-tls-peer-certificate.js",
+      "test-tls-pfx-authorizationerror.js",
+      "test-tls-psk-alpn-callback-exception-handling.js",
+      "test-tls-psk-server.js",
+      "test-tls-reinitialize-listeners.js",
+      "test-tls-secure-context-usage-order.js",
+      "test-tls-server-verify.js",
+      "test-tls-set-default-ca-certificates-append-fetch.mjs",
+      "test-tls-set-default-ca-certificates-append-https-request.js",
+      "test-tls-set-default-ca-certificates-array-buffer.js",
+      "test-tls-set-default-ca-certificates-basic.js",
+      "test-tls-set-default-ca-certificates-error.js",
+      "test-tls-set-default-ca-certificates-mixed-types.js",
+      "test-tls-set-default-ca-certificates-precedence-bundled.js",
+      "test-tls-set-default-ca-certificates-precedence-empty.js",
+      "test-tls-set-default-ca-certificates-recovery.js",
+      "test-tls-set-default-ca-certificates-reset-fetch.mjs",
+      "test-tls-set-default-ca-certificates-reset-https-request.js",
+      "test-tls-set-secure-context.js",
+      "test-tls-set-sigalgs.js",
+      "test-tls-sni-case-insensitive.js",
+      "test-tls-sni-server-client.js",
+      "test-tls-socket-destroy.js",
+      "test-tls-ticket-cluster.js",
+      "test-tls-tlswrap-segfault.js",
+      "test-tls-use-after-free-regression.js",
+      "test-tls-write-error.js",
+      "test-trace-events-fs-async.js",
+      "test-trace-events-get-category-enabled-buffer.js",
+      "test-trace-events-metadata.js",
+      "test-trace-events-worker-metadata-with-name.js",
+      "test-trace-events-worker-metadata.js",
+      "test-url-parse-format.js",
+      "test-util-convert-signal-to-exit-code.mjs",
+      "test-util-exception-with-host-port.js",
+      "test-util-isPartialDeepStrictEqual.js",
+      "test-util-sigint-watchdog.js",
+      "test-util.js",
+      "test-uv-errmap.js",
+      "test-uv-errno.js",
+      "test-v8-cpu-profile.js",
+      "test-v8-deserialize-buffer.js",
+      "test-v8-flags.js",
+      "test-v8-getheapsnapshot-twice.js",
+      "test-v8-serialize-leak.js",
+      "test-v8-stats.js",
+      "test-v8-version-tag.js",
+      "test-vfs-package-json-cache.js",
+      "test-vfs-reserved-root.js",
+      "test-vfs.js",
+      "test-vm-cached-data.js",
+      "test-vm-createcacheddata.js",
+      "test-webcrypto-fips-refresh.js",
+      "test-webcrypto-get-public-key.mjs",
+      "test-webcrypto-promise-prototype-pollution.mjs",
+      "test-webcrypto-prototype-pollution.mjs",
+      "test-webcrypto-rsa-shared-key.js",
+      "test-webcrypto-supports-fips.js",
+      "test-webcrypto-util.js",
+      "test-webworker-blob-module-url.js",
+      "test-whatwg-events-add-event-listener-options-passive.js",
+      "test-whatwg-readablestream.js",
+      "test-whatwg-url-parse-fast-path.js",
+      "test-worker-message-port-move.js",
+      "test-worker-message-port-receive-message.js",
+      "test-worker-messaging-errors-invalid.js",
+      "test-worker-stack-overflow-stack-size.js",
+      "test-zlib-brotli-flush-invalid-kind.js",
+      "test-zlib-brotli-flush.js",
+      "test-zlib-brotli-reset.js",
+      "test-zlib-dictionary.js",
+      "test-zlib-flush-drain-longblock.js",
+      "test-zlib-flush-write-sync-interleaved.js",
+      "test-zlib-flush.js",
+      "test-zlib-reset-before-write.js",
+      "test-zlib-reset-incomplete-output.js",
+      "test-zlib-sync-no-event.js",
+      "test-zlib-write-after-end.js",
+      "test-zlib-write-after-flush.js",
+      "test-zlib-zip-interop.js",
+      "test-zlib-zstd-flush.js",
+      "test-zlib-zstd-reset-incomplete-frame.js",
+      "test-zlib-zstd-reset.js"
+    ]
+  },
+  {
+    "count": 283,
+    "error": "AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:",
+    "fixtures": [
+      "test-abortcontroller-internal.js",
+      "test-abortcontroller.js",
+      "test-abortsignal-drop-settled-signals.mjs",
+      "test-async-hooks-promise-enable-disable.js",
+      "test-async-hooks-promise-triggerid.js",
+      "test-async-local-storage-http-agent.js",
+      "test-async-wrap-uncaughtexception.js",
+      "test-bench-cli-backpressure.js",
+      "test-bench-cli-lifecycle.js",
+      "test-bench-cli-reporters.js",
+      "test-blob.js",
+      "test-buffer-write.js",
+      "test-child-process-server-close.js",
+      "test-child-process-stdin.js",
+      "test-child-process-windows-hide.js",
+      "test-cli-bad-options.js",
+      "test-cli-options-as-flags.js",
+      "test-cli-options-precedence.js",
+      "test-cli-permission-deny-fs.js",
+      "test-cli-permission-multiple-allow.js",
+      "test-cli-syntax-eval.js",
+      "test-cli-syntax-piped-good.js",
+      "test-cluster-basic.js",
+      "test-cluster-fork-windowsHide.js",
+      "test-cluster-listen-pipe-readable-writable.js",
+      "test-cluster-primary-kill.js",
+      "test-cluster-uncaught-exception.js",
+      "test-console-group.js",
+      "test-console-tty-colors.js",
+      "test-console.js",
+      "test-coverage-with-inspector-disabled.js",
+      "test-crypto-keygen-async-elliptic-curve-jwk-rsa.js",
+      "test-crypto-keygen-promisify.js",
+      "test-crypto-keyobject-clone-transfer.js",
+      "test-crypto-provider-cache-snapshot.js",
+      "test-dgram-bind-error-callback.js",
+      "test-dgram-create-socket-handle.js",
+      "test-dgram-send-callback-recursive.js",
+      "test-diagnostics-channel-bind-store.js",
+      "test-diagnostics-channel-bounded-channel.js",
+      "test-diagnostics-channel-tracing-channel-context.js",
+      "test-disable-proto-delete.js",
+      "test-dlopen-binary.js",
+      "test-dns-default-order-ipv4.js",
+      "test-dns-default-order-ipv6.js",
+      "test-dns-default-order-verbatim.js",
+      "test-dns-memory-error.js",
+      "test-dns-promises-exists.js",
+      "test-domain-async-id-map-leak.js",
+      "test-domain-promise.js",
+      "test-domain-top-level-error-handler-throw.js",
+      "test-domain-vm-promise-isolation.js",
+      "test-domain-with-abort-on-uncaught-exception.js",
+      "test-domexception-cause.js",
+      "test-dotenv-edge-cases.js",
+      "test-dotenv-node-options.js",
+      "test-dotenv.js",
+      "test-eventsource.js",
+      "test-eventtarget.js",
+      "test-force-repl.js",
+      "test-fs-cp-async-socket.mjs",
+      "test-fs-cp-async-symlink-targets.mjs",
+      "test-fs-error-messages.js",
+      "test-fs-filehandle.js",
+      "test-fs-glob-throw.mjs",
+      "test-fs-read-stream-inherit.js",
+      "test-fs-read-stream.js",
+      "test-fs-ready-event-stream.js",
+      "test-fs-realpath-pipe.js",
+      "test-fs-stream-construct-compat-error-write.js",
+      "test-fs-watch-recursive-linux-directory-watchers.js",
+      "test-fs-write-stream-err.js",
+      "test-fs-write-stream-patch-open.js",
+      "test-fs-writefile-one-roundtrip.js",
+      "test-global-console-exists.js",
+      "test-global-setters.js",
+      "test-http-1.0.js",
+      "test-http-abort-stream-end.js",
+      "test-http-agent-keep-alive-timeout-buffer.js",
+      "test-http-buffer-sanity.js",
+      "test-http-chunk-extensions-limit.js",
+      "test-http-client-abort-destroy.js",
+      "test-http-client-abort-keep-alive-destroy-res.js",
+      "test-http-client-agent-end-close-event.js",
+      "test-http-client-close-event.js",
+      "test-http-client-highwatermark.js",
+      "test-http-client-immediate-error.js",
+      "test-http-client-incomingmessage-destroy.js",
+      "test-http-client-request-options.js",
+      "test-http-decoded-auth.js",
+      "test-http-keep-alive-timeout.js",
+      "test-http-max-header-size.js",
+      "test-http-max-headers-count.js",
+      "test-http-multi-line-headers.js",
+      "test-http-nodelay.js",
+      "test-http-outgoing-finish-writable.js",
+      "test-http-outgoing-finished.js",
+      "test-http-outgoing-first-chunk-singlebyte-encoding.js",
+      "test-http-outgoing-flush-drain.js",
+      "test-http-outgoing-writableFinished.js",
+      "test-http-remove-connection-header-persists-connection.js",
+      "test-http-request-join-authorization-headers.js",
+      "test-http-response-drain-cork.js",
+      "test-http-server-client-error.js",
+      "test-http-server-headers-timeout-delayed-headers.js",
+      "test-http-server-headers-timeout-interrupted-headers.js",
+      "test-http-server-headers-timeout-keepalive.js",
+      "test-http-server-headers-timeout-pipelining.js",
+      "test-http-server-keep-alive-defaults.js",
+      "test-http-server-options-highwatermark.js",
+      "test-http-server-request-timeout-delayed-body.js",
+      "test-http-server-request-timeout-delayed-headers.js",
+      "test-http-server-request-timeout-interrupted-body.js",
+      "test-http-server-request-timeout-interrupted-headers.js",
+      "test-http-server-request-timeout-keepalive.js",
+      "test-http-server-request-timeout-pipelining.js",
+      "test-http-server-request-timeout-upgrade.js",
+      "test-http-server-timeouts-validation.js",
+      "test-http-server.js",
+      "test-http-upgrade-advertise.js",
+      "test-http-upgrade-server.js",
+      "test-http-write-head-2.js",
+      "test-http2-clean-output.js",
+      "test-https-agent-unref-socket.js",
+      "test-internal-util-construct-sab.js",
+      "test-internal-webidl.js",
+      "test-intl.js",
+      "test-is-internal-thread.mjs",
+      "test-memory-usage-emfile.js",
+      "test-module-parent-deprecation.js",
+      "test-net-connect-memleak.js",
+      "test-net-listen-invalid-port.js",
+      "test-net-persistent-nodelay.js",
+      "test-net-socket-connecting.js",
+      "test-net-socket-write-after-close.js",
+      "test-node-output-console.mjs",
+      "test-node-output-errors.mjs",
+      "test-node-output-sourcemaps.mjs",
+      "test-node-output-vm.mjs",
+      "test-openssl-ca-options.js",
+      "test-package-map-cli.js",
+      "test-parse-test-envs.js",
+      "test-pending-deprecation.js",
+      "test-permission-allow-addons-cli.js",
+      "test-permission-audit-addons-does-not-deny.js",
+      "test-permission-audit-child-process-inherit-flags.js",
+      "test-permission-audit-fs-does-not-deny.js",
+      "test-permission-audit-fs-lstat-symlink-does-not-deny.js",
+      "test-permission-audit-net-does-not-deny.js",
+      "test-permission-drop-fs-granted-path.js",
+      "test-permission-drop-fs-specific-path.js",
+      "test-permission-drop-not-enabled.js",
+      "test-permission-fs-absolute-path.js",
+      "test-permission-fs-relative-path.js",
+      "test-permission-fs-repeat-path.js",
+      "test-permission-fs-require.js",
+      "test-permission-fs-write-trace-events.js",
+      "test-permission-linked-binding-drop.js",
+      "test-preload.js",
+      "test-process-dlopen-error-message-crash.js",
+      "test-process-execve-throws.js",
+      "test-process-really-exit.js",
+      "test-process-uncaught-exception-monitor.js",
+      "test-process-versions.js",
+      "test-promise-hook-exceptions.js",
+      "test-queue-microtask.js",
+      "test-quotaexceedederror.js",
+      "test-readline-interface-escapecodetimeout.js",
+      "test-readline-reopen.js",
+      "test-repl-end-emits-exit.js",
+      "test-repl-setprompt.js",
+      "test-repl-syntax-error-stack.js",
+      "test-repl-uncaught-exception.js",
+      "test-repl-unsupported-option.js",
+      "test-require-resolve.js",
+      "test-require-symlink.js",
+      "test-runner-cli-randomize.js",
+      "test-runner-concurrency.js",
+      "test-runner-coverage.js",
+      "test-runner-diagnostics-channel.js",
+      "test-runner-error-reporter.js",
+      "test-runner-exit-code.js",
+      "test-runner-force-exit-failure.js",
+      "test-runner-force-exit-flush.js",
+      "test-runner-import-no-scheme.js",
+      "test-runner-mocking.js",
+      "test-runner-no-isolation-filtering.js",
+      "test-runner-option-precedence.js",
+      "test-runner-reporters.js",
+      "test-runner-root-duration.js",
+      "test-runner-tags-experimental-warning.mjs",
+      "test-runner-test-filepath.js",
+      "test-runner-test-fullname.js",
+      "test-security-revert-unknown.js",
+      "test-set-http-max-http-headers.js",
+      "test-shadow-realm-custom-loaders.js",
+      "test-shadow-realm-module.js",
+      "test-snapshot-argv1.js",
+      "test-snapshot-cjs-main.js",
+      "test-snapshot-dns-lookup-localhost-promise.js",
+      "test-snapshot-dns-lookup-localhost.js",
+      "test-snapshot-dns-resolve-localhost-promise.js",
+      "test-snapshot-dns-resolve-localhost.js",
+      "test-snapshot-error.js",
+      "test-snapshot-eval.js",
+      "test-snapshot-gzip.js",
+      "test-snapshot-incompatible.js",
+      "test-snapshot-namespaced-builtin.js",
+      "test-snapshot-net.js",
+      "test-snapshot-typescript.js",
+      "test-snapshot-umd.js",
+      "test-snapshot-weak-reference.js",
+      "test-stdio-undestroy.js",
+      "test-stdout-cannot-be-closed-child-process-pipe.js",
+      "test-stream-finished-async-local-storage.js",
+      "test-structuredClone-domexception.js",
+      "test-testpy-env-var-via-comment.js",
+      "test-timers-immediate-queue-throw.js",
+      "test-timers-reset-process-domain-on-throw.js",
+      "test-tls-alpn-callback-sync-end-newsession.js",
+      "test-tls-alpn-callback-sync-end.js",
+      "test-tls-alpn-callback-sync-write.js",
+      "test-tls-alpn-server-client.js",
+      "test-tls-cipher-list.js",
+      "test-tls-cli-max-version-1.2.js",
+      "test-tls-cli-max-version-1.3.js",
+      "test-tls-cli-min-version-1.0.js",
+      "test-tls-cli-min-version-1.1.js",
+      "test-tls-cli-min-version-1.2.js",
+      "test-tls-cli-min-version-1.3.js",
+      "test-tls-client-default-ciphers.js",
+      "test-tls-connect-keepalive-nodelay.js",
+      "test-tls-connect-memleak.js",
+      "test-tls-connect-timeout-option.js",
+      "test-tls-env-extra-ca-with-options.js",
+      "test-tls-env-extra-ca.js",
+      "test-tls-invoke-queued.js",
+      "test-tls-legacy-pfx.js",
+      "test-tls-min-max-version.js",
+      "test-tls-psk-circuit.js",
+      "test-tls-psk-errors.js",
+      "test-tls-server-parent-constructor-options.js",
+      "test-tls-sni-option.js",
+      "test-tls-sni-servername.js",
+      "test-tls-socket-constructor-alpn-options-parsing.js",
+      "test-tls-wrap-econnreset-localaddress.js",
+      "test-tls-wrap-econnreset-pipe.js",
+      "test-tls-wrap-econnreset.js",
+      "test-tls-writewrap-leak.js",
+      "test-tojson-perf_hooks.js",
+      "test-unhandled-exception-rethrow-error.js",
+      "test-unicode-node-options.js",
+      "test-url-format-whatwg.js",
+      "test-url-relative.js",
+      "test-url-urltooptions.js",
+      "test-util-stripvtcontrolcharacters.js",
+      "test-vfs-file-handle.js",
+      "test-vfs-mount-point-url.js",
+      "test-vfs-mount.js",
+      "test-vfs-real-provider-handle.js",
+      "test-vm-global-get-own.js",
+      "test-vm-global-property-interceptors.js",
+      "test-vm-harmony-symbols.js",
+      "test-vm-property-not-on-sandbox.js",
+      "test-vm-proxies.js",
+      "test-vm-sigint.js",
+      "test-vm-source-map-url.js",
+      "test-websocket.js",
+      "test-whatwg-events-eventtarget-this-of-listener.js",
+      "test-whatwg-url-custom-inspect.js",
+      "test-whatwg-url-custom-searchparams-inspect.js",
+      "test-whatwg-url-custom-setters.js",
+      "test-whatwg-url-properties.js",
+      "test-whatwg-url-searchparams-fast-path.js",
+      "test-worker-init-failure.js",
+      "test-worker-message-port-inspect-during-init-hook.js",
+      "test-worker-message-port-transfer-fake-js-transferable-internal.js",
+      "test-worker-message-port-transfer-fake-js-transferable.js",
+      "test-worker-message-port-transfer-filehandle-fd0.js",
+      "test-worker-message-port-transfer-self.js",
+      "test-worker-on-process-exit.js",
+      "test-wrap-js-stream-exceptions.js",
+      "test-zlib-premature-end.js"
+    ]
+  },
+  {
+    "count": 175,
+    "error": "AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:",
+    "fixtures": [
+      "test-assert-deep.js",
+      "test-assert-first-line.js",
+      "test-async-hooks-correctly-switch-promise-hook.js",
+      "test-async-hooks-execution-async-resource-await.js",
+      "test-async-hooks-execution-async-resource.js",
+      "test-async-wrap-promise-after-enabled.js",
+      "test-binding-constants.js",
+      "test-blocklist.js",
+      "test-buffer-alloc.js",
+      "test-buffer-generic-methods.js",
+      "test-c-ares.js",
+      "test-child-process-advanced-serialization.js",
+      "test-child-process-validate-stdio.js",
+      "test-cli-print-promise.mjs",
+      "test-compile-cache-api-error.js",
+      "test-crypto-argon2-unsupported.js",
+      "test-crypto-dh-stateless.js",
+      "test-crypto-ec-jwk-coordinates.js",
+      "test-crypto-encap-decap.js",
+      "test-crypto-jwk-raw-validation.js",
+      "test-crypto-key-objects.js",
+      "test-crypto-keygen-eddsa.js",
+      "test-crypto-keygen-empty-passphrase-no-prompt.js",
+      "test-crypto-keygen-invalid-parameter-encoding-dsa.js",
+      "test-crypto-keygen-invalid-parameter-encoding-ec.js",
+      "test-crypto-keygen-rfc8017-9-1.js",
+      "test-crypto-keygen-rfc8017-a-2-3.js",
+      "test-crypto-keygen-rsa-pss.js",
+      "test-crypto-keygen.js",
+      "test-crypto-pqc-keygen-ml-dsa.js",
+      "test-crypto-pqc-keygen-ml-kem.js",
+      "test-crypto-pqc-keygen-slh-dsa.js",
+      "test-crypto-provider-hashes.js",
+      "test-crypto-secret-keygen.js",
+      "test-crypto-sign-verify.js",
+      "test-diagnostics-channel-module-import-error.js",
+      "test-diagnostics-channel-module-import.js",
+      "test-diagnostics-channel-module-require-error.js",
+      "test-diagnostics-channel-module-require.js",
+      "test-diff.js",
+      "test-dns-lookup-promises-options-deprecated.js",
+      "test-dns-lookup.js",
+      "test-dns-lookupService.js",
+      "test-dns-resolvens-typeerror.js",
+      "test-dns-set-default-order.js",
+      "test-errors-systemerror.js",
+      "test-find-package-json.js",
+      "test-fs-cp-async-file-modes.mjs",
+      "test-fs-cp-async-special-files-in-tree.mjs",
+      "test-fs-cp-sync-copy-socket-error.mjs",
+      "test-fs-cp-sync-directory-mode.mjs",
+      "test-fs-null-bytes.js",
+      "test-fs-openAsBlobSync.js",
+      "test-fs-promises.js",
+      "test-fs-readdir-recursive-tree.js",
+      "test-fs-readdir-ucs2.js",
+      "test-fs-syncwritestream.js",
+      "test-fs-timestamp-parsing-error.js",
+      "test-fs-write-optional-params.js",
+      "test-global.js",
+      "test-http-dont-set-default-headers-with-setHost.js",
+      "test-http-dont-set-default-headers.js",
+      "test-http-invalid-urls.js",
+      "test-http-odd-hex-write.js",
+      "test-http-response-setheaders.js",
+      "test-http-set-max-idle-http-parser.js",
+      "test-http-url.parse-only-support-http-https-protocol.js",
+      "test-http-websocket-mask-immutable.js",
+      "test-http-write-head-after-set-header.js",
+      "test-http2-createsecureserver-options.js",
+      "test-http2-createserver-options.js",
+      "test-http2-ping.js",
+      "test-http2-util-nghttp2error.js",
+      "test-https-simple.js",
+      "test-net-autoselectfamily.js",
+      "test-perf-hooks-timerify-invalid-args.js",
+      "test-performance-resourcetimingbuffersize.js",
+      "test-permission-drop-errors.js",
+      "test-permission-fs-symlink-relative.js",
+      "test-permission-fs-write-report.js",
+      "test-permission-fs-write-v8.js",
+      "test-permission-linked-binding.js",
+      "test-permission-wasi.js",
+      "test-permission-worker-threads-cli.js",
+      "test-process-execve-permission-fail.js",
+      "test-process-execve-validation.js",
+      "test-queue-microtask-uncaught-asynchooks.js",
+      "test-readline-input-onerror.js",
+      "test-readline-keys.js",
+      "test-readline-line-separators.js",
+      "test-readline-promises-csi.mjs",
+      "test-repl-inspect-defaults.js",
+      "test-repl-uncaught-exception-standalone.js",
+      "test-require-json.js",
+      "test-require-node-prefix.js",
+      "test-require-resolve-invalid-paths.js",
+      "test-resource-usage.js",
+      "test-runner-assert.js",
+      "test-runner-log.mjs",
+      "test-runner-mock-timers.js",
+      "test-runner-option-validation.js",
+      "test-runner-plan.mjs",
+      "test-runner-run-coverage.mjs",
+      "test-runner-run-global-hooks.mjs",
+      "test-runner-run.mjs",
+      "test-runner-string-to-regexp.js",
+      "test-runner-tags-inheritance.mjs",
+      "test-runner-wait-for.js",
+      "test-sea-assets-not-in-sea.js",
+      "test-sea-get-asset-keys.js",
+      "test-shadow-realm-globals.js",
+      "test-source-map-api.js",
+      "test-stream-finished.js",
+      "test-tls-alpn-protocols-validation.js",
+      "test-tls-disable-renegotiation.js",
+      "test-tls-exportkeyingmaterial.js",
+      "test-tls-get-ca-certificates-error.js",
+      "test-tls-max-send-fragment.js",
+      "test-tls-ticket-invalid-arg.js",
+      "test-ttywrap-invalid-fd.js",
+      "test-url-parse-invalid-input.js",
+      "test-url-revokeobjecturl.js",
+      "test-urlpattern-types.js",
+      "test-util-debounce.js",
+      "test-util-internal.js",
+      "test-util-promisify.js",
+      "test-util-throttle.js",
+      "test-v8-flag-type-check.js",
+      "test-v8-heap-profile.js",
+      "test-v8-query-objects.js",
+      "test-v8-startup-snapshot-api.js",
+      "test-vfs-invalid-package-json.js",
+      "test-vfs-zip-provider.js",
+      "test-vm-context.js",
+      "test-vm-create-context-arg.js",
+      "test-vm-global-setter.js",
+      "test-vm-module-errors.js",
+      "test-vm-timeout-escape-promise-module.js",
+      "test-vm-timeout-escape-promise.js",
+      "test-watch-mode-files_watcher.mjs",
+      "test-webcrypto-constructors.js",
+      "test-webcrypto-enforce-range.js",
+      "test-webcrypto-random.js",
+      "test-whatwg-encoding-custom-interop.js",
+      "test-whatwg-url-custom-parsing.js",
+      "test-whatwg-url-custom-properties.js",
+      "test-whatwg-url-custom-searchparams-append.js",
+      "test-whatwg-url-custom-searchparams-delete.js",
+      "test-whatwg-url-custom-searchparams-entries.js",
+      "test-whatwg-url-custom-searchparams-foreach.js",
+      "test-whatwg-url-custom-searchparams-get.js",
+      "test-whatwg-url-custom-searchparams-getall.js",
+      "test-whatwg-url-custom-searchparams-has.js",
+      "test-whatwg-url-custom-searchparams-keys.js",
+      "test-whatwg-url-custom-searchparams-set.js",
+      "test-whatwg-url-custom-searchparams-stringifier.js",
+      "test-whatwg-url-custom-searchparams-values.js",
+      "test-whatwg-url-invalidthis.js",
+      "test-whatwg-webstreams-compression.js",
+      "test-whatwg-webstreams-coverage.js",
+      "test-whatwg-webstreams-encoding.js",
+      "test-worker-broadcastchannel.js",
+      "test-worker-execargv-invalid.js",
+      "test-worker-message-event.js",
+      "test-worker-message-mark-as-uncloneable.js",
+      "test-worker-message-port-close.js",
+      "test-worker-message-port-constructor.js",
+      "test-worker-message-port-transfer-native.js",
+      "test-worker-process-argv.js",
+      "test-worker-resource-limits.js",
+      "test-worker-type-check.js",
+      "test-worker-unsupported-path.js",
+      "test-zlib-invalid-arg-value-brotli-compress.js",
+      "test-zlib-reset-during-write.js",
+      "test-zlib-zip-hardening.js"
+    ]
+  },
+  {
+    "count": 131,
+    "error": "TypeError: value is not a constructor",
+    "fixtures": [
+      "test-broadcastchannel-custom-inspect.js",
+      "test-child-process-send-boundsocket.js",
+      "test-client-request-destroy.js",
+      "test-cluster-child-index-dgram.js",
+      "test-cluster-worker-constructor.js",
+      "test-crypto-certificate.js",
+      "test-crypto-x509-hidden-slots.js",
+      "test-dns-cancel-reverse-lookup.js",
+      "test-dns-channel-cancel.js",
+      "test-dns-get-server.js",
+      "test-dns-multi-channel.js",
+      "test-dns-perf_hooks.js",
+      "test-dns-resolveany-bad-ancount.js",
+      "test-dns-resolveany-ttl-overflow.js",
+      "test-dns-resolvesrv.js",
+      "test-dns-setlocaladdress.js",
+      "test-dns-setserver-when-querying.js",
+      "test-fastutf8stream-destroy.js",
+      "test-fastutf8stream-end.js",
+      "test-fastutf8stream-flush-mocks.js",
+      "test-fastutf8stream-flush-sync.js",
+      "test-fastutf8stream-flush.js",
+      "test-fastutf8stream-fsync.js",
+      "test-fastutf8stream-full-write-utf8.js",
+      "test-fastutf8stream-minlength.js",
+      "test-fastutf8stream-mode.js",
+      "test-fastutf8stream-partial-write-utf8.js",
+      "test-fastutf8stream-periodicflush.js",
+      "test-fastutf8stream-reopen.js",
+      "test-fastutf8stream-retry.js",
+      "test-fastutf8stream-sync.js",
+      "test-fastutf8stream-write-arraybufferview.js",
+      "test-fastutf8stream-write-buffer.js",
+      "test-fastutf8stream-write.js",
+      "test-http-agent-domain-reused-gc.js",
+      "test-http-agent-keepalive-delay.js",
+      "test-http-agent-keepalive.js",
+      "test-http-agent-uninitialized-with-handle.js",
+      "test-http-agent-uninitialized.js",
+      "test-http-autoselectfamily.js",
+      "test-http-client-defaults.js",
+      "test-http-client-input-function.js",
+      "test-http-client-path-toctou.js",
+      "test-http-get-raw-header-names.js",
+      "test-http-outgoing-buffer.js",
+      "test-http-outgoing-destroy.js",
+      "test-http-outgoing-destroyed.js",
+      "test-http-outgoing-properties.js",
+      "test-http-outgoing-settimeout.js",
+      "test-http-perf_hooks.js",
+      "test-http2-perf_hooks.js",
+      "test-https-agent-abort-controller.js",
+      "test-https-agent-create-connection.js",
+      "test-https-agent-disable-session-reuse.js",
+      "test-https-agent-getname.js",
+      "test-https-agent-session-reuse.js",
+      "test-https-autoselectfamily.js",
+      "test-https-expect-continue-reuse-race.js",
+      "test-https-snicallback-override.js",
+      "test-https-strict.js",
+      "test-internal-module-wrap.js",
+      "test-js-stream-call-properties.js",
+      "test-mime-api.js",
+      "test-mime-whatwg.js",
+      "test-net-boundsocket.js",
+      "test-net-perf_hooks.js",
+      "test-net-transfer-guards.js",
+      "test-outgoing-message-destroy.js",
+      "test-outgoing-message-pipe.js",
+      "test-perf-gc-crash.js",
+      "test-perf-hooks-timerify-error.js",
+      "test-performance-function-async.js",
+      "test-performance-measure-detail.js",
+      "test-performance-measure.js",
+      "test-performanceobserver-gc.js",
+      "test-quic-session-properties.mjs",
+      "test-ref-unref-return.js",
+      "test-repl-colors.js",
+      "test-repl-null.js",
+      "test-repl-preview-without-inspector.js",
+      "test-stream-wrap-drain.js",
+      "test-stream-wrap-encoding.js",
+      "test-stream-wrap.js",
+      "test-tcp-wrap-connect.js",
+      "test-tls-client-getephemeralkeyinfo.js",
+      "test-tls-close-notify.js",
+      "test-tls-dhe.js",
+      "test-tls-peer-certificate-repeated-reads.js",
+      "test-tls-server-setkeycert.js",
+      "test-tls-wrap-no-abort.js",
+      "test-tty-backwards-api.js",
+      "test-urlpattern-invalidthis.js",
+      "test-util-inspect-namespace.js",
+      "test-util-inspect.js",
+      "test-util-types.js",
+      "test-v8-collect-gc-profile-exit-before-stop.js",
+      "test-v8-collect-gc-profile-minor-ms.js",
+      "test-v8-collect-gc-profile-using.js",
+      "test-v8-collect-gc-profile.js",
+      "test-v8-serdes.js",
+      "test-vfs-composable-provider.js",
+      "test-vm-module-after-evaluate.js",
+      "test-vm-module-basic.js",
+      "test-vm-module-cached-data.js",
+      "test-vm-module-dynamic-import-promise.js",
+      "test-vm-module-dynamic-import.js",
+      "test-vm-module-dynamic-namespace.js",
+      "test-vm-module-evaluate-source-text-module.js",
+      "test-vm-module-evaluate-synthethic-module-rejection.js",
+      "test-vm-module-evaluate-synthethic-module.js",
+      "test-vm-module-evaluate-while-evaluating.js",
+      "test-vm-module-hasasyncgraph.js",
+      "test-vm-module-hastoplevelawait.js",
+      "test-vm-module-import-meta.js",
+      "test-vm-module-instantiate.js",
+      "test-vm-module-link-shared-deps.js",
+      "test-vm-module-link.js",
+      "test-vm-module-linkmodulerequests-circular.js",
+      "test-vm-module-linkmodulerequests-deep.js",
+      "test-vm-module-modulerequests.js",
+      "test-vm-module-reevaluate.js",
+      "test-vm-module-synthetic.js",
+      "test-wasm.mjs",
+      "test-webcrypto-crypto-job-mode.js",
+      "test-whatwg-webstreams-adapters-streambase.js",
+      "test-worker-broadcastchannel-wpt.js",
+      "test-wrap-js-stream-destroy.js",
+      "test-wrap-js-stream-duplex.js",
+      "test-wrap-js-stream-read-stop.js",
+      "test-x509-escaping.js",
+      "test-zlib-zip-coverage.js"
+    ]
+  },
+  {
+    "count": 130,
+    "error": "Error: Worker threads are unavailable in this runtime",
+    "fixtures": [
+      "test-async-hooks-worker-asyncfn-terminate-1.js",
+      "test-async-hooks-worker-asyncfn-terminate-2.js",
+      "test-async-hooks-worker-asyncfn-terminate-3.js",
+      "test-async-hooks-worker-asyncfn-terminate-4.js",
+      "test-cli-node-options.js",
+      "test-common-wpt-allowed-rejections.js",
+      "test-common-wpt-backends.js",
+      "test-common-wpt-webworker-error.js",
+      "test-crypto-prime.js",
+      "test-diagnostics-channel-worker-threads.js",
+      "test-fs-promises-file-handle-read-worker.js",
+      "test-http2-reset-flood.js",
+      "test-net-boundsocket-transfer-worker.js",
+      "test-net-server-transfer-worker.js",
+      "test-net-socket-transfer-worker-http.js",
+      "test-net-socket-transfer-worker.js",
+      "test-no-addons-resolution-condition.js",
+      "test-perf-hooks-histogram-qrde-worker.js",
+      "test-perf-hooks-worker-timeorigin.js",
+      "test-performance-nodetiming-uvmetricsinfo-worker.js",
+      "test-process-exec-argv.js",
+      "test-process-execve-worker-threads.js",
+      "test-process-threadCpuUsage-worker-threads.js",
+      "test-shadow-realm-gc.js",
+      "test-trace-events-api-worker-disabled.js",
+      "test-trace-sigint-in-worker.js",
+      "test-v8-collect-gc-profile-in-worker.js",
+      "test-web-locks-query.js",
+      "test-web-locks.js",
+      "test-webcrypto-cryptokey-workers.js",
+      "test-worker-abort-on-uncaught-exception-terminate.js",
+      "test-worker-abort-on-uncaught-exception.js",
+      "test-worker-arraybuffer-zerofill.js",
+      "test-worker-beforeexit-throw-exit.js",
+      "test-worker-cjs-workerdata.js",
+      "test-worker-cleanexit-with-js.js",
+      "test-worker-cleanexit-with-moduleload.js",
+      "test-worker-cleanup-handles.js",
+      "test-worker-cli-options.js",
+      "test-worker-console-listeners.js",
+      "test-worker-cpu-profile.js",
+      "test-worker-cpu-usage.js",
+      "test-worker-crypto-sign-transfer-result.js",
+      "test-worker-cwd-race-condition.js",
+      "test-worker-data-url.js",
+      "test-worker-dispose.mjs",
+      "test-worker-dns-terminate-during-query.js",
+      "test-worker-dns-terminate.js",
+      "test-worker-error-primitive.js",
+      "test-worker-error-stack-getter-throws.js",
+      "test-worker-esm-exit.js",
+      "test-worker-esm-missing-main.js",
+      "test-worker-esmodule.js",
+      "test-worker-eval-typescript.js",
+      "test-worker-event.js",
+      "test-worker-execargv.js",
+      "test-worker-exit-code.js",
+      "test-worker-exit-from-uncaught-exception.js",
+      "test-worker-exit-heapsnapshot.js",
+      "test-worker-fs-stat-watcher.js",
+      "test-worker-hasref.js",
+      "test-worker-heap-profile.js",
+      "test-worker-heap-snapshot.js",
+      "test-worker-heapdump-failure.js",
+      "test-worker-http2-generic-streams-terminate.js",
+      "test-worker-http2-stream-terminate.js",
+      "test-worker-internal-modules.mjs",
+      "test-worker-load-file-with-extension-other-than-js.js",
+      "test-worker-memory.js",
+      "test-worker-message-channel-sharedarraybuffer.js",
+      "test-worker-message-channel.js",
+      "test-worker-message-not-serializable.js",
+      "test-worker-message-port-drain.js",
+      "test-worker-message-port-message-before-close.js",
+      "test-worker-message-port-terminate-transfer-list.js",
+      "test-worker-message-port-transfer-terminate.js",
+      "test-worker-message-port-wasm-module.js",
+      "test-worker-messageerror-listener-cleanup.js",
+      "test-worker-messageport-hasref.js",
+      "test-worker-messaging-errors-handler.js",
+      "test-worker-messaging-errors-timeout.js",
+      "test-worker-mjs-workerdata.js",
+      "test-worker-nearheaplimit-deadlock.js",
+      "test-worker-nested-on-process-exit.js",
+      "test-worker-nested-uncaught.js",
+      "test-worker-nexttick-terminate.js",
+      "test-worker-no-sab.js",
+      "test-worker-no-stdin-stdout-interaction.js",
+      "test-worker-non-fatal-uncaught-exception.js",
+      "test-worker-onmessage-not-a-function.js",
+      "test-worker-onmessage.js",
+      "test-worker-parent-port-ref.js",
+      "test-worker-process-cwd.js",
+      "test-worker-process-env-shared.js",
+      "test-worker-process-env.js",
+      "test-worker-process-exit-async-module.js",
+      "test-worker-ref-onexit.js",
+      "test-worker-ref.js",
+      "test-worker-relative-path-double-dot.js",
+      "test-worker-relative-path.js",
+      "test-worker-safe-getters.js",
+      "test-worker-sharedarraybuffer-from-worker-thread.js",
+      "test-worker-stack-overflow.js",
+      "test-worker-stdio-flush-inflight.js",
+      "test-worker-stdio-flush.js",
+      "test-worker-stdio-from-preload-module.js",
+      "test-worker-stdio.js",
+      "test-worker-syntax-error-file.js",
+      "test-worker-syntax-error.js",
+      "test-worker-terminate-http2-respond-with-file.js",
+      "test-worker-terminate-microtask-loop.js",
+      "test-worker-terminate-nested.js",
+      "test-worker-terminate-null-handler.js",
+      "test-worker-terminate-ref-public-port.js",
+      "test-worker-terminate-source-map.js",
+      "test-worker-terminate-timers.js",
+      "test-worker-terminate-unrefed.js",
+      "test-worker-thread-name.js",
+      "test-worker-track-unmanaged-fds.js",
+      "test-worker-uncaught-exception-async.js",
+      "test-worker-uncaught-exception.js",
+      "test-worker-unref-from-message-during-exit.js",
+      "test-worker-unsupported-things.js",
+      "test-worker-vm-context-terminate.js",
+      "test-worker-voluntarily-exit-followed-by-addition.js",
+      "test-worker-voluntarily-exit-followed-by-throw.js",
+      "test-worker-workerdata-messageport.js",
+      "test-worker-workerdata-sharedarraybuffer.js",
+      "test-worker.js",
+      "test-worker.mjs"
+    ]
+  },
+  {
+    "count": 105,
+    "error": "(no error text)",
+    "fixtures": [
+      "test-async-hooks-disable-during-promise.js",
+      "test-async-hooks-disable-gc-tracking.js",
+      "test-async-hooks-enable-before-promise-resolve.js",
+      "test-async-hooks-enable-during-promise.js",
+      "test-async-hooks-enable-recursive.js",
+      "test-async-hooks-prevent-double-destroy.js",
+      "test-async-hooks-top-level-clearimmediate.js",
+      "test-child-process-spawnsync-kill-signal.js",
+      "test-child-process-spawnsync-shell.js",
+      "test-cli-node-cli-manpage-options.mjs",
+      "test-cluster-dgram-1.js",
+      "test-cluster-dgram-2.js",
+      "test-cluster-dgram-bind-fd.js",
+      "test-cluster-fork-stdio.js",
+      "test-cluster-http-pipe.js",
+      "test-cluster-primary-error.js",
+      "test-cluster-send-deadlock.js",
+      "test-cluster-send-socket-to-worker-http-server.js",
+      "test-cluster-worker-death.js",
+      "test-cluster-worker-disconnect-on-error.js",
+      "test-common-gc.js",
+      "test-common.js",
+      "test-crypto-publicDecrypt-fails-first-time.js",
+      "test-crypto-rsa-dsa.js",
+      "test-diagnostics-channel-child-process.js",
+      "test-diagnostics-channel-net-client-socket-tls.js",
+      "test-diagnostics-channel-net.js",
+      "test-diagnostics-channel-process.js",
+      "test-diagnostics-channel-safe-subscriber-errors.js",
+      "test-diagnostics-channel-udp.js",
+      "test-domain-emit-error-handler-stack.js",
+      "test-domain-fs-enoent-stream.js",
+      "test-domain-thrown-error-handler-stack.js",
+      "test-domain-top-level-error-handler-clears-stack.js",
+      "test-eventtarget-memoryleakwarning.js",
+      "test-fetch.mjs",
+      "test-fs-exists.js",
+      "test-fs-read-stream-err.js",
+      "test-fs-read-stream-patch-open.js",
+      "test-fs-stream-construct-compat-error-read.js",
+      "test-fs-stream-construct-compat-graceful-fs.js",
+      "test-fs-stream-construct-compat-old-node.js",
+      "test-fs-stream-destroy-emit-error.js",
+      "test-fs-stream-double-close.js",
+      "test-fs-write-stream-fs.js",
+      "test-fs-write-stream.js",
+      "test-heapdump-async-hooks-init-promise.js",
+      "test-http-abort-queued.js",
+      "test-http-agent-close.js",
+      "test-http-agent-highwatermark-reuse.js",
+      "test-http-agent-keylog-existing-sockets.js",
+      "test-http-agent-maxsockets.js",
+      "test-http-bind-twice.js",
+      "test-http-client-abort-keep-alive-queued-unix-socket.js",
+      "test-http-client-abort-unix-socket.js",
+      "test-http-client-error-rawbytes.js",
+      "test-http-client-pipe-end.js",
+      "test-http-client-req-error-dont-double-fire.js",
+      "test-http-client-response-domain.js",
+      "test-http-client-with-create-connection.js",
+      "test-http-parser-finish-error.js",
+      "test-http-response-multi-content-length.js",
+      "test-http-server-connections-checking-leak.js",
+      "test-http-server-keepalive-end.js",
+      "test-http-sync-write-error-during-continue.js",
+      "test-http-unix-socket-keep-alive.js",
+      "test-http-unix-socket.js",
+      "test-http-upgrade-binary.js",
+      "test-module-circular-dependency-warning.js",
+      "test-module-loading-deprecated.js",
+      "test-module-parent-setter-deprecation.js",
+      "test-net-better-error-messages-listen.js",
+      "test-net-bind-twice.js",
+      "test-net-eaddrinuse.js",
+      "test-net-listen-error.js",
+      "test-net-listen-handle-in-cluster-1.js",
+      "test-net-persistent-ref-unref.js",
+      "test-net-server-try-ports.js",
+      "test-permission-net-warning.js",
+      "test-pipe-abstract-socket-http.js",
+      "test-pipe-outgoing-message-data-emitted-after-ended.js",
+      "test-process-execve-socket.js",
+      "test-runner-no-isolation-different-cwd.mjs",
+      "test-runner-no-isolation.mjs",
+      "test-stream-promises.js",
+      "test-stream-writable-samecb-singletick.js",
+      "test-tls-client-reject-12.js",
+      "test-tls-client-reject.js",
+      "test-tls-fast-writing.js",
+      "test-tls-keylog-tlsv13.js",
+      "test-tls-ocsp-callback.js",
+      "test-tls-socket-close.js",
+      "test-tls-starttls-server.js",
+      "test-tty-stdin-pipe.js",
+      "test-url-parse-deprecation.js",
+      "test-warn-tls-common-deprecation.js",
+      "test-warn-tls-wrap-deprecation.js",
+      "test-webcrypto-supports.mjs",
+      "test-whatwg-url-custom-searchparams-constructor.js",
+      "test-worker-message-port-close-while-receiving.js",
+      "test-zlib-close-after-error.js",
+      "test-zlib-close-in-ondata.js",
+      "test-zlib-destroy-pipe.js",
+      "test-zlib-dictionary-fail.js",
+      "test-zlib-invalid-input-memory.js"
+    ]
+  },
+  {
+    "count": 43,
+    "error": "AssertionError [ERR_ASSERTION]: Missing expected exception.",
+    "fixtures": [
+      "test-als-defaultvalue-original.js",
+      "test-als-defaultvalue.js",
+      "test-console-table.js",
+      "test-crypto-cipheriv-cbc-cts.js",
+      "test-crypto-cipheriv-decipheriv.js",
+      "test-crypto-hkdf.js",
+      "test-crypto-pqc-key-objects-ml-dsa.js",
+      "test-crypto-pqc-key-objects-ml-kem.js",
+      "test-crypto-pqc-key-objects-slh-dsa.js",
+      "test-crypto-raw-key-type-validation.js",
+      "test-crypto-rsa-oaep-mgf1.js",
+      "test-debug-v8-fast-api.js",
+      "test-disable-proto-throw.js",
+      "test-file-validate-mode-flag.js",
+      "test-fs-access.js",
+      "test-fs-internal-assertencoding.js",
+      "test-fs-read.js",
+      "test-fs-stat-abort-test.js",
+      "test-fs-stream-windows-handle.js",
+      "test-fs-sync-fd-leak.js",
+      "test-http-client-timeout-option.js",
+      "test-http-content-length-mismatch.js",
+      "test-http-insecure-parser-per-stream.js",
+      "test-internal-modules.js",
+      "test-internal-only-binding.js",
+      "test-net-socket-constructor.js",
+      "test-permission-child-process-cli.js",
+      "test-permission-has.js",
+      "test-permission-net-uds.js",
+      "test-pipe-abstract-socket.js",
+      "test-require-mjs.js",
+      "test-socket-address.js",
+      "test-tls-crl-bundle.js",
+      "test-tls-ip-servername-forbidden.js",
+      "test-vfs-memory-provider-dynamic.js",
+      "test-vfs-rename-symlink-descendant.js",
+      "test-vfs-rename.js",
+      "test-vm-measure-memory.js",
+      "test-vm-new-script-new-context.js",
+      "test-vm-timeout-escape-promise-2.js",
+      "test-worker-message-port-transfer-closed.js",
+      "test-zlib-brotli-dictionary.js",
+      "test-zlib-zstd-pledged-src-size.js"
+    ]
+  },
+  {
+    "count": 42,
+    "error": "TypeError: The \"paths[0]\" argument must be of type string. Received an instance of __QuenchVirtualFileSystem",
+    "fixtures": [
+      "test-vfs-destructuring.js",
+      "test-vfs-fs-accessSync.js",
+      "test-vfs-fs-callback-error-paths.js",
+      "test-vfs-fs-chmod-callback.js",
+      "test-vfs-fs-chmodSync.js",
+      "test-vfs-fs-copyFileSync.js",
+      "test-vfs-fs-createReadStream.js",
+      "test-vfs-fs-createWriteStream.js",
+      "test-vfs-fs-existsSync.js",
+      "test-vfs-fs-fchmod-callback.js",
+      "test-vfs-fs-linkSync.js",
+      "test-vfs-fs-matches-real-fs.js",
+      "test-vfs-fs-mkdir-callback.js",
+      "test-vfs-fs-mkdirSync.js",
+      "test-vfs-fs-mkdtempSync.js",
+      "test-vfs-fs-open-callback.js",
+      "test-vfs-fs-openAsBlob.js",
+      "test-vfs-fs-openSync.js",
+      "test-vfs-fs-opendir-callback.js",
+      "test-vfs-fs-opendirSync.js",
+      "test-vfs-fs-promises-buffer-encoding.js",
+      "test-vfs-fs-promises-stat-no-throw.js",
+      "test-vfs-fs-promises.js",
+      "test-vfs-fs-readFile-callback.js",
+      "test-vfs-fs-readFileSync.js",
+      "test-vfs-fs-readdirSync.js",
+      "test-vfs-fs-realpathSync.js",
+      "test-vfs-fs-rename-callback.js",
+      "test-vfs-fs-renameSync.js",
+      "test-vfs-fs-rmSync.js",
+      "test-vfs-fs-stat-callback.js",
+      "test-vfs-fs-statSync.js",
+      "test-vfs-fs-symlink-callback.js",
+      "test-vfs-fs-symlinkSync.js",
+      "test-vfs-fs-truncate-callback.js",
+      "test-vfs-fs-truncateSync.js",
+      "test-vfs-fs-watch-dispatch.js",
+      "test-vfs-fs-writeFile-callback.js",
+      "test-vfs-fs-writeFileSync.js",
+      "test-vfs-handle-semantics.js",
+      "test-vfs-lchown-symlink.js",
+      "test-vfs-module-paths.js"
+    ]
+  },
+  {
+    "count": 35,
+    "error": "TypeError: Cannot read properties of undefined (reading 'importKey')",
+    "fixtures": [
+      "test-crypto-subtle-zero-length.js",
+      "test-crypto-webcrypto-aes-decrypt-tag-too-small.js",
+      "test-webcrypto-aead-decrypt-detached-buffer.js",
+      "test-webcrypto-aes-gcm-iv-length.js",
+      "test-webcrypto-aes-kw-short-input.js",
+      "test-webcrypto-cipher-unrelated-errors.js",
+      "test-webcrypto-cryptokey-clone-transfer.js",
+      "test-webcrypto-derivebits-cfrg.js",
+      "test-webcrypto-derivebits-ecdh.js",
+      "test-webcrypto-derivebits-hkdf.js",
+      "test-webcrypto-derivekey-cfrg.js",
+      "test-webcrypto-derivekey-ecdh.js",
+      "test-webcrypto-detached-parameters.js",
+      "test-webcrypto-encrypt-decrypt-rsa.js",
+      "test-webcrypto-export-import-cfrg.js",
+      "test-webcrypto-export-import-ec.js",
+      "test-webcrypto-export-import-rsa.js",
+      "test-webcrypto-export-import.js",
+      "test-webcrypto-hash-normalization.js",
+      "test-webcrypto-import-union.js",
+      "test-webcrypto-key-ops-duplicates.js",
+      "test-webcrypto-kmac-empty-output.js",
+      "test-webcrypto-normalization-boundary.js",
+      "test-webcrypto-parameter-species.js",
+      "test-webcrypto-pbkdf2-iteration-limits.js",
+      "test-webcrypto-raw-format-aliases.js",
+      "test-webcrypto-rsa-jwk-sha3-alg.js",
+      "test-webcrypto-sign-verify-ecdsa.js",
+      "test-webcrypto-sign-verify-eddsa.js",
+      "test-webcrypto-sign-verify-hmac.js",
+      "test-webcrypto-sign-verify-kmac.js",
+      "test-webcrypto-sign-verify-rsa.js",
+      "test-webcrypto-usages-species.js",
+      "test-webcrypto-webidl-brand.js",
+      "test-webcrypto-wrap-unwrap.js"
+    ]
+  },
+  {
+    "count": 32,
+    "error": "AssertionError [ERR_ASSERTION]: Missing expected exception (TypeError).",
+    "fixtures": [
+      "test-accessor-properties.js",
+      "test-child-process-send-type-error.js",
+      "test-console-instance.js",
+      "test-console-methods.js",
+      "test-file.js",
+      "test-freeze-intrinsics.js",
+      "test-fs-assert-encoding-error.js",
+      "test-fs-copyfile.js",
+      "test-fs-non-number-arguments-throw.js",
+      "test-fs-readfile-error.js",
+      "test-fs-stream-options.js",
+      "test-fs-whatwg-url.js",
+      "test-http-agent-maxtotalsockets.js",
+      "test-http-client-check-http-token.js",
+      "test-http-client-invalid-path.js",
+      "test-http-client-reject-unexpected-agent.js",
+      "test-http-client-unescaped-path.js",
+      "test-http-hostname-typechecking.js",
+      "test-http-invalid-path-chars.js",
+      "test-http-request-invalid-method-error.js",
+      "test-net-localerror.js",
+      "test-net-server-listen-options-signal.js",
+      "test-tls-basic-validations.js",
+      "test-tls-external-accessor.js",
+      "test-tls-snicallback-error.js",
+      "test-uv-binding-constant.js",
+      "test-vm-basic.js",
+      "test-vm-is-context.js",
+      "test-vm-options-validation.js",
+      "test-webcrypto-random-backing-buffer.js",
+      "test-zlib-type-error.js",
+      "test-zlib-zstd-dictionary.js"
+    ]
+  },
+  {
+    "count": 31,
+    "error": "Error: - process terminated with status 1, expected 0",
+    "fixtures": [
+      "test-compile-cache-api-env.js",
+      "test-compile-cache-api-flush.js",
+      "test-compile-cache-api-options-portable-env.js",
+      "test-compile-cache-api-permission.js",
+      "test-compile-cache-api-portable.js",
+      "test-compile-cache-api-readonly.js",
+      "test-compile-cache-api-success.js",
+      "test-compile-cache-api-tmpdir.js",
+      "test-compile-cache-disable.js",
+      "test-experimental-shared-value-conveyor.js",
+      "test-fs-stat-cancel-inflight.js",
+      "test-http2-debug.js",
+      "test-module-builtin-experimental.js",
+      "test-process-finalization.mjs",
+      "test-process-timeout-options.js",
+      "test-runner-run-files-undefined.mjs",
+      "test-snapshot-api.js",
+      "test-snapshot-child-process-sync.js",
+      "test-snapshot-cwd.js",
+      "test-snapshot-perf-hooks-gc-observer.js",
+      "test-snapshot-reproducible.js",
+      "test-snapshot-stack-trace-limit-mutation.js",
+      "test-snapshot-stack-trace-limit.js",
+      "test-snapshot-warning.js",
+      "test-timers-async-store-leak.js",
+      "test-tls-get-ca-certificates-extra-empty.js",
+      "test-tls-get-ca-certificates-extra-subset.js",
+      "test-tls-get-ca-certificates-extra.js",
+      "test-tls-off-thread-cert-loading-disabled.js",
+      "test-tls-set-default-ca-certificates-extra-override.js",
+      "test-worker-node-options.js"
+    ]
+  },
+  {
+    "count": 20,
+    "error": "Error: Cannot find module 'node:bench'",
+    "fixtures": [
+      "test-bench-auto-run.js",
+      "test-bench-clock-precision.js",
+      "test-bench-context-control.js",
+      "test-bench-context-errors.js",
+      "test-bench-create-runner.js",
+      "test-bench-custom-reporter.js",
+      "test-bench-default-warmup.js",
+      "test-bench-diagnostic-channels.js",
+      "test-bench-diagnostics.js",
+      "test-bench-errors.js",
+      "test-bench-filtering.js",
+      "test-bench-harness-errors.js",
+      "test-bench-hook-errors.js",
+      "test-bench-reporters.js",
+      "test-bench-run-file.js",
+      "test-bench-run-options.js",
+      "test-bench-run.js",
+      "test-bench-stream.js",
+      "test-bench-validation.js",
+      "test-bench-yield-between-samples.js"
+    ]
+  },
+  {
+    "count": 20,
+    "error": "TypeError: Cannot read properties of undefined (reading 'generateKey')",
+    "fixtures": [
+      "test-crypto-dep0203.js",
+      "test-crypto-dep0204.js",
+      "test-webcrypto-cryptokey-brand-check.js",
+      "test-webcrypto-cryptokey-hidden-slots.js",
+      "test-webcrypto-cryptokey-no-own-symbols.js",
+      "test-webcrypto-deduplicate-usages.js",
+      "test-webcrypto-derivebits.js",
+      "test-webcrypto-derived-bits-species.js",
+      "test-webcrypto-derivekey.js",
+      "test-webcrypto-encrypt-decrypt-aes.js",
+      "test-webcrypto-encrypt-decrypt-chacha20-poly1305.js",
+      "test-webcrypto-encrypt-decrypt.js",
+      "test-webcrypto-internal-slots.mjs",
+      "test-webcrypto-key-prototype.js",
+      "test-webcrypto-keygen-kmac.js",
+      "test-webcrypto-keygen.js",
+      "test-webcrypto-rsa-exponent-length.js",
+      "test-webcrypto-rsa-modulus-length.js",
+      "test-webcrypto-sign-verify.js",
+      "test-webcrypto-webidl.js"
+    ]
+  },
+  {
+    "count": 16,
+    "error": "TypeError: TLS socket has no native transport",
+    "fixtures": [
+      "test-gc-tls-external-memory.js",
+      "test-tls-connect-stream-writes.js",
+      "test-tls-destroy-stream-12.js",
+      "test-tls-destroy-stream.js",
+      "test-tls-destroy-whilst-write.js",
+      "test-tls-error-servername.js",
+      "test-tls-generic-stream.js",
+      "test-tls-js-stream.js",
+      "test-tls-net-socket-keepalive-12.js",
+      "test-tls-net-socket-keepalive.js",
+      "test-tls-on-empty-socket.js",
+      "test-tls-socket-allow-half-open-option.js",
+      "test-tls-socket-snicallback-without-server.js",
+      "test-tls-streamwrap-buffersize.js",
+      "test-tls-transport-destroy-after-own-gc.js",
+      "test-tls-wrap-econnreset-socket.js"
+    ]
+  },
+  {
+    "count": 15,
+    "error": "TypeError: Cannot read properties of undefined (reading 'prototype')",
+    "fixtures": [
+      "test-dns-resolve-promises.js",
+      "test-http-outgoing-proto.js",
+      "test-repl-autocomplete.js",
+      "test-repl-envvars.js",
+      "test-repl-history-navigation.js",
+      "test-repl-history-perm.js",
+      "test-repl-load-multiline-from-history.js",
+      "test-repl-multiline-navigation-while-adding.js",
+      "test-repl-multiline-navigation.js",
+      "test-repl-permission-model.js",
+      "test-repl-persistent-history.js",
+      "test-repl-reverse-search.js",
+      "test-repl-use-global.js",
+      "test-urlpattern.js",
+      "test-vm-module-linkmodulerequests.js"
+    ]
+  },
+  {
+    "count": 13,
+    "error": "SyntaxError: Unexpected token",
+    "fixtures": [
+      "test-blocklist-fast-api.js",
+      "test-buffer-isutf8-isascii-fast.js",
+      "test-buffer-swap-fast.js",
+      "test-buffer-write-fast.js",
+      "test-http-same-map.js",
+      "test-http-websocket-mask-fast.js",
+      "test-os-fast.js",
+      "test-permission-has-fast-api.js",
+      "test-process-hrtime-bigint.js",
+      "test-process-hrtime.js",
+      "test-timers-fast-calls.js",
+      "test-timers-now.js",
+      "test-whatwg-url-canparse.js"
+    ]
+  },
+  {
+    "count": 11,
+    "error": "TypeError: cannot destructure null or undefined",
+    "fixtures": [
+      "test-code-cache.js",
+      "test-http-parser-max-header-pairs-cache.js",
+      "test-http-parser.js",
+      "test-perf-hooks-histogram-external-memory.js",
+      "test-performance-gc-minor-ms.js",
+      "test-performance-gc.js",
+      "test-performanceobserver.js",
+      "test-permission-net-dns.js",
+      "test-primordials-apply.js",
+      "test-primordials-promise.js",
+      "test-primordials-regexp.js"
+    ]
+  },
+  {
+    "count": 11,
+    "error": "Error: - stderr did not match expectation, checker throws:",
+    "fixtures": [
+      "test-compile-cache-dynamic-import.js",
+      "test-compile-cache-esm.js",
+      "test-compile-cache-existing-directory.js",
+      "test-compile-cache-permission-allowed.js",
+      "test-compile-cache-permission-disallowed.js",
+      "test-compile-cache-portable-esm.js",
+      "test-compile-cache-portable.js",
+      "test-compile-cache-success.js",
+      "test-compile-cache-updated-file.js",
+      "test-trace-env.js",
+      "test-trace-exit-stack-limit.js"
+    ]
+  },
+  {
+    "count": 10,
+    "error": "AssertionError [ERR_ASSERTION]: Test should have aborted but instead exited with exit code 1 and signal null",
+    "fixtures": [
+      "test-domain-no-error-handler-abort-on-uncaught-0.js",
+      "test-domain-no-error-handler-abort-on-uncaught-1.js",
+      "test-domain-no-error-handler-abort-on-uncaught-2.js",
+      "test-domain-no-error-handler-abort-on-uncaught-3.js",
+      "test-domain-no-error-handler-abort-on-uncaught-4.js",
+      "test-domain-no-error-handler-abort-on-uncaught-5.js",
+      "test-domain-no-error-handler-abort-on-uncaught-6.js",
+      "test-domain-no-error-handler-abort-on-uncaught-7.js",
+      "test-domain-no-error-handler-abort-on-uncaught-8.js",
+      "test-domain-no-error-handler-abort-on-uncaught-9.js"
+    ]
+  },
+  {
+    "count": 9,
+    "error": "TypeError: Cannot read properties of undefined (reading 'create')",
+    "fixtures": [
+      "test-vfs-zip-provider-readdir-recursive.js",
+      "test-zlib-zip-files.js",
+      "test-zlib-zip-fuzz.js",
+      "test-zlib-zip-metadata.js",
+      "test-zlib-zip-security.js",
+      "test-zlib-zip-vfs.js",
+      "test-zlib-zip-writable.js",
+      "test-zlib-zip-zip64.js",
+      "test-zlib-zip.js"
+    ]
+  },
+  {
+    "count": 8,
+    "error": "Error: This handle type cannot be sent",
+    "fixtures": [
+      "test-child-process-fork-dgram.js",
+      "test-child-process-fork-getconnections.js",
+      "test-child-process-fork-net-server.js",
+      "test-child-process-fork-net-socket.js",
+      "test-child-process-fork-net.js",
+      "test-child-process-send-keep-open.js",
+      "test-child-process-send-returns-boolean.js",
+      "test-permission-net-udp-handle.js"
+    ]
+  },
+  {
+    "count": 8,
+    "error": "TypeError: Invalid URL",
+    "fixtures": [
+      "test-http-agent-no-protocol.js",
+      "test-http-client-get-url.js",
+      "test-http-url.parse-auth-with-header-in-request.js",
+      "test-http-url.parse-auth.js",
+      "test-http-url.parse-basic.js",
+      "test-http-url.parse-path.js",
+      "test-http-url.parse-post.js",
+      "test-http-url.parse-search.js"
+    ]
+  },
+  {
+    "count": 8,
+    "error": "TypeError: class constructor cannot be called without new",
+    "fixtures": [
+      "test-http-keepalive-client.js",
+      "test-http-keepalive-free.js",
+      "test-http-keepalive-override.js",
+      "test-http-keepalive-request.js",
+      "test-zlib-deflate-constructors.js",
+      "test-zlib-deflate-raw-inherits.js",
+      "test-zlib-invalid-input.js",
+      "test-zlib.js"
+    ]
+  },
+  {
+    "count": 7,
+    "error": "AssertionError [ERR_ASSERTION]: ifError got unwanted exception: Key generation for ec keys is not supported",
+    "fixtures": [
+      "test-crypto-keygen-async-elliptic-curve-jwk-ec.js",
+      "test-crypto-keygen-async-explicit-elliptic-curve-encrypted-p256.js",
+      "test-crypto-keygen-async-explicit-elliptic-curve-encrypted.js.js",
+      "test-crypto-keygen-async-explicit-elliptic-curve.js",
+      "test-crypto-keygen-async-named-elliptic-curve-encrypted-p256.js",
+      "test-crypto-keygen-async-named-elliptic-curve-encrypted.js",
+      "test-crypto-keygen-async-named-elliptic-curve.js"
+    ]
+  },
+  {
+    "count": 7,
+    "error": "AssertionError [ERR_ASSERTION]: <path>:N",
+    "fixtures": [
+      "test-permission-fs-read.js",
+      "test-permission-fs-symlink.js",
+      "test-permission-fs-write.js",
+      "test-permission-has-reference-types.js",
+      "test-permission-net-socket-fd.js",
+      "test-permission-net-tcp.js",
+      "test-permission-processbinding.js"
+    ]
+  },
+  {
+    "count": 7,
+    "error": "DataCloneError: Found invalid value in transferList.",
+    "fixtures": [
+      "test-structuredClone-global.js",
+      "test-webstream-structured-clone-no-leftovers.mjs",
+      "test-webstreams-clone-unref.js",
+      "test-worker-message-port-jstransferable-nested-untransferable.js",
+      "test-worker-message-port-message-port-transferring.js",
+      "test-worker-message-port-transfer-filehandle.js",
+      "test-worker-message-port-transfer-target.js"
+    ]
+  },
+  {
+    "count": 6,
+    "error": "Error: error:030000D6:digital envelope routines::not XOF or invalid length",
+    "fixtures": [
+      "test-crypto-default-shake-lengths-oneshot.js",
+      "test-crypto-default-shake-lengths.js",
+      "test-crypto-hash.js",
+      "test-crypto-oneshot-hash-xof.js",
+      "test-crypto-oneshot-hash.js",
+      "test-crypto.js"
+    ]
+  },
+  {
+    "count": 6,
+    "error": "AssertionError [ERR_ASSERTION]: Missing expected rejection.",
+    "fixtures": [
+      "test-fs-promises-file-handle-aggregate-errors.js",
+      "test-permission-fs-filehandle-sync.js",
+      "test-shadow-realm-allowed-builtin-modules.js",
+      "test-vm-dynamic-import-callback-missing-flag.js",
+      "test-vm-no-dynamic-import-callback.js",
+      "test-webstreams-decompression-reject-trailing.js"
+    ]
+  },
+  {
+    "count": 6,
+    "error": "TypeError: Cannot set properties of undefined (setting 'maxSockets')",
+    "fixtures": [
+      "test-http-addrequest-localaddress.js",
+      "test-http-get-pipeline-problem.js",
+      "test-http-max-sockets.js",
+      "test-http-parser-free.js",
+      "test-http-pipe-fs.js",
+      "test-http-should-keep-alive.js"
+    ]
+  },
+  {
+    "count": 6,
+    "error": "Error: connect ECONNREFUSED N.0.0.1:80",
+    "fixtures": [
+      "test-http-agent-timeout-option.js",
+      "test-http-client-readable.js",
+      "test-http-client-timeout-option-with-agent.js",
+      "test-http-createConnection.js",
+      "test-http-max-header-size-per-stream.js",
+      "test-http-request-dont-override-options.js"
+    ]
+  },
+  {
+    "count": 6,
+    "error": "Error: HTTPS transport is unavailable",
+    "fixtures": [
+      "test-http-dns-error.js",
+      "test-https-connecting-to-http.js",
+      "test-https-eof-for-eom.js",
+      "test-https-insecure-parse-per-stream.js",
+      "test-https-max-header-size-per-stream.js",
+      "test-tls-junk-server.js"
+    ]
+  },
+  {
+    "count": 5,
+    "error": "TypeError: Cannot read properties of undefined (reading 'disconnect')",
+    "fixtures": [
+      "test-cluster-dgram-ipv6only.js",
+      "test-cluster-dgram-reuseport.js",
+      "test-cluster-disconnect-exitedAfterDisconnect-race.js",
+      "test-cluster-net-reuseport.js",
+      "test-dgram-cluster-close-in-listening.js"
+    ]
+  },
+  {
+    "count": 5,
+    "error": "TypeError: Cannot read properties of undefined (reading 'length')",
+    "fixtures": [
+      "test-crypto-rsa-multiprime-jwk.js",
+      "test-module-nearest-parent-package-json-cache.js",
+      "test-runner-v8-deserializer.mjs",
+      "test-vfs-package-json.js",
+      "test-vfs-reserved-root-unowned.js"
+    ]
+  },
+  {
+    "count": 5,
+    "error": "TypeError: Cannot read properties of undefined (reading 'createSync')",
+    "fixtures": [
+      "test-vfs-zip-provider-commit.js",
+      "test-vfs-zip-provider-handle.js",
+      "test-zlib-zip-file-lifecycle.js",
+      "test-zlib-zip-security-hardening.js",
+      "test-zlib-zip-sync.js"
+    ]
+  },
+  {
+    "count": 5,
+    "error": "ReferenceError: Worker is not defined",
+    "fixtures": [
+      "test-webworker-importscripts-conversion.js",
+      "test-webworker-postmessage-lifecycle.js",
+      "test-webworker-postmessage-overloads.js",
+      "test-webworker-ref-unref.js",
+      "test-webworker-typescript-disabled.js"
+    ]
+  },
+  {
+    "count": 4,
+    "error": "AssertionError [ERR_ASSERTION]: Missing expected exception (Error).",
+    "fixtures": [
+      "test-assert-partial-deep-equal.js",
+      "test-fs-read-stream-file-handle.js",
+      "test-http-head-throw-on-response-body-write.js",
+      "test-net-server-call-listen-multiple-times.js"
+    ]
+  },
+  {
+    "count": 4,
+    "error": "RangeError: Maximum call stack size exceeded",
+    "fixtures": [
+      "test-async-hooks-recursive-stack-runInAsyncScope.js",
+      "test-async-local-storage-deep-stack.js",
+      "test-async-local-storage-exit-does-not-leak.js",
+      "test-ttywrap-stack.js"
+    ]
+  },
+  {
+    "count": 4,
+    "error": "AssertionError [ERR_ASSERTION]: Expected \"actual\" to be strictly unequal to: 0",
+    "fixtures": [
+      "test-async-wrap-trigger-id.js",
+      "test-bench-cli.js",
+      "test-crypto-secure-heap.js",
+      "test-openssl-unreadable-config.js"
+    ]
+  },
+  {
+    "count": 4,
+    "error": "TypeError: Cannot read properties of undefined (reading 'on')",
+    "fixtures": [
+      "test-cluster-worker-init.js",
+      "test-http-abort-client.js",
+      "test-http-client-agent.js",
+      "test-http-req-res-close.js"
+    ]
+  },
+  {
+    "count": 4,
+    "error": "TypeError: The \"original\" argument must be of type function. Received type undefined (undefined)",
+    "fixtures": [
+      "test-crypto-kem-shared-key.js",
+      "test-fs-glob.mjs",
+      "test-http2-client-promisify-connect-error.js",
+      "test-util-promisify-custom-names.mjs"
+    ]
+  },
+  {
+    "count": 4,
+    "error": "Error: Key generation for ec keys is not supported",
+    "fixtures": [
+      "test-crypto-key-encoding-provider-cipher.js",
+      "test-crypto-key-reuse-concurrent.js",
+      "test-crypto-keygen-ec-group-names.js",
+      "test-crypto-psychic-signatures.js"
+    ]
+  },
+  {
+    "count": 4,
+    "error": "TypeError: Cannot read properties of undefined (reading 'digest')",
+    "fixtures": [
+      "test-crypto-subtle-cross-realm.js",
+      "test-webcrypto-algorithm-name-ascii.js",
+      "test-webcrypto-digest-turboshake.js",
+      "test-webcrypto-digest.js"
+    ]
+  },
+  {
+    "count": 4,
+    "error": "TypeError: Cannot read properties of undefined (reading 'Resolver')",
+    "fixtures": [
+      "test-dns-channel-cancel-promise.js",
+      "test-dns-channel-timeout.js",
+      "test-dns-resolvesrv-econnrefused.js",
+      "test-dns-setservers-type-check.js"
+    ]
+  },
+  {
+    "count": 4,
+    "error": "AssertionError [ERR_ASSERTION]: Missing expected rejection (AbortError).",
+    "fixtures": [
+      "test-fs-promises-appendfile.js",
+      "test-fs-promises-readfile.js",
+      "test-fs-promises-writefile.js",
+      "test-fs-readfile-one-roundtrip.js"
+    ]
+  },
+  {
+    "count": 4,
+    "error": "TypeError: Invalid HTTP header name",
+    "fixtures": [
+      "test-http-client-headers-array.js",
+      "test-http-server-multiheaders.js",
+      "test-http-server-multiheaders2.js",
+      "test-http-upgrade-client.js"
+    ]
+  },
+  {
+    "count": 4,
+    "error": "AssertionError [ERR_ASSERTION]: function should not have been called at <path>:11",
+    "fixtures": [
+      "test-http-dummy-characters-smuggling.js",
+      "test-http-highwatermark.js",
+      "test-http-request-smuggling-content-length.js",
+      "test-http-server-write-after-end.js"
+    ]
+  },
+  {
+    "count": 4,
+    "error": "TypeError: Cannot read properties of undefined (reading 'enable')",
+    "fixtures": [
+      "test-mock-timers-abortsignal-timeout.js",
+      "test-runner-mock-timers-date.js",
+      "test-runner-mock-timers-scheduler.js",
+      "test-util-throttle-timing.js"
+    ]
+  },
+  {
+    "count": 4,
+    "error": "Error: VFS mount points overlap",
+    "fixtures": [
+      "test-vfs-layer-tag-prefix.mjs",
+      "test-vfs-mount-errors.js",
+      "test-vfs-multi-mount.js",
+      "test-vfs-scoped-cache-purge.js"
+    ]
+  },
+  {
+    "count": 3,
+    "error": "TypeError: Cannot read properties of undefined (reading 'unref')",
+    "fixtures": [
+      "test-cluster-rr-handle-close.js",
+      "test-cluster-rr-handle-keep-loop-alive.js",
+      "test-cluster-rr-handle-ref-unref.js"
+    ]
+  },
+  {
+    "count": 3,
+    "error": "TypeError: Cannot read properties of undefined (reading 'id')",
+    "fixtures": [
+      "test-cluster-server-restart-none.js",
+      "test-cluster-server-restart-rr.js",
+      "test-cluster-worker-destroy.js"
+    ]
+  },
+  {
+    "count": 3,
+    "error": "Error: Key generation for ed25519 keys is not supported",
+    "fixtures": [
+      "test-crypto-key-store.js",
+      "test-crypto-keygen-raw.js",
+      "test-permission-openssl-store.js"
+    ]
+  },
+  {
+    "count": 3,
+    "error": "AssertionError [ERR_ASSERTION]: ifError got unwanted exception: Key generation for dsa keys is not supported",
+    "fixtures": [
+      "test-crypto-keygen-async-dsa-key-object.js",
+      "test-crypto-keygen-async-dsa.js",
+      "test-crypto-keygen-bit-length.js"
+    ]
+  },
+  {
+    "count": 3,
+    "error": "TypeError: cannot convert null or undefined to object",
+    "fixtures": [
+      "test-crypto-keyobject-hidden-slots.js",
+      "test-net-access-byteswritten.js",
+      "test-stream-base-prototype-accessors-enumerability.js"
+    ]
+  },
+  {
+    "count": 3,
+    "error": "AssertionError [ERR_ASSERTION]: function should not have been called at <path>:7",
+    "fixtures": [
+      "test-domain-load-after-set-uncaught-exception-capture.js",
+      "test-http-max-headers-count-overflow.js",
+      "test-net-server-close-before-calling-lookup-callback.js"
+    ]
+  },
+  {
+    "count": 3,
+    "error": "Error: write is unavailable outside a mounted VFS",
+    "fixtures": [
+      "test-fs-promisified.js",
+      "test-fs-sir-writes-alot.js",
+      "test-fs-write-reuse-callback.js"
+    ]
+  },
+  {
+    "count": 3,
+    "error": "AssertionError [ERR_ASSERTION]: Expected \"actual\" to be reference-equal to \"expected\":",
+    "fixtures": [
+      "test-fs-write-stream-change-open.js",
+      "test-next-tick-domain.js",
+      "test-vm-global-identity.js"
+    ]
+  },
+  {
+    "count": 3,
+    "error": "AssertionError [ERR_ASSERTION]: Expected \"actual\" to be strictly unequal to:",
+    "fixtures": [
+      "test-fs-write.js",
+      "test-node-run.js",
+      "test-require-extensions-same-filename-as-dir.js"
+    ]
+  },
+  {
+    "count": 3,
+    "error": "TypeError: Cannot read properties of undefined (reading 'localhost:N:')",
+    "fixtures": [
+      "test-http-agent-error-on-idle.js",
+      "test-http-keep-alive-close-on-header.js",
+      "test-http-keep-alive.js"
+    ]
+  },
+  {
+    "count": 3,
+    "error": "AssertionError [ERR_ASSERTION]: function should not have been called at <path>:27",
+    "fixtures": [
+      "test-http-client-abort-completed-keepalive.js",
+      "test-http-connect.js",
+      "test-net-listen-close-server.js"
+    ]
+  },
+  {
+    "count": 3,
+    "error": "AssertionError [ERR_ASSERTION]: The validation function is expected to return \"true\". Received false",
+    "fixtures": [
+      "test-http-early-hints-invalid-argument.js",
+      "test-http2-alpn.js",
+      "test-module-loading-error.js"
+    ]
+  },
+  {
+    "count": 3,
+    "error": "AssertionError [ERR_ASSERTION]: function should not have been called at <path>:N",
+    "fixtures": [
+      "test-http-max-http-headers.js",
+      "test-net-onread-static-buffer.js",
+      "test-tls-onread-static-buffer.js"
+    ]
+  },
+  {
+    "count": 3,
+    "error": "Error: kaboom",
+    "fixtures": [
+      "test-http-server-capture-rejections.js",
+      "test-net-server-capture-rejection.js",
+      "test-tls-server-capture-rejection.js"
+    ]
+  },
+  {
+    "count": 3,
+    "error": "AssertionError [ERR_ASSERTION]: function should not have been called at <path>:14",
+    "fixtures": [
+      "test-http-server-reject-cr-no-lf.js",
+      "test-tls-close-error.js",
+      "test-webcrypto-getrandomvalues-properties.js"
+    ]
+  },
+  {
+    "count": 3,
+    "error": "Error: read ECONNRESET",
+    "fixtures": [
+      "test-http-upgrade-agent.js",
+      "test-tls-junk-closes-server.js",
+      "test-tls-server-failed-handshake-emits-clienterror.js"
+    ]
+  },
+  {
+    "count": 3,
+    "error": "TypeError: value is not iterable",
+    "fixtures": [
+      "test-readline-async-iterators-destroy.js",
+      "test-readline-async-iterators.js",
+      "test-require-delete-array-iterator.js"
+    ]
+  },
+  {
+    "count": 3,
+    "error": "TypeError: The \"fn\" argument must be of type function",
+    "fixtures": [
+      "test-runner-filter-warning.js",
+      "test-runner-root-after-with-refed-handles.js",
+      "test-runner-typechecking.js"
+    ]
+  },
+  {
+    "count": 3,
+    "error": "Error: read EINVAL",
+    "fixtures": [
+      "test-socket-writes-before-passed-to-tls-socket.js",
+      "test-tls-connect-given-socket.js",
+      "test-tls-inception.js"
+    ]
+  },
+  {
+    "count": 3,
+    "error": "ReferenceError: SubtleCrypto is not defined",
+    "fixtures": [
+      "test-webcrypto-hybrid-kem-species.js",
+      "test-webcrypto-supports-overloads.js",
+      "test-webcrypto-supports-receiver.js"
+    ]
+  },
+  {
+    "count": 2,
+    "error": "TypeError: Cannot read properties of undefined (reading 'Symbol(quench.async_hooks.async_id)')",
+    "fixtures": [
+      "test-async-hooks-http-agent-destroy.js",
+      "test-async-hooks-http-agent.js"
+    ]
+  },
+  {
+    "count": 2,
+    "error": "TypeError: Cannot read properties of undefined (reading 'alloc')",
+    "fixtures": [
+      "test-async-local-storage-http-parser-leak.js",
+      "test-http-parser-lazy-loaded.js"
+    ]
+  },
+  {
+    "count": 2,
+    "error": "AssertionError [ERR_ASSERTION]",
+    "fixtures": [
+      "test-async-wrap-pop-id-during-load.js",
+      "test-http-debug.js"
+    ]
+  },
+  {
+    "count": 2,
+    "error": "TypeError: The \"paths[0]\" argument must be of type string. Received undefined",
+    "fixtures": [
+      "test-cli-node-cli-manpage-env-vars.mjs",
+      "test-whatwg-encoding-singlebyte.mjs"
+    ]
+  },
+  {
+    "count": 2,
+    "error": "AssertionError [ERR_ASSERTION]: function should not have been called at <path>:19",
+    "fixtures": [
+      "test-cluster-accept-fail.js",
+      "test-http-client-reject-cr-no-lf.js"
+    ]
+  },
+  {
+    "count": 2,
+    "error": "TypeError: Cannot read properties of undefined (reading 'isConnected')",
+    "fixtures": [
+      "test-cluster-call-and-destroy.js",
+      "test-cluster-worker-isconnected.js"
+    ]
+  },
+  {
+    "count": 2,
+    "error": "TypeError: Cannot read properties of undefined (reading 'undefined')",
+    "fixtures": [
+      "test-cluster-kill-disconnect.js",
+      "test-worker-environmentdata.js"
+    ]
+  },
+  {
+    "count": 2,
+    "error": "AssertionError [ERR_ASSERTION]: function should not have been called at <path>:10",
+    "fixtures": [
+      "test-cluster-worker-handle-close.js",
+      "test-http-double-content-length.js"
+    ]
+  },
+  {
+    "count": 2,
+    "error": "AssertionError [ERR_ASSERTION]: [UNEXPECTED_FAILURE][INCOMPLETE] html/webappapis/atob/base64.any.html: Incomplete",
+    "fixtures": [
+      "test-common-wpt-runner.js",
+      "test-common-wpt-script-modifier.js"
+    ]
+  },
+  {
+    "count": 2,
+    "error": "TypeError [ERR_INVALID_ARG_TYPE]: The first argument must be of type string or an instance of Buffer, ArrayBuffer, or Array or an Array-like Object. Received an instance of Object",
+    "fixtures": [
+      "test-crypto-eddsa-variants.js",
+      "test-crypto-key-objects-ec-jwk-private.js"
+    ]
+  },
+  {
+    "count": 2,
+    "error": "TypeError: Cannot read properties of undefined (reading 'get')",
+    "fixtures": [
+      "test-crypto-keyobject-brand-check.js",
+      "test-timers-clearImmediate-als.js"
+    ]
+  },
+  {
+    "count": 2,
+    "error": "TypeError [ERR_INVALID_ARG_TYPE]: The first argument must be of type string or an instance of Buffer, ArrayBuffer, or Array or an Array-like Object. Received an instance of KeyObject",
+    "fixtures": [
+      "test-crypto-oaep-zero-length.js",
+      "test-crypto-private-decrypt-gh32240.js"
+    ]
+  },
+  {
+    "count": 2,
+    "error": "AssertionError [ERR_ASSERTION]: Values have same structure but are not reference-equal:",
+    "fixtures": [
+      "test-crypto-rsa-pkcs1-public-key.js",
+      "test-vm-context-dont-contextify.js"
+    ]
+  },
+  {
+    "count": 2,
+    "error": "AssertionError [ERR_ASSERTION]: Expected \"actual\" to be strictly unequal to: -1",
+    "fixtures": [
+      "test-crypto-rsa-pss-parameters.js",
+      "test-dgram-udp6-link-local-address.js"
+    ]
+  },
+  {
+    "count": 2,
+    "error": "TypeError: right-hand side of 'instanceof' is not an object",
+    "fixtures": [
+      "test-diagnostic-channel-http-response-created.js",
+      "test-diagnostics-channel-http.js"
+    ]
+  },
+  {
+    "count": 2,
+    "error": "ReferenceError: navigator is not defined",
+    "fixtures": [
+      "test-diagnostics-channel-web-locks.js",
+      "test-navigator.js"
+    ]
+  },
+  {
+    "count": 2,
+    "error": "SyntaxError: expected JSON value",
+    "fixtures": [
+      "test-domain-http-server.js",
+      "test-stdout-close-catch.js"
+    ]
+  },
+  {
+    "count": 2,
+    "error": "AssertionError [ERR_ASSERTION]: function should not have been called at <path>:12",
+    "fixtures": [
+      "test-domain-set-uncaught-exception-capture-after-load.js",
+      "test-http-upgrade-reconsume-stream.js"
+    ]
+  },
+  {
+    "count": 2,
+    "error": "Nested TLS transport is not implemented",
+    "fixtures": [
+      "test-double-tls-client.js",
+      "test-double-tls-server.js"
+    ]
+  },
+  {
+    "count": 2,
+    "error": "AssertionError [ERR_ASSERTION]: stdout:",
+    "fixtures": [
+      "test-dummy-stdio.js",
+      "test-repl-cli-eval.js"
+    ]
+  },
+  {
+    "count": 2,
+    "error": "TypeError: right-hand side of 'in' is not an object",
+    "fixtures": [
+      "test-env-newprotomethod-remove-unnecessary-prototypes.js",
+      "test-http-client-override-global-agent.js"
+    ]
+  },
+  {
+    "count": 2,
+    "error": "TypeError [ERR_INVALID_ARG_TYPE]: The \"event\" argument must be an instance of Event. Received an instance of Event",
+    "fixtures": [
+      "test-events-on-async-iterator.js",
+      "test-nodeeventtarget.js"
+    ]
+  },
+  {
+    "count": 2,
+    "error": "AssertionError [ERR_ASSERTION]: Missing expected rejection (Error).",
+    "fixtures": [
+      "test-fs-promises-file-handle-close-errors.js",
+      "test-fs-promises-file-handle-op-errors.js"
+    ]
+  },
+  {
+    "count": 2,
+    "error": "AssertionError [ERR_ASSERTION]: ifError got unwanted exception: Expected values to be strictly deep-equal:",
+    "fixtures": [
+      "test-fs-write-buffer-large.js",
+      "test-fs-write-negativeoffset.js"
+    ]
+  },
+  {
+    "count": 2,
+    "error": "AssertionError [ERR_ASSERTION]: ifError got unwanted exception: write is unavailable outside a mounted VFS",
+    "fixtures": [
+      "test-fs-write-buffer.js",
+      "test-fs-writefile-with-fd.js"
+    ]
+  },
+  {
+    "count": 2,
+    "error": "TypeError: Cannot read properties of undefined (reading 'destroy')",
+    "fixtures": [
+      "test-gc-http-client-connaborted.js",
+      "test-http-client-spurious-aborted.js"
+    ]
+  },
+  {
+    "count": 2,
+    "error": "ReferenceError: Crypto is not defined",
+    "fixtures": [
+      "test-global-webcrypto-classes.js",
+      "test-global-webcrypto.js"
+    ]
+  },
+  {
+    "count": 2,
+    "error": "Error: socket hang up",
+    "fixtures": [
+      "test-http-agent.js",
+      "test-http-client-aborted-event.js"
+    ]
+  },
+  {
+    "count": 2,
+    "error": "TypeError: Cannot read properties of undefined (reading 'end')",
+    "fixtures": [
+      "test-http-client-keep-alive-release-before-finish.js",
+      "test-http-no-read-no-dump.js"
+    ]
+  },
+  {
+    "count": 2,
+    "error": "TypeError: Cannot read properties of undefined (reading 'bind')",
+    "fixtures": [
+      "test-http-client-request-listeners-leak.js",
+      "test-http-default-port.js"
+    ]
+  },
+  {
+    "count": 2,
+    "error": "ReferenceError: WebSocket is not defined",
+    "fixtures": [
+      "test-http-import-websocket.js",
+      "test-permission-net-websocket.js"
+    ]
+  },
+  {
+    "count": 2,
+    "error": "AssertionError [ERR_ASSERTION]: function should not have been called at <path>:62",
+    "fixtures": [
+      "test-http-missing-header-separator-cr.js",
+      "test-http-missing-header-separator-lf.js"
+    ]
+  },
+  {
+    "count": 2,
+    "error": "TypeError: Cannot read properties of undefined (reading '_destroyed')",
+    "fixtures": [
+      "test-http-server-clear-timer.js",
+      "test-http-server-close-destroy-timeout.js"
+    ]
+  },
+  {
+    "count": 2,
+    "error": "TypeError: Cannot set properties of undefined (setting 'free')",
+    "fixtures": [
+      "test-http-server-connection-list-when-close-deferred.js",
+      "test-http-server-connection-list-when-close.js"
+    ]
+  },
+  {
+    "count": 2,
+    "error": "AssertionError [ERR_ASSERTION]: function should not have been called at <path>:9",
+    "fixtures": [
+      "test-http-server-write-end-after-end.js",
+      "test-net-listen-close-server-callback-is-not-function.js"
+    ]
+  },
+  {
+    "count": 2,
+    "error": "TypeError: The argument 'stdio' is invalid. Received <ref *1> {",
+    "fixtures": [
+      "test-listen-fd-cluster.js",
+      "test-listen-fd-server.js"
+    ]
+  },
+  {
+    "count": 2,
+    "error": "ReferenceError: BroadcastChannel is not defined",
+    "fixtures": [
+      "test-messaging-string-tag.js",
+      "test-worker-messaging.js"
+    ]
+  },
+  {
+    "count": 2,
+    "error": "Error: Command failed: <path>",
+    "fixtures": [
+      "test-module-wrap.js",
+      "test-module-wrapper.js"
+    ]
+  },
+  {
+    "count": 2,
+    "error": "AssertionError [ERR_ASSERTION]: function should not have been called at <path>:21",
+    "fixtures": [
+      "test-net-server-close-before-ipc-response.js",
+      "test-permission-net-udp.js"
+    ]
+  },
+  {
+    "count": 2,
+    "error": "AssertionError [ERR_ASSERTION]: <path>:27",
+    "fixtures": [
+      "test-permission-fs-symlink-target-write.js",
+      "test-permission-fs-traversal-path.js"
+    ]
+  },
+  {
+    "count": 2,
+    "error": "AssertionError [ERR_ASSERTION]: function should not have been called at <path>:16",
+    "fixtures": [
+      "test-process-execve-on-exit.js",
+      "test-vm-script-after-evaluate.js"
+    ]
+  },
+  {
+    "count": 2,
+    "error": "AssertionError [ERR_ASSERTION]: ifError got unwanted exception: ENOENT: no such file or directory, open '<path>",
+    "fixtures": [
+      "test-process-redirect-warnings-env.js",
+      "test-process-redirect-warnings.js"
+    ]
+  },
+  {
+    "count": 2,
+    "error": "AssertionError [ERR_ASSERTION]: The input did not match the regular expression /The \"initHook\" argument must be of type function/. Input:",
+    "fixtures": [
+      "test-promise-hook-create-hook.js",
+      "test-promise-hook-on-init.js"
+    ]
+  },
+  {
+    "count": 2,
+    "error": "URIError: URI malformed",
+    "fixtures": [
+      "test-querystring-escape.js",
+      "test-whatwg-url-custom-searchparams.js"
+    ]
+  },
+  {
+    "count": 2,
+    "error": "Error: Cannot find module 'internal/deps/acorn/acorn/dist/acorn'",
+    "fixtures": [
+      "test-repl-highlight.js",
+      "test-repl-preprocess-top-level-await.js"
+    ]
+  },
+  {
+    "count": 2,
+    "error": "TypeError: Cannot read properties of null (reading 'length')",
+    "fixtures": [
+      "test-sync-io-option.js",
+      "test-trace-exit.js"
+    ]
+  },
+  {
+    "count": 2,
+    "error": "AssertionError [ERR_ASSERTION]: The input did not match the regular expression /^Thrown at:$/m. Input:",
+    "fixtures": [
+      "test-throw-error-with-getter-throw-traced.mjs",
+      "test-throw-undefined-or-null-traced.mjs"
+    ]
+  },
+  {
+    "count": 2,
+    "error": "TypeError: Cannot read properties of undefined (reading 'issuerCertificate')",
+    "fixtures": [
+      "test-tls-cert-chains-concat.js",
+      "test-tls-cert-chains-in-ca.js"
+    ]
+  },
+  {
+    "count": 2,
+    "error": "TLS configuration operation setTicketKeys is not implemented",
+    "fixtures": [
+      "test-tls-ticket-12.js",
+      "test-tls-ticket.js"
+    ]
+  },
+  {
+    "count": 2,
+    "error": "Error: vm.measureMemory is unavailable",
+    "fixtures": [
+      "test-vm-measure-memory-lazy.js",
+      "test-vm-measure-memory-multi-context.js"
+    ]
+  },
+  {
+    "count": 2,
+    "error": "TypeError: Cannot read properties of undefined (reading 'read')",
+    "fixtures": [
+      "test-zlib-zip-edgecases.js",
+      "test-zlib-zip-encoding.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "Error: Test source signal is collected failed",
+    "fixtures": [
+      "test-abortsignal-any-source-gc.mjs"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "AssertionError [ERR_ASSERTION]: The input did not match the regular expression /rejects/. Input:",
+    "fixtures": [
+      "test-assert-async.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "AssertionError [ERR_ASSERTION]: Expected values not to be loosely deep-equal:",
+    "fixtures": [
+      "test-assert-checktag.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "AssertionError [ERR_ASSERTION]: ok(false)",
+    "fixtures": [
+      "test-assert.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "TypeError: Cannot read properties of undefined (reading '1')",
+    "fixtures": [
+      "test-async-hooks-async-await.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "AssertionError [ERR_ASSERTION]: init",
+    "fixtures": [
+      "test-async-hooks-fatal-error.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "TypeError: Cannot read properties of undefined (reading 'triggerId')",
+    "fixtures": [
+      "test-async-hooks-promise.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "TypeError: Cannot read properties of undefined (reading 'set')",
+    "fixtures": [
+      "test-async-local-storage-http-multiclients.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "AssertionError [ERR_ASSERTION]: Expect",
+    "fixtures": [
+      "test-bash-completion.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "AssertionError [ERR_ASSERTION]: TypeError: value is not callable",
+    "fixtures": [
+      "test-bench-cli-ack.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "AssertionError [ERR_ASSERTION]: The input did not match the regular expression /invalid value for --bench-isolation/. Input:",
+    "fixtures": [
+      "test-bench-cli-arguments.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "TypeError: static module request was not resolved",
+    "fixtures": [
+      "test-bench-module.mjs"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "AssertionError [ERR_ASSERTION]: <eval>:2",
+    "fixtures": [
+      "test-bench-run-exit-code.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "TypeError: Cannot read properties of undefined (reading 'slice')",
+    "fixtures": [
+      "test-bootstrap-modules.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "RangeError: The value of \"size\" is out of range",
+    "fixtures": [
+      "test-buffer-tostring-4gb.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "TypeError: Converting circular structure to JSON",
+    "fixtures": [
+      "test-child-process-advanced-serialization-host-objects.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "TypeError: Cannot read properties of undefined (reading 'pid')",
+    "fixtures": [
+      "test-child-process-constructor.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "TypeError: Cannot read properties of null (reading 'write')",
+    "fixtures": [
+      "test-child-process-fork-stdio.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "TypeError: Cannot set properties of undefined (setting 'readStart')",
+    "fixtures": [
+      "test-child-process-pipe-dataflow.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "AssertionError [ERR_ASSERTION]: Unexpected global(s) found: cwd",
+    "fixtures": [
+      "test-child-process-prototype-tampering.mjs"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "TypeError: Cannot read properties of null (reading 'close')",
+    "fixtures": [
+      "test-child-process-recv-handle.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "AssertionError [ERR_ASSERTION]: ifError got unwanted exception: Command failed: \"${ESCAPED_0}\" ${ESCAPED_1} --eval \"console.log(typeof import.meta);\"",
+    "fixtures": [
+      "test-cli-eval.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "AssertionError [ERR_ASSERTION]: bold for headers should be present",
+    "fixtures": [
+      "test-cli-node-print-help-style.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "AssertionError [ERR_ASSERTION]: Missing flag --openssl-config=... in quench-node [-e CODE|SCRIPT]",
+    "fixtures": [
+      "test-cli-node-print-help.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "AssertionError [ERR_ASSERTION]: [Diagnostic { source: \"[stdin]\", message: \"Expected a semicolon or an implicit semicolon after a statement, but found none\", span: Span { start: 0, end: 0 } }]",
+    "fixtures": [
+      "test-cli-syntax-piped-bad.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "Error: B exited with 1",
+    "fixtures": [
+      "test-cluster-bind-twice.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "Error: ENOENT: no such file or directory, chdir '<path> -> './unix-socket-dir'",
+    "fixtures": [
+      "test-cluster-net-listen-relative-path.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "Error: - stderr did not match /skip .*bad_syntax\\.js because the cache was not initialized/",
+    "fixtures": [
+      "test-compile-cache-bad-syntax.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "Error: error:1E08010C:DECODER routines:OSSL_DECODER_from_bio:unsupported:../crypto/encode_decode/decoder_lib.c:N:No supported data to decode.  Input type: DER, Input structure: type-specific, error:068000A8:asn1 encoding routines:asn1_check_tlen:wrong tag:../crypto/asn1/tasn_dec.c:N:, error:0688010A:asn1 encoding routines:asn1_template_noexp_d2i:nested asn1 error:../crypto/asn1/tasn_dec.c:N:, error:068000A8:asn1 encoding routines:asn1_check_tlen:wrong tag:../crypto/asn1/tasn_dec.c:N:, error:0688010A:asn1 encoding routines:asn1_item_embed_d2i:nested asn1 error:../crypto/asn1/tasn_dec.c:N:Type=RSAPrivateKey, error:068000A8:asn1 encoding routines:asn1_check_tlen:wrong tag:../crypto/asn1/tasn_dec.c:N:, error:0688010A:asn1 encoding routines:asn1_item_embed_d2i:nested asn1 error:../crypto/asn1/tasn_dec.c:N:Type=PKCS8_PRIV_KEY_INFO",
+    "fixtures": [
+      "test-crypto-async-sign-verify.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "TypeError: The \"options\" argument must be of type object",
+    "fixtures": [
+      "test-crypto-cipherbase-options-fast-path.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "Error: Supplied key is too large",
+    "fixtures": [
+      "test-crypto-dh-padding.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "AssertionError [ERR_ASSERTION]: Unexpected extra warning received: DeprecationWarning: Calling Hmac.digest() more than once is deprecated.",
+    "fixtures": [
+      "test-crypto-hmac.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "AssertionError [ERR_ASSERTION]: ifError got unwanted exception: Key generation for ed25519 keys is not supported",
+    "fixtures": [
+      "test-crypto-keygen-async-elliptic-curve-jwk.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "AssertionError [ERR_ASSERTION]: ifError got unwanted exception: Key generation for dh keys is not supported",
+    "fixtures": [
+      "test-crypto-keygen-dh-classic.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "AssertionError [ERR_ASSERTION]: 305c300d06092a864886f70d0101010500034b003048024100b1184aadab9f56c58e79a28d1b70a9b10242de051a97b08cb1bb3ebac18668604effc4b4ab0df53c552d6892b680022d6e6027848b9085ce2cd5131abf92b4730203010001",
+    "fixtures": [
+      "test-crypto-keygen-no-rsassa-pss-params.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "AssertionError [ERR_ASSERTION]: Unexpected buffer getter at <path>:54",
+    "fixtures": [
+      "test-crypto-randomfill-properties.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "AssertionError [ERR_ASSERTION]: The input did not match the regular expression /WARNING: Detected use of sync API[\\s\\S]*randomFillSync/. Input:",
+    "fixtures": [
+      "test-crypto-randomfillsync-trace-sync-io.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "TypeError: Cannot read properties of undefined (reading 'modulusLength')",
+    "fixtures": [
+      "test-crypto-rsa-pss-default-salt-length.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "AssertionError [ERR_ASSERTION]: The input did not match the regular expression /Coordinated Universal Time/. Input:",
+    "fixtures": [
+      "test-datetime-change-notify.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "Error: open EEXIST",
+    "fixtures": [
+      "test-dgram-bind-fd.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "AssertionError [ERR_ASSERTION]: Socket should not bind. at <path>:30",
+    "fixtures": [
+      "test-dgram-cluster-bind-error.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "AssertionError [ERR_ASSERTION]: Socket should not bind. at <path>:37",
+    "fixtures": [
+      "test-dgram-cluster-close-during-bind.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "TypeError: dispose method is not callable",
+    "fixtures": [
+      "test-diagnostics-channel-run-stores-scope.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "TypeError: The \"name\" argument must be of type string",
+    "fixtures": [
+      "test-diagnostics-channel-symbol-named.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "TypeError: The \"nameOrChannels\" argument must be of type string or an instance of TracingChannel or Object",
+    "fixtures": [
+      "test-diagnostics-channel-tracing-channel-args-types.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "AssertionError [ERR_ASSERTION]: The input did not match the regular expression /ERR_UNSUPPORTED_DIR_IMPORT/. Input:",
+    "fixtures": [
+      "test-directory-import.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "TypeError: Cannot read properties of undefined (reading 'lookup')",
+    "fixtures": [
+      "test-dns-lookup-promises.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "TypeError: Cannot read properties of undefined (reading 'lookupService')",
+    "fixtures": [
+      "test-dns-lookupService-promises.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "AssertionError [ERR_ASSERTION]: The input did not match the regular expression /ERR_OUT_OF_RANGE|ERR_INVALID_ARG_TYPE/i. Input:",
+    "fixtures": [
+      "test-dns-resolver-max-timeout.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "AssertionError [ERR_ASSERTION]: Test index 5 failed: Error: Command failed: ulimit -c 0 && \"${ESCAPED_0}\" --abort-on-uncaught-exception \"${ESCAPED_1}\" child ${ESCAPED_2}",
+    "fixtures": [
+      "test-domain-abort-on-uncaught.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "Error: foobar",
+    "fixtures": [
+      "test-domain-implicit-binding.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "AssertionError [ERR_ASSERTION]: ifError got unwanted exception: ENOENT: no such file or directory, open 'this file does not exist'",
+    "fixtures": [
+      "test-domain-implicit-fs.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "AssertionError [ERR_ASSERTION]: function should not have been called at <path>:34",
+    "fixtures": [
+      "test-domain-multi.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "AssertionError [ERR_ASSERTION]: process should have aborted, but did not",
+    "fixtures": [
+      "test-domain-throw-error-then-throw-from-uncaught-exception-handler.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "AssertionError [ERR_ASSERTION]: The input did not match the regular expression /Warning: foo\\n/. Input:",
+    "fixtures": [
+      "test-env-var-no-warnings.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "AssertionError [ERR_ASSERTION]: The input did not match the regular expression /^ {4}at Object/. Input:",
+    "fixtures": [
+      "test-error-aggregateTwoErrors.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "AssertionError [ERR_ASSERTION]: The input did not match the regular expression /throw {\\r?\\n\\^\\r?\\n{ toString: \\[Function: toString] }\\r?\\n\\r?\\nNode\\.js \\S+\\r?\\n$/. Input:",
+    "fixtures": [
+      "test-error-reporting.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "AssertionError [ERR_ASSERTION]: Missing expected exception (EvalError).",
+    "fixtures": [
+      "test-eval-disallow-code-generation-from-strings.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "Error: - stdout did not match /default: --external-memory-max-reasonable-size=0$/m",
+    "fixtures": [
+      "test-external-memory-reasonable-size.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "AssertionError [ERR_ASSERTION]: The input did not match the regular expression /--experimental-ffi/. Input:",
+    "fixtures": [
+      "test-ffi-missing-build.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "AssertionError [ERR_ASSERTION]: drain count off by -1",
+    "fixtures": [
+      "test-file-write-stream.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "AssertionError [ERR_ASSERTION]: events missing or out of order: \"write open drain write \" !== \"write open drain write drain close \"",
+    "fixtures": [
+      "test-file-write-stream2.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "TypeError: The \"flags\" option is invalid",
+    "fixtures": [
+      "test-file-write-stream3.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "AssertionError [ERR_ASSERTION]: expected recursive-b.cjs, got  by hex decoding recursive-b.cjs",
+    "fixtures": [
+      "test-fs-buffer.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "AssertionError [ERR_ASSERTION]: the hook found no request to inject the symbolic link at",
+    "fixtures": [
+      "test-fs-cp-async-destination-appears-late.mjs"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "AssertionError [ERR_ASSERTION]: ifError got unwanted exception: cannot destructure null or undefined",
+    "fixtures": [
+      "test-fs-existssync-memleak-longpath.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "AssertionError [ERR_ASSERTION]: ifError got unwanted exception: The value of \"position\" is out of range. Received -1",
+    "fixtures": [
+      "test-fs-read-position-validation.mjs"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "TypeError: The \"path\" argument must be of type string, Buffer, or URL. Received an instance of Object",
+    "fixtures": [
+      "test-fs-rm.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "AssertionError [ERR_ASSERTION]: expected -N \u00b1 1.N, got 0",
+    "fixtures": [
+      "test-fs-stat-date.mjs"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "AssertionError [ERR_ASSERTION]: Missing expected exception (TypeError): createWriteStream options.fs.open should throw if isn't a function",
+    "fixtures": [
+      "test-fs-stream-fs-options.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "AssertionError [ERR_ASSERTION]: The input did not match the regular expression /TypeError/. Input:",
+    "fixtures": [
+      "test-fs-write-no-fd.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "ReferenceError: CustomEvent is not defined",
+    "fixtures": [
+      "test-global-customevent.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "Error: Command failed: <path> --expose-internals --print require(\"internal/test/binding\").internalBinding(\"v8\").getHashSeed()",
+    "fixtures": [
+      "test-hash-seed.mjs"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "TypeError: Cannot read properties of undefined (reading 'bytesWritten')",
+    "fixtures": [
+      "test-http-byteswritten.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "Error: get did fail",
+    "fixtures": [
+      "test-http-catch-uncaughtexception.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "AssertionError [ERR_ASSERTION]: The input did not match the regular expression /^Connection: close\\r\\n$/m. Input:",
+    "fixtures": [
+      "test-http-chunked-304.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "AssertionError [ERR_ASSERTION]: Missing expected exception: http request should throw when passing array as header host",
+    "fixtures": [
+      "test-http-client-headers-host-array.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "AssertionError [ERR_ASSERTION]: http request should throw when passing invalid insecureHTTPParser",
+    "fixtures": [
+      "test-http-client-insecure-http-parser-error.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "AssertionError [ERR_ASSERTION]: get %Object.prototype%.hostname at <path>:18",
+    "fixtures": [
+      "test-http-client-null-prototype-options.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "TypeError: Cannot read properties of undefined (reading 'listenerCount')",
+    "fixtures": [
+      "test-http-client-parse-error.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "AssertionError [ERR_ASSERTION]: function should not have been called at <path>:20",
+    "fixtures": [
+      "test-http-client-reject-chunked-with-content-length.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "TypeError: Cannot read properties of undefined (reading 'N.0.0.1:N:')",
+    "fixtures": [
+      "test-http-client-timeout-option-listeners.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "AssertionError [ERR_ASSERTION]: function should not have been called at <path>:6",
+    "fixtures": [
+      "test-http-connect-req-res.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "ReferenceError: intentionally_not_defined is not defined",
+    "fixtures": [
+      "test-http-exceptions.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "Error: this should never be executed",
+    "fixtures": [
+      "test-http-expect-handling.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "TypeError: Cannot read properties of undefined (reading 'emit')",
+    "fixtures": [
+      "test-http-header-badrequest.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "TypeError: Cannot read properties of undefined (reading 'kLenientHeaderValueRelaxed')",
+    "fixtures": [
+      "test-http-header-value-relaxed.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "Error: connect ECONNREFUSED ::1:80",
+    "fixtures": [
+      "test-http-host-header-ipv6-fail.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "TypeError: Cannot read properties of undefined (reading 'readableHighWaterMark')",
+    "fixtures": [
+      "test-http-incoming-message-options.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "AssertionError [ERR_ASSERTION]: The input did not match the regular expression /Keep-Alive: timeout=5, max=3\\r\\n/m. Input:",
+    "fixtures": [
+      "test-http-keep-alive-max-requests.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "TypeError: Atomics.wait cannot block in this agent",
+    "fixtures": [
+      "test-http-keep-alive-timeout-race-condition.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "AssertionError [ERR_ASSERTION]: unexpectedly got response from server",
+    "fixtures": [
+      "test-http-localaddress-bind-error.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "TypeError: Cannot read properties of undefined (reading 'writableHighWaterMark')",
+    "fixtures": [
+      "test-http-outgoing-end-cork.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "TypeError: Class extends value is not a constructor or null",
+    "fixtures": [
+      "test-http-outgoing-message-inheritance.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "TypeError: Cannot read properties of undefined (reading 'kOnHeaders')",
+    "fixtures": [
+      "test-http-parser-bad-ref.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "TypeError: Cannot read properties of undefined (reading 'kOnHeadersComplete')",
+    "fixtures": [
+      "test-http-parser-cached-callbacks.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "TypeError: Cannot read properties of undefined (reading 'kOnTimeout')",
+    "fixtures": [
+      "test-http-parser-memory-retention.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "Error: connect ECONNREFUSED N.0.0.1:N",
+    "fixtures": [
+      "test-http-parser-multiple-execute.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "TypeError: Cannot read properties of undefined (reading 'RESPONSE')",
+    "fixtures": [
+      "test-http-parser-timeout-reset.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "TypeError: Cannot read properties of undefined (reading 'writableEnded')",
+    "fixtures": [
+      "test-http-remove-header-stays-removed.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "TypeError: Cannot read properties of undefined (reading '_events')",
+    "fixtures": [
+      "test-http-req-close-robust-from-tampering.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "AssertionError [ERR_ASSERTION]: function should not have been called at <path>:33",
+    "fixtures": [
+      "test-http-request-connect-path.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "AssertionError [ERR_ASSERTION]: (req, res) => {",
+    "fixtures": [
+      "test-http-request-host-header.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "Error: Expected ERR_IP_BLOCKED but got ECONNRESET",
+    "fixtures": [
+      "test-http-request-lookup-error-catchable.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "TypeError: Cannot read properties of undefined (reading 'write')",
+    "fixtures": [
+      "test-http-response-cork.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "TypeError: Cannot convert undefined or null to object",
+    "fixtures": [
+      "test-http-server-delete-parser.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "AssertionError [ERR_ASSERTION]: function onUncaught(error) {} at <path>:13",
+    "fixtures": [
+      "test-http-server-incomingmessage-destroy.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "AssertionError [ERR_ASSERTION]: Expected 8 requests but got 6",
+    "fixtures": [
+      "test-http-server-optimize-empty-requests.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "AssertionError [ERR_ASSERTION]: The input did not match the regular expression /^HTTP\\/1\\.1 N Continue\\r\\n/. Input:",
+    "fixtures": [
+      "test-http-server-raw-header-lookup.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "AssertionError [ERR_ASSERTION]: function should not have been called at <path>:5",
+    "fixtures": [
+      "test-http-server-unconsume-consume.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "AssertionError [ERR_ASSERTION]: failed for socket.on",
+    "fixtures": [
+      "test-http-server-unconsume.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "TypeError: Header name must be a valid HTTP token [\"set-cookie,A\"]",
+    "fixtures": [
+      "test-http-set-cookies.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "TypeError: The argument 'headers' is invalid",
+    "fixtures": [
+      "test-http-set-trailers.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "AssertionError [ERR_ASSERTION]: function should not have been called at <path>:74",
+    "fixtures": [
+      "test-http-transfer-encoding-smuggling.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "Error: whoah",
+    "fixtures": [
+      "test-http-uncaught-from-request-callback.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "AssertionError [ERR_ASSERTION]: function should not have been called at <path>:31",
+    "fixtures": [
+      "test-http-upgrade-server-callback.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "AssertionError [ERR_ASSERTION]: function should not have been called at file://<path>:9",
+    "fixtures": [
+      "test-http-upgrade-server-with-body.mjs"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "Error: This shouldn't happen.",
+    "fixtures": [
+      "test-http-upgrade-server2.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "TypeError: Cannot set properties of undefined (setting '0')",
+    "fixtures": [
+      "test-http2-util-update-options-buffer.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "AssertionError [ERR_ASSERTION]: The input did not match the regular expression /No such module/. Input:",
+    "fixtures": [
+      "test-internal-process-binding.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "AssertionError [ERR_ASSERTION]: The input did not match the regular expression /;/g. Input:",
+    "fixtures": [
+      "test-internal-util-decorate-error-stack.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "TypeError: The argument 'options' must have the property \"port\" or \"path\". Received { fd: 2 }",
+    "fixtures": [
+      "test-listen-fd-ebadf.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "AssertionError [ERR_ASSERTION]: Expected non-zero exit for invalid input",
+    "fixtures": [
+      "test-max-old-space-size-percentage.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "AssertionError [ERR_ASSERTION]: The input did not match the regular expression /Cannot find module '\\x66oo'/. Input:",
+    "fixtures": [
+      "test-module-loading-globalpaths.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "AssertionError [ERR_ASSERTION]: The input did not match the regular expression /MODULE_NOT_FOUND/. Input:",
+    "fixtures": [
+      "test-module-main-fail.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "TypeError: Cannot set properties of undefined (setting '.bar')",
+    "fixtures": [
+      "test-module-multi-extensions.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "Error: - stderr did not match /MODULE_TIMER/g",
+    "fixtures": [
+      "test-module-print-timing.mjs"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "AssertionError [ERR_ASSERTION]: set %Object.prototype%.exports at <path>:36",
+    "fixtures": [
+      "test-module-prototype-mutation.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "AssertionError [ERR_ASSERTION]: The input did not match the regular expression /ERR_INVALID_ARG_TYPE/. Input:",
+    "fixtures": [
+      "test-module-setsourcemapssupport.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "Error: Cannot find module 'moduleB'",
+    "fixtures": [
+      "test-module-symlinked-peer-modules.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "AssertionError [ERR_ASSERTION]: The input did not match the regular expression /Cannot read package config/. Input:",
+    "fixtures": [
+      "test-module-unreadable-package-json.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "AssertionError [ERR_ASSERTION]: function should not have been called at <path>:18",
+    "fixtures": [
+      "test-net-client-bind-twice.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "AssertionError [ERR_ASSERTION]: [Pipe server]Error: listen EINVAL: invalid argument test/.tmp.N-f7553d2568086355/node-test.N.sock-net-connect-options-fd-server",
+    "fixtures": [
+      "test-net-connect-options-fd.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "Error: listen EINVAL: invalid argument test/.tmp.N-7c9f5544b0e6da7/node-test.N.sock-net-connect-options-path-server",
+    "fixtures": [
+      "test-net-connect-options-path.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "TypeError: Cannot set properties of undefined (setting 'undefined')",
+    "fixtures": [
+      "test-net-end-close.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "TypeError: The argument 'options' must have the property \"port\" or \"path\". Received { fd: 0 }",
+    "fixtures": [
+      "test-net-listen-fd0.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "Error: listen EINVAL: invalid argument test/.tmp.N-807c9b613859726b/node-test.N.sock-listen-path-0",
+    "fixtures": [
+      "test-net-server-listen-path.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "AssertionError [ERR_ASSERTION]: N",
+    "fixtures": [
+      "test-net-socket-timeout.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "AssertionError [ERR_ASSERTION]: <path>:19",
+    "fixtures": [
+      "test-performance-nodetiming-uvmetricsinfo.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "TypeError: Cannot read properties of undefined (reading 'name')",
+    "fixtures": [
+      "test-performance-nodetiming.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "Error: - process terminated with status 0, expected 1",
+    "fixtures": [
+      "test-permission-allow-fs-vfs-flags.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "AssertionError [ERR_ASSERTION]: The input did not match the regular expression /true/. Input:",
+    "fixtures": [
+      "test-permission-config-file.mjs"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "AssertionError [ERR_ASSERTION]: Expected at least one denied message",
+    "fixtures": [
+      "test-permission-diagnostics-channel.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "AssertionError [ERR_ASSERTION]:  Error: Cannot find module '<path>",
+    "fixtures": [
+      "test-permission-fs-read-entrypoint.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "AssertionError [ERR_ASSERTION]: Cannot find module '/tmp/*'",
+    "fixtures": [
+      "test-permission-fs-wildcard.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "AssertionError [ERR_ASSERTION]: <path>:7",
+    "fixtures": [
+      "test-permission-net-fetch.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "AssertionError [ERR_ASSERTION]: The input did not match the regular expression /\\[PERM\\d{4}\\] SecurityWarning: The flag \\x2d\\x2dallow\\x2daddons must be used with extreme caution/. Input:",
+    "fixtures": [
+      "test-permission-warning-flags.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "TypeError: Cannot read properties of null (reading 'bind')",
+    "fixtures": [
+      "test-pipe-writev.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "AssertionError [ERR_ASSERTION]: The input did not match the regular expression /No such module: test/. Input:",
+    "fixtures": [
+      "test-process-binding.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "AssertionError [ERR_ASSERTION]: The following options are documented as allowed in NODE_OPTIONS in <path>: --allow-fs-vfs --bench-isolation --bench-name-pattern --bench-reporter-destination --bench-reporter --bench-samples --bench-warmup --enable-fips-indicator-events --experimental-bench --worker-snapshot but are not in process.allowedNodeEnvironmentFlags",
+    "fixtures": [
+      "test-process-env-allowed-flags-are-documented.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "AssertionError [ERR_ASSERTION]: The input did not match the regular expression /^Sat Apr 14 N 14:34:56 GMT\\+N \\(.+\\)$/. Input:",
+    "fixtures": [
+      "test-process-env-tz.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "DataCloneError: Value cannot be cloned",
+    "fixtures": [
+      "test-process-env.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "AssertionError [ERR_ASSERTION]: The input did not match the regular expression /Cannot delete property 'exitCode' of #<process>/. Input:",
+    "fixtures": [
+      "test-process-exit-code-validation.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "AssertionError [ERR_ASSERTION]: wrong exit for 10-exitWithUndefinedFatalException",
+    "fixtures": [
+      "test-process-exit-code.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "AssertionError [ERR_ASSERTION]: The input did not match the regular expression /Error: Access to this API has been restricted/. Input:",
+    "fixtures": [
+      "test-process-load-env-file.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "AssertionError [ERR_ASSERTION]: The input was expected to not match the regular expression /\\(node:\\d+\\) \\[DEP1\\] DeprecationWarning/. Input:",
+    "fixtures": [
+      "test-process-warnings.mjs"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "AssertionError [ERR_ASSERTION]: The input did not match the regular expression /The \"afterHook\" argument must be of type function/. Input:",
+    "fixtures": [
+      "test-promise-hook-on-after.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "AssertionError [ERR_ASSERTION]: The input did not match the regular expression /The \"beforeHook\" argument must be of type function/. Input:",
+    "fixtures": [
+      "test-promise-hook-on-before.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "AssertionError [ERR_ASSERTION]: The input did not match the regular expression /The \"settledHook\" argument must be of type function/. Input:",
+    "fixtures": [
+      "test-promise-hook-on-resolve.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "AssertionError [ERR_ASSERTION]: stdout: <[RangeError: Maximum call stack size exceeded]",
+    "fixtures": [
+      "test-promise-reject-callback-exception.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "TypeError [ERR_INVALID_ARG_TYPE]: The \"message\" argument must be one of type string or function. Received an instance of Buffer",
+    "fixtures": [
+      "test-promise-unhandled-flag.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "Error",
+    "fixtures": [
+      "test-promises-unhandled-rejections.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "AssertionError [ERR_ASSERTION]: Missing expected exception (URIError).",
+    "fixtures": [
+      "test-querystring.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "Error: child.stderr be silent",
+    "fixtures": [
+      "test-repl-harmony.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "AssertionError [ERR_ASSERTION]: <path>:31",
+    "fixtures": [
+      "test-repl-tab-complete-nested-repls.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "AssertionError [ERR_ASSERTION]: The input did not match the regular expression /> \\| undefined\\n/. Input:",
+    "fixtures": [
+      "test-repl-unexpected-token-recoverable.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "Error: Cannot find module '<path>",
+    "fixtures": [
+      "test-require-extension-over-directory.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "AssertionError [ERR_ASSERTION]: The input did not match the regular expression /dep-a-value/. Input:",
+    "fixtures": [
+      "test-require-package-map.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "Error: Cannot find module '.'",
+    "fixtures": [
+      "test-require-resolve-opts-paths-relative.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "AssertionError [ERR_ASSERTION]: The input did not match the regular expression /concurrency: true,/. Input:",
+    "fixtures": [
+      "test-runner-cli-concurrency.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "AssertionError [ERR_ASSERTION]: The input did not match the regular expression /timeout: Infinity,/. Input:",
+    "fixtures": [
+      "test-runner-cli-timeout.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "AssertionError [ERR_ASSERTION]: The input did not match the regular expression /^Could not find/. Input:",
+    "fixtures": [
+      "test-runner-cli.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "Error: - stdout did not match /\\x23\\x20start\\x20of\\x20coverage\\x20report\\n\\x23\\x20\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\n\\x23\\x20file\\x20\\x20\\x20\\x20\\x20\\x20\\x20\\x20\\x20\\x20\\x20\\x20\\x20\\x20\\x20\\x20\\x20\\x20\\x20\\x20\\x20\\x20\\x20\\|\\x20line\\x20\\x25\\x20\\|\\x20branch\\x20\\x25\\x20\\|\\x20funcs\\x20\\x25\\x20\\|\\x20uncovered\\x20lines\\n\\x23\\x20\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\n\\x23\\x20file\\x2dtest\\.js\\x20\\x20\\x20\\x20\\x20\\x20\\x20\\x20\\x20\\x20\\x20\\x20\\x20\\x20\\x20\\|\\x20100\\.00\\x20\\|\\x20\\x20\\x20100\\.00\\x20\\|\\x20\\x20100\\.00\\x20\\|\\x20\\n\\x23\\x20file\\.test\\.mjs\\x20\\x20\\x20\\x20\\x20\\x20\\x20\\x20\\x20\\x20\\x20\\x20\\x20\\x20\\|\\x20100\\.00\\x20\\|\\x20\\x20\\x20100\\.00\\x20\\|\\x20\\x20100\\.00\\x20\\|\\x20\\n\\x23\\x20logic\\x2dfile\\.js\\x20\\x20\\x20\\x20\\x20\\x20\\x20\\x20\\x20\\x20\\x20\\x20\\x20\\x20\\|\\x20\\x2066\\.67\\x20\\|\\x20\\x20\\x20100\\.00\\x20\\|\\x20\\x20\\x2050\\.00\\x20\\|\\x205\\x2d7\\n\\x23\\x20test\\.cjs\\x20\\x20\\x20\\x20\\x20\\x20\\x20\\x20\\x20\\x20\\x20\\x20\\x20\\x20\\x20\\x20\\x20\\x20\\x20\\|\\x20100\\.00\\x20\\|\\x20\\x20\\x20100\\.00\\x20\\|\\x20\\x20100\\.00\\x20\\|\\x20\\n\\x23\\x20test\\x20\\x20\\x20\\x20\\x20\\x20\\x20\\x20\\x20\\x20\\x20\\x20\\x20\\x20\\x20\\x20\\x20\\x20\\x20\\x20\\x20\\x20\\x20\\|\\x20\\x20\\x20\\x20\\x20\\x20\\x20\\x20\\|\\x20\\x20\\x20\\x20\\x20\\x20\\x20\\x20\\x20\\x20\\|\\x20\\x20\\x20\\x20\\x20\\x20\\x20\\x20\\x20\\|\\x20\\n\\x23\\x20\\x20not\\x2dmatching\\x2dtest\\x2dname\\.js\\x20\\|\\x20100\\.00\\x20\\|\\x20\\x20\\x20100\\.00\\x20\\|\\x20\\x20100\\.00\\x20\\|\\x20\\n\\x23\\x20\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\n\\x23\\x20all\\x20files\\x20\\x20\\x20\\x20\\x20\\x20\\x20\\x20\\x20\\x20\\x20\\x20\\x20\\x20\\x20\\x20\\x20\\x20\\|\\x20\\x2091\\.89\\x20\\|\\x20\\x20\\x20100\\.00\\x20\\|\\x20\\x20\\x2083\\.33\\x20\\|\\x20\\n\\x23\\x20\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\x2d\\n\\x23\\x20end\\x20of\\x20coverage\\x20report/",
+    "fixtures": [
+      "test-runner-coverage-default-exclusion.mjs"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "TypeError: Cannot read properties of undefined (reading 'register')",
+    "fixtures": [
+      "test-runner-custom-assertions.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "AssertionError [ERR_ASSERTION]: The input did not match the regular expression /Error: Test \"extraneous async activity test\" at .+extraneous_set_immediate_async\\.mjs:3:1 generated asynchronous activity after the test ended/m. Input:",
+    "fixtures": [
+      "test-runner-extraneous-async-activity.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "AssertionError [ERR_ASSERTION]: Flag propagation test failed for --config-file=node.config.json.",
+    "fixtures": [
+      "test-runner-flag-propagation.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "AssertionError [ERR_ASSERTION]: The input did not match the regular expression /Setup-only module executed/. Input:",
+    "fixtures": [
+      "test-runner-global-setup-teardown.mjs"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "AssertionError [ERR_ASSERTION]: The input did not match the regular expression /pass 2$/m. Input:",
+    "fixtures": [
+      "test-runner-misc.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "AssertionError [ERR_ASSERTION]: child process exited with non-zero status",
+    "fixtures": [
+      "test-runner-mock-dual-package.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "AssertionError [ERR_ASSERTION]: '' == 'before(): global\\n' +",
+    "fixtures": [
+      "test-runner-no-isolation-hooks.mjs"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "AssertionError [ERR_ASSERTION]: The input did not match the regular expression /The \"path\" argument must be of type string/. Input:",
+    "fixtures": [
+      "test-runner-snapshot-file-tests.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "AssertionError [ERR_ASSERTION]: The input did not match the regular expression /The \"options\" argument must be of type object/. Input:",
+    "fixtures": [
+      "test-runner-snapshot-tests.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "AssertionError [ERR_ASSERTION]: The input did not match the regular expression /^# pass 10$/m. Input:",
+    "fixtures": [
+      "test-runner-tag-filter-cli.mjs"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "AssertionError [ERR_ASSERTION]: Missing expected exception: expected throw for tags=db",
+    "fixtures": [
+      "test-runner-tags-validation.mjs"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "AssertionError [ERR_ASSERTION]: expected exit 0, got 1",
+    "fixtures": [
+      "test-runner-todo-suite-hook-failure.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "AssertionError [ERR_ASSERTION]: Runner failed: <path>:13",
+    "fixtures": [
+      "test-runner-worker-id.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "AssertionError [ERR_ASSERTION]: The input did not match the regular expression /ok \\d+ - fail with message string # EXPECTED FAILURE reason string/. Input:",
+    "fixtures": [
+      "test-runner-xfail.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "AssertionError [ERR_ASSERTION]: ifError got unwanted exception: Command failed: ps -o pid,args | grep 'N N' | grep -v grep",
+    "fixtures": [
+      "test-setproctitle.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "TypeError: ShadowRealm import failed",
+    "fixtures": [
+      "test-shadow-realm-import-value-resolve.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "AssertionError [ERR_ASSERTION]: The input did not match the regular expression /^TypeError: Illegal invocation$/. Input:",
+    "fixtures": [
+      "test-signal-safety.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "Error: - process terminated with status 1, expected 9",
+    "fixtures": [
+      "test-snapshot-basic.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "Error: - stderr did not match /Cannot read snapshot configuration from snapshot\\.json/",
+    "fixtures": [
+      "test-snapshot-config.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "Error: - process terminated with status 0, expected 14",
+    "fixtures": [
+      "test-snapshot-invalid-blob.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "AssertionError [ERR_ASSERTION]: The input did not match the regular expression /Error: Creating workers is not supported in startup snapshot/. Input:",
+    "fixtures": [
+      "test-snapshot-worker.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "TypeError: ERR_INVALID_ADDRESS: ERR_INVALID_ARG_TYPE: The \"address\" argument must be of type string",
+    "fixtures": [
+      "test-socketaddress.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "TypeError: host did not resolve dynamic import module",
+    "fixtures": [
+      "test-source-map-invalid-url.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "Error: - stderr did not match /--use-largepages is no longer supported/",
+    "fixtures": [
+      "test-startup-large-pages.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "TypeError: Cannot read properties of undefined (reading 'close')",
+    "fixtures": [
+      "test-stdout-close-unref.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "AssertionError [ERR_ASSERTION]: The following openat call are missing: /etc/ssl/openssl.cnf",
+    "fixtures": [
+      "test-strace-openat-openssl.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "Error: shared TCP socket is not connected",
+    "fixtures": [
+      "test-stream-destroy.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "TypeError [ERR_INVALID_ARG_TYPE]: The \"body\" argument must be of type function or an instance of Blob, ReadableStream, WritableStream, Stream, Iterable, AsyncIterable, or Promise or { readable, writable } pair. Received an instance of Blob",
+    "fixtures": [
+      "test-stream-duplex-from.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "AssertionError [ERR_ASSERTION]: ifError got unwanted exception: Command failed: echo hello | \"${ESCAPED_0}\" \"${ESCAPED_1}\" child",
+    "fixtures": [
+      "test-stream-pipeline-process.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "AssertionError [ERR_ASSERTION]: should have failed",
+    "fixtures": [
+      "test-timers-interval-promisified.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "AssertionError [ERR_ASSERTION]: The input did not match the regular expression /ERR_SSL_(TLSV1_ALERT_PROTOCOL_VERSION|TLSV1_ALERT_RECORD_OVERFLOW|(SSL\\/)?TLS_ALERT_UNEXPECTED_MESSAGE)/. Input:",
+    "fixtures": [
+      "test-tls-alert-handling.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "AssertionError [ERR_ASSERTION]: The input did not match the regular expression /SSL alert number 70/. Input:",
+    "fixtures": [
+      "test-tls-alert.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "TypeError [ERR_MISSING_ARGS]: The \"options\" or \"port\" or \"path\" argument must be specified",
+    "fixtures": [
+      "test-tls-client-allow-partial-trust-chain.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "AssertionError [ERR_ASSERTION]: ifError got unwanted exception: unable to get local issuer certificate",
+    "fixtures": [
+      "test-tls-client-auth.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "Error: resumeSession was not emitted",
+    "fixtures": [
+      "test-tls-client-hello-fragmented.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "Error: Error setting temp DH parameter",
+    "fixtures": [
+      "test-tls-client-mindhsize.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "TypeError: The argument 'hints' is invalid. Received N",
+    "fixtures": [
+      "test-tls-connect-hints-option.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "RangeError: Port should be >= 0 and < N. Received type string ('test/.tmp.N-3bb285500221b7f6/node-test.N.sock').",
+    "fixtures": [
+      "test-tls-connect-pipe.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "TypeError: Cannot read properties of undefined (reading 'singleUse')",
+    "fixtures": [
+      "test-tls-connect-single-use-context.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "AssertionError [ERR_ASSERTION]: The input did not match the regular expression /socket hang up/. Input:",
+    "fixtures": [
+      "test-tls-econnreset.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "AssertionError [ERR_ASSERTION]: The input did not match the regular expression /no suitable signature algorithm|NO_CERTIFICATE_SET/i. Input:",
+    "fixtures": [
+      "test-tls-empty-sni-context.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "Error: ENOENT: no such file or directory, open '<path>",
+    "fixtures": [
+      "test-tls-enable-keylog-cli.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "AssertionError [ERR_ASSERTION]: The input did not match the regular expression /Warning: Ignoring extra certs from.*no-such-file-exists-\ud83d\udc22.* load failed:.*No such file or directory/. Input:",
+    "fixtures": [
+      "test-tls-env-bad-extra-ca.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "Error: error:0A0000BF:SSL routines::no protocols available",
+    "fixtures": [
+      "test-tls-getprotocol.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "AssertionError [ERR_ASSERTION]: node:https.js:1",
+    "fixtures": [
+      "test-tls-handshake-exception.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "AssertionError [ERR_ASSERTION]: The input did not match the regular expression /bad[ _]decrypt/i. Input:",
+    "fixtures": [
+      "test-tls-passphrase.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "AssertionError [ERR_ASSERTION]: code: 1, signal: null, output: Connecting to ::1",
+    "fixtures": [
+      "test-tls-session-cache.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "AssertionError [ERR_ASSERTION]: ifError got unwanted exception: error:0A0000B5:SSL routines::no ciphers available",
+    "fixtures": [
+      "test-tls-set-ciphers.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "RangeError: Port should be >= 0 and < N. Received type string ('cause-error').",
+    "fixtures": [
+      "test-tls-tlswrap-segfault-2.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "TypeError: Cannot read properties of undefined (reading '_idleTimeout')",
+    "fixtures": [
+      "test-tls-wrap-timeout.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "Error: - stderr did not match /internal\\/process\\/pre_execution/",
+    "fixtures": [
+      "test-trace-env-stack.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "AssertionError [ERR_ASSERTION]: Expected \"actual\" not to be strictly deep-equal to: []",
+    "fixtures": [
+      "test-trace-events-async-hooks-dynamic.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "AssertionError [ERR_ASSERTION]: The input did not match the regular expression /xxx/. Input:",
+    "fixtures": [
+      "test-unhandled-exception-with-worker-inuse.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "AssertionError [ERR_ASSERTION]: wonky format(http://atslash%2F%40:%2F%40@foo/) == http://atslash%2F%40:%2F%40@foo/",
+    "fixtures": [
+      "test-url-format.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "AssertionError [ERR_ASSERTION]: pathToFileURL('\\\\exa mple\\share\\file.txt') should throw ERR_INVALID_URL",
+    "fixtures": [
+      "test-url-pathtofileurl.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "AssertionError [ERR_ASSERTION]: expected original source in scriptName, got \"<path>",
+    "fixtures": [
+      "test-util-getcallsites-sourcemap.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "AssertionError [ERR_ASSERTION]: The input did not match the regular expression /The \"content\" argument must be of type string/. Input:",
+    "fixtures": [
+      "test-v8-string-is-one-byte-representation.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "TypeError: module <path> Object]/hello.mjs: No such file or directory (os error 2)",
+    "fixtures": [
+      "test-vfs-import.mjs"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "AssertionError [ERR_ASSERTION]: The input did not match the regular expression /hello from inside the mount/. Input:",
+    "fixtures": [
+      "test-vfs-load.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "Error: Cannot find module '[object Object]/m1.js'",
+    "fixtures": [
+      "test-vfs-module-hooks-cleanup.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "Error: Cannot find module '[object Object]/app/entry.js'",
+    "fixtures": [
+      "test-vfs-module-hooks.mjs"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "Error: Cannot find module '[object Object]/hello.js'",
+    "fixtures": [
+      "test-vfs-require.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "TypeError: Cannot read properties of undefined (reading 'open')",
+    "fixtures": [
+      "test-vfs-zip-provider-dispose.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "AssertionError [ERR_ASSERTION]: createScript crashes",
+    "fixtures": [
+      "test-vm-api-handles-getter-errors.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "AssertionError [ERR_ASSERTION]: The \"EvalError\" validation function is expected to return \"true\". Received EvalError: ReferenceError: x is not defined",
+    "fixtures": [
+      "test-vm-codegen.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "AssertionError [ERR_ASSERTION]: Case 0 failed: Object.getOwnPropertyNames",
+    "fixtures": [
+      "test-vm-global-property-enumerator.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "AssertionError [ERR_ASSERTION]: Expected values to be loosely deep-equal:",
+    "fixtures": [
+      "test-vm-global-property-prototype.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "SyntaxError: The requested module 'node:vm' does not provide an export named 'SourceTextModule'",
+    "fixtures": [
+      "test-vm-module-referrer-realm.mjs"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "Error: whoops",
+    "fixtures": [
+      "test-vm-proxy-failure-CP.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "AssertionError [ERR_ASSERTION]: Unexpected global(s) found: hello, code, foo, obj",
+    "fixtures": [
+      "test-vm-run-in-new-context.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "AssertionError [ERR_ASSERTION]: The input did not match the regular expression /BEGIN CERT/. Input:",
+    "fixtures": [
+      "test-vm-syntax-error-stderr.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "AssertionError [ERR_ASSERTION]: The input did not match the regular expression /TypeError \\[ERR_UNKNOWN_SIGNAL\\]: Unknown signal: invalid_signal/. Input:",
+    "fixtures": [
+      "test-watch-mode-kill-signal-invalid.mjs"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "TypeError: RegExp.escape requires a string value",
+    "fixtures": [
+      "test-watch-mode-kill-signal-override.mjs"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "TypeError [ERR_INVALID_ARG_TYPE]: The first argument must be of type string or an instance of Buffer, ArrayBuffer, or Array or an Array-like Object. Received undefined",
+    "fixtures": [
+      "test-webcrypto-ec-pkcs8-public-key.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "TypeError: Cannot read properties of undefined (reading 'supports')",
+    "fixtures": [
+      "test-webcrypto-keccak-byte-alignment.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "TypeError: Cannot read properties of undefined (reading 'decrypt')",
+    "fixtures": [
+      "test-webcrypto-methods-not-async.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "AssertionError [ERR_ASSERTION]: function should not have been called at <path>:47",
+    "fixtures": [
+      "test-whatwg-events-add-event-listener-options-signal.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "AssertionError [ERR_ASSERTION]: Generator !== URLSearchParams Iterator",
+    "fixtures": [
+      "test-whatwg-url-custom-tostringtag.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "AssertionError [ERR_ASSERTION]: Missing expected exception (DataCloneError).",
+    "fixtures": [
+      "test-whatwg-webstreams-transfer.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "AssertionError [ERR_ASSERTION]: The input did not match the regular expression /DataCloneError/. Input:",
+    "fixtures": [
+      "test-worker-invalid-workerdata.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "AssertionError [ERR_ASSERTION]: hit N loop iterations",
+    "fixtures": [
+      "test-worker-message-port-infinite-message-loop.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "DataCloneError: Detached or shared ArrayBuffer cannot be cloned",
+    "fixtures": [
+      "test-worker-message-port-multiple-sharedarraybuffers.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "AssertionError [ERR_ASSERTION]: The input did not match the regular expression /^DataCloneError: Transfer list contains duplicate MessagePort$/. Input:",
+    "fixtures": [
+      "test-worker-message-port-transfer-duplicate.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "CompileError: validate error: threads must be enabled for shared memories (at offset 0xb)",
+    "fixtures": [
+      "test-worker-message-port-wasm-threads.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "TypeError: Cannot read properties of null (reading 'Symbol(Symbol.iterator)')",
+    "fixtures": [
+      "test-worker-message-port.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "AssertionError [ERR_ASSERTION]: Expected error not found in: node:worker_threads.js:1",
+    "fixtures": [
+      "test-worker-message-type-unknown.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "AssertionError [ERR_ASSERTION]: worker errors must not be reported on the main thread at <path>:29",
+    "fixtures": [
+      "test-worker-spec-differences.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "AssertionError [ERR_ASSERTION]: The input did not match the regular expression /The property 'options\\.eval' must be false when 'filename' is not a string\\./. Input:",
+    "fixtures": [
+      "test-worker-unsupported-eval-on-url.mjs"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "TypeError: Cannot read properties of undefined (reading 'call')",
+    "fixtures": [
+      "test-zlib-flush-drain.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "Error: invalid gzip header",
+    "fixtures": [
+      "test-zlib-from-gzip-with-trailing-garbage.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "Error: Unknown frame descriptor",
+    "fixtures": [
+      "test-zlib-reject-garbage-after-end.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "AssertionError [ERR_ASSERTION]: The input did not match the regular expression /unexpected end of file/. Input:",
+    "fixtures": [
+      "test-zlib-truncated.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "AssertionError [ERR_ASSERTION]: Expected after-GC delta 0 to be less than 5 % of before-GC delta 0",
+    "fixtures": [
+      "test-zlib-unused-weak.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "AssertionError [ERR_ASSERTION]: SyntaxError: The requested module 'node:zlib' does not provide an export named 'ZipFile'",
+    "fixtures": [
+      "test-zlib-zip-experimental-warning.js"
+    ]
+  },
+  {
+    "count": 1,
+    "error": "TypeError: Cannot read properties of undefined (reading 'createStream')",
+    "fixtures": [
+      "test-zlib-zip-property.js"
+    ]
+  }
+]

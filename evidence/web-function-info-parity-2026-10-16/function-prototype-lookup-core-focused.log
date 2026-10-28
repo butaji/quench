@@ -1,0 +1,9 @@
+   Compiling quench-runtime v0.1.0 (/workspace/quench/crates/quench-runtime)
+    Finished `test` profile [unoptimized] target(s) in 2m 29s
+     Running unittests src/lib.rs (target/debug/deps/quench_runtime-faba0c2c63dca90b)
+
+running 1 test
+test vm::tests::function_native_info_lookup_transitions_match_in_both_execution_modes ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 658 filtered out; finished in 0.07s
+

@@ -1,0 +1,17 @@
+["FAILED","ENABLED","ALREADY_ENABLED","DISABLED"]
+[
+  'readPackageJSON',
+  'parsePackageJSON',
+  'getNearestParentPackageJSONType',
+  'getNearestParentPackageJSON',
+  'getPackageScopeConfig',
+  'getPackageType',
+  'enableCompileCache',
+  'getCompileCacheDir',
+  'flushCompileCache',
+  'getCompileCacheEntry',
+  'saveCompileCacheEntry',
+  'compileCacheStatus',
+  'cachedCodeTypes',
+  'moduleFormats'
+]

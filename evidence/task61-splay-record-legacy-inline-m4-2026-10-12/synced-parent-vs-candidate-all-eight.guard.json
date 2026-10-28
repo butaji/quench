@@ -1,0 +1,93 @@
+{
+  "schema": 2,
+  "created_unix_ns": 1791782318690922000,
+  "updated_unix_ns": 1791782318690922000,
+  "change_kind": "layout",
+  "minimum_clean_pairs": 7,
+  "top_up_rounds": 7,
+  "maximum_top_up_batches_per_fixture": 2,
+  "instruction_aa_band_percent": 0.14,
+  "maximum_rss_increase_percent": 0.5,
+  "measurement_runner": {
+    "path": "/Users/admin/Code/GitHub/quench-v2/target/pinned/bdc9d6c4afc537fe8ed30d4fccba9157cd4232e345ce75810465a0fff98db109/quench-bench",
+    "sha256": "bdc9d6c4afc537fe8ed30d4fccba9157cd4232e345ce75810465a0fff98db109"
+  },
+  "baseline": {
+    "path": "/Users/admin/Code/GitHub/quench-v2/target/pinned/dd63c09a142648041daab393fcab66d5f2e4a85d9347a23d0c3830504c93cffe/quench-node",
+    "sha256": "dd63c09a142648041daab393fcab66d5f2e4a85d9347a23d0c3830504c93cffe"
+  },
+  "candidate": {
+    "path": "/Users/admin/Code/GitHub/quench-v2/target/pinned/ead2ff81fa08797eee190dcafed5d31f825bf193c4f4a3328dc3af4150f22343/quench-node",
+    "sha256": "ead2ff81fa08797eee190dcafed5d31f825bf193c4f4a3328dc3af4150f22343"
+  },
+  "timeout_ms": 300000,
+  "source_revision": "597dd55d41a79584e73d8965a16d5243a784349b",
+  "source_dirty": false,
+  "corpus": {
+    "checkout_clean": true,
+    "checkout_revision": "64e1860c736c1b899708f4cd646721bc71e53d8b",
+    "fixture_set_matches": true,
+    "pinned_revision": "64e1860c736c1b899708f4cd646721bc71e53d8b"
+  },
+  "suite_inputs": [
+    {
+      "modified_unix_ns": 1791780414946070960,
+      "path": "quench-bench/js-engine-benchmark/v8-v7/base.js",
+      "sha256": "ac383759c3cbf5f3a499ade526a4e296f7925733d8c3889b6d5840ce6867ff51",
+      "size_bytes": 9351
+    },
+    {
+      "modified_unix_ns": 1791780414946180360,
+      "path": "quench-bench/js-engine-benchmark/v8-v7/crypto.js",
+      "sha256": "5321d2ada9b61e01d5f281609513467cbaa7c0effb12c577ed08088d812453af",
+      "size_bytes": 48043
+    },
+    {
+      "modified_unix_ns": 1791780414946256816,
+      "path": "quench-bench/js-engine-benchmark/v8-v7/deltablue.js",
+      "sha256": "74b5a95f4877701073c6efef08e4ae306562747067e292925b69cbd629a511b9",
+      "size_bytes": 25653
+    },
+    {
+      "modified_unix_ns": 1791780414946463261,
+      "path": "quench-bench/js-engine-benchmark/v8-v7/earley-boyer.js",
+      "sha256": "dbf3aeb6b3d056e8ea35b5f19aa8c8a4fb1053e41d07f096c22483b2c1c6ee01",
+      "size_bytes": 195205
+    },
+    {
+      "modified_unix_ns": 1791780414946531231,
+      "path": "quench-bench/js-engine-benchmark/v8-v7/navier-stokes.js",
+      "sha256": "ce241465ffeee77b5c4f7119f522aa971fe1fe92c3aed76f7514ea43e07fec84",
+      "size_bytes": 12690
+    },
+    {
+      "modified_unix_ns": 1791780414946599242,
+      "path": "quench-bench/js-engine-benchmark/v8-v7/raytrace.js",
+      "sha256": "d52183ca324cdb88d9ee3e78326433fe2ca28d6436f0a6c3ec013ab67cb798eb",
+      "size_bytes": 27996
+    },
+    {
+      "modified_unix_ns": 1791780414946778276,
+      "path": "quench-bench/js-engine-benchmark/v8-v7/regexp.js",
+      "sha256": "5268b0d15931fda4e331de35fc58e5beded9a250b60764e1cc7cfc898ab53602",
+      "size_bytes": 111299
+    },
+    {
+      "modified_unix_ns": 1791780414947291042,
+      "path": "quench-bench/js-engine-benchmark/v8-v7/richards.js",
+      "sha256": "d86eac4108343a54ba6e10621a77b46f82f554c3b0a46e8fb4032d5cf65a2a11",
+      "size_bytes": 15776
+    },
+    {
+      "modified_unix_ns": 1791780414947437838,
+      "path": "quench-bench/js-engine-benchmark/v8-v7/splay.js",
+      "sha256": "1f875cec579d03af40d256ceaeb6823f3ef16c883652650ca51d183472a8185d",
+      "size_bytes": 10746
+    }
+  ],
+  "initial_report": {
+    "path": "/private/tmp/quench-task61-record-legacy-inline/evidence/task61-splay-record-legacy-inline-m4-2026-10-12/synced-parent-vs-candidate-all-eight-fixed-work-11.json",
+    "sha256": "fc790d4a62bf9611a4e9a2316f25bb464590423e8fd83ca2cec360af8166fcf9"
+  },
+  "top_up_batches": []
+}

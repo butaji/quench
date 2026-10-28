@@ -1,0 +1,1544 @@
+{
+  "schema": 16,
+  "suite": "jet-stream3",
+  "jit_mode": "no-jit",
+  "jit_diagnostics": false,
+  "jit_wasm_root": null,
+  "jit_wasm_root_only": false,
+  "jit_wasm_root_first": false,
+  "jit_wasm_selective": false,
+  "jit_wasm_memcpy_ab": false,
+  "jit_wasm_memcpy_raw_ab": false,
+  "jit_wasm_memcpy_early_ab": false,
+  "jit_wasm_compare_branch_ab": false,
+  "jit_wasm_affine_pair_ab": false,
+  "jit_wasm_reference_body_cache_ab": false,
+  "jit_wasm_memcpy_leaf_ab": false,
+  "jit_wasm_selective_ab": false,
+  "created_unix_ns": 1792720335439426558,
+  "rounds_requested": 5,
+  "timeout_ms": 600000,
+  "source_revision": "5a26eb1e0441da7441131dc50ab59e4c3d0ccfe5",
+  "source_dirty": false,
+  "corpus": {
+    "pinned_revision": "06785cf861ac44855f168cbbe829278c2802e6de",
+    "checkout_revision": "06785cf861ac44855f168cbbe829278c2802e6de",
+    "checkout_clean": true,
+    "fixture_set_matches": false
+  },
+  "host": {
+    "uname": "Linux acfbe6f17cde 6.18.55 #1 SMP Wed Oct 14 19:45:18 UTC 2026 x86_64 GNU/Linux",
+    "rustc": "rustc 1.99.0 (b940084d7 2026-09-28)\nbinary: rustc\ncommit-hash: b940084d7eb6a299eb4bfeb8e34901bc051e7ac4\ncommit-date: 2026-09-28\nhost: x86_64-unknown-linux-gnu\nrelease: 1.99.0\nLLVM version: 23.1.1",
+    "model": null,
+    "memory_bytes": 18882674688,
+    "memory_limit_bytes": 17179869184,
+    "cpu_quota": "400000 100000",
+    "logical_cpus": 4,
+    "process_metrics_backend": "Linux wait4 rusage"
+  },
+  "engines": [
+    {
+      "name": "quench",
+      "executable": "/workspace/quench/target/production/quench-node",
+      "executable_sha256": "a85b84d3e54b7e67e924c2b50785be5fa8fc4ab04cb4db94e433a40358f44cc5",
+      "version": "Quench shared-VM interpreter build; package 0.1.0",
+      "argv": [],
+      "environment": {
+        "HOME": "/home/agent",
+        "LANG": "C.UTF-8",
+        "LC_ALL": "C.UTF-8",
+        "PATH": "/tmp/quench-cargo/bin:/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/override:/opt/codex/runtimes/codex-primary-runtime/dependencies/python/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin:/opt/codex/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/fallback"
+      },
+      "inherits_environment": false,
+      "jit_mode": "interpreter",
+      "jit_proof_command": [
+        "/workspace/quench/target/production/quench-node"
+      ],
+      "jit_proof": "the measured shared VM executes interpreter bytecode; no guest JIT path is enabled",
+      "webassembly": true
+    },
+    {
+      "name": "bun",
+      "executable": "/workspace/.local/bench-runtimes/bun/node_modules/@oven/bun-linux-x64/bin/bun",
+      "executable_sha256": "a83d263767d839e4d2649ca8e35d07159c7afc99afdc96d731ced29e056dda0c",
+      "version": "1.4.2",
+      "argv": [],
+      "environment": {
+        "BUN_JSC_useJIT": "0",
+        "HOME": "/home/agent",
+        "LANG": "C.UTF-8",
+        "LC_ALL": "C.UTF-8",
+        "PATH": "/tmp/quench-cargo/bin:/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/override:/opt/codex/runtimes/codex-primary-runtime/dependencies/python/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin:/opt/codex/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/fallback"
+      },
+      "inherits_environment": false,
+      "jit_mode": "disabled-and-probed",
+      "jit_proof_command": [
+        "BUN_JSC_useJIT=0",
+        "BUN_JSC_dumpOptions=1",
+        "/workspace/.local/bench-runtimes/bun/node_modules/@oven/bun-linux-x64/bin/bun",
+        "-e",
+        "console.log(Bun.version)"
+      ],
+      "jit_proof": "command succeeded and reported \"useJIT=false\": 1.4.2\n\nModified JSC options:\n   dumpOptions=1 (default: 0)\n   useJIT=false (default: true)",
+      "webassembly": true
+    },
+    {
+      "name": "node",
+      "executable": "/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node",
+      "executable_sha256": "bc17c508ffeed0ec622934f9b7fa72f8e78da65350e63c3eceb56fa688aa5e12",
+      "version": "v24.19.0",
+      "argv": [
+        "--jitless"
+      ],
+      "environment": {
+        "HOME": "/home/agent",
+        "LANG": "C.UTF-8",
+        "LC_ALL": "C.UTF-8",
+        "PATH": "/tmp/quench-cargo/bin:/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/override:/opt/codex/runtimes/codex-primary-runtime/dependencies/python/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin:/opt/codex/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/fallback"
+      },
+      "inherits_environment": false,
+      "jit_mode": "disabled-and-probed",
+      "jit_proof_command": [
+        "/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node",
+        "--jitless",
+        "-e",
+        "console.log(process.execArgv.includes('--jitless'))"
+      ],
+      "jit_proof": "command succeeded and reported \"true\": true",
+      "webassembly": false
+    }
+  ],
+  "suite_inputs": [
+    {
+      "path": "quench-bench/jetstream/cli.js",
+      "size_bytes": 5600,
+      "modified_unix_ns": 1792524360887412696,
+      "sha256": "22ee4b987b07940dd7397ed7f88345c71acc415e2549b64bf45ba43f7572e5f0"
+    },
+    {
+      "path": "quench-bench/jetstream/JetStreamDriver.js",
+      "size_bytes": 110633,
+      "modified_unix_ns": 1792524359981088811,
+      "sha256": "f105bddfd402514b2325fe9ea6e1df5ce776a4ad4570a8006c7c8559159440fc"
+    },
+    {
+      "path": "quench-bench/jetstream/utils/params.js",
+      "size_bytes": 8047,
+      "modified_unix_ns": 1792524362115334866,
+      "sha256": "0e9d28c0fd2de5583c64678ffc61307b10d983bcb419fe2e3bb383c8b7ded647"
+    },
+    {
+      "path": "quench-bench/jetstream/utils/shell-config.js",
+      "size_bytes": 2352,
+      "modified_unix_ns": 1792524362115736207,
+      "sha256": "9a83000be5e6526a3c26a414fc3a23043e57ef8e4cd67aaff459066a2c347bca"
+    }
+  ],
+  "selected_fixtures": [
+    "quench-bench/jetstream/doxbee-promise"
+  ],
+  "fixtures": {
+    "quench-bench/jetstream/doxbee-promise": {
+      "source": {
+        "path": "quench-bench/jetstream/doxbee-promise",
+        "size_bytes": 4096,
+        "modified_unix_ns": 1792524363121554381,
+        "sha256": "4311c39dd7f2d2e7dac6bcc09189098605edde278c3f6eb1849ae72cac716de0"
+      },
+      "valid": true,
+      "output_equal": true,
+      "summaries": {
+        "bun": {
+          "median_score": 62.84,
+          "median_max_rss_bytes": 45592576,
+          "valid_samples": 5
+        },
+        "node": {
+          "median_score": 54.19,
+          "median_max_rss_bytes": 187482112,
+          "valid_samples": 5
+        },
+        "quench": {
+          "median_score": 25.3,
+          "median_max_rss_bytes": 62550016,
+          "valid_samples": 5
+        }
+      },
+      "unsupported_engines": {},
+      "rounds": [
+        {
+          "round": 0,
+          "execution_order": [
+            "quench",
+            "bun",
+            "node"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 9104273335,
+              "peak_rss_bytes": 45408256,
+              "score": 49.76,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 30629,
+              "page_reclaims": 30629,
+              "involuntary_context_switches": 148,
+              "host_before": {
+                "captured_unix_ns": 1792720354653702600,
+                "load_average": {
+                  "one_minute": 1.57,
+                  "five_minutes": 1.55,
+                  "fifteen_minutes": 1.41
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 351319,
+                    "cpu_percent": 1.2,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.7,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.2,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.2,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792720363771692101,
+                "load_average": {
+                  "one_minute": 1.48,
+                  "five_minutes": 1.53,
+                  "fifteen_minutes": 1.41
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 351319,
+                    "cpu_percent": 1.4,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.7,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.2,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.2,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "Starting JetStream3\nRunning doxbee-promise:\ndoxbee-promise First-Score                      73.00 pts\ndoxbee-promise Worst-Score                      25.43 pts\ndoxbee-promise Average-Score                    66.39 pts\ndoxbee-promise Score                            49.76 pts\ndoxbee-promise First-Time                       68.50 ms \ndoxbee-promise Worst-Time                      196.65 ms \ndoxbee-promise Average-Time                     75.32 ms \ndoxbee-promise Total-Time                      340.47 ms \ndoxbee-promise Wall-Time                      9054.30 ms \n\nOverall:\nOverall First-Score                             73.00 pts\nOverall Worst-Score                             25.43 pts\nOverall Average-Score                           66.39 pts\nOverall First-Time                              68.50 ms \nOverall Worst-Time                             196.65 ms \nOverall Average-Time                            75.32 ms \n\nOverall Score                                   49.76 pts\nOverall Wall-Time                             9058.03 ms \n\n",
+              "stderr": ""
+            },
+            "node": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 6935012159,
+              "peak_rss_bytes": 181522432,
+              "score": 59.93,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 44808,
+              "page_reclaims": 44808,
+              "involuntary_context_switches": 50,
+              "host_before": {
+                "captured_unix_ns": 1792720363784084165,
+                "load_average": {
+                  "one_minute": 1.48,
+                  "five_minutes": 1.53,
+                  "fifteen_minutes": 1.41
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 351319,
+                    "cpu_percent": 1.4,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.7,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.2,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.2,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792720370730704193,
+                "load_average": {
+                  "one_minute": 1.44,
+                  "five_minutes": 1.52,
+                  "fifteen_minutes": 1.41
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 351319,
+                    "cpu_percent": 1.3,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.7,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.2,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.2,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "Starting JetStream3\nRunning doxbee-promise:\ndoxbee-promise First-Score                      49.15 pts\ndoxbee-promise Worst-Score                      49.45 pts\ndoxbee-promise Average-Score                    88.55 pts\ndoxbee-promise Score                            59.93 pts\ndoxbee-promise First-Time                      101.73 ms \ndoxbee-promise Worst-Time                      101.11 ms \ndoxbee-promise Average-Time                     56.46 ms \ndoxbee-promise Total-Time                      259.31 ms \ndoxbee-promise Wall-Time                      6833.27 ms \n\nOverall:\nOverall First-Score                             49.15 pts\nOverall Worst-Score                             49.45 pts\nOverall Average-Score                           88.55 pts\nOverall First-Time                             101.73 ms \nOverall Worst-Time                             101.11 ms \nOverall Average-Time                            56.46 ms \n\nOverall Score                                   59.93 pts\nOverall Wall-Time                             6837.50 ms \n\n",
+              "stderr": ""
+            },
+            "quench": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 18918664386,
+              "peak_rss_bytes": 65683456,
+              "score": 24.11,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 79721,
+              "page_reclaims": 79721,
+              "involuntary_context_switches": 66,
+              "host_before": {
+                "captured_unix_ns": 1792720335699042023,
+                "load_average": {
+                  "one_minute": 1.79,
+                  "five_minutes": 1.59,
+                  "fifteen_minutes": 1.42
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.7,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.2,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.2,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "caas-prefix-tra"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792720354641950907,
+                "load_average": {
+                  "one_minute": 1.57,
+                  "five_minutes": 1.55,
+                  "fifteen_minutes": 1.41
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 351319,
+                    "cpu_percent": 1.2,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.7,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.2,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.2,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "Starting JetStream3\nRunning doxbee-promise:\ndoxbee-promise First-Score                      20.05 pts\ndoxbee-promise Worst-Score                      21.35 pts\ndoxbee-promise Average-Score                    32.71 pts\ndoxbee-promise Score                            24.11 pts\ndoxbee-promise First-Time                      249.32 ms \ndoxbee-promise Worst-Time                      234.15 ms \ndoxbee-promise Average-Time                    152.87 ms \ndoxbee-promise Total-Time                      636.33 ms \ndoxbee-promise Wall-Time                      18463.68 ms \n\nOverall:\nOverall First-Score                             20.05 pts\nOverall Worst-Score                             21.35 pts\nOverall Average-Score                           32.71 pts\nOverall First-Time                             249.32 ms \nOverall Worst-Time                             234.15 ms \nOverall Average-Time                           152.87 ms \n\nOverall Score                                   24.11 pts\nOverall Wall-Time                             18489.07 ms \n\n",
+              "stderr": ""
+            }
+          }
+        },
+        {
+          "round": 1,
+          "execution_order": [
+            "bun",
+            "node",
+            "quench"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 8445165760,
+              "peak_rss_bytes": 45154304,
+              "score": 62.84,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 32590,
+              "page_reclaims": 32590,
+              "involuntary_context_switches": 71,
+              "host_before": {
+                "captured_unix_ns": 1792720370739799421,
+                "load_average": {
+                  "one_minute": 1.44,
+                  "five_minutes": 1.52,
+                  "fifteen_minutes": 1.41
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 351319,
+                    "cpu_percent": 1.3,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.7,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.2,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.2,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792720379200055016,
+                "load_average": {
+                  "one_minute": 1.37,
+                  "five_minutes": 1.51,
+                  "fifteen_minutes": 1.4
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 351437,
+                    "cpu_percent": 100.0,
+                    "command": "ps"
+                  },
+                  {
+                    "pid": 351319,
+                    "cpu_percent": 1.4,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.7,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.2,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.2,
+                    "command": "codex"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "Starting JetStream3\nRunning doxbee-promise:\ndoxbee-promise First-Score                      69.61 pts\ndoxbee-promise Worst-Score                      49.62 pts\ndoxbee-promise Average-Score                    71.83 pts\ndoxbee-promise Score                            62.84 pts\ndoxbee-promise First-Time                       71.83 ms \ndoxbee-promise Worst-Time                      100.76 ms \ndoxbee-promise Average-Time                     69.61 ms \ndoxbee-promise Total-Time                      242.20 ms \ndoxbee-promise Wall-Time                      8380.89 ms \n\nOverall:\nOverall First-Score                             69.61 pts\nOverall Worst-Score                             49.62 pts\nOverall Average-Score                           71.83 pts\nOverall First-Time                              71.83 ms \nOverall Worst-Time                             100.76 ms \nOverall Average-Time                            69.61 ms \n\nOverall Score                                   62.84 pts\nOverall Wall-Time                             8386.49 ms \n\n",
+              "stderr": ""
+            },
+            "node": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 7868939395,
+              "peak_rss_bytes": 187412480,
+              "score": 50.79,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 50499,
+              "page_reclaims": 50499,
+              "involuntary_context_switches": 34,
+              "host_before": {
+                "captured_unix_ns": 1792720379213668366,
+                "load_average": {
+                  "one_minute": 1.37,
+                  "five_minutes": 1.51,
+                  "fifteen_minutes": 1.4
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 351319,
+                    "cpu_percent": 1.4,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.7,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.2,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.2,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792720387096198632,
+                "load_average": {
+                  "one_minute": 1.39,
+                  "five_minutes": 1.51,
+                  "fifteen_minutes": 1.4
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 351319,
+                    "cpu_percent": 1.4,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.7,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.2,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.2,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "Starting JetStream3\nRunning doxbee-promise:\ndoxbee-promise First-Score                      48.61 pts\ndoxbee-promise Worst-Score                      34.49 pts\ndoxbee-promise Average-Score                    78.13 pts\ndoxbee-promise Score                            50.79 pts\ndoxbee-promise First-Time                      102.87 ms \ndoxbee-promise Worst-Time                      144.96 ms \ndoxbee-promise Average-Time                     63.99 ms \ndoxbee-promise Total-Time                      311.82 ms \ndoxbee-promise Wall-Time                      7732.44 ms \n\nOverall:\nOverall First-Score                             48.61 pts\nOverall Worst-Score                             34.49 pts\nOverall Average-Score                           78.13 pts\nOverall First-Time                             102.87 ms \nOverall Worst-Time                             144.96 ms \nOverall Average-Time                            63.99 ms \n\nOverall Score                                   50.79 pts\nOverall Wall-Time                             7737.51 ms \n\n",
+              "stderr": ""
+            },
+            "quench": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 19847831202,
+              "peak_rss_bytes": 62550016,
+              "score": 25.3,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 68158,
+              "page_reclaims": 68158,
+              "involuntary_context_switches": 44,
+              "host_before": {
+                "captured_unix_ns": 1792720387108788062,
+                "load_average": {
+                  "one_minute": 1.39,
+                  "five_minutes": 1.51,
+                  "fifteen_minutes": 1.4
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 351319,
+                    "cpu_percent": 1.4,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.7,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.2,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.2,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792720406975608048,
+                "load_average": {
+                  "one_minute": 1.28,
+                  "five_minutes": 1.47,
+                  "fifteen_minutes": 1.39
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 351319,
+                    "cpu_percent": 1.4,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.7,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.2,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.2,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "Starting JetStream3\nRunning doxbee-promise:\ndoxbee-promise First-Score                      33.23 pts\ndoxbee-promise Worst-Score                      15.97 pts\ndoxbee-promise Average-Score                    30.52 pts\ndoxbee-promise Score                            25.30 pts\ndoxbee-promise First-Time                      150.47 ms \ndoxbee-promise Worst-Time                      313.03 ms \ndoxbee-promise Average-Time                    163.81 ms \ndoxbee-promise Total-Time                      627.31 ms \ndoxbee-promise Wall-Time                      19666.11 ms \n\nOverall:\nOverall First-Score                             33.23 pts\nOverall Worst-Score                             15.97 pts\nOverall Average-Score                           30.52 pts\nOverall First-Time                             150.47 ms \nOverall Worst-Time                             313.03 ms \nOverall Average-Time                           163.81 ms \n\nOverall Score                                   25.30 pts\nOverall Wall-Time                             19691.42 ms \n\n",
+              "stderr": ""
+            }
+          }
+        },
+        {
+          "round": 2,
+          "execution_order": [
+            "node",
+            "quench",
+            "bun"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 8054943583,
+              "peak_rss_bytes": 45801472,
+              "score": 61.23,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 32407,
+              "page_reclaims": 32407,
+              "involuntary_context_switches": 558,
+              "host_before": {
+                "captured_unix_ns": 1792720434258093836,
+                "load_average": {
+                  "one_minute": 1.18,
+                  "five_minutes": 1.43,
+                  "fifteen_minutes": 1.38
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 351319,
+                    "cpu_percent": 1.4,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.7,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.2,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.2,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792720442325334577,
+                "load_average": {
+                  "one_minute": 1.46,
+                  "five_minutes": 1.48,
+                  "fifteen_minutes": 1.4
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 351319,
+                    "cpu_percent": 1.4,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.7,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.2,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.2,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "Starting JetStream3\nRunning doxbee-promise:\ndoxbee-promise First-Score                      72.83 pts\ndoxbee-promise Worst-Score                      41.86 pts\ndoxbee-promise Average-Score                    75.30 pts\ndoxbee-promise Score                            61.23 pts\ndoxbee-promise First-Time                       68.65 ms \ndoxbee-promise Worst-Time                      119.43 ms \ndoxbee-promise Average-Time                     66.41 ms \ndoxbee-promise Total-Time                      254.49 ms \ndoxbee-promise Wall-Time                      7995.58 ms \n\nOverall:\nOverall First-Score                             72.83 pts\nOverall Worst-Score                             41.86 pts\nOverall Average-Score                           75.30 pts\nOverall First-Time                              68.65 ms \nOverall Worst-Time                             119.43 ms \nOverall Average-Time                            66.41 ms \n\nOverall Score                                   61.23 pts\nOverall Wall-Time                             7998.74 ms \n\n",
+              "stderr": ""
+            },
+            "node": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 9151577428,
+              "peak_rss_bytes": 187707392,
+              "score": 25.27,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 50515,
+              "page_reclaims": 50515,
+              "involuntary_context_switches": 360,
+              "host_before": {
+                "captured_unix_ns": 1792720406994608902,
+                "load_average": {
+                  "one_minute": 1.28,
+                  "five_minutes": 1.47,
+                  "fifteen_minutes": 1.39
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 351462,
+                    "cpu_percent": 100.0,
+                    "command": "ps"
+                  },
+                  {
+                    "pid": 351319,
+                    "cpu_percent": 1.4,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.7,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.2,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.2,
+                    "command": "codex"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792720416158035734,
+                "load_average": {
+                  "one_minute": 1.26,
+                  "five_minutes": 1.46,
+                  "fifteen_minutes": 1.39
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 351319,
+                    "cpu_percent": 1.5,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.7,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.2,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.2,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "Starting JetStream3\nRunning doxbee-promise:\ndoxbee-promise First-Score                      15.52 pts\ndoxbee-promise Worst-Score                      14.94 pts\ndoxbee-promise Average-Score                    69.58 pts\ndoxbee-promise Score                            25.27 pts\ndoxbee-promise First-Time                      322.15 ms \ndoxbee-promise Worst-Time                      334.62 ms \ndoxbee-promise Average-Time                     71.86 ms \ndoxbee-promise Total-Time                      728.62 ms \ndoxbee-promise Wall-Time                      8905.30 ms \n\nOverall:\nOverall First-Score                             15.52 pts\nOverall Worst-Score                             14.94 pts\nOverall Average-Score                           69.58 pts\nOverall First-Time                             322.15 ms \nOverall Worst-Time                             334.62 ms \nOverall Average-Time                            71.86 ms \n\nOverall Score                                   25.27 pts\nOverall Wall-Time                             8913.19 ms \n\n",
+              "stderr": ""
+            },
+            "quench": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 18064443266,
+              "peak_rss_bytes": 62545920,
+              "score": 28.52,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 68158,
+              "page_reclaims": 68158,
+              "involuntary_context_switches": 87,
+              "host_before": {
+                "captured_unix_ns": 1792720416171768410,
+                "load_average": {
+                  "one_minute": 1.26,
+                  "five_minutes": 1.46,
+                  "fifteen_minutes": 1.39
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 351319,
+                    "cpu_percent": 1.5,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.7,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.2,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.2,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792720434249038785,
+                "load_average": {
+                  "one_minute": 1.18,
+                  "five_minutes": 1.43,
+                  "fifteen_minutes": 1.38
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 351478,
+                    "cpu_percent": 100.0,
+                    "command": "ps"
+                  },
+                  {
+                    "pid": 351319,
+                    "cpu_percent": 1.4,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.7,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.2,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.2,
+                    "command": "codex"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "Starting JetStream3\nRunning doxbee-promise:\ndoxbee-promise First-Score                      29.75 pts\ndoxbee-promise Worst-Score                      23.23 pts\ndoxbee-promise Average-Score                    33.57 pts\ndoxbee-promise Score                            28.52 pts\ndoxbee-promise First-Time                      168.06 ms \ndoxbee-promise Worst-Time                      215.27 ms \ndoxbee-promise Average-Time                    148.94 ms \ndoxbee-promise Total-Time                      532.27 ms \ndoxbee-promise Wall-Time                      17910.35 ms \n\nOverall:\nOverall First-Score                             29.75 pts\nOverall Worst-Score                             23.23 pts\nOverall Average-Score                           33.57 pts\nOverall First-Time                             168.06 ms \nOverall Worst-Time                             215.27 ms \nOverall Average-Time                           148.94 ms \n\nOverall Score                                   28.52 pts\nOverall Wall-Time                             17932.41 ms \n\n",
+              "stderr": ""
+            }
+          }
+        },
+        {
+          "round": 3,
+          "execution_order": [
+            "quench",
+            "bun",
+            "node"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 7236333492,
+              "peak_rss_bytes": 45592576,
+              "score": 73.83,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 38852,
+              "page_reclaims": 38852,
+              "involuntary_context_switches": 189,
+              "host_before": {
+                "captured_unix_ns": 1792720461708474302,
+                "load_average": {
+                  "one_minute": 1.35,
+                  "five_minutes": 1.46,
+                  "fifteen_minutes": 1.39
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 351319,
+                    "cpu_percent": 1.5,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.7,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.2,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.2,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792720468957844874,
+                "load_average": {
+                  "one_minute": 1.3,
+                  "five_minutes": 1.44,
+                  "fifteen_minutes": 1.39
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 351319,
+                    "cpu_percent": 1.6,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.7,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.2,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.2,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "Starting JetStream3\nRunning doxbee-promise:\ndoxbee-promise First-Score                      83.90 pts\ndoxbee-promise Worst-Score                      57.37 pts\ndoxbee-promise Average-Score                    83.60 pts\ndoxbee-promise Score                            73.83 pts\ndoxbee-promise First-Time                       59.59 ms \ndoxbee-promise Worst-Time                       87.15 ms \ndoxbee-promise Average-Time                     59.81 ms \ndoxbee-promise Total-Time                      206.55 ms \ndoxbee-promise Wall-Time                      7195.59 ms \n\nOverall:\nOverall First-Score                             83.90 pts\nOverall Worst-Score                             57.37 pts\nOverall Average-Score                           83.60 pts\nOverall First-Time                              59.59 ms \nOverall Worst-Time                              87.15 ms \nOverall Average-Time                            59.81 ms \n\nOverall Score                                   73.83 pts\nOverall Wall-Time                             7199.92 ms \n\n",
+              "stderr": ""
+            },
+            "node": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 7733340812,
+              "peak_rss_bytes": 187482112,
+              "score": 54.19,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 50699,
+              "page_reclaims": 50699,
+              "involuntary_context_switches": 561,
+              "host_before": {
+                "captured_unix_ns": 1792720468968713982,
+                "load_average": {
+                  "one_minute": 1.3,
+                  "five_minutes": 1.44,
+                  "fifteen_minutes": 1.39
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 351319,
+                    "cpu_percent": 1.6,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.7,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.2,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.2,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792720476716345008,
+                "load_average": {
+                  "one_minute": 1.27,
+                  "five_minutes": 1.44,
+                  "fifteen_minutes": 1.38
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 351319,
+                    "cpu_percent": 1.6,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.7,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.2,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.2,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "Starting JetStream3\nRunning doxbee-promise:\ndoxbee-promise First-Score                      57.97 pts\ndoxbee-promise Worst-Score                      34.45 pts\ndoxbee-promise Average-Score                    79.68 pts\ndoxbee-promise Score                            54.19 pts\ndoxbee-promise First-Time                       86.25 ms \ndoxbee-promise Worst-Time                      145.12 ms \ndoxbee-promise Average-Time                     62.75 ms \ndoxbee-promise Total-Time                      294.13 ms \ndoxbee-promise Wall-Time                      7570.23 ms \n\nOverall:\nOverall First-Score                             57.97 pts\nOverall Worst-Score                             34.45 pts\nOverall Average-Score                           79.68 pts\nOverall First-Time                              86.25 ms \nOverall Worst-Time                             145.12 ms \nOverall Average-Time                            62.75 ms \n\nOverall Score                                   54.19 pts\nOverall Wall-Time                             7575.16 ms \n\n",
+              "stderr": ""
+            },
+            "quench": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 19342637644,
+              "peak_rss_bytes": 62742528,
+              "score": 27.77,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 82678,
+              "page_reclaims": 82678,
+              "involuntary_context_switches": 42,
+              "host_before": {
+                "captured_unix_ns": 1792720442335752809,
+                "load_average": {
+                  "one_minute": 1.46,
+                  "five_minutes": 1.48,
+                  "fifteen_minutes": 1.4
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 351319,
+                    "cpu_percent": 1.4,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.7,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.2,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.2,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792720461698238792,
+                "load_average": {
+                  "one_minute": 1.35,
+                  "five_minutes": 1.46,
+                  "fifteen_minutes": 1.39
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 351496,
+                    "cpu_percent": 100.0,
+                    "command": "bash"
+                  },
+                  {
+                    "pid": 351319,
+                    "cpu_percent": 1.5,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.7,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.2,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.2,
+                    "command": "codex"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "Starting JetStream3\nRunning doxbee-promise:\ndoxbee-promise First-Score                      30.18 pts\ndoxbee-promise Worst-Score                      22.70 pts\ndoxbee-promise Average-Score                    31.28 pts\ndoxbee-promise Score                            27.77 pts\ndoxbee-promise First-Time                      165.68 ms \ndoxbee-promise Worst-Time                      220.28 ms \ndoxbee-promise Average-Time                    159.87 ms \ndoxbee-promise Total-Time                      545.83 ms \ndoxbee-promise Wall-Time                      19211.20 ms \n\nOverall:\nOverall First-Score                             30.18 pts\nOverall Worst-Score                             22.70 pts\nOverall Average-Score                           31.28 pts\nOverall First-Time                             165.68 ms \nOverall Worst-Time                             220.28 ms \nOverall Average-Time                           159.87 ms \n\nOverall Score                                   27.77 pts\nOverall Wall-Time                             19232.45 ms \n\n",
+              "stderr": ""
+            }
+          }
+        },
+        {
+          "round": 4,
+          "execution_order": [
+            "bun",
+            "node",
+            "quench"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 7381702250,
+              "peak_rss_bytes": 45850624,
+              "score": 70.91,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 24335,
+              "page_reclaims": 24335,
+              "involuntary_context_switches": 50,
+              "host_before": {
+                "captured_unix_ns": 1792720476726342542,
+                "load_average": {
+                  "one_minute": 1.27,
+                  "five_minutes": 1.44,
+                  "fifteen_minutes": 1.38
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 351319,
+                    "cpu_percent": 1.6,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.7,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.2,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.2,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792720484121618973,
+                "load_average": {
+                  "one_minute": 1.23,
+                  "five_minutes": 1.42,
+                  "fifteen_minutes": 1.38
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 351319,
+                    "cpu_percent": 1.6,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.7,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.2,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.2,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "Starting JetStream3\nRunning doxbee-promise:\ndoxbee-promise First-Score                      74.64 pts\ndoxbee-promise Worst-Score                      58.29 pts\ndoxbee-promise Average-Score                    81.96 pts\ndoxbee-promise Score                            70.91 pts\ndoxbee-promise First-Time                       66.98 ms \ndoxbee-promise Worst-Time                       85.77 ms \ndoxbee-promise Average-Time                     61.01 ms \ndoxbee-promise Total-Time                      213.77 ms \ndoxbee-promise Wall-Time                      7341.28 ms \n\nOverall:\nOverall First-Score                             74.64 pts\nOverall Worst-Score                             58.29 pts\nOverall Average-Score                           81.96 pts\nOverall First-Time                              66.98 ms \nOverall Worst-Time                              85.77 ms \nOverall Average-Time                            61.01 ms \n\nOverall Score                                   70.91 pts\nOverall Wall-Time                             7345.13 ms \n\n",
+              "stderr": ""
+            },
+            "node": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 6318008979,
+              "peak_rss_bytes": 187523072,
+              "score": 66.07,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 50589,
+              "page_reclaims": 50589,
+              "involuntary_context_switches": 236,
+              "host_before": {
+                "captured_unix_ns": 1792720484131096399,
+                "load_average": {
+                  "one_minute": 1.23,
+                  "five_minutes": 1.42,
+                  "fifteen_minutes": 1.38
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 351319,
+                    "cpu_percent": 1.6,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.7,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.2,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.2,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792720490462084579,
+                "load_average": {
+                  "one_minute": 1.29,
+                  "five_minutes": 1.43,
+                  "fifteen_minutes": 1.38
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 351319,
+                    "cpu_percent": 1.6,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.7,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.2,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.2,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "Starting JetStream3\nRunning doxbee-promise:\ndoxbee-promise First-Score                      59.97 pts\ndoxbee-promise Worst-Score                      49.38 pts\ndoxbee-promise Average-Score                    97.39 pts\ndoxbee-promise Score                            66.07 pts\ndoxbee-promise First-Time                       83.38 ms \ndoxbee-promise Worst-Time                      101.25 ms \ndoxbee-promise Average-Time                     51.34 ms \ndoxbee-promise Total-Time                      235.97 ms \ndoxbee-promise Wall-Time                      6205.16 ms \n\nOverall:\nOverall First-Score                             59.97 pts\nOverall Worst-Score                             49.38 pts\nOverall Average-Score                           97.39 pts\nOverall First-Time                              83.38 ms \nOverall Worst-Time                             101.25 ms \nOverall Average-Time                            51.34 ms \n\nOverall Score                                   66.07 pts\nOverall Wall-Time                             6210.45 ms \n\n",
+              "stderr": ""
+            },
+            "quench": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 25379052922,
+              "peak_rss_bytes": 62545920,
+              "score": 18.08,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 68150,
+              "page_reclaims": 68150,
+              "involuntary_context_switches": 96,
+              "host_before": {
+                "captured_unix_ns": 1792720490474042236,
+                "load_average": {
+                  "one_minute": 1.29,
+                  "five_minutes": 1.43,
+                  "fifteen_minutes": 1.38
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 351319,
+                    "cpu_percent": 1.6,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.7,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.2,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.2,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792720515869521717,
+                "load_average": {
+                  "one_minute": 1.19,
+                  "five_minutes": 1.4,
+                  "fifteen_minutes": 1.37
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 351556,
+                    "cpu_percent": 100.0,
+                    "command": "ps"
+                  },
+                  {
+                    "pid": 351319,
+                    "cpu_percent": 1.7,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.7,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.2,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.2,
+                    "command": "codex"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "Starting JetStream3\nRunning doxbee-promise:\ndoxbee-promise First-Score                      25.86 pts\ndoxbee-promise Worst-Score                       9.61 pts\ndoxbee-promise Average-Score                    23.80 pts\ndoxbee-promise Score                            18.08 pts\ndoxbee-promise First-Time                      193.32 ms \ndoxbee-promise Worst-Time                      520.40 ms \ndoxbee-promise Average-Time                    210.07 ms \ndoxbee-promise Total-Time                      923.79 ms \ndoxbee-promise Wall-Time                      25219.88 ms \n\nOverall:\nOverall First-Score                             25.86 pts\nOverall Worst-Score                              9.61 pts\nOverall Average-Score                           23.80 pts\nOverall First-Time                             193.32 ms \nOverall Worst-Time                             520.40 ms \nOverall Average-Time                           210.07 ms \n\nOverall Score                                   18.08 pts\nOverall Wall-Time                             25244.88 ms \n\n",
+              "stderr": ""
+            }
+          }
+        }
+      ]
+    }
+  },
+  "complete": true,
+  "qualification_ready": false
+}

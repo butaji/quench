@@ -1,0 +1,697 @@
+{
+  "schema": 1,
+  "qualification": "affected-only; Stage A remains open",
+  "change": "Set/WeakSet internal membership is independent of Object.freeze property integrity; remove three redundant mutation guards.",
+  "head": "7e60169df033dd247f34199e084e3e8080a92a29",
+  "host": "Darwin arm64",
+  "toolchain": "rustc 1.99.0 (b940084d7 2026-09-28) (Homebrew)",
+  "node": "v26.10.0",
+  "sources": {
+    "crates/quench-runtime/src/collections/set.rs": "331e3d140b4bebd2e3c7a0379dd9e8da6275974c858c058b7376e070293e9ef5",
+    "crates/quench-runtime/src/properties_integrity.rs": "a4e33d1e24c3363505eeab2844f0eaf4813b9b8cb5b2c622e41c2d7b2db8bc4f",
+    "tests/node/lib/internal/process/per_thread.js": "f3bca509ca9ae6be403fcbc0133c45760c6cc76f21f890c8f494f2934efc9e7b",
+    "tests/node/test/parallel/test-process-env-allowed-flags.js": "25f0c2ff940d02e75779fa0bdc6d0d23c12d515ab777bd2342fa989bfaa3105b"
+  },
+  "binaries": {
+    "target/iteration/task19-set-freeze/before-quench-node": "764d944b91b16f39313de0c8ddb0532074a3388adc3ff015139fd1469b2aa557",
+    "target/iteration/task19-set-freeze/before-run-compat": "7373668b6411107718da6bce50afaed3295ec38516fd53713bdd57915320e4b8",
+    "target/debug/quench-node": "18ee8fc53d30470994efb0939f9eedb06a933ec4dfc37e376defe6e744503f7f",
+    "target/debug/run-compat": "9ea4e739f8a50521fba483df9cb2f04bbd50308e961b13d45787bb485e740e57",
+    "target/debug/run-test": "e233199241b8dd6821af12467f51aadf39b9484e8850f85d460c224dd9d6d003",
+    "target/debug/compare-runs": "bde6e77917c476caecb3e8d848102c6b2ac3fb7dda80efee5a1cecd4e9479bd5"
+  },
+  "affected_test262": {
+    "pin": "6eec1ac9ee144dafd8f344d73a21f36bfc9f6755",
+    "inventory_sha256": "b0bc67e12b3a7844a74de10309fe91d370fa3d57cdb812d788f9de79cddf3dff",
+    "cases": [
+      {
+        "path": "tests/test262/test/built-ins/Set/prototype/add/add.js",
+        "sha256": "dc87842597ac8e0786006b425bb15015a927c6f1a171cc38d95367d0487694f5"
+      },
+      {
+        "path": "tests/test262/test/built-ins/Set/prototype/add/does-not-have-setdata-internal-slot-array.js",
+        "sha256": "ef8f6767b1377084b7ecdddace1270ce0b127f00d119063d68ed8c5256c931e4"
+      },
+      {
+        "path": "tests/test262/test/built-ins/Set/prototype/add/does-not-have-setdata-internal-slot-map.js",
+        "sha256": "adc950d0754b472e8a91e387dabda6d17df2d39d3d8664063e6436c39a5c4b3e"
+      },
+      {
+        "path": "tests/test262/test/built-ins/Set/prototype/add/does-not-have-setdata-internal-slot-object.js",
+        "sha256": "9fe89fea79150055c4e7f2409a08c80f96ef369dc8aa8777bb1314954ee8d6d6"
+      },
+      {
+        "path": "tests/test262/test/built-ins/Set/prototype/add/does-not-have-setdata-internal-slot-set-prototype.js",
+        "sha256": "7112943ce550a9c86f4ff700a600cb0bd853dae0e628d570cdce34af47ae9de2"
+      },
+      {
+        "path": "tests/test262/test/built-ins/Set/prototype/add/does-not-have-setdata-internal-slot-weakset.js",
+        "sha256": "8d5946ca71898286f0c2beed5ab053c44fc267c64c1caee75d594ba8643b9c78"
+      },
+      {
+        "path": "tests/test262/test/built-ins/Set/prototype/add/length.js",
+        "sha256": "6e2dae2192e9ba8d01f240d22255b75dfd5ee98acf46c62ae312919103cc1908"
+      },
+      {
+        "path": "tests/test262/test/built-ins/Set/prototype/add/name.js",
+        "sha256": "06e058e6cd2ff9ea232fdda640f25bacfd1454c0f483f9cf21312b8b9a2fc2dd"
+      },
+      {
+        "path": "tests/test262/test/built-ins/Set/prototype/add/not-a-constructor.js",
+        "sha256": "f936dc61559d89ae021caae51aa3c3fcc37173541d62a21c8063f24aea451237"
+      },
+      {
+        "path": "tests/test262/test/built-ins/Set/prototype/add/preserves-insertion-order.js",
+        "sha256": "64dfecbcaf535a4bd5ed7e63c9e1b02f71e000bec041590dea684bcad0c66c18"
+      },
+      {
+        "path": "tests/test262/test/built-ins/Set/prototype/add/returns-this-when-ignoring-duplicate.js",
+        "sha256": "2263ddf3841d1eb63b6bf3e8b78765c2712f21e351c7caa3f3fba14a93b08524"
+      },
+      {
+        "path": "tests/test262/test/built-ins/Set/prototype/add/returns-this.js",
+        "sha256": "20f8a4bbc9a6fff71240a0aa5dd8a5618c13293ee46db5035bf8a76a57ef7055"
+      },
+      {
+        "path": "tests/test262/test/built-ins/Set/prototype/add/this-not-object-throw-boolean.js",
+        "sha256": "66db23442a0e0132868239076e65064bc9d7dc6ff31d3bdabf0eec864a2a91c5"
+      },
+      {
+        "path": "tests/test262/test/built-ins/Set/prototype/add/this-not-object-throw-null.js",
+        "sha256": "ab9d72848b5b41a660b4da11b9945c209d7d442a99aca3102d5fb49028d7a58c"
+      },
+      {
+        "path": "tests/test262/test/built-ins/Set/prototype/add/this-not-object-throw-number.js",
+        "sha256": "eee77569d4febfdc07893aebccf7535c0ab0da26094f4dd3c0f014be5d60e678"
+      },
+      {
+        "path": "tests/test262/test/built-ins/Set/prototype/add/this-not-object-throw-string.js",
+        "sha256": "c1f0e2060cb5708c0ee9a6f249bfd537ce077b45f9aa57f2f60b2c02e6a85d3c"
+      },
+      {
+        "path": "tests/test262/test/built-ins/Set/prototype/add/this-not-object-throw-symbol.js",
+        "sha256": "958e8899446b03f52d8cf9cfec7e4d2a2f47245bd04ecb4c356ed064c5935568"
+      },
+      {
+        "path": "tests/test262/test/built-ins/Set/prototype/add/this-not-object-throw-undefined.js",
+        "sha256": "7c6b6a376495619c470cefb7595581ed21f0bc1345b7e02f76e610501bcc282b"
+      },
+      {
+        "path": "tests/test262/test/built-ins/Set/prototype/add/will-not-add-duplicate-entry-initial-iterable.js",
+        "sha256": "abe782b45e155c342349be9c8b32dd3edaf4e6b2e95c86d20828ff914029c5e8"
+      },
+      {
+        "path": "tests/test262/test/built-ins/Set/prototype/add/will-not-add-duplicate-entry-normalizes-zero.js",
+        "sha256": "cce30133499356e22cf693e02de0a9a0e2387ddf6dfd1164be29f1294c83c360"
+      },
+      {
+        "path": "tests/test262/test/built-ins/Set/prototype/add/will-not-add-duplicate-entry.js",
+        "sha256": "92419102d34ff9402ebb181da84520b162984c10a6498a7836cf65ff3c79ead6"
+      },
+      {
+        "path": "tests/test262/test/built-ins/Set/prototype/clear/clear.js",
+        "sha256": "01be454fa300c3899a0f1e47349e1bdcef603570b724f0453ed059b1e2b4624b"
+      },
+      {
+        "path": "tests/test262/test/built-ins/Set/prototype/clear/clears-all-contents-from-iterable.js",
+        "sha256": "9683a918d37ea92f2a7eeaa3ca44bb62a711ce8f0f6f1d645bbb1c09ab46b52b"
+      },
+      {
+        "path": "tests/test262/test/built-ins/Set/prototype/clear/clears-all-contents.js",
+        "sha256": "af78b1afdf9f974983682bb47db45a20fa3edf04290473bd9f9a42c737790ce7"
+      },
+      {
+        "path": "tests/test262/test/built-ins/Set/prototype/clear/clears-an-empty-set.js",
+        "sha256": "9eaf82c7b2bc4a67f1cf13a2ecee26551f6432f83c8cb63e5479284067b0a32b"
+      },
+      {
+        "path": "tests/test262/test/built-ins/Set/prototype/clear/does-not-have-setdata-internal-slot-array.js",
+        "sha256": "9c7703f80c9a615354ca8abd7aef0fad3d0f08d509e60b300957812527a31512"
+      },
+      {
+        "path": "tests/test262/test/built-ins/Set/prototype/clear/does-not-have-setdata-internal-slot-map.js",
+        "sha256": "eb1b101d3d112c27113f05b74a8f8d0a276f61b6a8e401cda1fc491a19a6c9e7"
+      },
+      {
+        "path": "tests/test262/test/built-ins/Set/prototype/clear/does-not-have-setdata-internal-slot-object.js",
+        "sha256": "1b847a83558ce946df2c1e3eceef249d06e721d154d391667852a7d45f972348"
+      },
+      {
+        "path": "tests/test262/test/built-ins/Set/prototype/clear/does-not-have-setdata-internal-slot-set.prototype.js",
+        "sha256": "7c6eb35d969c52297be4b132e6eb5cf08968412b9dfdb7b5e5a03ae345bb0411"
+      },
+      {
+        "path": "tests/test262/test/built-ins/Set/prototype/clear/does-not-have-setdata-internal-slot-weakset.js",
+        "sha256": "98689b438f896d1a2a9dd31eac9e493ba7142ad1c92fbed8164fee81ec923572"
+      },
+      {
+        "path": "tests/test262/test/built-ins/Set/prototype/clear/length.js",
+        "sha256": "a228e1e96bc8b58b26c76cd56b3a9e1348398705cd297c127c33e0e25dd229f7"
+      },
+      {
+        "path": "tests/test262/test/built-ins/Set/prototype/clear/name.js",
+        "sha256": "97901c4010742fa8770455782b64754d7b55ded0e8375f66573f336d3238f349"
+      },
+      {
+        "path": "tests/test262/test/built-ins/Set/prototype/clear/not-a-constructor.js",
+        "sha256": "321ab9698a4cdb80116466094924aa32a89d3e1067dbf6b179d45c3608338561"
+      },
+      {
+        "path": "tests/test262/test/built-ins/Set/prototype/clear/returns-undefined.js",
+        "sha256": "a0db729cabc31f8ce11ab2a4f769444a3f1c1d17d85c0433a98d91e647e021ba"
+      },
+      {
+        "path": "tests/test262/test/built-ins/Set/prototype/clear/this-not-object-throw-boolean.js",
+        "sha256": "de009b538d02f4fe525e73801bbd734140bcbcdacf86cc20ab19205d3abce8e1"
+      },
+      {
+        "path": "tests/test262/test/built-ins/Set/prototype/clear/this-not-object-throw-null.js",
+        "sha256": "0329dc43c7ea5566c5b375d92bbd2fb5306a5b2ec9197fe1cc3ea602f78f8abd"
+      },
+      {
+        "path": "tests/test262/test/built-ins/Set/prototype/clear/this-not-object-throw-number.js",
+        "sha256": "bbd73955d0617cdf0670b549ba102b99b1d5775fbf5d4fca25724a2c3fbdd620"
+      },
+      {
+        "path": "tests/test262/test/built-ins/Set/prototype/clear/this-not-object-throw-string.js",
+        "sha256": "f1342bd495a444b37e1e8e4655455be801d9ba31f5caa0cb7ed7f5809f3bc3b7"
+      },
+      {
+        "path": "tests/test262/test/built-ins/Set/prototype/clear/this-not-object-throw-symbol.js",
+        "sha256": "25791bf2b57f7e53401325bbb197561df177981e55d65dea0872ddd332e107ab"
+      },
+      {
+        "path": "tests/test262/test/built-ins/Set/prototype/clear/this-not-object-throw-undefined.js",
+        "sha256": "91e8a38013dc39bacb785bd64b005132a1f1da45bb1fc1900c921e09bafe446c"
+      },
+      {
+        "path": "tests/test262/test/built-ins/Set/prototype/delete/delete-entry-initial-iterable.js",
+        "sha256": "435b6227c34a51259de087412ed4a577f0c636900dc63076660cfc957ba24d14"
+      },
+      {
+        "path": "tests/test262/test/built-ins/Set/prototype/delete/delete-entry-normalizes-zero.js",
+        "sha256": "32e424cff6ca075b38a93065e9eb529d16e9de9070c309a88a0b71f0da213307"
+      },
+      {
+        "path": "tests/test262/test/built-ins/Set/prototype/delete/delete-entry.js",
+        "sha256": "b4c6393c6f560b74e0f91c3fb3c8c3c593e4e7c3a47a4dbe2e06c21c05afda1e"
+      },
+      {
+        "path": "tests/test262/test/built-ins/Set/prototype/delete/delete.js",
+        "sha256": "dc46e29e2b5042a00880babfb034160d9f3fb75e50bd1a0384fd87679a4934d6"
+      },
+      {
+        "path": "tests/test262/test/built-ins/Set/prototype/delete/does-not-have-setdata-internal-slot-array.js",
+        "sha256": "93f7932e6a731b16f5674b464082830099b2ce3e7052cc7d09fc771b69e6e599"
+      },
+      {
+        "path": "tests/test262/test/built-ins/Set/prototype/delete/does-not-have-setdata-internal-slot-map.js",
+        "sha256": "9b828f4a461405baa91779356e9ac31e4ef1ca4f7293983d260cfd1fc5043a2f"
+      },
+      {
+        "path": "tests/test262/test/built-ins/Set/prototype/delete/does-not-have-setdata-internal-slot-object.js",
+        "sha256": "67ec7c2240c2da72a35d3ed96d4ef5ef5e1fbf81b80fec1db75c5a58c9dc9b6b"
+      },
+      {
+        "path": "tests/test262/test/built-ins/Set/prototype/delete/does-not-have-setdata-internal-slot-set-prototype.js",
+        "sha256": "85de8c665fbb9df6cf83f872862ccfa5c9a2eb815916be856a303933a8381972"
+      },
+      {
+        "path": "tests/test262/test/built-ins/Set/prototype/delete/does-not-have-setdata-internal-slot-weakset.js",
+        "sha256": "15a86881a3999a6a1dddd5e28e21686a8b92e804bfdc989e335d4b6b7741db93"
+      },
+      {
+        "path": "tests/test262/test/built-ins/Set/prototype/delete/length.js",
+        "sha256": "5b5d93f00b03a3ccfece725fc351b0beaf146b02589438749cb6807e1c3a2e0e"
+      },
+      {
+        "path": "tests/test262/test/built-ins/Set/prototype/delete/name.js",
+        "sha256": "fa381be12529498cfc73ecc737cec9ce662c51cae1110e2bf1fb8b73ece0f3a6"
+      },
+      {
+        "path": "tests/test262/test/built-ins/Set/prototype/delete/not-a-constructor.js",
+        "sha256": "563729c4b7b3c665b81fc065c347825b0d015bf9fbb48b496251d8f8eec7122f"
+      },
+      {
+        "path": "tests/test262/test/built-ins/Set/prototype/delete/returns-false-when-delete-is-noop.js",
+        "sha256": "c34579d08edf1547e3b5438d653b7cdcfd8b4d9f1e8c2f2febf3006edfbe9ecd"
+      },
+      {
+        "path": "tests/test262/test/built-ins/Set/prototype/delete/returns-true-when-delete-operation-occurs.js",
+        "sha256": "5c364bb8ea64b3654d020e0e40d786c1d4a60833efffcca7b23bd7bfa956e8f7"
+      },
+      {
+        "path": "tests/test262/test/built-ins/Set/prototype/delete/this-not-object-throw-boolean.js",
+        "sha256": "44abe701f37175f2a7c45b9b175286d062fa13b8f43916483b9652bcb9392bdd"
+      },
+      {
+        "path": "tests/test262/test/built-ins/Set/prototype/delete/this-not-object-throw-null.js",
+        "sha256": "3256b0ed8f5fc058b16113b24e0dc5bba5b131e10fd3d2020049756a6fdf0b88"
+      },
+      {
+        "path": "tests/test262/test/built-ins/Set/prototype/delete/this-not-object-throw-number.js",
+        "sha256": "23b79ffc1763214b1118152d80e25d4a69d45fa9effff8b26ac0a75588b1033c"
+      },
+      {
+        "path": "tests/test262/test/built-ins/Set/prototype/delete/this-not-object-throw-string.js",
+        "sha256": "42507c02ef6ef30ad89aebff9cbcb32921f091ffec4209a3973b92a483ec96c8"
+      },
+      {
+        "path": "tests/test262/test/built-ins/Set/prototype/delete/this-not-object-throw-symbol.js",
+        "sha256": "0fcd1335befd4fa7fb107035bbae479a1c1afd00a4e49c6a37706ac4fa4ffb2b"
+      },
+      {
+        "path": "tests/test262/test/built-ins/Set/prototype/delete/this-not-object-throw-undefined.js",
+        "sha256": "3c1d436df0d23cea910c3530053ff56e3fde2154250b6870f86560af95adbbee"
+      },
+      {
+        "path": "tests/test262/test/built-ins/WeakSet/prototype/add/add.js",
+        "sha256": "b4ce7bdd3462ac3f0ec0347c3d70e3c5bb93bb5355c91a626e3cf4509bb43197"
+      },
+      {
+        "path": "tests/test262/test/built-ins/WeakSet/prototype/add/adds-object-element.js",
+        "sha256": "5f7deee72350961f90bd1be72918b9f90b3606d93e79c6faf436a9cec4f9e518"
+      },
+      {
+        "path": "tests/test262/test/built-ins/WeakSet/prototype/add/adds-symbol-element.js",
+        "sha256": "8dc636a9716a29fa96bb1ad5d335980319680dd7d09019768052e0bddc28042a"
+      },
+      {
+        "path": "tests/test262/test/built-ins/WeakSet/prototype/add/does-not-have-weaksetdata-internal-slot-array.js",
+        "sha256": "c814438617ec2fa536be334309178cadbc310ab196422025f493753d43167563"
+      },
+      {
+        "path": "tests/test262/test/built-ins/WeakSet/prototype/add/does-not-have-weaksetdata-internal-slot-map.js",
+        "sha256": "6f4cb968fd94f081566180af1793141630a9e484ae392d8c66ca74b72236cb37"
+      },
+      {
+        "path": "tests/test262/test/built-ins/WeakSet/prototype/add/does-not-have-weaksetdata-internal-slot-object.js",
+        "sha256": "a6c761929b1f00629dd31ad005ed779d9e4f9087d72404cfe371da11e852e857"
+      },
+      {
+        "path": "tests/test262/test/built-ins/WeakSet/prototype/add/does-not-have-weaksetdata-internal-slot-set.js",
+        "sha256": "7afdd0349d6f516f18ee546e0200121a7e318a02203e2a1b4c6204b7fa908085"
+      },
+      {
+        "path": "tests/test262/test/built-ins/WeakSet/prototype/add/does-not-have-weaksetdata-internal-slot-weakset-prototype.js",
+        "sha256": "92656d08b9bf28b7446d4cd507adc6088d9669a7f6eb883efced5c5a69424826"
+      },
+      {
+        "path": "tests/test262/test/built-ins/WeakSet/prototype/add/length.js",
+        "sha256": "6e1b38c0dc09681e16518ef5f6d1ac8a87e6e68ad8ab029ed3400057aadfd278"
+      },
+      {
+        "path": "tests/test262/test/built-ins/WeakSet/prototype/add/name.js",
+        "sha256": "0034f4a3759eccb623be7e9025d302e95058b89e2b71c89a03bf39cc5ead6670"
+      },
+      {
+        "path": "tests/test262/test/built-ins/WeakSet/prototype/add/not-a-constructor.js",
+        "sha256": "b27ab198627d393667ec1e91bb27d6ce651a961b533841933479d309f4e15c77"
+      },
+      {
+        "path": "tests/test262/test/built-ins/WeakSet/prototype/add/returns-this-symbol.js",
+        "sha256": "1436f28a7c83420be726d394d43d871f52e24f3a970336a30528495daaf694ed"
+      },
+      {
+        "path": "tests/test262/test/built-ins/WeakSet/prototype/add/returns-this-when-ignoring-duplicate-symbol.js",
+        "sha256": "e3ff0e70d32794bcfc05c38633517d5d6d079ed8c5eec91b6a57d8bd207555da"
+      },
+      {
+        "path": "tests/test262/test/built-ins/WeakSet/prototype/add/returns-this-when-ignoring-duplicate.js",
+        "sha256": "682e525a9c2076acee07b6a8f64b6b43a3f3b36e579ab428237bcf2ede042fde"
+      },
+      {
+        "path": "tests/test262/test/built-ins/WeakSet/prototype/add/returns-this.js",
+        "sha256": "4c8475874afb19532a7d65a5afa58379b9c94cdc4cb50e731faf2eb6de97ab5a"
+      },
+      {
+        "path": "tests/test262/test/built-ins/WeakSet/prototype/add/this-not-object-throw-boolean.js",
+        "sha256": "bd8f7fb571412e0409695c08d62467051c67d341e9e6c9b7da16591c40508c87"
+      },
+      {
+        "path": "tests/test262/test/built-ins/WeakSet/prototype/add/this-not-object-throw-null.js",
+        "sha256": "f2e79d0db0c4db400ceac0d1a7a09909f2dfbb09d17226091b153de5bf4e8270"
+      },
+      {
+        "path": "tests/test262/test/built-ins/WeakSet/prototype/add/this-not-object-throw-number.js",
+        "sha256": "c0e8b16ee7b3206c49849decb73476db8ab82b36eaf98a8390715e79482c1879"
+      },
+      {
+        "path": "tests/test262/test/built-ins/WeakSet/prototype/add/this-not-object-throw-string.js",
+        "sha256": "f8f05d5b7f470fd17ccb902128596b2f282772d90dc4b22c57755765221d83b7"
+      },
+      {
+        "path": "tests/test262/test/built-ins/WeakSet/prototype/add/this-not-object-throw-symbol.js",
+        "sha256": "315f830ece2ada691268c522aaa8cceae896e27a016a7b2c003fefacac4af372"
+      },
+      {
+        "path": "tests/test262/test/built-ins/WeakSet/prototype/add/this-not-object-throw-undefined.js",
+        "sha256": "72d83df2ee015b5a2f55d41012c45b5b15736dff1ce76172fc2efd74d3f687b0"
+      },
+      {
+        "path": "tests/test262/test/built-ins/WeakSet/prototype/add/throw-when-value-cannot-be-held-weakly.js",
+        "sha256": "b738907bd769f2924110755a176069bb71bac340c3b781a02abd417eeae13257"
+      },
+      {
+        "path": "tests/test262/test/built-ins/WeakSet/prototype/delete/delete-entry-initial-iterable.js",
+        "sha256": "e50aef9c1b8ff9b5b47a87dfeb539f0055a52eb300c579276515159709be8af3"
+      },
+      {
+        "path": "tests/test262/test/built-ins/WeakSet/prototype/delete/delete-object-entry.js",
+        "sha256": "df406efa8951d96b8861c60e83375248c91a9d576fa69f1ecaa471f736066d95"
+      },
+      {
+        "path": "tests/test262/test/built-ins/WeakSet/prototype/delete/delete-symbol-entry.js",
+        "sha256": "3f2ddeae68d22a6153e6f91c1a92534f226c84d7a537fd475fd2969e8d4c0ebb"
+      },
+      {
+        "path": "tests/test262/test/built-ins/WeakSet/prototype/delete/delete.js",
+        "sha256": "a9206ccee452cfb9057dc90e69c12e3a28bea4c8454312cd4790d793f431e3fe"
+      },
+      {
+        "path": "tests/test262/test/built-ins/WeakSet/prototype/delete/does-not-have-weaksetdata-internal-slot-array.js",
+        "sha256": "99bce9e6a0bcce1dbf52740c3603e1e902b1ba50e53d230c786ae39d5d178a7d"
+      },
+      {
+        "path": "tests/test262/test/built-ins/WeakSet/prototype/delete/does-not-have-weaksetdata-internal-slot-map.js",
+        "sha256": "291c011eaa06d0f46a67a67e671dd10d76f3f429ce9c91ae943b78d9bba5f847"
+      },
+      {
+        "path": "tests/test262/test/built-ins/WeakSet/prototype/delete/does-not-have-weaksetdata-internal-slot-object.js",
+        "sha256": "7b6d2a47655a48027631d0600013b52c141b3361ad7b9510c5eddf7bb27313f7"
+      },
+      {
+        "path": "tests/test262/test/built-ins/WeakSet/prototype/delete/does-not-have-weaksetdata-internal-slot-set.js",
+        "sha256": "20469331a003e47c098508c6dd7a55515af61256ffb7bbaa6abd36ed76bcb5a9"
+      },
+      {
+        "path": "tests/test262/test/built-ins/WeakSet/prototype/delete/does-not-have-weaksetdata-internal-slot-weakset-prototype.js",
+        "sha256": "a8e80a97d123d4c6ca48bdf4c6d754878b8155f43c16239f8ecd757ea04d40f7"
+      },
+      {
+        "path": "tests/test262/test/built-ins/WeakSet/prototype/delete/length.js",
+        "sha256": "1e9a585e6088ac0ef1b85bcb4c77e35090587a1d3ce409e0bd35281ee31b5175"
+      },
+      {
+        "path": "tests/test262/test/built-ins/WeakSet/prototype/delete/name.js",
+        "sha256": "300120b85893388f6f1289711d1ffe5bd99057de2b93e962f9af74d1146d2434"
+      },
+      {
+        "path": "tests/test262/test/built-ins/WeakSet/prototype/delete/not-a-constructor.js",
+        "sha256": "5e2a968a557db9bb47405f68d1707d3df3a485d878118d08e766134f6231fa9b"
+      },
+      {
+        "path": "tests/test262/test/built-ins/WeakSet/prototype/delete/returns-false-when-delete-is-noop.js",
+        "sha256": "51074274b1c8ee551bd0d7b8764cc38267b7a547cff783317ad9de11f51c355d"
+      },
+      {
+        "path": "tests/test262/test/built-ins/WeakSet/prototype/delete/returns-false-when-value-cannot-be-held-weakly.js",
+        "sha256": "0cd270413951e854e3a80a371ac5a9ff747f940b1890758c75e3c56a8ffe3895"
+      },
+      {
+        "path": "tests/test262/test/built-ins/WeakSet/prototype/delete/this-not-object-throw-boolean.js",
+        "sha256": "baa9639f0858fb862b01acd88425f755b9233440dca9ae71caf3f5f42c0525b7"
+      },
+      {
+        "path": "tests/test262/test/built-ins/WeakSet/prototype/delete/this-not-object-throw-null.js",
+        "sha256": "a35a99cfe8d916568a7bde952944ae61663ae75f0f5862521dca2cb909d54c7f"
+      },
+      {
+        "path": "tests/test262/test/built-ins/WeakSet/prototype/delete/this-not-object-throw-number.js",
+        "sha256": "3aa22996b9b0c099700899091b23564c6026a4ba5721f645eadf677e856d809e"
+      },
+      {
+        "path": "tests/test262/test/built-ins/WeakSet/prototype/delete/this-not-object-throw-string.js",
+        "sha256": "5137d195d7a5b8805a91e9fb6754cc53938426c7bbbfe8347ad9ab2d6d7205f4"
+      },
+      {
+        "path": "tests/test262/test/built-ins/WeakSet/prototype/delete/this-not-object-throw-symbol.js",
+        "sha256": "e4cbd89275488557a39ad3b1d61e1c42cc4a16dcf5fe024b96edce4fc2beeb37"
+      },
+      {
+        "path": "tests/test262/test/built-ins/WeakSet/prototype/delete/this-not-object-throw-undefined.js",
+        "sha256": "330aa138362e4a1650205af771d7bb3b5cc4be7604281dd64815833d57c352c1"
+      }
+    ],
+    "before_passed": 102,
+    "after_passed": 102,
+    "regressions": [],
+    "command": "TEST262_TEST_TIMEOUT_MS=10000 target/debug/run-test <inventory path>",
+    "process_deadline_seconds": 15,
+    "compare_runs": [
+      {
+        "scope": "Set/prototype/add",
+        "command": "TEST262_TEST_TIMEOUT_MS=10000 target/debug/compare-runs --target test/built-ins/Set/prototype/add --threads 4 --out target/iteration/task19-set-freeze/compare-Set-prototype-add",
+        "result": "identical in individual/sequential/parallel; zero failures",
+        "log_sha256": "52ae988e7cfd52360f7b487d13fc68b06fbfc868a1259161b9e8ec2614cf6132"
+      },
+      {
+        "scope": "Set/prototype/delete",
+        "command": "TEST262_TEST_TIMEOUT_MS=10000 target/debug/compare-runs --target test/built-ins/Set/prototype/delete --threads 4 --out target/iteration/task19-set-freeze/compare-Set-prototype-delete",
+        "result": "identical in individual/sequential/parallel; zero failures",
+        "log_sha256": "b98cdede53593a266b881d14701131a4c3904818a6d76791a6db0d52a3b9eb87"
+      },
+      {
+        "scope": "Set/prototype/clear",
+        "command": "TEST262_TEST_TIMEOUT_MS=10000 target/debug/compare-runs --target test/built-ins/Set/prototype/clear --threads 4 --out target/iteration/task19-set-freeze/compare-Set-prototype-clear",
+        "result": "identical in individual/sequential/parallel; zero failures",
+        "log_sha256": "6d5ecfb3940943483ebd5c42082d1c550aac45b71e86c51693ba4243b2b34137"
+      },
+      {
+        "scope": "WeakSet/prototype/add",
+        "command": "TEST262_TEST_TIMEOUT_MS=10000 target/debug/compare-runs --target test/built-ins/WeakSet/prototype/add --threads 4 --out target/iteration/task19-set-freeze/compare-WeakSet-prototype-add",
+        "result": "identical in individual/sequential/parallel; zero failures",
+        "log_sha256": "c3db1b72635c8728e97d9f15e8cd724aeb18a920450bf7a771009f27505e3d41"
+      },
+      {
+        "scope": "WeakSet/prototype/delete",
+        "command": "TEST262_TEST_TIMEOUT_MS=10000 target/debug/compare-runs --target test/built-ins/WeakSet/prototype/delete --threads 4 --out target/iteration/task19-set-freeze/compare-WeakSet-prototype-delete",
+        "result": "identical in individual/sequential/parallel; zero failures",
+        "log_sha256": "2272a39a7e21709ff076090fd0a47a761d3f34e0da55de612fc11a0632539d25"
+      }
+    ]
+  },
+  "node_cases": [
+    {
+      "path": "crates/quench-node-test/node-tests/test-assert.js",
+      "sha256": "abdbd4a951150107ed1b3e79cf7512676dd8c574871897eece2840e58fabaca9",
+      "before_exit": 1,
+      "after_exit": 1,
+      "before_outcome": "fail",
+      "after_outcome": "fail",
+      "same_stdout": true,
+      "same_stderr": true
+    },
+    {
+      "path": "crates/quench-node-test/node-tests/test-buffer.js",
+      "sha256": "b938f18167bda2b4b1086ce3dde62567f2b88d3956e428c7ac868d53eaee9b9e",
+      "before_exit": 0,
+      "after_exit": 0,
+      "before_outcome": "pass",
+      "after_outcome": "pass",
+      "same_stdout": true,
+      "same_stderr": true
+    },
+    {
+      "path": "crates/quench-node-test/node-tests/test-console.js",
+      "sha256": "8baa711a561337ba9876d5abb5dbaffda4c51a0f290fec1b55ac97ede3e832e6",
+      "before_exit": 0,
+      "after_exit": 0,
+      "before_outcome": "pass",
+      "after_outcome": "pass",
+      "same_stdout": true,
+      "same_stderr": true
+    },
+    {
+      "path": "crates/quench-node-test/node-tests/test-events.js",
+      "sha256": "b28edc595758bbec1c36d68a42d5997088c06567fe302a40f42266333d3dd0f6",
+      "before_exit": 0,
+      "after_exit": 0,
+      "before_outcome": "pass",
+      "after_outcome": "pass",
+      "same_stdout": true,
+      "same_stderr": true
+    },
+    {
+      "path": "crates/quench-node-test/node-tests/test-fs.js",
+      "sha256": "c491c4d6c778e42be8b7b686b5eb972402f91c1121414ac088859b4dc540eb21",
+      "before_exit": 0,
+      "after_exit": 0,
+      "before_outcome": "pass",
+      "after_outcome": "pass",
+      "same_stdout": true,
+      "same_stderr": true
+    },
+    {
+      "path": "crates/quench-node-test/node-tests/test-npm-ms.js",
+      "sha256": "bfb26f1533344a28ed40185d3837a11082429bef60537d8fe41d012874f9ecda",
+      "before_exit": 0,
+      "after_exit": 0,
+      "before_outcome": "pass",
+      "after_outcome": "pass",
+      "same_stdout": true,
+      "same_stderr": true
+    },
+    {
+      "path": "crates/quench-node-test/node-tests/test-npm-require.js",
+      "sha256": "c2569287eafbef543cf860f6f213296057461d11a55d4d9113c39d2221d19aac",
+      "before_exit": 0,
+      "after_exit": 0,
+      "before_outcome": "pass",
+      "after_outcome": "pass",
+      "same_stdout": true,
+      "same_stderr": true
+    },
+    {
+      "path": "crates/quench-node-test/node-tests/test-os.js",
+      "sha256": "c7f43025a6c951ba537cfbcb639d406e8be40c00577503c0ad4380fcc7e4cae5",
+      "before_exit": 0,
+      "after_exit": 0,
+      "before_outcome": "pass",
+      "after_outcome": "pass",
+      "same_stdout": true,
+      "same_stderr": true
+    },
+    {
+      "path": "crates/quench-node-test/node-tests/test-path.js",
+      "sha256": "d3f37e452511acd7a7d2a9cd9690eac4de62e8cdefb4ea44fb926184d52a10cf",
+      "before_exit": 0,
+      "after_exit": 0,
+      "before_outcome": "pass",
+      "after_outcome": "pass",
+      "same_stdout": true,
+      "same_stderr": true
+    },
+    {
+      "path": "crates/quench-node-test/node-tests/test-process.js",
+      "sha256": "3ff97a65faa729f43bad07f2f9ad652526d9645938a7ca2db0883e6ea6eb8300",
+      "before_exit": 0,
+      "after_exit": 0,
+      "before_outcome": "pass",
+      "after_outcome": "pass",
+      "same_stdout": false,
+      "same_stderr": true
+    },
+    {
+      "path": "crates/quench-node-test/node-tests/test-querystring.js",
+      "sha256": "1577798d2efee1255a81fea075411ef443bb102f904103f1a783df466ab52f9f",
+      "before_exit": 0,
+      "after_exit": 0,
+      "before_outcome": "pass",
+      "after_outcome": "pass",
+      "same_stdout": true,
+      "same_stderr": true
+    },
+    {
+      "path": "crates/quench-node-test/node-tests/test-string-replace.js",
+      "sha256": "d55ebf6c8286cd46bd06d32155c1847be995153ee15cdb904b89e6359bd260d0",
+      "before_exit": 0,
+      "after_exit": 0,
+      "before_outcome": "pass",
+      "after_outcome": "pass",
+      "same_stdout": true,
+      "same_stderr": true
+    },
+    {
+      "path": "crates/quench-node-test/node-tests/test-timers-interval-promises.js",
+      "sha256": "a95b18b34e7926ee0f99f94fb13a7078808ed1dda4f6a52a4229319775a77196",
+      "before_exit": 0,
+      "after_exit": 0,
+      "before_outcome": "pass",
+      "after_outcome": "pass",
+      "same_stdout": true,
+      "same_stderr": true
+    },
+    {
+      "path": "crates/quench-node-test/node-tests/test-timers-promises.js",
+      "sha256": "19e76797a68ad8bbacd8eec146034d76b52c359190c2a815e5912ef6143b29c3",
+      "before_exit": 0,
+      "after_exit": 0,
+      "before_outcome": "pass",
+      "after_outcome": "pass",
+      "same_stdout": true,
+      "same_stderr": true
+    },
+    {
+      "path": "crates/quench-node-test/node-tests/test-timers.js",
+      "sha256": "006c3be6938a3b30c116e67b0537a32e7954816974b90b4b86138dba8ec8f785",
+      "before_exit": 0,
+      "after_exit": 0,
+      "before_outcome": "pass",
+      "after_outcome": "pass",
+      "same_stdout": true,
+      "same_stderr": true
+    },
+    {
+      "path": "crates/quench-node-test/node-tests/test-url.js",
+      "sha256": "844f79fedb3cdf67dd55acb8e941ad57dcaf583699325205b473b4a667201152",
+      "before_exit": 0,
+      "after_exit": 0,
+      "before_outcome": "pass",
+      "after_outcome": "pass",
+      "same_stdout": true,
+      "same_stderr": true
+    },
+    {
+      "path": "crates/quench-node-test/node-tests/test-util.js",
+      "sha256": "35d4374b10c6bae1e8a9097ed621b44877c4c7cfb52623f40801227330080d3f",
+      "before_exit": 0,
+      "after_exit": 0,
+      "before_outcome": "pass",
+      "after_outcome": "pass",
+      "same_stdout": true,
+      "same_stderr": true
+    },
+    {
+      "path": "crates/quench-node-test/node-tests/test-vm.js",
+      "sha256": "c6c8c738d71dcf63566e63455f05942196f9f3c78f0eb06c39013e36be8b51dc",
+      "before_exit": 0,
+      "after_exit": 0,
+      "before_outcome": "pass",
+      "after_outcome": "pass",
+      "same_stdout": true,
+      "same_stderr": true
+    },
+    {
+      "path": "crates/quench-node-test/node-tests/test-zlib-sync.js",
+      "sha256": "0a1fb4dc500489590926af26759f7224b3dc5624ce86e5ceffdb82154561984a",
+      "before_exit": 0,
+      "after_exit": 0,
+      "before_outcome": "pass",
+      "after_outcome": "pass",
+      "same_stdout": true,
+      "same_stderr": true
+    },
+    {
+      "path": "crates/quench-node-test/node-tests/test-zlib.js",
+      "sha256": "f9e0b16e140ba00b7f2755dcbf0f8685ee8108d0acb8acdd574cdbb90a2e5801",
+      "before_exit": 0,
+      "after_exit": 0,
+      "before_outcome": "pass",
+      "after_outcome": "pass",
+      "same_stdout": true,
+      "same_stderr": true
+    }
+  ],
+  "node_stdout_difference": "test-process.js prints the worker PID (71130 before, 71150 after); its exit/completion/stderr remain identical.",
+  "oracle_controls": {
+    "frozen_Set": "target/iteration/task19-set-freeze/controls-after.json",
+    "frozen_Set_matches": [
+      "file",
+      "eval",
+      "worker"
+    ],
+    "integrity_matrix": "target/iteration/task19-set-freeze/integrity-controls.json",
+    "frozen_Set_WeakSet_matches": 4,
+    "preexisting_seal_preventExtensions_metadata_mismatches": 8
+  },
+  "remaining_gaps": [
+    "The diagnostic reader still replaces the host allowedNodeEnvironmentFlags table with a fixture-shaped six-entry Set. A Rust-owned Node subclass policy must replace it; generic frozen Sets cannot supply Node-specific public no-op mutators.",
+    "The pinned upstream allowed-flags fixture aborts during legacy parsing both before and after (-SIGABRT, no completion record).",
+    "Legacy Set/WeakSet seal and preventExtensions metadata is incorrect before and after; internal mutations are already correct for those controls.",
+    "Production Node is still legacy; these results do not qualify the final single-VM inventory."
+  ],
+  "raw_evidence": "target/iteration/task19-set-freeze",
+  "full_suites_run": false,
+  "new_unit_tests": 0
+}

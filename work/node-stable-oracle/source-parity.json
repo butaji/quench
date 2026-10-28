@@ -1,0 +1,7 @@
+{
+  "raw_quench_inventory_hash": "a3820c977f97ed07",
+  "parallel_sources": 5015,
+  "all_source_bytes_equal": true,
+  "official_runner_planned": 5012,
+  "selection_note": "Stock official harness status rules retained; its result count is not substituted for raw Quench inventory."
+}

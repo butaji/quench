@@ -1,0 +1,477 @@
+{
+  "schema": 1,
+  "task": "20",
+  "kind": "affected_stage_requalification",
+  "captured_date": "2026-10-07",
+  "source": {
+    "revision": "b4b3ca277daf0edb739129fc4315f3ffd5dfb9ac",
+    "dirty": true,
+    "host": "macos-aarch64",
+    "runner": "target/iteration/run-stages-next",
+    "runner_sha256": "2a9324bf79c60ce4f75d261aac1eba76d63f840fa82351bf39b16cbd16ba4e40",
+    "compare_runs": "target/iteration/compare-runs",
+    "compare_runs_sha256": "f4555a24036ff2f1fba5d33fbca63bab39db961eb71cd191e7df1fa65cd0566c",
+    "outer_parallel_stages": 4,
+    "per_stage_jobs": 1,
+    "stage_timeout_ms": 900000,
+    "stage114_timeout_ms": 60000
+  },
+  "corpus": {
+    "path": "tests/test262",
+    "revision": "f2d1435644797268dca1f7988cad5a4e89ccd8d2",
+    "stage_definitions": "docs/STAGES.md",
+    "stage_definitions_sha256": "4cb13c366db7ed8d7ae0a1b7fe63eb18f93def77fd09231630ba5050f7d7d3d2"
+  },
+  "scope": {
+    "full_test262_run": false,
+    "unit_tests_run": false,
+    "affected_stage_ids": [
+      10,
+      11,
+      26,
+      34,
+      35,
+      36,
+      37,
+      38,
+      39,
+      46,
+      47,
+      49,
+      50,
+      58,
+      61,
+      79,
+      80,
+      81
+    ],
+    "stage114_exact_owner_paths": 48,
+    "reason": "Requalifies only stages with changed Promise/GC/compiler/error owners and the unchanged, exact 48-path Stage 114 owner selection. Reuses owner-hash-identical slices; module compile behavior and the Stage 94 corpus conflict are outside this source change."
+  },
+  "owner_stage_groups": {
+    "10,11,26": [
+      "crates/quench-runtime-next/src/bytecode/validate.rs",
+      "crates/quench-runtime-next/src/compile/liveness.rs",
+      "crates/quench-runtime-next/src/compile/numeric.rs",
+      "crates/quench-runtime-next/src/compile/rewrite.rs"
+    ],
+    "34-39,49,50,61": [
+      "crates/quench-runtime-next/src/api_native.rs",
+      "crates/quench-runtime-next/src/vm/activation_lifecycle.rs",
+      "crates/quench-runtime-next/src/vm/embedding.rs",
+      "crates/quench-runtime-next/src/vm/generator.rs",
+      "crates/quench-runtime-next/src/vm/promise.rs",
+      "crates/quench-runtime-next/src/vm/promise_async.rs",
+      "crates/quench-runtime-next/src/vm/promise_jobs.rs"
+    ],
+    "46,58": [
+      "crates/quench-runtime-next/src/vm/error.rs"
+    ],
+    "47,79-81": [
+      "crates/quench-runtime-next/src/vm/gc.rs"
+    ]
+  },
+  "owner_source_sha256": {
+    "crates/quench-runtime-next/src/bytecode/validate.rs": "4f8b7d20c196a1aa88e7dd22e90ca8e0c832b436277490d4f2adb1c6b61d487f",
+    "crates/quench-runtime-next/src/compile/liveness.rs": "419da8fca4d67e6e9585dce023382c4008492c9bbf5fbc8a65ab01705ab8bec8",
+    "crates/quench-runtime-next/src/compile/numeric.rs": "26a3cd4f40b84efa7936106bbb8497430b03b023d0a7f5c4d8a0ff95ad5dd980",
+    "crates/quench-runtime-next/src/compile/rewrite.rs": "92fe73df38aa3538eb0750d959236a96dc10c3db7cebca84e6d774c64ebb3327",
+    "crates/quench-runtime-next/src/api_native.rs": "4966b69c6e740483223a992a36e19e2679335fc8c5e3bb2d3965e789dc43d457",
+    "crates/quench-runtime-next/src/vm/activation_lifecycle.rs": "f56637ab35a0c0440dc6b4578da4300970bd1fa8eeceeb1884803cdc29c36b38",
+    "crates/quench-runtime-next/src/vm/embedding.rs": "960ffb5da251610ba1d4ac1fa35eaaa32a57d1ac3f0237b9ed56a7b18273c274",
+    "crates/quench-runtime-next/src/vm/generator.rs": "1f2f27581089d1b932bd9421a43e1601b00e229c9fa88413e588a71ced3c47df",
+    "crates/quench-runtime-next/src/vm/promise.rs": "40078ad69892d0a5a42547f3943326c5fa3f6127579e6e9e436878cd17d2a606",
+    "crates/quench-runtime-next/src/vm/promise_async.rs": "51996aa1ba295083c0ee0e63bc8a0e8e32d7ca4d49d903df41f8d53297d41f57",
+    "crates/quench-runtime-next/src/vm/promise_jobs.rs": "9cb3c6e7ebd3c1e78292d560c6988b97e10e2d102b706911bd1099ebfcaf3a54",
+    "crates/quench-runtime-next/src/vm/error.rs": "d13d83c6f4e156069003eeb5b98bbf70ba0d8dac2f8ada194dca8a50858ed146",
+    "crates/quench-runtime-next/src/vm/gc.rs": "2056ef7bb23b478c3061318c458fc3c71e2930f1db03728e45eb858bdc9fab81"
+  },
+  "affected_stages": [
+    {
+      "stage": 10,
+      "stage_path": "10",
+      "passed": 11102,
+      "failed": 0,
+      "total": 11102,
+      "report": "target/iteration/task20-refresh-2026-10-07/stage-10.json",
+      "report_sha256": "b6c807644c14e3503044bd607f667468c57c935e7ece2e08aef7ae34506d42d3",
+      "comparison": {
+        "baseline_report": "target/iteration/test262-pin-f2d-stage-10-final.json",
+        "baseline_sha256": "479d3b830f7239ee8f10a16a2c767e7e6a135d1fcfaa42dc4b944cf01d69cb25",
+        "current_report": "target/iteration/task20-refresh-2026-10-07/stage-10.json",
+        "current_sha256": "b6c807644c14e3503044bd607f667468c57c935e7ece2e08aef7ae34506d42d3",
+        "exit_code": 0,
+        "verdict": "regressions=0"
+      }
+    },
+    {
+      "stage": 11,
+      "stage_path": "11",
+      "passed": 217,
+      "failed": 0,
+      "total": 217,
+      "report": "target/iteration/task20-refresh-2026-10-07/stage-11.json",
+      "report_sha256": "f436965b8e0d8c21d6c22182e9a454280190bbc1f2dfb35cc7a9c6e900c2198d",
+      "comparison": {
+        "baseline_report": "target/iteration/task20-current-baseline-stage-11.json",
+        "baseline_sha256": "4e2ae0d680763b52f5b492897281fa6b0977d76126a8e49d5d1c3da5f3b39da0",
+        "current_report": "target/iteration/task20-refresh-2026-10-07/stage-11.json",
+        "current_sha256": "f436965b8e0d8c21d6c22182e9a454280190bbc1f2dfb35cc7a9c6e900c2198d",
+        "exit_code": 0,
+        "verdict": "regressions=0"
+      }
+    },
+    {
+      "stage": 26,
+      "stage_path": "26",
+      "passed": 9337,
+      "failed": 0,
+      "total": 9337,
+      "report": "target/iteration/task20-refresh-2026-10-07/stage-26.json",
+      "report_sha256": "8d43f563f3774a5243d6d8a573a56576784020c04cb2d5c10ec95679e14b0eb5",
+      "comparison": {
+        "baseline_report": "target/iteration/task20-current-baseline-stage-26.json",
+        "baseline_sha256": "ad091518e1115d0b5f063105fc9621e51345cdbaa0d25b43a156f36c6e01e408",
+        "current_report": "target/iteration/task20-refresh-2026-10-07/stage-26.json",
+        "current_sha256": "8d43f563f3774a5243d6d8a573a56576784020c04cb2d5c10ec95679e14b0eb5",
+        "exit_code": 0,
+        "verdict": "regressions=0"
+      }
+    },
+    {
+      "stage": 34,
+      "stage_path": "34",
+      "passed": 104,
+      "failed": 0,
+      "total": 104,
+      "report": "target/iteration/task20-refresh-2026-10-07/stage-34.json",
+      "report_sha256": "413da21f0d86b8ce40bbcaebac408a917123342c99b5bd1f8850c8daadd052de",
+      "comparison": {
+        "baseline_report": "target/iteration/task20-current-baseline-stage-34.json",
+        "baseline_sha256": "0bed9ae6c0f934e27569d2432d78c3fb9f97f3adc4ab72909d5c43fc19780399",
+        "current_report": "target/iteration/task20-refresh-2026-10-07/stage-34.json",
+        "current_sha256": "413da21f0d86b8ce40bbcaebac408a917123342c99b5bd1f8850c8daadd052de",
+        "exit_code": 0,
+        "verdict": "regressions=0"
+      }
+    },
+    {
+      "stage": 35,
+      "stage_path": "35",
+      "passed": 38,
+      "failed": 0,
+      "total": 38,
+      "report": "target/iteration/task20-refresh-2026-10-07/stage-35.json",
+      "report_sha256": "107159612fb80231f9b4115c56f38edd6398263594532b824adba121e4369548",
+      "comparison": {
+        "baseline_report": "target/iteration/task20-current-baseline-stage-35.json",
+        "baseline_sha256": "9d69d2c266d2940d3f084d05f6e061ed27bcb419fff21f9d5128230463f49208",
+        "current_report": "target/iteration/task20-refresh-2026-10-07/stage-35.json",
+        "current_sha256": "107159612fb80231f9b4115c56f38edd6398263594532b824adba121e4369548",
+        "exit_code": 0,
+        "verdict": "regressions=0"
+      }
+    },
+    {
+      "stage": 36,
+      "stage_path": "36",
+      "passed": 18,
+      "failed": 0,
+      "total": 18,
+      "report": "target/iteration/task20-refresh-2026-10-07/stage-36.json",
+      "report_sha256": "b9871d375fd64b374a8ac0d50ad4506a3a2017ef4d80e05fb4b7e5c65a0789ad",
+      "comparison": {
+        "baseline_report": "target/iteration/task20-current-baseline-stage-36.json",
+        "baseline_sha256": "3f63c79744dfb3c9042d18e06f64a1f34a8a817a0430a82b6a8a49f81b5d91f9",
+        "current_report": "target/iteration/task20-refresh-2026-10-07/stage-36.json",
+        "current_sha256": "b9871d375fd64b374a8ac0d50ad4506a3a2017ef4d80e05fb4b7e5c65a0789ad",
+        "exit_code": 0,
+        "verdict": "regressions=0"
+      }
+    },
+    {
+      "stage": 37,
+      "stage_path": "37",
+      "passed": 23,
+      "failed": 0,
+      "total": 23,
+      "report": "target/iteration/task20-refresh-2026-10-07/stage-37.json",
+      "report_sha256": "8d90b08119aeac24abf11142c373399739878c50c780cb613576b85f7f435f5f",
+      "comparison": {
+        "baseline_report": "target/iteration/task20-current-baseline-stage-37.json",
+        "baseline_sha256": "2c1c5d7f026cbc620744e4cd3064b89c8b9901b20b8658715757105325ba4102",
+        "current_report": "target/iteration/task20-refresh-2026-10-07/stage-37.json",
+        "current_sha256": "8d90b08119aeac24abf11142c373399739878c50c780cb613576b85f7f435f5f",
+        "exit_code": 0,
+        "verdict": "regressions=0"
+      }
+    },
+    {
+      "stage": 38,
+      "stage_path": "38",
+      "passed": 48,
+      "failed": 0,
+      "total": 48,
+      "report": "target/iteration/task20-refresh-2026-10-07/stage-38.json",
+      "report_sha256": "c9e222dd415c0b0b5f1f0b0d59ba9a19cff12cfef8235558dfe0612abe25287d",
+      "comparison": {
+        "baseline_report": "target/iteration/task20-current-baseline-stage-38.json",
+        "baseline_sha256": "a654e160c1660bde23542e6b64fc005de1633e633a4e24c5186f25a1a4bf4b49",
+        "current_report": "target/iteration/task20-refresh-2026-10-07/stage-38.json",
+        "current_sha256": "c9e222dd415c0b0b5f1f0b0d59ba9a19cff12cfef8235558dfe0612abe25287d",
+        "exit_code": 0,
+        "verdict": "regressions=0"
+      }
+    },
+    {
+      "stage": 39,
+      "stage_path": "39",
+      "passed": 13,
+      "failed": 0,
+      "total": 13,
+      "report": "target/iteration/task20-refresh-2026-10-07/stage-39.json",
+      "report_sha256": "e04f9e8a5ec9942b779fd887dda774f9c6cb0dcb58bf2f36b7f2e75b89665966",
+      "comparison": {
+        "baseline_report": "target/iteration/test262-pin-f2d-stage-39.json",
+        "baseline_sha256": "32568d12ec676fa032fdb2887b10f5ddf56cb68e8cfa99c0c5888f426cc26a0e",
+        "current_report": "target/iteration/task20-refresh-2026-10-07/stage-39.json",
+        "current_sha256": "e04f9e8a5ec9942b779fd887dda774f9c6cb0dcb58bf2f36b7f2e75b89665966",
+        "exit_code": 0,
+        "verdict": "regressions=0"
+      }
+    },
+    {
+      "stage": 46,
+      "stage_path": "46",
+      "passed": 93,
+      "failed": 0,
+      "total": 93,
+      "report": "target/iteration/task20-refresh-2026-10-07/stage-46.json",
+      "report_sha256": "1b308e7eabcd885fcdff06ebc0c16d02f51fe2481915511bbb5f774b56043ad6",
+      "comparison": {
+        "baseline_report": "target/iteration/task20-current-baseline-stage-46.json",
+        "baseline_sha256": "38630085355a4c0ba99240aef197e43db8f24ad0c2e89e0307fa02c5943391a5",
+        "current_report": "target/iteration/task20-refresh-2026-10-07/stage-46.json",
+        "current_sha256": "1b308e7eabcd885fcdff06ebc0c16d02f51fe2481915511bbb5f774b56043ad6",
+        "exit_code": 0,
+        "verdict": "regressions=0"
+      }
+    },
+    {
+      "stage": 47,
+      "stage_path": "47",
+      "passed": 47,
+      "failed": 0,
+      "total": 47,
+      "report": "target/iteration/task20-refresh-2026-10-07/stage-47.json",
+      "report_sha256": "d88893e9e422feb58fa19b2f4c5ef2a7c40cfca1027a8ccac3322818f264dde1",
+      "comparison": {
+        "baseline_report": "target/iteration/task20-current-baseline-stage-47.json",
+        "baseline_sha256": "87149f5bb5d089c35760c784b63ef9e10d5c3d8dc24a8cfbac0d345e9d0dc7ea",
+        "current_report": "target/iteration/task20-refresh-2026-10-07/stage-47.json",
+        "current_sha256": "d88893e9e422feb58fa19b2f4c5ef2a7c40cfca1027a8ccac3322818f264dde1",
+        "exit_code": 0,
+        "verdict": "regressions=0"
+      }
+    },
+    {
+      "stage": 49,
+      "stage_path": "49",
+      "passed": 23,
+      "failed": 0,
+      "total": 23,
+      "report": "target/iteration/task20-refresh-2026-10-07/stage-49.json",
+      "report_sha256": "0eeed3d9148262dd3093864bacd0fab0b53e81da2d6903fc9384258fe407e9ec",
+      "comparison": {
+        "baseline_report": "target/iteration/task20-current-baseline-stage-49.json",
+        "baseline_sha256": "6a2f6af667be1025d785b54668713f5488f1ab2bb6ce79045ee5bbef263c7841",
+        "current_report": "target/iteration/task20-refresh-2026-10-07/stage-49.json",
+        "current_sha256": "0eeed3d9148262dd3093864bacd0fab0b53e81da2d6903fc9384258fe407e9ec",
+        "exit_code": 0,
+        "verdict": "regressions=0"
+      }
+    },
+    {
+      "stage": 50,
+      "stage_path": "50",
+      "passed": 61,
+      "failed": 0,
+      "total": 61,
+      "report": "target/iteration/task20-refresh-2026-10-07/stage-50.json",
+      "report_sha256": "042d5f98e55128c811ce76bda0b552d0506d56e49fca3903af0312819c467392",
+      "comparison": {
+        "baseline_report": "target/iteration/task20-current-baseline-stage-50.json",
+        "baseline_sha256": "2147fe8251b8b44a0a192d13216967414043fa0b877bb9cd6b6e155d6feae43f",
+        "current_report": "target/iteration/task20-refresh-2026-10-07/stage-50.json",
+        "current_sha256": "042d5f98e55128c811ce76bda0b552d0506d56e49fca3903af0312819c467392",
+        "exit_code": 0,
+        "verdict": "regressions=0"
+      }
+    },
+    {
+      "stage": 58,
+      "stage_path": "58",
+      "passed": 94,
+      "failed": 0,
+      "total": 94,
+      "report": "target/iteration/task20-refresh-2026-10-07/stage-58.json",
+      "report_sha256": "f378d9963f50285ee069d7e4fe645935bfde2616dddb1852259e16f902eec42b",
+      "comparison": {
+        "baseline_report": "target/iteration/task20-current-baseline-stage-58.json",
+        "baseline_sha256": "7a53897b3449cbceedd991791437598bde19f808bf5188a4fbcbd725a85a8efb",
+        "current_report": "target/iteration/task20-refresh-2026-10-07/stage-58.json",
+        "current_sha256": "f378d9963f50285ee069d7e4fe645935bfde2616dddb1852259e16f902eec42b",
+        "exit_code": 0,
+        "verdict": "regressions=0"
+      }
+    },
+    {
+      "stage": 61,
+      "stage_path": "61",
+      "passed": 729,
+      "failed": 0,
+      "total": 729,
+      "report": "target/iteration/task20-refresh-2026-10-07/stage-61.json",
+      "report_sha256": "7b472cf53bd91adeba0acbc8f46b2dfb68fd40366c283f2bbe6e31e351889871",
+      "comparison": {
+        "baseline_report": "target/iteration/test262-pin-f2d-stage-61.json",
+        "baseline_sha256": "500bd15240061ba2e72a268b49bd1593aeca31976220ee58892f31a3efbfc05d",
+        "current_report": "target/iteration/task20-refresh-2026-10-07/stage-61.json",
+        "current_sha256": "7b472cf53bd91adeba0acbc8f46b2dfb68fd40366c283f2bbe6e31e351889871",
+        "exit_code": 0,
+        "verdict": "regressions=0"
+      }
+    },
+    {
+      "stage": 79,
+      "stage_path": "79",
+      "passed": 141,
+      "failed": 0,
+      "total": 141,
+      "report": "target/iteration/task20-refresh-2026-10-07/stage-79.json",
+      "report_sha256": "1e34efcf9674d788dcf1df026e3c157cff39492e11bd7ae9b064744af20f9275",
+      "comparison": {
+        "baseline_report": "target/iteration/task20-current-baseline-stage-79.json",
+        "baseline_sha256": "ff7549c37fb9bf64bba283559e9156793b796146aeb92085557c37b0e61cadfe",
+        "current_report": "target/iteration/task20-refresh-2026-10-07/stage-79.json",
+        "current_sha256": "1e34efcf9674d788dcf1df026e3c157cff39492e11bd7ae9b064744af20f9275",
+        "exit_code": 0,
+        "verdict": "regressions=0"
+      }
+    },
+    {
+      "stage": 80,
+      "stage_path": "80",
+      "passed": 29,
+      "failed": 0,
+      "total": 29,
+      "report": "target/iteration/task20-refresh-2026-10-07/stage-80.json",
+      "report_sha256": "8195c8004654925564611572f7e6c7b7944a90c582c138b40a2b43ca295a1f6d",
+      "comparison": {
+        "baseline_report": "target/iteration/task20-current-baseline-stage-80.json",
+        "baseline_sha256": "be60537d17020f9ed034195e5bcb5001c6353d04e737896cb5a9eb5382c2b842",
+        "current_report": "target/iteration/task20-refresh-2026-10-07/stage-80.json",
+        "current_sha256": "8195c8004654925564611572f7e6c7b7944a90c582c138b40a2b43ca295a1f6d",
+        "exit_code": 0,
+        "verdict": "regressions=0"
+      }
+    },
+    {
+      "stage": 81,
+      "stage_path": "81",
+      "passed": 85,
+      "failed": 0,
+      "total": 85,
+      "report": "target/iteration/task20-refresh-2026-10-07/stage-81.json",
+      "report_sha256": "111a69a0ee5528a2c4b02421e343a5c94b1ebd5fbb26e2cd9377f868c23f7ed1",
+      "comparison": {
+        "baseline_report": "target/iteration/task20-current-baseline-stage-81.json",
+        "baseline_sha256": "dbe9589dfa9e67ec792bfd3e7e6efe5151ccec8a8b9499640104f0c010d87946",
+        "current_report": "target/iteration/task20-refresh-2026-10-07/stage-81.json",
+        "current_sha256": "111a69a0ee5528a2c4b02421e343a5c94b1ebd5fbb26e2cd9377f868c23f7ed1",
+        "exit_code": 0,
+        "verdict": "regressions=0"
+      }
+    }
+  ],
+  "reused_unchanged_owner_slices": [
+    {
+      "stage": 14,
+      "owners": {
+        "crates/quench-runtime-next/src/vm/object_integrity.rs": "df152cef7fdac99f64ab9928d26ca3bbdfa59aabd109c45c8a85e9844ceb4a75"
+      },
+      "matches_report": "tasks/evidence/task20-current-affected-stages-2026-10-06.json"
+    },
+    {
+      "stage": 31,
+      "owners": {
+        "crates/quench-runtime-next/src/vm/array_modern.rs": "3bae1f1b0f8e99d058b6539cc4a4ba4c7adb357ff4e6b1d90e017931ef7bf454",
+        "crates/quench-runtime-next/src/vm/builtins.rs": "3f968219d8867d489b4d0b0ef980fa96c3f8f3e70a1c2a60e2522b46326a4fde"
+      },
+      "matches_report": "tasks/evidence/task20-current-affected-stages-2026-10-06.json"
+    },
+    {
+      "stage": 53,
+      "owners": {
+        "crates/quench-runtime-next/src/vm/json.rs": "12cf1d19afb386fba727b9a6508e657385409e6db33c4da5215c9a2c9df8c74e"
+      },
+      "matches_report": "tasks/evidence/task20-current-affected-stages-2026-10-06.json"
+    },
+    {
+      "stage": 60,
+      "owners": {
+        "crates/quench-runtime-next/src/vm/array_modern.rs": "3bae1f1b0f8e99d058b6539cc4a4ba4c7adb357ff4e6b1d90e017931ef7bf454",
+        "crates/quench-runtime-next/src/vm/builtins.rs": "3f968219d8867d489b4d0b0ef980fa96c3f8f3e70a1c2a60e2522b46326a4fde"
+      },
+      "matches_report": "tasks/evidence/task20-current-affected-stages-2026-10-06.json"
+    },
+    {
+      "stage": 66,
+      "owners": {
+        "crates/quench-runtime-next/src/vm/collections.rs": "a7b34a02c2b628d816072fd14b2e7f0fce38ea0b3912c46ac26ba53e08b33ab5"
+      },
+      "matches_report": "tasks/evidence/task20-current-affected-stages-2026-10-06.json"
+    },
+    {
+      "stage": 73,
+      "owners": {
+        "crates/quench-runtime-next/src/vm/symbol.rs": "02e93bbf1a9ac666ef57de3abfc9e9a74b7ecf36f1bb70669fc082f4640618e6"
+      },
+      "matches_report": "tasks/evidence/task20-current-affected-stages-2026-10-06.json"
+    }
+  ],
+  "stage114_subset": {
+    "stage": 114,
+    "selection_report": "target/iteration/task20-stage114-current-refresh/current.json",
+    "selection_report_sha256": "d91d0f49d6272fa8f84b78ada788c273f7ed35887c65dd79d8f2d3473e37eb94",
+    "baseline_projection": "target/iteration/task20-stage114-affected/baseline.json",
+    "baseline_projection_sha256": "bd0c21e03c99817d10aa07d88e301778a1b6e14bc2b3c4e019d5e36f22595e6d",
+    "runner_manifest": "target/iteration/task20-stage114-refresh-2026-10-07/run-manifest.json",
+    "runner_manifest_sha256": "6c0a3fe5ca4243d6aece878361e3ec3e72d9a90f282a1606d98be3f6a93560bc",
+    "current_report": "target/iteration/task20-stage114-refresh-2026-10-07/current.json",
+    "current_report_sha256": "6f51f8f57d780fbda94d5b5790979551b68061e29c41c7b5a9506f375354ed7a",
+    "passed": 48,
+    "failed": 0,
+    "total": 48,
+    "invocations": 48,
+    "comparison": {
+      "baseline_report": "target/iteration/task20-stage114-affected/baseline.json",
+      "baseline_sha256": "bd0c21e03c99817d10aa07d88e301778a1b6e14bc2b3c4e019d5e36f22595e6d",
+      "current_report": "target/iteration/task20-stage114-refresh-2026-10-07/current.json",
+      "current_sha256": "6f51f8f57d780fbda94d5b5790979551b68061e29c41c7b5a9506f375354ed7a",
+      "exit_code": 0,
+      "verdict": "regressions=0"
+    }
+  },
+  "result": {
+    "affected_stages_passed": 22202,
+    "affected_stages_failed": 0,
+    "affected_stages_total": 22202,
+    "stage114_passed": 48,
+    "stage114_failed": 0,
+    "stage114_total": 48,
+    "combined_selected_passed": 22250,
+    "combined_selected_failed": 0,
+    "stage_comparisons_with_zero_regressions": 19
+  }
+}

@@ -1,0 +1,19 @@
+   Compiling quench-runtime v0.1.0 (/workspace/scratch/quench-npm-file-url/crates/quench-runtime)
+    Finished `test` profile [unoptimized] target(s) in 2m 00s
+     Running unittests src/lib.rs (/workspace/quench/target/npm-file-url/debug/deps/quench_runtime-a37f4bae6097d42f)
+
+running 1 test
+
+thread 'vm::tests::collection_construction_survives_gc_in_iterator_and_entry_callbacks' (333762) panicked at crates/quench-runtime/src/vm/tests.rs:57:30:
+called `Result::unwrap()` on an `Err` value: JsError(ErrorMessage { payload: ErrorPayload { description: Text { message: "Error: Map method called on incompatible receiver", eval_parser_diagnostic: false }, thrown: Some(heap(69)), source_location: Some(ErrorSourceLocation { file: "collection-constructor-gc.js", line: 3, column: 7, source_line: Some("      for (const C of [Map, Set, WeakMap, WeakSet]) {") }) } })
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test vm::tests::collection_construction_survives_gc_in_iterator_and_entry_callbacks ... FAILED
+
+failures:
+
+failures:
+    vm::tests::collection_construction_survives_gc_in_iterator_and_entry_callbacks
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 625 filtered out; finished in 0.04s
+
+error: test failed, to rerun pass `-p quench-runtime --lib`

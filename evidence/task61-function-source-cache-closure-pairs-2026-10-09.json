@@ -1,0 +1,111 @@
+{
+  "task": 61,
+  "experiment": "Per-program/function-site immutable source string cache",
+  "date": "2026-10-09",
+  "diagnostic_only": true,
+  "source_revision": "85ac94453762079ad510432e45e97d37e60d4f3f",
+  "source_diff_sha256": "2098220c345f5a6df8db0827e207c59237389741c60c55263366ae0c59ad4f27",
+  "host": {
+    "platform": "macOS-26.5-arm64-arm-64bit",
+    "machine": "arm64",
+    "model": "Mac16,10",
+    "processor": "Apple M4",
+    "memory_bytes": 17179869184,
+    "resource_limits": "No container memory or CPU quota reported",
+    "measurement_backend": "/usr/bin/time -l"
+  },
+  "input": {
+    "path": "tasks/evidence/task61-normal-closure-10m-2026-10-09.cjs",
+    "sha256": "08ef4a8476b48cfbc784a53d205769adf3374e8836ad302d36d251b8bad8d109",
+    "iterations": 10000000,
+    "shape": "CJS IIFE creates/discards same anonymous normal-function closure at one function site"
+  },
+  "binaries": {
+    "baseline": {
+      "path": "target/iteration/task61-descriptor-transition-20261009/production/quench-node",
+      "sha256": "eabe4cb354506920ef9ef217bcc935403ec49b2d61748b8ff476b0efde334d28"
+    },
+    "candidate": {
+      "path": "target/iteration/task61-function-source-cache-production-20261009/production/quench-node",
+      "sha256": "cf3916764bd3b59ac3dcb91bd9787cb31ec01537245eaa785ae1cd9e7d6d1d57",
+      "build_command": "CARGO_TARGET_DIR=target/iteration/task61-function-source-cache-production-20261009 CARGO_INCREMENTAL=0 CARGO_PROFILE_PRODUCTION_STRIP=symbols cargo build --locked --offline --profile production -p quench-node --bin quench-node"
+    }
+  },
+  "measurement": {
+    "method": "11 alternating pairs, candidate first on odd pairs; /usr/bin/time -l; all runs exited zero",
+    "command": "/usr/bin/time -l <pinned-quench-node> tasks/evidence/task61-normal-closure-10m-2026-10-09.cjs",
+    "source_diff_expected_sha256": "2098220c345f5a6df8db0827e207c59237389741c60c55263366ae0c59ad4f27",
+    "runner": {
+      "path": "tasks/evidence/task61-function-source-cache-closure-pairs-2026-10-09.py",
+      "sha256": "5307757ca98f8a305dcbdd01b88dadfdd9c9ca41d5bb20de0eed28e806b2c68d"
+    },
+    "raw_pairs": {
+      "path": "tasks/evidence/task61-function-source-cache-closure-pairs-2026-10-09.csv",
+      "sha256": "91e5595a3cb41db72d66a49b0939b80f2fd2fb81d6dfe4336427f73ae4c7d185"
+    },
+    "outputs_match_all": true,
+    "output": "stdout was empty on all runs; every pair matched byte-for-byte",
+    "exit_zero_all": true,
+    "instructions_retired": {
+      "baseline_median": 282765021690.0,
+      "candidate_median": 230294436883.0,
+      "median_paired_improvement_percent": 18.561806472139118,
+      "candidate_better_pairs": 11,
+      "pairs": 11,
+      "paired_improvement_percent_range": [
+        18.49325604564236,
+        18.669673569307214
+      ]
+    },
+    "elapsed_seconds": {
+      "baseline_median": 11.18,
+      "candidate_median": 8.94,
+      "median_paired_improvement_percent": 20.035778175313062,
+      "candidate_better_pairs": 11,
+      "pairs": 11,
+      "paired_improvement_percent_range": [
+        14.616755793226385,
+        32.03463203463203
+      ]
+    },
+    "user_seconds": {
+      "baseline_median": 11.15,
+      "candidate_median": 8.91,
+      "median_paired_improvement_percent": 20.08968609865471,
+      "candidate_better_pairs": 11,
+      "pairs": 11,
+      "paired_improvement_percent_range": [
+        18.665464382326423,
+        25.337569499602857
+      ]
+    },
+    "maximum_rss_bytes": {
+      "baseline_median": 17973248.0,
+      "candidate_median": 18104320.0,
+      "median_paired_improvement_percent": -0.6386861313868614,
+      "candidate_better_pairs": 1,
+      "pairs": 11,
+      "paired_improvement_percent_range": [
+        -1.2704174228675136,
+        0.09115770282588878
+      ]
+    }
+  },
+  "interpretation": "The source cache candidate lowered retired instructions and elapsed time in all 11 pairs: median paired improvements of 18.56% and 20.04%. Maximum RSS was effectively flat (candidate median 0.64% higher; candidate lower in 1/11). This is focused microbenchmark evidence only, not an EarleyBoyer or V8-v7 fixture claim.",
+  "correctness_report": "target/iteration/task61-function-source-cache-gate-20261009/correctness-report.json",
+  "fixture_confirmation": {
+    "manifest": "tasks/evidence/task61-function-source-cache-earley-pairs-2026-10-09.json",
+    "manifest_sha256": "bc4bdeb017718c7d96864b0afd4217694f02c975a14fa4dec36c50f6cd1004d9",
+    "raw_pairs": "tasks/evidence/task61-function-source-cache-earley-pairs-2026-10-09.csv",
+    "raw_pairs_sha256": "221fdf9f99f383d19d733ce76cc7a9a1e8e2ae966f471ee195807e165ee60e1a",
+    "score_median_baseline": 634,
+    "score_median_candidate": 764,
+    "score_paired_change_percent": 20.283,
+    "instructions_paired_change_percent": -7.0329,
+    "elapsed_paired_change_percent": -9.3728,
+    "max_rss_paired_change_percent": -8.1561,
+    "pairs": 11,
+    "candidate_better_pairs": 11,
+    "normalized_output_matches": true
+  }
+}

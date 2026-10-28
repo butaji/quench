@@ -1,0 +1,12 @@
+    Blocking waiting for file lock on build directory
+   Compiling quench-runtime v0.1.0 (/workspace/quench/crates/quench-runtime)
+   Compiling quench-wasm v0.1.0 (/workspace/quench/crates/quench-wasm)
+   Compiling quench-node v0.1.0 (/workspace/quench/crates/quench-node)
+    Finished `iteration` profile [optimized] target(s) in 2m 53s
+     Running unittests src/lib.rs (work/host-build/iteration/deps/quench_node-65af69e1bb1f045c)
+
+running 1 test
+test modules::process_shared_vm::tests::canonical_process_root_survives_global_replacement_and_refreshes_with_the_vm ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 3 filtered out; finished in 0.03s
+

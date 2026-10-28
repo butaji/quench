@@ -1,0 +1,194 @@
+{
+  "tasks": [
+    "19",
+    "23",
+    "37",
+    "40",
+    "48",
+    "86"
+  ],
+  "source_head": "7e60169df033dd247f34199e084e3e8080a92a29",
+  "source_state": "dirty worktree",
+  "source_hashes": {
+    "crates/quench-runtime-next/src/wasm.rs": "81b381e454bc95bd21ac20f70caaba6f0c6b2991e022bf1221be4790d56376d3",
+    "crates/quench-runtime-next/src/wasm/memory.rs": "b6ca9973da7a8d3a8409c74eef432102c4ca087e22142b7f537f0ca6a6a5c053",
+    "crates/quench-runtime-next/src/wasm/table.rs": "4bdce8c86b00c61a550386f82697be46cb66fd9fe74fe219d7d7ab9d2ede527c",
+    "crates/quench-runtime-next/src/heap/cell.rs": "887d8c5af78f51f4a851d3f97ebae6ecdc6a67980bad70887d22a32f845d408b",
+    "crates/quench-runtime-next/src/vm/wasm.rs": "951879edcbb79c5b3abb232152a4786d019fd2686d2a5c0d7a968736c463422d",
+    "crates/quench-runtime-next/src/vm/wasm_table.rs": "0516d20ce72c2b5d03621be8490861ec115d201a62e1d82cf7e7c1c6bb44f8da",
+    "crates/quench-runtime-next/src/vm/dispatch.rs": "dc123b20a6d1c39b0a3c8ba973464421e87e11f6893044bd414715441685fa34",
+    "crates/quench-runtime-next/src/bytecode.rs": "2b65a3dcfb5bece4dff8d89fba688d4e617cdf3abc0a46ce584f08dc31fb4063",
+    "crates/quench-runtime-next/src/bytecode/validate.rs": "80e8f849a8e98d892ba794fe8dc0a9797c0825d7b6ca197245d9db56423e4e9c",
+    "crates/quench-runtime-next/src/bytecode/disassemble.rs": "6e28a33001ffa3a9267e9ee40b45b3610d1ddc00948a53623acfc3eff08b4bbb",
+    "crates/quench-wasm/src/shared.rs": "96312ea24f468c4eac82f16a5a53b5cf8a0d2f48fd9ad1a2ed8686622ee408eb"
+  },
+  "suite_head": "67c8b9dc32c47d61c05a1681df349d01c85fa8ff",
+  "suite_clean": true,
+  "host": "macOS-26.5-arm64-arm-64bit",
+  "rustc": "rustc 1.99.0 (b940084d7 2026-09-28) (Homebrew)",
+  "profile": "debug",
+  "residual_format": 53,
+  "obligation": "Execute unshared Memory32/Memory64 and custom page sizes through the existing shared memory cell, scalar ABI and dispatch; preserve unsigned indices and exact offset arithmetic, original imported type/page size/maximum and growth/lifecycle state.",
+  "representation": "WasmMemory and the existing traced resource retain the validated MemoryType as authority. Page size, index width, page/address caps, limits, size/growth results and import matching derive from it; implicit and explicit default page sizes compare by actual bytes. Structure admission is separate from host allocation representability, preserving valid maximal module definitions. MemoryAddress uses a raw 64-bit constant-pool offset and resource register; checked u64 addition traps before wrapping or rounding, and the existing WasmBits64 scalar representation carries exact effective addresses. No f64 address transport, Memory32-only offset role, identity side map or second executor. Init uses I32 data input/length and destination width; mixed copy uses each memory width and the smaller length width. Active data expressions validate against owning memory width. Shared index-size/grow-failure projection serves both memories and tables. Residual format53 rejects old MemoryAddress operand meanings; validation rejects non-WasmBits64 offset constants.",
+  "scope": "Previous 135-file table/host/import/lifecycle ratchet plus all top-level i64 memory declarations and all five pinned custom-page-sizes proposal files: 151 files. Matching frozen baseline/current directive IDs/input hashes and 60-second completed worker deadlines include ordinary Memory32 load/store/grow/bulk callers. No full Test262, Wasm, Node or benchmark run; production JS/Node execution is unchanged.",
+  "inventory": {
+    "path": "target/iteration/task37-wasm-memory-types-files.json",
+    "sha256": "f1dfc23f392f17b59362e54bd79a55ccea306b0864f4135fb36c3c203a5748ba"
+  },
+  "qualification": {
+    "files": 151,
+    "total": 36961,
+    "before_passed": 33535,
+    "passed": 35229,
+    "failed": 1732,
+    "gains": 1694,
+    "regressions": 0,
+    "gains_by_file": {
+      "crates/quench-wasm-test/testsuite/address64.wast": 242,
+      "crates/quench-wasm-test/testsuite/align64.wast": 74,
+      "crates/quench-wasm-test/testsuite/bulk64.wast": 70,
+      "crates/quench-wasm-test/testsuite/endianness64.wast": 69,
+      "crates/quench-wasm-test/testsuite/float_memory64.wast": 90,
+      "crates/quench-wasm-test/testsuite/load64.wast": 38,
+      "crates/quench-wasm-test/testsuite/memory64-imports.wast": 38,
+      "crates/quench-wasm-test/testsuite/memory64.wast": 54,
+      "crates/quench-wasm-test/testsuite/memory_copy64.wast": 523,
+      "crates/quench-wasm-test/testsuite/memory_fill64.wast": 36,
+      "crates/quench-wasm-test/testsuite/memory_grow64.wast": 49,
+      "crates/quench-wasm-test/testsuite/memory_init64.wast": 183,
+      "crates/quench-wasm-test/testsuite/memory_redundancy64.wast": 8,
+      "crates/quench-wasm-test/testsuite/memory_trap64.wast": 172,
+      "crates/quench-wasm-test/testsuite/proposals/custom-page-sizes/custom-page-sizes-invalid.wast": 4,
+      "crates/quench-wasm-test/testsuite/proposals/custom-page-sizes/custom-page-sizes.wast": 44
+    },
+    "exact_directive_ids": true,
+    "identical_input_hashes": true,
+    "complete_workers": true
+  },
+  "controls": {
+    "files": 16,
+    "total": 787,
+    "passed": 787,
+    "failed": 0,
+    "new_memory_directives": 45,
+    "same_runner": true,
+    "obligations": "Large unsigned indices, negative/all-ones and overflowing full-width offsets trap without aliasing; growth/maximum failure preserves size; zero-length boundary rules; overlap/mixed width copy; data init/drop; original memory width/page-size matching, custom one-byte pages and original current-size aliases."
+  },
+  "checks": {
+    "wasm_internal": 35,
+    "bytecode_internal": 19,
+    "heap_related": 21,
+    "frontend": 39,
+    "profile_feature_all_target_check": "passed",
+    "internal_obligations": "Extended existing serialized memory/raw-bit/GC unit to Memory64/I64 addresses and results, active offsets and malformed offset-constant admission. Independent instances, exact payloads, foreign/stale instance rejection, root transfer and collection remain covered; existing Memory32 import/bulk units retain ownership coverage. No new ordinary conformance unit."
+  },
+  "oracle": {
+    "path": "target/iteration/task37-wasm-memory-types-oracle.json",
+    "source": "target/iteration/task37-wasm-memory-types-oracle.cjs",
+    "sha256": "2ddf7bae47a01cb33b2cdc0329a12ff202817febad8cdb55d927ff74d1187061",
+    "source_sha256": "5905628a81e75e5bab1eebc877c1a0e56a37876d9376e991fa540ec5a9560305",
+    "result": {
+      "node": "v26.10.0",
+      "flags": [
+        "--no-sparkplug",
+        "--no-maglev",
+        "--no-turbofan",
+        "--wasm-jitless"
+      ],
+      "modules": 2,
+      "checks": 20,
+      "customPages": {
+        "supported": false,
+        "error": "WebAssembly.Module(): invalid memory limits flags 0xd @+34",
+        "qualification": "Local Node cannot serve as a custom-page oracle; pinned proposal and shared-Wast controls own this qualification."
+      },
+      "qualification": "Exact two shared-Wast modules: Memory64 unsigned addressing, 64-bit offset overflow, loads/stores, size/grow/failure state, zero-length bounds, init/drop, overlap/mixed copy and original-width imported size."
+    },
+    "qualification_limit": "Two exact modules extracted from shared-Wast controls agree on 20 values/traps with local Node JITs disabled. Node v26.10.0 rejects custom-page memory flags; custom-page qualification comes from the pinned proposal and shared-Wast controls, not the Node oracle. Does not qualify JS API installation, shared memory/threads or embedding reentry.",
+    "module_inputs": {
+      "target/iteration/task37-wasm-memory-types-custom-pages.wasm": "c65a3a2aef3b52726cf92edf61b86d9abefa577fafcf234400c2817c775c7e91",
+      "target/iteration/task37-wasm-memory-types-custom-pages.wat": "15ea7292b3ffb727a149908cd98ca5a14c6cf52992149ce618a631eb86dfecf9",
+      "target/iteration/task37-wasm-memory-types-oracle-0.wasm": "99b7214da28c5e4cd9864b6ab5aff9c30c8474043d943cf952baf463e86c4fa8",
+      "target/iteration/task37-wasm-memory-types-oracle-0.wat": "354cf2946c07abafe115cc81b00812dca8b0c28408bf021e512a894300f5f3dd",
+      "target/iteration/task37-wasm-memory-types-oracle-1.wasm": "5b4c68a22d65b01c491ae44db65b43eccd6bd9fc5b02e4f8c19559b24544b902",
+      "target/iteration/task37-wasm-memory-types-oracle-1.wat": "e7d7c39b254468ea8183ab15f08099ff606dbe217b70f01ef1de8dea0910b6be"
+    }
+  },
+  "specification": {
+    "memory_copy": "https://webassembly.github.io/spec/core/valid/instructions.html#valid-memory-copy",
+    "memory_execution": "https://webassembly.github.io/spec/core/exec/instructions.html#exec-memory-grow",
+    "validator_limits": "wasmparser 0.247.0 src/validator/core.rs check_memory_type and src/limits.rs max_wasm_memory32_pages/max_wasm_memory64_pages"
+  },
+  "reports": {
+    "before": {
+      "path": "target/iteration/task37-wasm-memory-types-before.json",
+      "sha256": "83b09ed238a23249f08eec46742972e6dda286d91ab96f0c2c1f2a23f77b9289",
+      "binary_sha256": "a580195ad39256546247f4797f5fca2e205139077da924d606d66ad6cf11551a",
+      "command_source": "provenance.command in this report"
+    },
+    "after": {
+      "path": "target/iteration/task37-wasm-memory-types-after.json",
+      "sha256": "ed987704650d10568f61093d2cbb19757fb6c6dc8b7eff3e447ba55e715f96d1",
+      "binary_sha256": "b783e5425fd08eff8f3f2479997b5eb22bb5b65df6a1141eda4eeb9f44d4d610",
+      "command_source": "provenance.command in this report"
+    },
+    "controls": {
+      "path": "target/iteration/task37-wasm-memory-types-controls.json",
+      "sha256": "21ae67cab21f14f3e84e22c2e7d088d827e072ae4e71bb9e5627c64c02e528ad",
+      "binary_sha256": "b783e5425fd08eff8f3f2479997b5eb22bb5b65df6a1141eda4eeb9f44d4d610",
+      "command_source": "provenance.command in this report"
+    }
+  },
+  "frozen_runner": {
+    "path": "target/iteration/task37-wasm-memory-types-runner",
+    "sha256": "b783e5425fd08eff8f3f2479997b5eb22bb5b65df6a1141eda4eeb9f44d4d610"
+  },
+  "logs": {
+    "runtime": {
+      "path": "target/iteration/task37-wasm-memory-types-runtime.log",
+      "sha256": "ed76b840190de5ac785f986743a76c081d4c454f311f875113cb4b8356fea557"
+    },
+    "frontend": {
+      "path": "target/iteration/task37-wasm-memory-types-frontend.log",
+      "sha256": "24965d039396b95614528fef8ce74d67a5cb87f7cf27cb9ba0d7501fda0505a9"
+    },
+    "bytecode": {
+      "path": "target/iteration/task37-wasm-memory-types-bytecode.log",
+      "sha256": "b0245eacac60323926e83785982a8a8df46b1ed9d0000f073354266943452741"
+    },
+    "heap": {
+      "path": "target/iteration/task37-wasm-memory-types-heap.log",
+      "sha256": "58615aa5b349158c90e5ca4bf8d94a43ce7c88dee7c16f50aff5d638c08a2dde"
+    },
+    "build": {
+      "path": "target/iteration/task37-wasm-memory-types-build.log",
+      "sha256": "8220b565d0a0350f133b10e213aa021fd9c5bc8adf36146cb149a900379e5f71"
+    },
+    "check": {
+      "path": "target/iteration/task37-wasm-memory-types-check.log",
+      "sha256": "01195d6fab2f12d48229bff7a1cc794f370ac598e4c47b95c6f1d1c93b2cb1a6"
+    },
+    "compare": {
+      "path": "target/iteration/task37-wasm-memory-types-compare.log",
+      "sha256": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+    },
+    "after": {
+      "path": "target/iteration/task37-wasm-memory-types-after.log",
+      "sha256": "9a4419325457758d95e87644d4ce5b73bbaa767164d18422166775bba7b638b3"
+    },
+    "before": {
+      "path": "target/iteration/task37-wasm-memory-types-before.log",
+      "sha256": "22b445365032b2203ce465da777e8658f88e114d939b664116ea8703e366259f"
+    },
+    "controls": {
+      "path": "target/iteration/task37-wasm-memory-types-controls.log",
+      "sha256": "354463f07b9d8949cfacfd814bf9d28dc2ff06d621c5a0c667ff2f9d87399169"
+    },
+    "oracle": {
+      "path": "target/iteration/task37-wasm-memory-types-oracle.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  },
+  "remaining": "Concrete typed/GC/non-null references, shared tables/memory and threads, SIMD and remaining proposals, JS/Wasm adapters and embedding reentry. Complete three-suite qualification, implemented Node inventory/migration, production cutover and cleanup remain open. Stage A stays open; Stage B has not started.",
+  "profile_limit": "Feature builds pass; profile execution attribution remains an independent task68 gap. No profile execution or performance claim."
+}

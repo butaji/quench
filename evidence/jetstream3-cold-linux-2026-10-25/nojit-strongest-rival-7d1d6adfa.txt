@@ -1,0 +1,35 @@
+argon2-wasm                  score x0.214 (bun)  rss x2.05 (bun) <
+web-ssr                      score x0.329 (bun)  rss x1.14 (bun) <
+validatorjs                  score x0.341 (node)  rss x1.75 (bun) <
+doxbee-async                 score x0.347 (bun)  rss x1.02 (bun) <
+sync-fs                      score x0.363 (node)  rss x1.54 (bun) <
+doxbee-promise               score x0.371 (bun)  rss x0.98 (bun) <
+async-fs                     score x0.409 (node)  rss x1.86 (bun) <
+chai-wtb                     score x0.410 (node)  rss x1.73 (bun) <
+babel-wtb                    score x0.421 (node)  rss x1.11 (bun) <
+postcss-wtb                  score x0.444 (node)  rss x1.26 (bun) <
+babel-minify-wtb             score x0.475 (node)  rss x1.17 (bun) <
+lazy-collections             score x0.530 (node)  rss x2.48 (bun) <
+bigint-noble-ed25519         score x0.545 (bun)  rss x1.24 (bun) <
+typescript-lib               score x0.545 (node)  rss x1.12 (bun) <
+json-parse-inspector         score x0.561 (bun)  rss x1.18 (bun) <
+js-tokens                    score x0.577 (node)  rss x2.55 (bun) <
+json-stringify-inspector     score x0.607 (bun)  rss x1.43 (bun) <
+UniPoker                     score x0.654 (node)  rss x1.81 (bun) <
+prettier-wtb                 score x0.736 (node)  rss x1.21 (bun) <
+espree-wtb                   score x0.737 (node)  rss x1.49 (bun) <
+babylon-wtb                  score x0.739 (node)  rss x1.59 (bun) <
+esprima-next-wtb             score x0.746 (node)  rss x1.45 (bun) <
+acorn-wtb                    score x0.767 (node)  rss x1.40 (bun) <
+source-map-wtb               score x0.883 (bun)  rss x1.42 (bun) <
+stanford-crypto-sha256       score x1.151 (node)  rss x2.14 (bun) <
+stanford-crypto-pbkdf2       score x1.233 (bun)  rss x2.15 (bun)
+hash-map                     score x1.239 (node)  rss x1.57 (bun)
+stanford-crypto-aes          score x1.288 (bun)  rss x1.08 (bun) <
+sqlite3-wasm                 score x2.069 (bun)  rss x1.23 (bun)
+tsf-wasm                     score x2.420 (bun)  rss x1.92 (bun)
+zlib-wasm                    score x2.640 (bun)  rss x1.92 (bun)
+quicksort-wasm               score x3.235 (bun)  rss x2.23 (bun)
+HashSet-wasm                 score x3.811 (bun)  rss x1.73 (bun)
+gcc-loops-wasm               score x4.154 (bun)  rss x1.93 (bun)
+no-JIT, strongest rival per test: 8 of 34 tests >=1.2x on both

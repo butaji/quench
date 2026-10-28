@@ -1,0 +1,39 @@
+{
+  "base_source": "e2e182a108b980a0989118282abf56e0d51e5bd7",
+  "patch": "work/operation-source-source.patch",
+  "patch_sha256": "35f849d9e4014b569cd52ec141695fc6f9b4c53a470d7a67c232eaa508754ac8",
+  "extra_fixture_sha256": {
+    "test-assignment-access-columns.js": "9b6fbb139899f88da985cc3bd8c0b73d43528ab200d86b9ee3807307bc3e7352",
+    "test-call-column-trivia.js": "a0fa50b8c00b1a523fde8e7eb3c319f2b94eb80318527465a79953e2382fd552",
+    "test-complex-call-columns.js": "25dcab082e631c182760e86096dc61b4b878d1136ae2398053fcba7056d3a7fd",
+    "test-getter-call-columns.js": "e5ee7c676710fc1b5cb143bdab84592b5529fe9982c7e099f1eaf0412a1bf1f5",
+    "test-optional-private-call-columns.js": "5fe124b587436066d7b3c0ec021b51db5ca0368a0e44001bd1c8699d3bb1fa99",
+    "test-property-access-columns.js": "fb44c5f6f93f775a9de3971df043f8dfa475e67dd6f329fcba1fc3bde3fac40e",
+    "test-source-line-terminators.js": "5af117909bcd0436df4a29887bf1fafa106dbb76ec6861f5f822ee20745c3048",
+    "test-special-call-columns.js": "9435cf6b9adf53a892493cfbd02764e5b9efafe0de1c2e1a41fbfe63448df32d"
+  },
+  "binaries": {
+    "cli": {
+      "path": "work/quench-operation-source-qualified",
+      "sha256": "3c3830fca7fe55e7c5a187f28faafc03bdc7fc1e88d7ba0cf088aa5b04d7d266",
+      "sha256_after": "3c3830fca7fe55e7c5a187f28faafc03bdc7fc1e88d7ba0cf088aa5b04d7d266"
+    },
+    "runner": {
+      "path": "work/host-build/iteration/run-parallel",
+      "sha256": "278ff6c3404156abcdc97f0f62abb2fcc2a2b0e86a392e346a2ed9008b5bb144",
+      "sha256_after": "278ff6c3404156abcdc97f0f62abb2fcc2a2b0e86a392e346a2ed9008b5bb144"
+    },
+    "api_tests": {
+      "path": "work/host-build/iteration/deps/child_entry-70660f0a4dee9e77",
+      "sha256": "32c1228ed8c219446b94cd7d7aab242cebcc83e5c877501fd8dd7333a8d46338",
+      "sha256_after": "32c1228ed8c219446b94cd7d7aab242cebcc83e5c877501fd8dd7333a8d46338"
+    }
+  },
+  "identity_checks": {
+    "cli": true,
+    "runner": true,
+    "api_tests": true
+  },
+  "api_exit_code": 0,
+  "reconciled_candidate_source": "8e3dd52762121f7ee9e10a1ce88088d89d32a6db"
+}

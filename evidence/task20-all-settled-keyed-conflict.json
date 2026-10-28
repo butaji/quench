@@ -1,0 +1,26 @@
+{
+  "task": "20",
+  "case": "tests/test262/test/built-ins/Promise/allSettledKeyed/result-property-descriptors.js",
+  "fixture_sha256": "2d51e6b5e88c8cf09abcc37d1d46a2f45cc34c6c3036243682bef49369ac1bd6",
+  "harness": "tests/test262/harness/propertyHelper.js",
+  "harness_sha256": "08bc29114d804c4f24f906bac950ee4dc9c93c659d93258e7b44a54283ba9bb8",
+  "suite_head": "6eec1ac9ee144dafd8f344d73a21f36bfc9f6755",
+  "obligation": "AllSettledKeyed result properties are ordinary writable/enumerable/configurable data properties.",
+  "conflict": "verifyProperty(result, \"fulfilled\", ...) deletes that configurable property through isConfigurable. The fixture supplies no restore option, then calls verifyProperty(result.fulfilled, \"status\", ...). The entry is undefined, so its descriptor verification throws TypeError.",
+  "evidence": "Unchanged helper applied to ordinary null-prototype result with ordinary settled-entry objects; identical deletion/undefined/TypeError in local Node and Quench.",
+  "control_stdout": "false\ntrue\ntrue\n",
+  "node_version": "v26.10.0",
+  "node_proposal_support": false,
+  "node_limitation": "Local Node lacks Promise.allSettledKeyed; the control proves ordinary descriptor/helper behavior, not an end-to-end implementation of the proposal.",
+  "raw_artifact_prefix": "target/iteration/task07-all-settled-keyed",
+  "fixture_modified": false,
+  "harness_modified": false,
+  "inventory_reduced": false,
+  "resolution": "Keep the exact failure open; a corrected upstream fixture must preserve coverage and requires separate suite pin review.",
+  "control_source_sha256": "d7715944eff10ce434371d8603dff63ddcd2ae9e4cd7e50f317fd296e68b66a9",
+  "control_result_explanation": [
+    "fulfilled property no longer exists after verifyProperty",
+    "result.fulfilled is undefined",
+    "verifying its status throws TypeError"
+  ]
+}

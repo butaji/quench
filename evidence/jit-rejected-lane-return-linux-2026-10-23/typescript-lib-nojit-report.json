@@ -1,0 +1,3188 @@
+{
+  "schema": 16,
+  "suite": "jet-stream3",
+  "jit_mode": "no-jit",
+  "jit_diagnostics": false,
+  "jit_wasm_root": null,
+  "jit_wasm_root_only": false,
+  "jit_wasm_root_first": false,
+  "jit_wasm_selective": false,
+  "jit_wasm_memcpy_ab": false,
+  "jit_wasm_memcpy_raw_ab": false,
+  "jit_wasm_memcpy_early_ab": false,
+  "jit_wasm_compare_branch_ab": false,
+  "jit_wasm_affine_pair_ab": false,
+  "jit_wasm_reference_body_cache_ab": false,
+  "jit_wasm_memcpy_leaf_ab": false,
+  "jit_wasm_selective_ab": false,
+  "created_unix_ns": 1792715861672753376,
+  "rounds_requested": 11,
+  "timeout_ms": 600000,
+  "source_revision": "2dc8133450742eab74f06aaa5de88b2d5fcdfff7",
+  "source_dirty": false,
+  "corpus": {
+    "pinned_revision": "06785cf861ac44855f168cbbe829278c2802e6de",
+    "checkout_revision": "06785cf861ac44855f168cbbe829278c2802e6de",
+    "checkout_clean": true,
+    "fixture_set_matches": false
+  },
+  "host": {
+    "uname": "Linux acfbe6f17cde 6.18.55 #1 SMP Wed Oct 14 19:45:18 UTC 2026 x86_64 GNU/Linux",
+    "rustc": "rustc 1.99.0 (b940084d7 2026-09-28)\nbinary: rustc\ncommit-hash: b940084d7eb6a299eb4bfeb8e34901bc051e7ac4\ncommit-date: 2026-09-28\nhost: x86_64-unknown-linux-gnu\nrelease: 1.99.0\nLLVM version: 23.1.1",
+    "model": null,
+    "memory_bytes": 18882674688,
+    "memory_limit_bytes": 17179869184,
+    "cpu_quota": "400000 100000",
+    "logical_cpus": 4,
+    "process_metrics_backend": "Linux wait4 rusage"
+  },
+  "engines": [
+    {
+      "name": "quench",
+      "executable": "/workspace/quench/target/production/quench-node",
+      "executable_sha256": "53756c38057a0ca96b69a97e2760782e0839a23a5ab7378496ccad58eacb29c2",
+      "version": "Quench shared-VM interpreter build; package 0.1.0",
+      "argv": [],
+      "environment": {
+        "HOME": "/home/agent",
+        "LANG": "C.UTF-8",
+        "LC_ALL": "C.UTF-8",
+        "PATH": "/tmp/quench-cargo/bin:/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/override:/opt/codex/runtimes/codex-primary-runtime/dependencies/python/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin:/opt/codex/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/fallback"
+      },
+      "inherits_environment": false,
+      "jit_mode": "interpreter",
+      "jit_proof_command": [
+        "/workspace/quench/target/production/quench-node"
+      ],
+      "jit_proof": "the measured shared VM executes interpreter bytecode; no guest JIT path is enabled",
+      "webassembly": true
+    },
+    {
+      "name": "bun",
+      "executable": "/tmp/jit-denotation-bun-runtime-2026-10-23/bench-runtimes/bun-linux-x64/bun",
+      "executable_sha256": "7ce7d6b654eddeec20afddf2396317fba6dc19ab52788a27e894e1806bf8f24b",
+      "version": "1.4.3",
+      "argv": [],
+      "environment": {
+        "BUN_JSC_useJIT": "0",
+        "HOME": "/home/agent",
+        "LANG": "C.UTF-8",
+        "LC_ALL": "C.UTF-8",
+        "PATH": "/tmp/quench-cargo/bin:/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/override:/opt/codex/runtimes/codex-primary-runtime/dependencies/python/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin:/opt/codex/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/fallback"
+      },
+      "inherits_environment": false,
+      "jit_mode": "disabled-and-probed",
+      "jit_proof_command": [
+        "BUN_JSC_useJIT=0",
+        "BUN_JSC_dumpOptions=1",
+        "/tmp/jit-denotation-bun-runtime-2026-10-23/bench-runtimes/bun-linux-x64/bun",
+        "-e",
+        "console.log(Bun.version)"
+      ],
+      "jit_proof": "command succeeded and reported \"useJIT=false\": 1.4.3\n\nModified JSC options:\n   dumpOptions=1 (default: 0)\n   useJIT=false (default: true)",
+      "webassembly": true
+    },
+    {
+      "name": "node",
+      "executable": "/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node",
+      "executable_sha256": "bc17c508ffeed0ec622934f9b7fa72f8e78da65350e63c3eceb56fa688aa5e12",
+      "version": "v24.19.0",
+      "argv": [
+        "--jitless"
+      ],
+      "environment": {
+        "HOME": "/home/agent",
+        "LANG": "C.UTF-8",
+        "LC_ALL": "C.UTF-8",
+        "PATH": "/tmp/quench-cargo/bin:/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/override:/opt/codex/runtimes/codex-primary-runtime/dependencies/python/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin:/opt/codex/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/fallback"
+      },
+      "inherits_environment": false,
+      "jit_mode": "disabled-and-probed",
+      "jit_proof_command": [
+        "/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node",
+        "--jitless",
+        "-e",
+        "console.log(process.execArgv.includes('--jitless'))"
+      ],
+      "jit_proof": "command succeeded and reported \"true\": true",
+      "webassembly": false
+    }
+  ],
+  "suite_inputs": [
+    {
+      "path": "quench-bench/jetstream/cli.js",
+      "size_bytes": 5600,
+      "modified_unix_ns": 1792524360887412696,
+      "sha256": "22ee4b987b07940dd7397ed7f88345c71acc415e2549b64bf45ba43f7572e5f0"
+    },
+    {
+      "path": "quench-bench/jetstream/JetStreamDriver.js",
+      "size_bytes": 110633,
+      "modified_unix_ns": 1792524359981088811,
+      "sha256": "f105bddfd402514b2325fe9ea6e1df5ce776a4ad4570a8006c7c8559159440fc"
+    },
+    {
+      "path": "quench-bench/jetstream/utils/params.js",
+      "size_bytes": 8047,
+      "modified_unix_ns": 1792524362115334866,
+      "sha256": "0e9d28c0fd2de5583c64678ffc61307b10d983bcb419fe2e3bb383c8b7ded647"
+    },
+    {
+      "path": "quench-bench/jetstream/utils/shell-config.js",
+      "size_bytes": 2352,
+      "modified_unix_ns": 1792524362115736207,
+      "sha256": "9a83000be5e6526a3c26a414fc3a23043e57ef8e4cd67aaff459066a2c347bca"
+    }
+  ],
+  "selected_fixtures": [
+    "quench-bench/jetstream/typescript-lib"
+  ],
+  "fixtures": {
+    "quench-bench/jetstream/typescript-lib": {
+      "source": {
+        "path": "quench-bench/jetstream/typescript-lib",
+        "size_bytes": 4096,
+        "modified_unix_ns": 1792524363121554381,
+        "sha256": "4311c39dd7f2d2e7dac6bcc09189098605edde278c3f6eb1849ae72cac716de0"
+      },
+      "valid": true,
+      "output_equal": true,
+      "summaries": {
+        "bun": {
+          "median_score": 0.48,
+          "median_max_rss_bytes": 197529600,
+          "valid_samples": 11
+        },
+        "node": {
+          "median_score": 0.55,
+          "median_max_rss_bytes": 318439424,
+          "valid_samples": 11
+        },
+        "quench": {
+          "median_score": 0.23,
+          "median_max_rss_bytes": 194936832,
+          "valid_samples": 11
+        }
+      },
+      "unsupported_engines": {},
+      "rounds": [
+        {
+          "round": 0,
+          "execution_order": [
+            "quench",
+            "bun",
+            "node"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 40706965591,
+              "peak_rss_bytes": 197529600,
+              "score": 0.12,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 66561,
+              "page_reclaims": 66561,
+              "involuntary_context_switches": 1167,
+              "host_before": {
+                "captured_unix_ns": 1792716063516813090,
+                "load_average": {
+                  "one_minute": 0.94,
+                  "five_minutes": 1.18,
+                  "fifteen_minutes": 1.22
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 343929,
+                    "cpu_percent": 1.3,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.7,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.2,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.1,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792716104241527641,
+                "load_average": {
+                  "one_minute": 1.4,
+                  "five_minutes": 1.27,
+                  "fifteen_minutes": 1.25
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 344032,
+                    "cpu_percent": 100.0,
+                    "command": "ps"
+                  },
+                  {
+                    "pid": 343929,
+                    "cpu_percent": 11.5,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.7,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.2,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.1,
+                    "command": "dockerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "Starting JetStream3\nRunning typescript-lib:\ntypescript-lib First-Score                       0.12 pts\ntypescript-lib Score                             0.12 pts\ntypescript-lib First-Time                     40481.58 ms \ntypescript-lib Total-Time                     40481.58 ms \ntypescript-lib Wall-Time                      40663.76 ms \n\nOverall:\nOverall First-Score                              0.12 pts\nOverall First-Time                            40481.58 ms \n\nOverall Score                                    0.12 pts\nOverall Wall-Time                             40666.35 ms \n\n",
+              "stderr": ""
+            },
+            "node": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 8688770727,
+              "peak_rss_bytes": 318427136,
+              "score": 0.62,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 79745,
+              "page_reclaims": 79745,
+              "involuntary_context_switches": 94,
+              "host_before": {
+                "captured_unix_ns": 1792716104255883212,
+                "load_average": {
+                  "one_minute": 1.4,
+                  "five_minutes": 1.27,
+                  "fifteen_minutes": 1.25
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 343929,
+                    "cpu_percent": 11.5,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.7,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.2,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.1,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792716112955873327,
+                "load_average": {
+                  "one_minute": 1.37,
+                  "five_minutes": 1.26,
+                  "fifteen_minutes": 1.25
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 343929,
+                    "cpu_percent": 10.3,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.7,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.2,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.1,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "Starting JetStream3\nRunning typescript-lib:\ntypescript-lib First-Score                       0.62 pts\ntypescript-lib Score                             0.62 pts\ntypescript-lib First-Time                     8081.12 ms \ntypescript-lib Total-Time                     8081.12 ms \ntypescript-lib Wall-Time                      8540.38 ms \n\nOverall:\nOverall First-Score                              0.62 pts\nOverall First-Time                            8081.12 ms \n\nOverall Score                                    0.62 pts\nOverall Wall-Time                             8543.35 ms \n\n",
+              "stderr": ""
+            },
+            "quench": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 21234066605,
+              "peak_rss_bytes": 194977792,
+              "score": 0.26,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 131204,
+              "page_reclaims": 131204,
+              "involuntary_context_switches": 83,
+              "host_before": {
+                "captured_unix_ns": 1792716042259868286,
+                "load_average": {
+                  "one_minute": 0.91,
+                  "five_minutes": 1.19,
+                  "fifteen_minutes": 1.23
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.7,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 343929,
+                    "cpu_percent": 0.4,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.2,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.1,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792716063508323145,
+                "load_average": {
+                  "one_minute": 0.94,
+                  "five_minutes": 1.18,
+                  "fifteen_minutes": 1.22
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 344020,
+                    "cpu_percent": 100.0,
+                    "command": "ps"
+                  },
+                  {
+                    "pid": 343929,
+                    "cpu_percent": 1.3,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.7,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.2,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.1,
+                    "command": "dockerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "Starting JetStream3\nRunning typescript-lib:\ntypescript-lib First-Score                       0.26 pts\ntypescript-lib Score                             0.26 pts\ntypescript-lib First-Time                     19589.98 ms \ntypescript-lib Total-Time                     19589.98 ms \ntypescript-lib Wall-Time                      21116.25 ms \n\nOverall:\nOverall First-Score                              0.26 pts\nOverall First-Time                            19589.98 ms \n\nOverall Score                                    0.26 pts\nOverall Wall-Time                             21123.32 ms \n\n",
+              "stderr": ""
+            }
+          }
+        },
+        {
+          "round": 1,
+          "execution_order": [
+            "bun",
+            "node",
+            "quench"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 9469508320,
+              "peak_rss_bytes": 199565312,
+              "score": 0.54,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 68816,
+              "page_reclaims": 68816,
+              "involuntary_context_switches": 57,
+              "host_before": {
+                "captured_unix_ns": 1792716112964542916,
+                "load_average": {
+                  "one_minute": 1.37,
+                  "five_minutes": 1.26,
+                  "fifteen_minutes": 1.25
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 343929,
+                    "cpu_percent": 10.3,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.7,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.2,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.1,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792716122445369940,
+                "load_average": {
+                  "one_minute": 1.31,
+                  "five_minutes": 1.25,
+                  "fifteen_minutes": 1.24
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 344055,
+                    "cpu_percent": 100.0,
+                    "command": "ps"
+                  },
+                  {
+                    "pid": 343929,
+                    "cpu_percent": 9.2,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.7,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.2,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.1,
+                    "command": "dockerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "Starting JetStream3\nRunning typescript-lib:\ntypescript-lib First-Score                       0.54 pts\ntypescript-lib Score                             0.54 pts\ntypescript-lib First-Time                     9202.45 ms \ntypescript-lib Total-Time                     9202.45 ms \ntypescript-lib Wall-Time                      9420.94 ms \n\nOverall:\nOverall First-Score                              0.54 pts\nOverall First-Time                            9202.45 ms \n\nOverall Score                                    0.54 pts\nOverall Wall-Time                             9423.87 ms \n\n",
+              "stderr": ""
+            },
+            "node": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 8886155491,
+              "peak_rss_bytes": 332713984,
+              "score": 0.59,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 83173,
+              "page_reclaims": 83173,
+              "involuntary_context_switches": 230,
+              "host_before": {
+                "captured_unix_ns": 1792716122462080726,
+                "load_average": {
+                  "one_minute": 1.31,
+                  "five_minutes": 1.25,
+                  "fifteen_minutes": 1.24
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 344056,
+                    "cpu_percent": 100.0,
+                    "command": "ps"
+                  },
+                  {
+                    "pid": 343929,
+                    "cpu_percent": 9.2,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.7,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.2,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.1,
+                    "command": "dockerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792716131364132365,
+                "load_average": {
+                  "one_minute": 1.26,
+                  "five_minutes": 1.24,
+                  "fifteen_minutes": 1.24
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 343929,
+                    "cpu_percent": 8.5,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.7,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.2,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.1,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "Starting JetStream3\nRunning typescript-lib:\ntypescript-lib First-Score                       0.59 pts\ntypescript-lib Score                             0.59 pts\ntypescript-lib First-Time                     8471.40 ms \ntypescript-lib Total-Time                     8471.40 ms \ntypescript-lib Wall-Time                      8780.57 ms \n\nOverall:\nOverall First-Score                              0.59 pts\nOverall First-Time                            8471.40 ms \n\nOverall Score                                    0.59 pts\nOverall Wall-Time                             8783.43 ms \n\n",
+              "stderr": ""
+            },
+            "quench": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 22213444550,
+              "peak_rss_bytes": 194920448,
+              "score": 0.25,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 131799,
+              "page_reclaims": 131799,
+              "involuntary_context_switches": 55,
+              "host_before": {
+                "captured_unix_ns": 1792716131377839358,
+                "load_average": {
+                  "one_minute": 1.26,
+                  "five_minutes": 1.24,
+                  "fifteen_minutes": 1.24
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 343929,
+                    "cpu_percent": 8.5,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.7,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.2,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.1,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792716153603688051,
+                "load_average": {
+                  "one_minute": 1.17,
+                  "five_minutes": 1.22,
+                  "fifteen_minutes": 1.23
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 343929,
+                    "cpu_percent": 7.1,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.7,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.2,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.1,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "Starting JetStream3\nRunning typescript-lib:\ntypescript-lib First-Score                       0.25 pts\ntypescript-lib Score                             0.25 pts\ntypescript-lib First-Time                     20370.16 ms \ntypescript-lib Total-Time                     20370.16 ms \ntypescript-lib Wall-Time                      22048.48 ms \n\nOverall:\nOverall First-Score                              0.25 pts\nOverall First-Time                            20370.16 ms \n\nOverall Score                                    0.25 pts\nOverall Wall-Time                             22057.79 ms \n\n",
+              "stderr": ""
+            }
+          }
+        },
+        {
+          "round": 2,
+          "execution_order": [
+            "node",
+            "quench",
+            "bun"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 10798395677,
+              "peak_rss_bytes": 199401472,
+              "score": 0.48,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 66536,
+              "page_reclaims": 66536,
+              "involuntary_context_switches": 60,
+              "host_before": {
+                "captured_unix_ns": 1792716184992639733,
+                "load_average": {
+                  "one_minute": 1.1,
+                  "five_minutes": 1.2,
+                  "fifteen_minutes": 1.22
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 343929,
+                    "cpu_percent": 5.9,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.7,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.2,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.1,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792716195800381459,
+                "load_average": {
+                  "one_minute": 1.09,
+                  "five_minutes": 1.19,
+                  "fifteen_minutes": 1.22
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 343929,
+                    "cpu_percent": 5.5,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.7,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.2,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.1,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "Starting JetStream3\nRunning typescript-lib:\ntypescript-lib First-Score                       0.48 pts\ntypescript-lib Score                             0.48 pts\ntypescript-lib First-Time                     10506.83 ms \ntypescript-lib Total-Time                     10506.83 ms \ntypescript-lib Wall-Time                      10729.32 ms \n\nOverall:\nOverall First-Score                              0.48 pts\nOverall First-Time                            10506.83 ms \n\nOverall Score                                    0.48 pts\nOverall Wall-Time                             10731.22 ms \n\n",
+              "stderr": ""
+            },
+            "node": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 10267770859,
+              "peak_rss_bytes": 318722048,
+              "score": 0.51,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 80477,
+              "page_reclaims": 80477,
+              "involuntary_context_switches": 207,
+              "host_before": {
+                "captured_unix_ns": 1792716153614029680,
+                "load_average": {
+                  "one_minute": 1.17,
+                  "five_minutes": 1.22,
+                  "fifteen_minutes": 1.23
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 343929,
+                    "cpu_percent": 7.1,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.7,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.2,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.1,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792716163894538844,
+                "load_average": {
+                  "one_minute": 1.14,
+                  "five_minutes": 1.21,
+                  "fifteen_minutes": 1.23
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 343929,
+                    "cpu_percent": 6.6,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.7,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.2,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.1,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "Starting JetStream3\nRunning typescript-lib:\ntypescript-lib First-Score                       0.51 pts\ntypescript-lib Score                             0.51 pts\ntypescript-lib First-Time                     9792.31 ms \ntypescript-lib Total-Time                     9792.31 ms \ntypescript-lib Wall-Time                      10140.04 ms \n\nOverall:\nOverall First-Score                              0.51 pts\nOverall First-Time                            9792.31 ms \n\nOverall Score                                    0.51 pts\nOverall Wall-Time                             10144.50 ms \n\n",
+              "stderr": ""
+            },
+            "quench": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 21068773783,
+              "peak_rss_bytes": 194949120,
+              "score": 0.26,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 131092,
+              "page_reclaims": 131092,
+              "involuntary_context_switches": 47,
+              "host_before": {
+                "captured_unix_ns": 1792716163903808106,
+                "load_average": {
+                  "one_minute": 1.14,
+                  "five_minutes": 1.21,
+                  "fifteen_minutes": 1.23
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 343929,
+                    "cpu_percent": 6.6,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.7,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.2,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.1,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792716184984357588,
+                "load_average": {
+                  "one_minute": 1.1,
+                  "five_minutes": 1.2,
+                  "fifteen_minutes": 1.22
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 343929,
+                    "cpu_percent": 5.9,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.7,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.2,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.1,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "Starting JetStream3\nRunning typescript-lib:\ntypescript-lib First-Score                       0.26 pts\ntypescript-lib Score                             0.26 pts\ntypescript-lib First-Time                     19415.75 ms \ntypescript-lib Total-Time                     19415.75 ms \ntypescript-lib Wall-Time                      20938.40 ms \n\nOverall:\nOverall First-Score                              0.26 pts\nOverall First-Time                            19415.75 ms \n\nOverall Score                                    0.26 pts\nOverall Wall-Time                             20946.96 ms \n\n",
+              "stderr": ""
+            }
+          }
+        },
+        {
+          "round": 3,
+          "execution_order": [
+            "quench",
+            "bun",
+            "node"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 10579261927,
+              "peak_rss_bytes": 197316608,
+              "score": 0.48,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 65135,
+              "page_reclaims": 65135,
+              "involuntary_context_switches": 573,
+              "host_before": {
+                "captured_unix_ns": 1792716222907602457,
+                "load_average": {
+                  "one_minute": 1.06,
+                  "five_minutes": 1.18,
+                  "fifteen_minutes": 1.21
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 343929,
+                    "cpu_percent": 4.9,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.7,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.2,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.1,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792716233501417472,
+                "load_average": {
+                  "one_minute": 1.04,
+                  "five_minutes": 1.17,
+                  "fifteen_minutes": 1.21
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 343929,
+                    "cpu_percent": 4.7,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.7,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.2,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.1,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "Starting JetStream3\nRunning typescript-lib:\ntypescript-lib First-Score                       0.48 pts\ntypescript-lib Score                             0.48 pts\ntypescript-lib First-Time                     10332.99 ms \ntypescript-lib Total-Time                     10332.99 ms \ntypescript-lib Wall-Time                      10537.93 ms \n\nOverall:\nOverall First-Score                              0.48 pts\nOverall First-Time                            10332.99 ms \n\nOverall Score                                    0.48 pts\nOverall Wall-Time                             10539.34 ms \n\n",
+              "stderr": ""
+            },
+            "node": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 9489695860,
+              "peak_rss_bytes": 318316544,
+              "score": 0.55,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 80341,
+              "page_reclaims": 80341,
+              "involuntary_context_switches": 108,
+              "host_before": {
+                "captured_unix_ns": 1792716233510638637,
+                "load_average": {
+                  "one_minute": 1.04,
+                  "five_minutes": 1.17,
+                  "fifteen_minutes": 1.21
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 343929,
+                    "cpu_percent": 4.7,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.7,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.2,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.1,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792716243010741069,
+                "load_average": {
+                  "one_minute": 1.04,
+                  "five_minutes": 1.16,
+                  "fifteen_minutes": 1.21
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 343929,
+                    "cpu_percent": 4.6,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.7,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.2,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.1,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "Starting JetStream3\nRunning typescript-lib:\ntypescript-lib First-Score                       0.55 pts\ntypescript-lib Score                             0.55 pts\ntypescript-lib First-Time                     9101.54 ms \ntypescript-lib Total-Time                     9101.54 ms \ntypescript-lib Wall-Time                      9387.83 ms \n\nOverall:\nOverall First-Score                              0.55 pts\nOverall First-Time                            9101.54 ms \n\nOverall Score                                    0.55 pts\nOverall Wall-Time                             9391.72 ms \n\n",
+              "stderr": ""
+            },
+            "quench": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 27076629606,
+              "peak_rss_bytes": 194994176,
+              "score": 0.2,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 132943,
+              "page_reclaims": 132943,
+              "involuntary_context_switches": 85,
+              "host_before": {
+                "captured_unix_ns": 1792716195811123646,
+                "load_average": {
+                  "one_minute": 1.09,
+                  "five_minutes": 1.19,
+                  "fifteen_minutes": 1.22
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 343929,
+                    "cpu_percent": 5.5,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.7,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.2,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.1,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792716222896512693,
+                "load_average": {
+                  "one_minute": 1.06,
+                  "five_minutes": 1.18,
+                  "fifteen_minutes": 1.21
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 343929,
+                    "cpu_percent": 4.9,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.7,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.2,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.1,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "Starting JetStream3\nRunning typescript-lib:\ntypescript-lib First-Score                       0.20 pts\ntypescript-lib Score                             0.20 pts\ntypescript-lib First-Time                     25105.79 ms \ntypescript-lib Total-Time                     25105.79 ms \ntypescript-lib Wall-Time                      26950.20 ms \n\nOverall:\nOverall First-Score                              0.20 pts\nOverall First-Time                            25105.79 ms \n\nOverall Score                                    0.20 pts\nOverall Wall-Time                             26958.41 ms \n\n",
+              "stderr": ""
+            }
+          }
+        },
+        {
+          "round": 4,
+          "execution_order": [
+            "bun",
+            "node",
+            "quench"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 10585862514,
+              "peak_rss_bytes": 198041600,
+              "score": 0.48,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 64872,
+              "page_reclaims": 64872,
+              "involuntary_context_switches": 377,
+              "host_before": {
+                "captured_unix_ns": 1792716243019184036,
+                "load_average": {
+                  "one_minute": 1.04,
+                  "five_minutes": 1.16,
+                  "fifteen_minutes": 1.21
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 343929,
+                    "cpu_percent": 4.6,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.7,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.2,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.1,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792716253618363848,
+                "load_average": {
+                  "one_minute": 1.03,
+                  "five_minutes": 1.16,
+                  "fifteen_minutes": 1.2
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 344143,
+                    "cpu_percent": 100.0,
+                    "command": "ps"
+                  },
+                  {
+                    "pid": 343929,
+                    "cpu_percent": 4.4,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.7,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.2,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.1,
+                    "command": "dockerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "Starting JetStream3\nRunning typescript-lib:\ntypescript-lib First-Score                       0.48 pts\ntypescript-lib Score                             0.48 pts\ntypescript-lib First-Time                     10359.30 ms \ntypescript-lib Total-Time                     10359.30 ms \ntypescript-lib Wall-Time                      10543.12 ms \n\nOverall:\nOverall First-Score                              0.48 pts\nOverall First-Time                            10359.30 ms \n\nOverall Score                                    0.48 pts\nOverall Wall-Time                             10546.11 ms \n\n",
+              "stderr": ""
+            },
+            "node": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 9498402153,
+              "peak_rss_bytes": 318660608,
+              "score": 0.55,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 79782,
+              "page_reclaims": 79782,
+              "involuntary_context_switches": 467,
+              "host_before": {
+                "captured_unix_ns": 1792716253628204534,
+                "load_average": {
+                  "one_minute": 1.03,
+                  "five_minutes": 1.16,
+                  "fifteen_minutes": 1.2
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 343929,
+                    "cpu_percent": 4.4,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.7,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.2,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.1,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792716263151519561,
+                "load_average": {
+                  "one_minute": 1.03,
+                  "five_minutes": 1.15,
+                  "fifteen_minutes": 1.2
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 343929,
+                    "cpu_percent": 4.3,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.7,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.2,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.1,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "Starting JetStream3\nRunning typescript-lib:\ntypescript-lib First-Score                       0.55 pts\ntypescript-lib Score                             0.55 pts\ntypescript-lib First-Time                     9027.61 ms \ntypescript-lib Total-Time                     9027.61 ms \ntypescript-lib Wall-Time                      9364.85 ms \n\nOverall:\nOverall First-Score                              0.55 pts\nOverall First-Time                            9027.61 ms \n\nOverall Score                                    0.55 pts\nOverall Wall-Time                             9367.67 ms \n\n",
+              "stderr": ""
+            },
+            "quench": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 26370727673,
+              "peak_rss_bytes": 194928640,
+              "score": 0.2,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 132835,
+              "page_reclaims": 132835,
+              "involuntary_context_switches": 301,
+              "host_before": {
+                "captured_unix_ns": 1792716263160501612,
+                "load_average": {
+                  "one_minute": 1.03,
+                  "five_minutes": 1.15,
+                  "fifteen_minutes": 1.2
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 343929,
+                    "cpu_percent": 4.3,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.7,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.2,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.1,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792716289545808736,
+                "load_average": {
+                  "one_minute": 1.25,
+                  "five_minutes": 1.2,
+                  "fifteen_minutes": 1.22
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 343929,
+                    "cpu_percent": 4.0,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.7,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.2,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.1,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "Starting JetStream3\nRunning typescript-lib:\ntypescript-lib First-Score                       0.20 pts\ntypescript-lib Score                             0.20 pts\ntypescript-lib First-Time                     24490.29 ms \ntypescript-lib Total-Time                     24490.29 ms \ntypescript-lib Wall-Time                      26242.46 ms \n\nOverall:\nOverall First-Score                              0.20 pts\nOverall First-Time                            24490.29 ms \n\nOverall Score                                    0.20 pts\nOverall Wall-Time                             26250.87 ms \n\n",
+              "stderr": ""
+            }
+          }
+        },
+        {
+          "round": 5,
+          "execution_order": [
+            "node",
+            "quench",
+            "bun"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 12536935126,
+              "peak_rss_bytes": 195411968,
+              "score": 0.42,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 64330,
+              "page_reclaims": 64330,
+              "involuntary_context_switches": 79,
+              "host_before": {
+                "captured_unix_ns": 1792716322281219346,
+                "load_average": {
+                  "one_minute": 1.15,
+                  "five_minutes": 1.18,
+                  "fifteen_minutes": 1.21
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 343929,
+                    "cpu_percent": 3.7,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.7,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.2,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.1,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792716334831482587,
+                "load_average": {
+                  "one_minute": 1.12,
+                  "five_minutes": 1.17,
+                  "fifteen_minutes": 1.2
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 343929,
+                    "cpu_percent": 3.6,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.7,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.2,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.1,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "Starting JetStream3\nRunning typescript-lib:\ntypescript-lib First-Score                       0.42 pts\ntypescript-lib Score                             0.42 pts\ntypescript-lib First-Time                     11999.42 ms \ntypescript-lib Total-Time                     11999.42 ms \ntypescript-lib Wall-Time                      12437.03 ms \n\nOverall:\nOverall First-Score                              0.42 pts\nOverall First-Time                            11999.42 ms \n\nOverall Score                                    0.42 pts\nOverall Wall-Time                             12439.90 ms \n\n",
+              "stderr": ""
+            },
+            "node": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 10746505565,
+              "peak_rss_bytes": 328896512,
+              "score": 0.49,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 82253,
+              "page_reclaims": 82253,
+              "involuntary_context_switches": 501,
+              "host_before": {
+                "captured_unix_ns": 1792716289556658808,
+                "load_average": {
+                  "one_minute": 1.25,
+                  "five_minutes": 1.2,
+                  "fifteen_minutes": 1.22
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 343929,
+                    "cpu_percent": 4.0,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.7,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.2,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.1,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792716300316767647,
+                "load_average": {
+                  "one_minute": 1.21,
+                  "five_minutes": 1.19,
+                  "fifteen_minutes": 1.21
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 344176,
+                    "cpu_percent": 100.0,
+                    "command": "ps"
+                  },
+                  {
+                    "pid": 343929,
+                    "cpu_percent": 3.9,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.7,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.2,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.1,
+                    "command": "dockerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "Starting JetStream3\nRunning typescript-lib:\ntypescript-lib First-Score                       0.49 pts\ntypescript-lib Score                             0.49 pts\ntypescript-lib First-Time                     10182.36 ms \ntypescript-lib Total-Time                     10182.36 ms \ntypescript-lib Wall-Time                      10590.66 ms \n\nOverall:\nOverall First-Score                              0.49 pts\nOverall First-Time                            10182.36 ms \n\nOverall Score                                    0.49 pts\nOverall Wall-Time                             10594.07 ms \n\n",
+              "stderr": ""
+            },
+            "quench": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 21934023391,
+              "peak_rss_bytes": 195010560,
+              "score": 0.25,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 131813,
+              "page_reclaims": 131813,
+              "involuntary_context_switches": 91,
+              "host_before": {
+                "captured_unix_ns": 1792716300324958849,
+                "load_average": {
+                  "one_minute": 1.21,
+                  "five_minutes": 1.19,
+                  "fifteen_minutes": 1.21
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 343929,
+                    "cpu_percent": 3.9,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.7,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.2,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.1,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792716322270467499,
+                "load_average": {
+                  "one_minute": 1.15,
+                  "five_minutes": 1.18,
+                  "fifteen_minutes": 1.21
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 343929,
+                    "cpu_percent": 3.7,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.7,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.2,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.1,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "Starting JetStream3\nRunning typescript-lib:\ntypescript-lib First-Score                       0.25 pts\ntypescript-lib Score                             0.25 pts\ntypescript-lib First-Time                     20208.88 ms \ntypescript-lib Total-Time                     20208.88 ms \ntypescript-lib Wall-Time                      21783.02 ms \n\nOverall:\nOverall First-Score                              0.25 pts\nOverall First-Time                            20208.88 ms \n\nOverall Score                                    0.25 pts\nOverall Wall-Time                             21792.68 ms \n\n",
+              "stderr": ""
+            }
+          }
+        },
+        {
+          "round": 6,
+          "execution_order": [
+            "quench",
+            "bun",
+            "node"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 10525118473,
+              "peak_rss_bytes": 198901760,
+              "score": 0.49,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 65209,
+              "page_reclaims": 65209,
+              "involuntary_context_switches": 549,
+              "host_before": {
+                "captured_unix_ns": 1792716365448274123,
+                "load_average": {
+                  "one_minute": 1.07,
+                  "five_minutes": 1.15,
+                  "fifteen_minutes": 1.19
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 343929,
+                    "cpu_percent": 3.8,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.7,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.2,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.1,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792716375983246443,
+                "load_average": {
+                  "one_minute": 1.21,
+                  "five_minutes": 1.18,
+                  "fifteen_minutes": 1.2
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 343929,
+                    "cpu_percent": 3.8,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.7,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.2,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.1,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "Starting JetStream3\nRunning typescript-lib:\ntypescript-lib First-Score                       0.49 pts\ntypescript-lib Score                             0.49 pts\ntypescript-lib First-Time                     10273.91 ms \ntypescript-lib Total-Time                     10273.91 ms \ntypescript-lib Wall-Time                      10482.54 ms \n\nOverall:\nOverall First-Score                              0.49 pts\nOverall First-Time                            10273.91 ms \n\nOverall Score                                    0.49 pts\nOverall Wall-Time                             10484.17 ms \n\n",
+              "stderr": ""
+            },
+            "node": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 12019317325,
+              "peak_rss_bytes": 312590336,
+              "score": 0.43,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 78367,
+              "page_reclaims": 78367,
+              "involuntary_context_switches": 245,
+              "host_before": {
+                "captured_unix_ns": 1792716375992409997,
+                "load_average": {
+                  "one_minute": 1.21,
+                  "five_minutes": 1.18,
+                  "fifteen_minutes": 1.2
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 343929,
+                    "cpu_percent": 3.8,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.7,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.2,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.1,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792716388027022416,
+                "load_average": {
+                  "one_minute": 1.17,
+                  "five_minutes": 1.17,
+                  "fifteen_minutes": 1.2
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 343929,
+                    "cpu_percent": 3.7,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.7,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.2,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.1,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "Starting JetStream3\nRunning typescript-lib:\ntypescript-lib First-Score                       0.43 pts\ntypescript-lib Score                             0.43 pts\ntypescript-lib First-Time                     11568.18 ms \ntypescript-lib Total-Time                     11568.18 ms \ntypescript-lib Wall-Time                      11905.30 ms \n\nOverall:\nOverall First-Score                              0.43 pts\nOverall First-Time                            11568.18 ms \n\nOverall Score                                    0.43 pts\nOverall Wall-Time                             11908.10 ms \n\n",
+              "stderr": ""
+            },
+            "quench": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 30583158803,
+              "peak_rss_bytes": 194830336,
+              "score": 0.18,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 134860,
+              "page_reclaims": 134860,
+              "involuntary_context_switches": 93,
+              "host_before": {
+                "captured_unix_ns": 1792716334846569313,
+                "load_average": {
+                  "one_minute": 1.12,
+                  "five_minutes": 1.17,
+                  "fifteen_minutes": 1.2
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 343929,
+                    "cpu_percent": 3.6,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.7,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.2,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.1,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792716365438597101,
+                "load_average": {
+                  "one_minute": 1.07,
+                  "five_minutes": 1.15,
+                  "fifteen_minutes": 1.19
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 343929,
+                    "cpu_percent": 3.8,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.7,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.2,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.1,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "Starting JetStream3\nRunning typescript-lib:\ntypescript-lib First-Score                       0.18 pts\ntypescript-lib Score                             0.18 pts\ntypescript-lib First-Time                     28205.42 ms \ntypescript-lib Total-Time                     28205.42 ms \ntypescript-lib Wall-Time                      30392.13 ms \n\nOverall:\nOverall First-Score                              0.18 pts\nOverall First-Time                            28205.42 ms \n\nOverall Score                                    0.18 pts\nOverall Wall-Time                             30400.35 ms \n\n",
+              "stderr": ""
+            }
+          }
+        },
+        {
+          "round": 7,
+          "execution_order": [
+            "bun",
+            "node",
+            "quench"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 17069456866,
+              "peak_rss_bytes": 197677056,
+              "score": 0.3,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 66857,
+              "page_reclaims": 66857,
+              "involuntary_context_switches": 696,
+              "host_before": {
+                "captured_unix_ns": 1792716388040850460,
+                "load_average": {
+                  "one_minute": 1.17,
+                  "five_minutes": 1.17,
+                  "fifteen_minutes": 1.2
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 343929,
+                    "cpu_percent": 3.7,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.7,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.2,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.1,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792716405122435569,
+                "load_average": {
+                  "one_minute": 1.12,
+                  "five_minutes": 1.16,
+                  "fifteen_minutes": 1.19
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 343929,
+                    "cpu_percent": 3.6,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.7,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.2,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.1,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "Starting JetStream3\nRunning typescript-lib:\ntypescript-lib First-Score                       0.30 pts\ntypescript-lib Score                             0.30 pts\ntypescript-lib First-Time                     16586.06 ms \ntypescript-lib Total-Time                     16586.06 ms \ntypescript-lib Wall-Time                      17013.47 ms \n\nOverall:\nOverall First-Score                              0.30 pts\nOverall First-Time                            16586.06 ms \n\nOverall Score                                    0.30 pts\nOverall Wall-Time                             17017.13 ms \n\n",
+              "stderr": ""
+            },
+            "node": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 11380290255,
+              "peak_rss_bytes": 312487936,
+              "score": 0.46,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 78379,
+              "page_reclaims": 78379,
+              "involuntary_context_switches": 165,
+              "host_before": {
+                "captured_unix_ns": 1792716405130646560,
+                "load_average": {
+                  "one_minute": 1.12,
+                  "five_minutes": 1.16,
+                  "fifteen_minutes": 1.19
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 343929,
+                    "cpu_percent": 3.6,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.7,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.2,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.1,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792716416531595349,
+                "load_average": {
+                  "one_minute": 1.1,
+                  "five_minutes": 1.16,
+                  "fifteen_minutes": 1.19
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 343929,
+                    "cpu_percent": 3.6,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.7,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.2,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.1,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "Starting JetStream3\nRunning typescript-lib:\ntypescript-lib First-Score                       0.46 pts\ntypescript-lib Score                             0.46 pts\ntypescript-lib First-Time                     10828.81 ms \ntypescript-lib Total-Time                     10828.81 ms \ntypescript-lib Wall-Time                      11215.58 ms \n\nOverall:\nOverall First-Score                              0.46 pts\nOverall First-Time                            10828.81 ms \n\nOverall Score                                    0.46 pts\nOverall Wall-Time                             11219.13 ms \n\n",
+              "stderr": ""
+            },
+            "quench": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 30798258428,
+              "peak_rss_bytes": 194928640,
+              "score": 0.17,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 134558,
+              "page_reclaims": 134558,
+              "involuntary_context_switches": 76,
+              "host_before": {
+                "captured_unix_ns": 1792716416539959592,
+                "load_average": {
+                  "one_minute": 1.1,
+                  "five_minutes": 1.16,
+                  "fifteen_minutes": 1.19
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 343929,
+                    "cpu_percent": 3.6,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.7,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.2,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.1,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792716447353683189,
+                "load_average": {
+                  "one_minute": 1.12,
+                  "five_minutes": 1.16,
+                  "fifteen_minutes": 1.19
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 343929,
+                    "cpu_percent": 3.5,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.7,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.2,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.1,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "Starting JetStream3\nRunning typescript-lib:\ntypescript-lib First-Score                       0.17 pts\ntypescript-lib Score                             0.17 pts\ntypescript-lib First-Time                     28732.74 ms \ntypescript-lib Total-Time                     28732.74 ms \ntypescript-lib Wall-Time                      30674.33 ms \n\nOverall:\nOverall First-Score                              0.17 pts\nOverall First-Time                            28732.74 ms \n\nOverall Score                                    0.17 pts\nOverall Wall-Time                             30684.35 ms \n\n",
+              "stderr": ""
+            }
+          }
+        },
+        {
+          "round": 8,
+          "execution_order": [
+            "node",
+            "quench",
+            "bun"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 10287983251,
+              "peak_rss_bytes": 196132864,
+              "score": 0.52,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 62963,
+              "page_reclaims": 62963,
+              "involuntary_context_switches": 107,
+              "host_before": {
+                "captured_unix_ns": 1792716481546949849,
+                "load_average": {
+                  "one_minute": 1.33,
+                  "five_minutes": 1.21,
+                  "fifteen_minutes": 1.2
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 343929,
+                    "cpu_percent": 3.4,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.7,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.2,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.1,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792716491845224853,
+                "load_average": {
+                  "one_minute": 1.28,
+                  "five_minutes": 1.21,
+                  "fifteen_minutes": 1.2
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 343929,
+                    "cpu_percent": 3.3,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.7,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.2,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.1,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "Starting JetStream3\nRunning typescript-lib:\ntypescript-lib First-Score                       0.52 pts\ntypescript-lib Score                             0.52 pts\ntypescript-lib First-Time                     9656.85 ms \ntypescript-lib Total-Time                     9656.85 ms \ntypescript-lib Wall-Time                      10174.77 ms \n\nOverall:\nOverall First-Score                              0.52 pts\nOverall First-Time                            9656.85 ms \n\nOverall Score                                    0.52 pts\nOverall Wall-Time                             10180.40 ms \n\n",
+              "stderr": ""
+            },
+            "node": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 8938743011,
+              "peak_rss_bytes": 312406016,
+              "score": 0.59,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 79011,
+              "page_reclaims": 79011,
+              "involuntary_context_switches": 183,
+              "host_before": {
+                "captured_unix_ns": 1792716447366934359,
+                "load_average": {
+                  "one_minute": 1.12,
+                  "five_minutes": 1.16,
+                  "fifteen_minutes": 1.19
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 344257,
+                    "cpu_percent": 100.0,
+                    "command": "ps"
+                  },
+                  {
+                    "pid": 343929,
+                    "cpu_percent": 3.5,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.7,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.2,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.1,
+                    "command": "dockerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792716456319717655,
+                "load_average": {
+                  "one_minute": 1.51,
+                  "five_minutes": 1.23,
+                  "fifteen_minutes": 1.21
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 344267,
+                    "cpu_percent": 100.0,
+                    "command": "ps"
+                  },
+                  {
+                    "pid": 343929,
+                    "cpu_percent": 3.4,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.7,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.2,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.1,
+                    "command": "dockerd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "Starting JetStream3\nRunning typescript-lib:\ntypescript-lib First-Score                       0.59 pts\ntypescript-lib Score                             0.59 pts\ntypescript-lib First-Time                     8540.27 ms \ntypescript-lib Total-Time                     8540.27 ms \ntypescript-lib Wall-Time                      8828.40 ms \n\nOverall:\nOverall First-Score                              0.59 pts\nOverall First-Time                            8540.27 ms \n\nOverall Score                                    0.59 pts\nOverall Wall-Time                             8831.27 ms \n\n",
+              "stderr": ""
+            },
+            "quench": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 25188523303,
+              "peak_rss_bytes": 194936832,
+              "score": 0.22,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 132385,
+              "page_reclaims": 132385,
+              "involuntary_context_switches": 147,
+              "host_before": {
+                "captured_unix_ns": 1792716456331308927,
+                "load_average": {
+                  "one_minute": 1.51,
+                  "five_minutes": 1.23,
+                  "fifteen_minutes": 1.21
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 343929,
+                    "cpu_percent": 3.4,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.7,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.2,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.1,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792716481536520408,
+                "load_average": {
+                  "one_minute": 1.33,
+                  "five_minutes": 1.21,
+                  "fifteen_minutes": 1.2
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 343929,
+                    "cpu_percent": 3.4,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.7,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.2,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.1,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "Starting JetStream3\nRunning typescript-lib:\ntypescript-lib First-Score                       0.22 pts\ntypescript-lib Score                             0.22 pts\ntypescript-lib First-Time                     23239.26 ms \ntypescript-lib Total-Time                     23239.26 ms \ntypescript-lib Wall-Time                      25030.37 ms \n\nOverall:\nOverall First-Score                              0.22 pts\nOverall First-Time                            23239.26 ms \n\nOverall Score                                    0.22 pts\nOverall Wall-Time                             25049.18 ms \n\n",
+              "stderr": ""
+            }
+          }
+        },
+        {
+          "round": 9,
+          "execution_order": [
+            "quench",
+            "bun",
+            "node"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 58378868578,
+              "peak_rss_bytes": 192999424,
+              "score": 0.09,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 65825,
+              "page_reclaims": 65825,
+              "involuntary_context_switches": 213,
+              "host_before": {
+                "captured_unix_ns": 1792716515543360153,
+                "load_average": {
+                  "one_minute": 1.18,
+                  "five_minutes": 1.19,
+                  "fifteen_minutes": 1.19
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 343929,
+                    "cpu_percent": 3.2,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.7,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.2,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.1,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792716573935108338,
+                "load_average": {
+                  "one_minute": 1.44,
+                  "five_minutes": 1.26,
+                  "fifteen_minutes": 1.22
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 343929,
+                    "cpu_percent": 5.1,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.7,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.2,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.1,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "Starting JetStream3\nRunning typescript-lib:\ntypescript-lib First-Score                       0.09 pts\ntypescript-lib Score                             0.09 pts\ntypescript-lib First-Time                     58089.74 ms \ntypescript-lib Total-Time                     58089.74 ms \ntypescript-lib Wall-Time                      58321.08 ms \n\nOverall:\nOverall First-Score                              0.09 pts\nOverall First-Time                            58089.74 ms \n\nOverall Score                                    0.09 pts\nOverall Wall-Time                             58327.15 ms \n\n",
+              "stderr": ""
+            },
+            "node": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 8443901242,
+              "peak_rss_bytes": 318439424,
+              "score": 0.62,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 79763,
+              "page_reclaims": 79763,
+              "involuntary_context_switches": 319,
+              "host_before": {
+                "captured_unix_ns": 1792716573944573999,
+                "load_average": {
+                  "one_minute": 1.44,
+                  "five_minutes": 1.26,
+                  "fifteen_minutes": 1.22
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 343929,
+                    "cpu_percent": 5.1,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.7,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.2,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.1,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792716582400661428,
+                "load_average": {
+                  "one_minute": 1.41,
+                  "five_minutes": 1.26,
+                  "fifteen_minutes": 1.22
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 343929,
+                    "cpu_percent": 5.1,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.7,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.2,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.1,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "Starting JetStream3\nRunning typescript-lib:\ntypescript-lib First-Score                       0.62 pts\ntypescript-lib Score                             0.62 pts\ntypescript-lib First-Time                     8043.96 ms \ntypescript-lib Total-Time                     8043.96 ms \ntypescript-lib Wall-Time                      8346.01 ms \n\nOverall:\nOverall First-Score                              0.62 pts\nOverall First-Time                            8043.96 ms \n\nOverall Score                                    0.62 pts\nOverall Wall-Time                             8348.71 ms \n\n",
+              "stderr": ""
+            },
+            "quench": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 23669774600,
+              "peak_rss_bytes": 194871296,
+              "score": 0.23,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 133092,
+              "page_reclaims": 133092,
+              "involuntary_context_switches": 183,
+              "host_before": {
+                "captured_unix_ns": 1792716491855213605,
+                "load_average": {
+                  "one_minute": 1.28,
+                  "five_minutes": 1.21,
+                  "fifteen_minutes": 1.2
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 343929,
+                    "cpu_percent": 3.3,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.7,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.2,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.1,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792716515535300690,
+                "load_average": {
+                  "one_minute": 1.18,
+                  "five_minutes": 1.19,
+                  "fifteen_minutes": 1.19
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 343929,
+                    "cpu_percent": 3.2,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.7,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.2,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.1,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "Starting JetStream3\nRunning typescript-lib:\ntypescript-lib First-Score                       0.23 pts\ntypescript-lib Score                             0.23 pts\ntypescript-lib First-Time                     21646.35 ms \ntypescript-lib Total-Time                     21646.35 ms \ntypescript-lib Wall-Time                      23518.93 ms \n\nOverall:\nOverall First-Score                              0.23 pts\nOverall First-Time                            21646.35 ms \n\nOverall Score                                    0.23 pts\nOverall Wall-Time                             23526.06 ms \n\n",
+              "stderr": ""
+            }
+          }
+        },
+        {
+          "round": 10,
+          "execution_order": [
+            "bun",
+            "node",
+            "quench"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 9337947573,
+              "peak_rss_bytes": 196079616,
+              "score": 0.55,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 66531,
+              "page_reclaims": 66531,
+              "involuntary_context_switches": 707,
+              "host_before": {
+                "captured_unix_ns": 1792716582411040437,
+                "load_average": {
+                  "one_minute": 1.41,
+                  "five_minutes": 1.26,
+                  "fifteen_minutes": 1.22
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 343929,
+                    "cpu_percent": 5.1,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.7,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.2,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.1,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792716591757616890,
+                "load_average": {
+                  "one_minute": 1.35,
+                  "five_minutes": 1.25,
+                  "fifteen_minutes": 1.21
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 343929,
+                    "cpu_percent": 5.0,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.7,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.2,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.1,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "Starting JetStream3\nRunning typescript-lib:\ntypescript-lib First-Score                       0.55 pts\ntypescript-lib Score                             0.55 pts\ntypescript-lib First-Time                     9104.50 ms \ntypescript-lib Total-Time                     9104.50 ms \ntypescript-lib Wall-Time                      9300.49 ms \n\nOverall:\nOverall First-Score                              0.55 pts\nOverall First-Time                            9104.50 ms \n\nOverall Score                                    0.55 pts\nOverall Wall-Time                             9301.86 ms \n\n",
+              "stderr": ""
+            },
+            "node": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 8419186802,
+              "peak_rss_bytes": 321433600,
+              "score": 0.63,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 80425,
+              "page_reclaims": 80425,
+              "involuntary_context_switches": 1938,
+              "host_before": {
+                "captured_unix_ns": 1792716591765122569,
+                "load_average": {
+                  "one_minute": 1.35,
+                  "five_minutes": 1.25,
+                  "fifteen_minutes": 1.21
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 343929,
+                    "cpu_percent": 5.0,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.7,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.2,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.1,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792716600194223936,
+                "load_average": {
+                  "one_minute": 1.29,
+                  "five_minutes": 1.24,
+                  "fifteen_minutes": 1.21
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 343929,
+                    "cpu_percent": 5.0,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.7,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.2,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.1,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "Starting JetStream3\nRunning typescript-lib:\ntypescript-lib First-Score                       0.63 pts\ntypescript-lib Score                             0.63 pts\ntypescript-lib First-Time                     7995.94 ms \ntypescript-lib Total-Time                     7995.94 ms \ntypescript-lib Wall-Time                      8281.78 ms \n\nOverall:\nOverall First-Score                              0.63 pts\nOverall First-Time                            7995.94 ms \n\nOverall Score                                    0.63 pts\nOverall Wall-Time                             8284.40 ms \n\n",
+              "stderr": ""
+            },
+            "quench": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 19828268518,
+              "peak_rss_bytes": 194973696,
+              "score": 0.27,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 131083,
+              "page_reclaims": 131083,
+              "involuntary_context_switches": 279,
+              "host_before": {
+                "captured_unix_ns": 1792716600202538713,
+                "load_average": {
+                  "one_minute": 1.29,
+                  "five_minutes": 1.24,
+                  "fifteen_minutes": 1.21
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 343929,
+                    "cpu_percent": 5.0,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.7,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.2,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.1,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792716620050699313,
+                "load_average": {
+                  "one_minute": 1.21,
+                  "five_minutes": 1.22,
+                  "fifteen_minutes": 1.2
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 343929,
+                    "cpu_percent": 4.8,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.7,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.2,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.1,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "Starting JetStream3\nRunning typescript-lib:\ntypescript-lib First-Score                       0.27 pts\ntypescript-lib Score                             0.27 pts\ntypescript-lib First-Time                     18234.65 ms \ntypescript-lib Total-Time                     18234.65 ms \ntypescript-lib Wall-Time                      19692.14 ms \n\nOverall:\nOverall First-Score                              0.27 pts\nOverall First-Time                            18234.65 ms \n\nOverall Score                                    0.27 pts\nOverall Wall-Time                             19699.13 ms \n\n",
+              "stderr": ""
+            }
+          }
+        }
+      ]
+    }
+  },
+  "complete": true,
+  "qualification_ready": true
+}
