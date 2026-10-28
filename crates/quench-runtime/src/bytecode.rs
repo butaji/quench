@@ -31,6 +31,7 @@ pub(crate) fn intrinsic_name_native(name: &str) -> Option<crate::heap::Native> {
         "\0quench:super-set" => Native::SuperSet,
         SUPER_BASE_BINDING => Native::ReflectGetPrototypeOf,
         "\0quench:object-literal-prototype" => Native::ObjectLiteralPrototype,
+        "\0quench:object-literal-create" => Native::ObjectLiteralCreate,
         "\0quench:object-define-property" => Native::ObjectDefineProperty,
         "\0quench:object-freeze" => Native::ObjectFreeze,
         // What the compiler's own throws, class setup and `using` declarations call: the

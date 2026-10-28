@@ -101,6 +101,17 @@ impl<H: Host> Vm<H> {
                 }
                 Ok(if succeeded { Value::TRUE } else { Value::FALSE })
             }
+            // The object a literal whose first property is `__proto__: value` starts as: an
+            // ordinary object of that prototype when it is an object or null, as the literal's
+            // [[SetPrototypeOf]] of its new object makes it, else of %Object.prototype%.
+            Native::ObjectLiteralCreate => {
+                let proto = if target.is_null() || self.is_object_like(target) {
+                    target
+                } else {
+                    self.realm_object_prototype(self.realm.globals)
+                };
+                Ok(self.heap.alloc(crate::heap::Cell::Object(Self::empty_object(proto))))
+            }
             Native::ObjectLiteralPrototype => {
                 let proto = args.get(1).copied().unwrap_or(Value::UNDEFINED);
                 if proto.is_null() || self.is_object_like(proto) {
