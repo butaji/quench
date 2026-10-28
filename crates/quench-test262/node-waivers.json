@@ -4,7 +4,7 @@
   "policy": "Pinned Test262 cases whose raw Quench failure the local Node oracle reproduces. A waived case stays a failure in every report; runners accept it only while it fails with exactly the recorded failure.",
   "oracle": {
     "runtime": "node",
-    "version": "v26.12.1",
+    "version": "v26.13.0",
     "command": "node tools/test262-node-oracle.cjs"
   },
   "suite_revision": "f2d1435644797268dca1f7988cad5a4e89ccd8d2",
