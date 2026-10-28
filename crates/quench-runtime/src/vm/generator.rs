@@ -48,9 +48,8 @@ impl<H: Host> Vm<H> {
     /// `next()` of `generator`, a suspended synchronous generator of this realm and program
     /// that `method` (this realm's `%GeneratorPrototype%.next`, `steps_as_generator`) steps,
     /// called with no arguments from frame `f`'s call record that resumes at `pc`: its frame
-    /// pushed in place as an in-loop call pushes a callee's, under the native activation
-    /// `generator_iteration_step` runs it in, so the body sees the same activation stack. The
-    /// pending call completes with the step's result (`finish_in_loop_generator_step`).
+    /// pushed in place as an in-loop call pushes a callee's (`resume_generator_in_place`), and
+    /// the pending call completes with the step's result (`finish_in_loop_generator_step`).
     /// `None` leaves any other step to the native call.
     pub(super) fn try_in_loop_generator_step(
         &mut self,
@@ -64,6 +63,29 @@ impl<H: Host> Vm<H> {
         if !self.generator_resumes_in_place(generator) {
             return None;
         }
+        let resumed = self.resume_generator_in_place(f, pc, method, generator, reuses_result)?;
+        Some(resumed.map(|(call_guard, resume)| StepResult::PushFrame {
+            destination,
+            call_guard,
+            construct_this: None,
+            settles: None,
+            generator: Some(resume),
+        }))
+    }
+
+    /// The in-place step of `generator`, which `generator_resumes_in_place` admits: frame
+    /// `f` resumes at `pc` after it, and the generator's frame is pushed under the native
+    /// activation `generator_iteration_step` runs it in, so the body sees the same activation
+    /// stack; the step's guest call and its resumption. `None` when the guest-call budget
+    /// leaves the step to the native call.
+    pub(super) fn resume_generator_in_place(
+        &mut self,
+        f: usize,
+        pc: usize,
+        method: Value,
+        generator: Value,
+        reuses_result: bool,
+    ) -> Option<Result<(crate::stack::GuestCallGuard, GeneratorResume), JsError>> {
         let call_guard = crate::stack::GuestCallGuard::enter().ok()?;
         if let Err(error) = self.check_execution_interrupt() {
             return Some(Err(error));
@@ -86,13 +108,7 @@ impl<H: Host> Vm<H> {
         });
         self.activate_frame(&mut frame);
         self.frames.push(frame);
-        Some(Ok(StepResult::PushFrame {
-            destination,
-            call_guard,
-            construct_this: None,
-            settles: None,
-            generator: Some(GeneratorResume { reuses_result }),
-        }))
+        Some(Ok((call_guard, GeneratorResume { reuses_result })))
     }
 
     /// The result of a generator step `resume` made in place, whose popped `frame` stopped

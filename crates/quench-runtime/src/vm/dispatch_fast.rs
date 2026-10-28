@@ -15418,8 +15418,8 @@ fn lane_resume_generator_frame<H: Host>(
     // SAFETY: the call record lies in the running view.
     let call_pc = unsafe { ip.offset_from((*cx).base) } as usize;
     let destination = i.a & crate::bytecode::REGISTER_MASK;
-    match vm.try_in_loop_generator_step(frame, call_pc + 1, method, generator, destination, true)? {
-        Ok(StepResult::PushFrame { destination, call_guard, generator: Some(resume), .. }) => {
+    match vm.resume_generator_in_place(frame, call_pc + 1, method, generator, true)? {
+        Ok((call_guard, resume)) => {
             // SAFETY: the general loop's pending calls outlive the lane run.
             unsafe { &mut *(*cx).pending }.push(PendingGeneralCall {
                 caller: frame,
@@ -15436,7 +15436,6 @@ fn lane_resume_generator_frame<H: Host>(
             vm.lane_stack.refresh_activation_limit();
             Some(lane_enter_script_frame(cx, frame + 1))
         }
-        Ok(_) => unreachable!("a generator step pushes its frame"),
         Err(error) => {
             vm.lane_raised = Some(error);
             Some(exit(ip))
