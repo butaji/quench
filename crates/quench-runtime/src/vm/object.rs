@@ -1435,7 +1435,8 @@ impl<H: Host> Vm<H> {
 
     /// `primary_own_field_store_hit` at a site past one shape (`field_site_polymorphic`): the
     /// own-data slot its megamorphic entries, inline or hashed, record for the receiver's
-    /// exact shape, stored with the write barrier.
+    /// exact shape, stored with the write barrier; the own entry that hit, a store record's
+    /// hint (`hinted_own_field_store_hit`).
     #[inline(always)]
     pub(super) fn polymorphic_own_field_store_hit(
         &mut self,
@@ -1444,8 +1445,34 @@ impl<H: Host> Vm<H> {
         atom: Atom,
         value: Value,
         site: u16,
-    ) -> bool {
+    ) -> Option<FieldCache> {
         debug_assert!(self.lane_admits(p));
+        if self.method_caches_may_name(atom) {
+            return None;
+        }
+        let record_id = object.direct_object_index()?;
+        let receiver = self.heap.object_record_by_id(record_id);
+        if receiver.is_module_namespace() || receiver.is_arguments_object() {
+            return None;
+        }
+        let (index, shape) = (self.field_cache_index(site), receiver.exact_shape());
+        let slot = self
+            .inline_megamorphic_field_slot(index, shape)
+            .or_else(|| self.hashed_megamorphic_own_field_slot(index, shape))?;
+        // SAFETY: as for `primary_own_field_store_hit`: the entry was recorded for this exact
+        // shape's own data slot.
+        if !unsafe { self.heap.record_property_set_flat::<true>(record_id, usize::from(slot), value) } {
+            return None;
+        }
+        self.profile.field_cache_hit(2, 0);
+        Some(FieldCache::own(shape, slot))
+    }
+
+    /// `polymorphic_own_field_store_hit` through the own entry a store record's hint names
+    /// (`LaneInstruction::field_hint`), which an earlier hit of the site's entries proved for
+    /// the receiver's exact shape: `false` where the shape differs or the store is refused.
+    #[inline(always)]
+    pub(super) fn hinted_own_field_store_hit(&mut self, hint: FieldCache, object: Value, atom: Atom, value: Value) -> bool {
         if self.method_caches_may_name(atom) {
             return false;
         }
@@ -1453,19 +1480,11 @@ impl<H: Host> Vm<H> {
             return false;
         };
         let receiver = self.heap.object_record_by_id(record_id);
-        if receiver.is_module_namespace() || receiver.is_arguments_object() {
+        if receiver.exact_shape() != hint.receiver || receiver.is_module_namespace() || receiver.is_arguments_object() {
             return false;
         }
-        let (index, shape) = (self.field_cache_index(site), receiver.exact_shape());
-        let Some(slot) = self
-            .inline_megamorphic_field_slot(index, shape)
-            .or_else(|| self.hashed_megamorphic_own_field_slot(index, shape))
-        else {
-            return false;
-        };
-        // SAFETY: as for `primary_own_field_store_hit`: the entry was recorded for this exact
-        // shape's own data slot.
-        if !unsafe { self.heap.record_property_set_flat::<true>(record_id, usize::from(slot), value) } {
+        // SAFETY: as for `polymorphic_own_field_store_hit`, whose hit recorded the pair.
+        if !unsafe { self.heap.record_property_set_flat::<true>(record_id, usize::from(hint.slot), value) } {
             return false;
         }
         self.profile.field_cache_hit(2, 0);

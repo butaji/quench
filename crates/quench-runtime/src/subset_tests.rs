@@ -756,3 +756,31 @@ print(out.join(" "));
 "#;
     assert_eq!(output(source), ["18300 t11 inherited getter undefined"]);
 }
+
+#[test]
+fn polymorphic_stores_through_record_hints_keep_their_semantics() {
+    // A polymorphic own-field store tests its record's hint, the own entry its last hit named
+    // (`Vm::hinted_own_field_store_hit`), before the site's entries: receivers of ten shapes,
+    // then a frozen one, an own accessor in the field's place, a prototype setter and a
+    // receiver gone to dictionary storage. Node 26 prints the same.
+    let source = r#"
+const out = [];
+function P(k) { this.pos = 0; this["f" + k] = k; }
+P.prototype.step = function (v) { this.pos = v; return this.pos; };
+const ps = [];
+for (let k = 0; k < 10; k++) ps.push(new P(k));
+let sum = 0;
+for (let round = 0; round < 300; round++) for (const p of ps) sum += p.step(round);
+out.push(sum);
+const frozen = new P(3); Object.freeze(frozen);
+out.push(frozen.step(9), frozen.pos);
+const same = new P(3); same.step(5); out.push(same.pos);
+Object.defineProperty(same, "pos", { get() { return "g"; }, set(v) { out.push("set" + v); }, configurable: true });
+same.step(7); out.push(same.pos);
+const viaProto = Object.create({ set pos(v) { out.push("proto" + v); } });
+P.prototype.step.call(viaProto, 4);
+const big = new P(4); for (let i = 0; i < 40; i++) big["x" + i] = i; delete big.x3; out.push(big.step(11), big.pos);
+print(out.join(" "));
+"#;
+    assert_eq!(output(source), ["448500 0 0 5 set7 g proto4 11 11"]);
+}
