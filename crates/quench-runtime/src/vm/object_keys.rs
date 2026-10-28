@@ -70,6 +70,24 @@ impl<H: Host> Vm<H> {
         Some(slots)
     }
 
+    /// `Object.keys(object)` with each key's value, where reading them runs no guest code: an
+    /// object whose enumerable own keys its shape lists (`shape_enumerable_slots`), each a data
+    /// property, each key as its text. `None` leaves the reads to guest order.
+    pub(crate) fn plain_enumerable_entries(&self, object: Value) -> Option<Vec<(String, Value)>> {
+        let slots = self.shape_enumerable_slots(object)?;
+        let data = self.object_data(object)?;
+        slots
+            .iter()
+            .map(|&(atom, slot)| {
+                let slot = slot as usize;
+                if self.slot_attributes(data, slot)?.accessor {
+                    return None;
+                }
+                Some((self.atom_value(atom).host_string().to_owned(), self.heap.property_get(data, slot)?))
+            })
+            .collect()
+    }
+
     /// Whether `object`'s string keys all live in its shape: no Proxy, array, typed array or
     /// module namespace.
     fn shape_lists_enumerable_keys(&self, object: Value) -> bool {

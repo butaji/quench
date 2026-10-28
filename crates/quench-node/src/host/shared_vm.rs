@@ -572,7 +572,7 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "httpResponseRemoveHeader" (2) => crate::modules::http_shared_vm::response_remove_header,
         method "httpResponseWrite" (7) => crate::modules::http_shared_vm::response_write,
         method "httpResponseFinish" (7) => crate::modules::http_shared_vm::response_finish,
-        method "httpResponseWriteHead" (6) => crate::modules::http_shared_vm::response_write_head,
+        method "httpResponseWriteHead" (7) => crate::modules::http_shared_vm::response_write_head,
         method "httpResponseInitialize" (2) => crate::modules::http_shared_vm::response_initialize,
         method "httpResponseSend" (4) => crate::modules::http_shared_vm::response_send,
         method "assertStrictEqual" (2) => crate::modules::assert_shared_vm::strict_equal,
