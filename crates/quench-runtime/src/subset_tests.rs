@@ -3,6 +3,31 @@
 use crate::test_host::TestHost;
 use crate::{Engine, Runtime};
 
+#[test]
+fn function_bodies_compiled_more_than_once_compile_from_their_source() {
+    // `return a ?? b` compiles `b` once for a null `a` and once for an undefined one: each
+    // compilation of the lazily parsed `worker`, at load or in a replay of `reduced`
+    // (`disassemble` replays every released function), compiles its own body with `inner`
+    // (typescript-lib's `getAssignmentReducedTypeWorker` lost its nested functions to the
+    // stand-in).
+    let source = "function outer(left) {
+        function reduced(left) {
+            return left ?? id(function worker() {
+                function inner() { return 'inner'; }
+                return inner();
+            }());
+        }
+        return reduced(left);
+    }
+    function id(value) { return value; }
+    console.log(outer(null) + ' ' + outer(undefined) + ' ' + outer('left'));";
+    assert_eq!(output(source), ["inner inner left"]);
+    let listing = Engine::specialize(source, "test.js").unwrap().disassemble();
+    let compiled = |name: &str| listing.lines().filter(|line| line.starts_with("function ") && line.split_whitespace().nth(2) == Some(name)).count();
+    assert!(compiled("worker") > 0);
+    assert_eq!(compiled("inner"), compiled("worker"), "{listing}");
+}
+
 fn output(source: &str) -> Vec<String> {
     let host = TestHost::default();
     let view = host.clone();

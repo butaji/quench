@@ -235,6 +235,13 @@ pub(super) fn stand_in<'a>(allocator: &'a Allocator, program: &mut Program<'a>, 
     StandIns { allocator, starts }.visit_program(program);
 }
 
+/// Whether `body` is a released body's stand-in (`stand_in`): one statement, empty and at the
+/// body's start, which no source text parses to.
+pub(super) fn is_stand_in(body: &FunctionBody<'_>) -> bool {
+    matches!(body.statements.as_slice(), [Statement::ExpressionStatement(statement)]
+        if statement.span.is_empty() && statement.span.start == body.span.start)
+}
+
 /// Gives each lazily parsed body its stand-in.
 struct StandIns<'s, 'a> {
     allocator: &'a Allocator,
@@ -278,8 +285,6 @@ pub(super) fn arena(text: &str) -> Allocator {
 /// text.
 pub(super) struct Reparsed<'a> {
     pub(super) program: Program<'a>,
-    /// The starts of the function bodies inside it parsed lazily.
-    pub(super) lazy_bodies: Vec<u32>,
 }
 
 impl<'a> Reparsed<'a> {
@@ -338,10 +343,7 @@ pub(super) fn reparse<'a>(
         return None;
     }
     oxc_ast_visit::VisitMut::visit_program(&mut super::replay::ShiftSpans(delta), &mut parsed.program);
-    Some(Reparsed {
-        lazy_bodies: parsed.lazy_function_bodies.iter().map(|start| start.wrapping_add(delta)).collect(),
-        program: parsed.program,
-    })
+    Some(Reparsed { program: parsed.program })
 }
 
 /// What the whole program's analysis would have found inside its lazily parsed bodies, with
