@@ -29,6 +29,8 @@ mod class;
 mod early;
 mod frame_registers;
 #[cfg(feature = "verify-replay")]
+mod lazy_bodies;
+#[cfg(feature = "verify-replay")]
 mod free_names;
 mod syntax_message;
 pub(crate) mod liveness;
@@ -907,6 +909,8 @@ impl Engine {
         let normalized = early::normalize_hashbang(source);
         let allocator = Allocator::with_capacity(normalized.len().saturating_mul(6));
         let mut parsed = annex_b_targets::parse_program(&allocator, &normalized, source_type);
+        #[cfg(feature = "verify-replay")]
+        lazy_bodies::verify(name, &normalized, &parsed.program);
         if parsed.stack_exhausted {
             return Err(vec![Diagnostic::stack_exhausted(name)]);
         }
