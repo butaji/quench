@@ -1209,6 +1209,7 @@ impl<H: Host> Vm<H> {
             .active_native
             .push(super::activation::NativeActivation {
                 callable: callee,
+                receiver: Value::UNDEFINED,
                 frame_depth: self.frames.len(),
                 boundary,
             });
@@ -1258,6 +1259,7 @@ impl<H: Host> Vm<H> {
             .active_native
             .push(super::activation::NativeActivation {
                 callable: method,
+                receiver: Value::UNDEFINED,
                 frame_depth: self.frames.len(),
                 boundary: super::activation::NativeCallBoundary::Opaque,
             });

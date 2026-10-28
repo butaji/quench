@@ -1354,7 +1354,7 @@ struct ForwardedResolution {
 }
 
 /// Fields a `ConstructPlan` names; an initializer storing more keeps running its adds.
-const CONSTRUCT_PLAN_FIELDS: usize = 4;
+const CONSTRUCT_PLAN_FIELDS: usize = 8;
 // A plan's values fill a receiver's inline slots (`ConstructPlan::allocate`).
 const _: () = assert!(INLINE_PROPERTY_COUNT <= CONSTRUCT_PLAN_FIELDS);
 // `ConstructPlan::defaulted` holds a bit per field.
@@ -9507,27 +9507,32 @@ fn lane_frame_state<H: Host>(
     let vm = unsafe { vm(cx) };
     let function = vm.frames[frame].function;
     let program = unsafe { (*cx).program };
-    let diagnostics = vm.programs.reports_on_drop();
-    let Some(lane_view) = vm
-        .programs
-        .lane_view(program, function, |code, constants, kind, live, sites| {
-            derive_lane_view::<H>(
-                function,
-                code,
-                constants,
-                kind,
-                live,
-                sites,
-                vm.js_tier_runs(),
-                vm.programs.js_jit_general_dispatch_enabled(),
-                diagnostics,
-            )
-        })
-    else {
-        unreachable!("an inline Wasm frame runs a function of its program");
+    // The context's table holds the frame's program's views: a derived one is read there.
+    // SAFETY: the table lives as long as its program entry.
+    let derived = unsafe { &*(*cx).views }.get(function as usize).and_then(super::program_store::derived_lane_view);
+    let lane_view = match derived {
+        Some(view) => view,
+        None => {
+            let diagnostics = vm.programs.reports_on_drop();
+            let Some(lane_view) = vm.programs.lane_view(program, function, |code, constants, kind, live, sites| {
+                derive_lane_view::<H>(
+                    function,
+                    code,
+                    constants,
+                    kind,
+                    live,
+                    sites,
+                    vm.js_tier_runs(),
+                    vm.programs.js_jit_general_dispatch_enabled(),
+                    diagnostics,
+                )
+            }) else {
+                unreachable!("an inline Wasm frame runs a function of its program");
+            };
+            // SAFETY: views live as long as their program entry.
+            unsafe { &*lane_view }
+        }
     };
-    // SAFETY: views live as long as their program entry.
-    let lane_view = unsafe { &*lane_view };
     let base = lane_view.records();
     let r = Registers(vm.frames[frame].registers.as_mut_ptr());
     let view = frame_memory_view(cx, lane_view, r);
@@ -15475,8 +15480,8 @@ fn lane_resume_generator_frame<H: Host>(
     // SAFETY: the call record lies in the running view.
     let call_pc = unsafe { ip.offset_from((*cx).base) } as usize;
     let destination = i.a & crate::bytecode::REGISTER_MASK;
-    match vm.try_in_loop_generator_step(frame, call_pc + 1, method, generator, destination, true)? {
-        Ok(StepResult::PushFrame { destination, call_guard, generator: Some(resume), .. }) => {
+    match vm.resume_generator_in_place(frame, call_pc + 1, method, generator, true)? {
+        Ok((call_guard, resume)) => {
             // SAFETY: the general loop's pending calls outlive the lane run.
             unsafe { &mut *(*cx).pending }.push(PendingGeneralCall {
                 caller: frame,
@@ -15493,7 +15498,6 @@ fn lane_resume_generator_frame<H: Host>(
             vm.lane_stack.refresh_activation_limit();
             Some(lane_enter_script_frame(cx, frame + 1))
         }
-        Ok(_) => unreachable!("a generator step pushes its frame"),
         Err(error) => {
             vm.lane_raised = Some(error);
             Some(exit(ip))
