@@ -1,12 +1,15 @@
-# Local JIT consumer handoff
+# JIT consumer handoff
 
-## Ready review target
+## Delivered branch
 
-`v2-jit-foundation-release-20261027` is the clean, local review branch. Its base is
-`da9a1c41b71aabd259d6ab848f06e819ae8946b7`; implementation source is the tested
-`72c770283d1a7646e2e643df39d2f51041a2fb17`. It adds the reusable extension guide
-and runnable captured-leaf example. The later diagnostic experiment
-`d918ffbfd24798638f796d9f88c74f749c49162b` is excluded.
+The reusable foundation is published on `v2-jit`. Integration commit
+`56cd0aed0376c2d46f04e30c5c768ee546527dda` has the tested release
+`c70f0fffce693456fd27c3411aba01e7a3c737b4` and prior remote `v2-jit`
+`3207636972a69564ea9f7db5866f000a8ebfede5` as parents. The production JIT
+source is the release runtime tree; the integration retained the remote branch's
+regression and adapted its lane-view lookup to the current arena-backed API. The
+captured-leaf implementation and guide are from `72c770283d1a7646e2e643df39d2f51041a2fb17`.
+The later diagnostic experiment `d918ffbfd24798638f796d9f88c74f749c49162b` is excluded.
 
 ## Build and smoke
 
@@ -24,11 +27,21 @@ Each smoke run prints `[160000,18000]`. For native-body proof, run JIT in a
 separate diagnostic process with `QUENCH_JS_JIT_STATS=1`; find `capturedLeafLoop`
 and require `native_region_runs > exits + 20`. Do not use diagnostic timings.
 
-Tested on source `72c770283d`: 1,038 runtime tests; 53,353 Test262 passes and
-53 unchanged waivers per mode with zero unwaived failures; 67,124 Wasm directives
-passed per mode across 288 files; and 16 V8-v7 functional checks. Cold AES,
-TypeScript and Babel parity also passed. This is correctness and mechanism evidence,
-not score/RSS qualification. Exact binary, corpus and report hashes are in
+On this integration, `cargo test --locked -p quench-runtime --lib` passed all
+1,039 tests. The cold stock AES fixture also exited successfully under the preserved
+JIT binary, no-JIT, and Node 26.12; all three emitted the same empty output. The
+JIT binary SHA-256 was `bcf3021de04f093b82bf274eceb98ae38e166781945a8b726acb580249b0c83e`,
+the fixture SHA-256 was `7665eb8a3b155475308b51736223b3e7dc146d1f5207224c53abab90d3067ef8`,
+and the Node binary SHA-256 was
+`caa24debe02770c92a70677e2a62ca98890150e7ac1c17bcfe31bcc98cc89943`.
+
+The earlier source-`72c770283d` full-suite record is 1,038 runtime tests, 53,353
+Test262 passes and 53 unchanged waivers per mode with zero unwaived failures,
+67,124 Wasm directives per mode across 288 files, and 16 V8-v7 functional checks.
+That implementation runtime is unchanged here; those corpus suites were not rerun
+for this integration. Cold TypeScript and Babel parity also passed on that earlier
+source. These are correctness and mechanism results, not score/RSS qualification.
+Exact binary, corpus and report hashes are in
 `/workspace/quench-jit-evidence-20261025/captured-inline/consumer-packet.json`.
 
 ## Consumer source relationships
