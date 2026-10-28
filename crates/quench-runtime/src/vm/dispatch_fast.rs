@@ -12567,6 +12567,7 @@ fn lane_record_forwarded_fields<H: Host>(
         fields: fields.fields,
         parameters: fields.parameters,
         defaulted: fields.defaulted,
+        constant: fields.constant,
         fallbacks: fields.fallbacks,
         forwarded: Some(ForwardedResolution {
             initializer: Some(initializer),

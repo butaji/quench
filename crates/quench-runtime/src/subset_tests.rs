@@ -729,8 +729,10 @@ fn nested_reads_past_their_primary_entries_keep_their_values() {
     // entries and a string's own `length` (`lane_nested_polymorphic_value`): strings of
     // astral and accented code points, arrays and an object with its own `length`, a middle
     // step over many shapes, an inherited one, then a getter installed on its prototype and
-    // a primitive in its place. Node 26 prints the same.
+    // a primitive in its place. Node 26 prints the same. A semantics check: the iteration
+    // build's lane does not reach these sites, which the release build's reads do.
     let source = r#"
+(function () {
 const out = [];
 function P(input) { this.input = input; this.pos = 0; }
 P.prototype.len = function () { return this.input.length; };
@@ -753,6 +755,7 @@ Object.defineProperty(proto, "label", { get() { return "getter"; } });
 const p = new P("x"); p.node = node; out.push(p.kind());
 node.type = "str"; out.push(String(p.kind()));
 print(out.join(" "));
+})();
 "#;
     assert_eq!(output(source), ["18300 t11 inherited getter undefined"]);
 }
@@ -764,6 +767,7 @@ fn polymorphic_stores_through_record_hints_keep_their_semantics() {
     // then a frozen one, an own accessor in the field's place, a prototype setter and a
     // receiver gone to dictionary storage. Node 26 prints the same.
     let source = r#"
+(function () {
 const out = [];
 function P(k) { this.pos = 0; this["f" + k] = k; }
 P.prototype.step = function (v) { this.pos = v; return this.pos; };
@@ -781,6 +785,66 @@ const viaProto = Object.create({ set pos(v) { out.push("proto" + v); } });
 P.prototype.step.call(viaProto, 4);
 const big = new P(4); for (let i = 0; i < 40; i++) big["x" + i] = i; delete big.x3; out.push(big.step(11), big.pos);
 print(out.join(" "));
+})();
 "#;
     assert_eq!(output(source), ["448500 0 0 5 set7 g proto4 11 11"]);
+}
+
+#[test]
+fn forwarding_constructors_keep_their_initializers_constant_fields() {
+    // Two closures of one forwarding constructor (`this.initialize.apply(this, arguments)`)
+    // whose initializers differ: the plan a forwarded construction records keeps which of
+    // its fields are constants (`lane_record_forwarded_fields`), so C's `this.w = 1` stays 1
+    // beside a defaulted parameter field. In a function, whose loops run in the lane. Node
+    // prints the same.
+    let source = r#"
+(function () {
+var Class = { create: function() { return function() { this.initialize.apply(this, arguments); }; } };
+function A(x) { this.x = x; }
+var B = Class.create();
+B.prototype = { initialize: function(x) { this.y = x + 1; } };
+var C = Class.create();
+C.prototype = { initialize: function(x) { this.z = (x ? x : 4); this.w = 1; } };
+function make(K, v) { return new K(v); }
+var out = [];
+for (var i = 0; i < 3000; i++) { var a = new (i % 3 == 0 ? A : i % 3 == 1 ? B : C)(i % 7); if (i > 2990) out.push(JSON.stringify(a)); }
+for (var i = 0; i < 3000; i++) { var k = [A, B, C][i % 3]; var o = new k(i % 5); if (i > 2990) out.push(JSON.stringify(o)); }
+for (var i = 0; i < 3000; i++) { var o = make([A, B, C][i % 3], i % 5); if (i > 2990) out.push(JSON.stringify(o)); }
+var o1; for (var i = 0; i < 3000; i++) { o1 = new A(i); } for (var i = 0; i < 3000; i++) { var K = i < 1500 ? A : (i < 2000 ? B : C); var o2 = new K(i % 4); if (i % 500 == 499) out.push(JSON.stringify(o2)); }
+print(out.join('\n'));
+})();
+"#;
+    assert_eq!(output(source).join("\n"), r##"{"x":2}
+{"y":4}
+{"z":4,"w":1}
+{"x":5}
+{"y":7}
+{"z":4,"w":1}
+{"x":1}
+{"y":3}
+{"z":3,"w":1}
+{"x":1}
+{"y":3}
+{"z":3,"w":1}
+{"x":4}
+{"y":1}
+{"z":1,"w":1}
+{"x":2}
+{"y":4}
+{"z":4,"w":1}
+{"x":1}
+{"y":3}
+{"z":3,"w":1}
+{"x":4}
+{"y":1}
+{"z":1,"w":1}
+{"x":2}
+{"y":4}
+{"z":4,"w":1}
+{"x":3}
+{"x":3}
+{"x":3}
+{"y":4}
+{"z":3,"w":1}
+{"z":3,"w":1}"##);
 }
