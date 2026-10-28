@@ -10232,8 +10232,9 @@ script_handler! {
         };
         let Some(value) = value else {
             // An activation keeping values past the parameters, a full lane stack or another
-            // program's target takes the general form (`lane_activate`).
-            if argc > target.params
+            // program's target takes the general form (`lane_activate`). A callee that drops
+            // the values past its parameters is passed those alone, as `lane_activate` passes them.
+            if (argc > target.params && !target.drops_extra_arguments())
                 || !lane_activation_room(vm, target)
                 || (returns && !lane_returning_call_admitted(cx))
                 || vm.with_scope_entered
@@ -10241,7 +10242,10 @@ script_handler! {
             {
                 sibling!(lane_script_call_general::<H>, r, ip, Carried::script(cx))
             }
-            let (registers, base) = lane_push_activation::<H, false, false>(cx, r, ip, target, arguments, this, false);
+            // SAFETY: the call's window of `r` holds its `argc` values.
+            let passed = unsafe { r.0.add(usize::from(arguments)).cast_const() };
+            let (registers, base) =
+                lane_push_passed::<H, false, false>(cx, r, ip, target, passed, argc.min(target.params), this, false);
             next!(cx, registers, base, Carried::script(cx))
         };
         if !returns {
@@ -10375,6 +10379,9 @@ script_handler! {
     fn lane_iterator_step<>(cx, r, ip, i, view) {
         let vm = unsafe { vm(cx) };
         let (method, iterator) = (r.get(i.b), r.get(i.c));
+        if unsafe { (*cx).script_calls } && vm.steps_as_generator(iterator, method) {
+            sibling!(lane_generator_step::<H>, r, ip, Carried::script(cx))
+        }
         if !vm.steps_as_array_iterator(iterator, method) {
             sibling!(lane_script_call::<H, ANY_ARGC>, r, ip, Carried::script(cx))
         }
@@ -10383,6 +10390,19 @@ script_handler! {
         };
         r.set(i.a, result);
         next!(cx, r, following(ip), Carried::script(cx))
+    }
+}
+
+script_handler! {
+    /// An iteration step (`lane_iteration_step`) of this realm's generator `next` of a
+    /// generator that is not running: the generator resumes in place from the running frame,
+    /// as `lane_call_native` calls the native, with a result only the step's `done` and
+    /// `value` reads observe (`Vm::generator_iteration_step`).
+    #[inline(never)]
+    fn lane_generator_step<>(cx, r, ip, i, view) {
+        let (method, iterator) = (r.get(i.b), r.get(i.c));
+        let value = lane_call_from_frame(cx, ip, |vm, code| vm.generator_iteration_step(code, method, iterator));
+        lane_native_complete(cx, ip, i, value)
     }
 }
 
@@ -11618,8 +11638,24 @@ fn lane_call_native<H: Host>(
             native => format!("materializes for native {native:?}"),
         });
     }
-    // The callee observes the frame stack: lane activations become frames first, as leaving
-    // the lane would make them, and the call runs from the innermost one.
+    lane_call_from_frame(cx, ip, |vm, code| {
+        vm.call_native_guarded(code, native, receiver, arguments.as_slice(), callee)
+    })
+}
+
+/// A native call at the lane `Call` record `ip` made from the running frame: the callee
+/// observes the frame stack, so lane activations become frames first, as leaving the lane
+/// would make them, and `call` runs from the innermost one. `None` leaves the error it raised
+/// in `Vm::lane_raised`.
+#[inline(always)]
+fn lane_call_from_frame<H: Host>(
+    cx: *mut LaneContext<H>,
+    ip: Ip,
+    call: impl FnOnce(&mut Vm<H>, &ResidualProgram) -> Result<Value, JsError>,
+) -> Option<Value> {
+    let vm = unsafe { vm(cx) };
+    // SAFETY: `ip` is a record of the active view, which is the running function's.
+    let call_pc = unsafe { ip.offset_from((*cx).base) } as usize;
     vm.materialize_lane_activations(cx);
     // SAFETY: the context's program outlives the lane run, and `ip` is a record of the
     // active view, which is the running frame's.
@@ -11630,7 +11666,7 @@ fn lane_call_native<H: Host>(
     // calls of JavaScript run in this lane while it runs from this frame.
     let site = LaneNativeCall { cx: cx.cast(), call: ip, frames: vm.frames.len() };
     let outer = vm.lane_native.replace(site);
-    let result = vm.call_native_guarded(code, native, receiver, arguments.as_slice(), callee);
+    let result = call(vm, code);
     vm.lane_native = outer;
     // The native's allocations may make a collection due, which the lane's safepoints take.
     note_allocation(vm);
