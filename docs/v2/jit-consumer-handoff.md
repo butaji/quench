@@ -34,6 +34,17 @@ JIT binary SHA-256 was `bcf3021de04f093b82bf274eceb98ae38e166781945a8b726acb5802
 the fixture SHA-256 was `7665eb8a3b155475308b51736223b3e7dc146d1f5207224c53abab90d3067ef8`,
 and the Node binary SHA-256 was
 `caa24debe02770c92a70677e2a62ca98890150e7ac1c17bcfe31bcc98cc89943`.
+The fixture was `quench-bench/jetstream/SeaMonster/stanford-crypto-aes.js`; from
+the repository root, the exact cold JIT command was:
+
+```sh
+QUENCH_COMPILE_CACHE= QUENCH_STARTUP_SNAPSHOT=off \
+  target/production/quench-node --jit \
+  quench-bench/jetstream/SeaMonster/stanford-crypto-aes.js
+```
+
+This was an exit/output smoke only; it did not collect native-activation stats.
+Use the captured-leaf stats check above to prove completed native work.
 
 The earlier source-`72c770283d` full-suite record is 1,038 runtime tests, 53,353
 Test262 passes and 53 unchanged waivers per mode with zero unwaived failures,
@@ -90,8 +101,8 @@ set or PGO training hash is asserted by this packet.
 
 ## Remaining boundary
 
-Consumers currently lack source access because this branch is local and publication
-approval remains pending. No consumer integration failure is established from
-these reports. Consumer workloads own their package/native coverage and performance
-qualification. General rooted effectful-call continuation, dynamic instruction
-count A/A, peer score/RSS qualification, and publication/adoption remain open.
+The source is published on `v2-jit`; downstream adoption and verification remain
+pending. No consumer integration failure is established from these reports.
+Consumer workloads own their package/native coverage and performance qualification.
+General rooted effectful-call continuation, dynamic instruction count A/A, peer
+score/RSS qualification, and downstream adoption remain open.
