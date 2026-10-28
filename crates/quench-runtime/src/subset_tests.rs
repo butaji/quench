@@ -619,3 +619,36 @@ print(out.join(" "));
     let sloppy = "function sloppy(e) { const g = () => e; g(); return sloppy.arguments.length; } function drive(f) { let s = 0; for (let i = 0; i < 50; i++) s += f(i, 1, 2); return s; } print(drive(sloppy));";
     assert_eq!(output(sloppy), ["150"]);
 }
+
+#[test]
+fn proved_promise_species_follows_constructor_and_species_changes() {
+    // `then` answers SpeciesConstructor from a proof of where `constructor` and `@@species`
+    // were found (`PromiseSpeciesProof`); reassigning either, an own `constructor` and a
+    // subclass each take the spec's reads again.
+    let source = r#"
+const log = [];
+function chain(n) { let p = Promise.resolve(0); for (let i = 0; i < n; i++) p = p.then((v) => v + 1); return p; }
+(async () => {
+  log.push(await chain(50));
+  const original = Promise.prototype.constructor;
+  class Tracked extends Promise { constructor(f) { log.push("ctor"); super(f); } }
+  Promise.prototype.constructor = Tracked;
+  const t = Promise.resolve(1).then((v) => v);
+  log.push(t instanceof Tracked);
+  Promise.prototype.constructor = original;
+  log.push(Promise.resolve(1).then((v) => v) instanceof Tracked);
+  const species = Object.getOwnPropertyDescriptor(Promise, Symbol.species);
+  Object.defineProperty(Promise, Symbol.species, { get() { log.push("species"); return Tracked; }, configurable: true });
+  log.push(Promise.resolve(2).then((v) => v) instanceof Tracked);
+  Object.defineProperty(Promise, Symbol.species, species);
+  log.push(Promise.resolve(2).then((v) => v) instanceof Tracked);
+  const own = Promise.resolve(3); own.constructor = Tracked;
+  log.push(own.then((v) => v) instanceof Tracked);
+  const sub = Tracked.resolve(4);
+  log.push(sub.then((v) => v) instanceof Tracked);
+  log.push(await chain(10));
+  print(log.join(" "));
+})();
+"#;
+    assert_eq!(output(source), ["50 ctor true false species ctor true false ctor true ctor ctor true 10"]);
+}

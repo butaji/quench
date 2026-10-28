@@ -1910,6 +1910,8 @@ pub(crate) struct Vm<H> {
     array_iteration_proof: Option<iterators::ArrayIterationProof>,
     for_in_own_keys: Option<object_static::ForInOwnKeys>,
     species_slot_proof: std::cell::Cell<Option<object_get::SpeciesSlotProof>>,
+    /// The last proof that a promise's species constructor is `%Promise%` (`promise_species_proved`).
+    promise_species_proof: std::cell::Cell<Option<promise::PromiseSpeciesProof>>,
     index_free_chain_proof: std::cell::Cell<Option<object::IndexFreeChainProof>>,
     enumerable_keys: enumerable_key_memo::EnumerableKeyMemo,
     shape_attribute_memo: shape_memo::ShapeAttributeMemo,
@@ -2900,6 +2902,7 @@ impl<H: Host> Vm<H> {
         self.array_iteration_proof = None;
         self.for_in_own_keys = None;
         self.species_slot_proof.set(None);
+        self.promise_species_proof.set(None);
         self.index_free_chain_proof.set(None);
         self.enumerable_keys.clear();
         self.shape_attribute_memo.clear();

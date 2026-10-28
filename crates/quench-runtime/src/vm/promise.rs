@@ -10,6 +10,24 @@ const JAVASCRIPT_MODULE_TYPE: &str = "javascript";
 use crate::{ModuleSource, module_identity::ModuleIdentity};
 use rustc_hash::FxHashSet;
 
+/// Where SpeciesConstructor(promise, %Promise%) found the realm's `%Promise%` for receivers
+/// of one shape and prototype under one prototype layout epoch (`Vm::promise_species_proved`):
+/// `constructor` in a data slot of a prototype, and its own `@@species` slot holding the
+/// intrinsic getter. Every collection advances the epoch, so no value here outlives its record.
+#[derive(Clone, Copy)]
+pub(super) struct PromiseSpeciesProof {
+    shape: u32,
+    prototype: Value,
+    epoch: u64,
+    realm: Value,
+    holder: Value,
+    holder_slot: u32,
+    constructor: Value,
+    constructor_shape: u32,
+    species_slot: usize,
+    getter: Value,
+}
+
 fn module_cache_key(name: &str, module_type: &str) -> String {
     format!("{}:{module_type}", crate::module_identity::normalized_text(name))
 }
@@ -5486,13 +5504,92 @@ impl<H: Host> Vm<H> {
     /// its receiver (`has_intrinsic_species_getter`). Both reads observe nothing, so a
     /// failed proof only leaves the observable steps to the general path.
     fn promise_species_intrinsic(&mut self, promise: Value) -> bool {
+        if self.promise_species_proved(promise) {
+            return true;
+        }
         let constructor_atom = self.runtime_atoms.constructor;
         let Some(constructor) = self.plain_named_load(promise, constructor_atom) else {
             return false;
         };
-        constructor.is_undefined()
-            || (constructor == self.intrinsic_promise_constructor()
-                && self.has_intrinsic_species_getter(constructor))
+        if constructor.is_undefined() {
+            return true;
+        }
+        let intrinsic = constructor == self.intrinsic_promise_constructor() && self.has_intrinsic_species_getter(constructor);
+        if intrinsic {
+            self.record_promise_species_proof(promise, constructor);
+        }
+        intrinsic
+    }
+
+    /// Whether the last `PromiseSpeciesProof` answers `promise`: SpeciesConstructor(promise,
+    /// %Promise%) then reads `constructor` as the realm's `%Promise%` from the prototype data
+    /// slot it was found in, and that constructor's own `@@species` still holds the intrinsic
+    /// getter. A receiver of the proved shape and prototype finds `constructor` where the walk
+    /// did while the prototype layout epoch holds (`plain_proved_get`); the two slots are read
+    /// again, as a data write to either changes no layout.
+    #[inline]
+    fn promise_species_proved(&self, promise: Value) -> bool {
+        let Some(proof) = self.promise_species_proof.get() else {
+            return false;
+        };
+        let Some(data) = self.heap.ordinary_object(promise) else {
+            return false;
+        };
+        if data.shape() != proof.shape
+            || data.proto() != proof.prototype
+            || data.has_side_descriptors()
+            || proof.epoch != crate::heap::prototype_layout_epoch()
+            || proof.realm != self.realm.globals
+        {
+            return false;
+        }
+        let (Some(holder), Some(constructor)) =
+            (self.heap.ordinary_object(proof.holder), self.object_data(proof.constructor))
+        else {
+            return false;
+        };
+        // SAFETY: the proof's walk found `constructor` in this data slot of the holder's shape,
+        // which the epoch keeps.
+        let found = unsafe { self.heap.property_get_shaped(holder, proof.holder_slot as usize) };
+        found == Some(proof.constructor)
+            && constructor.shape() == proof.constructor_shape
+            && self.heap.property_get(constructor, proof.species_slot) == Some(proof.getter)
+    }
+
+    /// Records the `PromiseSpeciesProof` of `promise`, whose `constructor` read found the
+    /// realm's `%Promise%` with its intrinsic `@@species` getter: where the read's proof found
+    /// the constructor, and the getter's slot, when both were proved under this epoch.
+    fn record_promise_species_proof(&self, promise: Value, constructor: Value) {
+        use super::symbol_load_proof::SymbolLoadAnswer;
+        let epoch = crate::heap::prototype_layout_epoch();
+        let (Some(data), Some(constructor_data)) = (self.heap.ordinary_object(promise), self.object_data(constructor))
+        else {
+            return;
+        };
+        let key = PropertyKey::string(self.runtime_atoms.constructor);
+        let Some(SymbolLoadAnswer::Inherited { prototype, holder, slot }) = self.symbol_load_proofs.answer(data.shape(), key, epoch)
+        else {
+            return;
+        };
+        let constructor_shape = constructor_data.shape();
+        let Some(species_slot) = self.proved_species_slot(constructor_shape, epoch) else {
+            return;
+        };
+        let Some(getter) = self.heap.property_get(constructor_data, species_slot) else {
+            return;
+        };
+        self.promise_species_proof.set(Some(PromiseSpeciesProof {
+            shape: data.shape(),
+            prototype,
+            epoch,
+            realm: self.realm.globals,
+            holder,
+            holder_slot: slot,
+            constructor,
+            constructor_shape,
+            species_slot,
+            getter,
+        }));
     }
 
     pub(super) fn promise_then(
@@ -5591,6 +5688,10 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         promise: Value,
     ) -> Result<Value, JsError> {
+        // A read that runs no guest code and finds the intrinsic species answers at once.
+        if self.promise_species_intrinsic(promise) {
+            return Ok(self.intrinsic_promise_constructor());
+        }
         let constructor_atom = self.runtime_atoms.constructor;
         let constructor = self.get_property(p, promise, constructor_atom)?;
         if constructor.is_undefined() {
