@@ -12132,6 +12132,41 @@ fn shared_osr_appends_and_fills_holes_in_place() {
 }
 
 #[test]
+fn shared_osr_indexes_the_row_a_loop_reads_each_iteration() {
+    // `a[e][f] = x` in a loop over `e` indexes the row `a[e]` the iteration read, not the
+    // row the region entered with: the region declines an indexed register it defines
+    // (sjcl's AES table setup, stanford-crypto-aes under `--jit`).
+    let source = r#"
+      function fill(v) {
+        var a = [[], [], [], []], n;
+        for (var f = 0; f < 300; f++) {
+          n = v * f;
+          for (var e = 0; 4 > e; e++) a[e][f] = n = n << 24 ^ n >>> 8;
+        }
+        var h = 0;
+        for (var r = 0; r < 4; r++) for (var i = 0; i < 300; i++) h = (h * 31 + (a[r][i] | 0)) | 0;
+        return h + ":" + a[0].length + ":" + a[3].length;
+      }
+      var out = [];
+      for (var c = 0; c < 3; c++) out.push(fill(0x101));
+      print(out.join(" "));
+    "#;
+    let program = Engine::specialize(source, "osr-row.js").unwrap();
+    for policy in crate::MemoryPolicy::ALL {
+        let output = Rc::new(RefCell::new(Vec::new()));
+        let mut compiled = Vm::new(TestHost::writing_to(output.clone()));
+        compiled.set_memory_policy(policy);
+        compiled.set_execution_mode(crate::ExecutionMode::Compiled);
+        compiled.execute(&program).unwrap();
+        assert_eq!(
+            output.borrow().as_slice(),
+            ["1419804588:300:300 1419804588:300:300 1419804588:300:300"],
+            "{policy:?}"
+        );
+    }
+}
+
+#[test]
 #[cfg(not(quench_profiled))]
 fn shared_osr_indexes_arrays_that_field_reads_give() {
     // Each iteration reads the arrays from fields of `this` and of an argument, then reads

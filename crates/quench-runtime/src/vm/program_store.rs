@@ -3533,6 +3533,7 @@ impl Drop for ProgramStore {
                         super::compiled::RegionRejection::FieldLimit => "field-limit",
                         super::compiled::RegionRejection::FieldStoreLimit => "field-store-limit",
                         super::compiled::RegionRejection::FieldMutation => "field-mutation",
+                        super::compiled::RegionRejection::ArrayRedefined => "array-redefined",
                     };
                     let _ = write_json_string(&mut stderr, name);
                 } else {
@@ -3660,6 +3661,7 @@ impl Drop for ProgramStore {
                     super::compiled::RegionRejection::FieldLimit => "field-limit",
                     super::compiled::RegionRejection::FieldStoreLimit => "field-store-limit",
                     super::compiled::RegionRejection::FieldMutation => "field-mutation",
+                    super::compiled::RegionRejection::ArrayRedefined => "array-redefined",
                 };
                 let _ = write!(stderr, "[");
                 let _ = write_json_string(&mut stderr, name);
