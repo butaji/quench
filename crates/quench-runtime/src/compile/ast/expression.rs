@@ -699,7 +699,7 @@ impl FunctionCompiler<'_, '_> {
     }
     /// Compiles an expression whose value is discarded. A postfix update then needs no
     /// separate ToNumeric of the old value: `IncDec` performs the conversion itself.
-    pub(super) fn effect_expression(&mut self, expression: &Expression<'_>) -> Register {
+    pub(in crate::compile) fn effect_expression(&mut self, expression: &Expression<'_>) -> Register {
         match expression {
             Expression::UpdateExpression(value) => self.update(value, false),
             _ => self.expression(expression),

@@ -212,6 +212,8 @@ impl FunctionCompiler<'_, '_> {
         let dst = self.reg();
         self.emit(Op::Move, dst, left, 0, 0);
         let jump = self.emit(Op::JumpFalse, left, 0, 0, 0);
+        // The right operand's temporaries are dead once its value moves into `dst`.
+        let temporaries = self.next_reg;
         if value.operator.is_or() {
             let skip = self.emit(Op::Jump, 0, 0, 0, 0);
             self.patch(jump);
@@ -223,19 +225,26 @@ impl FunctionCompiler<'_, '_> {
             self.emit(Op::Move, dst, right, 0, 0);
             self.patch(jump);
         }
+        self.next_reg = temporaries;
         dst
     }
 
     pub(super) fn conditional(&mut self, value: &ConditionalExpression<'_>, debug_name: Option<Atom>) -> Register {
         let dst = self.reg();
+        // The test's and each branch's temporaries are dead once the test has branched and
+        // each branch's value has moved into `dst`.
+        let temporaries = self.next_reg;
         let test = self.expression(&value.test);
         let other = self.emit(Op::JumpFalse, test, 0, 0, 0);
+        self.next_reg = temporaries;
         let yes = self.expression_with_debug_name(&value.consequent, debug_name);
         self.emit(Op::Move, dst, yes, 0, 0);
+        self.next_reg = temporaries;
         let end = self.emit(Op::Jump, 0, 0, 0, 0);
         self.patch(other);
         let no = self.expression_with_debug_name(&value.alternate, debug_name);
         self.emit(Op::Move, dst, no, 0, 0);
+        self.next_reg = temporaries;
         self.patch(end);
         dst
     }
