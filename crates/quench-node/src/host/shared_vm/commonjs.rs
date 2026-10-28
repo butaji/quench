@@ -316,11 +316,10 @@ fn detect_text_kind(text: &str) -> quench_runtime::SourceKind {
     }
 }
 
+/// Holds one function's tree at a time: the whole tree of a large file (typescript.js, 9 MB)
+/// with its semantic tables was the peak of loading it.
 fn valid_source(source: &str, source_type: oxc_span::SourceType) -> bool {
-    let allocator = oxc_allocator::Allocator::default();
-    let parsed = oxc_parser::Parser::new(&allocator, source, source_type).parse();
-    parsed.diagnostics.is_empty() && oxc_semantic::SemanticBuilder::new()
-        .with_check_syntax_error(true).build(&parsed.program).diagnostics.is_empty()
+    quench_runtime::Engine::syntax_valid(source, source_type)
 }
 
 pub(super) fn initialize(context: &mut Context<'_>) -> Result<(), RootedError> {

@@ -1698,6 +1698,22 @@ pub(super) struct FunctionTreeFacts {
     pub(super) parameter_error: Option<String>,
 }
 
+/// The source functions of `program` and the early errors Quench's own checks find in it,
+/// in the order a compilation reports them.
+pub(super) fn program_early_errors(program: &Program<'_>, strict: bool) -> (usize, Vec<String>) {
+    let facts = function_tree_facts(program, strict);
+    let errors = facts
+        .restricted_assignment
+        .map(|name| format!("SyntaxError: assignment to {name} is not allowed in strict mode"))
+        .into_iter()
+        .chain(strict.then(|| strict_octal_numeric_early_error(program)).flatten())
+        .chain(block_early_error(program, strict))
+        .chain(strict_binding_early_error(program, strict))
+        .chain(facts.parameter_error)
+        .collect();
+    (facts.functions, errors)
+}
+
 pub(super) fn function_tree_facts(program: &Program<'_>, strict: bool) -> FunctionTreeFacts {
     let mut walk = FunctionTreeWalk {
         functions: 0,
