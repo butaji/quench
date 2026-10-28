@@ -2386,7 +2386,6 @@ impl Function {
                 });
             let environment_activation = in_loop
                 && self.parent.is_some()
-                && !self.is_arrow
                 && !self.is_class_constructor
                 // A rest list binding directly fills its slot with the gathered array
                 // (`lane_activate_environment`).

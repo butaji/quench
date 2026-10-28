@@ -488,3 +488,55 @@ fn closure_free_parameter_lists_binding_apart_drop_unobservable_environment_copi
     program.validate().unwrap();
     assert_eq!(output(source), ["2,1,4", "7,5", "7undefined,7number"]);
 }
+
+#[test]
+fn closure_making_arrows_run_as_environment_activations_with_their_lexical_this() {
+    // An arrow that makes closures runs as an environment activation
+    // (`CallPlan::environment_activation`) whose `this` is its environment's; its
+    // closures find that `this`, its captured parameters and locals as a frame's would,
+    // and a throw or a recursive call leaves the activation as the frame it would be.
+    let source = r#"
+const out = [];
+const obj = {
+  v: 3,
+  run() {
+    const make = (k) => () => this.v + k;
+    const fs = [];
+    for (let i = 0; i < 4; i++) fs.push(make(i));
+    return fs.map((f) => f()).join();
+  },
+  nested() {
+    const outer = (a) => { const inner = (b) => (c) => this.v * a + b + c; return inner(a + 1); };
+    return outer(2)(5);
+  },
+};
+out.push(obj.run(), obj.nested());
+// An arrow making a closure that escapes and mutates a captured parameter.
+const counter = (n) => { const inc = () => ++n; const get = () => n; return [inc, get]; };
+const [inc, get] = counter(10); inc(); inc(); out.push(get());
+// Throws through an environment arrow.
+const thrower = (x) => { const f = () => { throw new Error("e" + x); }; return f(); };
+try { thrower(7); } catch (e) { out.push(e.message); }
+// Recursion.
+const fib = (n) => { const lazy = () => n; return n < 2 ? lazy() : fib(n - 1) + fib(n - 2); };
+out.push(fib(15));
+// IIFE named function expression inside an arrow, as minified code writes.
+const w = (r) => function worker(e) { return e * 2 + r; }(r + 1);
+let s = 0; for (let i = 0; i < 1000; i++) s += w(i); out.push(s);
+// Arrow in a derived constructor after super().
+class A { constructor() { this.a = 1; } }
+class B extends A { constructor() { super(); const g = () => () => this.a + 1; this.b = g()(); } }
+out.push(new B().b);
+// Sloppy top-level arrow this.
+const top = () => { const h = () => typeof this; return h(); };
+out.push(top());
+// Arrow reading arguments of its enclosing function.
+function outerArgs() { const a = () => { const b = () => arguments.length; return b(); }; return a(); }
+out.push(outerArgs(1, 2, 3));
+// Many calls in a hot loop with a captured TDZ local.
+const tdz = (x) => { let y = x; const r = () => y; y += 1; return r(); };
+let t = 0; for (let i = 0; i < 5000; i++) t += tdz(i); out.push(t);
+print(out.join(" "));
+"#;
+    assert_eq!(output(source), ["3,4,5,6 14 12 e7 610 1500500 2 object 3 12502500"]);
+}
