@@ -494,7 +494,24 @@ fn check_case(case: &Case, runs: u32) {
                     Some(super::Cell::WeakRef { target, .. }) => vm.heap.weak_value(target.unwrap()).unwrap(),
                     _ => unreachable!(),
                 };
-                eprintln!("DIAG holders {:?}", vm.heap.debug_holders(target));
+                let mut frontier = vec![target];
+                for depth in 0..8 {
+                    let mut next = Vec::new();
+                    for value in &frontier {
+                        let holders = vm.heap.debug_holders(*value);
+                        eprintln!("DIAG depth {depth} {value:?} held by {holders:?}");
+                        for holder in holders {
+                            if let Some(rest) = holder.strip_prefix("slot ") {
+                                let index: u32 = rest.split(' ').next().unwrap().parse().unwrap();
+                                next.push(Value::heap(index));
+                            } else if let Some(rest) = holder.strip_prefix("record ") {
+                                let _ = rest;
+                            }
+                        }
+                    }
+                    if next.is_empty() { break; }
+                    frontier = next;
+                }
                 eprintln!("DIAG kept_alive={} frames={} frame_hits={:?} target={target:?}",
                     vm.kept_alive.len(), vm.frames.len(),
                     vm.frames.iter().map(|f| (f.registers.iter().filter(|v| **v == target).count(), f.locals.iter().filter(|v| **v == target).count(), f.registers.len())).collect::<Vec<_>>());

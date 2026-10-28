@@ -982,8 +982,17 @@ impl Heap {
                 found.push(format!("slot {index} {:?} marked={}", cell.profile_variant_name(), Self::marked(&self.marks, index)));
             }
         }
-        let slot = target.legacy_heap_index().map(|index| (index, self.get(target).map(|cell| cell.profile_variant_name())));
-        found.push(format!("target slot holds {slot:?}"));
+        let mut ids = Vec::new();
+        for (family, handle) in self.record_families() {
+            family.for_each_live_id(&mut |id| ids.push(handle(id)));
+        }
+        for owner in ids {
+            let mut edges = Vec::new();
+            self.owner_edges(owner, &mut edges, &mut |_, _, _, _, _| {});
+            if edges.contains(&target) {
+                found.push(format!("record {owner:?}"));
+            }
+        }
         found
     }
     /// Every live legacy cell, without needing `&mut` (census and diagnostics).
