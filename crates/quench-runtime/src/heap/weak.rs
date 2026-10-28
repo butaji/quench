@@ -94,7 +94,15 @@ impl EphemeronWork {
 }
 
 impl Heap {
-    pub(super) fn prune_weak_entries(&mut self, full: bool) -> Vec<(Value, Value)> {
+    /// Prunes the weak entries whose keys or targets the mark left unmarked: every live weak
+    /// cell's after a full collection, the young and remembered ones' after a minor one. The
+    /// young weak cells a minor collection under `age` keeps young (`PromotionAge::ages`)
+    /// stay listed for the next one: marked, not yet aged.
+    pub(super) fn prune_weak_entries(
+        &mut self,
+        full: bool,
+        age: PromotionAge,
+    ) -> Vec<(Value, Value)> {
         let Self {
             object_records,
             array_records,
@@ -105,6 +113,7 @@ impl Heap {
             string_records,
             v128_records,
             marks,
+            aged,
             slots,
             young_weak,
             remembered,
@@ -141,8 +150,34 @@ impl Heap {
                 }
             }
         }
-        young_weak.clear();
+        if full || !age.ages() {
+            young_weak.clear();
+        } else {
+            young_weak.retain(|&index| {
+                let (word, bit) = slot_bit(index as usize);
+                is_marked(Value::heap(index)) && aged.get(word).is_none_or(|ages| ages & bit == 0)
+            });
+        }
         finalization_jobs
+    }
+
+    /// The keys, values and targets of `cell`'s weak entries, which a strong trace of it
+    /// (`Heap::children`) leaves to the ephemeron work and to pruning.
+    pub(super) fn weak_entry_edges(cell: &Cell, edges: &mut Vec<Value>) {
+        match cell {
+            Cell::WeakMap { entries, .. } => {
+                edges.extend(entries.iter().flat_map(|(key, value)| [*key, *value]));
+            }
+            Cell::WeakSet { entries, .. } => edges.extend(entries.iter().copied()),
+            Cell::WeakRef { target, .. } => edges.extend(target.map(|target| target.value)),
+            Cell::FinalizationRegistry { entries, .. } => {
+                for entry in entries.iter() {
+                    edges.push(entry.target.value);
+                    edges.extend(entry.token.map(|token| token.value));
+                }
+            }
+            _ => {}
+        }
     }
 
     fn prune_weak_cell(

@@ -700,7 +700,7 @@ impl Heap {
         {
             return;
         }
-        let (word, bit) = (index / u64::BITS as usize, 1_u64 << (index % u64::BITS as usize));
+        let (word, bit) = super::slot_bit(index);
         // A cell already remembered needs nothing more: the common repeated write.
         if self.remembered_marks.get(word).is_some_and(|marks| marks & bit != 0) {
             return;
