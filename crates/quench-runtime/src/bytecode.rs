@@ -2317,6 +2317,11 @@ impl Function {
                 })
     }
 
+    /// Whether some jump of the body targets its own or an earlier instruction: a loop.
+    pub(crate) fn loops(&self) -> bool {
+        has_backward_branch(&self.code, &self.wide)
+    }
+
     /// Whether an activation can suspend: an `await`, or a `yield` of a generator.
     pub(crate) fn suspends(&self) -> bool {
         self.instructions()
