@@ -353,6 +353,21 @@ pub fn at_compile_phase(phase: quench_runtime::CompilePhase) {
         quench_runtime::CompilePhase::Encoding => {
             release_once_per_interval(CompileRelease::Encoding, release_read_only_code_and_data)
         }
+        // A run's lane views derive in bursts once its warm-up calls are over, with no compile
+        // boundary between them, and a burst kept the deriver's, the lanes' and the general
+        // loop's code resident beside the heap: 1.25 MB of file pages in one collection
+        // interval at V8-v7 RayTrace's peak. Only over the budget: releasing on the interval
+        // as well raised Richards and DeltaBlue by 84-140 KiB. Bolted static x86_64,
+        // memory-first, pinned, two rounds of 3 runs, 2026-10-28, worst runs against none:
+        // RayTrace 2904 -> 2776-2812 KiB, Crypto 2908-3088 -> 2812-2908, RegExp 5284-5340 ->
+        // 5156-5284, NavierStokes 3884-4012 -> 3836-3884, DeltaBlue `--jit` 2988 -> 2804-2916,
+        // Richards 2396 -> 2416; Scores within the runs' spread.
+        quench_runtime::CompilePhase::LaneDerivation => {
+            #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+            if CompileRelease::LaneDerivation.over_budget() {
+                release_read_only_pages();
+            }
+        }
     }
 }
 
@@ -374,10 +389,11 @@ enum CompileRelease {
     FirstCall,
     Encoding,
     Kept,
+    LaneDerivation,
 }
 
 impl CompileRelease {
-    const COUNT: usize = 4;
+    const COUNT: usize = 5;
 
     /// The releases that may come inside their interval once resident code passes the budget
     /// (`over_budget`). A binary's first run compiles and keeps every bootstrap script back
@@ -391,7 +407,7 @@ impl CompileRelease {
     #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
     fn releases_over_budget(self) -> bool {
         match self {
-            Self::FirstCall | Self::CodeGeneration | Self::Kept => true,
+            Self::FirstCall | Self::CodeGeneration | Self::Kept | Self::LaneDerivation => true,
             Self::Encoding => false,
         }
     }
