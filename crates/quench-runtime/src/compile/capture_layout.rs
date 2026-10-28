@@ -225,7 +225,11 @@ pub(super) fn apply_function(
         // No closure of this activation can exist, and no nested function captures
         // its locals: a per-iteration or block copy of the environment is unobservable
         // under the same layout conditions that let a closure's activation split.
-        if captured.is_empty() && selective_layout_is_safe(function, id, inputs, atoms)
+        // Each argument must still arrive in a slot of its own, though its name may bind
+        // apart from it (`Function::arguments_own_their_slots`): no environment holds it.
+        if captured.is_empty()
+            && activation_is_private(function, id, inputs)
+            && function.arguments_own_their_slots(|atom| atoms.get(atom))
         {
             remove_unobservable_clones(function, &captured);
         }
@@ -323,6 +327,15 @@ fn inherited_dynamic_scope(functions: &[FunctionFacts]) -> Vec<bool> {
 /// Whether the function's activation may keep its uncaptured locals out of its environment:
 /// a nested function, or a module body, whose environment nothing outside it reads by name.
 fn selective_layout_is_safe(function: &Function, id: usize, inputs: &LayoutInputs, atoms: &CompilerAtoms<'_>) -> bool {
+    activation_is_private(function, id, inputs)
+        // A rest list binding directly names each parameter's own slot, as a simple one does.
+        && function.parameters_own_their_slots(|atom| atoms.get(atom))
+}
+
+/// Whether nothing outside the function's own code reads its environment by name or
+/// resumes it: a nested function or a module body, with no dynamic scope access and no
+/// suspension or construction protocol that names its slots.
+fn activation_is_private(function: &Function, id: usize, inputs: &LayoutInputs) -> bool {
     let nested = id != 0 && function.parent.is_some();
     let module_body = inputs.module_root && function.parent.is_none();
     (nested || module_body)
@@ -332,8 +345,6 @@ fn selective_layout_is_safe(function: &Function, id: usize, inputs: &LayoutInput
         && !function.is_class_constructor
         && !function.derived_constructor
         && !function.class_initializer
-        // A rest list binding directly names each parameter's own slot, as a simple one does.
-        && function.parameters_own_their_slots(|atom| atoms.get(atom))
         && !function.has_dynamic_scope_access()
 }
 

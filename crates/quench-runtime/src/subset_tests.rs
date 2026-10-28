@@ -467,3 +467,24 @@ fn strict_global_assignment_keeps_enclosing_locals_in_registers() {
         ["9", "3", "11", "undefinedundefinedundefined"]
     );
 }
+
+#[test]
+fn closure_free_parameter_lists_binding_apart_drop_unobservable_environment_copies() {
+    // A list with defaults or patterns binds its names apart from the argument slots; with
+    // no closure in the activation, its block and per-iteration environment copies are
+    // unobservable, as they are for a simple list, so its locals move into registers.
+    let source = r#"
+        function f(e, t = !1) { if (e) { const n = t ? 1 : 2; return n; } for (let i = 0; i < 3; i++) { let k = i * 2; e = k; } return e; }
+        print([f(1), f(1, true), f(0)].join());
+        function g(a, { b } = { b: 5 }) { let s = 0; for (const x of [a, b]) { let y = x; s += y; } try { let z = s; throw z; } catch (q) { return q + arguments.length; } }
+        print([g(1), g(1, { b: 2 })].join());
+        function h(a = 1) { { let a2 = a; a = 7; } return a + typeof arguments[0]; }
+        print([h(), h(3)].join());
+    "#;
+    let program = Engine::specialize(source, "parameters-apart.js").unwrap();
+    program.compile_released();
+    let f = &program.functions[1];
+    assert!(f.instructions().all(|instruction| instruction.op() != crate::bytecode::Op::CloneEnv));
+    program.validate().unwrap();
+    assert_eq!(output(source), ["2,1,4", "7,5", "7undefined,7number"]);
+}
