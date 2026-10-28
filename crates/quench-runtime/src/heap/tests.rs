@@ -316,8 +316,9 @@ fn minor_collection_keeps_records_written_into_old_records(heap: &mut Heap, age:
     assert!(heap.is_live(child) && heap.is_old(child) != age.ages());
     assert!(heap.is_live(element) && heap.is_old(element) != age.ages());
     assert!(!heap.is_live(garbage));
-    // Owners of what stays young stay remembered, so unmarked.
-    assert!(heap.is_old(owner) != age.ages() && heap.is_old(array) != age.ages());
+    // Owners stay old; those of what may stay young are carried to the next minor collection.
+    assert!(heap.is_old(owner) && heap.is_old(array));
+    assert_eq!(heap.carried_owners.len(), if age.ages() { 2 } else { 0 });
     if age.ages() {
         collect_minor(heap, [owner, array]);
         assert!(heap.is_old(child) && heap.is_old(element));
@@ -1183,8 +1184,13 @@ fn wide_environment_clones_store_only_the_slots_they_do_not_share() {
 }
 
 /// The owners remembered for the next minor collection, of every family these tests use.
+/// The old owners the next minor collection traces: those the barriers logged, and those the
+/// last minor collection carried (`Heap::carried_owners`).
 fn remembered_owners(heap: &Heap) -> usize {
-    heap.remembered.len() + heap.object_records.remembered_count() + heap.array_records.remembered_count()
+    heap.remembered.len()
+        + heap.object_records.remembered_count()
+        + heap.array_records.remembered_count()
+        + heap.carried_owners.len()
 }
 
 #[test]
@@ -1233,11 +1239,16 @@ fn promoted_owner_remembers_its_young_child(
     assert_eq!(remembered_owners(&heap), 0, "the barrier logs no young owner");
     collect_minor(&mut heap, [owner]);
     assert!(heap.is_live(child) && !heap.is_old(child));
-    assert_eq!(remembered_owners(&heap), 1, "the promoted owner holds a young child");
+    assert_eq!(remembered_owners(&heap), 1, "the promoted owner may hold a young child");
     collect_minor(&mut heap, []);
     assert!(heap.is_live(owner) && heap.is_old(owner));
     assert!(heap.is_live(child) && heap.is_old(child));
-    assert_eq!(remembered_owners(&heap), 0, "the owner holds nothing young");
+    // The owner, not written since it was carried, holds nothing young and is dropped; the
+    // child just promoted is carried once.
+    assert!(!heap.carried_owners.contains(&owner));
+    assert_eq!(remembered_owners(&heap), 1);
+    collect_minor(&mut heap, []);
+    assert_eq!(remembered_owners(&heap), 0, "nothing was written or promoted");
     collect_minor(&mut heap, []);
     assert!(heap.is_live(child) && remembered_owners(&heap) == 0);
     heap.collect([]);
@@ -1301,8 +1312,13 @@ fn old_owners_stay_remembered_until_their_aged_children_are_promoted_or_freed() 
     collect_minor(&mut heap, [keeper, dropper]);
     assert!(heap.is_live(kept) && heap.is_old(kept));
     assert!(!heap.is_live(dropped), "an aged child no owner holds dies at a minor collection");
-    assert_eq!(remembered_owners(&heap), 0);
     assert!(heap.is_old(keeper) && heap.is_old(dropper));
+    // The keeper, not written since it was carried, is dropped; the written dropper and the
+    // promoted child are carried once more, and nothing after a minor with no writes.
+    assert!(!heap.carried_owners.contains(&keeper));
+    collect_minor(&mut heap, [keeper, dropper]);
+    assert!(heap.is_live(kept) && heap.is_old(kept));
+    assert_eq!(remembered_owners(&heap), 0);
 }
 
 #[test]
