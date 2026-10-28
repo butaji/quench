@@ -200,12 +200,14 @@ pub(super) fn verify(name: &str, source: &str, program: &Program<'_>) {
     );
 }
 
-/// The environment switch that enables lazy function bodies while they are qualified.
-const LAZY_FUNCTION_BODIES_ENV: &str = "QUENCH_LAZY_FUNCTION_BODIES";
+/// The environment switch that compiles function bodies eagerly, for measuring the lazy ones
+/// against them. Lazy is the default: cold `import typescript` 101-103 -> 68.2 MB max RSS, and
+/// JetStream memory-first max RSS within +2.3% on all 16 rows (2026-10-28, x86_64 4 vCPU).
+const EAGER_FUNCTION_BODIES_ENV: &str = "QUENCH_EAGER_FUNCTION_BODIES";
 
 /// Whether a program compiles with lazy function bodies.
 pub(super) fn enabled() -> bool {
-    std::env::var_os(LAZY_FUNCTION_BODIES_ENV).is_some()
+    std::env::var_os(EAGER_FUNCTION_BODIES_ENV).is_none()
 }
 
 /// The name a stand-in body calls (see the module documentation).
