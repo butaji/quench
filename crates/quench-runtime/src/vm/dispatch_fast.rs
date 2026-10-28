@@ -13311,10 +13311,15 @@ fn lane_activate_environment<H: Host>(
     };
     let body = code.function(target.function as usize);
     let rest = body.rest;
-    // A body reading its `arguments` keeps every value passed past its parameters too.
-    if argc > target.params && !(rest || body.call_plan(code).reads_passed_arguments) || vm.with_scope_entered {
+    let plan = body.call_plan(code);
+    // A body reading its `arguments` keeps every value passed past its parameters too, as
+    // a frame does where legacy reflection (`f.arguments`) can read them; elsewhere nothing
+    // observes them, and the window keeps only those its parameters bind.
+    let extra = argc > target.params && !(rest || plan.reads_passed_arguments);
+    if extra && plan.legacy_reflection || vm.with_scope_entered {
         return Err(exit(ip));
     }
+    let (passed, argc) = if extra { (&passed[..usize::from(target.params)], target.params) } else { (passed, argc) };
     // A rest body keeps every value passed, the room sized for its parameters and the rest.
     let extra = usize::from(argc.saturating_sub(target.params));
     if vm.lane_stack.activations.len() >= vm.lane_stack.activation_limit.get()

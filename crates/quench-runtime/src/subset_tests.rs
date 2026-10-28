@@ -597,3 +597,25 @@ print(s + " " + keys + " " + seen + " " + Object.keys(late).join(","));
 "#;
     assert_eq!(output(source), ["4522500 pos,end,kind,id,parent:A;pos,end,kind,id,parent:B;pos,end,kind,id,parent:C; 1 pos,end,kind,parent"]);
 }
+
+#[test]
+fn environment_activations_drop_extra_arguments_nothing_observes() {
+    // A strict callee that makes closures runs as an environment activation called with
+    // more values than its parameters; without legacy reflection or an `arguments` read
+    // nothing observes the extra ones, and one reading `arguments` keeps them.
+    let source = r#"
+"use strict";
+const out = [];
+function each(list, f) { let acc = 0; for (let i = 0; i < list.length; i++) acc += f(list[i], i, "x"); return acc; }
+function one(e) { const g = () => e * 2; return g(); }
+out.push(each([1, 2, 3, 4], one));
+function twoArgs(e, t) { let k = e; const g = () => k + (t === undefined ? 100 : t); return g(); }
+out.push(each([1, 2], twoArgs), twoArgs(5));
+function counts(e) { const g = () => arguments.length + e; return g(); }
+out.push(each([1, 2], counts));
+print(out.join(" "));
+"#;
+    assert_eq!(output(source), ["20 4 105 9"]);
+    let sloppy = "function sloppy(e) { const g = () => e; g(); return sloppy.arguments.length; } function drive(f) { let s = 0; for (let i = 0; i < 50; i++) s += f(i, 1, 2); return s; } print(drive(sloppy));";
+    assert_eq!(output(sloppy), ["150"]);
+}
