@@ -14,11 +14,11 @@ pub(super) enum GeneratorStep {
     Done(Value),
 }
 
-/// A generator its caller's frame resumed in place (`Vm::try_in_loop_generator_step`): the
-/// generator, rooted while its frame runs, and whether the step's result is the object an
-/// iteration step reuses (`Vm::reused_iterator_result`) rather than a fresh one.
+/// A generator step its caller's frame resumed in place (`Vm::try_in_loop_generator_step`):
+/// whether the step's result is the object an iteration step reuses
+/// (`Vm::reused_iterator_result`) rather than a fresh one. The generator is the receiver of
+/// the step's native activation, which keeps it alive while its frame runs.
 pub(crate) struct GeneratorResume {
-    root: crate::heap::RootId,
     reuses_result: bool,
 }
 
@@ -80,18 +80,18 @@ impl<H: Host> Vm<H> {
         self.frames[f].pc_is_resume = true;
         self.realm.promise.active_native.push(super::activation::NativeActivation {
             callable: method,
+            receiver: generator,
             frame_depth: self.frames.len(),
             boundary: super::activation::NativeCallBoundary::Opaque,
         });
         self.activate_frame(&mut frame);
         self.frames.push(frame);
-        let root = self.heap.root(generator);
         Some(Ok(StepResult::PushFrame {
             destination,
             call_guard,
             construct_this: None,
             settles: None,
-            generator: Some(GeneratorResume { root, reuses_result }),
+            generator: Some(GeneratorResume { reuses_result }),
         }))
     }
 
@@ -107,9 +107,7 @@ impl<H: Host> Vm<H> {
         value: Value,
         stop: InLoopGeneratorStop,
     ) -> Value {
-        self.realm.promise.active_native.pop();
-        let generator = self.heap.root_value(resume.root).expect("a resumed generator is rooted");
-        self.heap.release_root(resume.root);
+        let generator = self.realm.promise.active_native.pop().expect("a resumed generator's activation").receiver;
         let done = match stop {
             InLoopGeneratorStop::Yielded { destination, delegated_result } => {
                 frame.with_objects = self.with_stack.split_off(frame.with_base);
@@ -143,10 +141,8 @@ impl<H: Host> Vm<H> {
     /// A generator step `resume` made in place whose frame threw: the generator finishes, as
     /// `resume_generator_step` finishes it, and the native activation ends; the caller's
     /// unwind goes on with the error.
-    pub(super) fn abandon_in_loop_generator_step(&mut self, resume: GeneratorResume) {
-        self.realm.promise.active_native.pop();
-        let generator = self.heap.root_value(resume.root).expect("a resumed generator is rooted");
-        self.heap.release_root(resume.root);
+    pub(super) fn abandon_in_loop_generator_step(&mut self, _resume: GeneratorResume) {
+        let generator = self.realm.promise.active_native.pop().expect("a resumed generator's activation").receiver;
         if let Some(record) = self.generator_record_mut(generator) {
             record.running = false;
             record.done = true;

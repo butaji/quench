@@ -710,7 +710,7 @@ impl<H: Host> Vm<H> {
                 .promise
                 .active_native
                 .iter()
-                .map(|activation| activation.callable),
+                .flat_map(|activation| [activation.callable, activation.receiver]),
         );
         roots.extend(
             self.realm.promise.rejection_notifications.iter().map(
