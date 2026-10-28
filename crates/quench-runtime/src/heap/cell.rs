@@ -1912,6 +1912,18 @@ impl Object {
         plain.then_some(self.payload as usize)
     }
 
+    /// The storage start of an object whose values live in the arena behind extras, as a
+    /// prototype's do (its `PrototypeLookupState` lives there): the start the extras hold
+    /// (`storage_position`). `None` for inline storage or no extras.
+    #[inline(always)]
+    pub(crate) fn extras_storage_start(&self) -> Option<usize> {
+        if self.meta & OBJECT_INLINE_STORAGE != 0 {
+            return None;
+        }
+        // SAFETY: an extras pointer names the extras this object owns.
+        self.extras_pointer().map(|extras| unsafe { (*extras).arena_start } as usize)
+    }
+
     /// `plain_storage_start` of an object outside dictionary storage, whose start bits are
     /// then an arena start rather than a dictionary id (`ValueVec::is_dictionary`): the
     /// fast case of a read that also serves dictionaries (`Heap::property_get_shaped`).
