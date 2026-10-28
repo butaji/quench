@@ -212,31 +212,39 @@ impl FunctionCompiler<'_, '_> {
         let dst = self.reg();
         self.emit(Op::Move, dst, left, 0, 0);
         let jump = self.emit(Op::JumpFalse, left, 0, 0, 0);
+        // Past the jump only `dst` and registers allocated before the expression are live,
+        // so the right operand reuses the left's temporaries.
+        let after_result = self.next_reg;
         if value.operator.is_or() {
             let skip = self.emit(Op::Jump, 0, 0, 0, 0);
             self.patch(jump);
-            let right = self.expression_with_debug_name(&value.right, debug_name);
+            let right = self.reuse_temporaries_from(dst, |this| this.expression_with_debug_name(&value.right, debug_name));
             self.emit(Op::Move, dst, right, 0, 0);
             self.patch(skip);
         } else {
-            let right = self.expression_with_debug_name(&value.right, debug_name);
+            let right = self.reuse_temporaries_from(dst, |this| this.expression_with_debug_name(&value.right, debug_name));
             self.emit(Op::Move, dst, right, 0, 0);
             self.patch(jump);
         }
+        self.next_reg = after_result;
         dst
     }
 
     pub(super) fn conditional(&mut self, value: &ConditionalExpression<'_>, debug_name: Option<Atom>) -> Register {
         let dst = self.reg();
+        let after_result = self.next_reg;
         let test = self.expression(&value.test);
         let other = self.emit(Op::JumpFalse, test, 0, 0, 0);
-        let yes = self.expression_with_debug_name(&value.consequent, debug_name);
+        // Past the test's jump only `dst` and registers allocated before the expression are
+        // live, and the two arms never both run: each reuses the test's temporaries.
+        let yes = self.reuse_temporaries_from(dst, |this| this.expression_with_debug_name(&value.consequent, debug_name));
         self.emit(Op::Move, dst, yes, 0, 0);
         let end = self.emit(Op::Jump, 0, 0, 0, 0);
         self.patch(other);
-        let no = self.expression_with_debug_name(&value.alternate, debug_name);
+        let no = self.reuse_temporaries_from(dst, |this| this.expression_with_debug_name(&value.alternate, debug_name));
         self.emit(Op::Move, dst, no, 0, 0);
         self.patch(end);
+        self.next_reg = after_result;
         dst
     }
 

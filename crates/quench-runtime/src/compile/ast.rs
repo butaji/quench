@@ -792,6 +792,14 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
             });
     }
 
+    /// Compiles `body` with the temporaries allocated past `result` free again: the caller
+    /// proves that only `result` and the registers below it are live where `body` starts.
+    pub(super) fn reuse_temporaries_from<T>(&mut self, result: Register, body: impl FnOnce(&mut Self) -> T) -> T {
+        debug_assert!(result >= self.temporary_floor && result < self.next_reg);
+        self.next_reg = result + 1;
+        body(self)
+    }
+
     /// Compiles `body` with every register allocated so far kept from statement-level
     /// release, for a construct that reads them after the body's statements run.
     pub(super) fn with_registers_held<T>(&mut self, body: impl FnOnce(&mut Self) -> T) -> T {
