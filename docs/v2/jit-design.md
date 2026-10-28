@@ -56,7 +56,7 @@ JetStream 3 is the acceptance workload, not a code-generation oracle. Its stock 
 
 ## Implementation sequence
 
-1. Record the mode-specific JetStream control runs and compiler/runtime versions. Keep each fixture separate and start with the first server-side fixture in `docs/jetstream3.md`.
+1. Record the mode-specific JetStream control runs and compiler/runtime versions. Keep each fixture separate and start with the first server-side fixture in `https://linear.app/todoxapp/document/v2-jet-score-mem-status-and-measurement-contract-ae88abad6a7f`.
 2. Add a process-level JIT selector to `quench-node`, defaulting to interpreted. It must set `ExecutionMode` on the existing runtime rather than create a JIT-specific VM. Confirm the Wasm tier remains reachable through JavaScript `WebAssembly` calls in the same runtime.
 3. Add lazy JavaScript function entry counters and a budgeted compiled-code cache. Avoid per-op profiling metadata; retain only feedback needed to justify a compile decision. Make compile failure, unsupported bytecode, guard misses and budget exhaustion resume through the interpreter.
 4. Compile a narrow, semantically safe JavaScript subset first. Start with pure numeric functions and entry guards checked after normal activation. The tier must return through the existing dispatch-loop unwind path. Extend to loops/control flow only with PC/state maps that permit exact interpreter reconstruction. Keep effects behind semantic helpers until ordering, roots and exception behavior are covered by the semantic-preservation relation.
