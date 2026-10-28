@@ -934,7 +934,12 @@ impl Native {
     /// on every value it compares (10,210 materializations in the color-convert npm scenario),
     /// and TypeScript's CommonJS re-export helper (`__createBinding`) reads each export's
     /// descriptor (208,883 in the typescript-eslint npm scenario), and Express decodes each
-    /// query value with `decodeURIComponent` (one per request).
+    /// query value with `decodeURIComponent` (one per request). A Wasm export converts its
+    /// arguments with coercions, reaches JavaScript only through its imports' calls and runs
+    /// its own code natively, or pushes a frame for it only after making the activations
+    /// frames (`Vm::call_wasm_exported_function`); its trap becomes an error object where the
+    /// general path raises it (JetStream richards-wasm calls an export 2.1 million times an
+    /// iteration from a frameless activation).
     pub(crate) fn runs_beside_activations(self) -> bool {
         matches!(
             self,
@@ -972,6 +977,7 @@ impl Native {
                 | Self::Array
                 | Self::PromiseResolve
                 | Self::PromiseWithResolvers
+                | Self::WasmExportedFunction
         )
     }
 

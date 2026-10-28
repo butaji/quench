@@ -12132,6 +12132,41 @@ fn shared_osr_appends_and_fills_holes_in_place() {
 }
 
 #[test]
+fn shared_osr_indexes_the_row_a_loop_reads_each_iteration() {
+    // `a[e][f] = x` in a loop over `e` indexes the row `a[e]` the iteration read, not the
+    // row the region entered with: the region declines an indexed register it defines
+    // (sjcl's AES table setup, stanford-crypto-aes under `--jit`).
+    let source = r#"
+      function fill(v) {
+        var a = [[], [], [], []], n;
+        for (var f = 0; f < 300; f++) {
+          n = v * f;
+          for (var e = 0; 4 > e; e++) a[e][f] = n = n << 24 ^ n >>> 8;
+        }
+        var h = 0;
+        for (var r = 0; r < 4; r++) for (var i = 0; i < 300; i++) h = (h * 31 + (a[r][i] | 0)) | 0;
+        return h + ":" + a[0].length + ":" + a[3].length;
+      }
+      var out = [];
+      for (var c = 0; c < 3; c++) out.push(fill(0x101));
+      print(out.join(" "));
+    "#;
+    let program = Engine::specialize(source, "osr-row.js").unwrap();
+    for policy in crate::MemoryPolicy::ALL {
+        let output = Rc::new(RefCell::new(Vec::new()));
+        let mut compiled = Vm::new(TestHost::writing_to(output.clone()));
+        compiled.set_memory_policy(policy);
+        compiled.set_execution_mode(crate::ExecutionMode::Compiled);
+        compiled.execute(&program).unwrap();
+        assert_eq!(
+            output.borrow().as_slice(),
+            ["1419804588:300:300 1419804588:300:300 1419804588:300:300"],
+            "{policy:?}"
+        );
+    }
+}
+
+#[test]
 #[cfg(not(quench_profiled))]
 fn shared_osr_indexes_arrays_that_field_reads_give() {
     // Each iteration reads the arrays from fields of `this` and of an argument, then reads
@@ -15322,6 +15357,86 @@ fn js_jit_general_dispatch_stores_own_fields_through_the_field_cache_and_falls_b
         .collect::<Vec<_>>();
     assert_eq!(set_field_pcs.len(), 1);
     assert!(native.general_dispatch_pc_is_native(set_field_pcs[0]));
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
+fn js_jit_general_dispatch_returns_own_fields_and_falls_back_exactly() {
+    let source = r#"
+      function readX(object) { return object.x; }
+      const wide = () => ({ a: 1, b: 2, c: 3, d: 4, x: 5 });
+      const plain = wide();
+      for (let index = 0; index < 64; index++) {
+        if (readX(plain) !== 5) throw Error('hot own field');
+      }
+      plain.x = 50;
+      if (readX(plain) !== 50) throw Error('live value');
+      let getterCalls = 0;
+      const accessor = wide();
+      Object.defineProperty(accessor, 'x', { get() { getterCalls++; return 9; } });
+      if (readX(accessor) !== 9 || getterCalls !== 1) throw Error('accessor');
+      const proxy = new Proxy(wide(), { get(target, key) { return key === 'x' ? 7 : target[key]; } });
+      if (readX(proxy) !== 7) throw Error('proxy');
+      const dictionary = wide();
+      for (let index = 0; index < 64; index++) dictionary['k' + index] = index;
+      delete dictionary.a;
+      if (readX(dictionary) !== 5) throw Error('dictionary');
+      const deleted = wide();
+      delete deleted.x;
+      if (readX(deleted) !== undefined) throw Error('deleted');
+      if (readX({ x: 3 }) !== 3) throw Error('inline storage');
+      if (readX(Object.create(plain)) !== 50) throw Error('prototype holder');
+      let threw = false;
+      try { readX(null); } catch (error) { threw = error instanceof TypeError; }
+      if (!threw) throw Error('nullish receiver');
+    "#;
+    let program = Engine::compile(crate::ExecutionRequest::script(
+        source,
+        "js-jit-general-own-field-return.js",
+    ))
+    .unwrap();
+    let function = program
+        .functions
+        .iter()
+        .position(|function| {
+            function
+                .header()
+                .name
+                .or(function.header().inferred_name)
+                .is_some_and(|atom| &program.atoms[atom as usize] == "readX")
+        })
+        .unwrap() as u32;
+
+    let mut interpreter = Vm::new(TestHost::default());
+    interpreter.execute(&program).unwrap();
+
+    let mut compiled = Vm::new(TestHost::default());
+    compiled.programs.enable_js_general_dispatch();
+    compiled.set_execution_mode(crate::ExecutionMode::Compiled);
+    compiled.programs.compile_general_baseline_when_hot();
+    compiled.execute(&program).unwrap();
+
+    let Some(super::program_store::JsTierState::Compiled(native)) = compiled
+        .programs
+        .js_tier(super::program_store::ProgramId::MAIN, function)
+    else {
+        panic!("readX should use the general JavaScript compiler");
+    };
+    assert!(native.is_general_dispatch());
+    assert!(native.native_entries() > 0);
+    let body = program.function(function as usize);
+    let returning_reads = body
+        .code
+        .iter()
+        .enumerate()
+        .filter(|(_, packed)| {
+            let instruction = super::dispatch_fast::decoded_instruction(body, **packed);
+            instruction.op() == crate::bytecode::Op::GetField && instruction.returns_from_frame()
+        })
+        .map(|(pc, _)| pc)
+        .collect::<Vec<_>>();
+    assert_eq!(returning_reads.len(), 1, "readX returns its field read");
+    assert!(native.general_dispatch_pc_is_native(returning_reads[0]));
 }
 
 #[test]

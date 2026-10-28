@@ -4539,13 +4539,16 @@ script_handler! {
 script_handler! {
     /// `GetField` of a register or `this` at a site past one shape
     /// (`Vm::field_site_polymorphic`): its inline megamorphic entries; any other read takes
-    /// `lane_get_field_hashed`.
+    /// `lane_get_field_hashed`, which a site whose entries moved to the hash runs from then on.
     fn lane_get_field_polymorphic<THIS: bool>(cx, r, ip, i, view) {
         // SAFETY: the context's program outlives the lane run.
         let code = unsafe { &*(*cx).code };
         let Some(value) = (unsafe { lane_known_field_base::<H, THIS>(cx, r, i.b) })
             .and_then(|object| (unsafe { vm(cx) }).inline_polymorphic_field_hit(code, object, i.c))
         else {
+            if (unsafe { vm(cx) }).field_site_hashed(i.c) {
+                requicken::<H>(ip, lane_get_field_hashed::<H, THIS>);
+            }
             sibling!(lane_get_field_hashed::<H, THIS>, r, ip, Carried::script(cx))
         };
         r.set(i.a, value);
@@ -9542,6 +9545,19 @@ impl<H: Host> Vm<H> {
             }
             _ => false,
         }
+    }
+
+    /// Whether the activations of a lane native call deferred beside them (`lane_deferred`)
+    /// run a function of `program`: the innermost runs its lane context's program, and each
+    /// names its caller's, the outermost's being a frame's.
+    pub(super) fn deferred_activations_run(&self, program: ProgramId) -> bool {
+        let Some(DeferredLaneCall { cx, .. }) = &self.lane_deferred else {
+            return false;
+        };
+        // SAFETY: the deferred call's lane runs, so its context lives.
+        let innermost = unsafe { (*cx.cast::<LaneContext<H>>()).program };
+        innermost == program
+            || self.lane_stack.activations.iter().any(|activation| activation.caller_program == program)
     }
 
     /// Make a deferred lane native call's activations frames (`DeferredLaneCall`), as
