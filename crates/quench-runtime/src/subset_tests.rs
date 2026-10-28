@@ -677,3 +677,73 @@ function chain(n) { let p = Promise.resolve(0); for (let i = 0; i < n; i++) p = 
 "#;
     assert_eq!(output(source), ["50 ctor true false species ctor true false ctor true ctor ctor true 10"]);
 }
+
+#[test]
+fn generators_resumed_in_place_keep_iteration_semantics() {
+    // A generator's `next()` from a frame or a lane iteration step resumes its frame in place
+    // (`Vm::try_in_loop_generator_step`), its `yield` and return completing the call: for-of,
+    // explicit steps, nesting, delegation, throws, `finally` on an early exit, a re-entrant
+    // step, closures over its locals, `arguments`, `with` and a resumed value.
+    let source = r#"
+const out = [];
+function* range(n) { for (let i = 0; i < n; i++) yield i; }
+let s = 0; for (const v of range(1000)) s += v; out.push(s);
+const g = range(3); out.push(JSON.stringify([g.next(), g.next(), g.next(), g.next(), g.next()]));
+function* nested() { for (const a of range(3)) for (const b of range(2)) yield a * 10 + b; }
+out.push([...nested()].join());
+function* delegating() { yield 1; const r = yield* inner(); yield r; }
+function* inner() { yield 2; yield 3; return 4; }
+out.push([...delegating()].join());
+function* thrower() { yield 1; throw new Error("boom"); }
+try { for (const v of thrower()) out.push("t" + v); } catch (e) { out.push(e.message); }
+const t = thrower(); t.next(); try { t.next(); } catch (e) { out.push("caught " + e.message); } out.push(JSON.stringify(t.next()));
+function* withFinally() { try { yield 1; yield 2; } finally { out.push("finally"); } }
+for (const v of withFinally()) { out.push("f" + v); break; }
+function* selfCall() { yield 1; try { me.next(); } catch (e) { out.push(e.constructor.name); } yield 2; }
+const me = selfCall(); out.push([...me].join());
+function* counter() { let c = 0; const read = () => c; while (true) { c++; const got = yield read; if (got === "stop") return c; } }
+const cg = counter(); const r1 = cg.next().value; cg.next(); cg.next(); out.push(r1(), JSON.stringify(cg.next("stop")));
+function* args() { yield arguments.length; yield this === undefined || this === globalThis; }
+out.push([...args(1, 2, 3)].join());
+function* withScope() { const o = { x: 7 }; with (o) { yield x; x = 8; yield x; } }
+out.push([...withScope()].join());
+let deep = 0; function* rec(n) { if (n > 0) yield* rec(n - 1); yield n; } for (const v of rec(10)) deep += v; out.push(deep);
+const objGen = { *[Symbol.iterator]() { yield* [5, 6]; } }; out.push([...objGen].join());
+print(out.join(" "));
+"#;
+    assert_eq!(
+        output(source),
+        ["499500 [{\"value\":0,\"done\":false},{\"value\":1,\"done\":false},{\"value\":2,\"done\":false},{\"done\":true},{\"done\":true}] 0,1,10,11,20,21 1,2,3,4 t1 boom caught boom {\"done\":true} f1 finally TypeError 1,2 3 {\"value\":3,\"done\":true} 3,true 7,8 55 5,6"]
+    );
+    let resumed = r#"
+"use strict";
+function* g(){ const x = yield 1; yield x * 2; }
+const it = g(); const a = it.next(); const b = it.next(21); const c = it.next(); print(JSON.stringify([a, b, c]));
+"#;
+    assert_eq!(output(resumed), ["[{\"value\":1,\"done\":false},{\"value\":42,\"done\":false},{\"done\":true}]"]);
+}
+
+#[test]
+fn typed_array_set_between_numeric_kinds_converts_each_element() {
+    // `set` from a typed array of another numeric kind converts on the bytes
+    // (`Vm::typed_array_convert_numbers`): every kind pair over boundary values, overlapping
+    // views of one buffer, which read the source before writing, and a source too large.
+    let source = r#"
+const kinds = [Int8Array, Uint8Array, Uint8ClampedArray, Int16Array, Uint16Array, Int32Array, Uint32Array, Float32Array, Float64Array, typeof Float16Array === "function" ? Float16Array : Float32Array];
+const values = [0, -0, 1, -1, 127, 128, 255, 256, -129, 65535, 65536, 2147483647, -2147483648, 4294967295, 1.5, -1.5, 2.5, 0.49999, NaN, Infinity, -Infinity, 1e10, 3.4e38, 65504.5];
+const out = [];
+for (const S of kinds) for (const T of kinds) {
+  const src = new S(values.length); for (let i = 0; i < values.length; i++) src[i] = values[i];
+  const dst = new T(values.length + 2); dst.set(src, 1);
+  out.push(Array.from(dst, (v) => Object.is(v, -0) ? "-0" : String(v)).join(","));
+}
+// Overlap: views of one buffer with different kinds.
+const buf = new ArrayBuffer(64); const u8 = new Uint8Array(buf); for (let i = 0; i < 64; i++) u8[i] = i * 7;
+const u16 = new Uint16Array(buf, 8, 8); u8.set(u16, 4); out.push(Array.from(u8).join(","));
+const f32 = new Float32Array(buf, 0, 8); const i8 = new Int8Array(buf, 2, 8); f32.set(i8); out.push(Array.from(f32).join(","));
+try { new Uint8Array(2).set(new Uint8Array(4)); } catch (e) { out.push(e.constructor.name); }
+let h = 0; for (const s of out) for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0;
+print(out.length + " " + h + " " + out[out.length - 3].slice(0, 60));
+"#;
+    assert_eq!(output(source), ["103 -1900204906 0,7,14,21,56,70,84,98,112,126,140,154,84,91,98,105,112,119,1"]);
+}
