@@ -28,7 +28,6 @@ mod capture_scope;
 mod class;
 mod early;
 mod frame_registers;
-#[cfg(feature = "verify-replay")]
 mod lazy_bodies;
 #[cfg(feature = "verify-replay")]
 mod free_names;
@@ -653,6 +652,12 @@ impl Engine {
         link_plan.reexports.is_empty().then_some(link_plan.locals)
     }
 
+    /// Whether `source` parses as `source_type` with no syntax error OXC reports, holding
+    /// one function's tree at a time (`lazy_bodies::syntax_valid`).
+    pub fn syntax_valid(source: &str, source_type: SourceType) -> bool {
+        lazy_bodies::syntax_valid(source, source_type)
+    }
+
     pub fn specialize(source: &str, name: &str) -> Result<ResidualProgram, Vec<Diagnostic>> {
         Self::specialize_with_mode(
             source,
@@ -906,11 +911,57 @@ impl Engine {
         annex_b_forbidden_names: &[String],
         expected_shape: ParsedProgramShape,
     ) -> Result<ResidualProgram, Vec<Diagnostic>> {
+        let compile = |lazy| {
+            Self::specialize_parsing(
+                source,
+                name,
+                mode,
+                atom_prefix,
+                source_type,
+                module_goal,
+                capture_script_completion,
+                inherited_strict,
+                private_name_overrides,
+                annex_b_forbidden_names,
+                expected_shape,
+                lazy,
+            )
+        };
+        // Lazy function bodies apply to source a replay can parse again; a program that does
+        // not compile with them compiles eagerly, which reports its own diagnostics.
+        if matches!(expected_shape, ParsedProgramShape::Any)
+            && lazy_bodies::enabled()
+            && let Ok(program) = compile(true)
+        {
+            return Ok(program);
+        }
+        compile(false)
+    }
+
+    /// `specialize_with_mode_and_private_names`, with the function bodies parsed lazily when
+    /// `lazy` (`lazy_bodies`).
+    #[allow(clippy::too_many_arguments)]
+    fn specialize_parsing(
+        source: &str,
+        name: &str,
+        mode: SpecializationMode,
+        atom_prefix: &dyn AtomPrefix,
+        source_type: SourceType,
+        module_goal: bool,
+        capture_script_completion: bool,
+        inherited_strict: bool,
+        private_name_overrides: &[(String, String)],
+        annex_b_forbidden_names: &[String],
+        expected_shape: ParsedProgramShape,
+        lazy: bool,
+    ) -> Result<ResidualProgram, Vec<Diagnostic>> {
         let normalized = early::normalize_hashbang(source);
         let allocator = Allocator::with_capacity(normalized.len().saturating_mul(6));
-        let mut parsed = annex_b_targets::parse_program(&allocator, &normalized, source_type);
+        let mut parsed = lazy_bodies::parse(&allocator, &normalized, source_type, lazy.then_some(0));
         #[cfg(feature = "verify-replay")]
-        lazy_bodies::verify(name, &normalized, &parsed.program);
+        if !lazy {
+            lazy_bodies::verify(name, &normalized, &parsed.program);
+        }
         if parsed.stack_exhausted {
             return Err(vec![Diagnostic::stack_exhausted(name)]);
         }
@@ -1086,6 +1137,7 @@ impl Engine {
         };
         let mut compiler = Compiler::new(name, &normalized, mode, atom_prefix, private_name_ids);
         compiler.prototype_unobservable = prototype_unobservable;
+        compiler.lazy_bodies = parsed.lazy_function_bodies.iter().copied().collect();
         #[cfg(feature = "verify-replay")]
         {
             compiler.free_names = free_names;
@@ -1596,6 +1648,11 @@ struct Compiler<'a> {
     /// The source starts of the function expressions whose `prototype` no program text
     /// observes (`call_only`); empty where the source was not analyzed.
     prototype_unobservable: FxHashSet<u32>,
+    /// The starts of the function bodies parsed lazily and not compiled yet (`lazy_bodies`).
+    lazy_bodies: FxHashSet<u32>,
+    /// The starts of the function bodies compiled from their source parsed again, which a
+    /// replay stands in the same way (`ProgramReplay::lazy_bodies`).
+    lazy_compiled: Vec<u32>,
     /// Each function's free names (`free_names`), which `verify_predicted_captures` checks
     /// against what the function's compilation captured.
     #[cfg(feature = "verify-replay")]
@@ -2088,6 +2145,8 @@ impl<'a> Compiler<'a> {
             private_name_references: 0,
             private_name_ids,
             prototype_unobservable: FxHashSet::default(),
+            lazy_bodies: FxHashSet::default(),
+            lazy_compiled: Vec::new(),
             #[cfg(feature = "verify-replay")]
             free_names: FxHashMap::default(),
             private_name_labels: FxHashMap::default(),
@@ -2318,6 +2377,12 @@ impl<'a> Compiler<'a> {
         function: &oxc_ast::ast::Function<'_>,
         mut context: replay::PlainFunctionContext,
     ) -> u32 {
+        if let Some(body) = &function.body
+            && self.lazy_bodies.remove(&body.span.start)
+        {
+            self.lazy_compiled.push(body.span.start);
+            return self.compile_lazy_function(function, context);
+        }
         if self.replayable_source {
             context.scopes = context.scopes.recording();
         }
@@ -2374,6 +2439,47 @@ impl<'a> Compiler<'a> {
         context.scopes = context.scopes.into_memo();
         self.record_replay_call(id, entry, private_names, replay::ReplayCall::Plain(context));
         id
+    }
+
+    /// A function whose body was parsed lazily, compiled from its source parsed again alone
+    /// (`lazy_bodies`). A body that fails an early check alone fails the compilation, which
+    /// then compiles the program eagerly; until then its stand-in compiles in its place.
+    fn compile_lazy_function(
+        &mut self,
+        function: &oxc_ast::ast::Function<'_>,
+        context: replay::PlainFunctionContext,
+    ) -> u32 {
+        let strict = self.module_goal || context.inherited_strict;
+        let snippet = &self.text[function.span.start as usize..function.span.end as usize];
+        let (text, offset) = lazy_bodies::text_alone(
+            snippet,
+            replay::plain_function_wrapper(&context),
+            context.inherited_strict,
+            self.source_type,
+        );
+        let allocator = lazy_bodies::arena(&text);
+        let reparsed = lazy_bodies::reparse(
+            &allocator,
+            &text,
+            offset,
+            function.span.start.wrapping_sub(offset),
+            self.source_type,
+            strict,
+        );
+        let Some(reparsed) = reparsed.filter(|reparsed| reparsed.function().is_some_and(|again| again.span == function.span)) else {
+            self.reject(function.span, "SyntaxError: a lazily parsed function body does not compile alone");
+            return self.compile_plain_function(function, context);
+        };
+        self.lazy_bodies.extend(reparsed.lazy_bodies.iter().copied());
+        self.prototype_unobservable.extend(reparsed.prototype_unobservable.iter().copied());
+        // Its private names number on from the program's.
+        let first_id = self.private_name_ids.values().max().map_or(0, |id| id + 1);
+        self.private_name_ids
+            .extend(reparsed.private_name_ids.iter().map(|(span, id)| (*span, first_id + id)));
+        self.private_name_labels
+            .extend(reparsed.private_name_labels.iter().map(|(span, label)| (*span, label.clone())));
+        let again = reparsed.function().expect("checked above");
+        self.compile_plain_function(again, context)
     }
 
     /// Checks, under `QUENCH_LAZY_FACTS_LOG`, that the free names of function `id` (starting
@@ -2633,28 +2739,11 @@ impl<'a> Compiler<'a> {
                 .iter()
                 .any(|directive| directive.directive == "use strict");
         let async_module = module_goal && has_top_level_await(&program.body);
-        let facts = early::function_tree_facts(program, self.root_strict);
+        let (functions, errors) = early::program_early_errors(program, self.root_strict);
         // One slot per source function and the root, reserved once: grown by doubling, the
         // slots of a large script stood up to twice its functions beside its tree.
-        self.functions.reserve_exact(facts.functions + 1);
-        if let Some(name) = facts.restricted_assignment {
-            self.reject(
-                Span::default(),
-                format!("SyntaxError: assignment to {name} is not allowed in strict mode"),
-            );
-        }
-        if self.root_strict
-            && let Some(error) = early::strict_octal_numeric_early_error(program)
-        {
-            self.reject(Span::default(), error);
-        }
-        if let Some(error) = early::block_early_error(program, self.root_strict) {
-            self.reject(Span::default(), error);
-        }
-        if let Some(error) = early::strict_binding_early_error(program, self.root_strict) {
-            self.reject(Span::default(), error);
-        }
-        if let Some(error) = facts.parameter_error {
+        self.functions.reserve_exact(functions + 1);
+        for error in errors {
             self.reject(Span::default(), error);
         }
         self.compile_function(
@@ -3095,6 +3184,11 @@ impl<'a> Compiler<'a> {
                     source_type: self.source_type,
                     root_strict: self.root_strict,
                     module_goal: self.module_goal,
+                    lazy_bodies: {
+                        let mut starts = std::mem::take(&mut self.lazy_compiled);
+                        starts.sort_unstable();
+                        starts.into_boxed_slice()
+                    },
                     specialized: self.mode == SpecializationMode::Enabled,
                     atoms,
                     exits: std::mem::take(&mut self.function_exits).into_boxed_slice(),

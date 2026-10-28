@@ -539,6 +539,10 @@ pub(crate) struct ProgramReplay {
     pub(super) source_type: oxc_span::SourceType,
     pub(super) root_strict: bool,
     pub(super) module_goal: bool,
+    /// The starts of the function bodies the load compiled from their source parsed again
+    /// (`lazy_bodies`), in order: a replay stands each in, so the code around it compiles
+    /// as the load compiled it.
+    pub(super) lazy_bodies: Box<[u32]>,
     pub(super) specialized: bool,
     pub(super) atoms: ProgramAtomIndex,
     /// Where the load left the tables once each function was compiled.
@@ -608,9 +612,7 @@ impl super::atoms::AtomPrefix for ReplayAtoms<'_> {
 /// code, which has no `super()` to keep).
 fn replay_wrapper(call: &ReplayCall, strict: bool) -> (&'static str, &'static str) {
     match call {
-        ReplayCall::Plain(context) if context.expression => ("(", ")"),
-        ReplayCall::Plain(context) if context.default_export => ("export default ", ""),
-        ReplayCall::Plain(_) => ("", ""),
+        ReplayCall::Plain(context) => plain_function_wrapper(context),
         ReplayCall::ObjectMethod(_) => ("(async function*(){({", "})})"),
         ReplayCall::ClassMethod(_) => ("(async function*(){(class{", "})})"),
         ReplayCall::Arrow(_) if strict => ("(class extends Object{constructor(){(", ")}})"),
@@ -618,9 +620,21 @@ fn replay_wrapper(call: &ReplayCall, strict: bool) -> (&'static str, &'static st
     }
 }
 
+/// The text around a function declaration's or expression's source that parses it again as
+/// one (`replay_wrapper`).
+pub(super) fn plain_function_wrapper(context: &PlainFunctionContext) -> (&'static str, &'static str) {
+    if context.expression {
+        ("(", ")")
+    } else if context.default_export {
+        ("export default ", "")
+    } else {
+        ("", "")
+    }
+}
+
 /// Moves every span of a tree parsed from wrapped text by `delta`, so the function's own
 /// spans are offsets into the program's text again.
-struct ShiftSpans(u32);
+pub(super) struct ShiftSpans(pub(super) u32);
 
 impl<'a> oxc_ast_visit::VisitMut<'a> for ShiftSpans {
     fn visit_span(&mut self, span: &mut oxc_span::Span) {
@@ -765,6 +779,14 @@ pub(crate) fn recompile(
     }
     let delta = start.wrapping_sub(prefix.len() as u32);
     oxc_ast_visit::VisitMut::visit_program(&mut ShiftSpans(delta), &mut parsed.program);
+    // The bodies in the function's source the load compiled from their source parsed again,
+    // its own included.
+    let lazy_bodies: rustc_hash::FxHashSet<u32> = {
+        let from = replay.lazy_bodies.partition_point(|body| *body < start);
+        let to = replay.lazy_bodies.partition_point(|body| *body < end);
+        replay.lazy_bodies[from..to].iter().copied().collect()
+    };
+    super::lazy_bodies::stand_in(&allocator, &mut parsed.program, &lazy_bodies);
     let views = &replay.views;
     let atoms = ReplayAtoms {
         table: &program.atoms,
@@ -828,6 +850,7 @@ pub(crate) fn recompile(
         record: None,
     };
     compiler.replay_target = Some((id, &replay.exits));
+    compiler.lazy_bodies = lazy_bodies;
     compiler.name_shared_sites = super::NameSharedSites::Replay(&replay.name_shared_sites);
     compiler.seek(function_replay.entry);
     let made = match &function_replay.call {
