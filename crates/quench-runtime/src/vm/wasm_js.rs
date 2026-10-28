@@ -1439,14 +1439,24 @@ impl<H: Host> Vm<H> {
         let result = match self.run_compiled(program, environment, index, &encoded) {
             Some(result) => result,
             None => match self.programs.get(program) {
-                Some(residual) => self.call_user(
-                    &residual,
-                    index,
-                    environment,
-                    Value::UNDEFINED,
-                    &encoded,
-                    CallContext::Internal,
-                ),
+                Some(residual) => {
+                    // The interpreted call pushes a frame, which observes the frame stack: a
+                    // lane's deferred activations become frames first, from their caller's
+                    // program, as a call of guest code makes them (`runs_beside_activations`).
+                    if self.lane_deferred.is_some() {
+                        self.set_active_program(previous);
+                        self.materialize_deferred_lane();
+                        self.replace_active_program(program);
+                    }
+                    self.call_user(
+                        &residual,
+                        index,
+                        environment,
+                        Value::UNDEFINED,
+                        &encoded,
+                        CallContext::Internal,
+                    )
+                }
                 None => Err(JsError::validation("missing Wasm program".into())),
             },
         };

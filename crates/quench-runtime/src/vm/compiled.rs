@@ -13386,8 +13386,10 @@ impl<H: Host> Vm<H> {
         {
             // The module's code is about to run natively, so the interpreter's views of it go
             // first, and the compile reuses their memory, unless a frame of it is on the stack,
-            // whose lane run may hold their records. An interpreted run derives them again.
-            if !self.frames.iter().any(|frame| frame.program == program) {
+            // whose lane run may hold their records, or a lane's activations are deferred
+            // beside this call (`runs_beside_activations`), which are frames not on it. An
+            // interpreted run derives them again.
+            if self.lane_deferred.is_none() && !self.frames.iter().any(|frame| frame.program == program) {
                 self.programs.release_lane_views(program);
             }
             let started = jit_diagnostics_enabled().then(std::time::Instant::now);
