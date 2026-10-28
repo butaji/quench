@@ -514,6 +514,11 @@ pub(crate) struct Heap {
     aged: Vec<u64>,
     remembered_marks: Vec<u64>,
     remembered: Vec<u32>,
+    /// Old owners that may point at what the last minor collection left young
+    /// (`PromotionAge::ages`): those the barriers logged before it and those it promoted.
+    /// The next minor collection logs and traces them with the barriers' own log; one not
+    /// written since then points at nothing young after it, so it is not carried again.
+    carried_owners: Vec<Value>,
     young: Vec<u32>,
     /// The young cells with weak entries (weak maps and sets, weak refs, finalization
     /// registries): a minor collection prunes only these and the remembered cells.
@@ -797,6 +802,7 @@ impl Heap {
             marks: Vec::with_capacity(12),
             remembered_marks: Vec::with_capacity(12),
             remembered: Vec::with_capacity(384),
+            carried_owners: Vec::new(),
             young: Vec::with_capacity(384),
             free_by_slab: Vec::with_capacity(12),
             free_slabs: Vec::with_capacity(12),
@@ -1716,6 +1722,7 @@ impl Heap {
         self.properties.reset();
         self.remembered_marks.clear();
         self.remembered.clear();
+        self.carried_owners.clear();
         self.young.clear();
         self.young_weak.clear();
         self.roots.clear();
@@ -1844,7 +1851,7 @@ impl Heap {
     /// and legacy cells share one generation rule: survivors of their `promotion_age`-th
     /// minor collection, or of a full one, stay marked (old), the write barriers log old
     /// owners they write, and a minor traces roots, that log and the old owners of what an
-    /// earlier minor left young (`remember_young_edges`) only.
+    /// earlier minor left young (`carried_owners`) only.
     /// Whether this full collection traces closure environments through their reads
     /// (`live_at_environment_trim`).
     fn environment_trim_due(&self) -> bool {
@@ -1866,10 +1873,10 @@ impl Heap {
     ) -> Vec<(Value, Value)> {
         let full = self.collection_is_full(full);
         let age = self.promotion_age();
-        // A minor collection that leaves survivors young rebuilds the remembered sets from
-        // the old owners that may point at them (`remember_young_edges`): those the barriers
-        // logged, then those it promotes.
-        let rebuilds_remembered = !full && age.ages();
+        // A minor collection that leaves survivors young carries the old owners that may
+        // point at them to the next one (`carried_owners`): those the barriers logged, then
+        // those it promotes.
+        let carries_owners = !full && age.ages();
         self.charge_materialized_text();
         // The sweep may free a prototype whose record a later object reuses.
         advance_prototype_layout_epoch();
@@ -1905,6 +1912,7 @@ impl Heap {
             Self::clear_marks(&self.marks);
             self.remembered.clear();
             self.remembered_marks.fill(0);
+            self.carried_owners.clear();
             // A full collection promotes every survivor, aged or not.
             self.aged.clear();
             for (family, _) in self.record_families_mut() {
@@ -1931,7 +1939,7 @@ impl Heap {
             }
             old
         });
-        // Under `rebuilds_remembered`, the old owners that may point at what stays young.
+        // Under `carries_owners`, the old owners that may point at what stays young.
         let mut remembered_owners: Vec<Value> = Vec::new();
         if !full {
             #[cfg(feature = "profile-aggregate")]
@@ -1942,17 +1950,24 @@ impl Heap {
                     .map(|(family, _)| family.remembered_count())
                     .sum::<usize>() as u64;
             }
-            if rebuilds_remembered {
+            // What the barriers logged since the last collection is carried to the next one
+            // (`carried_owners`); what the last one carried is traced, then dropped.
+            if carries_owners {
                 self.aged.resize(self.marks.len(), 0);
                 remembered_owners.extend(self.remembered.iter().map(|&index| Value::heap(index)));
             }
-            for (family, handle) in self.record_families_mut() {
-                let logged = family.take_remembered();
+            let written = self.record_families_mut().map(|(family, _)| family.take_remembered());
+            for owner in std::mem::take(&mut self.carried_owners) {
+                self.write_barrier(owner);
+            }
+            for ((family, handle), mut logged) in self.record_families_mut().into_iter().zip(written) {
+                let written = logged.len();
+                logged.extend(family.take_remembered());
                 family.prepare_minor(&logged, age);
                 let first = work.len();
                 work.extend(logged.into_iter().map(handle));
-                if rebuilds_remembered {
-                    remembered_owners.extend_from_slice(&work[first..]);
+                if carries_owners {
+                    remembered_owners.extend_from_slice(&work[first..first + written]);
                 }
             }
         }
@@ -2247,11 +2262,11 @@ impl Heap {
             self.gc_profile.freed += freed_cells as u64;
         }
         let _ = (freed_cells, swept_slots);
-        if rebuilds_remembered {
+        if carries_owners {
             for (family, handle) in self.record_families_mut() {
                 remembered_owners.extend(family.take_promoted().into_iter().map(handle));
             }
-            self.remember_young_edges(&remembered_owners, &mut object_roots);
+            self.carried_owners = remembered_owners;
         }
         #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
         {
@@ -2564,111 +2579,6 @@ impl Heap {
             property_owners: property_owners_for_sweep,
             freed_cells,
             swept_slots,
-        }
-    }
-
-    /// Rebuilds the remembered sets after a minor collection that left survivors young
-    /// (`PromotionAge::ages`), keeping their invariant: between collections every old cell or
-    /// record with an edge to a young one is remembered, so the next minor collection traces
-    /// it. Only `owners` can hold such an edge: the old owners the barriers logged since the
-    /// last collection and the aged ones this one promoted. Every other old owner was written
-    /// before the last collection and pointed at nothing young after it, and what was young
-    /// then is now old or freed. An owner stays remembered while one of its edges, strong or
-    /// weak, names a young cell or record; all are decided before any is logged, since logging
-    /// an old record unmarks it, as the record barrier does (`Heap::write_barrier`).
-    fn remember_young_edges(
-        &mut self,
-        owners: &[Value],
-        object_roots: &mut impl FnMut(GcTraceKind, Value, u32, bool, &mut Vec<Value>),
-    ) {
-        let mut edges = Vec::new();
-        let retained: Vec<Value> = owners
-            .iter()
-            .copied()
-            .filter(|&owner| {
-                edges.clear();
-                self.owner_edges(owner, &mut edges, object_roots);
-                edges
-                    .iter()
-                    .any(|&edge| self.is_live(edge) && !self.is_old(edge))
-            })
-            .collect();
-        for owner in retained {
-            self.write_barrier(owner);
-        }
-    }
-
-    /// Every value live `owner` holds: what a trace of it pushes, with each of its shape's
-    /// roots (`GcTraceKind::VerifyFull`, which a collection's trace pushes only for the first
-    /// owner of a shape), its closure environment and string elements, which the mark takes
-    /// apart from its work, its sparse elements, and the entries of its weak collections
-    /// (`Heap::weak_entry_edges`).
-    fn owner_edges(
-        &self,
-        owner: Value,
-        edges: &mut Vec<Value>,
-        object_roots: &mut impl FnMut(GcTraceKind, Value, u32, bool, &mut Vec<Value>),
-    ) {
-        let trace_kind = GcTraceKind::VerifyFull;
-        let properties = &self.properties;
-        // A fresh walk: every owner pushes its own prototype.
-        let mut no_proto_yet = Value::UNDEFINED;
-        let last_proto = &mut no_proto_yet;
-        debug_assert!(self.is_live(owner), "a remembered owner is live: {owner:?}");
-        match owner.heap_reference() {
-            Some(HeapReference::ObjectRecord(id)) => {
-                // SAFETY: the caller's owner is a live direct object.
-                let object = unsafe { self.object_records.get_live(id) };
-                Self::object_children(owner, object, properties, edges, object_roots, trace_kind, last_proto);
-            }
-            Some(HeapReference::ArrayRecord(id)) => {
-                // SAFETY: the caller's owner is a live direct array.
-                let array = unsafe { self.array_records.get_live(id) };
-                let mut strings = Vec::new();
-                Self::array_children(
-                    owner,
-                    array,
-                    properties,
-                    |string| strings.push(Value::direct_string(string)),
-                    edges,
-                    object_roots,
-                    trace_kind,
-                    last_proto,
-                );
-                edges.extend(strings);
-            }
-            Some(HeapReference::FunctionRecord(id)) => {
-                // SAFETY: the caller's owner is a live direct function.
-                let function = unsafe { self.function_records.get_live(id) };
-                Self::function_children(owner, function, properties, edges, object_roots, trace_kind, last_proto);
-                edges.push(function.env);
-            }
-            Some(HeapReference::IteratorRecord(id)) => {
-                // SAFETY: the caller's owner is a live direct iterator.
-                let iterator = unsafe { self.iterator_records.get_live(id) };
-                Self::object_children(owner, &iterator.object, properties, edges, object_roots, trace_kind, last_proto);
-                Self::iterator_edges(iterator, edges);
-            }
-            Some(HeapReference::PromiseRecord(id)) => {
-                // SAFETY: the caller's owner is a live direct promise.
-                let promise = unsafe { self.promise_records.get_live(id) };
-                Self::object_children(owner, &promise.object, properties, edges, object_roots, trace_kind, last_proto);
-                promise.record.append_roots(edges);
-            }
-            Some(HeapReference::AwaitRecord(id)) => {
-                // SAFETY: the caller's owner is a live direct await state.
-                unsafe { self.await_records.get_live(id) }.extend_roots(edges);
-            }
-            Some(HeapReference::LegacySlot(_)) => {
-                if let Some(cell) = self.get(owner) {
-                    Self::children(owner, cell, properties, edges, object_roots, trace_kind, last_proto);
-                    Self::weak_entry_edges(cell, edges);
-                }
-            }
-            Some(HeapReference::StringRecord(_) | HeapReference::V128Record(_)) | None => {}
-        }
-        if let Some(elements) = self.sparse_arrays.as_ref().and_then(|arrays| arrays.get(&owner)) {
-            edges.extend(elements.values.values().copied());
         }
     }
 

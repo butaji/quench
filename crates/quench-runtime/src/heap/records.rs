@@ -148,8 +148,8 @@ pub(super) struct RecordSpace<T, const CAPACITY: usize = RECORD_SPACE_CAPACITY> 
     /// logged by the barrier (`prepare_minor`). The mark cannot tell them from the old records
     /// it finds, so they are named before it runs.
     minor_words: Vec<(RecordId, u64)>,
-    /// The aged records the last minor sweep promoted, whose edges into what stays young the
-    /// collector remembers (`Heap::remember_young_edges`).
+    /// The aged records the last minor sweep promoted, which may point at what stays young:
+    /// the collector carries them to the next minor collection (`Heap::carried_owners`).
     promoted: Vec<RecordId>,
     /// What minor sweeps found of the aged records since the collector last took it.
     aged_fates: AgedFates,
