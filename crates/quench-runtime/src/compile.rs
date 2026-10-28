@@ -2433,8 +2433,24 @@ impl<'a> Compiler<'a> {
                     .unwrap_or_else(|| format!("?{distance}:{slot}"))
             })
             .collect();
+        // Bindings the compilation found that the free names do not name: a memo built
+        // from the free names would answer such a lookup "unbound".
+        // A capture marker (`capture_marker`) is asked for by the name it marks.
+        let source_of = |atom: Atom| {
+            self.capture_markers
+                .iter()
+                .find_map(|(&(_, source), &marker)| (marker == atom).then_some(source))
+                .unwrap_or(atom)
+        };
+        let unasked: Vec<String> = scopes
+            .recorded_atoms()
+            .into_iter()
+            .map(|atom| self.atoms[source_of(atom) as usize].to_string())
+            .filter(|name| !names.iter().any(|free| **free == **name))
+            .collect();
+        let verdict = if unasked.is_empty() { verdict } else { "unasked" };
         eprintln!(
-            "lazy-facts {verdict} source={} start={start} functions={} unpredicted={unpredicted:?} predicted={predicted:?} actual={actual:?}",
+            "lazy-facts {verdict} source={} start={start} functions={} unpredicted={unpredicted:?} unasked={unasked:?} predicted={predicted:?} actual={actual:?}",
             self.source,
             exit - id
         );
