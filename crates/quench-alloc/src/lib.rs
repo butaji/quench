@@ -134,7 +134,8 @@ struct Heap {
     decommitted: *mut usize,
     decommitted_len: usize,
     /// Pages `new_page` handed out since the last release, and in the interval before it: the
-    /// pages the next interval is likely to take again, which a release keeps.
+    /// pages the next interval is likely to take again, which a release keeps. Two counts, as a
+    /// full collection's boundaries release back to back and the second interval takes little.
     taken: usize,
     taken_before: usize,
 }
