@@ -198,6 +198,9 @@ const REQUEST_DISPATCH_FACTORY: &str = quench_js_check::checked_js!(
 const RESPONSE_FACTORY: &str = r#"((Stream, setHeaderOperation, getHeaderOperation, getHeadersOperation, removeHeaderOperation, write, finish, writeHeadOperation, destroyOperation, initializeResponse, nextTick, codes) => {
   const kExchange = Symbol("kResponseExchange");
   const kFinished = Symbol("kResponseFinished");
+  // `end` callbacks waiting for the response to finish, as `_http_outgoing.js`'s
+  // `kEndCallbacks`: they run with `null` before "finish" is emitted.
+  const kEndCallbacks = Symbol("kEndCallbacks");
   // A header value as the native exchange takes it: each element of an array as a string,
   // any other value but `undefined` as one string; an array also marks a multiple header.
   // Hoisted, so `headerValue` makes no closure and its calls need no frame.
@@ -220,8 +223,24 @@ const RESPONSE_FACTORY: &str = r#"((Stream, setHeaderOperation, getHeaderOperati
       if (typeof callback === "function") callback(error);
     });
   };
+  // `_http_outgoing.js`'s `queueEndCallback` without a flush error, which a response that
+  // never errors its flush does not record.
+  const queueEndCallback = (response, callback) => {
+    if (response[kFinished]) {
+      callback(new codes.ERR_STREAM_ALREADY_FINISHED("end"));
+      return;
+    }
+    const callbacks = response[kEndCallbacks];
+    if (callbacks === undefined) response[kEndCallbacks] = [callback];
+    else callbacks.push(callback);
+  };
   const emitFinished = (response) => {
     response[kFinished] = true;
+    const callbacks = response[kEndCallbacks];
+    if (callbacks !== undefined) {
+      response[kEndCallbacks] = undefined;
+      for (let index = 0; index < callbacks.length; index++) callbacks[index](null);
+    }
     response.emit("finish");
     nextTick(() => response.emit("close"));
   };
@@ -352,13 +371,10 @@ const RESPONSE_FACTORY: &str = r#"((Stream, setHeaderOperation, getHeaderOperati
       }
       writeChunk(this, chunk, encoding, false);
     } else if (this.finished) {
-      if (typeof callback === "function") {
-        if (!this[kFinished]) this.once("finish", callback);
-        else callback(new codes.ERR_STREAM_ALREADY_FINISHED("end"));
-      }
+      if (typeof callback === "function") queueEndCallback(this, callback);
       return this;
     }
-    if (typeof callback === "function") this.once("finish", callback);
+    if (typeof callback === "function") queueEndCallback(this, callback);
     this.finished = true;
     const exchange = this[kExchange];
     finish(exchange.id, this.statusCode, this.statusMessage, exchange.request, this, exchange.server, exchange.socket);

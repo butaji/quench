@@ -1441,6 +1441,250 @@ fn emit_js_dense_array_get(
     );
 }
 
+/// The address of the own data field a site's field cache entry names on the receiver in
+/// the frame word at `base_offset`, as the lane's own-field hits find it
+/// (`Vm::own_field_entry_hit`, `Vm::primary_own_field_store_hit`): a direct-object receiver
+/// whose exact shape is the entry's receiver, an entry naming no holder, and plain arena
+/// storage, whose slot the shape fixes. Plain storage carries no extras, so the receiver is
+/// neither a module namespace nor an arguments object. The entry, the record and the arena
+/// are read on every execution, so a cache refill, a receiver change or arena movement is
+/// seen; any failed proof branches to `fallback`.
+fn emit_js_own_field_slot(
+    builder: &mut FunctionBuilder<'_>,
+    arguments: ir::Value,
+    payload: ir::Value,
+    base_offset: i32,
+    site: u16,
+    fallback: ir::Block,
+) -> ir::Value {
+    use crate::heap::NATIVE_OBJECT_LAYOUT as OBJECT;
+    use crate::value::ValueLayout;
+    use super::NATIVE_FIELD_CACHE_LAYOUT as CACHE;
+
+    let base = builder.ins().load(types::I64, MemFlagsData::trusted(), arguments, base_offset);
+    let family = builder.ins().band_imm_u(base, ValueLayout::HEAP_FAMILY_MASK as i64);
+    let is_object = builder.ins().icmp_imm_u(IntCC::Equal, family, ValueLayout::DIRECT_OBJECT_TAG as i64);
+    emit_js_guard(builder, is_object, fallback);
+    let record_id = builder.ins().ireduce(types::I32, base);
+    let record_id = builder.ins().uextend(types::I64, record_id);
+    let in_reservation = builder.ins().icmp_imm_u(
+        IntCC::UnsignedLessThan,
+        record_id,
+        i64::try_from(OBJECT.record_capacity).expect("object record capacity fits i64"),
+    );
+    emit_js_guard(builder, in_reservation, fallback);
+
+    let entries = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, field_entries));
+    let records = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, object_record_base));
+    let values = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, property_values));
+    let values_len = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, property_len));
+    for base in [entries, records, values] {
+        let present = builder.ins().icmp_imm_u(IntCC::NotEqual, base, 0);
+        emit_js_guard(builder, present, fallback);
+    }
+
+    // The site's entry, its words complemented as stored.
+    let entry = builder.ins().iadd_imm_s(
+        entries,
+        i64::try_from(usize::from(site) * CACHE.entry_size).expect("field cache offset fits i64"),
+    );
+    let entry_word = |builder: &mut FunctionBuilder<'_>, offset: usize, complement: u32| {
+        let offset = i32::try_from(offset).expect("field cache word offset fits i32");
+        let stored = builder.ins().load(types::I32, MemFlagsData::trusted(), entry, offset);
+        builder.ins().bxor_imm_u(stored, i64::from(complement))
+    };
+    let holder = entry_word(builder, CACHE.holder_offset, CACHE.holder_complement);
+    let own = builder.ins().icmp_imm_u(IntCC::Equal, holder, i64::from(CACHE.own_holder));
+    emit_js_guard(builder, own, fallback);
+    let receiver_shape = entry_word(builder, CACHE.receiver_offset, CACHE.receiver_complement);
+
+    let record_offset = builder.ins().imul_imm_u(
+        record_id,
+        i64::try_from(OBJECT.record_size).expect("object record size fits i64"),
+    );
+    let object = builder.ins().iadd(records, record_offset);
+    // The exact shape carries the dictionary bit, so a dictionary never matches.
+    let shape = builder.ins().load(
+        types::I32,
+        MemFlagsData::trusted(),
+        object,
+        i32::try_from(OBJECT.auxiliary_offset).expect("auxiliary offset fits i32"),
+    );
+    let same_shape = builder.ins().icmp(IntCC::Equal, shape, receiver_shape);
+    emit_js_guard(builder, same_shape, fallback);
+    let meta = builder.ins().load(
+        types::I32,
+        MemFlagsData::trusted(),
+        object,
+        i32::try_from(OBJECT.meta_offset).expect("meta offset fits i32"),
+    );
+    let inline = builder.ins().band_imm_u(meta, i64::from(OBJECT.inline_storage_mask));
+    let arena_storage = builder.ins().icmp_imm_u(IntCC::Equal, inline, 0);
+    emit_js_guard(builder, arena_storage, fallback);
+    // Plain storage: the payload word is the arena start alone, its upper half zero, which
+    // an extras word never is (`Object::plain_storage_start`).
+    let storage = builder.ins().load(
+        types::I64,
+        MemFlagsData::trusted(),
+        object,
+        i32::try_from(OBJECT.payload_offset).expect("payload offset fits i32"),
+    );
+    let upper = builder.ins().ushr_imm_u(storage, i64::from(u32::BITS));
+    let plain = builder.ins().icmp_imm_u(IntCC::Equal, upper, 0);
+    emit_js_guard(builder, plain, fallback);
+
+    let slot = entry_word(builder, CACHE.slot_offset, CACHE.slot_complement);
+    let slot = builder.ins().band_imm_u(slot, i64::from(u16::MAX));
+    let slot = builder.ins().uextend(types::I64, slot);
+    let position = builder.ins().iadd(storage, slot);
+    let in_arena = builder.ins().icmp(IntCC::UnsignedLessThan, position, values_len);
+    emit_js_guard(builder, in_arena, fallback);
+    let value_offset = builder.ins().imul_imm_u(
+        position,
+        i64::try_from(OBJECT.property_value_size).expect("property value size fits i64"),
+    );
+    builder.ins().iadd(values, value_offset)
+}
+
+/// A word of the running dispatch's payload (`JsStepDispatch`).
+fn emit_js_payload_word(builder: &mut FunctionBuilder<'_>, payload: ir::Value, offset: usize) -> ir::Value {
+    let offset = i32::try_from(offset).expect("JS dispatch offset fits i32");
+    builder.ins().load(types::I64, MemFlagsData::trusted(), payload, offset)
+}
+
+/// The VM step that resumes at this PC on any failed proof (`emit_js_step_fallback`), in
+/// its own block after the direct path.
+struct JsExactFallback {
+    context: ir::Value,
+    callout: ir::Value,
+    callout_signature: ir::SigRef,
+    result_pointer: ir::Value,
+    stopped_block: ir::Block,
+    continue_block: ir::Block,
+    pc: usize,
+}
+
+impl JsExactFallback {
+    fn emit(&self, builder: &mut FunctionBuilder<'_>, fallback: ir::Block) {
+        builder.switch_to_block(fallback);
+        emit_js_step_fallback(
+            builder,
+            self.context,
+            self.callout,
+            self.callout_signature,
+            self.result_pointer,
+            self.stopped_block,
+            self.continue_block,
+            self.pc,
+        );
+    }
+}
+
+/// Lower an own data-field read (`emit_js_own_field_slot`); the destination stays untouched
+/// on a failed proof, which resumes `Vm::step` at this GetField PC and may fill the cache.
+fn emit_js_own_field_get(
+    builder: &mut FunctionBuilder<'_>,
+    arguments: ir::Value,
+    payload: ir::Value,
+    base_offset: i32,
+    site: u16,
+    destination_offset: i32,
+    next: ir::Block,
+    exact: &JsExactFallback,
+) {
+    let fallback = builder.create_block();
+    let address = emit_js_own_field_slot(builder, arguments, payload, base_offset, site, fallback);
+    let value = builder.ins().load(types::I64, MemFlagsData::trusted(), address, 0);
+    builder.ins().store(MemFlagsData::trusted(), value, arguments, destination_offset);
+    builder.ins().jump(next, &[]);
+    exact.emit(builder, fallback);
+}
+
+/// Lower a returning own data-field read: the value `emit_js_own_field_slot` finds becomes
+/// the frame's result as the native `Return` makes it, a requested interrupt first taking
+/// the exact-PC callout; any failed proof resumes `Vm::step` at this GetField PC.
+fn emit_js_own_field_return(
+    builder: &mut RegionCore<'_>,
+    arguments: ir::Value,
+    payload: ir::Value,
+    base_offset: i32,
+    site: u16,
+    result_pointer: ir::Value,
+    exact: &JsExactFallback,
+) {
+    let fallback = builder.create_block();
+    let address = emit_js_own_field_slot(builder, arguments, payload, base_offset, site, fallback);
+    let value = builder.ins().load(types::I64, MemFlagsData::trusted(), address, 0);
+    let returns = builder.create_block();
+    let interrupted = builder.interrupt_requested();
+    builder.ins().brif(interrupted, fallback, &[], returns, &[]);
+    builder.switch_to_block(returns);
+    builder.seal_block(returns);
+    builder.ins().store(MemFlagsData::trusted(), value, result_pointer, 0);
+    let status = builder.ins().iconst(
+        types::I32,
+        i64::from(JS_GENERAL_RETURN_STATUS_BASE)
+            + i64::try_from(exact.pc).expect("bounded general-dispatch PC"),
+    );
+    builder.ins().return_(&[status]);
+    exact.emit(builder, fallback);
+}
+
+/// Lower an own data-field store as the lane's store hit makes it
+/// (`Vm::primary_own_field_store_hit`, `Vm::cached_field_store_hit`): in specialized
+/// execution, of a name no method cache names (whose store would invalidate it), to the slot
+/// `emit_js_own_field_slot` finds. Only a value outside the heap is stored here, which the
+/// write barrier never logs; a heap value, like every failed proof, resumes `Vm::step` at
+/// this SetField PC with nothing written.
+#[allow(clippy::too_many_arguments)]
+fn emit_js_own_field_set(
+    builder: &mut FunctionBuilder<'_>,
+    arguments: ir::Value,
+    payload: ir::Value,
+    base_offset: i32,
+    value_offset: i32,
+    atom: Atom,
+    site: u16,
+    next: ir::Block,
+    exact: &JsExactFallback,
+) {
+    use crate::value::ValueLayout;
+
+    let fallback = builder.create_block();
+    let specialized = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, stores_specialized));
+    let specialized = builder.ins().icmp_imm_u(IntCC::NotEqual, specialized, 0);
+    emit_js_guard(builder, specialized, fallback);
+    let value = builder.ins().load(types::I64, MemFlagsData::trusted(), arguments, value_offset);
+    let tag = builder.ins().band_imm_u(value, ValueLayout::TAG_MASK as i64);
+    let immediate = builder.ins().icmp_imm_u(IntCC::NotEqual, tag, ValueLayout::HEAP_TAG as i64);
+    emit_js_guard(builder, immediate, fallback);
+    // The atom's bit among the names method caches hold (`Vm::method_caches_may_name`).
+    let word_index = atom / u64::BITS;
+    let words = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, method_cache_atoms));
+    let words_len = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, method_cache_atom_words));
+    let word_present = builder.create_block();
+    let name_free = builder.create_block();
+    let covered = builder.ins().icmp_imm_u(IntCC::UnsignedGreaterThan, words_len, i64::from(word_index));
+    builder.ins().brif(covered, word_present, &[], name_free, &[]);
+    builder.switch_to_block(word_present);
+    builder.seal_block(word_present);
+    let word = builder.ins().load(
+        types::I64,
+        MemFlagsData::trusted(),
+        words,
+        i32::try_from(word_index as usize * std::mem::size_of::<u64>()).expect("atom word offset fits i32"),
+    );
+    let named = builder.ins().band_imm_u(word, (1_u64 << (atom % u64::BITS)) as i64);
+    let unnamed = builder.ins().icmp_imm_u(IntCC::Equal, named, 0);
+    builder.ins().brif(unnamed, name_free, &[], fallback, &[]);
+    builder.switch_to_block(name_free);
+    builder.seal_block(name_free);
+    let address = emit_js_own_field_slot(builder, arguments, payload, base_offset, site, fallback);
+    builder.ins().store(MemFlagsData::trusted(), value, address, 0);
+    builder.ins().jump(next, &[]);
+    exact.emit(builder, fallback);
+}
+
 /// Read the VM's atomic cancellation flag at a JS loop backedge. The caller
 /// sends a set flag to the exact-PC `Vm::step` callout, which reports the same
 /// interruption as the interpreter before consuming the branch.
@@ -1666,6 +1910,84 @@ pub(super) fn compile_js_general_dispatch(
                 stopped_block,
                 continue_block,
                 pc,
+            );
+            general_dispatch_native_pcs[pc] = 1;
+            continue;
+        }
+        if instruction.op() == Op::GetField
+            && instruction.result_flags() == 0
+            && !instruction.returns_from_frame()
+            && !instruction.writes_current_this()
+            && instruction.numeric_local_target().is_none()
+            && let Some(next) = next
+            && let Some(FieldLookup::Atom { base, cache_site, .. }) = instruction.field_lookup()
+            && let Some(base_offset) = base.register_index().and_then(register_offset)
+            && let Some(destination_offset) = register_offset(instruction.result_register())
+        {
+            let exact = JsExactFallback {
+                context,
+                callout,
+                callout_signature,
+                result_pointer,
+                stopped_block,
+                continue_block,
+                pc,
+            };
+            emit_js_own_field_get(&mut builder, arguments, payload, base_offset, cache_site, destination_offset, next, &exact);
+            general_dispatch_native_pcs[pc] = 1;
+            continue;
+        }
+        // A GetField that returns its value (`return object.field`), as a getter body is: the
+        // read, then the native `Return`'s completion.
+        if instruction.op() == Op::GetField
+            && (instruction.result_flags() == 0
+                || instruction.result_flags() == crate::bytecode::RETURN_REGISTER)
+            && instruction.returns_from_frame()
+            && !instruction.writes_current_this()
+            && instruction.numeric_local_target().is_none()
+            && let Some(FieldLookup::Atom { base, cache_site, .. }) = instruction.field_lookup()
+            && let Some(base_offset) = base.register_index().and_then(register_offset)
+        {
+            let exact = JsExactFallback {
+                context,
+                callout,
+                callout_signature,
+                result_pointer,
+                stopped_block,
+                continue_block,
+                pc,
+            };
+            emit_js_own_field_return(&mut builder, arguments, payload, base_offset, cache_site, result_pointer, &exact);
+            general_dispatch_native_pcs[pc] = 1;
+            continue;
+        }
+        if instruction.op() == Op::SetField
+            && instruction.result_flags() == 0
+            && !instruction.returns_from_frame()
+            && !instruction.writes_current_this()
+            && let Some(next) = next
+            && let Some(base_offset) = register_offset(instruction.register_b())
+            && let Some(value_offset) = register_offset(instruction.register_a())
+        {
+            let exact = JsExactFallback {
+                context,
+                callout,
+                callout_signature,
+                result_pointer,
+                stopped_block,
+                continue_block,
+                pc,
+            };
+            emit_js_own_field_set(
+                &mut builder,
+                arguments,
+                payload,
+                base_offset,
+                value_offset,
+                instruction.atom_index(),
+                instruction.cache_site_index(),
+                next,
+                &exact,
             );
             general_dispatch_native_pcs[pc] = 1;
             continue;
@@ -3416,18 +3738,43 @@ type ReferenceCallout = unsafe extern "C" fn(
 ) -> i64;
 type DiagnosticReferenceCallout = ReferenceCallout;
 
-/// A monomorphic target certificate for one same-artifact indirect-call site.
-/// The body pointer is owned by this artifact's code mapping. The VM publishes
-/// the epoch last after a successful target return and a table-slot recheck;
+/// A target certificate for same-artifact indirect calls: element `index` of instance `env`'s
+/// table in binding `table` is this artifact's `function`, of type `signature`, whose code is
+/// `body`. An
+/// artifact's call sites share its certificates, one per table index's low bits
+/// (`reference_dispatch_entries`). The body pointer is owned by this artifact's code mapping.
+/// The VM publishes the epoch last after a successful target return and a table-slot recheck;
 /// a nonzero epoch is the validity bit.
 #[repr(C)]
 #[derive(Clone, Copy)]
 struct FastReferenceCache {
     epoch: u64,
     env: Value,
+    table: u64,
     index: u64,
+    signature: u64,
     function: u64,
     body: u64,
+}
+
+/// Certificates an artifact keeps per indirect call site (`reference_dispatch_entries`): a site
+/// whose targets vary dispatches through all of them (JetStream richards-wasm sends each task
+/// through one site to one of four functions; a certificate per site held only the last).
+const REFERENCE_DISPATCH_ENTRIES_PER_SITE: usize = 4;
+
+/// The most certificates an artifact keeps, however many sites it has: a direct-mapped cache
+/// whose collisions cost only a callout.
+const MAX_REFERENCE_DISPATCH_ENTRIES: usize = 256;
+
+/// The certificates of an artifact with `sites` indirect call sites, indexed by the table
+/// index's low bits: a power of two, none without sites.
+fn reference_dispatch_entries(sites: usize) -> usize {
+    if sites == 0 {
+        return 0;
+    }
+    (sites * REFERENCE_DISPATCH_ENTRIES_PER_SITE)
+        .next_power_of_two()
+        .min(MAX_REFERENCE_DISPATCH_ENTRIES)
 }
 
 impl Default for FastReferenceCache {
@@ -3435,7 +3782,9 @@ impl Default for FastReferenceCache {
         Self {
             epoch: 0,
             env: Value::NULL,
+            table: 0,
             index: 0,
+            signature: 0,
             function: 0,
             body: 0,
         }
@@ -4154,7 +4503,9 @@ unsafe fn reference_callout_inner<H: Host, const DIAGNOSTICS: bool>(
                 let cache = unsafe { &mut *fast_cache };
                 cache.epoch = 0;
                 cache.env = context.env;
+                cache.table = u64::from(table_slot);
                 cache.index = index;
+                cache.signature = signature_index;
                 cache.function = function as u64;
                 cache.body = body;
                 cache.epoch = vm.wasm_reference_epoch.get();
@@ -4536,8 +4887,9 @@ pub(super) struct CompiledProgram {
     /// site. The vector is only pointers until a site becomes hot, and each
     /// cache weakly references its callee artifact to avoid Rc cycles.
     reference_call_caches: std::cell::RefCell<Vec<Option<Box<IndirectCallCacheEntry>>>>,
-    /// Stable per-site target certificates for native direct dispatch. These
-    /// do not retain heap values and are invalidated by the VM epoch.
+    /// Target certificates for native direct dispatch, by table index
+    /// (`reference_dispatch_entries`). These do not retain heap values and are
+    /// invalidated by the VM epoch.
     reference_fast_caches: Box<[UnsafeCell<FastReferenceCache>]>,
     /// The owner and bytecode PC for each entry in `reference_call_caches`.
     reference_cache_sites: Vec<(usize, usize, u32)>,
@@ -4799,10 +5151,14 @@ impl CompiledProgram {
     #[cfg(test)]
     pub(super) fn reference_fast_cache_matches_target(
         &self,
-        site: usize,
+        index: usize,
         target_function: usize,
     ) -> bool {
-        let Some(cache) = self.reference_fast_caches.get(site) else {
+        let entries = self.reference_fast_caches.len();
+        let Some(cache) = (entries != 0)
+            .then(|| self.reference_fast_caches.get(index & (entries - 1)))
+            .flatten()
+        else {
             return false;
         };
         let Some(body) = self.table.get(target_function).copied() else {
@@ -5444,11 +5800,42 @@ struct JsStepDispatch {
     /// Stable base of this VM's direct-array record reservation. The field is
     /// refreshed after VM callouts because the reservation may be lazy.
     array_record_base: usize,
+    /// The heap facts generated field reads use (`emit_js_own_field_get`): the object
+    /// record reservation, the property value arena and its length, and the field cache
+    /// entries of `program_id`'s sites; zero where absent. A callout may grow or compact any
+    /// of them, so each is read again after one (`refresh_heap_bases`).
+    object_record_base: usize,
+    property_values: usize,
+    property_len: usize,
+    field_entries: usize,
+    /// The names method caches hold (`Vm::method_caches_may_name`), one bit each, and its
+    /// length in words; and whether the VM and program run specialized, which a cached store
+    /// requires (`Vm::cached_field_store_hit`).
+    method_cache_atoms: usize,
+    method_cache_atom_words: usize,
+    stores_specialized: usize,
     #[cfg(test)]
     island_steps: u64,
     #[cfg(test)]
     global_name_cache_hits: u64,
     outcome: Option<JsNativeStep>,
+}
+
+impl JsStepDispatch {
+    /// Reads the heap bases generated code uses again, after anything that may have grown,
+    /// compacted or replaced them.
+    fn refresh_heap_bases<H: Host>(&mut self, vm: &Vm<H>) {
+        self.array_record_base = vm.heap.array_record_base().map_or(0, |base| base as usize);
+        self.object_record_base = vm.heap.object_record_base().map_or(0, |base| base as usize);
+        let (values, len) = vm.heap.native_property_values();
+        (self.property_values, self.property_len) = (values as usize, len);
+        self.field_entries = vm.program_field_entries(self.program_id).unwrap_or(0);
+        let atoms = vm.method_cache_atoms.words();
+        (self.method_cache_atoms, self.method_cache_atom_words) = (atoms.as_ptr() as usize, atoms.len());
+        self.stores_specialized = usize::from(
+            vm.specialized && vm.programs.residual(self.program_id).is_some_and(|program| program.specialized),
+        );
+    }
 }
 
 fn js_native_frame_storage_unchanged(frame: &Frame, dispatch: &JsStepDispatch) -> bool {
@@ -5796,10 +6183,7 @@ unsafe extern "C" fn js_step_callout<H: Host>(
                     }),
                 );
             }
-            dispatch.array_record_base = vm
-                .heap
-                .array_record_base()
-                .map_or(0, |base| base as usize);
+            dispatch.refresh_heap_bases(vm);
             match step {
                 Ok(super::StepResult::Continue) => {
                     if next >= body.code.len() {
@@ -8362,6 +8746,9 @@ struct Emitter<'a, 'b, H: Host> {
     blocks: Vec<Option<ir::Block>>,
     /// Dense ids for the compiled artifact's actual indirect call sites.
     reference_site_ids: &'a [(usize, usize)],
+    /// The artifact's certificate count less one (`reference_dispatch_entries`), which selects
+    /// a table index's certificate.
+    reference_dispatch_mask: u64,
     /// Selects the diagnostics ABI at compile time; both ABIs carry site ids.
     diagnostics_enabled: bool,
     base: ir::Value,
@@ -9270,10 +9657,16 @@ impl<H: Host> Emitter<'_, '_, H> {
             self.body.core.context,
             CONTEXT_REFERENCE_FAST_CACHES,
         );
-        let fast_cache = self.body.core.builder.ins().iadd_imm_s(
-            fast_cache_base,
-            (site_id * std::mem::size_of::<FastReferenceCache>()) as i64,
-        );
+        // The certificate of the index's low bits (`reference_dispatch_entries`).
+        let entry = self
+            .body.core.builder
+            .ins()
+            .band_imm_u(index, self.reference_dispatch_mask as i64);
+        let entry_offset = self
+            .body.core.builder
+            .ins()
+            .imul_imm_u(entry, std::mem::size_of::<FastReferenceCache>() as i64);
+        let fast_cache = self.body.core.builder.ins().iadd(fast_cache_base, entry_offset);
         let cached_epoch = self.body.core.builder.ins().load(
             types::I64,
             MemFlagsData::trusted(),
@@ -9337,8 +9730,30 @@ impl<H: Host> Emitter<'_, '_, H> {
             std::mem::offset_of!(FastReferenceCache, index) as i32,
         );
         let index_matches = self.body.core.builder.ins().icmp(IntCC::Equal, index, cached_index);
+        let cached_signature = self.body.core.builder.ins().load(
+            types::I64,
+            MemFlagsData::trusted(),
+            fast_cache,
+            std::mem::offset_of!(FastReferenceCache, signature) as i32,
+        );
+        let signature_matches = self
+            .body.core.builder
+            .ins()
+            .icmp(IntCC::Equal, signature_index, cached_signature);
+        let cached_table = self.body.core.builder.ins().load(
+            types::I64,
+            MemFlagsData::trusted(),
+            fast_cache,
+            std::mem::offset_of!(FastReferenceCache, table) as i32,
+        );
+        let table_matches = self.body.core.builder.ins().icmp(IntCC::Equal, table_slot, cached_table);
+        let signature_matches = self.body.core.builder.ins().band(signature_matches, table_matches);
         let epoch_and_env_match = self.body.core.builder.ins().band(epoch_matches, env_matches);
-        let cache_matches = self.body.core.builder.ins().band(epoch_and_env_match, index_matches);
+        let index_and_signature_match = self.body.core.builder.ins().band(index_matches, signature_matches);
+        let cache_matches = self
+            .body.core.builder
+            .ins()
+            .band(epoch_and_env_match, index_and_signature_match);
         self.body.core.builder
             .ins()
             .brif(cache_matches, check_entry, &[], slow_call, &[]);
@@ -10547,6 +10962,7 @@ impl<'a, H: Host> Analysis<'a, H> {
         fixed_base: Option<i32>,
         globals: &[u32],
         reference_site_ids: &'a [(usize, usize)],
+        reference_dispatch_mask: u64,
         diagnostics_enabled: bool,
     ) -> Option<ir::Function> {
         let function = &self.code.function(index);
@@ -10641,6 +11057,7 @@ impl<'a, H: Host> Analysis<'a, H> {
             plan,
             blocks: vec![None; function.code.len()],
             reference_site_ids,
+            reference_dispatch_mask,
             diagnostics_enabled,
             base,
             length,
@@ -11768,16 +12185,21 @@ impl<H: Host> Vm<H> {
             local_count: 0,
             native_pcs: std::ptr::null(),
             native_pc_count: 0,
-            array_record_base: self
-                .heap
-                .array_record_base()
-                .map_or(0, |base| base as usize),
+            array_record_base: 0,
+            object_record_base: 0,
+            property_values: 0,
+            property_len: 0,
+            field_entries: 0,
+            method_cache_atoms: 0,
+            method_cache_atom_words: 0,
+            stores_specialized: 0,
             #[cfg(test)]
             island_steps: 0,
             #[cfg(test)]
             global_name_cache_hits: 0,
             outcome: None,
         };
+        dispatch.refresh_heap_bases(self);
         // Native dispatch starts at the next unexecuted bytecode. Callouts
         // overwrite this with the exact failing PC before invoking VM semantics.
         self.frames[frame].pc = start_pc;
@@ -12986,6 +13408,7 @@ impl<H: Host> Vm<H> {
                 fixed_base,
                 &globals,
                 &reference_site_ids[index],
+                reference_dispatch_entries(reference_cache_count).saturating_sub(1) as u64,
                 diagnostics_enabled,
             );
             if let Some(started) = body_build_started {
@@ -13133,7 +13556,7 @@ impl<H: Host> Vm<H> {
                     .take(reference_cache_count)
                     .collect(),
             ),
-            reference_fast_caches: (0..reference_cache_count)
+            reference_fast_caches: (0..reference_dispatch_entries(reference_cache_count))
                 .map(|_| UnsafeCell::new(FastReferenceCache::default()))
                 .collect::<Vec<_>>()
                 .into_boxed_slice(),
@@ -13386,8 +13809,10 @@ impl<H: Host> Vm<H> {
         {
             // The module's code is about to run natively, so the interpreter's views of it go
             // first, and the compile reuses their memory, unless a frame of it is on the stack,
-            // whose lane run may hold their records. An interpreted run derives them again.
-            if !self.frames.iter().any(|frame| frame.program == program) {
+            // whose lane run may hold their records, or a lane activation deferred beside this
+            // call (`runs_beside_activations`), a frame not on it. An interpreted run derives
+            // them again.
+            if !self.deferred_activations_run(program) && !self.frames.iter().any(|frame| frame.program == program) {
                 self.programs.release_lane_views(program);
             }
             let started = jit_diagnostics_enabled().then(std::time::Instant::now);

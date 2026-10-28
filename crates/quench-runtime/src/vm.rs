@@ -781,6 +781,31 @@ impl site_table::SiteEntry for FieldCache {
         }
     }
 }
+/// Layout facts for generated code that reads a field cache entry as `SiteEntry for
+/// FieldCache` stores it: three words, each complemented against `EMPTY_CACHE`.
+pub(super) struct NativeFieldCacheLayout {
+    pub(super) entry_size: usize,
+    pub(super) receiver_offset: usize,
+    pub(super) holder_offset: usize,
+    pub(super) slot_offset: usize,
+    pub(super) receiver_complement: u32,
+    pub(super) holder_complement: u32,
+    pub(super) slot_complement: u32,
+    /// The holder an own data field's entry names.
+    pub(super) own_holder: u32,
+}
+
+pub(super) const NATIVE_FIELD_CACHE_LAYOUT: NativeFieldCacheLayout = NativeFieldCacheLayout {
+    entry_size: std::mem::size_of::<<FieldCache as site_table::SiteEntry>::Stored>(),
+    receiver_offset: 0,
+    holder_offset: std::mem::size_of::<u32>(),
+    slot_offset: 2 * std::mem::size_of::<u32>(),
+    receiver_complement: EMPTY_CACHE.receiver,
+    holder_complement: EMPTY_CACHE.holder,
+    slot_complement: EMPTY_CACHE.slot as u32,
+    own_holder: NO_FIELD_HOLDER,
+};
+
 /// One cached property-add transition: an extensible ordinary object of `source_shape` whose
 /// prototype chain still has exactly `prototype_shapes[..prototype_depth]` gains `atom` at `slot`
 /// and moves to `target_shape`.
@@ -3083,6 +3108,13 @@ impl<H: Host> Vm<H> {
 
     /// Re-derive `active_field_entries` after the active program or the field cache table
     /// changed.
+    /// The field cache entries of `program`'s sites, for generated code that reads them
+    /// (`NATIVE_FIELD_CACHE_LAYOUT`); valid until the cache table grows or is replaced.
+    pub(super) fn program_field_entries(&self, program: ProgramId) -> Option<usize> {
+        let layout = self.program_cache_layouts.get(program.raw() as usize)?;
+        Some(self.field_caches.entries_from(layout.field_base) as usize)
+    }
+
     pub(super) fn refresh_active_field_entries(&mut self) {
         self.active_field_entries = self.field_caches.entries_from(self.active_layout.field_base);
     }

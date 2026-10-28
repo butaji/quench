@@ -3118,6 +3118,22 @@ impl Heap {
             unsafe { self.properties.get_flat(object.properties(), slot) }
         }
     }
+    /// `property_get_flat` of a prototype holder, whose values usually live behind extras
+    /// (`Object::extras_storage_start`), read without first testing the forms a holder
+    /// seldom has.
+    ///
+    /// # Safety
+    /// As for `property_get_flat`.
+    #[inline(always)]
+    pub(crate) unsafe fn holder_property_get_flat(&self, holder: &Object, slot: usize) -> Value {
+        if let Some(start) = holder.extras_storage_start() {
+            debug_assert!(!holder.properties().is_dictionary(), "the caller matched an exact shape");
+            // SAFETY: the caller proves the slot exists outside dictionary storage.
+            return unsafe { self.properties.get_flat_at(start, slot) };
+        }
+        // SAFETY: as the caller guarantees.
+        unsafe { self.property_get_flat(holder, slot) }
+    }
     #[inline(always)]
     pub(crate) unsafe fn property_get_unchecked(&self, object: &Object, slot: usize) -> Value {
         if let Some(value) = object.inline_property(slot) {

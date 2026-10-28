@@ -1493,6 +1493,15 @@ impl From<Function> for FunctionSlot {
     }
 }
 
+/// The records of the implicit `constructor(...args) { super(...args); }` that
+/// `Function::super_forwarding` reads: the rest list, the parent's four, the construction,
+/// the receiver binding and the return.
+const FORWARDED_REST_RECORDS: usize = 8;
+/// The records of `constructor(a, b) { super(a, b); }` besides its parameter loads: the
+/// parent's four and a spare `undefined` load, then the construction, its check, the
+/// receiver binding, an `undefined` load and the return.
+const FORWARDED_PARAMETERS_FRAME: usize = 10;
+
 /// Call-setup facts derived once per function from its static layout, so an activation reads
 /// one cached word instead of re-testing each flag.
 /// What a constructor that only constructs its parent passes on
@@ -2632,7 +2641,19 @@ impl Function {
         {
             return None;
         }
-        let records = self.instructions().collect::<SmallVec<[WideInstruction; 16]>>();
+        // Each shape has a fixed number of records, so the record count rejects any other
+        // body before a record decodes: the implicit constructor reads its first eight (its
+        // tail is unreachable), the parameter form is exactly `FORWARDED_PARAMETERS_FRAME`
+        // around its parameter loads.
+        let shaped_records = if self.rest {
+            FORWARDED_REST_RECORDS
+        } else {
+            FORWARDED_PARAMETERS_FRAME + usize::from(self.params)
+        };
+        if self.code.len() < shaped_records || (!self.rest && self.code.len() != shaped_records) {
+            return None;
+        }
+        let records = self.instructions().take(shaped_records).collect::<SmallVec<[WideInstruction; 16]>>();
         // The parent: the active function's [[GetPrototypeOf]], called with no receiver.
         let parent_of = |active: &WideInstruction, base: &WideInstruction, receiver: &WideInstruction, call: &WideInstruction| {
             active.op() == Op::LoadCapture

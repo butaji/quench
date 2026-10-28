@@ -3533,6 +3533,7 @@ impl Drop for ProgramStore {
                         super::compiled::RegionRejection::FieldLimit => "field-limit",
                         super::compiled::RegionRejection::FieldStoreLimit => "field-store-limit",
                         super::compiled::RegionRejection::FieldMutation => "field-mutation",
+                        super::compiled::RegionRejection::ArrayRedefined => "array-redefined",
                     };
                     let _ = write_json_string(&mut stderr, name);
                 } else {
@@ -3660,6 +3661,7 @@ impl Drop for ProgramStore {
                     super::compiled::RegionRejection::FieldLimit => "field-limit",
                     super::compiled::RegionRejection::FieldStoreLimit => "field-store-limit",
                     super::compiled::RegionRejection::FieldMutation => "field-mutation",
+                    super::compiled::RegionRejection::ArrayRedefined => "array-redefined",
                 };
                 let _ = write!(stderr, "[");
                 let _ = write_json_string(&mut stderr, name);
@@ -3789,6 +3791,7 @@ fn derive_lane_view<'s>(
     ) -> super::dispatch_fast::LaneView,
 ) -> *const super::dispatch_fast::LaneView {
     view.get_or_init(|| {
+        crate::compile::compile_phase_boundary(crate::compile::CompilePhase::LaneDerivation);
         // Only a loop tier reads the masks; a collection derives them otherwise.
         let live = || entry.residual.shared_register_root_masks(function);
         let view = derive(code, &entry.constants, entry.residual.kind, &live, &entry.residual.field_sites);

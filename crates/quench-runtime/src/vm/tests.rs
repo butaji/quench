@@ -182,6 +182,87 @@ fn lane_generator_iteration_steps_keep_generator_semantics() {
 }
 
 #[test]
+fn lane_polymorphic_field_stores_keep_assignment_semantics() {
+    // A store site past one shape writes each recorded shape's slot in the lane; a receiver
+    // that gains the property, a frozen one and an accessor still take the general store.
+    let source = r#"
+      const out = [];
+      class P { constructor(k) { this["w" + k] = k; this.pos = 0; } step(v) { this.pos = v; } }
+      const ps = []; for (let k = 0; k < 6; k++) ps.push(new P(k));
+      for (let r = 0; r < 100; r++) for (const p of ps) p.step(r + p.pos);
+      out.push(ps.map((p) => p.pos).join(","));
+      function set(o, v) { o.x = v; }
+      const os = [{ x: 0, a: 1 }, { x: 0, b: 1 }, { x: 0, c: 1 }];
+      for (let r = 0; r < 50; r++) for (const o of os) set(o, r);
+      const fresh = {}; set(fresh, "added"); out.push(fresh.x, os.map((o) => o.x).join(","));
+      const frozen = Object.freeze({ x: 1, a: 1 }); set(frozen, 9); out.push(frozen.x);
+      const acc = { a: 1, set x(v) { out.push("setter " + v); } }; set(acc, 5);
+      print(out.join(" "));
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    let program = Engine::specialize(source, "lane-polymorphic-stores.js").unwrap();
+    vm.execute(&program).unwrap();
+    assert_eq!(output.borrow().as_slice(), ["4950,4950,4950,4950,4950,4950 added 49,49,49 1 setter 5"]);
+}
+
+#[test]
+fn lane_global_undefined_reads_keep_binding_semantics() {
+    // A static global read of `undefined` answers its value in the lane, while a direct
+    // eval's `var undefined` and a `with` object's property still shadow it, and neither an
+    // eval's own `let` nor a write to the global changes it.
+    let source = r#"
+      const out = [];
+      function f() { eval("var undefined = 1"); let s; for (let i = 0; i < 3; i++) s = undefined; return s; }
+      function g(o) { with (o) { let s; for (let i = 0; i < 3; i++) s = undefined; return s; } }
+      function h() { let s = 0; for (let i = 0; i < 1000; i++) s = typeof undefined + (undefined === void 0); return s; }
+      out.push(f(), g({ undefined: "w" }), g({}), h());
+      (0, eval)("let undefined = 3");
+      globalThis.undefined = 7; out.push(h());
+      print(out.join(" "));
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    let program = Engine::specialize(source, "lane-global-undefined.js").unwrap();
+    vm.execute(&program).unwrap();
+    assert_eq!(output.borrow().as_slice(), ["1 w  undefinedtrue undefinedtrue"]);
+}
+
+#[test]
+fn lane_field_reads_of_strings_and_hashed_sites_keep_lookup_semantics() {
+    // A string's `length` read in the lane answers its own length, whatever its chain holds,
+    // while other receivers at the same site read theirs; a site past its inline shapes
+    // answers own and prototype fields from its hashed entries and sees a prototype change.
+    let source = r#"
+      const out = [];
+      class T { constructor(s) { this.input = s; } len() { return this.input.length; } }
+      let n = 0; const t = new T("abcdef");
+      for (let i = 0; i < 1000; i++) n += t.len();
+      out.push(n);
+      t.input = [1, 2]; out.push(t.len());
+      t.input = { length: "own" }; out.push(t.len());
+      String.prototype.length = 99; out.push(new T("xy").len());
+      const shapes = [];
+      for (let k = 0; k < 12; k++) { const o = { ["f" + k]: k, type: "t" + k }; shapes.push(o); }
+      function Proto() {} Proto.prototype.type = "proto";
+      for (let k = 0; k < 3; k++) { const o = new Proto(); o["g" + k] = k; shapes.push(o); }
+      function readType(o) { return o.type; }
+      for (let r = 0; r < 50; r++) for (const o of shapes) readType(o);
+      out.push(shapes.map(readType).join(","));
+      Proto.prototype.type = "changed"; out.push(readType(shapes[13]));
+      print(out.join(" "));
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    let program = Engine::specialize(source, "lane-field-reads.js").unwrap();
+    vm.execute(&program).unwrap();
+    assert_eq!(
+        output.borrow().as_slice(),
+        ["6000 2 own 2 t0,t1,t2,t3,t4,t5,t6,t7,t8,t9,t10,t11,proto,proto,proto changed"]
+    );
+}
+
+#[test]
 fn lane_calls_passing_extra_values_keep_them_only_for_legacy_reflection() {
     // A lane call passing more values than its callee's parameters keeps them for a sloppy
     // callee, whose `f.arguments` and caller's `arguments` read them, and passes a strict
@@ -12051,6 +12132,41 @@ fn shared_osr_appends_and_fills_holes_in_place() {
 }
 
 #[test]
+fn shared_osr_indexes_the_row_a_loop_reads_each_iteration() {
+    // `a[e][f] = x` in a loop over `e` indexes the row `a[e]` the iteration read, not the
+    // row the region entered with: the region declines an indexed register it defines
+    // (sjcl's AES table setup, stanford-crypto-aes under `--jit`).
+    let source = r#"
+      function fill(v) {
+        var a = [[], [], [], []], n;
+        for (var f = 0; f < 300; f++) {
+          n = v * f;
+          for (var e = 0; 4 > e; e++) a[e][f] = n = n << 24 ^ n >>> 8;
+        }
+        var h = 0;
+        for (var r = 0; r < 4; r++) for (var i = 0; i < 300; i++) h = (h * 31 + (a[r][i] | 0)) | 0;
+        return h + ":" + a[0].length + ":" + a[3].length;
+      }
+      var out = [];
+      for (var c = 0; c < 3; c++) out.push(fill(0x101));
+      print(out.join(" "));
+    "#;
+    let program = Engine::specialize(source, "osr-row.js").unwrap();
+    for policy in crate::MemoryPolicy::ALL {
+        let output = Rc::new(RefCell::new(Vec::new()));
+        let mut compiled = Vm::new(TestHost::writing_to(output.clone()));
+        compiled.set_memory_policy(policy);
+        compiled.set_execution_mode(crate::ExecutionMode::Compiled);
+        compiled.execute(&program).unwrap();
+        assert_eq!(
+            output.borrow().as_slice(),
+            ["1419804588:300:300 1419804588:300:300 1419804588:300:300"],
+            "{policy:?}"
+        );
+    }
+}
+
+#[test]
 #[cfg(not(quench_profiled))]
 fn shared_osr_indexes_arrays_that_field_reads_give() {
     // Each iteration reads the arrays from fields of `this` and of an argument, then reads
@@ -15062,6 +15178,269 @@ fn js_jit_general_dispatch_reads_live_dense_array_elements_and_falls_back_exactl
 
 #[test]
 #[cfg(not(quench_profiled))]
+fn js_jit_general_dispatch_reads_own_fields_through_the_field_cache_and_falls_back_exactly() {
+    let source = r#"
+      // The read feeds a test, so it is a plain GetField rather than a returning one.
+      function readField(object) { const value = object.value; if (value === null) return null; return value; }
+      // Three own properties keep the values in the property arena.
+      const first = { value: 10, other: 1, more: 2 };
+      const second = { other: 3, more: 4, value: 20 };
+      for (let index = 0; index < 64; index++) {
+        const object = index % 2 === 0 ? first : second;
+        if (readField(object) !== (index % 2 === 0 ? 10 : 20)) throw Error('alternating shapes');
+      }
+      first.value = 11;
+      if (readField(first) !== 11) throw Error('live value');
+
+      const small = { value: 30 };
+      if (readField(small) !== 30) throw Error('inline storage fallback');
+
+      const inherited = Object.create({ value: 40 });
+      if (readField(inherited) !== 40) throw Error('prototype holder fallback');
+
+      let getterCalls = 0;
+      const accessor = { other: 1, more: 2, get value() { getterCalls++; return 50; } };
+      if (readField(accessor) !== 50 || getterCalls !== 1) throw Error('accessor fallback');
+
+      let proxyCalls = 0;
+      const proxy = new Proxy(first, { get(target, key, receiver) {
+        if (key === 'value') proxyCalls++;
+        return Reflect.get(target, key, receiver);
+      } });
+      if (readField(proxy) !== 11 || proxyCalls !== 1) throw Error('proxy fallback');
+
+      const dictionary = { value: 60, other: 1, more: 2, extra: 3 };
+      delete dictionary.extra;
+      delete dictionary.other;
+      if (readField(dictionary) !== 60) throw Error('dictionary fallback');
+
+      if (readField('text') !== undefined) throw Error('primitive fallback');
+      if (readField(first) !== 11) throw Error('cached shape after misses');
+    "#;
+    let program = Engine::compile(crate::ExecutionRequest::script(
+        source,
+        "js-jit-general-own-field.js",
+    ))
+    .unwrap();
+    let function = program
+        .functions
+        .iter()
+        .position(|function| {
+            function
+                .header()
+                .name
+                .or(function.header().inferred_name)
+                .is_some_and(|atom| &program.atoms[atom as usize] == "readField")
+        })
+        .unwrap() as u32;
+
+    let mut interpreter = Vm::new(TestHost::default());
+    interpreter.execute(&program).unwrap();
+
+    let mut compiled = Vm::new(TestHost::default());
+    compiled.programs.enable_js_general_dispatch();
+    compiled.set_execution_mode(crate::ExecutionMode::Compiled);
+    compiled.programs.compile_general_baseline_when_hot();
+    compiled.execute(&program).unwrap();
+
+    let Some(super::program_store::JsTierState::Compiled(native)) = compiled
+        .programs
+        .js_tier(super::program_store::ProgramId::MAIN, function)
+    else {
+        panic!("readField should use the general JavaScript compiler");
+    };
+    assert!(native.is_general_dispatch());
+    assert!(native.native_entries() > 0);
+    let body = program.function(function as usize);
+    let get_field_pcs = body
+        .code
+        .iter()
+        .enumerate()
+        .filter_map(|(pc, packed)| {
+            (super::dispatch_fast::decoded_instruction(body, *packed).op()
+                == crate::bytecode::Op::GetField)
+                .then_some(pc)
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(get_field_pcs.len(), 1);
+    assert!(native.general_dispatch_pc_is_native(get_field_pcs[0]));
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
+fn js_jit_general_dispatch_stores_own_fields_through_the_field_cache_and_falls_back_exactly() {
+    let source = r#"
+      function writeField(object, value) { object.value = value; }
+      // Three own properties keep the values in the property arena.
+      const first = { value: 0, other: 1, more: 2 };
+      const second = { other: 3, more: 4, value: 0 };
+      for (let index = 0; index < 64; index++) {
+        writeField(index % 2 === 0 ? first : second, index);
+      }
+      if (first.value !== 62 || second.value !== 63) throw Error('alternating shapes');
+
+      const target = { other: 5 };
+      writeField(first, target);
+      if (first.value !== target) throw Error('heap value fallback');
+
+      let setterValue;
+      const accessor = { other: 1, more: 2, set value(value) { setterValue = value; } };
+      writeField(accessor, 7);
+      if (setterValue !== 7) throw Error('setter fallback');
+
+      const frozen = Object.freeze({ value: 8, other: 1, more: 2 });
+      writeField(frozen, 9);
+      if (frozen.value !== 8) throw Error('frozen fallback');
+
+      const seen = [];
+      const proxy = new Proxy({ value: 0, other: 1, more: 2 }, { set(target, key, value) {
+        seen.push(key);
+        target[key] = value;
+        return true;
+      } });
+      writeField(proxy, 10);
+      if (seen.join() !== 'value') throw Error('proxy fallback');
+
+      // A method cache naming the property makes its stores take the VM path, which
+      // invalidates the cached method.
+      const methods = { other: 1, more: 2, value() { return 1; } };
+      for (let index = 0; index < 8; index++) if (methods.value() !== 1) throw Error('method');
+      writeField(methods, function () { return 2; });
+      if (methods.value() !== 2) throw Error('method cache invalidation');
+      writeField(first, 11);
+      if (first.value !== 11) throw Error('cached shape after misses');
+    "#;
+    let program = Engine::compile(crate::ExecutionRequest::script(
+        source,
+        "js-jit-general-own-field-store.js",
+    ))
+    .unwrap();
+    let function = program
+        .functions
+        .iter()
+        .position(|function| {
+            function
+                .header()
+                .name
+                .or(function.header().inferred_name)
+                .is_some_and(|atom| &program.atoms[atom as usize] == "writeField")
+        })
+        .unwrap() as u32;
+
+    let mut interpreter = Vm::new(TestHost::default());
+    interpreter.execute(&program).unwrap();
+
+    let mut compiled = Vm::new(TestHost::default());
+    compiled.programs.enable_js_general_dispatch();
+    compiled.set_execution_mode(crate::ExecutionMode::Compiled);
+    compiled.programs.compile_general_baseline_when_hot();
+    compiled.execute(&program).unwrap();
+
+    let Some(super::program_store::JsTierState::Compiled(native)) = compiled
+        .programs
+        .js_tier(super::program_store::ProgramId::MAIN, function)
+    else {
+        panic!("writeField should use the general JavaScript compiler");
+    };
+    assert!(native.is_general_dispatch());
+    assert!(native.native_entries() > 0);
+    let body = program.function(function as usize);
+    let set_field_pcs = body
+        .code
+        .iter()
+        .enumerate()
+        .filter_map(|(pc, packed)| {
+            (super::dispatch_fast::decoded_instruction(body, *packed).op()
+                == crate::bytecode::Op::SetField)
+                .then_some(pc)
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(set_field_pcs.len(), 1);
+    assert!(native.general_dispatch_pc_is_native(set_field_pcs[0]));
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
+fn js_jit_general_dispatch_returns_own_fields_and_falls_back_exactly() {
+    let source = r#"
+      function readX(object) { return object.x; }
+      const wide = () => ({ a: 1, b: 2, c: 3, d: 4, x: 5 });
+      const plain = wide();
+      for (let index = 0; index < 64; index++) {
+        if (readX(plain) !== 5) throw Error('hot own field');
+      }
+      plain.x = 50;
+      if (readX(plain) !== 50) throw Error('live value');
+      let getterCalls = 0;
+      const accessor = wide();
+      Object.defineProperty(accessor, 'x', { get() { getterCalls++; return 9; } });
+      if (readX(accessor) !== 9 || getterCalls !== 1) throw Error('accessor');
+      const proxy = new Proxy(wide(), { get(target, key) { return key === 'x' ? 7 : target[key]; } });
+      if (readX(proxy) !== 7) throw Error('proxy');
+      const dictionary = wide();
+      for (let index = 0; index < 64; index++) dictionary['k' + index] = index;
+      delete dictionary.a;
+      if (readX(dictionary) !== 5) throw Error('dictionary');
+      const deleted = wide();
+      delete deleted.x;
+      if (readX(deleted) !== undefined) throw Error('deleted');
+      if (readX({ x: 3 }) !== 3) throw Error('inline storage');
+      if (readX(Object.create(plain)) !== 50) throw Error('prototype holder');
+      let threw = false;
+      try { readX(null); } catch (error) { threw = error instanceof TypeError; }
+      if (!threw) throw Error('nullish receiver');
+    "#;
+    let program = Engine::compile(crate::ExecutionRequest::script(
+        source,
+        "js-jit-general-own-field-return.js",
+    ))
+    .unwrap();
+    let function = program
+        .functions
+        .iter()
+        .position(|function| {
+            function
+                .header()
+                .name
+                .or(function.header().inferred_name)
+                .is_some_and(|atom| &program.atoms[atom as usize] == "readX")
+        })
+        .unwrap() as u32;
+
+    let mut interpreter = Vm::new(TestHost::default());
+    interpreter.execute(&program).unwrap();
+
+    let mut compiled = Vm::new(TestHost::default());
+    compiled.programs.enable_js_general_dispatch();
+    compiled.set_execution_mode(crate::ExecutionMode::Compiled);
+    compiled.programs.compile_general_baseline_when_hot();
+    compiled.execute(&program).unwrap();
+
+    let Some(super::program_store::JsTierState::Compiled(native)) = compiled
+        .programs
+        .js_tier(super::program_store::ProgramId::MAIN, function)
+    else {
+        panic!("readX should use the general JavaScript compiler");
+    };
+    assert!(native.is_general_dispatch());
+    assert!(native.native_entries() > 0);
+    let body = program.function(function as usize);
+    let returning_reads = body
+        .code
+        .iter()
+        .enumerate()
+        .filter(|(_, packed)| {
+            let instruction = super::dispatch_fast::decoded_instruction(body, **packed);
+            instruction.op() == crate::bytecode::Op::GetField && instruction.returns_from_frame()
+        })
+        .map(|(pc, _)| pc)
+        .collect::<Vec<_>>();
+    assert_eq!(returning_reads.len(), 1, "readX returns its field read");
+    assert!(native.general_dispatch_pc_is_native(returning_reads[0]));
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
 fn js_jit_general_dispatch_batches_fallback_islands_before_native_ops() {
     let source = r#"
       const captured = { value: 2 };
@@ -16827,6 +17206,75 @@ fn lane_forwarded_calls_run_callees_of_other_programs_in_their_program() {
         .collect::<Vec<_>>()
         .join("|");
     assert_eq!(output.borrow().as_slice(), [expected]);
+}
+
+#[test]
+fn lane_fused_loop_records_fall_back_to_each_step() {
+    // A captured loop bound read with its branch, an update with its back edge, a store
+    // with the copy of its value and two chained operators each run as one record; a
+    // non-number bound, a BigInt counter, a hole, a frozen or typed array, an accessor
+    // element, a string or BigInt operand and an int32 overflow each leave a step to its
+    // own record, with Node's results.
+    let source = r#"
+      function make() {
+        let limit = 4;
+        const seen = [];
+        function count() { let n = 0; for (let i = 0; i < limit; i++) n += i; return n; }
+        function countBig() { let n = 0n; for (let i = 0n; i < 3n; i++) n += i; return n; }
+        function chain(a, b, c) { return (a + b) * c; }
+        function square(a, b) { const t = a - b; return t * t; }
+        function divide(a, b, c) { return a / b - c; }
+        function store(x, i, v) { let last; for (let k = 0; k < 2; k++) last = x[i] = v + k; return last; }
+        for (let round = 0; round < 3; round++) {
+          seen.push(count());
+          limit = round === 1 ? 'x' : 6;
+          seen.push(String(countBig()));
+          seen.push(chain(2, 3, 4), chain(2147483647, 1, 2), chain(0.5, 0.25, 4), chain('a', 1, 2), chain(1n, 2n, 3n));
+          seen.push(square(3, 5), square(0.5, 2), 1 / square(-0, 0), chain(-0, -0, 1), divide(7, 2, 1), divide(1, 0, 1), String(divide(0, 0, 1)));
+          const plain = [1, 2, 3];
+          const holey = [1, , 3];
+          const frozen = Object.freeze([1, 2, 3]);
+          const typed = new Float64Array(3);
+          seen.push(store(plain, 1, 10), plain.join('|'), store(holey, 1, 20), holey.join('|'), store(typed, 2, 0.5), typed.join('|'));
+          const accessor = Object.defineProperty([0], 0, { set(v) { this.got = v; }, get() { return 'g'; } });
+          seen.push(store(frozen, 0, 5), frozen.join('|'), store({}, 'k', 7), store(accessor, 0, 3), accessor.got, 1 / chain(-0, -0, 1));
+        }
+        return seen;
+      }
+      print(make().join(','));
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    vm.execute(&Engine::specialize(source, "lane-fused-loop-records.js").unwrap()).unwrap();
+    assert_eq!(output.borrow().as_slice(), ["6,3,20,4294967296,3,NaN,9,4,2.25,Infinity,0,2.5,Infinity,NaN,11,1|11|3,21,1|21|3,1.5,0|0|1.5,6,1|2|3,8,4,4,-Infinity,15,3,20,4294967296,3,NaN,9,4,2.25,Infinity,0,2.5,Infinity,NaN,11,1|11|3,21,1|21|3,1.5,0|0|1.5,6,1|2|3,8,4,4,-Infinity,0,3,20,4294967296,3,NaN,9,4,2.25,Infinity,0,2.5,Infinity,NaN,11,1|11|3,21,1|21|3,1.5,0|0|1.5,6,1|2|3,8,4,4,-Infinity"]);
+}
+
+#[test]
+fn lane_fused_update_read_and_operator_falls_back_to_each_step() {
+    // `t + x[++k]` runs as one record (`lane_update_get_index_operator`); a hole, an
+    // inherited element, a non-array, a string, a BigInt and a sum past int32 each
+    // leave it to the read or operator record, with Node's results.
+    let source = r#"
+      function sum(x, k, n) { let t = 0.5; for (let i = 0; i < n; i++) t = t + x[++k]; return t; }
+      function diff(x, k, n) { let t = 100; for (let i = 0; i < n; i++) t = x[--k] - t; return t; }
+      function prod(x, k, n) { let t = 1; for (let i = 0; i < n; i++) { t = t * x[++k]; t = t / x[k--]; t = x[++k] / 2 * t; } return t; }
+      const seen = [];
+      const doubles = [0, 1.5, 2.25, -3.125, 4, 5.5, 6.75];
+      for (let round = 0; round < 3; round++) {
+        seen.push(sum(doubles, 0, 6), diff(doubles, 7, 6), prod(doubles, 0, 3));
+      }
+      seen.push(sum([0, 1, 'a', 2, , 3], 0, 5));
+      const inherited = [0, 1, , 3]; Object.prototype[2] = 40;
+      seen.push(sum(inherited, 0, 3)); delete Object.prototype[2];
+      seen.push(sum({ 1: 2, 2: 3.5 }, 0, 2), sum([0, 2147483647], 0, 1));
+      try { sum([0, 1n], 0, 1); } catch (error) { seen.push(error.constructor.name); }
+      seen.push(String(sum([0, -0], -1, 2)), 1 / diff([-0, 0], 2, 2), sum([0, NaN, 1], 0, 2));
+      print(seen.join(','));
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    vm.execute(&Engine::specialize(source, "lane-update-read-operator.js").unwrap()).unwrap();
+    assert_eq!(output.borrow().as_slice(), ["17.375,90.875,-1.318359375,17.375,90.875,-1.318359375,17.375,90.875,-1.318359375,1.5a2undefined3,44.5,6,2147483647.5,TypeError,0.5,0.01,NaN"]);
 }
 
 #[test]
