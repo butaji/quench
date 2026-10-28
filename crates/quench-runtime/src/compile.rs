@@ -1062,9 +1062,9 @@ impl Engine {
                 })
                 .collect());
         }
-        let private_name_ids = private_name_ids(&semantic.semantic);
-        let private_name_labels = private_name_labels(&semantic.semantic);
-        let prototype_unobservable = call_only::prototype_unobservable_functions(&semantic.semantic, &parsed.program);
+        let mut private_name_ids = private_name_ids(&semantic.semantic);
+        let mut private_name_labels = private_name_labels(&semantic.semantic);
+        let mut prototype_unobservable = call_only::prototype_unobservable_functions(&semantic.semantic, &parsed.program);
         #[cfg(feature = "verify-replay")]
         let free_names = free_names::free_names(&semantic.semantic, &parsed.program);
         let inherited_private_ids = if wrapped_eval
@@ -1106,6 +1106,27 @@ impl Engine {
         // Validate in method grammar, then remove the context wrapper. Original
         // spans still address `normalized`, retaining exact nested function source.
         drop(semantic);
+        if lazy {
+            // The lazily parsed bodies, checked and analyzed one at a time before code
+            // generation (`lazy_bodies::body_facts`).
+            let root_strict = module_goal
+                || inherited_strict
+                || parsed.program.directives.iter().any(|directive| directive.directive == "use strict");
+            let first_private_id = private_name_ids.values().max().map_or(0, |id| id + 1);
+            let Some(facts) = lazy_bodies::body_facts(
+                &normalized,
+                &parsed.program,
+                &parsed.lazy_function_bodies,
+                source_type,
+                root_strict,
+                first_private_id,
+            ) else {
+                return Err(vec![Diagnostic::unsupported(name, "SyntaxError: a lazily parsed function body does not check alone")]);
+            };
+            private_name_ids.extend(facts.private_name_ids);
+            private_name_labels.extend(facts.private_name_labels);
+            prototype_unobservable.extend(facts.prototype_unobservable);
+        }
         // Parsing and analysis are done; the code generator's work starts here.
         compile_phase_boundary(CompilePhase::CodeGeneration);
         let eval_context = if let ParsedProgramShape::Eval(context, _) = expected_shape {
@@ -1650,6 +1671,10 @@ struct Compiler<'a> {
     /// The starts of the function bodies compiled from their source parsed again, which a
     /// replay stands in the same way (`ProgramReplay::lazy_bodies`).
     lazy_compiled: Vec<u32>,
+    /// The arenas lazily parsed functions are parsed again in, one per nesting of such
+    /// functions, each reset and reused: an arena per function interleaved its blocks with
+    /// the program's long-lived records, and the heap kept the holes between them.
+    lazy_arenas: Vec<Allocator>,
     /// Each function's free names (`free_names`), which `verify_predicted_captures` checks
     /// against what the function's compilation captured.
     #[cfg(feature = "verify-replay")]
@@ -2144,6 +2169,7 @@ impl<'a> Compiler<'a> {
             prototype_unobservable: FxHashSet::default(),
             lazy_bodies: FxHashSet::default(),
             lazy_compiled: Vec::new(),
+            lazy_arenas: Vec::new(),
             #[cfg(feature = "verify-replay")]
             free_names: FxHashMap::default(),
             private_name_labels: FxHashMap::default(),
@@ -2446,7 +2472,6 @@ impl<'a> Compiler<'a> {
         function: &oxc_ast::ast::Function<'_>,
         context: replay::PlainFunctionContext,
     ) -> u32 {
-        let strict = self.module_goal || context.inherited_strict;
         let snippet = &self.text[function.span.start as usize..function.span.end as usize];
         let (text, offset) = lazy_bodies::text_alone(
             snippet,
@@ -2454,27 +2479,41 @@ impl<'a> Compiler<'a> {
             context.inherited_strict,
             self.source_type,
         );
-        let allocator = lazy_bodies::arena(&text);
+        let mut allocator = self.lazy_arenas.pop().unwrap_or_else(|| lazy_bodies::arena(&text));
+        allocator.reset();
+        let id = self.compile_parsed_again(&allocator, &text, offset, function, context);
+        self.lazy_arenas.push(allocator);
+        id
+    }
+
+    /// `compile_lazy_function`, with `text` (the function's source at `offset`, wrapped)
+    /// parsed in `allocator`.
+    fn compile_parsed_again(
+        &mut self,
+        allocator: &Allocator,
+        text: &str,
+        offset: u32,
+        function: &oxc_ast::ast::Function<'_>,
+        context: replay::PlainFunctionContext,
+    ) -> u32 {
+        let nesting = if self.replay_target.is_some() {
+            lazy_bodies::Nesting::Recorded(&self.lazy_bodies)
+        } else {
+            lazy_bodies::Nesting::Parse
+        };
         let reparsed = lazy_bodies::reparse(
-            &allocator,
-            &text,
+            allocator,
+            text,
             offset,
             function.span.start.wrapping_sub(offset),
             self.source_type,
-            strict,
+            nesting,
         );
         let Some(reparsed) = reparsed.filter(|reparsed| reparsed.function().is_some_and(|again| again.span == function.span)) else {
             self.reject(function.span, "SyntaxError: a lazily parsed function body does not compile alone");
             return self.compile_plain_function(function, context);
         };
         self.lazy_bodies.extend(reparsed.lazy_bodies.iter().copied());
-        self.prototype_unobservable.extend(reparsed.prototype_unobservable.iter().copied());
-        // Its private names number on from the program's.
-        let first_id = self.private_name_ids.values().max().map_or(0, |id| id + 1);
-        self.private_name_ids
-            .extend(reparsed.private_name_ids.iter().map(|(span, id)| (*span, first_id + id)));
-        self.private_name_labels
-            .extend(reparsed.private_name_labels.iter().map(|(span, label)| (*span, label.clone())));
         let again = reparsed.function().expect("checked above");
         self.compile_plain_function(again, context)
     }
