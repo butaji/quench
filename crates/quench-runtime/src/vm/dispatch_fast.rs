@@ -11604,6 +11604,11 @@ fn lane_native_value<H: Host>(
                 return Some(value);
             }
         }
+        Native::StringCharAt if !args.is_empty() => {
+            if let Some(value) = string_char_at_ascii(vm, receiver, args[0]) {
+                return Some(value);
+            }
+        }
         Native::MapGet
         | Native::MapHas
         | Native::SetHas
@@ -11666,6 +11671,14 @@ fn string_char_code_at<H: Host>(vm: &Vm<H>, receiver: Value, index: Value) -> Op
             .and_then(|index| units.unit(index))
             .map_or(Value::NAN, |unit| Value::integer(i32::from(unit))),
     )
+}
+
+/// `charAt` of a flat string at an integer index of an ASCII unit: the unit's shared string
+/// (`Vm::ascii_unit_string`). Any other receiver, index or unit takes the native.
+fn string_char_at_ascii<H: Host>(vm: &mut Vm<H>, receiver: Value, index: Value) -> Option<Value> {
+    let index = usize::try_from(index.as_int()?).ok()?;
+    let unit = vm.heap.string(receiver)?.existing_flat()?.unit(index)?;
+    vm.ascii_unit_string(unit)
 }
 
 script_handler! {

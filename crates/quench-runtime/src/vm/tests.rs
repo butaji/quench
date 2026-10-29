@@ -12408,6 +12408,32 @@ print(h + " " + out.slice(-6).join(","));
 }
 
 #[test]
+fn char_at_and_from_char_code_share_ascii_unit_strings() {
+    // One-unit ASCII results come from a cache a collection empties (`ascii_unit_strings`);
+    // every other unit, an index out of range and a coerced index take the native. The
+    // output is Node's, through many collections.
+    let source = r#"
+var s = "aZé中😀~", out = [];
+for (var i = -1; i < 9; i++) out.push(JSON.stringify(s.charAt(i)), s.charAt(i).length);
+var junk = []; for (var k = 0; k < 200000; k++) junk.push({k: k, t: String.fromCharCode(65 + k % 26) + s.charAt(k % 3)});
+out.push(junk[12345].t, String.fromCharCode(0).length, String.fromCharCode(127).length, String.fromCharCode(128).charCodeAt(0), "x".charAt(0) === "x", "abc".charAt(1.7), "abc".charAt("2"));
+var r = ""; for (var j = 0; j < 300; j++) r += "0123456789abcdef".charAt(j & 15); out.push(r.length, r.slice(250));
+print(out.join("|"));
+    "#;
+    let expected = [r#"""|0|"a"|1|"Z"|1|"é"|1|"中"|1|"\ud83d"|1|"\ude00"|1|"~"|1|""|0|""|0|Va|1|1|128|true|b|c|300|abcdef0123456789abcdef0123456789abcdef0123456789ab"#];
+    let program = Engine::specialize(source, "ascii-unit-strings.js").unwrap();
+    for mode in [None, Some(crate::ExecutionMode::Compiled)] {
+        let output = Rc::new(RefCell::new(Vec::new()));
+        let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+        if let Some(mode) = mode {
+            vm.set_execution_mode(mode);
+        }
+        vm.execute(&program).unwrap();
+        assert_eq!(output.borrow().as_slice(), expected, "{mode:?}");
+    }
+}
+
+#[test]
 fn shared_osr_indexes_the_row_a_loop_reads_each_iteration() {
     // `a[e][f] = x` in a loop over `e` indexes the row `a[e]` the iteration read, not the
     // row the region entered with: the region declines an indexed register it defines
