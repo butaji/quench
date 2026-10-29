@@ -5558,6 +5558,18 @@ const JS_FUNCTION_TIERS: [bool; crate::MemoryPolicy::ALL.len()] = [true, false];
 
 /// Whether the JavaScript function tiers compile under `policy` (`JS_FUNCTION_TIERS`).
 pub(super) fn js_function_tiers_compile(policy: crate::MemoryPolicy) -> bool {
+    #[cfg(feature = "gc-tuning")]
+    {
+        // Measurement builds may turn the function tiers off under any policy
+        // (`QUENCH_JS_JIT_TIERS=0`), to separate their `--jit` peak from the loop tier's.
+        static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        let enabled = *ENABLED.get_or_init(|| {
+            std::env::var("QUENCH_JS_JIT_TIERS").map_or(true, |value| value != "0")
+        });
+        if !enabled {
+            return false;
+        }
+    }
     JS_FUNCTION_TIERS[policy as usize]
 }
 
