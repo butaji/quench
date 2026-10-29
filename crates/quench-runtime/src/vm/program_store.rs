@@ -850,8 +850,9 @@ struct ProgramEntry {
     /// its `import()` specifiers; `None` for a program that is its own.
     script_or_module: Option<Rc<str>>,
     /// Dynamic code (eval, `Function`, host scripts): reclaimed once nothing
-    /// can run it. The main program and modules stay for the realm's life.
-    reclaimable: bool,
+    /// can run it, with the footprint the collector was charged for it
+    /// (`ProgramFootprint`). The main program and modules stay for the realm's life.
+    reclaimable: Option<usize>,
     /// The reclamation pass current at insertion.
     pass: u64,
     /// The minor collections that must still trace its root values, which changed since a
@@ -927,7 +928,7 @@ struct OwnedScript {
 pub(crate) struct ProgramStore {
     /// Indexed by `ProgramId`; a reclaimed program leaves an empty slot, so an
     /// id never names another program.
-    programs: Vec<Option<ProgramEntry>>,
+    programs: Vec<Option<Box<ProgramEntry>>>,
     /// Weak compiled-script identities for global eval; contexts are supplied per call.
     global_eval_programs: FxHashMap<JsString, ProgramId>,
     owned_scripts: FxHashMap<ProgramId, OwnedScript>,
@@ -935,6 +936,8 @@ pub(crate) struct ProgramStore {
     reclaim_passes: u64,
     /// Reclaimable programs inserted since the last reclamation pass.
     unchecked_reclaimable: usize,
+    /// `settled_reclaimable_bytes`, as the last reclamation pass found it.
+    settled_reclaimable_bytes: usize,
     /// The entry facts every function shares whose facts are all unset
     /// (`JsEntryFacts::is_unset`): most functions the tier
     /// watches, which had each held a copy (V8-v7 Crypto `--jit`: 32 -> 21 KiB at the heap's peak).
@@ -983,6 +986,7 @@ impl Default for ProgramStore {
             owned_scripts: FxHashMap::default(),
             reclaim_passes: 0,
             unchecked_reclaimable: 0,
+            settled_reclaimable_bytes: 0,
             no_entry_facts: Rc::default(),
             js_jit_tracked_functions: 0,
             js_jit_tracking_exhaustions: 0,
@@ -1056,21 +1060,21 @@ impl ProgramStore {
     }
 
     fn entry(&self, id: ProgramId) -> Option<&ProgramEntry> {
-        self.programs.get(id.index())?.as_ref()
+        self.programs.get(id.index())?.as_deref()
     }
 
     /// Every mutation goes through here, so it also marks the program's roots pending.
     fn entry_mut(&mut self, id: ProgramId) -> Option<&mut ProgramEntry> {
-        let entry = self.programs.get_mut(id.index())?.as_mut()?;
+        let entry = self.programs.get_mut(id.index())?.as_deref_mut()?;
         entry.minor_root_traces = PromotionAge::OLDEST.minors();
         Some(entry)
     }
 
     /// Inserts dynamic code that `reclaim_unreferenced` may later drop.
-    pub(crate) fn insert_reclaimable_shared(&mut self, program: Rc<ResidualProgram>) -> Option<ProgramId> {
+    pub(crate) fn insert_reclaimable_shared(&mut self, program: Rc<ResidualProgram>, footprint: usize) -> Option<ProgramId> {
         let id = self.insert_shared(program)?;
         if let Some(entry) = self.entry_mut(id) {
-            entry.reclaimable = true;
+            entry.reclaimable = Some(footprint);
         }
         self.unchecked_reclaimable += 1;
         Some(id)
@@ -1079,6 +1083,14 @@ impl ProgramStore {
     #[cfg(test)]
     pub(crate) fn live_count(&self) -> usize {
         self.programs.iter().flatten().count()
+    }
+
+    /// The footprints of the reclaimable programs the last reclamation pass found still
+    /// referenced after a pass before it (`ProgramEntry::reclaimable`): programs that stay.
+    /// Those inserted since are still pending (`reclaim_unreferenced`) and are not counted,
+    /// so a stream of short-lived programs does not raise its own threshold.
+    pub(crate) fn settled_reclaimable_bytes(&self) -> usize {
+        self.settled_reclaimable_bytes
     }
 
     /// Whether dynamic code may be reclaimable, including dropped host owners.
@@ -1115,9 +1127,14 @@ impl ProgramStore {
         let mut reclaimed_shared_js = Vec::new();
         let mut reclaimed_rejected = 0usize;
         let mut pending = 0;
+        let mut settled = 0usize;
         for (index, slot) in self.programs.iter_mut().enumerate() {
             let Some(entry) = slot else { continue };
-            if !entry.reclaimable || referenced.get(index).copied().unwrap_or(true) {
+            let Some(footprint) = entry.reclaimable else { continue };
+            if referenced.get(index).copied().unwrap_or(true) {
+                if entry.pass < previous_pass {
+                    settled = settled.saturating_add(footprint);
+                }
                 continue;
             }
             if entry.pass >= previous_pass {
@@ -1167,6 +1184,7 @@ impl ProgramStore {
             *slot = None;
             reclaimed.extend(ProgramId::from_index(index));
         }
+        self.settled_reclaimable_bytes = settled;
         self.js_jit_tracked_functions = self
             .js_jit_tracked_functions
             .saturating_sub(reclaimed_tiers.0);
@@ -1408,7 +1426,7 @@ impl ProgramStore {
         let lane_views = LaneViews::default();
         let lane_deferred = vec![std::cell::Cell::new(0); program.functions.len()];
         let origin = if program.kind == crate::bytecode::ProgramKind::Eval { CompilationOrigin::Eval { caller: None } } else { CompilationOrigin::Source };
-        self.programs.push(Some(ProgramEntry {
+        self.programs.push(Some(Box::new(ProgramEntry {
             residual: Residual::decoded(program),
             wasm_signatures: None,
             constants: Vec::new(),
@@ -1428,10 +1446,10 @@ impl ProgramStore {
             scope: ProgramScope::Own,
             origin,
             script_or_module: None,
-            reclaimable: false,
+            reclaimable: None,
             pass: self.reclaim_passes,
             minor_root_traces: PromotionAge::OLDEST.minors(),
-        }));
+        })));
         Some(id)
     }
 

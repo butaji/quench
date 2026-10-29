@@ -384,6 +384,7 @@ impl<H: Host> Vm<H> {
         if reclaimed.is_empty() {
             return;
         }
+        self.free_cache_layouts_of(reclaimed.iter().copied());
         let reclaimed = reclaimed.into_iter().collect::<FxHashSet<_>>();
         self.function_values
             .retain(|(program, _), _| !reclaimed.contains(program));
@@ -868,8 +869,12 @@ impl<H: Host> Vm<H> {
         let heap = &self.heap;
         self.private_homes
             .retain(|key, _| heap.is_live(key.environment));
+        self.private_site_homes.prune_dead(|value| heap.is_live(value));
         if full && self.programs.has_unchecked_reclaimable() {
             self.reclaim_unreferenced_programs();
+        }
+        if full {
+            self.heap.set_reclaimable_programs_after_full(self.programs.settled_reclaimable_bytes());
         }
         // Do shape work immediately after sweep. In particular, dead method
         // cache handles must be pruned before any runtime cleanup can allocate

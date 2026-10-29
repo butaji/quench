@@ -1,10 +1,11 @@
 //! The class home a lane private-name access found last, per access site. A private name's
 //! home depends on the running function and the environment its frame captures from, never
 //! on the accessed object (`Vm::private_name_home`); a lane record belongs to one function of
-//! one program, so its site fixes all but the environment. An entry names the environment
-//! and the collection epoch it was found under: the environment value names the same cell,
-//! and so the same home, while no collection runs. Only functions without binding sites
-//! record, whose homes no eval-introduced private binding can change.
+//! one program, so its site fixes all but the environment. An entry names the environment,
+//! which names the same cell, and so the same home, for as long as it lives: each collection
+//! drops the entries a value of which it freed (`prune_dead`), as `Vm::private_homes` drops
+//! its own, and keeps the rest. Only functions without binding sites record, whose homes no
+//! eval-introduced private binding can change.
 //!
 //! An entry also keeps the private method or accessor the site's name resolved to under that
 //! home, once found (`PrivateElement`): a class evaluation makes its private methods and
@@ -24,7 +25,6 @@ const PRIVATE_SITE_HOME_ENTRIES: usize = 1 << 10;
 struct SiteHome {
     site: usize,
     environment: Value,
-    epoch: u64,
     home: Value,
     element: Option<PrivateElement>,
 }
@@ -53,38 +53,37 @@ impl PrivateSiteHomes {
         super::shape_memo::direct_mapped_index(site, PRIVATE_SITE_HOME_ENTRIES)
     }
 
-    /// The home site `site` found for `environment` under collection `epoch`.
+    /// The home site `site` found for `environment`.
     #[inline(always)]
-    pub(super) fn home(&self, site: usize, environment: Value, epoch: u64) -> Option<Value> {
+    pub(super) fn home(&self, site: usize, environment: Value) -> Option<Value> {
         let entry = self.entries.get(Self::index(site))?;
-        (entry.site == site && entry.environment == environment && entry.epoch == epoch).then_some(entry.home)
+        (entry.site == site && entry.environment == environment).then_some(entry.home)
     }
 
-    pub(super) fn record(&self, site: usize, environment: Value, epoch: u64, home: Value) {
+    pub(super) fn record(&self, site: usize, environment: Value, home: Value) {
         let index = Self::index(site);
         // The element found under the same home stays (`element`).
         let element = self
             .entries
             .get(index)
-            .filter(|entry| entry.site == site && entry.epoch == epoch && entry.home == home)
+            .filter(|entry| entry.site == site && entry.home == home)
             .and_then(|entry| entry.element);
-        self.entries.set(index, SiteHome { site, environment, epoch, home, element });
+        self.entries.set(index, SiteHome { site, environment, home, element });
     }
 
-    /// The private method or accessor site `site` found for its name under `home` and
-    /// collection `epoch` (`record_element`).
+    /// The private method or accessor site `site` found for its name under `home`
+    /// (`record_element`).
     #[inline(always)]
-    pub(super) fn element(&self, site: usize, epoch: u64, home: Value) -> Option<PrivateElement> {
+    pub(super) fn element(&self, site: usize, home: Value) -> Option<PrivateElement> {
         let entry = self.entries.get(Self::index(site))?;
-        (entry.site == site && entry.epoch == epoch && entry.home == home).then_some(entry.element).flatten()
+        (entry.site == site && entry.home == home).then_some(entry.element).flatten()
     }
 
     /// Records the element site `site`'s name resolved to, for its entry under `home`.
-    pub(super) fn record_element(&self, site: usize, epoch: u64, home: Value, element: PrivateElement) {
+    pub(super) fn record_element(&self, site: usize, home: Value, element: PrivateElement) {
         let index = Self::index(site);
         if let Some(entry) = self.entries.get(index)
             && entry.site == site
-            && entry.epoch == epoch
             && entry.home == home
         {
             self.entries.set(index, SiteHome { element: Some(element), ..entry });
@@ -93,5 +92,17 @@ impl PrivateSiteHomes {
 
     pub(super) fn clear(&self) {
         self.entries.clear();
+    }
+
+    /// Drops every entry naming a value that `live` reports freed: its slot may name another
+    /// cell from now on. Entries whose values all live stay valid across the collection.
+    pub(super) fn prune_dead(&self, live: impl Fn(Value) -> bool) {
+        self.entries.retain(|entry| {
+            let element = match entry.element {
+                Some(PrivateElement::Method(value) | PrivateElement::Getter(value)) => Some(value),
+                None => None,
+            };
+            live(entry.environment) && live(entry.home) && element.is_none_or(&live)
+        });
     }
 }
