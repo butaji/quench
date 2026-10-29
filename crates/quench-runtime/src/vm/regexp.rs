@@ -2666,11 +2666,10 @@ impl<H: Host> Vm<H> {
             }
             return Some(Ok(if native == Native::RegExpExec { Value::NULL } else { Value::FALSE }));
         }
-        let arguments = [subject];
-        if native == Native::RegExpExec {
-            return Some(self.regexp_steady_exec(p, receiver, subject, slot, last_index, result_used));
-        }
-        Some(self.regexp_test(p, receiver, &arguments))
+        // `test` with the builtin exec is that exec whose result array never escapes.
+        let exec = native == Native::RegExpExec;
+        let result = self.regexp_steady_exec(p, receiver, subject, slot, last_index, result_used && exec);
+        Some(if exec { result } else { result.map(|result| Value::boolean(!result.is_null())) })
     }
 
     /// `String.prototype.replace(regexp, string)` when the call runs no guest code, so it
