@@ -212,6 +212,7 @@ fn one_function_program(code: Vec<Instr>, source_positions: crate::bytecode::Sou
         encoded_records: None,
             validated: Default::default(),
             undefined_constant: Default::default(),
+            load_encoding: Default::default(),
             closure_reads: None,
     }
 }
@@ -335,6 +336,7 @@ fn decoder_rejects_runtime_abi_mismatch_before_tables() {
         encoded_records: None,
             validated: Default::default(),
             undefined_constant: Default::default(),
+            load_encoding: Default::default(),
             closure_reads: None,
     };
     let path = std::env::temp_dir().join(format!("quench-invalid-abi-{}", std::process::id()));
@@ -744,7 +746,10 @@ fn derived_function_facts_round_trip_and_match_their_derivation() {
     for (original, decoded_function) in program.functions.iter().zip(&decoded.functions) {
         assert_eq!(original.register_roots.dead_call_results(), decoded_function.register_roots.dead_call_results());
         // The decoder seeds the facts the encoder derived (`Function::derived_facts`).
-        assert_eq!(original.derived_facts(&program), decoded_function.derived_facts(&decoded));
+        assert_eq!(
+            original.derived_facts(&program, original.names_resolve_statically(&program)),
+            decoded_function.derived_facts(&decoded, decoded_function.names_resolve_statically(&decoded))
+        );
     }
     assert_eq!(decoded.validate(), Ok(()));
 }
@@ -769,5 +774,63 @@ fn encoding_builds_released_records_as_compiling_them_all_would() {
         eager.compile_released();
         assert_eq!(streamed.encode_compact().0, eager.encode_compact().0);
         assert!(streamed.functions.iter().any(|slot| slot.record().is_none()), "encoding keeps them released");
+    }
+}
+
+/// A load that encodes each record it releases (`ReleasedRecords::Encoded`) gives the encoding
+/// of the program whose released records compile again to be written: decoded, the same
+/// headers and records, whose facts hold. Only the order of its compact atom ids differs.
+#[test]
+fn load_encoded_records_decode_as_records_compiled_again() {
+    let sources = [
+        "function outer(a){ const f = x => x + a; class K { m(){ return f(1); } static s(){ return 2; } get g(){ return 3; } } return new K().m() + K.s(); }\nouter(1);",
+        "var ns; (function(ns){ function a(){ return b(); } function b(){ return 1; } ns.a = a; ns.c = { d(){ return a(); }, e: () => ns.a() }; })(ns || (ns = {}));\nns.c.d();",
+        "function* gen(){ yield 1; } async function f(){ await 0; return [...gen()].map(v => v * 2); }\nf();",
+        // Released before the code around them names them.
+        "var named = function () { return 1; }; let arrow = () => named(); const o = { k: function () { return arrow; } };\nexports = [named, arrow, o];",
+        // The functions around a released one decide whether its names resolve statically.
+        "function host(){ function inner(){ return typeof missing; } with ({}) { inner(); } return inner; }\nfunction direct(){ function inner(){ return 1; } return eval('inner()'); }\nfunction plain(){ function inner(){ return free; } return inner; }",
+        "function sum(a, b) { let total = 0; for (let i = 0; i < a; i++) { total += i * b; } return total; }\nfunction user(){ return sum(1, 2) + Math.max(1, 2); }",
+    ];
+    for (index, source) in sources.into_iter().enumerate() {
+        let name = format!("load-encoding-{index}.js");
+        let compile = |released| {
+            crate::Engine::specialize_script_with_atom_prefix(source, &name, &crate::compile::NoAtomPrefix, released)
+                .unwrap()
+        };
+        let encoded = compile(crate::compile::ReleasedRecords::Encoded);
+        let dropped = compile(crate::compile::ReleasedRecords::Dropped);
+        assert!(
+            encoded.functions.iter().any(|slot| slot.record().is_none()),
+            "the program releases records during its load"
+        );
+        let decode = |program: &ResidualProgram| {
+            let (bytes, order) = program.encode_compact();
+            let ids: std::collections::HashMap<&str, u32> =
+                order.iter().rev().map(|&atom| (&program.atoms[atom as usize], atom)).collect();
+            let text = super::SourceText::Shared(std::sync::Arc::from(source));
+            let mut decoded =
+                ResidualProgram::decode_compact(std::rc::Rc::new(bytes), &mut |name| ids[name], text).unwrap();
+            decoded.atoms = program.atoms.clone();
+            decoded.validate().unwrap();
+            (decoded, order.into_iter().collect::<std::collections::BTreeSet<_>>())
+        };
+        let ((from_load, load_atoms), (compiled_again, atoms)) = (decode(&encoded), decode(&dropped));
+        assert_eq!(load_atoms, atoms, "{name}");
+        assert_eq!(from_load.functions.len(), compiled_again.functions.len());
+        for function in 0..from_load.functions.len() {
+            assert_eq!(
+                format!("{:?}", from_load.functions[function].header()),
+                format!("{:?}", compiled_again.functions[function].header()),
+                "{name}: function {function}'s header"
+            );
+            assert_eq!(
+                format!("{:?}", from_load.function(function)),
+                format!("{:?}", compiled_again.function(function)),
+                "{name}: function {function}'s record"
+            );
+        }
+        // The encoding took the load's records; another compiles them again, as a clone does.
+        assert_eq!(decode(&encoded).1, atoms);
     }
 }

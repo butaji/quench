@@ -1363,6 +1363,7 @@ mod tests {
             encoded_records: None,
             validated: Default::default(),
             undefined_constant: Default::default(),
+            load_encoding: Default::default(),
             closure_reads: None,
         }
     }
