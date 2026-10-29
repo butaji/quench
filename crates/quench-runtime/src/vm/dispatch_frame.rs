@@ -1942,6 +1942,15 @@ impl<H: Host> Vm<H> {
                     published_pc = &mut self.frames[frame].pc;
                     continue;
                 }
+                // A run that stopped at the `await` of the loop's own frame, whose `Op::Await`
+                // step would end the loop with it, suspends it here where the awaited value's
+                // conversion observes nothing (`lane_stop_awaits`).
+                if pending_calls.is_empty()
+                    && let Some(outcome) =
+                        self.lane_stop_awaits(unsafe { &*executing_residual }, frame, cursor.instruction(pc), pc)
+                {
+                    return Ok(outcome);
+                }
             }
             // The lane may have left in another program's frame (above).
             // SAFETY: as for `p` at the top of the loop.
