@@ -51,6 +51,9 @@ panic = "abort"
 # Fast optimized execution for iterative conformance work, without whole-
 # program LTO invalidating the incremental build graph after each runtime edit.
 # The final release profile remains the production/performance authority.
+# This is the edit/measure loop: on the M4 host a quench-node edit rebuilds in
+# ~2 s against ~2 m 35 s for `production`, which stays non-incremental because
+# it is the qualified artifact.
 [profile.iteration]
 inherits = "release"
 # Share dependency artifacts between iterative binaries and Rust API tests,

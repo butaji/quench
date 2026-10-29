@@ -1,3 +1,8 @@
+# Rust 1.99, pinned. `rustup` honours this file only when cargo resolves through
+# its own shims (`rustup which cargo`): a Homebrew rustc earlier in PATH builds
+# with its own patch release instead, so a qualification artifact can silently
+# differ from the pin. Put the toolchain's bin first for pinned builds:
+#   PATH="$HOME/.rustup/toolchains/1.99.0-aarch64-apple-darwin/bin:$PATH"
 [toolchain]
 channel = "1.99.0"
 components = ["rustfmt", "clippy"]
