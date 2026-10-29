@@ -71,6 +71,8 @@ struct ParallelMarkView<'heap> {
     ephemerons: &'heap weak::EphemeronWork,
     /// `EnvironmentTrace::reads_closures` for this collection.
     reads_closures: bool,
+    /// `EnvironmentTrace::projection_function` for this collection.
+    projection_function: Option<u32>,
 }
 
 // SAFETY: the view is built from the collector's exclusive borrow of the heap and lives only
@@ -163,7 +165,12 @@ pub(super) fn parallel_mark_pool() -> Option<&'static ThreadPool> {
 }
 
 impl<'heap> ParallelMarkView<'heap> {
-    fn new(heap: &'heap mut Heap, ephemerons: &'heap weak::EphemeronWork, reads_closures: bool) -> Self {
+    fn new(
+        heap: &'heap mut Heap,
+        ephemerons: &'heap weak::EphemeronWork,
+        reads_closures: bool,
+        projection_function: Option<u32>,
+    ) -> Self {
         Self {
             slots: &heap.slots,
             properties: &heap.properties,
@@ -179,6 +186,7 @@ impl<'heap> ParallelMarkView<'heap> {
             v128s: heap.v128_records.parallel_marks(),
             ephemerons,
             reads_closures,
+            projection_function,
         }
     }
 
@@ -334,7 +342,9 @@ impl<'heap> ParallelMarkView<'heap> {
                 let Some(cell) = self.cell(index) else {
                     return;
                 };
-                if self.reads_closures && matches!(cell, Cell::Environment { .. }) {
+                if let Cell::Environment { function, .. } = cell
+                    && (self.reads_closures || self.projection_function == Some(*function))
+                {
                     batch.environments.push(value);
                     return;
                 }
@@ -431,7 +441,12 @@ impl Heap {
             let batches = Mutex::new(Vec::new());
             let waiting = AtomicUsize::new(0);
             let round = ParallelRound {
-                view: ParallelMarkView::new(self, ephemerons, environments.reads_closures()),
+                view: ParallelMarkView::new(
+                    self,
+                    ephemerons,
+                    environments.reads_closures(),
+                    environments.projection_function(),
+                ),
                 batches: &batches,
                 object_roots: parallel.object_roots,
                 trace_kind,

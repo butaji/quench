@@ -110,7 +110,6 @@ pub(crate) struct SharedAsyncHooksState {
     /// copied and dropped whole, without scanning the other contexts'.
     pub(super) local_stores: FxHashMap<StoreContext, Vec<(u64, RootId)>>,
     pub(super) store_references: FxHashMap<RootId, usize>,
-    pub(super) destroyed_resources: FxHashSet<u64>,
     /// The AsyncLocalStorage instances entered since their last `disable()`. Like Node's
     /// storage hook, an enabled one makes promises tracked (`tracks_promises`).
     pub(super) enabled_local_storages: FxHashSet<u64>,
@@ -133,7 +132,6 @@ impl SharedAsyncHooksState {
             entered_scopes: Vec::new(),
             local_stores: FxHashMap::default(),
             store_references: FxHashMap::default(),
-            destroyed_resources: FxHashSet::default(),
             enabled_local_storages: FxHashSet::default(),
         }
     }
@@ -200,7 +198,6 @@ impl SharedAsyncHooksState {
             entered_scopes,
             local_stores,
             store_references,
-            destroyed_resources,
             enabled_local_storages,
         } = self;
         let cells = &identity.0;
@@ -220,7 +217,6 @@ impl SharedAsyncHooksState {
                 && promise_resources.is_empty()
                 && local_stores.is_empty()
                 && store_references.is_empty()
-                && destroyed_resources.is_empty()
                 && enabled_local_storages.is_empty(),
             "an async resource",
         )?;

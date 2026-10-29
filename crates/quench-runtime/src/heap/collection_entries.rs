@@ -150,6 +150,12 @@ impl<T: CollectionEntry> CollectionEntries<T> {
         self.slots.capacity()
     }
 
+    /// The entry storage this collection owns, which allocation and live weight charge
+    /// (`Cell::payload_bytes`).
+    pub(crate) fn payload_bytes(&self) -> usize {
+        self.slots.capacity() * size_of::<T>()
+    }
+
     /// The live entries in insertion order.
     pub(crate) fn iter(&self) -> impl Iterator<Item = T> + '_ {
         self.slots
@@ -265,10 +271,12 @@ impl<T: CollectionEntry> CollectionEntries<T> {
         *self.index.get_mut() = None;
     }
 
-    pub(crate) fn register_iterator(&mut self, iterator: Value) {
-        if !self.iterators.contains(&iterator) {
-            self.iterators.push(iterator);
-        }
+    /// Registers a new iterator, each registered once (a fresh one, or one `take_iterators`
+    /// returned), and returns how many are registered.
+    pub(crate) fn register_iterator(&mut self, iterator: Value) -> usize {
+        debug_assert!(!self.iterators.contains(&iterator));
+        self.iterators.push(iterator);
+        self.iterators.len()
     }
 
     /// The registered iterators, for the caller to renumber or reset and re-register.

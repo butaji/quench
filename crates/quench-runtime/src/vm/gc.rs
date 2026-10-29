@@ -28,8 +28,8 @@ impl crate::heap::ClosureReadSource for ProgramClosureReads<'_> {
         self.lexical_this
     }
 
-    fn may_hold_projections(&self, function: u32) -> bool {
-        function == ROOT_FUNCTION_ID
+    fn projection_function(&self) -> u32 {
+        ROOT_FUNCTION_ID
     }
 
     fn slot_is_projection(&self, program: u32, function: u32, slot: u16) -> bool {
@@ -38,6 +38,10 @@ impl crate::heap::ClosureReadSource for ProgramClosureReads<'_> {
             && !self.programs.root_slot_is_binding(ProgramId::from_raw(program), slot, true)
     }
 }
+
+/// Pooled frames a full collection keeps (`Vm::frame_pool`): a depth ordinary call chains
+/// reach between collections, each frame bounded by `RETAINED_FRAME_VALUES` per buffer.
+const POOLED_FRAMES_KEPT_BY_FULL_COLLECTIONS: usize = 64;
 
 fn shape_reclaim_threshold_met(shape_count: usize, unreachable: usize) -> bool {
     unreachable >= shape_count.div_ceil(SHAPE_COMPACTION_MIN_RECLAIM_DENOMINATOR)
@@ -405,6 +409,15 @@ impl<H: Host> Vm<H> {
         let mut phase_started = std::time::Instant::now();
         self.constructed_shapes.fill(super::provenance::ConstructedShape::EMPTY);
         self.enumerable_keys.clear();
+        // Prepared regexp subjects share their strings' text: kept across a collection, they
+        // would keep a dropped subject's text alive however large, as no string holds them.
+        self.regexp_subjects.clear();
+        if full {
+            // Recursion leaves one pooled frame per level it reached; a full collection keeps the
+            // few that ordinary call depth reuses, and later deeper calls allocate their own.
+            self.frame_pool.truncate(POOLED_FRAMES_KEPT_BY_FULL_COLLECTIONS);
+            self.frame_pool.shrink_to(POOLED_FRAMES_KEPT_BY_FULL_COLLECTIONS);
+        }
         #[cfg(feature = "profile-aggregate")]
         for (index, frame) in self.frames.iter().enumerate() {
             self.profile.gc_frame(
