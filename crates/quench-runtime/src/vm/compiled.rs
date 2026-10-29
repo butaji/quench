@@ -5606,6 +5606,26 @@ pub(super) fn compile_osr_region(
     })
 }
 
+/// The process's peak resident set in KiB, for `QUENCH_JS_JIT_PEAK_TRACE`.
+#[cfg(feature = "gc-tuning")]
+fn process_peak_rss_kib() -> i64 {
+    // SAFETY: `getrusage` writes into the struct this call owns.
+    let mut usage: libc::rusage = unsafe { std::mem::zeroed() };
+    // SAFETY: as above; RUSAGE_SELF names this process.
+    if unsafe { libc::getrusage(libc::RUSAGE_SELF, &mut usage) } != 0 {
+        return 0;
+    }
+    // Darwin counts bytes, Linux KiB.
+    #[cfg(target_vendor = "apple")]
+    {
+        usage.ru_maxrss / 1024
+    }
+    #[cfg(not(target_vendor = "apple"))]
+    {
+        usage.ru_maxrss
+    }
+}
+
 /// Whether the loop tier has compiled as many regions as `QUENCH_LOOP_TIER_MAX_REGIONS`
 /// allows; unlimited when unset. Measurement builds only (`gc-tuning`): it exists to trade
 /// region compilation against the `--jit` peak that regalloc2's state sets
@@ -12863,7 +12883,18 @@ impl<H: Host> Vm<H> {
                     .js_jit_diagnostics_enabled()
                     .then(std::time::Instant::now);
                 self.host.before_native_compilation();
+                #[cfg(feature = "gc-tuning")]
+                let peak_before = (std::env::var_os("QUENCH_JS_JIT_PEAK_TRACE").is_some())
+                    .then(process_peak_rss_kib);
                 let artifact = super::js_compiled::compile(&residual, function_id);
+                #[cfg(feature = "gc-tuning")]
+                if let Some(before) = peak_before {
+                    let after = process_peak_rss_kib();
+                    eprintln!(
+                        "QUENCH_JS_JIT_PEAK function={function_id} succeeded={} peak_before_kib={before} peak_after_kib={after}",
+                        artifact.is_some(),
+                    );
+                }
                 self.host.after_native_compilation();
                 let artifact_failed = artifact.is_none();
                 let compile_rejection = artifact_failed.then(|| {
