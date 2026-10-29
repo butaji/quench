@@ -1697,19 +1697,23 @@ impl<'a, H: Host> NativeContext<'a, H> {
         template: RootId,
         witness: RootId,
         probes: &[(RootId, RootId)],
+        parameters: &[RootId],
     ) -> Option<u32> {
         let (template, witness) = (self.vm.root_value(template)?, self.vm.root_value(witness)?);
         let probes = probes
             .iter()
             .map(|&(holder, key)| Some((self.vm.root_value(holder)?, self.vm.root_value(key)?)))
             .collect::<Option<Vec<_>>>()?;
-        self.vm.capture_object_template(template, witness, &probes)
+        let parameters = parameters.iter().map(|&key| self.vm.root_value(key)).collect::<Option<Vec<_>>>()?;
+        self.vm.capture_object_template(template, witness, &probes, &parameters)
     }
 
-    /// A copy of object template `id` (`Vm::instantiate_object_template`), or `None` when
-    /// its construction's reads no longer hold and the caller must construct.
-    pub fn instantiate_object_template_rooted(&mut self, id: u32) -> Option<RootId> {
-        let copy = self.vm.instantiate_object_template(id)?;
+    /// A copy of object template `id` with `arguments` in its parameters
+    /// (`Vm::instantiate_object_template`), or `None` when its construction's reads no longer
+    /// hold and the caller must construct.
+    pub fn instantiate_object_template_rooted(&mut self, id: u32, arguments: &[RootId]) -> Option<RootId> {
+        let arguments = arguments.iter().map(|&argument| self.vm.root_value(argument)).collect::<Option<smallvec::SmallVec<[_; 16]>>>()?;
+        let copy = self.vm.instantiate_object_template(id, &arguments)?;
         Some(self.scoped_value(copy))
     }
 

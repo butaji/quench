@@ -1772,24 +1772,30 @@ pub(crate) enum LibraryOriginal {
     ReadablePush,
     /// `EventEmitter.prototype.listenerCount` (the bootstrap's shared EventEmitter).
     EmitterListenerCount,
+    /// `IncomingMessage.prototype._addHeaderLines` (`lib/_http_incoming.js`).
+    IncomingAddHeaderLines,
 }
 
 /// Where a `LibraryOriginal`'s constructor comes from.
 #[derive(Clone, Copy)]
 enum Definition {
-    /// The export of a library module, as the module finishes evaluating.
-    Module(&'static str),
+    /// An export of a library module, as the module finishes evaluating: the named one, or
+    /// the module's exports themselves.
+    Module(&'static str, Option<&'static str>),
     /// A global the bootstrap installs, as the bootstrap finishes.
     BootstrapGlobal(&'static str),
 }
 
 impl LibraryOriginal {
-    pub(crate) const ALL: [Self; 2] = [Self::ReadablePush, Self::EmitterListenerCount];
+    pub(crate) const ALL: [Self; 3] = [Self::ReadablePush, Self::EmitterListenerCount, Self::IncomingAddHeaderLines];
 
     /// The constructor's definition and the prototype method the original is.
     fn definition(self) -> (Definition, &'static str) {
         match self {
-            Self::ReadablePush => (Definition::Module("lib/internal/streams/readable.js"), "push"),
+            Self::ReadablePush => (Definition::Module("lib/internal/streams/readable.js", None), "push"),
+            Self::IncomingAddHeaderLines => {
+                (Definition::Module("lib/_http_incoming.js", Some("IncomingMessage")), "_addHeaderLines")
+            }
             Self::EmitterListenerCount => (Definition::BootstrapGlobal("__nodeEventEmitter"), "listenerCount"),
         }
     }
@@ -1821,8 +1827,15 @@ fn record_library_original(context: &mut Context<'_>, original: LibraryOriginal,
 /// Records the `LibraryOriginal`s the library module at `path` defines from its `exports`.
 fn record_library_originals(context: &mut Context<'_>, path: &Path, exports: RootId) -> Result<(), RootedError> {
     for original in LibraryOriginal::ALL {
-        if matches!(original.definition().0, Definition::Module(module) if path == Path::new(module)) {
-            record_library_original(context, original, exports)?;
+        let Definition::Module(module, export) = original.definition().0 else {
+            continue;
+        };
+        if path == Path::new(module) {
+            let constructor = match export {
+                Some(name) => get(context, exports, name)?,
+                None => exports,
+            };
+            record_library_original(context, original, constructor)?;
         }
     }
     Ok(())

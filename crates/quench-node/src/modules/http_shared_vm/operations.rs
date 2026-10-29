@@ -223,10 +223,13 @@ fn incoming_template_probes(
         let key = context.string_rooted("prototype");
         probes.extend([constructor, key]);
     }
-    // The methods an ended message's `push(null)` calls (`incoming::CREATE_FACTORY`).
+    // The methods an ended message's `push(null)` calls, and the header lines a server
+    // request's copy adds after its fields (`incoming::CREATE_FACTORY`).
     let push = context.string_rooted("push");
     let listener_count = context.string_rooted("listenerCount");
-    probes.extend([readable, push, emitter_prototype, listener_count]);
+    let incoming_prototype = get(context, incoming, "prototype")?;
+    let add_header_lines = context.string_rooted("_addHeaderLines");
+    probes.extend([readable, push, emitter_prototype, listener_count, incoming_prototype, add_header_lines]);
     context.array_rooted(&probes)
 }
 

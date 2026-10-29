@@ -14,7 +14,11 @@
 //! - each probe, an own data property of a holder the host names, value for value.
 //!
 //! Any other read must be immutable for the host's construction, which the host states by
-//! its choice of probes. The template roots every object it guards, so none is freed and
+//! its choice of probes.
+//!
+//! A template's parameters are own data properties of its root that each copy takes from
+//! its caller instead (`instantiate_object_template`'s arguments): the values a host's
+//! construction assigns per instance, which the two constructions need not share. The template roots every object it guards, so none is freed and
 //! its record reused, and remaps their shapes when shapes are compacted
 //! (`remap_object_template_shapes`).
 use super::property_key::PropertyKey;
@@ -67,6 +71,9 @@ pub(crate) struct ObjectTemplate {
     nodes: Box<[TemplateNode]>,
     layouts: Box<[TemplateLayout]>,
     probes: Box<[TemplateProbe]>,
+    /// The root's slots each copy takes from its arguments, in the order the capture named
+    /// their keys.
+    parameters: Box<[u32]>,
     /// Keeps the graph and every guarded object and probed value alive, so each compares
     /// by identity for the template's lifetime.
     #[expect(dead_code, reason = "held for their lifetime, never read")]
@@ -78,16 +85,29 @@ impl<H: Host> Vm<H> {
     /// construction of the same call built, with `probes` (holder, key) read now. `None`
     /// when the two differ other than by objects each made anew, a node is not a plain
     /// extensible record or an empty array, or a guarded layout or probe is not one a
-    /// shape alone describes.
+    /// shape alone describes. `parameters` names own data properties of `template` that
+    /// each copy takes from its arguments; the two constructions may hold anything there.
     pub(crate) fn capture_object_template(
         &mut self,
         template: Value,
         witness: Value,
         probes: &[(Value, Value)],
+        parameters: &[Value],
     ) -> Option<ObjectTemplateId> {
+        let mut slots = Vec::with_capacity(parameters.len());
+        for &key in parameters {
+            let key = self.template_probe_key(key)?;
+            let data = self.heap.object(template)?;
+            let shape = data.shape();
+            let slot = self.property_shape_slot(shape, key)?;
+            if self.shape_may_have_accessors(shape) && self.slot_attributes(data, slot)?.accessor {
+                return None;
+            }
+            slots.push(u32::try_from(slot).ok()?);
+        }
         let mut nodes = Vec::new();
         let mut seen = Vec::new();
-        self.template_node(template, witness, &mut nodes, &mut seen)?;
+        self.template_node(template, witness, &slots, &mut nodes, &mut seen)?;
         let mut layouts: Vec<TemplateLayout> = Vec::new();
         for node in &nodes {
             self.guard_template_chain(node.prototype, &mut layouts)?;
@@ -121,18 +141,21 @@ impl<H: Host> Vm<H> {
             nodes: nodes.into_boxed_slice(),
             layouts: layouts.into_boxed_slice(),
             probes: captured.into_boxed_slice(),
+            parameters: slots.into_boxed_slice(),
             roots,
         });
         Some(id)
     }
 
-    /// A copy of template `id`'s graph, or `None` when a read of its construction no longer
-    /// holds; the caller then constructs.
-    pub(crate) fn instantiate_object_template(&mut self, id: ObjectTemplateId) -> Option<Value> {
+    /// A copy of template `id`'s graph with `arguments` in its parameters, or `None` when a
+    /// read of its construction no longer holds or the arguments are not one per parameter;
+    /// the caller then constructs.
+    pub(crate) fn instantiate_object_template(&mut self, id: ObjectTemplateId, arguments: &[Value]) -> Option<Value> {
         let template = self.object_templates.get(id as usize)?;
-        if !self.template_reads_hold(template) {
+        if template.parameters.len() != arguments.len() || !self.template_reads_hold(template) {
             return None;
         }
+        let root = template.nodes.len().checked_sub(1)?;
         let mut copies: SmallVec<[Value; INLINE_COPIES]> = SmallVec::new();
         let mut values: SmallVec<[Value; INLINE_SLOTS]> = SmallVec::new();
         for index in 0..self.object_templates[id as usize].nodes.len() {
@@ -147,6 +170,11 @@ impl<H: Host> Vm<H> {
                 values.extend_from_slice(&node.values);
                 for &(slot, child) in &node.fresh {
                     values[slot as usize] = copies[child as usize];
+                }
+                if index == root {
+                    for (&slot, &argument) in self.object_templates[id as usize].parameters.iter().zip(arguments) {
+                        values[slot as usize] = argument;
+                    }
                 }
                 self.heap.alloc_object_with_properties(prototype, shape, &values)
             };
@@ -178,11 +206,13 @@ impl<H: Host> Vm<H> {
 
     /// Adds the node of `template` (and of each object it holds anew) to `nodes`, children
     /// first; its index. `seen` maps the graph's objects to their nodes, so an object the
-    /// graph holds twice is copied once.
+    /// graph holds twice is copied once. `parameters` are slots of this node that copies take
+    /// from their arguments, compared to nothing.
     fn template_node(
         &self,
         template: Value,
         witness: Value,
+        parameters: &[u32],
         nodes: &mut Vec<TemplateNode>,
         seen: &mut Vec<(Value, Value, u32)>,
     ) -> Option<u32> {
@@ -210,8 +240,9 @@ impl<H: Host> Vm<H> {
         for slot in 0..len {
             let (object, other) = (self.heap.object(template)?, self.heap.object(witness)?);
             let (value, paired) = (self.heap.property_get(object, slot)?, self.heap.property_get(other, slot)?);
-            if value != paired {
-                fresh.push((u32::try_from(slot).ok()?, self.template_node(value, paired, nodes, seen)?));
+            let parameter = parameters.iter().any(|&parameter| parameter as usize == slot);
+            if value != paired && !parameter {
+                fresh.push((u32::try_from(slot).ok()?, self.template_node(value, paired, &[], nodes, seen)?));
             }
             values.push(value);
         }
