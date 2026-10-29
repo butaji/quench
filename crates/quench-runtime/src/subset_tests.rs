@@ -963,3 +963,192 @@ Promise.all(runs).then((values) => { print(values.map(String).join(" ") + " | " 
         ["1 2 T [object Object] sub pc c:r g:boom 2450 1,2 | p0,q0,t0,g0,s0,c0,ctor,p1:1,q1:2,then,g1:[object Object],c1:pc,tick1,p2,q2,t1:T,g2,c2,tick2,t2,s1:sub,tick3,s2 | 3"]
     );
 }
+
+#[test]
+fn unicode_regexp_last_index_inside_a_surrogate_pair_starts_at_its_lead() {
+    // RegExpBuiltinExec reads a Unicode-mode `lastIndex` inside a surrogate pair as the
+    // index of the code point holding it, the pair's lead: a sticky match may start there,
+    // and a global search starts there rather than past the pair (Node's results).
+    let source = r#"
+    (function () {
+      const s = "a\u{1F600}x";
+      const out = [];
+      const show = (label, re, m) => out.push(label + ":" + (m ? m.index + "|" + JSON.stringify(Array.from(m)) : "null") + "|li=" + re.lastIndex);
+      for (const [src, flags] of [["\\u{1F600}x|a", "uy"], ["\\u{1F600}x", "gu"], ["\\u{1F600}x", "uy"], ["(\\u{1F600})(x)", "guy"], ["x", "uy"], ["x", "gu"], ["\\u{1F600}x", "y"], ["\\u{1F600}x", "g"], ["[^a]", "uy"], [".", "uy"], ["", "uy"], ["", "gu"], ["(?:)", "y"], ["\\udc00x", "uy"], ["\\udc00", "u"], ["\\ude00x", "y"]]) {
+        for (const li of [1, 2, 3, 4]) {
+          const re = new RegExp(src, flags); re.lastIndex = li;
+          show("exec /" + src + "/" + flags + " @" + li, re, re.exec(s));
+          const re2 = new RegExp(src, flags); re2.lastIndex = li;
+          out.push("test:" + re2.test(s) + "|li=" + re2.lastIndex);
+        }
+      }
+      for (let i = 0; i < 3; i++) {
+        const re = /\u{1F600}x/uy; re.lastIndex = 2;
+        const r = re.exec(s); out.push("loop:" + (r && r.index) + "|" + re.lastIndex);
+      }
+      let re = /\u{1F600}x|a/uy; re.lastIndex = 2;
+      out.push("match:" + JSON.stringify(s.match(re)) + "|li=" + re.lastIndex);
+      re = /\u{1F600}x/uy; re.lastIndex = 2;
+      out.push("replace:" + JSON.stringify(s.replace(re, "[$&]")) + "|li=" + re.lastIndex);
+      re = /\u{1F600}x/uy; re.lastIndex = 2;
+      out.push("replaceFn:" + JSON.stringify(s.replace(re, (m, i) => "<" + m + "@" + i + ">")) + "|li=" + re.lastIndex);
+      re = /\u{1F600}x/guy; re.lastIndex = 2;
+      out.push("replaceG:" + JSON.stringify(s.replace(re, "[$&]")) + "|li=" + re.lastIndex);
+      re = /\u{1F600}x/uy; re.lastIndex = 2;
+      out.push("search:" + s.search(re) + "|li=" + re.lastIndex);
+      re = /x/uy; re.lastIndex = 2;
+      out.push("split:" + JSON.stringify(s.split(re)) + "|li=" + re.lastIndex);
+      re = /(?:)/uy;
+      out.push("splitEmpty:" + JSON.stringify(s.split(re).map(p => p.length)));
+      re = /\u{1F600}x/uy; re.lastIndex = 2;
+      out.push("matchAll:" + JSON.stringify([..."a\u{1F600}x\u{1F600}x".matchAll(new RegExp(re.source, "guy"))].map(m => m.index)));
+      re = /\u{1F600}x/gu; re.lastIndex = 2;
+      out.push("matchAllLI:" + JSON.stringify([...s.matchAll(re)].map(m => m.index)));
+      for (const line of out) console.log(line);
+    })();
+"#;
+    let expected = r#"
+        exec /\u{1F600}x|a/uy @1:1|["😀x"]|li=4
+        test:true|li=4
+        exec /\u{1F600}x|a/uy @2:1|["😀x"]|li=4
+        test:true|li=4
+        exec /\u{1F600}x|a/uy @3:null|li=0
+        test:false|li=0
+        exec /\u{1F600}x|a/uy @4:null|li=0
+        test:false|li=0
+        exec /\u{1F600}x/gu @1:1|["😀x"]|li=4
+        test:true|li=4
+        exec /\u{1F600}x/gu @2:1|["😀x"]|li=4
+        test:true|li=4
+        exec /\u{1F600}x/gu @3:null|li=0
+        test:false|li=0
+        exec /\u{1F600}x/gu @4:null|li=0
+        test:false|li=0
+        exec /\u{1F600}x/uy @1:1|["😀x"]|li=4
+        test:true|li=4
+        exec /\u{1F600}x/uy @2:1|["😀x"]|li=4
+        test:true|li=4
+        exec /\u{1F600}x/uy @3:null|li=0
+        test:false|li=0
+        exec /\u{1F600}x/uy @4:null|li=0
+        test:false|li=0
+        exec /(\u{1F600})(x)/guy @1:1|["😀x","😀","x"]|li=4
+        test:true|li=4
+        exec /(\u{1F600})(x)/guy @2:1|["😀x","😀","x"]|li=4
+        test:true|li=4
+        exec /(\u{1F600})(x)/guy @3:null|li=0
+        test:false|li=0
+        exec /(\u{1F600})(x)/guy @4:null|li=0
+        test:false|li=0
+        exec /x/uy @1:null|li=0
+        test:false|li=0
+        exec /x/uy @2:null|li=0
+        test:false|li=0
+        exec /x/uy @3:3|["x"]|li=4
+        test:true|li=4
+        exec /x/uy @4:null|li=0
+        test:false|li=0
+        exec /x/gu @1:3|["x"]|li=4
+        test:true|li=4
+        exec /x/gu @2:3|["x"]|li=4
+        test:true|li=4
+        exec /x/gu @3:3|["x"]|li=4
+        test:true|li=4
+        exec /x/gu @4:null|li=0
+        test:false|li=0
+        exec /\u{1F600}x/y @1:null|li=0
+        test:false|li=0
+        exec /\u{1F600}x/y @2:null|li=0
+        test:false|li=0
+        exec /\u{1F600}x/y @3:null|li=0
+        test:false|li=0
+        exec /\u{1F600}x/y @4:null|li=0
+        test:false|li=0
+        exec /\u{1F600}x/g @1:null|li=0
+        test:false|li=0
+        exec /\u{1F600}x/g @2:null|li=0
+        test:false|li=0
+        exec /\u{1F600}x/g @3:null|li=0
+        test:false|li=0
+        exec /\u{1F600}x/g @4:null|li=0
+        test:false|li=0
+        exec /[^a]/uy @1:1|["😀"]|li=3
+        test:true|li=3
+        exec /[^a]/uy @2:1|["😀"]|li=3
+        test:true|li=3
+        exec /[^a]/uy @3:3|["x"]|li=4
+        test:true|li=4
+        exec /[^a]/uy @4:null|li=0
+        test:false|li=0
+        exec /./uy @1:1|["😀"]|li=3
+        test:true|li=3
+        exec /./uy @2:1|["😀"]|li=3
+        test:true|li=3
+        exec /./uy @3:3|["x"]|li=4
+        test:true|li=4
+        exec /./uy @4:null|li=0
+        test:false|li=0
+        exec //uy @1:1|[""]|li=1
+        test:true|li=1
+        exec //uy @2:1|[""]|li=1
+        test:true|li=1
+        exec //uy @3:3|[""]|li=3
+        test:true|li=3
+        exec //uy @4:4|[""]|li=4
+        test:true|li=4
+        exec //gu @1:1|[""]|li=1
+        test:true|li=1
+        exec //gu @2:1|[""]|li=1
+        test:true|li=1
+        exec //gu @3:3|[""]|li=3
+        test:true|li=3
+        exec //gu @4:4|[""]|li=4
+        test:true|li=4
+        exec /(?:)/y @1:1|[""]|li=1
+        test:true|li=1
+        exec /(?:)/y @2:2|[""]|li=2
+        test:true|li=2
+        exec /(?:)/y @3:3|[""]|li=3
+        test:true|li=3
+        exec /(?:)/y @4:4|[""]|li=4
+        test:true|li=4
+        exec /\udc00x/uy @1:null|li=0
+        test:false|li=0
+        exec /\udc00x/uy @2:null|li=0
+        test:false|li=0
+        exec /\udc00x/uy @3:null|li=0
+        test:false|li=0
+        exec /\udc00x/uy @4:null|li=0
+        test:false|li=0
+        exec /\udc00/u @1:null|li=1
+        test:false|li=1
+        exec /\udc00/u @2:null|li=2
+        test:false|li=2
+        exec /\udc00/u @3:null|li=3
+        test:false|li=3
+        exec /\udc00/u @4:null|li=4
+        test:false|li=4
+        exec /\ude00x/y @1:null|li=0
+        test:false|li=0
+        exec /\ude00x/y @2:2|["\ude00x"]|li=4
+        test:true|li=4
+        exec /\ude00x/y @3:null|li=0
+        test:false|li=0
+        exec /\ude00x/y @4:null|li=0
+        test:false|li=0
+        loop:1|4
+        loop:1|4
+        loop:1|4
+        match:["😀x"]|li=4
+        replace:"a[😀x]"|li=4
+        replaceFn:"a<😀x@1>"|li=4
+        replaceG:"a😀x"|li=0
+        search:-1|li=2
+        split:["a😀",""]|li=2
+        splitEmpty:[1,2,1]
+        matchAll:[]
+        matchAllLI:[1]
+"#;
+    let expected = expected.trim().lines().map(str::trim).collect::<Vec<_>>();
+    assert_eq!(output(source), expected);
+}

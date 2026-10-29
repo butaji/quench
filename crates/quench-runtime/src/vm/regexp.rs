@@ -2577,13 +2577,10 @@ impl<H: Host> Vm<H> {
             return Ok(None);
         }
         let subject = self.regexp_subject(input, &regex);
+        // A Unicode-mode start inside a surrogate pair is the pair's lead (RegExpBuiltinExec's
+        // inputIndex), where a sticky match may start and a search starts.
         let matched = if sticky {
-            // A start inside a surrogate pair resolves to the next code point, which a
-            // sticky match may not move to.
-            regex
-                .find_sticky_in_subject(&subject, start)
-                .next()
-                .filter(|matched| matched.range.start == start)
+            regex.find_sticky_in_subject(&subject, start).next()
         } else {
             regex.find_in_subject(&subject, start).next()
         };

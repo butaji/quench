@@ -643,8 +643,10 @@ impl Regex {
         RangeSearcher { regex: self, subject, backend }
     }
 
-    /// The match that starts exactly at `start`, as a sticky (`y`) search requires. Only that
-    /// position is tried, so a failing sticky match costs no scan of the rest of the text.
+    /// The match that starts exactly at `start`, as a sticky (`y`) search requires, or in
+    /// Unicode mode at the lead of the surrogate pair `start` lies inside
+    /// (`first_unit_at`). Only that position is tried, so a failing sticky match costs no
+    /// scan of the rest of the text.
     pub fn find_sticky_in_subject(&self, subject: &Subject, start: usize) -> Matches {
         if start > subject.len() {
             return Matches { item: None };
@@ -765,13 +767,7 @@ impl Regex {
             return Some(None);
         }
         let found = program.find(units, first, sticky, None).ok()?;
-        Some(found.and_then(|found| {
-            // A sticky match must start at `start` itself, not inside a surrogate pair.
-            if sticky && units.get(found.start).map_or(subject.len(), |unit| unit.offset_start) != start {
-                return None;
-            }
-            Some(self.unit_match(units, found.start, found.end, found.captures))
-        }))
+        Some(found.map(|found| self.unit_match(units, found.start, found.end, found.captures)))
     }
 
     pub fn find_from_utf16(&self, input: &[u16], start: usize) -> Matches {
@@ -1665,9 +1661,11 @@ fn contains_literal(input: &[Unit], literal: &[u32]) -> bool {
     })
 }
 
-/// The index of the first decoded unit at or after UTF-16 offset `start`.
+/// The index of the decoded unit holding offset `start` (`units.len()` at the end): a
+/// Unicode-mode start inside a surrogate pair is the pair's lead, as RegExpBuiltinExec
+/// reads `lastIndex` as the character holding that element.
 fn first_unit_at(units: &[Unit], start: usize) -> usize {
-    units.partition_point(|unit| unit.offset_start < start)
+    units.partition_point(|unit| unit.offset_end <= start)
 }
 
 fn units_from_utf16(input: &[u16], unicode: bool) -> Vec<Unit> {
