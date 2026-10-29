@@ -121,7 +121,7 @@ crate::snapshot::snap_struct!(RuntimeAtoms {
     lexical_this, new_target, regexp_exec, regexp_flags, last_index, regexp_flag_accessors, then,
     constructor, next, name, empty, value, done, iterator_return, writable, enumerable, configurable,
     get, set,
-    bound_target, bound_this, bound_args, char_code_at,
+    bound_target, bound_this, bound_args,
 });
 crate::snapshot::snap_struct!(RealmIntrinsics {
     arguments_objects, iterator_prototypes, builtin_prototypes, function_constructors,
@@ -386,6 +386,8 @@ impl<H: Host> Vm<H> {
             to_fixed_atom,
             to_precision_atom,
             runtime_atoms,
+            // A proof of the running heap's methods; a restored heap proves its own.
+            intact_builtins: _,
             constructed_shapes: _,
             // Templates name roots of the running heap; a restored heap starts without any,
             // and its hosts capture them again.

@@ -3040,6 +3040,7 @@ const getLinkedBinding = () => ({});
                     );
                 } else if undici {
                     arguments.push(context.host_function(crate::host::shared_vm::operation("byteStringEnd"))?);
+                    arguments.push(context.host_function(crate::host::shared_vm::operation("headerFields"))?);
                 }
                 context.call_rooted(wrapper, exports, &arguments)?;
                 if let Some(root) = primordial_seed {

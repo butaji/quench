@@ -662,12 +662,72 @@ impl<H: Host> Vm<H> {
         Ok(self.heap.string(value).map(|text| text.units().utf8_len()))
     }
 
-    /// Whether `String.prototype.charCodeAt` is this realm's own, an own data property of the
-    /// realm's `String.prototype`: a host that reads code units in its place calls nothing a
-    /// script could observe.
-    pub(crate) fn embedding_string_char_code_at_intact(&self) -> bool {
-        self.own_property(self.string_proto, self.runtime_atoms.char_code_at)
-            .is_some_and(|method| self.is_current_realm_native(method, Native::StringCharCodeAt))
+    /// Whether each of `builtins` is this realm's own method, an own data property of the
+    /// realm's prototype that holds it: a host step computing what guest code calling them
+    /// would compute then calls nothing a script could observe. A proof under the current
+    /// `prototype_layout_epoch` (`IntactBuiltinsProof`) names the slot and method of each; the
+    /// epoch retires the slots with any change of their holders' shapes, and a method written
+    /// over in its slot fails the comparison, which proves again.
+    pub(crate) fn embedding_builtins_intact(&mut self, builtins: &[crate::IntactBuiltin]) -> bool {
+        if self.intact_builtins.is_some_and(|proof| self.holds_intact_builtins(proof, builtins)) {
+            return true;
+        }
+        self.prove_intact_builtins();
+        self.intact_builtins.is_some_and(|proof| self.holds_intact_builtins(proof, builtins))
+    }
+
+    /// Whether `proof` holds under the current epoch and still finds each of `builtins` in
+    /// its slot.
+    fn holds_intact_builtins(&self, proof: IntactBuiltinsProof, builtins: &[crate::IntactBuiltin]) -> bool {
+        proof.epoch == crate::heap::prototype_layout_epoch()
+            && builtins.iter().all(|builtin| {
+                proof.methods[*builtin as usize].is_some_and(|(holder, slot, method)| {
+                    self.heap.ordinary_object(holder).and_then(|data| self.heap.property_get(data, slot as usize))
+                        == Some(method)
+                })
+            })
+    }
+
+    /// Records where each `IntactBuiltin` is its realm's own method, marking the prototypes
+    /// that hold them so a change of their shapes advances the epoch.
+    #[cold]
+    #[inline(never)]
+    fn prove_intact_builtins(&mut self) {
+        use crate::IntactBuiltin;
+        for holder in [self.string_proto, self.regexp_proto] {
+            self.heap.mark_prototype(holder);
+        }
+        let mut methods = [None; IntactBuiltin::ALL.len()];
+        for builtin in IntactBuiltin::ALL {
+            let (holder, name, native) = match builtin {
+                IntactBuiltin::StringCharCodeAt => (self.string_proto, "charCodeAt", Native::StringCharCodeAt),
+                IntactBuiltin::StringIncludes => (self.string_proto, "includes", Native::StringIncludes),
+                IntactBuiltin::RegExpTest => (self.regexp_proto, "test", Native::RegExpTest),
+                IntactBuiltin::RegExpExec => (self.regexp_proto, "exec", Native::RegExpExec),
+            };
+            methods[builtin as usize] = self.lookup_atom(name).and_then(|atom| {
+                let method = self.own_property(holder, atom).filter(|method| self.is_current_realm_native(*method, native))?;
+                let data = self.heap.ordinary_object(holder)?;
+                let slot = self.property_shape_slot(data.shape(), PropertyKey::string(atom))?;
+                Some((holder, u32::try_from(slot).ok()?, method))
+            });
+        }
+        self.intact_builtins = Some(IntactBuiltinsProof { epoch: crate::heap::prototype_layout_epoch(), methods });
+    }
+
+    /// Whether `accept(index, unit, length)` holds for every code unit of the string at `root`;
+    /// `None` denotes a non-string.
+    pub(crate) fn embedding_string_units_all(
+        &self,
+        root: RootId,
+        mut accept: impl FnMut(usize, u16, usize) -> bool,
+    ) -> Result<Option<bool>, JsError> {
+        let value = self.embedding_value(root)?;
+        Ok(self.heap.string(value).map(|text| {
+            let units = text.units();
+            let length = units.len();
+            units.iter().enumerate().all(|(index, unit)| accept(index, unit, length))
+        }))
     }
 
     /// The index of the first code unit of the string at `root` above `limit`, or its length

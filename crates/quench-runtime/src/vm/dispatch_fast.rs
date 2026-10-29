@@ -2664,6 +2664,27 @@ script_handler! {
 }
 
 script_handler! {
+    /// `ToPropertyKey` of a string or symbol, which is itself, or of an integer, its decimal
+    /// string; any other value, which may run guest code or format a float, takes the
+    /// general step in place.
+    fn lane_to_property_key<>(cx, r, ip, i, view) {
+        let vm = unsafe { vm(cx) };
+        let value = r.get(i.b);
+        let key = if let Some(integer) = value.as_int() {
+            let key = vm.heap.alloc_string(crate::vm::wtf16::JsString::from_str(&integer.to_string()));
+            note_allocation(vm);
+            key
+        } else if vm.heap.is_string(value) || matches!(vm.heap.get(value), Some(Cell::Symbol(_))) {
+            value
+        } else {
+            sibling!(lane_general_step::<H>, r, ip, Carried::script(cx))
+        };
+        r.set(i.a, key);
+        next!(cx, r, following(ip), Carried::script(cx))
+    }
+}
+
+script_handler! {
     /// Numbers and BigInts convert to themselves; other values take the general path.
     fn lane_to_numeric<>(cx, r, ip, i, view) {
         let value = r.get(i.b);
@@ -16102,6 +16123,7 @@ const fn other_handler<H: Host, const BACKWARD: bool, const ACC: u8>(op: Op) -> 
         Op::SetField | Op::SetFieldStrict => Some(lane_set_object_field_own::<H>),
         Op::SetThisField | Op::SetThisFieldStrict => Some(lane_set_this_field_own::<H>),
         Op::ToNumeric => Some(lane_to_numeric::<H>),
+        Op::ToPropertyKey => Some(lane_to_property_key::<H>),
         Op::RequireObjectCoercible => Some(lane_require_object_coercible::<H>),
         Op::DefinePropertyRecord => Some(lane_define_property_record::<H>),
         Op::DefineField => Some(lane_define_field::<H>),

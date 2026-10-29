@@ -183,6 +183,22 @@ pub struct BufferStorage {
     pub buffer: RootId,
 }
 
+/// Builtin methods a host's native step can require to be the realm's own
+/// (`NativeContext::builtins_intact`): a step that computes what guest code calling them
+/// would compute is unobservable only while that code would reach them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum IntactBuiltin {
+    StringCharCodeAt,
+    StringIncludes,
+    RegExpTest,
+    RegExpExec,
+}
+
+impl IntactBuiltin {
+    /// Every builtin a proof covers (`Vm::embedding_builtins_intact`).
+    pub(crate) const ALL: [Self; 4] = [Self::StringCharCodeAt, Self::StringIncludes, Self::RegExpTest, Self::RegExpExec];
+}
+
 /// Builtin internal-slot brands, independent of prototypes and guest property hooks.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BuiltinBrand {
@@ -493,10 +509,20 @@ impl<'a, H: Host> NativeContext<'a, H> {
         result.map_err(|error| self.error(error))
     }
 
-    /// Whether `String.prototype.charCodeAt` is the realm's own
-    /// (`Vm::embedding_string_char_code_at_intact`).
-    pub fn string_char_code_at_intact(&self) -> bool {
-        self.vm.embedding_string_char_code_at_intact()
+    /// Whether each of `builtins` is the realm's own method (`Vm::embedding_builtins_intact`).
+    pub fn builtins_intact(&mut self, builtins: &[IntactBuiltin]) -> bool {
+        self.vm.embedding_builtins_intact(builtins)
+    }
+
+    /// Whether `accept(index, unit, length)` holds for every code unit of a string, read in
+    /// place; `None` denotes a non-string.
+    pub fn string_units_all(
+        &mut self,
+        root: RootId,
+        accept: impl FnMut(usize, u16, usize) -> bool,
+    ) -> Result<Option<bool>, RootedError> {
+        let result = self.vm.embedding_string_units_all(root, accept);
+        result.map_err(|error| self.error(error))
     }
 
     /// The index of a string's first code unit above `limit`, or its length when none is,

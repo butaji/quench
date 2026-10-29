@@ -76,5 +76,64 @@ fn patch_node_source(relative: &str, source: &str) -> Option<String> {
             "(x); index < x.length; index++) {\n        if (x.charCodeAt(index) > 255) {"
         ),
     );
+    // Headers methods whose name and value undici's steps would keep as they are skip those
+    // steps (`modules::webidl_shared_vm::header_fields`); any other call runs them.
+    let mut source = source;
+    for (from, fast) in HEADER_FAST_PATHS {
+        source = replace_node_source_once(&source, from, &format!("{fast}{from}"));
+    }
     Some(source)
 }
+
+/// Each patched Headers step, its original first steps, and the fast path put before them:
+/// with `header_fields_binding!()` accepting its arguments unchanged, it does the steps that
+/// follow their checks (the guard, then the header list), and otherwise falls through.
+const HEADER_FAST_PATHS: [(&str, &str); 6] = [
+    (
+        "      value = headerValueNormalize(value);\n      if (!isValidHeaderName(name)) {",
+        concat!(
+            "      if (", header_fields_binding!(), "(name, value)) {\n",
+            "        if (getHeadersGuard(headers) === \"immutable\") {\n          throw new TypeError(\"immutable\");\n        }\n",
+            "        return getHeadersList(headers).append(name, value, false);\n      }\n",
+        ),
+    ),
+    (
+        "        webidl.argumentLengthCheck(arguments, 2, \"Headers.append\");",
+        concat!(
+            "        if (arguments.length >= 2 && ", header_fields_binding!(), "(name, value)) {\n",
+            "          if (this.#guard === \"immutable\") {\n            throw new TypeError(\"immutable\");\n          }\n",
+            "          return this.#headersList.append(name, value, false);\n        }\n",
+        ),
+    ),
+    (
+        "        webidl.argumentLengthCheck(arguments, 1, \"Headers.delete\");",
+        concat!(
+            "        if (arguments.length >= 1 && ", header_fields_binding!(), "(name)) {\n",
+            "          if (this.#guard === \"immutable\") {\n            throw new TypeError(\"immutable\");\n          }\n",
+            "          if (this.#headersList.contains(name, false)) {\n            this.#headersList.delete(name, false);\n          }\n",
+            "          return;\n        }\n",
+        ),
+    ),
+    (
+        "        webidl.argumentLengthCheck(arguments, 1, \"Headers.get\");",
+        concat!(
+            "        if (arguments.length >= 1 && ", header_fields_binding!(), "(name)) {\n",
+            "          return this.#headersList.get(name, false);\n        }\n",
+        ),
+    ),
+    (
+        "        webidl.argumentLengthCheck(arguments, 1, \"Headers.has\");",
+        concat!(
+            "        if (arguments.length >= 1 && ", header_fields_binding!(), "(name)) {\n",
+            "          return this.#headersList.contains(name, false);\n        }\n",
+        ),
+    ),
+    (
+        "        webidl.argumentLengthCheck(arguments, 2, \"Headers.set\");",
+        concat!(
+            "        if (arguments.length >= 2 && ", header_fields_binding!(), "(name, value)) {\n",
+            "          if (this.#guard === \"immutable\") {\n            throw new TypeError(\"immutable\");\n          }\n",
+            "          this.#headersList.set(name, value, false);\n          return;\n        }\n",
+        ),
+    ),
+];

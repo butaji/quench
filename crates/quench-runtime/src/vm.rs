@@ -83,9 +83,6 @@ struct RuntimeAtoms {
     bound_target: Atom,
     bound_this: Atom,
     bound_args: Atom,
-    /// `String.prototype.charCodeAt`, whose intactness a host's string scan checks
-    /// (`Vm::embedding_string_char_code_at_intact`).
-    char_code_at: Atom,
 }
 pub(crate) mod activation;
 mod agent;
@@ -2051,6 +2048,8 @@ pub(crate) struct Vm<H> {
     to_fixed_atom: Atom,
     to_precision_atom: Atom,
     runtime_atoms: RuntimeAtoms,
+    /// Where each `IntactBuiltin` was its realm's own method (`embedding_builtins_intact`).
+    intact_builtins: Option<IntactBuiltinsProof>,
     /// `Vm::constructed_shape` answers; cleared by every collection.
     constructed_shapes: [provenance::ConstructedShape; provenance::CONSTRUCTED_SHAPE_ENTRIES],
     /// The host's object templates (`object_template`), indexed by their ids.
@@ -2986,7 +2985,6 @@ impl<H: Host> Vm<H> {
             bound_target: self.intern_atom(BOUND_TARGET_KEY),
             bound_this: self.intern_atom(BOUND_THIS_KEY),
             bound_args: self.intern_atom(BOUND_ARGS_KEY),
-            char_code_at: self.intern_atom("charCodeAt"),
         };
         self.field_caches = site_table::SiteTable::with_empty(usize::from(program.cache_sites));
         self.refresh_active_field_entries();
@@ -3434,4 +3432,12 @@ impl<H: Host> Vm<H> {
 enum StringConstantKey<'a> {
     Text(&'a str),
     Units(&'a [u16]),
+}
+
+/// A proof of `Vm::embedding_builtins_intact`: per `IntactBuiltin`, the prototype holding it,
+/// its slot there and the realm's own method in it, under `epoch`.
+#[derive(Clone, Copy)]
+pub(crate) struct IntactBuiltinsProof {
+    epoch: u64,
+    methods: [Option<(Value, u32, Value)>; crate::IntactBuiltin::ALL.len()],
 }
