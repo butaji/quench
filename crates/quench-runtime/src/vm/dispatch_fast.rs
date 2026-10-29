@@ -1522,6 +1522,10 @@ pub(super) struct LaneStack {
     generation: ScriptGeneration,
     /// The epoch and realm `generation` names.
     generation_key: (u64, Value),
+    /// The boundary below a deferred native's callback while it runs (`NativeBoundary`).
+    native_boundary: Option<NativeBoundary>,
+    /// The frames the boundary's caller activations became, once a materialization made them.
+    boundary_frames: Option<usize>,
 }
 
 /// A generation no lane runs under: an empty target entry never matches.
@@ -1546,6 +1550,8 @@ impl Default for LaneStack {
             activation_limit: std::cell::Cell::new(0),
             generation: NO_SCRIPT_GENERATION,
             generation_key: (0, Value::UNDEFINED),
+            native_boundary: None,
+            boundary_frames: None,
         }
     }
 }
@@ -1680,10 +1686,28 @@ impl LaneStack {
 /// A lane native call made beside the lane's activations (`Vm::runs_beside_activations`):
 /// the lane's context and the call's record, whose frames the first observer of the frame
 /// stack makes (`Vm::materialize_deferred_lane`).
+#[derive(Clone, Copy)]
 pub(super) struct DeferredLaneCall {
     /// The lane's `LaneContext`, of the VM's host.
     cx: *mut (),
     call_pc: usize,
+    /// The frame count the native runs at, below its caller's activations.
+    frames: usize,
+}
+
+/// The activations below a callback a deferred native runs in the lane
+/// (`Vm::lane_deferred_callback`): they are the native's caller's, whose pending calls and
+/// executing program are the lane's outer ones, not the callback's.
+#[derive(Clone, Copy)]
+struct NativeBoundary {
+    /// The callback's activation: those before it are the caller's.
+    activation: usize,
+    pending: *mut Vec<PendingGeneralCall>,
+    executing: *mut super::dispatch_frame::ExecutingProgram,
+    deferred: DeferredLaneCall,
+    /// The promise natives running when the callback began (`active_native`): the native
+    /// caller's, which its activations' frames move; those the callback starts keep theirs.
+    natives: usize,
 }
 
 /// A native a lane called from its running frame after its activations became frames
@@ -2772,7 +2796,7 @@ fn lane_in_place<H: Host, T>(
     let (code, pc) = unsafe { (&*(*cx).code, ip.offset_from((*cx).base) as usize) };
     let beside = !vm.lane_stack.activations.is_empty();
     if beside {
-        vm.lane_deferred = Some(DeferredLaneCall { cx: cx.cast(), call_pc: pc });
+        vm.lane_deferred = Some(DeferredLaneCall { cx: cx.cast(), call_pc: pc, frames: vm.frames.len() });
     } else {
         let frame = unsafe { (*cx).frame };
         vm.frames[frame].pc = pc;
@@ -2786,7 +2810,7 @@ fn lane_in_place<H: Host, T>(
         Ok(value) => Some(value),
         Err(error) => {
             if unobserved {
-                vm.lane_deferred = Some(DeferredLaneCall { cx: cx.cast(), call_pc: pc });
+                vm.lane_deferred = Some(DeferredLaneCall { cx: cx.cast(), call_pc: pc, frames: vm.frames.len() });
                 vm.materialize_deferred_lane();
             }
             vm.lane_raised = Some(error);
@@ -9685,26 +9709,35 @@ impl<H: Host> Vm<H> {
     #[cold]
     #[inline(never)]
     fn materialize_deferred_lane_now(&mut self) {
-        let Some(DeferredLaneCall { cx, call_pc }) = self.lane_deferred.take() else {
+        let Some(DeferredLaneCall { cx, call_pc, .. }) = self.lane_deferred.take() else {
             return;
         };
-        // SAFETY: the deferred call's lane runs, so its context lives.
-        let cx = cx.cast::<LaneContext<H>>();
         let before = self.frames.len();
-        self.materialize_lane_activations(cx);
+        self.materialize_lane_activations(cx.cast::<LaneContext<H>>());
+        self.resume_deferred_caller(call_pc, before);
+    }
+
+    /// The deferred call's resumption once its activations became frames above `before`.
+    fn resume_deferred_caller(&mut self, call_pc: usize, before: usize) {
         // The natives running beside the activations recorded the frame count without them;
         // their caller is now the innermost new frame (`Vm::function_caller`).
-        let added = self.frames.len() - before;
-        for activation in self.realm.promise.active_native.iter_mut().rev() {
-            if activation.frame_depth != before {
-                break;
-            }
-            activation.frame_depth += added;
-        }
+        let natives = self.realm.promise.active_native.len();
+        self.shift_beside_natives(natives, before, self.frames.len() - before);
         // The call runs from the innermost activation's frame, resuming after it.
-        let frame = unsafe { (*cx).frame };
+        let frame = self.frames.len() - 1;
         self.frames[frame].pc = call_pc + 1;
         self.frames[frame].pc_is_resume = true;
+    }
+
+    /// Running natives, innermost of the first `natives`, that recorded `depth` frames beside
+    /// activations now `added` frames above it: their caller is the innermost of those.
+    fn shift_beside_natives(&mut self, natives: usize, depth: usize, added: usize) {
+        for native in self.realm.promise.active_native[..natives].iter_mut().rev() {
+            if native.frame_depth != depth {
+                break;
+            }
+            native.frame_depth += added;
+        }
     }
 
     fn materialize_lane_activations(&mut self, cx: *mut LaneContext<H>) {
@@ -9722,14 +9755,26 @@ impl<H: Host> Vm<H> {
                 .map(|activation| activation.frame_storage_bytes)
                 .sum::<usize>()
         );
-        let pending = unsafe { &mut *(*cx).pending };
         let mut caller = unsafe { (*cx).frame };
         let mut registers = std::mem::take(&mut self.lane_stack.values);
         let mut forwarders = std::mem::take(&mut self.lane_stack.forwarders).into_iter();
         let mut settling = std::mem::take(&mut self.lane_stack.settling).into_iter();
         let iterators = std::mem::take(&mut self.lane_stack.iterators);
         let states = ActivationState::of(&activations, cx);
+        // A deferred native's caller activations below its callback take the lane's outer
+        // pending calls and executing program (`NativeBoundary`).
+        let boundary = self.lane_stack.native_boundary.take();
+        let before = self.frames.len();
         for (depth, (activation, state)) in activations.drain(..).zip(states).enumerate() {
+            let below = boundary.filter(|boundary| depth < boundary.activation);
+            if let Some(boundary) = boundary
+                && depth == boundary.activation
+            {
+                self.lane_stack.boundary_frames = Some(self.frames.len() - before);
+            }
+            // SAFETY: the pending calls and executing program outlive the lane run.
+            let pending = unsafe { &mut *below.map_or((*cx).pending, |boundary| boundary.pending) };
+            let executing_program = below.map_or(unsafe { (*cx).executing }, |boundary| boundary.executing);
             let program = state.program;
             // Its frame belongs to its own program, which its push makes active; a call
             // into another program sets the caller's aside as the general loop's push does.
@@ -9741,7 +9786,7 @@ impl<H: Host> Vm<H> {
             let code = unsafe { &*code };
             let caller_program = (program != activation.caller_program).then(|| {
                 // SAFETY: the general loop's executing program outlives the lane run.
-                let executing = unsafe { &mut *(*cx).executing };
+                let executing = unsafe { &mut *executing_program };
                 debug_assert_eq!(executing.id, activation.caller_program);
                 let retained = self.programs.get(program);
                 let saved = super::dispatch_frame::SavedProgram {
@@ -9913,6 +9958,13 @@ impl<H: Host> Vm<H> {
             caller += 1;
         }
         debug_assert!(settling.next().is_none(), "every settling root belongs to an activation");
+        if let Some(boundary) = boundary {
+            // The native's caller is now the innermost of its activations' frames, as when
+            // its deferred call is observed (`materialize_deferred_lane_now`).
+            let added = *self.lane_stack.boundary_frames.get_or_insert(self.frames.len() - before);
+            let natives = boundary.natives.min(self.realm.promise.active_native.len());
+            self.shift_beside_natives(natives, boundary.deferred.frames, added);
+        }
         self.lane_stack.values = registers;
         self.lane_stack.values.clear();
         self.lane_stack.activations = activations;
@@ -11988,7 +12040,7 @@ fn lane_call_native<H: Host>(
     // A native that observes frames only through the points `materialize_deferred_lane`
     // guards runs beside the activations; the first such point makes them frames.
     if !vm.lane_stack.activations.is_empty() && vm.runs_beside_activations(native, callee) {
-        vm.lane_deferred = Some(DeferredLaneCall { cx: cx.cast(), call_pc });
+        vm.lane_deferred = Some(DeferredLaneCall { cx: cx.cast(), call_pc, frames: vm.frames.len() });
         let result = vm.call_native_guarded(unsafe { &*(*cx).code }, native, receiver, arguments.as_slice(), callee);
         note_allocation(vm);
         let unobserved = vm.lane_deferred.take().is_some();
@@ -11997,7 +12049,7 @@ fn lane_call_native<H: Host>(
             Err(error) => {
                 // The general path raises it from the frames its activations become.
                 if unobserved {
-                    vm.lane_deferred = Some(DeferredLaneCall { cx: cx.cast(), call_pc });
+                    vm.lane_deferred = Some(DeferredLaneCall { cx: cx.cast(), call_pc, frames: vm.frames.len() });
                     vm.materialize_deferred_lane();
                 }
                 vm.lane_raised = Some(error);
@@ -12080,7 +12132,7 @@ fn lane_construct_native<H: Host>(
     // runs (`lane_call_native`): the first point that observes frames makes them frames.
     let beside = !vm.lane_stack.activations.is_empty() && vm.constructs_beside_activations(callee);
     if beside {
-        vm.lane_deferred = Some(DeferredLaneCall { cx: cx.cast(), call_pc });
+        vm.lane_deferred = Some(DeferredLaneCall { cx: cx.cast(), call_pc, frames: vm.frames.len() });
     } else {
         vm.materialize_lane_activations(cx);
         let frame = unsafe { (*cx).frame };
@@ -12099,7 +12151,7 @@ fn lane_construct_native<H: Host>(
         Err(error) => {
             // The general path raises it from the frames the activations become.
             if unobserved {
-                vm.lane_deferred = Some(DeferredLaneCall { cx: cx.cast(), call_pc });
+                vm.lane_deferred = Some(DeferredLaneCall { cx: cx.cast(), call_pc, frames: vm.frames.len() });
                 vm.materialize_deferred_lane();
             }
             vm.lane_raised = Some(error);
@@ -18585,6 +18637,162 @@ impl<H: Host> Vm<H> {
                 let result = self.run_frames_after_lane_exit(code, frame, &mut pending, exited);
                 debug_assert_eq!(self.frames.len(), site.frames + 1, "the loop leaves the callback's frame");
                 self.complete_user_frame(code, result, false).and_then(FrameOutcome::into_value)
+            }
+        };
+        pending.clear();
+        self.pending_call_stacks.push(pending);
+        self.active_registers = registers;
+        if self.active_program != program {
+            self.set_active_program(program);
+        }
+        Some(outcome)
+    }
+
+    /// `Vm::call_value` of `callee` from a native running beside the lane's activations
+    /// (`DeferredLaneCall`), run as an activation above them whose completion ends the run
+    /// with its value (`Completion::ReturnsToNative`), so they stay activations and the call
+    /// stays deferred. A materialization while it runs makes the activations below it the
+    /// native caller's frames, with the lane's outer pending calls (`NativeBoundary`); an exit
+    /// finishes the callback's frames in the general loop, as `lane_native_callback`'s does,
+    /// and the native then returns to its caller's frame, as an observed deferred call does.
+    /// `None` leaves the call to the general path: another lane, program or frame count, a
+    /// callee no lane call would activate, or a boundary already in place.
+    pub(super) fn lane_deferred_callback(
+        &mut self,
+        callee: Value,
+        receiver: Value,
+        args: &[Value],
+    ) -> Option<Result<Value, JsError>> {
+        let deferred = self.lane_deferred?;
+        let cx: *mut LaneContext<H> = deferred.cx.cast();
+        if deferred.frames != self.frames.len()
+            || lane_context::<H>() != cx
+            || self.lane_stack.activations.is_empty()
+            || self.lane_stack.native_boundary.is_some()
+            || self.with_scope_entered
+        {
+            return None;
+        }
+        // SAFETY: as `lane_native_callback`'s.
+        if !unsafe { (*cx).script_calls } || self.active_program != unsafe { (*cx).program } || self.heap.should_collect() {
+            return None;
+        }
+        let _stack = crate::stack::StackGuard::enter().ok()?;
+        self.lane_stack.enter_generation((self.heap.collection_epoch(), self.realm.globals));
+        let target = lane_script_target(cx, callee)?;
+        // A callback of another program would enter it from the native's caller's view.
+        if target.program != unsafe { (*cx).program } {
+            return None;
+        }
+        let this = lane_call_this(self, &target, receiver)?;
+        let registers = self.active_registers;
+        // SAFETY: as `lane_native_callback`'s; the copy is the innermost caller activation's
+        // state, which an in-lane completion restores and an exit rebuilds as a frame's.
+        let saved = unsafe { std::ptr::read(cx) };
+        let (code, program) = (saved.code, saved.program);
+        // SAFETY: the deferred call's record lies in the caller activation's view.
+        let call = unsafe { saved.base.add(deferred.call_pc) };
+        let lower = self.lane_stack.activations.len();
+        let Some(start) = lane_push_callback(cx, saved.registers, call, &target, args, this) else {
+            // A push that found no room made the activations frames, as the native's
+            // observation of the frame stack would have.
+            if self.frames.len() != deferred.frames {
+                self.lane_deferred = None;
+                self.resume_deferred_caller(deferred.call_pc, deferred.frames);
+            }
+            return None;
+        };
+        // The callback's activation is made: a materialization from now on gives the
+        // caller's activations the outer pending calls and executing program.
+        let mut pending = self.pending_call_stacks.pop().unwrap_or_default();
+        let mut executing = super::dispatch_frame::ExecutingProgram { id: program, retained: None };
+        unsafe {
+            (*cx).pending = &mut pending;
+            (*cx).executing = &mut executing;
+        }
+        if let Some(ActivationKind::Script(script)) =
+            self.lane_stack.activations.last_mut().map(|activation| &mut activation.kind)
+        {
+            script.completion = Completion::ReturnsToNative;
+        }
+        self.lane_stack.native_boundary =
+            Some(NativeBoundary {
+                activation: lower,
+                pending: saved.pending,
+                executing: saved.executing,
+                deferred,
+                natives: self.realm.promise.active_native.len(),
+            });
+        // A callback of a native an earlier callback's frames run nests its own boundary.
+        let outer_boundary_frames = self.lane_stack.boundary_frames.take();
+        // A native the callback calls defers in its own turn.
+        self.lane_deferred = None;
+        unsafe { (*cx).memory = MemoryView::script(cx) };
+        let exit = lane_dispatch(cx, start);
+        let returned = self.lane_native_returned.take();
+        let mut boundary_frames = std::mem::replace(&mut self.lane_stack.boundary_frames, outer_boundary_frames);
+        let outcome = match (returned, boundary_frames) {
+            // Completed in the lane above its caller's activations: the call stays deferred.
+            (Some(value), None) => {
+                self.lane_stack.native_boundary = None;
+                unsafe {
+                    (*cx).pending = saved.pending;
+                    (*cx).executing = saved.executing;
+                }
+                self.lane_deferred = Some(deferred);
+                Ok(value)
+            }
+            (returned, _) => {
+                let exit_pc = returned.is_none().then(|| {
+                    // SAFETY: handlers only return records of the active view.
+                    let pc = unsafe { exit.offset_from((*cx).base) } as usize;
+                    self.lane_stack.boundary_frames = None;
+                    self.materialize_lane_activations(cx);
+                    if let Some(made) = std::mem::replace(&mut self.lane_stack.boundary_frames, outer_boundary_frames) {
+                        boundary_frames = Some(made);
+                    }
+                    let frame = unsafe { (*cx).frame };
+                    self.frames[frame].pc = pc;
+                    frame
+                });
+                // The caller's activations are frames: the lane continues in the innermost,
+                // the native's caller, once the callback's frames finish.
+                let caller = deferred.frames
+                    + boundary_frames.expect("the caller's activations became frames above the native's")
+                    - 1;
+                self.lane_stack.native_boundary = None;
+                // SAFETY: as above; the copy is restored before the general loop runs, as
+                // `lane_native_callback`'s is, then made the caller frame's.
+                unsafe {
+                    std::ptr::write(cx, saved);
+                    let frame_registers = Registers(self.frames[caller].registers.as_mut_ptr());
+                    (*cx).frame = caller;
+                    (*cx).registers = frame_registers;
+                    (*cx).this = self.frame_lane_this(caller);
+                    (*cx).env = Value::DELETED;
+                    (*cx).capture = std::ptr::null();
+                    (*cx).outer = NO_OUTER_WALK;
+                    (*cx).memory = MemoryView::script(cx);
+                }
+                let result = match (returned, exit_pc) {
+                    (Some(value), _) => Ok(value),
+                    (None, Some(frame)) => {
+                        let raised = self.lane_raised.take();
+                        // SAFETY: the lane's program outlives its run.
+                        let code = unsafe { &*code };
+                        let exited = super::dispatch_frame::LaneExit { executing, raised };
+                        let result = self.run_frames_after_lane_exit(code, frame, &mut pending, exited);
+                        self.complete_user_frame(code, result, false).and_then(FrameOutcome::into_value)
+                    }
+                    (None, None) => unreachable!("an exit records its frame"),
+                };
+                pending.clear();
+                self.pending_call_stacks.push(std::mem::take(&mut pending));
+                self.active_registers = self.frames[caller].registers.as_mut_ptr();
+                if self.active_program != program {
+                    self.set_active_program(program);
+                }
+                return Some(result);
             }
         };
         pending.clear();

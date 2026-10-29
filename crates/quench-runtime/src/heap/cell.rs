@@ -969,6 +969,15 @@ impl Native {
                 | Self::NumberString
                 | Self::MapEntries
                 | Self::ArraySlice
+                | Self::ArrayMap
+                | Self::ArrayForEach
+                | Self::ArrayFilter
+                | Self::ArraySome
+                | Self::ArrayEvery
+                | Self::ArrayFind
+                | Self::ArrayFindIndex
+                | Self::ArrayFindLast
+                | Self::ArrayFindLastIndex
                 | Self::RegExpTest
                 | Self::JsonParse
                 | Self::JsonStringify

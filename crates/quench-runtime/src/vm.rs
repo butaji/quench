@@ -3288,7 +3288,13 @@ impl<H: Host> Vm<H> {
         target: Option<CallTarget>,
     ) -> Result<Value, JsError> {
         // Guest code observes the frame stack; a native that runs beside activations does not.
+        // A script callee of such a native runs as an activation above them where it can.
         if self.lane_deferred.is_some() && !self.callee_runs_beside_activations(callee) {
+            if matches!(self.heap.function(callee), Some(FunctionRecord { kind: FunctionKind::User(..), .. }))
+                && let Some(result) = self.lane_deferred_callback(callee, this, args)
+            {
+                return result;
+            }
             self.materialize_deferred_lane();
         }
         if matches!(self.heap.get(callee), Some(Cell::Proxy { .. })) {
