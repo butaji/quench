@@ -12370,6 +12370,44 @@ fn shared_osr_appends_past_a_full_backing_keep_the_region_native() {
 }
 
 #[test]
+fn shared_osr_int32_element_scans_keep_nested_loop_results() {
+    // A nested loop reads arrays entry scanned to hold only `i32`s, without a tag guard
+    // per read: a double, a hole past a grown length and a negative zero each fail the
+    // scan, which widens the array's reads for the next compilation; results match Node.
+    let source = r#"
+function run(a, w, n) {
+  var s = 0;
+  for (var i = 0; i < n; i++) {
+    for (var j = 0; j < a.length; j++) { s = (s + a[j] * (i + 1)) | 0; w[j] = (w[j] + a[j]) | 0; }
+  }
+  return s;
+}
+var out = [];
+for (var k = 0; k < 400; k++) {
+  var a = [], w = [];
+  for (var j = 0; j < 30; j++) { a.push((j * 7 + k) | 0); w.push(j); }
+  if (k == 300) a[5] = 2.5;
+  if (k == 350) { a.length = 40; }
+  if (k == 370) a[3] = -0;
+  out.push(run(a, w, 20), w[7], w[29]);
+}
+var h = 0; for (var i = 0; i < out.length; i++) h = (h * 31 + (out[i] | 0) + (out[i] !== out[i] ? 7 : 0)) | 0;
+print(h + " " + out.slice(-6).join(","));
+    "#;
+    let expected = ["-2093528250 3146850,8947,12049,3153150,8967,12069"];
+    let program = Engine::specialize(source, "osr-int32-scan.js").unwrap();
+    for mode in [None, Some(crate::ExecutionMode::Compiled)] {
+        let output = Rc::new(RefCell::new(Vec::new()));
+        let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+        if let Some(mode) = mode {
+            vm.set_execution_mode(mode);
+        }
+        vm.execute(&program).unwrap();
+        assert_eq!(output.borrow().as_slice(), expected, "{mode:?}");
+    }
+}
+
+#[test]
 fn shared_osr_indexes_the_row_a_loop_reads_each_iteration() {
     // `a[e][f] = x` in a loop over `e` indexes the row `a[e]` the iteration read, not the
     // row the region entered with: the region declines an indexed register it defines

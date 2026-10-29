@@ -100,19 +100,20 @@ const WIDEN_REGISTER: u64 = 1 << u16::BITS;
 const WIDEN_CAPTURE: u64 = WIDEN_REGISTER << 1;
 const WIDEN_UNIT: u64 = WIDEN_CAPTURE << 1;
 const WIDEN_FIELD: u64 = WIDEN_UNIT << 1;
-const _: () = assert!(WIDEN_FIELD <= u32::MAX as u64);
+const WIDEN_ELEMENTS: u64 = WIDEN_FIELD << 1;
+const _: () = assert!(WIDEN_ELEMENTS <= u32::MAX as u64);
 const WIDEN_PAYLOAD: u64 = WIDEN_REGISTER - 1;
 
 impl Widening {
-    /// The not-entered word of an entry guard's widening; element reads are guarded where
-    /// they run, so an entry never names them.
+    /// The not-entered word of an entry guard's widening: an array's elements are named by
+    /// the entry scan of an array whose reads drop their guard (`Lowering::scan_int32`).
     fn code(self) -> u32 {
         match self {
             Self::Register(register) => (WIDEN_REGISTER | u64::from(register)) as u32,
             Self::Capture(index) => (WIDEN_CAPTURE | u64::from(index)) as u32,
             Self::Unit(register) => (WIDEN_UNIT | u64::from(register)) as u32,
             Self::Field(index) => (WIDEN_FIELD | u64::from(index)) as u32,
-            Self::Elements(_) => 0,
+            Self::Elements(register) => (WIDEN_ELEMENTS | u64::from(register)) as u32,
         }
     }
 
@@ -126,6 +127,8 @@ impl Widening {
             Some(Self::Unit(payload))
         } else if word & WIDEN_FIELD != 0 {
             Some(Self::Field(payload))
+        } else if word & WIDEN_ELEMENTS != 0 {
+            Some(Self::Elements(payload))
         } else {
             None
         }
@@ -3177,6 +3180,9 @@ struct Lowering<'a, 'b> {
     /// The entry values native code reads from memory at each use instead of holding
     /// them (`Resident`).
     resident: Resident,
+    /// The arrays whose elements entry found all `i32`s, which the region keeps so, so
+    /// their reads need no tag guard (`Lowering::scan_int32`).
+    int32_arrays: std::collections::BTreeSet<Register>,
     widenings: std::collections::BTreeMap<u32, Widening>,
     /// Per block, the first block of the chain it continues: each block after the first
     /// has its predecessors inside the chain (a guard's passing branch, the join of a test
@@ -3408,6 +3414,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
             track_backedges,
             arrays: std::collections::BTreeMap::new(),
             resident: Resident::default(),
+            int32_arrays: std::collections::BTreeSet::new(),
             widenings: std::collections::BTreeMap::new(),
         }
     }
@@ -3621,6 +3628,66 @@ impl<'a, 'b> Lowering<'a, 'b> {
         self.body.builder.ins().return_(&[status]);
     }
 
+    /// Proves at entry, for each array an innermost nested loop reads as `i32`s, that every
+    /// element is one, when every store of the region stores an `i32` (so each stays one,
+    /// whichever array it writes): the reads then take the payload with no tag guard. A
+    /// region without nested loops runs too few iterations per entry to repay the scan. An
+    /// element of another kind, or a hole, widens the array's reads for the next compilation.
+    fn scan_int32(&mut self) {
+        let region = self.region;
+        let nested = self.counted.iter().any(|counted| counted.header != region.header);
+        let stores_int32 = (region.header..=region.backedge).all(|pc| {
+            let instruction = region.instructions[(pc - region.header) as usize];
+            instruction.op() != Op::SetIndex || {
+                let web = self.webs.read(region, pc, instruction.register_a());
+                self.representations[web] == Representation::Int32
+            }
+        });
+        if !nested || !stores_int32 {
+            return;
+        }
+        let read_int32: std::collections::BTreeSet<Register> = region
+            .instructions
+            .iter()
+            .filter(|instruction| {
+                instruction.op() == Op::GetIndex
+                    && !region.tagged.contains(&instruction.result_register())
+                    && element_representation(instruction, self.observation) == Representation::Int32
+            })
+            .filter_map(|instruction| instruction.operand_b().register_index())
+            .filter(|register| !self.resident.arrays.contains_key(register))
+            .collect();
+        for register in read_int32 {
+            let Some(view) = self.arrays.get(&register).copied() else { continue };
+            let length = self.length(view);
+            let head = self.chain(self.body.builder.current_block().expect("lowering inside a block"));
+            let test = self.body.builder.create_block();
+            let element = self.body.builder.create_block();
+            let next = self.body.builder.create_block();
+            let done = self.body.builder.create_block();
+            let index = self.body.builder.append_block_param(test, types::I64);
+            let zero = self.body.builder.ins().iconst(types::I64, 0);
+            self.body.builder.ins().jump(test, &[ir::BlockArg::Value(zero)]);
+            self.body.builder.switch_to_block(test);
+            let finished = self.body.builder.ins().icmp(IntCC::UnsignedGreaterThanOrEqual, index, length);
+            self.body.builder.ins().brif(finished, done, &[], element, &[]);
+            self.body.builder.switch_to_block(element);
+            let offset = self.body.builder.ins().imul_imm_u(index, i64::from(WORD_BYTES));
+            let address = self.body.builder.ins().iadd(view.elements, offset);
+            let bits = self.body.builder.ins().load(types::I64, flags(), address, 0);
+            let tag = self.body.builder.ins().band_imm_u(bits, ValueLayout::TAG_MASK as i64);
+            let other = self.body.builder.ins().icmp_imm_u(IntCC::NotEqual, tag, ValueLayout::INT_TAG as i64);
+            let widen = self.not_entered(Some(Widening::Elements(register)));
+            self.body.builder.ins().brif(other, widen, &[], next, &[]);
+            self.body.builder.switch_to_block(next);
+            let stepped = self.body.builder.ins().iadd_imm_s(index, 1);
+            self.body.builder.ins().jump(test, &[ir::BlockArg::Value(stepped)]);
+            self.body.builder.switch_to_block(done);
+            self.chains.insert(done, head);
+            self.int32_arrays.insert(register);
+        }
+    }
+
     /// Stores an entry value that resides in memory (`Resident`) to its slot.
     fn reside(&mut self, slot: Option<usize>, value: ir::Value) {
         if let (Some(slot), Some(stack)) = (slot, self.resident.slot) {
@@ -3760,6 +3827,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
             self.reside(self.resident.fields[index], value);
             self.fields.push(Typed { value, representation });
         }
+        self.scan_int32();
         if let Some(inlining) = &self.region.inlining {
             // The scratch registers' address follows arrays and field-store slots; each
             // inlined callee is still the function its field held when the region was made.
@@ -4985,6 +5053,10 @@ impl<'a, 'b> Lowering<'a, 'b> {
                 // A hole is tagged, so unboxing sends it to the general path too. A Float64
                 // element loads straight into a float register.
                 let value = match representation {
+                    Representation::Int32 if self.int32_arrays.contains(&base) => {
+                        let bits = self.body.builder.ins().load(types::I64, flags(), address, displacement);
+                        self.body.builder.ins().ireduce(types::I32, bits)
+                    }
                     Representation::Int32 => {
                         let bits = self.body.builder.ins().load(types::I64, flags(), address, displacement);
                         let widen = self.widen_block(pc, Widening::Elements(base));

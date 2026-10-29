@@ -780,6 +780,18 @@ struct Emitter<'a, 'b> {
     /// Number invariants, as `f64`.
     numbers: BTreeMap<Invariant, ir::Value>,
     not_entered: ir::Block,
+    /// The cold blocks of failed reads, filled once the hot code is emitted: each restores
+    /// its pair (`Failure`).
+    failures: Vec<Failure>,
+}
+
+/// A read whose unboxing failed: its block jumps to the pair's restore with, per written
+/// array and row, the elements stored so far.
+struct Failure {
+    block: ir::Block,
+    column: ir::Value,
+    stored_here: Vec<bool>,
+    place: Place,
 }
 
 impl<'a, 'b> Emitter<'a, 'b> {
@@ -803,6 +815,7 @@ impl<'a, 'b> Emitter<'a, 'b> {
             integers: BTreeMap::new(),
             numbers: BTreeMap::new(),
             not_entered,
+            failures: Vec::new(),
         })
     }
 
@@ -1008,6 +1021,21 @@ impl<'a, 'b> Emitter<'a, 'b> {
             self.finish(word);
         }
 
+        for failure in std::mem::take(&mut self.failures) {
+            self.builder.switch_to_block(failure.block);
+            let mut counts = Vec::new();
+            for here in &failure.stored_here {
+                for offset in 0..PAIR_ROWS {
+                    let count = if offset == failure.place.row {
+                        self.builder.ins().iadd_imm_s(failure.column, i64::from(*here))
+                    } else {
+                        failure.place.other_stored
+                    };
+                    counts.push(ir::BlockArg::Value(count));
+                }
+            }
+            self.builder.ins().jump(failure.place.pair.restore, &counts);
+        }
         self.builder.switch_to_block(self.not_entered);
         let word = self.builder.ins().iconst(types::I64, super::RegionExit::EntryMiss(0).encode() as i64);
         self.finish(word);
@@ -1207,21 +1235,7 @@ impl<'a, 'b> Emitter<'a, 'b> {
                             // before this one and this one's stores so far, and the other row's.
                             let failed = self.builder.create_block();
                             self.builder.set_cold_block(failed);
-                            let current = self.builder.current_block()?;
-                            self.builder.switch_to_block(failed);
-                            let mut counts = Vec::new();
-                            for here in &stored_here {
-                                for offset in 0..PAIR_ROWS {
-                                    let count = if offset == place.row {
-                                        self.builder.ins().iadd_imm_s(column, i64::from(*here))
-                                    } else {
-                                        place.other_stored
-                                    };
-                                    counts.push(ir::BlockArg::Value(count));
-                                }
-                            }
-                            self.builder.ins().jump(place.pair.restore, &counts);
-                            self.builder.switch_to_block(current);
+                            self.failures.push(Failure { block: failed, column, stored_here: stored_here.clone(), place });
                             unbox_number(&mut self.builder, bits, failed)
                         }
                         Node::Row(value) => *values.get(*value)?,
