@@ -120,8 +120,7 @@ impl Heap {
         let live_weight = live + self.payload_bytes / payload_unit();
         self.live_weight_after_previous = live_weight;
         self.live_weight_after_full = live_weight;
-        self.threshold = self.pacing().young_budget(live);
-        self.max_threshold = self.max_threshold.max(self.threshold);
+        self.set_young_budget(self.pacing().young_budget(live));
         self.full_due = false;
     }
 

@@ -1,7 +1,15 @@
 #!/usr/bin/env bash
 # Profile-guided production build of quench-node.
 #
-# usage: tools/pgo-build.sh [PROFILE]   (default: production)
+# usage: tools/pgo-build.sh [--static] [PROFILE]   (default: production)
+#
+# --static builds the static x86_64 Linux binary (C runtime linked in, static relocation
+# model), the input of the BOLT layout step in docs/README.md: both the instrumented and the
+# profile-guided build add `-Ctarget-feature=+crt-static -Crelocation-model=static` and build
+# for the host triple, so the binary lands at target/<host>/PROFILE/quench-node. Every build
+# passes its flags in `RUSTFLAGS`, which replaces the repository's rustflags
+# (.cargo/config.toml) rather than appending to them, so the script repeats that baseline in
+# `repo_rustflags` and refuses an inherited `RUSTFLAGS`.
 #
 # 1. Builds an instrumented quench-node into target/pgo-instrumented.
 # 2. Runs the training corpus: the interpreter curriculum micro programs, the numbered
@@ -16,6 +24,11 @@
 set -euo pipefail
 
 root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+static=false
+if [[ "${1:-}" == "--static" ]]; then
+    static=true
+    shift
+fi
 profile="${1:-production}"
 target_dir="${CARGO_TARGET_DIR:-$root_dir/target}"
 instrumented_dir="$target_dir/pgo-instrumented"
@@ -40,6 +53,12 @@ curriculum_budget_ms=6000
 # QUENCH_PGO_REACT_ROUNDS=N. Keep this off by default so production builds stay independent
 # of npm fixture installation; the npm performance workflow can opt in when measuring React.
 react_training_rounds="${QUENCH_PGO_REACT_ROUNDS:-0}"
+# Neither the curriculum nor the Node fixtures serve HTTP for long, so the server path a web
+# application runs (socket polling, request parsing, response composition and the node:http
+# JavaScript around them) was laid out as cold code. The npm workload `http-echo-isolation`
+# is a plain node:http server and client on one keep-alive connection, with no package
+# dependencies; this many round trips (about fifteen seconds of the instrumented build) train it.
+http_training_rounds="${QUENCH_PGO_HTTP_ROUNDS:-3000}"
 # The curriculum stages interpreter mechanisms and runs no regular expression, string
 # search or typed-memory work; the numbered diagnostic micros (quench-bench/micros, one
 # operation family each, the same `microRun` protocol) cover those families, so a library
@@ -51,7 +70,22 @@ host="$(rustc -vV | sed -n 's/^host: //p')"
 # Passing only `--config build.rustflags=...` silently loses the PGO flag on
 # targets whose configuration has its own rustflags (aarch64-apple-darwin), so
 # this script appends the PGO flag to the same baseline flags in RUSTFLAGS.
+# It replaces every configured array, so an inherited `RUSTFLAGS` would lose both
+# the baseline and the profile flag.
+if [[ -n "${RUSTFLAGS:-}" ]]; then
+    printf 'unset RUSTFLAGS: it would replace the profile flags and the repository rustflags\n' >&2
+    exit 1
+fi
 repo_rustflags="-D warnings -C llvm-args=-align-all-functions=6"
+# The static mode's link flags, appended to both builds, and the target directory layout a
+# `--target` build uses.
+target_args=()
+binary_subdir="$profile"
+if [[ "$static" == true ]]; then
+    repo_rustflags="$repo_rustflags -Ctarget-feature=+crt-static -Crelocation-model=static"
+    target_args=(--target "$host")
+    binary_subdir="$host/$profile"
+fi
 llvm_profdata="$(rustc --print sysroot)/lib/rustlib/$host/bin/llvm-profdata"
 if [[ ! -x "$llvm_profdata" ]]; then
     printf 'llvm-profdata not found; run: rustup component add llvm-tools\n' >&2
@@ -91,8 +125,8 @@ mkdir -p "$data_dir"
 # `RUSTFLAGS` replaces the repository's target-specific rustflags instead of appending to
 # them; see `repo_rustflags` above.
 RUSTFLAGS="$repo_rustflags -Cprofile-generate=$data_dir" \
-    CARGO_TARGET_DIR="$instrumented_dir" cargo build --profile "$profile" -p quench-node
-instrumented="$instrumented_dir/$profile/quench-node"
+    CARGO_TARGET_DIR="$instrumented_dir" cargo build --profile "$profile" -p quench-node "${target_args[@]}"
+instrumented="$instrumented_dir/$binary_subdir/quench-node"
 
 # One raw profile per process: Darwin's runtime does not reliably merge concurrent
 # writers into a shared pool file here (llvm-profdata then reports "too much profile data").
@@ -123,6 +157,10 @@ while IFS= read -r fixture; do
     (cd "$(dirname "$fixture")" && run_limited "$instrumented" "$(basename "$fixture")" \
         >/dev/null 2>&1) || true
 done < <(find tests/node-compat -name '*.js' | sort)
+if (( http_training_rounds > 0 )); then
+    QUENCH_BENCH_ROUNDS="$http_training_rounds" \
+        run_training_limited "$instrumented" tests/npm-perf/workloads/http-echo-isolation.cjs >/dev/null 2>&1 || true
+fi
 if (( react_training_rounds > 0 )); then
     if [[ ! -f tests/npm-perf/node_modules/react/package.json ]]; then
         printf 'React PGO training requested; install tests/npm-perf dependencies with npm ci first\n' >&2
@@ -147,11 +185,12 @@ rm -rf "$data_dir"
 # move), whose every dispatch then pays the large one's prologue: Crypto and NavierStokes
 # ran 38% more instructions once training made a call the move's most frequent successor.
 RUSTFLAGS="$repo_rustflags -Cprofile-use=$profdata -Cllvm-args=-disable-icp" \
-    CARGO_TARGET_DIR="$target_dir" cargo build --profile "$profile" -p quench-node
-printf 'PGO build: %s\n' "$target_dir/$profile/quench-node"
+    CARGO_TARGET_DIR="$target_dir" cargo build --profile "$profile" -p quench-node "${target_args[@]}"
+binary="$target_dir/$binary_subdir/quench-node"
+printf 'PGO build: %s\n' "$binary"
 # Profile-guided inlining decides which lane handlers form their dispatch as a sibling jump
 # (`tools/check-lane-tail-calls.sh`); a profile that keeps symbols reports the ones that do not.
-if nm "$target_dir/$profile/quench-node" 2>/dev/null | grep dispatch_fast >/dev/null; then
+if nm "$binary" 2>/dev/null | grep dispatch_fast >/dev/null; then
     printf 'Lane handlers dispatching with a call:\n'
-    tools/check-lane-tail-calls.sh "$target_dir/$profile/quench-node" || true
+    tools/check-lane-tail-calls.sh "$binary" || true
 fi

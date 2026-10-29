@@ -67,6 +67,7 @@ impl SharedNodeState {
             primordials_module,
             realm_module_programs,
             crypto_handle_symbol,
+            library_originals,
             event_targets_api,
             trace,
             util_intrinsics,
@@ -170,6 +171,9 @@ impl SharedNodeState {
         commonjs_cache.write(writer)?;
         primordials_module.write(writer)?;
         crypto_handle_symbol.write(writer)?;
+        for original in &library_originals.0 {
+            original.write(writer)?;
+        }
         event_targets_api.write(writer)?;
         trace.write_snapshot(writer)?;
         util_intrinsics.write(writer)?;
@@ -242,6 +246,9 @@ impl SharedNodeState {
         self.commonjs_cache = HostSnap::read(reader)?;
         self.primordials_module = HostSnap::read(reader)?;
         self.crypto_handle_symbol = HostSnap::read(reader)?;
+        for original in &mut self.library_originals.0 {
+            *original = HostSnap::read(reader)?;
+        }
         self.event_targets_api = HostSnap::read(reader)?;
         self.trace.read_snapshot(reader)?;
         self.util_intrinsics = HostSnap::read(reader)?;

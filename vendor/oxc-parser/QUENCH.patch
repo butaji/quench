@@ -1,6 +1,8 @@
 --- a/Cargo.toml
 +++ b/Cargo.toml
-@@ -122,0 +123,3 @@
+@@ -92,0 +93 @@
++features = ["from_raw_parts"]
+@@ -122,0 +124,3 @@
 +
 +[dependencies.quench-stack]
 +path = "../../crates/quench-stack"
@@ -91,96 +93,96 @@
 +            ));
 --- a/src/js/expression.rs
 +++ b/src/js/expression.rs
-@@ -138 +138,5 @@
+@@ -187 +187,5 @@
 -        let name = if token.escaped() { self.cur_string() } else { self.token_source(&token) };
 +        let name = if token.escaped() {
 +            self.cur_string()
 +        } else {
 +            self.token_source(&token)
 +        };
-@@ -153 +157,5 @@
+@@ -202 +206,5 @@
 -        if self.options.enable_ident_hashes { Ident::from(name) } else { Ident::new_unhashed(name) }
 +        if self.options.enable_ident_hashes {
 +            Ident::from(name)
 +        } else {
 +            Ident::new_unhashed(name)
 +        }
-@@ -275,2 +283,4 @@
+@@ -324,2 +332,4 @@
 -        let no_side_effects_comments =
 -            self.lexer.trivia_builder.previous_token_no_side_effects_comments();
 +        let no_side_effects_comments = self
 +            .lexer
 +            .trivia_builder
 +            .previous_token_no_side_effects_comments();
-@@ -317 +327,3 @@
+@@ -366 +376,3 @@
 -                    self.lexer.trivia_builder.mark_no_side_effects_comments_applied(comments);
 +                    self.lexer
 +                        .trivia_builder
 +                        .mark_no_side_effects_comments_applied(comments);
-@@ -324 +336,3 @@
+@@ -373 +385,3 @@
 -                    self.lexer.trivia_builder.mark_no_side_effects_comments_applied(comments);
 +                    self.lexer
 +                        .trivia_builder
 +                        .mark_no_side_effects_comments_applied(comments);
-@@ -464 +478,4 @@
+@@ -513 +527,4 @@
 -        let pattern = RegExpPattern { text: Str::from(pattern_text), pattern };
 +        let pattern = RegExpPattern {
 +            text: Str::from(pattern_text),
 +            pattern,
 +        };
-@@ -486 +503,4 @@
+@@ -539 +556,4 @@
 -            Options { pattern_span_offset, flags_span_offset },
 +            Options {
 +                pattern_span_offset,
 +                flags_span_offset,
 +            },
-@@ -528 +548,4 @@
+@@ -581 +601,4 @@
 -            && matches!(elements.last(), Some(ArrayExpressionElement::SpreadElement(_)))
 +            && matches!(
 +                elements.last(),
 +                Some(ArrayExpressionElement::SpreadElement(_))
 +            )
-@@ -530 +553,3 @@
+@@ -583 +606,3 @@
 -            self.state.trailing_commas.insert(start, self.end_span(comma_start));
 +            self.state
 +                .trailing_commas
 +                .insert(start, self.end_span(comma_start));
-@@ -740 +765,3 @@
+@@ -793 +818,3 @@
 -            self.error(diagnostics::v8_intrinsic_spread_elem(self.cur_token().span()));
 +            self.error(diagnostics::v8_intrinsic_spread_elem(
 +                self.cur_token().span(),
 +            ));
-@@ -779 +806,2 @@
+@@ -832 +859,2 @@
 -            expr.expression.replace_with(|expr| self.map_to_chain_expression(expr.span(), expr));
 +            expr.expression
 +                .replace_with(|expr| self.map_to_chain_expression(expr.span(), expr));
-@@ -796 +824,3 @@
+@@ -849 +877,3 @@
 -            self.lexer.trivia_builder.mark_pure_comments_applied(comments);
 +            self.lexer
 +                .trivia_builder
 +                .mark_pure_comments_applied(comments);
-@@ -1010,0 +1041,3 @@
+@@ -1063,0 +1094,3 @@
 +        let Ok(_stack) = quench_stack::StackGuard::enter() else {
 +            return self.fatal_error(diagnostics::stack_exhausted(self.cur_token().span()));
 +        };
-@@ -1247,0 +1281,3 @@
+@@ -1300,0 +1334,3 @@
 +        let Ok(_stack) = quench_stack::StackGuard::enter() else {
 +            return self.fatal_error(diagnostics::stack_exhausted(self.cur_token().span()));
 +        };
-@@ -1272,0 +1309,3 @@
+@@ -1325,0 +1362,3 @@
 +        let Ok(_stack) = quench_stack::StackGuard::enter() else {
 +            return self.fatal_error(diagnostics::stack_exhausted(self.cur_token().span()));
 +        };
-@@ -1307,0 +1347,3 @@
+@@ -1360,0 +1400,3 @@
 +        let Ok(_stack) = quench_stack::StackGuard::enter() else {
 +            return self.fatal_error(diagnostics::stack_exhausted(self.cur_token().span()));
 +        };
-@@ -1342 +1384,3 @@
+@@ -1395 +1437,3 @@
 -            let Some(left_precedence) = kind_to_precedence(kind) else { break };
 +            let Some(left_precedence) = kind_to_precedence(kind) else {
 +                break;
 +            };
-@@ -1489,2 +1533,7 @@
+@@ -1542,2 +1586,7 @@
 -        let no_side_effects_comments =
 -            self.lexer.trivia_builder.previous_token_no_side_effects_comments();
 +        let Ok(_stack) = quench_stack::StackGuard::enter() else {
@@ -190,42 +192,142 @@
 +            .lexer
 +            .trivia_builder
 +            .previous_token_no_side_effects_comments();
-@@ -1503 +1552,3 @@
+@@ -1556 +1605,3 @@
 -                self.lexer.trivia_builder.mark_no_side_effects_comments_applied(comments);
 +                self.lexer
 +                    .trivia_builder
 +                    .mark_no_side_effects_comments_applied(comments);
-@@ -1515 +1566,3 @@
+@@ -1568 +1619,3 @@
 -                self.lexer.trivia_builder.mark_no_side_effects_comments_applied(comments);
 +                self.lexer
 +                    .trivia_builder
 +                    .mark_no_side_effects_comments_applied(comments);
-@@ -1540 +1593,3 @@
+@@ -1593 +1646,3 @@
 -                self.lexer.trivia_builder.mark_no_side_effects_comments_applied(comments);
 +                self.lexer
 +                    .trivia_builder
 +                    .mark_no_side_effects_comments_applied(comments);
-@@ -1560 +1615,3 @@
+@@ -1613 +1668,3 @@
 -            self.lexer.trivia_builder.mark_no_side_effects_comments_applied(comments);
 +            self.lexer
 +                .trivia_builder
 +                .mark_no_side_effects_comments_applied(comments);
-@@ -1627 +1684,4 @@
+@@ -1680 +1737,4 @@
 -            if matches!(lhs, Expression::ObjectExpression(_) | Expression::ArrayExpression(_)) {
 +            if matches!(
 +                lhs,
 +                Expression::ObjectExpression(_) | Expression::ArrayExpression(_)
 +            ) {
-@@ -1633 +1693,4 @@
+@@ -1686 +1746,4 @@
 -            && matches!(lhs, Expression::ObjectExpression(_) | Expression::ArrayExpression(_))
 +            && matches!(
 +                lhs,
 +                Expression::ObjectExpression(_) | Expression::ArrayExpression(_)
 +            )
+--- a/src/js/function.rs
++++ b/src/js/function.rs
+@@ -1 +1 @@
+-use oxc_allocator::{ArenaBox, ArenaVec};
++use oxc_allocator::{ArenaBox, ArenaVec, GetAllocator};
+@@ -44,0 +45,55 @@
++    /// Whether the body of the function starting at `start` parses lazily
++    /// (`ParseOptions::lazy_function_bodies`).
++    fn lazy_body_candidate(&self, start: u32, func_kind: FunctionKind) -> bool {
++        self.options.lazy_function_bodies.is_some_and(|from| start >= from)
++            && !self.is_ts
++            && self.lazy_depth == 0
++            && matches!(func_kind, FunctionKind::Declaration | FunctionKind::Expression)
++            && !self.source_text[..start as usize].trim_end().ends_with('(')
++    }
++
++    /// A function body parsed, then released from the arena and kept as its directives,
++    /// unless its parse left state that outlives it (`LazyBodyCheckpoint`).
++    fn parse_lazy_function_body(&mut self) -> ArenaBox<'a, FunctionBody<'a>> {
++        let allocator = self.allocator();
++        // The arena allocates downward: everything the body allocates lies before this.
++        let marker = std::ptr::NonNull::from(allocator.alloc(0u8));
++        let checkpoint = LazyBodyCheckpoint::of(self);
++        self.lazy_depth += 1;
++        let body = self.parse_function_body();
++        self.lazy_depth -= 1;
++        let span = body.span;
++        let source = self.source_text.as_bytes().as_ptr_range();
++        let in_source = |text: &str| text.is_empty() || source.contains(&text.as_ptr());
++        let directives_in_source = body.directives.iter().all(|directive| {
++            in_source(directive.directive.as_str())
++                && in_source(directive.expression.value.as_str())
++                && directive.expression.raw.is_none_or(|raw| in_source(raw.as_str()))
++        });
++        let escaped_after = self.lexer.escaped_strings.keys().any(|start| *start >= span.end)
++            || self.lexer.escaped_templates.keys().any(|start| *start >= span.end);
++        if checkpoint != LazyBodyCheckpoint::of(self)
++            || self.fatal_error.is_some()
++            || escaped_after
++            || !directives_in_source
++        {
++            return body;
++        }
++        // SAFETY: each directive's strings lie in the source text, checked above, so a
++        // bitwise copy holds nothing in the arena region released below.
++        let directives: Vec<Directive<'a>> =
++            body.directives.iter().map(|directive| unsafe { std::ptr::read(directive) }).collect();
++        let inside = |start: &u32| (span.start..span.end).contains(start);
++        self.lexer.escaped_strings.retain(|start, _| !inside(start));
++        self.lexer.escaped_templates.retain(|start, _| !inside(start));
++        // SAFETY: the arena has the same chunk as at `marker` (its capacity is unchanged), the
++        // marker lies in it and the arena's alignment is one byte. Nothing allocated after the
++        // marker is referenced any more: the body is dropped, the parser state that can hold
++        // arena data is as it was at the checkpoint, and the escaped strings and templates
++        // inside the body are removed.
++        unsafe { allocator.set_cursor_ptr(marker) };
++        self.lazy_function_bodies.push(span.start);
++        let directives = ArenaVec::from_iter_in(directives, &self.ast);
++        FunctionBody::boxed(span, directives, ArenaVec::new_in(self), self)
++    }
++
+@@ -292 +347,5 @@
+-            Some(self.parse_function_body())
++            Some(if self.lazy_body_candidate(start, func_kind) {
++                self.parse_lazy_function_body()
++            } else {
++                self.parse_function_body()
++            })
+@@ -566,0 +626,32 @@
++        }
++    }
++}
++
++/// The parser state a function body's parse can extend with data that outlives the body.
++/// A lazily parsed body releases the arena it used only when this is unchanged.
++#[derive(PartialEq, Eq)]
++struct LazyBodyCheckpoint {
++    /// Arena chunks only grow: the same capacity means the same current chunk.
++    arena_capacity: usize,
++    errors: usize,
++    deferred_script_errors: usize,
++    lexer_errors: usize,
++    deferred_module_errors: usize,
++    tokens: usize,
++    module_record_entries: usize,
++    cover_initialized_names: usize,
++    potential_await_reparses: usize,
++}
++
++impl LazyBodyCheckpoint {
++    fn of<C: Config>(parser: &ParserImpl<'_, C>) -> Self {
++        Self {
++            arena_capacity: parser.allocator().capacity(),
++            errors: parser.errors.len(),
++            deferred_script_errors: parser.deferred_script_errors.len(),
++            lexer_errors: parser.lexer.errors.len(),
++            deferred_module_errors: parser.lexer.deferred_module_errors.len(),
++            tokens: parser.lexer.tokens_len(),
++            module_record_entries: parser.module_record_builder.function_body_entries(),
++            cover_initialized_names: parser.state.cover_initialized_name.len(),
++            potential_await_reparses: parser.state.potential_await_reparse.len(),
 --- a/src/js/grammar.rs
 +++ b/src/js/grammar.rs
-@@ -87,0 +88,14 @@
-+            }
+@@ -88,0 +89,14 @@
 +            Expression::CallExpression(call)
 +                if p.options.allow_call_assignment_targets && !call.optional =>
 +            {
@@ -239,6 +341,7 @@
 +                    false,
 +                    p,
 +                ))
++            }
 @@ -149,3 +163,5 @@
 -                    p.error(diagnostics::invalid_assignment_target_default_value_operator(
 -                        assignment_expr.span,
@@ -296,23 +399,23 @@
 +            {
 +                self.parse_let(stmt_ctx)
 +            }
-@@ -204 +218,3 @@
+@@ -204 +222,3 @@
 -            self.lexer.trivia_builder.mark_no_side_effects_comments_applied(comments);
 +            self.lexer
 +                .trivia_builder
 +                .mark_no_side_effects_comments_applied(comments);
-@@ -327,2 +343,3 @@
+@@ -327,2 +347,3 @@
 -        let alternate =
 -            self.eat(Kind::Else).then(|| self.parse_statement_list_item(StatementContext::If));
 +        let alternate = self
 +            .eat(Kind::Else)
 +            .then(|| self.parse_statement_list_item(StatementContext::If));
-@@ -486 +503,3 @@
+@@ -486 +507,3 @@
 -                    self.error(diagnostics::for_loop_let_reserved_word(self.end_span(expr_start)));
 +                    self.error(diagnostics::for_loop_let_reserved_word(
 +                        self.end_span(expr_start),
 +                    ));
-@@ -518 +537,6 @@
+@@ -518 +541,6 @@
 -        self.parse_any_for_loop(for_start, parenthesis_opening_span, init_declaration, r#await)
 +        self.parse_any_for_loop(
 +            for_start,
@@ -320,13 +423,13 @@
 +            init_declaration,
 +            r#await,
 +        )
-@@ -533,2 +557,3 @@
+@@ -533,2 +561,3 @@
 -        let using_decl =
 -            self.context_remove(Context::In, |p| p.parse_using_declaration(StatementContext::For));
 +        let using_decl = self.context_remove(Context::In, |p| {
 +            p.parse_using_declaration(StatementContext::For)
 +        });
-@@ -538,3 +563,5 @@
+@@ -538,3 +567,5 @@
 -                self.error(diagnostics::await_using_declaration_not_allowed_in_for_in_statement(
 -                    using_decl.span,
 -                ));
@@ -335,19 +438,19 @@
 +                        using_decl.span,
 +                    ),
 +                );
-@@ -542,3 +569,3 @@
+@@ -542,3 +573,3 @@
 -                self.error(diagnostics::using_declaration_not_allowed_in_for_in_statement(
 -                    using_decl.span,
 -                ));
 +                self.error(
 +                    diagnostics::using_declaration_not_allowed_in_for_in_statement(using_decl.span),
 +                );
-@@ -611 +638,3 @@
+@@ -611 +642,3 @@
 -            self.error(diagnostics::initializer_in_for_in_lexical_declaration(declaration.span));
 +            self.error(diagnostics::initializer_in_for_in_lexical_declaration(
 +                declaration.span,
 +            ));
-@@ -687,2 +716,5 @@
+@@ -687,2 +720,5 @@
 -        let label =
 -            if self.can_insert_semicolon() { None } else { Some(self.parse_label_identifier()) };
 +        let label = if self.can_insert_semicolon() {
@@ -355,7 +458,7 @@
 +        } else {
 +            Some(self.parse_label_identifier())
 +        };
-@@ -697,2 +729,5 @@
+@@ -697,2 +733,5 @@
 -        let label =
 -            if self.can_insert_semicolon() { None } else { Some(self.parse_label_identifier()) };
 +        let label = if self.can_insert_semicolon() {
@@ -363,37 +466,86 @@
 +        } else {
 +            Some(self.parse_label_identifier())
 +        };
-@@ -756 +791,3 @@
+@@ -756 +795,3 @@
 -                        p.error(diagnostics::switch_multiple_default_clause(first_span, case.span));
 +                        p.error(diagnostics::switch_multiple_default_clause(
 +                            first_span, case.span,
 +                        ));
-@@ -864 +901,3 @@
+@@ -864 +905,3 @@
 -                    type_annotation.as_ref().map_or(pattern.span().end, |ta| ta.span.end),
 +                    type_annotation
 +                        .as_ref()
 +                        .map_or(pattern.span().end, |ta| ta.span.end),
+--- a/src/lexer/mod.rs
++++ b/src/lexer/mod.rs
+@@ -386,0 +387,5 @@
++    /// How many tokens the lexer has collected.
++    pub(crate) fn tokens_len(&self) -> usize {
++        self.tokens.len()
++    }
++
+--- a/src/lexer/trivia_builder.rs
++++ b/src/lexer/trivia_builder.rs
+@@ -5 +5 @@
+-use oxc_allocator::{Allocator, ArenaVec};
++use oxc_allocator::Allocator;
+@@ -16 +16,3 @@
+-    pub(crate) comments: ArenaVec<'a, Comment>,
++    /// Heap-held, not arena-held: a lazily parsed function body releases the arena it used
++    /// (`ParseOptions::lazy_function_bodies`), and the comments inside it outlive it.
++    pub(crate) comments: Vec<Comment>,
+@@ -19,0 +22,3 @@
++    /// The arena the lexer allocates in, which the comments no longer use.
++    arena: std::marker::PhantomData<&'a Allocator>,
++
+@@ -50 +55 @@
+-    pub fn new_in(allocator: &'a Allocator) -> Self {
++    pub fn new_in(_allocator: &'a Allocator) -> Self {
+@@ -54 +59 @@
+-            comments: ArenaVec::new_in(&allocator),
++            comments: Vec::new(),
+@@ -55,0 +61 @@
++            arena: std::marker::PhantomData,
 --- a/src/lib.rs
 +++ b/src/lib.rs
-@@ -110,0 +111,5 @@
-+
+@@ -111,0 +112,5 @@
 +/// Internal AST member name for an Annex B call-expression assignment target.
 +/// The NUL makes this impossible to spell as a JavaScript identifier. Consumers
 +/// opting into this representation must lower it to the required runtime error.
 +pub const CALL_ASSIGNMENT_TARGET_MARKER: &str = "\0oxc:call-assignment-target";
-@@ -207,0 +213,3 @@
++
+@@ -207,0 +213,7 @@
 +    /// Whether recursive parsing stopped at Quench's stack budget.
 +    pub stack_exhausted: bool,
 +
-@@ -216,0 +225,5 @@
++    /// The start of each function body parsed lazily (`ParseOptions::lazy_function_bodies`),
++    /// in source order: the program holds it with its directives and no statements.
++    pub lazy_function_bodies: Box<[u32]>,
++
+@@ -216,0 +229,5 @@
 +    /// Preserve call-expression assignment targets as synthetic static members
 +    /// using [`CALL_ASSIGNMENT_TARGET_MARKER`]. The consumer owns strict-mode
 +    /// validation and Annex B runtime-error lowering. Default: `false`.
 +    pub allow_call_assignment_targets: bool,
 +
-@@ -268,0 +282 @@
+@@ -263,0 +281,12 @@
++
++    /// When set, parse the bodies of plain JavaScript function declarations and expressions
++    /// that start at or after this offset, that no such body encloses and that are not
++    /// parenthesized, then release the arena they used and keep each as its directives only:
++    /// `ParserReturn::lazy_function_bodies` lists them, and a consumer parses each again from
++    /// its source span when it needs it. A consumer parsing one function's text again passes
++    /// an offset past that function's start, so the function itself parses whole. A body
++    /// whose parse left state the rest of the program reads (errors, escaped tokens past it,
++    /// module record entries, a new arena chunk) is kept whole.
++    ///
++    /// Default: `None`
++    pub lazy_function_bodies: Option<u32>,
+@@ -268,0 +298 @@
 +            allow_call_assignment_targets: false,
-@@ -299 +313,7 @@
+@@ -274,0 +305 @@
++            lazy_function_bodies: None,
+@@ -299 +330,7 @@
 -        Self { allocator, source_text, source_type, options, config: NoTokensParserConfig }
 +        Self {
 +            allocator,
@@ -402,7 +554,15 @@
 +            options,
 +            config: NoTokensParserConfig,
 +        }
-@@ -683 +703,7 @@
+@@ -663,0 +701,7 @@
++
++    /// How many lazily parsed function bodies enclose the current position
++    /// (`ParseOptions::lazy_function_bodies`).
++    lazy_depth: u32,
++
++    /// The start of each function body parsed lazily, in source order.
++    lazy_function_bodies: Vec<u32>,
+@@ -683 +727,7 @@
 -            lexer: Lexer::new(allocator, source_text, source_type, config.lexer_config(), unique),
 +            lexer: Lexer::new(
 +                allocator,
@@ -411,9 +571,12 @@
 +                config.lexer_config(),
 +                unique,
 +            ),
-@@ -705,0 +732 @@
+@@ -695,0 +746,2 @@
++            lazy_depth: 0,
++            lazy_function_bodies: Vec::new(),
+@@ -705,0 +758 @@
 +        let stack_exhausted = self.stack_is_exhausted();
-@@ -744 +771,6 @@
+@@ -744 +797,6 @@
 -            errors.extend(self.lexer.errors.drain(..).map(ParserDiagnostic::into_diagnostic));
 +            errors.extend(
 +                self.lexer
@@ -421,14 +584,21 @@
 +                    .drain(..)
 +                    .map(ParserDiagnostic::into_diagnostic),
 +            );
-@@ -768 +800,3 @@
+@@ -768 +826,3 @@
 -                    self.deferred_script_errors.into_iter().map(ParserDiagnostic::into_diagnostic),
 +                    self.deferred_script_errors
 +                        .into_iter()
 +                        .map(ParserDiagnostic::into_diagnostic),
-@@ -787,0 +822 @@
+@@ -779 +839,4 @@
+-        program.comments = self.lexer.trivia_builder.comments;
++        program.comments = ArenaVec::from_iter_in(
++            std::mem::take(&mut self.lexer.trivia_builder.comments),
++            &self.ast,
++        );
+@@ -787,0 +851,2 @@
++            lazy_function_bodies: std::mem::take(&mut self.lazy_function_bodies).into_boxed_slice(),
 +            stack_exhausted,
-@@ -860,3 +895,8 @@
+@@ -860,3 +925,8 @@
 -        let original_tokens =
 -            if self.lexer.config.tokens() { Some(self.lexer.take_tokens()) } else { None };
 -        let original = original_tokens.as_ref().map_or(&[][..], |tokens| tokens.as_slice());
@@ -440,35 +610,35 @@
 +        let original = original_tokens
 +            .as_ref()
 +            .map_or(&[][..], |tokens| tokens.as_slice());
-@@ -869 +909,5 @@
+@@ -869 +939,5 @@
 -            if self.lexer.config.tokens() { checkpoints.len() } else { 0 },
 +            if self.lexer.config.tokens() {
 +                checkpoints.len()
 +            } else {
 +                0
 +            },
-@@ -883 +927,2 @@
+@@ -883 +957,2 @@
 -                self.lexer.set_tokens(std::mem::replace(&mut replacements, ArenaVec::new_in(self)));
 +                self.lexer
 +                    .set_tokens(std::mem::replace(&mut replacements, ArenaVec::new_in(self)));
-@@ -903 +948,3 @@
+@@ -903 +978,3 @@
 -                let end = replacements[..replacement_start].last().map_or(0, Token::end);
 +                let end = replacements[..replacement_start]
 +                    .last()
 +                    .map_or(0, Token::end);
-@@ -915 +962,4 @@
+@@ -915 +992,4 @@
 -                edits.push((edit_start..original_index, replacement_start..replacements.len()));
 +                edits.push((
 +                    edit_start..original_index,
 +                    replacement_start..replacements.len(),
 +                ));
-@@ -921 +971,4 @@
+@@ -921 +1001,4 @@
 -            if edits.iter().all(|(range, replacement)| replacement.len() <= range.len()) {
 +            if edits
 +                .iter()
 +                .all(|(range, replacement)| replacement.len() <= range.len())
 +            {
-@@ -940,3 +993,5 @@
+@@ -940,3 +1023,5 @@
 -                let len = edits.iter().fold(tokens.len(), |len, (range, replacement)| {
 -                    len - range.len() + replacement.len()
 -                });
@@ -477,29 +647,29 @@
 +                    .fold(tokens.len(), |len, (range, replacement)| {
 +                        len - range.len() + replacement.len()
 +                    });
-@@ -992 +1047,2 @@
+@@ -992 +1077,2 @@
 -            self.errors.push(diagnostics::cover_initialized_name(expr.span()));
 +            self.errors
 +                .push(diagnostics::cover_initialized_name(expr.span()));
-@@ -1055 +1111,3 @@
+@@ -1055 +1141,3 @@
 -        let expr = Parser::new(&allocator, source, source_type).parse_expression().unwrap();
 +        let expr = Parser::new(&allocator, source, source_type)
 +            .parse_expression()
 +            .unwrap();
-@@ -1064 +1122,5 @@
+@@ -1064 +1152,5 @@
 -            assert!(Parser::new(&allocator, source, source_type).parse_expression().is_err());
 +            assert!(
 +                Parser::new(&allocator, source, source_type)
 +                    .parse_expression()
 +                    .is_err()
 +            );
-@@ -1086 +1148,4 @@
+@@ -1086 +1178,4 @@
 -            assert_eq!(ret.diagnostics.first().unwrap().to_string(), "Flow is not supported");
 +            assert_eq!(
 +                ret.diagnostics.first().unwrap().to_string(),
 +                "Flow is not supported"
 +            );
-@@ -1152,2 +1217,7 @@
+@@ -1152,2 +1247,7 @@
 -            let opts = ParseOptions { allow_v8_intrinsics: true, ..ParseOptions::default() };
 -            let ret = Parser::new(&allocator, source, source_type).with_options(opts).parse();
 +            let opts = ParseOptions {
@@ -509,7 +679,7 @@
 +            let ret = Parser::new(&allocator, source, source_type)
 +                .with_options(opts)
 +                .parse();
-@@ -1168,2 +1238,7 @@
+@@ -1168,2 +1268,7 @@
 -            let opts = ParseOptions { allow_v8_intrinsics: true, ..ParseOptions::default() };
 -            let ret = Parser::new(&allocator, source, source_type).with_options(opts).parse();
 +            let opts = ParseOptions {
@@ -519,7 +689,7 @@
 +            let ret = Parser::new(&allocator, source, source_type)
 +                .with_options(opts)
 +                .parse();
-@@ -1187,2 +1262,7 @@
+@@ -1187,2 +1292,7 @@
 -            let opts = ParseOptions { allow_v8_intrinsics: true, ..ParseOptions::default() };
 -            let ret = Parser::new(&allocator, source, source_type).with_options(opts).parse();
 +            let opts = ParseOptions {
@@ -529,29 +699,37 @@
 +            let ret = Parser::new(&allocator, source, source_type)
 +                .with_options(opts)
 +                .parse();
-@@ -1221 +1301,4 @@
+@@ -1221 +1331,4 @@
 -        assert_eq!(ret.program.hashbang.unwrap().value.as_str(), "/usr/bin/node");
 +        assert_eq!(
 +            ret.program.hashbang.unwrap().value.as_str(),
 +            "/usr/bin/node"
 +        );
-@@ -1229 +1312,5 @@
+@@ -1229 +1342,5 @@
 -        let sources = ["import x from 'foo';", "export {x} from 'foo';", "import.meta"];
 +        let sources = [
 +            "import x from 'foo';",
 +            "export {x} from 'foo';",
 +            "import.meta",
 +        ];
-@@ -1378 +1465,4 @@
+@@ -1378 +1495,4 @@
 -        assert_eq!(ret.diagnostics.first().unwrap().to_string(), "Unterminated string");
 +        assert_eq!(
 +            ret.diagnostics.first().unwrap().to_string(),
 +            "Unterminated string"
 +        );
-@@ -1422 +1512,5 @@
+@@ -1422 +1542,5 @@
 -            assert_eq!(unambiguous.tokens.as_slice(), module.tokens.as_slice(), "{source}");
 +            assert_eq!(
 +                unambiguous.tokens.as_slice(),
 +                module.tokens.as_slice(),
 +                "{source}"
 +            );
+--- a/src/module_record.rs
++++ b/src/module_record.rs
+@@ -37,0 +38,5 @@
++    /// How many entries a function body can add: dynamic imports and `import.meta`s.
++    pub fn function_body_entries(&self) -> usize {
++        self.module_record.dynamic_imports.len() + self.module_record.import_metas.len()
++    }
++

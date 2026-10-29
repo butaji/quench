@@ -386,6 +386,41 @@ const CASES: &[Case] = &[
         probes: &[("a", true), ("b", true), ("c", true), ("big", true)],
         hot: true,
     },
+    Case {
+        name: "every_record_family",
+        source: r#"
+            function make() {
+              const key = {tag: 'key'}; weak.key = new WeakRef(key);
+              const value = {tag: 'value'}; weak.value = new WeakRef(value);
+              const lost = {tag: 'lost'};
+              const lostValue = {tag: 'lost value'}; weak.lostValue = new WeakRef(lostValue);
+              const map = new WeakMap([[key, value], [lost, lostValue]]);
+              const keys = [key, 'a string beside the key'][Symbol.iterator]();
+              const settled = {tag: 'settled'}; weak.settled = new WeakRef(settled);
+              const promise = Promise.resolve(settled);
+              const awaited = {tag: 'awaited'}; weak.awaited = new WeakRef(awaited);
+              const never = new Promise(() => {});
+              async function waiting() { const held = awaited; await never; return held; }
+              const suspended = waiting();
+              const yielded = {tag: 'yielded'}; weak.yielded = new WeakRef(yielded);
+              function* generate() { yield yielded; }
+              const generator = generate();
+              return () => [map, keys, promise, never, suspended, generator].length;
+            }
+        "#,
+        // Each kept probe is reached through records of other families as well as the scope:
+        // the key through the array iterator, the awaited object through the suspended
+        // activation `never`'s reaction resumes, the yielded one through the generator.
+        probes: &[
+            ("key", true),
+            ("value", true),
+            ("lostValue", false),
+            ("settled", true),
+            ("awaited", true),
+            ("yielded", true),
+        ],
+        hot: false,
+    },
 ];
 
 /// The compilations the interpreter, specialized and native tiers share.
@@ -421,8 +456,15 @@ fn check_case(case: &Case, runs: u32) {
         "{HARNESS}{}\nfor (let run = 0; run < {runs}; run++) kept = make();\nif (typeof kept !== 'function') throw new Error('no closure');\n",
         case.source
     );
+    // Each case also runs with every full mark in parallel rounds (`force_parallel_mark_for_test`),
+    // whose closure environment edges the collector follows between rounds.
+    for parallel in [false, true] {
     for (compilation, program) in compilations(&source, case.name) {
+        let compilation = if parallel { format!("{compilation}, parallel mark") } else { compilation.to_owned() };
         let mut vm = Vm::new(TestHost::default().with_test262());
+        if parallel {
+            vm.heap.force_parallel_mark_for_test();
+        }
         vm.execute(&program).unwrap();
         collect(&mut vm, &program);
         for &(label, retained) in case.probes {
@@ -449,6 +491,7 @@ fn check_case(case: &Case, runs: u32) {
                 case.name,
             );
         }
+    }
     }
 }
 
@@ -505,4 +548,5 @@ retention_tests! {
     closure_retention_sibling_direct_eval_keeps_scope => "sibling_direct_eval_keeps_scope",
     closure_retention_with_keeps_scope => "with_keeps_scope",
     closure_retention_many_closures_over_one_scope => "many_closures_over_one_scope",
+    closure_retention_every_record_family => "every_record_family",
 }

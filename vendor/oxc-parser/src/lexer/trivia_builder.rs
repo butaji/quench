@@ -2,7 +2,7 @@ use std::num::NonZeroU32;
 
 use memchr::memchr_iter;
 
-use oxc_allocator::{Allocator, ArenaVec};
+use oxc_allocator::Allocator;
 use oxc_ast::ast::{Comment, CommentContent, CommentKind, CommentPosition};
 use oxc_span::Span;
 
@@ -13,9 +13,14 @@ pub struct TriviaBuilder<'a> {
     // This is a set of unique comments. Duplicated
     // comments could be generated in case of rewind; they are
     // filtered out at insertion time.
-    pub(crate) comments: ArenaVec<'a, Comment>,
+    /// Heap-held, not arena-held: a lazily parsed function body releases the arena it used
+    /// (`ParseOptions::lazy_function_bodies`), and the comments inside it outlive it.
+    pub(crate) comments: Vec<Comment>,
 
     pub(crate) irregular_whitespaces: Vec<Span>,
+
+    /// The arena the lexer allocates in, which the comments no longer use.
+    arena: std::marker::PhantomData<&'a Allocator>,
 
     // states
     /// index of processed comments
@@ -47,12 +52,13 @@ pub struct TriviaBuilder<'a> {
 const _: () = assert!(size_of::<Option<(u32, NonZeroU32)>>() == 8);
 
 impl<'a> TriviaBuilder<'a> {
-    pub fn new_in(allocator: &'a Allocator) -> Self {
+    pub fn new_in(_allocator: &'a Allocator) -> Self {
         let mut previous_token = Token::default();
         previous_token.set_kind(Kind::Undetermined);
         Self {
-            comments: ArenaVec::new_in(&allocator),
+            comments: Vec::new(),
             irregular_whitespaces: vec![],
+            arena: std::marker::PhantomData,
             processed: 0,
             saw_newline: true,
             saw_newline_for_comment: true,

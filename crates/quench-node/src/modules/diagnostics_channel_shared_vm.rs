@@ -4,7 +4,7 @@
 //! `DiagnosticsState`; tracing channels derive their event names from a prefix.
 
 use crate::host::NodeHost;
-use quench_runtime::{NativeContext, RootId, RootedError, Runtime, Value};
+use quench_runtime::{NativeContext, RootId, RootedError, Runtime};
 use std::collections::HashMap;
 
 #[derive(Default)]
@@ -417,6 +417,21 @@ pub(crate) fn channel_has_subscribers(state: &crate::host::SharedNodeState, name
     state.diagnostics.channels.get(name).is_some_and(|subscribers| !subscribers.is_empty())
 }
 
+/// Node's `Channel.publish` catches a subscriber's throw, reports it as an uncaught
+/// exception on the next tick and calls the next subscriber (`lib/diagnostics_channel.js`).
+const REPORT_SUBSCRIBER_ERROR: &str = quench_js_check::checked_js!(
+    r#"(error) => { process.nextTick(() => { throw error; }); }"#
+);
+
+/// `REPORT_SUBSCRIBER_ERROR` of the value subscriber `exception` threw.
+fn report_subscriber_error(context: &mut NativeContext<'_, NodeHost>, exception: RootId) -> Result<(), RootedError> {
+    let report = context.evaluate_script_rooted(REPORT_SUBSCRIBER_ERROR, "node:diagnostics_channel/report.js")?;
+    let undefined = context.undefined();
+    let reported = context.call_rooted(report, undefined, &[exception])?;
+    context.release_root(reported);
+    Ok(())
+}
+
 pub(crate) fn publish(
     context: &mut NativeContext<'_, NodeHost>,
     _: RootId,
@@ -443,6 +458,9 @@ pub(crate) fn publish(
         match result {
             Ok(result) => {
                 context.release_root(result);
+            }
+            Err(RootedError { exception: Some(exception), .. }) => {
+                report_subscriber_error(context, exception)?;
             }
             Err(error) => {
                 first_error = Some(error);
@@ -586,39 +604,17 @@ pub(crate) fn publish_named(
     Ok(())
 }
 
-pub(crate) fn publish_named_runtime(
+/// A snapshot array of the subscribers of channel `name`, or none when it has none: a host
+/// publisher calls each with the message and the name, as `publish` does.
+pub(crate) fn subscribers_rooted(
     runtime: &mut Runtime<NodeHost>,
-    program: &quench_runtime::ResidualProgram,
     name: &str,
-    message: RootId,
-) -> Result<(), String> {
+) -> Result<Option<RootId>, String> {
     let state = runtime.host_mut().shared_state();
-    let callbacks = state
-        .borrow()
-        .diagnostics
-        .channels
-        .get(name)
-        .cloned()
-        .unwrap_or_default();
-    let undefined = runtime.root(Value::UNDEFINED);
-    for callback in callbacks {
-        let result = runtime.call_rooted(callback, undefined, &[message]);
-        match result {
-            Ok(result) => {
-                runtime.release_root(result);
-            }
-            Err(error) => {
-                let message = runtime.format_error(program, &error.error);
-                if let Some(exception) = error.exception {
-                    runtime.release_root(exception);
-                }
-                runtime.release_root(undefined);
-                return Err(message);
-            }
-        }
-    }
-    runtime.release_root(undefined);
-    Ok(())
+    let callbacks = state.borrow().diagnostics.channels.get(name).filter(|callbacks| !callbacks.is_empty()).cloned();
+    callbacks
+        .map(|callbacks| runtime.array_rooted(&callbacks).map_err(|error| error.to_string()))
+        .transpose()
 }
 
 fn callback_wrapper(

@@ -44,6 +44,10 @@ On x64, a 32-bit load (`load.i32`, `uload8`/`uload16` to i32) counts as
 zeroing its register's upper 32 bits, as `movl`/`movzx` do, so widening its
 result for an address needs no `movl` copy (coremark's list walks carried
 one on each pointer-chasing step).
+On x64, a 32- or 64-bit `smul_overflow` lowers to the two-operand `imul`,
+which sets OF exactly when the signed product does not fit; upstream used the
+one-operand form, which pins its operand and result to `rax` and clobbers `rdx`
+with the unused high half (V8-v7 Crypto's am3 loop spilled around it).
 `#![allow(warnings)]` keeps the workspace's `-D warnings`
 from failing on upstream lints that a registry dependency's capped lints
 would hide. `QUENCH.patch` records these changes against the published

@@ -384,6 +384,11 @@ impl<'a, C: Config> Lexer<'a, C> {
         self.tokens = tokens;
     }
 
+    /// How many tokens the lexer has collected.
+    pub(crate) fn tokens_len(&self) -> usize {
+        self.tokens.len()
+    }
+
     /// Finalize tokens and return them.
     /// Called at very end of parsing.
     pub(crate) fn finalize_tokens(&mut self) -> ArenaVec<'a, Token> {

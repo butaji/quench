@@ -13,6 +13,13 @@ pub(super) fn constant(value: &StringLiteral<'_>) -> Constant {
     )
 }
 
+/// Whether `value` is well-formed Unicode, the `Constant::String` that `constant` makes: the
+/// parser's own fact (`StringLiteral::lone_surrogates`), which a property key's test
+/// (`FunctionCompiler::static_key`) reads on every quoted key without scanning its text.
+pub(super) fn is_well_formed(value: &StringLiteral<'_>) -> bool {
+    !value.lone_surrogates
+}
+
 pub(super) fn template_constant(value: &TemplateElementValue<'_>) -> Constant {
     from_raw(
         Some(value.raw.as_str()),

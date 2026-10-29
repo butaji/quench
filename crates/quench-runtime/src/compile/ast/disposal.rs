@@ -142,7 +142,7 @@ impl FunctionCompiler<'_, '_> {
             .last_mut()
             .expect("function disposal scope is present")
             .stack = Some(atom);
-        let constructor = self.load_name("DisposableStack");
+        let constructor = self.load_name(crate::bytecode::INTRINSIC_DISPOSABLE_STACK_BINDING);
         let stack = self.reg();
         self.emit(Op::Construct, stack, constructor, 0, 0);
         self.store_atom(atom, stack);

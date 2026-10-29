@@ -292,12 +292,22 @@ impl<H: Host> Vm<H> {
         if !self.is_function(callback) {
             return Err(self.type_error(p, "array callback is not callable".into()));
         }
+        // A result ArrayCreate makes is unreachable from guest code until it is returned, so
+        // its elements are stored as its own dense storage (`store_fresh_array_element`): a
+        // map's result over a dense receiver, which bounds its length, or a filter's.
+        let array_create = !typed_array
+            && matches!(native, Native::ArrayMap | Native::ArrayFilter)
+            && self.array_species_is_array_create(this);
+        let dense_receiver = self.heap.array_elements(this).is_some_and(|elements| elements.len() == length);
+        let fresh = array_create && (native == Native::ArrayFilter || dense_receiver);
         let result = match native {
             Native::ArrayMap if typed_array => {
                 Some(self.typed_array_species_create_for_writing(p, this, length)?)
             }
+            Native::ArrayMap if fresh => Some(self.hole_array(length)),
             Native::ArrayMap => Some(self.array_species_create(p, this, length)?),
             Native::ArrayFilter if typed_array => None,
+            Native::ArrayFilter if fresh => Some(self.hole_array(0)),
             Native::ArrayFilter => Some(self.array_species_create(p, this, 0)?),
             _ => None,
         };
@@ -339,6 +349,8 @@ impl<H: Host> Vm<H> {
                             .unwrap();
                         if typed_array {
                             self.typed_array_set(p, target, index, mapped)?;
+                        } else if fresh {
+                            self.store_fresh_array_element(target, index, mapped);
                         } else {
                             self.create_data_property_or_throw(p, target, index, mapped)?;
                         }
@@ -351,7 +363,11 @@ impl<H: Host> Vm<H> {
                                 .heap
                                 .root_value(result_root.expect("filter result is rooted"))
                                 .unwrap();
-                            self.create_data_property_or_throw(p, target, result_length, value)?;
+                            if fresh {
+                                self.store_fresh_array_element(target, result_length, value);
+                            } else {
+                                self.create_data_property_or_throw(p, target, result_length, value)?;
+                            }
                         }
                         result_length += 1;
                     }

@@ -362,20 +362,6 @@ impl<'a> Visit<'a> for StrictOctalNumericEarlyError {
     }
 }
 
-pub(super) fn parameter_early_error(
-    program: &Program<'_>,
-    inherited_strict: bool,
-) -> Option<String> {
-    let mut validator = ParameterEarlyErrors {
-        strict: inherited_strict,
-        in_parameters: false,
-        async_parameters: false,
-        yield_parameters_forbidden: false,
-        error: None,
-    };
-    validator.visit_program(program);
-    validator.error
-}
 
 /// Whether a function with these parameters and body can observe a binding of `name` its
 /// own scope would hold: a reference anywhere in them, or a direct eval, which can name it
@@ -506,6 +492,8 @@ const LENGTH_NAME: &str = "length";
 pub(super) struct FixedRegisterLocalFacts {
     /// Promotion is sound but for the body's `arguments` use, which `arguments` states.
     pub(super) safe: bool,
+    /// `safe` but for the functions and classes the body makes (`closures`).
+    body_safe: bool,
     pub(super) arguments: ArgumentsUse,
     /// Where the body first passes `arguments` as a value (`ArgumentsUse::Passes`), when no
     /// loop repeats it and no destructuring evaluates a default or key after its source, so
@@ -520,6 +508,57 @@ pub(super) struct FixedRegisterLocalFacts {
     /// A register-resident local loads as its register itself, so it stays sound only while
     /// no write can land between a read and that read's consumer within one statement.
     pub(super) nested_written_names: FxHashSet<String>,
+    /// What the functions and classes the body makes may do to its bindings
+    /// (`ClosureReach`); `None` when it makes none.
+    closures: Option<ClosureReach>,
+    /// The body itself may suspend at an `await` (a `for await`, an `await using`), not
+    /// counting the functions it makes.
+    pub(super) suspends: bool,
+}
+
+/// What functions and classes nested in a body may reach of its bindings, read without
+/// resolving their own scopes: every name any of them assigns, and whether one may observe
+/// the body's `arguments` binding itself (an arrow naming `arguments`, which is the
+/// body's own) or bind dynamically (a direct eval).
+#[derive(Default)]
+struct ClosureReach {
+    assigned: FxHashSet<String>,
+    observes_arguments: bool,
+    /// How many ordinary (non-arrow) functions enclose the visit: inside one, `arguments`
+    /// is that function's own.
+    ordinary_depth: u32,
+}
+
+impl<'a> Visit<'a> for ClosureReach {
+    fn visit_identifier_reference(&mut self, identifier: &oxc_ast::ast::IdentifierReference<'a>) {
+        self.observes_arguments |= self.ordinary_depth == 0 && identifier.name == ARGUMENTS;
+    }
+
+    fn visit_simple_assignment_target(&mut self, target: &SimpleAssignmentTarget<'a>) {
+        if let SimpleAssignmentTarget::AssignmentTargetIdentifier(identifier) = target {
+            self.assigned.insert(identifier.name.to_string());
+        }
+        walk::walk_simple_assignment_target(self, target);
+    }
+
+    fn visit_assignment_target_property_identifier(
+        &mut self,
+        property: &oxc_ast::ast::AssignmentTargetPropertyIdentifier<'a>,
+    ) {
+        self.assigned.insert(property.binding.name.to_string());
+        walk::walk_assignment_target_property_identifier(self, property);
+    }
+
+    fn visit_call_expression(&mut self, call: &CallExpression<'a>) {
+        self.observes_arguments |= is_direct_eval_call(call);
+        walk::walk_call_expression(self, call);
+    }
+
+    fn visit_function(&mut self, function: &Function<'a>, flags: ScopeFlags) {
+        self.ordinary_depth += 1;
+        walk::walk_function(self, function, flags);
+        self.ordinary_depth -= 1;
+    }
 }
 
 pub(super) fn fixed_register_local_facts(
@@ -536,9 +575,53 @@ pub(super) fn fixed_register_local_facts(
         unordered: bool,
         loops: u32,
         last_references: rustc_hash::FxHashMap<String, u32>,
+        closures: Option<ClosureReach>,
+        /// Whether `closures` gathers what the functions and classes reach, or only that the
+        /// body makes one.
+        reaches: bool,
+        /// The body itself awaits: an `await`, a `for await` or an `await using`.
+        suspends: bool,
     }
 
     impl Facts {
+        fn new(reaches: bool) -> Self {
+            Self {
+                safe: true,
+                arguments: ArgumentsUse::None,
+                bound_names: FxHashSet::default(),
+                nested_written_names: FxHashSet::default(),
+                first_pass: None,
+                unordered: false,
+                loops: 0,
+                last_references: rustc_hash::FxHashMap::default(),
+                closures: None,
+                reaches,
+                suspends: false,
+            }
+        }
+
+        fn walk(mut self, body: &[Statement<'_>], expression: Option<&Expression<'_>>) -> Self {
+            for statement in body {
+                self.visit_statement(statement);
+            }
+            if let Some(expression) = expression {
+                self.visit_expression(expression);
+            }
+            self
+        }
+
+        /// A function or class the body makes: its name, when it declares one, binds in the
+        /// body, and what it reaches of the body's bindings joins `closures`.
+        fn make_closure(&mut self, name: Option<&oxc_ast::ast::BindingIdentifier<'_>>, visit: impl FnOnce(&mut ClosureReach)) {
+            if let Some(name) = name {
+                self.bound_names.insert(name.name.to_string());
+            }
+            let reach = self.closures.get_or_insert_with(ClosureReach::default);
+            if self.reaches {
+                visit(reach);
+            }
+        }
+
         /// Visits `x = e`, `x op= e` or `x++` standing as a whole statement or for-update:
         /// the write to `x` follows every read in it, so only the operands are visited. A
         /// chain `x = y = e` of plain assignments is the same: each link writes after `e`.
@@ -731,6 +814,7 @@ pub(super) fn fixed_register_local_facts(
         }
 
         fn visit_for_of_statement(&mut self, statement: &oxc_ast::ast::ForOfStatement<'a>) {
+            self.suspends |= statement.r#await;
             self.loops += 1;
             walk::walk_for_of_statement(self, statement);
             self.loops -= 1;
@@ -776,54 +860,68 @@ pub(super) fn fixed_register_local_facts(
             walk::walk_unary_expression(self, expression);
         }
 
-        fn visit_function(&mut self, _: &Function<'a>, _: ScopeFlags) {
-            self.safe = false;
+        fn visit_await_expression(&mut self, expression: &oxc_ast::ast::AwaitExpression<'a>) {
+            self.suspends = true;
+            walk::walk_await_expression(self, expression);
         }
 
-        fn visit_arrow_function_expression(&mut self, _: &ArrowFunctionExpression<'a>) {
-            self.safe = false;
+        fn visit_variable_declaration(&mut self, declaration: &oxc_ast::ast::VariableDeclaration<'a>) {
+            self.suspends |= declaration.kind == oxc_ast::ast::VariableDeclarationKind::AwaitUsing;
+            walk::walk_variable_declaration(self, declaration);
         }
 
-        fn visit_class(&mut self, _: &oxc_ast::ast::Class<'a>) {
-            self.safe = false;
+        fn visit_function(&mut self, function: &Function<'a>, flags: ScopeFlags) {
+            self.make_closure(function.id.as_ref(), |reach| reach.visit_function(function, flags));
+        }
+
+        fn visit_arrow_function_expression(&mut self, arrow: &ArrowFunctionExpression<'a>) {
+            self.make_closure(None, |reach| reach.visit_arrow_function_expression(arrow));
+        }
+
+        fn visit_class(&mut self, class: &oxc_ast::ast::Class<'a>) {
+            self.make_closure(class.id.as_ref(), |reach| reach.visit_class(class));
         }
     }
 
-    let mut facts = Facts {
-        safe: true,
-        arguments: ArgumentsUse::None,
-        bound_names: FxHashSet::default(),
-        nested_written_names: FxHashSet::default(),
-        first_pass: None,
-        unordered: false,
-        loops: 0,
-        last_references: rustc_hash::FxHashMap::default(),
-    };
-    for statement in body {
-        facts.visit_statement(statement);
-    }
-    if let Some(expression) = expression {
-        facts.visit_expression(expression);
+    // What the body's functions and classes reach is read only for a safe body that reads its
+    // `arguments` (`arguments_mapping_unobserved`), which few do: walking every nested function
+    // again for each body that encloses it was most of this pass. Such a body is walked again,
+    // gathering the reach.
+    let mut facts = Facts::new(false).walk(body, expression);
+    if facts.safe && facts.closures.is_some() && matches!(facts.arguments, ArgumentsUse::Reads) {
+        facts = Facts::new(true).walk(body, expression);
     }
     FixedRegisterLocalFacts {
-        safe: facts.safe,
+        // Promotion keeps every local of a body that makes no function or class.
+        safe: facts.safe && facts.closures.is_none(),
+        body_safe: facts.safe,
         arguments: facts.arguments,
         first_pass: facts.first_pass.filter(|_| !facts.unordered),
         last_references: facts.last_references,
         bound_names: facts.bound_names,
         nested_written_names: facts.nested_written_names,
+        closures: facts.closures,
+        suspends: facts.suspends,
     }
 }
 
 impl FixedRegisterLocalFacts {
     /// Whether a sloppy body that rebinds no parameter cannot observe its `arguments`
-    /// mapping: it only reads the object, or it passes the object on after its last
-    /// reference to any parameter, so what writes the object's elements finds no parameter
-    /// read after it.
-    pub(super) fn arguments_mapping_unobserved(&self, parameters: impl Iterator<Item = impl AsRef<str>>) -> bool {
+    /// mapping: it only reads the object while no function it makes assigns a parameter,
+    /// or, making none, it passes the object on after its last reference to any parameter,
+    /// so what writes the object's elements finds no parameter read after it.
+    pub(super) fn arguments_mapping_unobserved(&self, mut parameters: impl Iterator<Item = impl AsRef<str>>) -> bool {
+        if !self.body_safe {
+            return false;
+        }
         match self.arguments {
-            ArgumentsUse::Reads => true,
-            ArgumentsUse::Passes => self.first_pass.is_some_and(|pass| {
+            // Only a write to a parameter could make a read differ from the value passed:
+            // the functions the body makes may not assign one, nor observe the binding.
+            ArgumentsUse::Reads => self.closures.as_ref().is_none_or(|reach| {
+                !reach.observes_arguments && parameters.all(|parameter| !reach.assigned.contains(parameter.as_ref()))
+            }),
+            // A function the body makes may read a parameter at any later time.
+            ArgumentsUse::Passes => self.closures.is_none() && self.first_pass.is_some_and(|pass| {
                 parameters.into_iter().all(|parameter| {
                     self.last_references.get(parameter.as_ref()).is_none_or(|&reference| reference < pass)
                 })
@@ -981,79 +1079,6 @@ impl ParameterEarlyErrors {
         if lexical.iter().any(|name| parameters.contains(name)) {
             self.error = Some("SyntaxError: lexical declaration conflicts with parameter".into());
         }
-    }
-}
-
-impl<'a> Visit<'a> for ParameterEarlyErrors {
-    fn visit_function(&mut self, function: &Function<'a>, flags: ScopeFlags) {
-        let own_strict = function.body.as_ref().is_some_and(|body| {
-            body.directives
-                .iter()
-                .any(|directive| directive.directive == "use strict")
-        });
-        self.validate_function(&function.params, own_strict);
-        if let Some(body) = &function.body {
-            self.validate_parameter_body(&function.params, &body.statements);
-        }
-        let previous = self.strict;
-        let previous_parameters = self.in_parameters;
-        let previous_async = self.async_parameters;
-        let previous_yield = self.yield_parameters_forbidden;
-        self.strict |= own_strict;
-        self.in_parameters = false;
-        self.async_parameters = function.r#async;
-        self.yield_parameters_forbidden = function.generator;
-        walk::walk_function(self, function, flags);
-        self.strict = previous;
-        self.in_parameters = previous_parameters;
-        self.async_parameters = previous_async;
-        self.yield_parameters_forbidden = previous_yield;
-    }
-
-    fn visit_arrow_function_expression(&mut self, function: &ArrowFunctionExpression<'a>) {
-        let own_strict = match &function.body {
-            oxc_ast::ast::ArrowFunctionBody::FunctionBody(body) => body
-                .directives
-                .iter()
-                .any(|directive| directive.directive == "use strict"),
-            _ => false,
-        };
-        self.validate_function(&function.params, own_strict);
-        if let oxc_ast::ast::ArrowFunctionBody::FunctionBody(body) = &function.body {
-            self.validate_parameter_body(&function.params, &body.statements);
-        }
-        let previous = self.strict;
-        let previous_parameters = self.in_parameters;
-        let previous_async = self.async_parameters;
-        let previous_yield = self.yield_parameters_forbidden;
-        self.strict |= own_strict;
-        self.in_parameters = false;
-        self.async_parameters = function.r#async;
-        self.yield_parameters_forbidden = false;
-        walk::walk_arrow_function_expression(self, function);
-        self.strict = previous;
-        self.in_parameters = previous_parameters;
-        self.async_parameters = previous_async;
-        self.yield_parameters_forbidden = previous_yield;
-    }
-
-    fn visit_formal_parameters(&mut self, params: &FormalParameters<'a>) {
-        let previous = self.in_parameters;
-        self.in_parameters = true;
-        walk::walk_formal_parameters(self, params);
-        self.in_parameters = previous;
-    }
-
-    fn visit_identifier_reference(&mut self, identifier: &oxc_ast::ast::IdentifierReference<'a>) {
-        let name = identifier.name.as_str();
-        if name == "yield" && (self.strict || self.in_parameters && self.yield_parameters_forbidden)
-        {
-            self.error = Some("SyntaxError: yield identifier is not allowed here".into());
-        } else if name == "await" && self.in_parameters && self.async_parameters {
-            self.error =
-                Some("SyntaxError: await identifier is not allowed in async parameters".into());
-        }
-        walk::walk_identifier_reference(self, identifier);
     }
 }
 
@@ -1662,81 +1687,188 @@ pub(super) fn collect_pattern_names(pattern: &BindingPattern<'_>, names: &mut im
     }
 }
 
-pub(super) fn strict_restricted_assignment_early_error(
-    program: &Program<'_>,
-    strict: bool,
-) -> Option<&'static str> {
-    let mut validator = StrictRestrictedAssignmentEarlyError {
-        strict,
-        found: None,
+/// What one walk of a program finds of its functions: their number, which sizes the
+/// compiler's function table, and the first restricted assignment and the last parameter
+/// error that `StrictRestrictedAssignmentEarlyError` and `ParameterEarlyErrors` report. Their
+/// strictness differs (a class method is strict for the first, not the second), so each keeps
+/// its own.
+pub(super) struct FunctionTreeFacts {
+    pub(super) functions: usize,
+    pub(super) restricted_assignment: Option<&'static str>,
+    pub(super) parameter_error: Option<String>,
+}
+
+/// The source functions of `program` and the early errors Quench's own checks find in it,
+/// in the order a compilation reports them.
+pub(super) fn program_early_errors(program: &Program<'_>, strict: bool) -> (usize, Vec<String>) {
+    let facts = function_tree_facts(program, strict);
+    let errors = facts
+        .restricted_assignment
+        .map(|name| format!("SyntaxError: assignment to {name} is not allowed in strict mode"))
+        .into_iter()
+        .chain(strict.then(|| strict_octal_numeric_early_error(program)).flatten())
+        .chain(block_early_error(program, strict))
+        .chain(strict_binding_early_error(program, strict))
+        .chain(facts.parameter_error)
+        .collect();
+    (facts.functions, errors)
+}
+
+pub(super) fn function_tree_facts(program: &Program<'_>, strict: bool) -> FunctionTreeFacts {
+    let mut walk = FunctionTreeWalk {
+        functions: 0,
+        restricted: StrictRestrictedAssignmentEarlyError { strict, found: None },
+        parameters: ParameterEarlyErrors {
+            strict,
+            in_parameters: false,
+            async_parameters: false,
+            yield_parameters_forbidden: false,
+            error: None,
+        },
     };
-    validator.visit_program(program);
-    validator.found
+    walk.visit_program(program);
+    FunctionTreeFacts {
+        functions: walk.functions,
+        restricted_assignment: walk.restricted.found,
+        parameter_error: walk.parameters.error,
+    }
 }
 
-struct StrictRestrictedAssignmentEarlyError {
+struct FunctionTreeWalk {
+    functions: usize,
+    restricted: StrictRestrictedAssignmentEarlyError,
+    parameters: ParameterEarlyErrors,
+}
+
+/// What each check keeps of its enclosing function, restored when the walk leaves one.
+#[derive(Clone, Copy)]
+struct EnclosingFunction {
+    restricted_strict: bool,
     strict: bool,
-    found: Option<&'static str>,
+    in_parameters: bool,
+    async_parameters: bool,
+    yield_parameters_forbidden: bool,
 }
 
-impl<'a> Visit<'a> for StrictRestrictedAssignmentEarlyError {
+impl FunctionTreeWalk {
+    fn enclosing(&self) -> EnclosingFunction {
+        EnclosingFunction {
+            restricted_strict: self.restricted.strict,
+            strict: self.parameters.strict,
+            in_parameters: self.parameters.in_parameters,
+            async_parameters: self.parameters.async_parameters,
+            yield_parameters_forbidden: self.parameters.yield_parameters_forbidden,
+        }
+    }
+
+    fn restore(&mut self, enclosing: EnclosingFunction) {
+        self.restricted.strict = enclosing.restricted_strict;
+        self.parameters.strict = enclosing.strict;
+        self.parameters.in_parameters = enclosing.in_parameters;
+        self.parameters.async_parameters = enclosing.async_parameters;
+        self.parameters.yield_parameters_forbidden = enclosing.yield_parameters_forbidden;
+    }
+}
+
+fn has_use_strict(directives: &[oxc_ast::ast::Directive<'_>]) -> bool {
+    directives.iter().any(|directive| directive.directive == "use strict")
+}
+
+impl<'a> Visit<'a> for FunctionTreeWalk {
     fn visit_function(&mut self, function: &Function<'a>, flags: ScopeFlags) {
-        let own_strict = function.body.as_ref().is_some_and(|body| {
-            body.directives
-                .iter()
-                .any(|directive| directive.directive == "use strict")
-        });
-        let previous = self.strict;
-        self.strict |= own_strict || flags.is_strict_mode();
+        self.functions += 1;
+        let own_strict = function.body.as_ref().is_some_and(|body| has_use_strict(&body.directives));
+        self.parameters.validate_function(&function.params, own_strict);
+        if let Some(body) = &function.body {
+            self.parameters.validate_parameter_body(&function.params, &body.statements);
+        }
+        let enclosing = self.enclosing();
+        self.restricted.strict |= own_strict || flags.is_strict_mode();
+        self.parameters.strict |= own_strict;
+        self.parameters.in_parameters = false;
+        self.parameters.async_parameters = function.r#async;
+        self.parameters.yield_parameters_forbidden = function.generator;
         walk::walk_function(self, function, flags);
-        self.strict = previous;
+        self.restore(enclosing);
     }
 
     fn visit_arrow_function_expression(&mut self, function: &ArrowFunctionExpression<'a>) {
+        self.functions += 1;
         let own_strict = match &function.body {
-            oxc_ast::ast::ArrowFunctionBody::FunctionBody(body) => body
-                .directives
-                .iter()
-                .any(|directive| directive.directive == "use strict"),
+            oxc_ast::ast::ArrowFunctionBody::FunctionBody(body) => has_use_strict(&body.directives),
             _ => false,
         };
-        let previous = self.strict;
-        self.strict |= own_strict;
+        self.parameters.validate_function(&function.params, own_strict);
+        if let oxc_ast::ast::ArrowFunctionBody::FunctionBody(body) = &function.body {
+            self.parameters.validate_parameter_body(&function.params, &body.statements);
+        }
+        let enclosing = self.enclosing();
+        self.restricted.strict |= own_strict;
+        self.parameters.strict |= own_strict;
+        self.parameters.in_parameters = false;
+        self.parameters.async_parameters = function.r#async;
+        self.parameters.yield_parameters_forbidden = false;
         walk::walk_arrow_function_expression(self, function);
-        self.strict = previous;
+        self.restore(enclosing);
+    }
+
+    fn visit_formal_parameters(&mut self, params: &FormalParameters<'a>) {
+        let previous = self.parameters.in_parameters;
+        self.parameters.in_parameters = true;
+        walk::walk_formal_parameters(self, params);
+        self.parameters.in_parameters = previous;
+    }
+
+    fn visit_identifier_reference(&mut self, identifier: &oxc_ast::ast::IdentifierReference<'a>) {
+        let parameters = &mut self.parameters;
+        let name = identifier.name.as_str();
+        if name == "yield"
+            && (parameters.strict || parameters.in_parameters && parameters.yield_parameters_forbidden)
+        {
+            parameters.error = Some("SyntaxError: yield identifier is not allowed here".into());
+        } else if name == "await" && parameters.in_parameters && parameters.async_parameters {
+            parameters.error =
+                Some("SyntaxError: await identifier is not allowed in async parameters".into());
+        }
+        walk::walk_identifier_reference(self, identifier);
     }
 
     fn visit_assignment_expression(&mut self, expression: &AssignmentExpression<'a>) {
-        if self.strict
+        if self.restricted.strict
             && let Some(name) = expression
                 .left
                 .as_simple_assignment_target()
-                .and_then(Self::restricted_target)
+                .and_then(StrictRestrictedAssignmentEarlyError::restricted_target)
         {
-            self.found.get_or_insert(name);
+            self.restricted.found.get_or_insert(name);
         }
         walk::walk_assignment_expression(self, expression);
     }
 
     fn visit_update_expression(&mut self, expression: &UpdateExpression<'a>) {
-        if self.strict
-            && let Some(name) = Self::restricted_target(&expression.argument)
+        if self.restricted.strict
+            && let Some(name) = StrictRestrictedAssignmentEarlyError::restricted_target(&expression.argument)
         {
-            self.found.get_or_insert(name);
+            self.restricted.found.get_or_insert(name);
         }
         walk::walk_update_expression(self, expression);
     }
 
     fn visit_unary_expression(&mut self, expression: &UnaryExpression<'a>) {
-        if self.strict
+        if self.restricted.strict
             && expression.operator == oxc_syntax::operator::UnaryOperator::Delete
             && let Expression::Identifier(identifier) = &expression.argument
-            && let Some(name) = Self::restricted_name(identifier.name.as_str())
+            && let Some(name) = StrictRestrictedAssignmentEarlyError::restricted_name(identifier.name.as_str())
         {
-            self.found.get_or_insert(name);
+            self.restricted.found.get_or_insert(name);
         }
         walk::walk_unary_expression(self, expression);
     }
+}
+
+struct StrictRestrictedAssignmentEarlyError {
+    strict: bool,
+    found: Option<&'static str>,
 }
 
 impl StrictRestrictedAssignmentEarlyError {

@@ -215,14 +215,13 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "errorStackFormat" (3) => crate::modules::node_errors_shared_vm::format_stack,
         method "errorPrepareStackTraceInitialize" (0) => crate::modules::node_errors_shared_vm::initialize_prepare_stack_trace,
         method "consoleGlobalInitialize" (0) => commonjs::initialize_console_global,
-        method "consoleLog" (0) => crate::modules::console_shared_vm::log,
+        method "consoleWrite" (0) => crate::modules::console_shared_vm::write,
         method "consoleLoad" (0) => crate::modules::console_shared_vm::load,
-        method "processWarningListener" (0) => crate::modules::process_shared_vm::warning_listener,
+        method "processWarningListenerInitialize" (0) => crate::modules::process_shared_vm::initialize_warning_listener,
         method "processWarningLibrary" (1) => crate::modules::process_warning_shared_vm::library,
         method "processWarningOption" (1) => crate::modules::process_warning_shared_vm::option,
         method "processWarningBasename" (2) => crate::modules::process_warning_shared_vm::path_basename,
         method "consoleWarningWriter" (0) => crate::modules::console_shared_vm::warning_writer,
-        method "consoleWarningWrite" (1) => crate::modules::console_shared_vm::warning_write,
         method "processMethodsInitialize" (0) => crate::modules::process_metrics_shared_vm::initialize_methods,
         method "processEmitWarningInitialize" (0) => crate::modules::process_shared_vm::initialize_emit_warning,
         method "processEnvInitialize" (0) => crate::modules::process_shared_vm::initialize_env,
@@ -573,7 +572,7 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "httpResponseRemoveHeader" (2) => crate::modules::http_shared_vm::response_remove_header,
         method "httpResponseWrite" (7) => crate::modules::http_shared_vm::response_write,
         method "httpResponseFinish" (7) => crate::modules::http_shared_vm::response_finish,
-        method "httpResponseWriteHead" (6) => crate::modules::http_shared_vm::response_write_head,
+        method "httpResponseWriteHead" (7) => crate::modules::http_shared_vm::response_write_head,
         method "httpResponseInitialize" (2) => crate::modules::http_shared_vm::response_initialize,
         method "httpResponseSend" (4) => crate::modules::http_shared_vm::response_send,
         method "assertStrictEqual" (2) => crate::modules::assert_shared_vm::strict_equal,
@@ -796,6 +795,9 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "tlsCollectAltName" (1) => crate::modules::tls_shared_vm::identity::collect_alt_name,
         method "tlsCheckServerIdentity" (2) => crate::modules::tls_shared_vm::identity::check_server_identity,
         method "httpIncomingBody" (1) => crate::modules::http_shared_vm::incoming::body,
+        method "objectTemplateCapture" (3) => crate::modules::http_shared_vm::incoming::capture_template,
+        method "objectTemplateCopy" (1) => crate::modules::http_shared_vm::incoming::copy_template,
+        method "byteStringEnd" (1) => crate::modules::webidl_shared_vm::byte_string_end,
         method "httpIncomingRead" (1) => crate::modules::http_shared_vm::incoming::read,
         method "httpIncomingDestroy" (2) => crate::modules::http_shared_vm::incoming::destroy,
         method "encodingUtf8" (0) => crate::modules::encoding_binding_shared_vm::encode,
@@ -831,7 +833,8 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "cryptoRsaCrypt" (8) => crate::modules::crypto_shared_vm::rsa_crypt,
         method "cryptoEcdh" (5) => crate::modules::crypto_shared_vm::ecdh,
         method "asyncResourceInit" (2) => crate::modules::async_hooks_shared_vm::initialize_resource,
-        method "asyncResourceRunInAsyncScope" (2) => crate::modules::async_hooks_shared_vm::run_in_async_scope,
+        method "asyncResourceEnterScope" (1) => crate::modules::async_hooks_shared_vm::enter_async_scope,
+        method "asyncResourceExitScope" (0) => crate::modules::async_hooks_shared_vm::exit_async_scope,
         method "asyncResourceEmitDestroy" (0) => crate::modules::async_hooks_shared_vm::emit_destroy,
         method "asyncLocalStorageInit" (1) => crate::modules::async_hooks_shared_vm::initialize_storage,
         method "asyncLocalStorageEnterWith" (1) => crate::modules::async_hooks_shared_vm::enter_with,
@@ -1046,6 +1049,13 @@ const BESIDE_ACTIVATIONS: &[&str] = &[
     "emitterListenerCount",
     "emitterEmitListeners",
     "bufferBindingByteLengthUtf8",
+    "bufferBindingAsciiSlice",
+    "bufferBindingBase64Slice",
+    "bufferBindingBase64urlSlice",
+    "bufferBindingHexSlice",
+    "bufferBindingLatin1Slice",
+    "bufferBindingUcs2Slice",
+    "bufferBindingUtf8Slice",
     "nextTick",
     "httpResponseGetHeader",
     "httpResponseGetHeaders",
@@ -1056,8 +1066,12 @@ const BESIDE_ACTIVATIONS: &[&str] = &[
     "httpResponseInitialize",
     "httpIncomingDestroy",
     "asyncResourceInit",
+    "asyncResourceEnterScope",
+    "asyncResourceExitScope",
     "stringDecoderDecode",
     "markAsUncloneable",
+    "objectTemplateCopy",
+    "byteStringEnd",
 ];
 
 impl quench_runtime::Host for NodeHost {
@@ -1080,7 +1094,13 @@ impl quench_runtime::Host for NodeHost {
     /// Splay 39800 -> 38988 KiB with the release before full collections).
     /// The allocator's free pages, which the collection's sweep just freed, leave with them
     /// (V8-v7 max RSS, static x86_64 unbolted, 2026-10-19: RegExp 6772-7044 -> 6664-6772 KiB,
-    /// EarleyBoyer 9048-9088 -> 8536-8576, the rest unchanged). Only under a policy that
+    /// EarleyBoyer 9048-9088 -> 8536-8576, the rest unchanged). Under every policy the
+    /// small-object allocator's empty pages leave too, past what its recent intervals took
+    /// (`quench_alloc::release_empty_pages`): a server's collections empty pages of every
+    /// phase's short-lived objects, which otherwise stayed resident beside the heap's next
+    /// peak (board load, glibc production, same host, 3 runs each, 2026-10-27, final peak
+    /// RSS: fastify 41.7-45.3 -> 39.4-40.8 MB, hono 43.0-49.4 -> 38.4-41.1 MB, throughput
+    /// within noise). Only under a policy that
     /// returns pages at collections (memory-first); every policy counts the collection for
     /// the release before output (`resident_pages::note_collection`).
     fn at_collection_boundary(&mut self, policy: quench_runtime::MemoryPolicy) {
@@ -1088,6 +1108,7 @@ impl quench_runtime::Host for NodeHost {
             crate::host::resident_pages::release_read_only_pages();
             crate::host::resident_pages::release_free_heap_pages();
         }
+        quench_alloc::release_empty_pages();
         crate::host::resident_pages::note_collection();
     }
 
@@ -1098,29 +1119,33 @@ impl quench_runtime::Host for NodeHost {
     /// NavierStokes `--jit` under MemoryFirst, plain x86_64 build, 2026-10-22: max RSS
     /// 10.84-10.94 -> 8.80-8.89 MB, Score within noise).
     fn before_native_compilation(&mut self) {
-        crate::host::resident_pages::release_read_only_pages();
+        crate::host::resident_pages::at_native_compilation(crate::host::resident_pages::NativeCompilation::Before);
     }
 
     /// The code generator's pages, and the allocator's pages its scratch memory freed, leave
     /// the resident set before the program runs on (V8-v7 Crypto `--jit` under MemoryFirst,
     /// plain x86_64 build, 2026-10-22: max RSS 6.82-6.84 -> 5.91 MB with the release before).
     fn after_native_compilation(&mut self) {
-        crate::host::resident_pages::release_read_only_pages();
-        crate::host::resident_pages::release_free_heap_pages();
+        crate::host::resident_pages::at_native_compilation(crate::host::resident_pages::NativeCompilation::After);
     }
 
-    /// The snapshot is a tracked read-only mapping (`startup_snapshot::load_or_schedule`).
-    fn snapshot_bytes_read(bytes: &[u8]) {
+    /// Snapshots and compile-cache entries are tracked read-only mappings
+    /// (`startup_snapshot::load_or_schedule`, `CacheEntry::load`).
+    fn kept_bytes_read(bytes: &[u8]) {
         crate::host::resident_pages::release_tracked_bytes(bytes);
     }
 
     fn kept_compiled_program(&mut self, name: &str, parts: &[&str]) -> Option<quench_runtime::KeptBytes> {
         self.compile_cache.entry(name, parts)?.load()
     }
+    fn keeps_compiled_programs(&self) -> bool {
+        self.compile_cache.directory().is_some()
+    }
     fn keep_compiled_program(&mut self, name: &str, parts: &[&str], bytes: &[u8]) {
         if let Some(entry) = self.compile_cache.entry(name, parts) {
             entry.store(bytes);
         }
+        crate::host::resident_pages::after_program_kept();
     }
     /// A decoded program after bootstrap (the entry and its modules, a builtin or library
     /// module loaded on first use) releases what loading it touched, as its compilation would
@@ -1140,6 +1165,10 @@ impl quench_runtime::Host for NodeHost {
     }
 
     fn proper_tail_calls(&self) -> bool {
+        false
+    }
+
+    fn nonextensible_applies_to_private(&self) -> bool {
         false
     }
 
@@ -1288,7 +1317,7 @@ impl quench_runtime::Host for NodeHost {
         let source = if extension == "json" {
             commonjs::source_text(&bytes).into_owned()
         } else {
-            let kind = commonjs::source_kind_of_real(&path)?;
+            let kind = commonjs::source_kind_of_real_bytes(&path, &bytes)?;
             if kind == quench_runtime::SourceKind::Module {
                 String::from_utf8(bytes)
                     .map_err(|error| format!("module {} is not UTF-8: {error}", path.display()))?
@@ -1480,6 +1509,7 @@ impl quench_runtime::Host for NodeHost {
         #[cfg(feature = "profile-memory")]
         context.profile_memory_checkpoint("node_event_target_polyfill");
         context.scoped(install_event_emitter)?;
+        commonjs::record_bootstrap_originals(context)?;
         #[cfg(feature = "profile-memory")]
         context.profile_memory_checkpoint("node_event_emitter_polyfill");
         crate::host::resident_pages::release_read_only_pages();

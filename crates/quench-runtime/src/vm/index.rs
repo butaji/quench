@@ -615,17 +615,16 @@ impl<H: Host> Vm<H> {
         let sparse = self.array_index_uses_sparse_storage(object, index, dense_len);
         if sparse {
             self.heap.sparse_set(object, index, value);
-        } else if let Some(array_object) = self.heap.array_mut(object) {
-            let elements = array_object.elements_mut();
+        } else {
             #[cfg(feature = "profile-aggregate")]
-            self.profile
-                .array_write_ownership(elements.owner_count() != 1);
-            let elements = mutable_array_elements(elements);
-            let capacity = elements.capacity();
-            elements.resize(index + 1, Value::DELETED);
-            elements[index] = value;
-            let grown = elements.capacity() - capacity;
-            self.heap.charge_payload_growth(grown * size_of::<Value>());
+            if let Some(array_object) = self.heap.array(object) {
+                self.profile
+                    .array_write_ownership(array_object.elements().owner_count() != 1);
+            }
+            self.heap.grow_array_elements(object, |elements| {
+                elements.resize(index + 1, Value::DELETED);
+                elements[index] = value;
+            });
         }
         self.sync_mapped_argument(object, index, value);
         true

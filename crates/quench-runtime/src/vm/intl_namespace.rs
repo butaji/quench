@@ -432,7 +432,7 @@ impl<H: Host> Vm<H> {
         new_target: Value,
     ) -> Result<Value, JsError> {
         if native != Native::IntlLocale {
-            return Err(self.type_error(p, "value is not a constructor".into()));
+            return Err(self.type_error(p, super::call_printer::NOT_CONSTRUCTOR_MESSAGE.into()));
         }
         self.with_call_roots(args.iter().copied().chain([new_target]), |vm| {
             let prototype = vm.intl_instance_prototype(p, new_target, Native::IntlLocale)?;

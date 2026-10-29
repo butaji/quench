@@ -111,7 +111,8 @@ impl CacheEntry {
             }
         }
         let temporary = self.path.with_extension(format!("{ENTRY_EXTENSION}.{}", std::process::id()));
-        if std::fs::write(&temporary, bytes).is_ok() && std::fs::rename(&temporary, &self.path).is_err() {
+        // A failed write (a full disk) leaves no partial temporary file behind either.
+        if std::fs::write(&temporary, bytes).and_then(|()| std::fs::rename(&temporary, &self.path)).is_err() {
             let _ = std::fs::remove_file(&temporary);
         }
     }

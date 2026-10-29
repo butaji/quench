@@ -139,6 +139,16 @@ impl ScopeChain {
         }
     }
 
+    /// The atoms a recording chain's compilation found bound in some scope.
+    #[cfg(feature = "verify-replay")]
+    pub(super) fn recorded_atoms(&self) -> Vec<Atom> {
+        match self {
+            Self::Scopes { memo: Some(memo), .. } => memo.borrow().keys().copied().collect(),
+            Self::Scopes { memo: None, .. } => Vec::new(),
+            Self::Memo(found) => found.iter().map(|(atom, _, _)| *atom).collect(),
+        }
+    }
+
     pub(super) fn contains(&self, atom: Atom) -> bool {
         self.find(atom).is_some()
     }

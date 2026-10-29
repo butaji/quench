@@ -468,20 +468,20 @@ impl Regex {
 
     /// The repository matcher, lowered from the kept source on first use.
     /// Whether a search from `start` of a subject of `length` code units whose unit at
-    /// `start` is `first` (`None` past its end) finds no match, decided before the subject
+    /// `start` is `first()` (`None` past its end) finds no match, decided before the subject
     /// is prepared: too few units remain for the shortest match, or the pattern's start
     /// anchor rules the position out (`backtrack::Program::anchor_excludes`). Code units
     /// are pattern units only outside Unicode mode, so the anchor applies only there. The
     /// complete matcher's facts are lowered once per pattern on first use, even for a
     /// pattern the automata backend matches.
-    pub fn excludes_search(&self, length: usize, start: usize, first: Option<u16>) -> bool {
+    pub fn excludes_search(&self, length: usize, start: usize, first: impl FnOnce() -> Option<u16>) -> bool {
         let complete = self.complete();
         length.saturating_sub(start) < complete.min_length
             || (!(self.flags.unicode || self.flags.unicode_sets)
                 && complete
                     .backtracking
                     .as_ref()
-                    .is_some_and(|program| program.anchor_excludes(start, first.map(u32::from))))
+                    .is_some_and(|program| program.anchor_excludes(start, first().map(u32::from))))
     }
 
     /// Whether every search of a subject, ASCII (`ascii`) or not, reads its text as it is,

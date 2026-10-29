@@ -140,21 +140,44 @@ fn inline_directory(context: &mut Context<'_>) -> Result<PathBuf, RootedError> {
 
 /// Node's explicit extension/package parse-goal policy, before guest execution.
 pub(crate) fn source_kind(path: &Path) -> Result<quench_runtime::SourceKind, String> {
-    // Only a `.js` or extensionless file asks its package scope, which is its real path's.
+    let path = real_path_for_kind(path)?;
+    source_kind_of_real(&path)
+}
+
+/// The path whose package scope decides `path`'s goal: only a `.js` or extensionless file
+/// asks its package scope, which is its real path's.
+fn real_path_for_kind(path: &Path) -> Result<std::borrow::Cow<'_, Path>, String> {
     if matches!(path.extension().and_then(|extension| extension.to_str()), Some("js") | None) {
-        let path = crate::host::real_path::real_path(path).map_err(|error| error.to_string())?;
-        return source_kind_of_real(&path);
+        return crate::host::real_path::real_path(path).map(std::borrow::Cow::Owned).map_err(|error| error.to_string());
     }
-    source_kind_of_real(path)
+    Ok(std::borrow::Cow::Borrowed(path))
 }
 
 /// `source_kind` of a path that is already its real path, as a module the loader resolved.
 pub(crate) fn source_kind_of_real(path: &Path) -> Result<quench_runtime::SourceKind, String> {
+    match declared_source_kind(path)? {
+        Some(kind) => Ok(kind),
+        None => {
+            let bytes = std::fs::read(path).map_err(|error| error.to_string())?;
+            Ok(detect_source_kind(&source_text(&bytes)))
+        }
+    }
+}
+
+/// `source_kind_of_real` of a file whose bytes the caller already holds: detecting from
+/// them keeps a second copy of a large file (typescript.js, 9 MB) from being read alongside.
+pub(crate) fn source_kind_of_real_bytes(path: &Path, bytes: &[u8]) -> Result<quench_runtime::SourceKind, String> {
+    Ok(declared_source_kind(path)?.unwrap_or_else(|| detect_source_kind(&source_text(bytes))))
+}
+
+/// The goal a real path's extension or package scope declares; none when Node's syntax
+/// detection of its text decides (`detect_source_kind`).
+fn declared_source_kind(path: &Path) -> Result<Option<quench_runtime::SourceKind>, String> {
     match path.extension().and_then(|extension| extension.to_str()) {
         // Node's `wasm` format is an ES module (`esm_wasm`).
-        Some("mjs" | "wasm") => return Ok(quench_runtime::SourceKind::Module),
-        Some("cjs" | "json" | "node") => return Ok(quench_runtime::SourceKind::Script),
-        Some(extension) if extension != "js" => return detect_source_kind(path),
+        Some("mjs" | "wasm") => return Ok(Some(quench_runtime::SourceKind::Module)),
+        Some("cjs" | "json" | "node") => return Ok(Some(quench_runtime::SourceKind::Script)),
+        Some(extension) if extension != "js" => return Ok(None),
         _ => {}
     }
     // Package scope is a filesystem/JSON question, not another resolution of
@@ -171,12 +194,9 @@ pub(crate) fn source_kind_of_real(path: &Path) -> Result<quench_runtime::SourceK
         let Some(explicit) = package_type(package)? else {
             continue;
         };
-        return match explicit {
-            Some(kind) => Ok(kind),
-            None => detect_source_kind(&path),
-        };
+        return Ok(explicit);
     }
-    detect_source_kind(&path)
+    Ok(None)
 }
 
 /// Node first accepts the CommonJS wrapper. Only syntax that cannot live in
@@ -232,25 +252,29 @@ pub(crate) fn source_text(bytes: &[u8]) -> std::borrow::Cow<'_, str> {
     }
 }
 
-fn detect_source_kind(path: &Path) -> Result<quench_runtime::SourceKind, String> {
-    let bytes = std::fs::read(path).map_err(|error| error.to_string())?;
-    let text = source_text(&bytes);
-    let text = text.strip_prefix('\u{feff}').unwrap_or(&text);
-    let text = if text.starts_with("#!") {
-        text.find('\n').map_or("", |newline| &text[newline..])
-    } else { text };
+fn detect_source_kind(text: &str) -> quench_runtime::SourceKind {
+    let text = script_body(text);
     // The goal follows from the text alone, which parsing it (twice, for a module) costs a
     // whole compilation of: typescript.js (9 MB) was parsed on every load. It is kept in the
     // compile cache, keyed by the exact text, as a compiled program is.
     let entry = text_facts_cache().entry(DETECTED_KIND_NAME, &[text]);
-    if let Some(kind) = entry.as_ref().and_then(|entry| entry.load()).and_then(|bytes| detected_kind_of(bytes.as_ref().as_ref())) {
-        return Ok(kind);
+    if let Some(kind) = entry.as_ref().and_then(detected_kind_in) {
+        return kind;
     }
     let kind = detect_text_kind(text);
     if let Some(entry) = entry {
         entry.store(&[detected_kind_byte(kind)]);
     }
-    Ok(kind)
+    kind
+}
+
+/// The parse goal an earlier detection of `text` kept in the compile cache, computing none.
+fn cached_source_kind(text: &str) -> Option<quench_runtime::SourceKind> {
+    text_facts_cache().entry(DETECTED_KIND_NAME, &[script_body(text)]).as_ref().and_then(detected_kind_in)
+}
+
+fn detected_kind_in(entry: &crate::host::compile_cache::CacheEntry) -> Option<quench_runtime::SourceKind> {
+    entry.load().and_then(|bytes| detected_kind_of(bytes.as_ref().as_ref()))
 }
 
 /// The compile-cache name a detected parse goal is kept under.
@@ -292,11 +316,10 @@ fn detect_text_kind(text: &str) -> quench_runtime::SourceKind {
     }
 }
 
+/// Holds one function's tree at a time: the whole tree of a large file (typescript.js, 9 MB)
+/// with its semantic tables was the peak of loading it.
 fn valid_source(source: &str, source_type: oxc_span::SourceType) -> bool {
-    let allocator = oxc_allocator::Allocator::default();
-    let parsed = oxc_parser::Parser::new(&allocator, source, source_type).parse();
-    parsed.diagnostics.is_empty() && oxc_semantic::SemanticBuilder::new()
-        .with_check_syntax_error(true).build(&parsed.program).diagnostics.is_empty()
+    quench_runtime::Engine::syntax_valid(source, source_type)
 }
 
 pub(super) fn initialize(context: &mut Context<'_>) -> Result<(), RootedError> {
@@ -1738,6 +1761,98 @@ pub(crate) fn library_require(context: &mut Context<'_>, id: &str) -> Result<Roo
     node_library_module(context, "internal/util.js", &relative)
 }
 
+/// A library function a host fast path stands for, as its definition made it: the value of
+/// `method` on the `prototype` of the constructor its `Definition` names, recorded before
+/// any other code can replace it (`record_library_originals`,
+/// `record_bootstrap_originals`). A fast path that skips a call of the method holds only
+/// while the method is still this value.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum LibraryOriginal {
+    /// `Readable.prototype.push` (`lib/internal/streams/readable.js`).
+    ReadablePush,
+    /// `EventEmitter.prototype.listenerCount` (the bootstrap's shared EventEmitter).
+    EmitterListenerCount,
+    /// `IncomingMessage.prototype._addHeaderLines` (`lib/_http_incoming.js`).
+    IncomingAddHeaderLines,
+}
+
+/// Where a `LibraryOriginal`'s constructor comes from.
+#[derive(Clone, Copy)]
+enum Definition {
+    /// An export of a library module, as the module finishes evaluating: the named one, or
+    /// the module's exports themselves.
+    Module(&'static str, Option<&'static str>),
+    /// A global the bootstrap installs, as the bootstrap finishes.
+    BootstrapGlobal(&'static str),
+}
+
+impl LibraryOriginal {
+    pub(crate) const ALL: [Self; 3] = [Self::ReadablePush, Self::EmitterListenerCount, Self::IncomingAddHeaderLines];
+
+    /// The constructor's definition and the prototype method the original is.
+    fn definition(self) -> (Definition, &'static str) {
+        match self {
+            Self::ReadablePush => (Definition::Module("lib/internal/streams/readable.js", None), "push"),
+            Self::IncomingAddHeaderLines => {
+                (Definition::Module("lib/_http_incoming.js", Some("IncomingMessage")), "_addHeaderLines")
+            }
+            Self::EmitterListenerCount => (Definition::BootstrapGlobal("__nodeEventEmitter"), "listenerCount"),
+        }
+    }
+}
+
+/// The recorded `LibraryOriginal`s, by their position in `LibraryOriginal::ALL`.
+#[derive(Default)]
+pub(crate) struct LibraryOriginals(pub(crate) [Option<RootId>; LibraryOriginal::ALL.len()]);
+
+impl LibraryOriginals {
+    pub(crate) fn get(&self, original: LibraryOriginal) -> Option<RootId> {
+        self.0[original as usize]
+    }
+}
+
+/// Records `original`, whose constructor is `constructor`, unless it is recorded.
+fn record_library_original(context: &mut Context<'_>, original: LibraryOriginal, constructor: RootId) -> Result<(), RootedError> {
+    if context.host_mut().shared_state().borrow().library_originals.get(original).is_some() {
+        return Ok(());
+    }
+    let (_, method) = original.definition();
+    let prototype = get(context, constructor, "prototype")?;
+    let value = get(context, prototype, method)?;
+    let retained = context.retain(value)?;
+    context.host_mut().shared_state().borrow_mut().library_originals.0[original as usize] = Some(retained);
+    Ok(())
+}
+
+/// Records the `LibraryOriginal`s the library module at `path` defines from its `exports`.
+fn record_library_originals(context: &mut Context<'_>, path: &Path, exports: RootId) -> Result<(), RootedError> {
+    for original in LibraryOriginal::ALL {
+        let Definition::Module(module, export) = original.definition().0 else {
+            continue;
+        };
+        if path == Path::new(module) {
+            let constructor = match export {
+                Some(name) => get(context, exports, name)?,
+                None => exports,
+            };
+            record_library_original(context, original, constructor)?;
+        }
+    }
+    Ok(())
+}
+
+/// Records the `LibraryOriginal`s of the bootstrap's globals, before any script runs.
+pub(crate) fn record_bootstrap_originals(context: &mut Context<'_>) -> Result<(), RootedError> {
+    for original in LibraryOriginal::ALL {
+        if let Definition::BootstrapGlobal(name) = original.definition().0 {
+            let global = context.global_root()?;
+            let constructor = get(context, global, name)?;
+            record_library_original(context, original, constructor)?;
+        }
+    }
+    Ok(())
+}
+
 pub(crate) fn node_library_export(
     context: &mut Context<'_>, owner: &str, relative: &str, name: &str,
 ) -> Result<RootId, RootedError> {
@@ -2716,7 +2831,15 @@ fn load_with_resolution(
         }
         return get(context, cached, "exports");
     }
-    let is_esm = goal == EntryGoal::Node && source_kind(filename).map_err(RootedError::host)? == quench_runtime::SourceKind::Module;
+    // A file whose goal its text decides compiles as CommonJS first, as Node's loader does:
+    // only a wrapper that does not compile asks the text for ES module syntax, so a CommonJS
+    // file is parsed once, not again for detection (typescript.js: a 9 MB text's tree and
+    // tables, the peak of loading it).
+    let declared = match goal {
+        EntryGoal::Node => declared_source_kind(&real_path_for_kind(filename).map_err(RootedError::host)?)
+            .map_err(RootedError::host)?,
+        _ => Some(quench_runtime::SourceKind::Script),
+    };
     let is_main = parent.is_none() && context.host_mut().commonjs_entry.is_some();
     let module = module_record(context, filename, parent, is_main)?;
     if let Some(parent) = parent {
@@ -2730,17 +2853,9 @@ fn load_with_resolution(
         let name = context.string_rooted(&key);
         set(context, directory, specifier, name)?;
     }
-    if is_esm {
-        let retained = context.retain(module)?;
-        roots.borrow_mut().active_esm_requires.insert(key.clone(), retained);
-    }
     let result = (|| {
-        if is_esm {
-            let exports = require_es_module(context, filename, parent)?;
-            set(context, module, "exports", exports)?;
-            let loaded = context.boolean(true);
-            set(context, module, "loaded", loaded)?;
-            return Ok(exports);
+        if declared == Some(quench_runtime::SourceKind::Module) {
+            return load_es_module(context, &key, module, filename, parent);
         }
         if filename.extension().and_then(|extension| extension.to_str()) == Some("node") {
             // Module._extensions['.node']: process.dlopen(module, filename).
@@ -2848,8 +2963,11 @@ const getLinkedBinding = () => ({});
                 } else {
                     ""
                 };
+                let undici = library_relative == Some(Path::new(crate::modules::webidl_shared_vm::UNDICI));
                 let prefix = if in_node_internal {
                     format!("(function (exports, require, module, __filename, __dirname, primordials, __nativeInternalBinding) {{ 'use strict'; {internal_binding}")
+                } else if undici {
+                    crate::modules::webidl_shared_vm::UNDICI_WRAPPER_PREFIX.to_owned()
                 } else {
                     format!("{WRAPPER_PREFIX}{internal_binding}")
                 };
@@ -2873,19 +2991,33 @@ const getLinkedBinding = () => ({});
                     // its records, as an embedded one does, and goes through the same cache.
                     None if in_node_internal => context
                         .evaluate_specialized_library_body_rooted(&prefix, text.to_owned(), &suffix, &key)?,
-                    None => {
-                        // Sized exactly: a formatted string grows by doubling, copying the module text each time.
-                        let wrapper_source = [prefix.as_str(), &text, &suffix].concat();
-                        // The wrapper holds the text now, so the file is released before
-                        // compiling it.
+                    // A text an earlier run detected as a module loads as one, without the
+                    // CommonJS compile that would fail again (a failed compile is not cached).
+                    None if declared.is_none() && cached_source_kind(text) == Some(quench_runtime::SourceKind::Module) => {
                         drop(file_text);
-                        let wrapper = evaluate_wrapper(
-                            context,
-                            &prefix,
-                            &wrapper_source,
-                            &key,
-                            is_main,
-                        )?;
+                        return load_es_module(context, &key, module, filename, parent);
+                    }
+                    None => {
+                        // The wrapper is built in the file's own buffer: growing a large one
+                        // remaps its pages, where a second copy of typescript.js (9 MB) was
+                        // briefly resident beside it. Its byte-order mark and `#!` line are
+                        // what the prefix replaces.
+                        let body_start = file_text.len() - text.len();
+                        let mut wrapper_source = file_text.into_owned();
+                        wrapper_source.reserve_exact(prefix.len() + suffix.len());
+                        wrapper_source.replace_range(..body_start, &prefix);
+                        wrapper_source.push_str(&suffix);
+                        let wrapper = match evaluate_wrapper(context, &prefix, &wrapper_source, &key, is_main) {
+                            Ok(wrapper) => wrapper,
+                            Err(_) if declared.is_none()
+                                && detect_source_kind(&wrapper_source[prefix.len()..wrapper_source.len() - suffix.len()])
+                                    == quench_runtime::SourceKind::Module =>
+                            {
+                                drop(wrapper_source);
+                                return load_es_module(context, &key, module, filename, parent);
+                            }
+                            Err(error) => return Err(error),
+                        };
                         // The compiled program keeps its own source; the module body runs
                         // inside this call, so the wrapper is released before it.
                         drop(wrapper_source);
@@ -2906,6 +3038,8 @@ const getLinkedBinding = () => ({});
                         context
                             .host_function(crate::host::shared_vm::operation("traceInternal"))?,
                     );
+                } else if undici {
+                    arguments.push(context.host_function(crate::host::shared_vm::operation("byteStringEnd"))?);
                 }
                 context.call_rooted(wrapper, exports, &arguments)?;
                 if let Some(root) = primordial_seed {
@@ -2921,6 +3055,12 @@ const getLinkedBinding = () => ({});
             let absent = context.undefined();
             context.call_rooted(initialize, absent, &[debug])?;
         }
+        if library_relative == Some(Path::new("lib/internal/util/inspect.js")) {
+            crate::modules::console_shared_vm::note_inspect_loaded(context)?;
+        }
+        if library_relative == Some(Path::new("lib/diagnostics_channel.js")) {
+            crate::modules::console_shared_vm::note_channels_loaded(context)?;
+        }
         if library_relative == Some(Path::new("lib/internal/console/global.js")) {
             // Node's bootstrap initializes the global console as it loads it; one loaded on
             // first use binds its streams before any module writes to it.
@@ -2935,14 +3075,15 @@ const getLinkedBinding = () => ({});
             crate::modules::console_shared_vm::adopt(context, module, exports)?;
         }
         let exports = get(context, module, "exports")?;
+        if let Some(path) = library_relative {
+            record_library_originals(context, path, exports)?;
+        }
         let loaded = context.boolean(true);
         set(context, module, "loaded", loaded)?;
         Ok(exports)
     })();
-    if is_esm {
-        if let Some(retained) = roots.borrow_mut().active_esm_requires.remove(&key) {
-            context.release_root(retained);
-        }
+    if let Some(retained) = roots.borrow_mut().active_esm_requires.remove(&key) {
+        context.release_root(retained);
     }
     if result.is_err() {
         cache.remove(context, &key)?;
@@ -2974,6 +3115,24 @@ const getLinkedBinding = () => ({});
         }
     }
     result
+}
+
+/// `require` of an ES module: `module` is active until `load_with_resolution` finishes, so a
+/// cycle back to it is the error Node reports.
+fn load_es_module(
+    context: &mut Context<'_>,
+    key: &str,
+    module: RootId,
+    filename: &Path,
+    parent: Option<RootId>,
+) -> Result<RootId, RootedError> {
+    let retained = context.retain(module)?;
+    context.host_mut().shared_state().borrow_mut().active_esm_requires.insert(key.to_owned(), retained);
+    let exports = require_es_module(context, filename, parent)?;
+    set(context, module, "exports", exports)?;
+    let loaded = context.boolean(true);
+    set(context, module, "loaded", loaded)?;
+    Ok(exports)
 }
 
 /// A CommonJS module's executed text: its file without a byte-order mark or a leading

@@ -187,7 +187,7 @@ pub(crate) fn notify_wake(signal: &WakeSignal) {
     signal.notify();
 }
 
-fn wake_signal() -> std::io::Result<Arc<WakeSignal>> {
+pub(crate) fn wake_signal() -> std::io::Result<Arc<WakeSignal>> {
     WAKE_SIGNAL.with(|slot| {
         if let Some(signal) = slot.borrow().as_ref() {
             return Ok(Arc::clone(signal));

@@ -379,7 +379,7 @@ pub(crate) fn poll(
                         prune_collected_responses(runtime, shared_state);
                         let request_async_id =
                             crate::modules::async_hooks_shared_vm::create_context(shared_state);
-                        let (server_root, response_id, response_factory, incoming_factory) = {
+                        let (server_root, response_id, request_dispatch) = {
                             let mut host = shared_state.borrow_mut();
                             let server_id = host.http.connections[&socket].server;
                             let server_root = host
@@ -390,18 +390,14 @@ pub(crate) fn poll(
                                 .ok_or_else(|| "HTTP server root was released early".to_owned())?;
                             let response_id =
                                 host.http.response_id().map_err(|error| error.to_owned())?;
-                            let response_factory = host
+                            let request_dispatch = host
                                 .http
-                                .response_factory
-                                .ok_or_else(|| "HTTP response factory is unavailable".to_owned())?;
-                            let incoming_factory = host.http.incoming_factory.ok_or_else(|| {
-                                "HTTP incoming-message factory is unavailable".to_owned()
-                            })?;
+                                .request_dispatch
+                                .ok_or_else(|| "HTTP request dispatch is unavailable".to_owned())?;
                             let http10 = message.version == "1.0";
-                            let close_after_response = http10 || message.headers.iter().any(|(name, value)| {
-                                name.eq_ignore_ascii_case("connection")
-                                    && value.eq_ignore_ascii_case("close")
-                            });
+                            let close_after_response = http10
+                                || super::protocol::header(&message.raw_headers, "connection")
+                                    .is_some_and(|value| value.eq_ignore_ascii_case("close"));
                             host.http
                                 .connections
                                 .get_mut(&socket)
@@ -421,12 +417,12 @@ pub(crate) fn poll(
                                     body: Default::default(),
                                     send_date: true,
                                     http10,
-                                    use_chunked_encoding_by_default: !http10 || message.headers.iter().any(|(name, value)| name.eq_ignore_ascii_case("te") && value.split(',').any(|token| token.trim().eq_ignore_ascii_case("chunked"))),
+                                    use_chunked_encoding_by_default: !http10 || super::protocol::header(&message.raw_headers, "te").is_some_and(|value| value.split(',').any(|token| token.trim().eq_ignore_ascii_case("chunked"))),
                                     lifecycle: super::state::ResponseLifecycle::Open,
                                     owner: None,
                                 },
                             );
-                            (server_root, response_id, response_factory, incoming_factory)
+                            (server_root, response_id, request_dispatch)
                         };
                         let socket_object =
                             runtime.object_rooted().map_err(|error| error.to_string())?;
@@ -435,7 +431,6 @@ pub(crate) fn poll(
                             message.method,
                             message.target,
                             message.version,
-                            message.headers,
                             message.raw_headers,
                             socket_object,
                         ) {
@@ -445,118 +440,64 @@ pub(crate) fn poll(
                                 return Err(error);
                             }
                         };
-                        let body_text = latin1_text(message.body.as_deref().unwrap_or_default());
-                        let body = runtime.string_rooted(&body_text);
-                        let undefined = runtime.root(Value::UNDEFINED);
-                        let open = runtime.root(if body_invalid {
-                            Value::TRUE
-                        } else {
-                            Value::FALSE
-                        });
-                        let transport = runtime.root(Value::number(socket as f64));
-                        let server_side = runtime.root(Value::TRUE);
-                        let readable = match runtime.call_rooted(
-                            incoming_factory,
-                            undefined,
-                            &[head.as_slice(), &[body, open, transport, server_side]].concat(),
-                        ) {
-                            Ok(readable) => readable,
-                            Err(error) => {
-                                let message = runtime.format_error(program, &error.error);
-                                if let Some(exception) = error.exception {
-                                    runtime.release_root(exception);
-                                }
-                                release_roots(runtime, &head);
-                                runtime.release_root(body);
-                                runtime.release_root(open);
-                                runtime.release_root(transport);
-                                runtime.release_root(server_side);
-                                runtime.release_root(undefined);
-                                runtime.release_root(socket_object);
-                                return Err(message);
-                            }
-                        };
-                        release_roots(runtime, &head);
-                        runtime.release_root(body);
-                        runtime.release_root(open);
-                        runtime.release_root(transport);
-                        runtime.release_root(server_side);
-                        runtime.release_root(undefined);
-                        let id = runtime.root(Value::number(response_id as f64));
-                        let status = runtime.root(Value::number(200.0));
-                        let undefined = runtime.root(Value::UNDEFINED);
-                        let response = match runtime.construct_rooted(
-                            response_factory,
-                            response_factory,
-                            &[id, status, readable, server_root, socket_object],
-                        ) {
-                            Ok(response) => response,
-                            Err(error) => {
-                                runtime.release_root(readable);
-                                runtime.release_root(id);
-                                runtime.release_root(status);
-                                runtime.release_root(undefined);
-                                runtime.release_root(socket_object);
-                                let message = runtime.format_error(program, &error.error);
-                                if let Some(exception) = error.exception {
-                                    runtime.release_root(exception);
-                                }
-                                return Err(message);
-                            }
-                        };
                         // The start message is made only for a channel with subscribers, as
                         // Node's server publishes it only then (`hasSubscribers`).
-                        let subscribed = crate::modules::diagnostics_channel_shared_vm::channel_has_subscribers(
-                            &shared_state.borrow(),
-                            REQUEST_START_CHANNEL,
-                        );
-                        let diagnostic_message = match subscribed
-                            .then(|| diagnostics_message(runtime, readable, response, server_root, socket_object))
-                            .transpose()
-                        {
-                            Ok(message) => message,
+                        let start_subscribers =
+                            crate::modules::diagnostics_channel_shared_vm::subscribers_rooted(
+                                runtime,
+                                REQUEST_START_CHANNEL,
+                            );
+                        let start_subscribers = match start_subscribers {
+                            Ok(subscribers) => subscribers,
                             Err(error) => {
-                                runtime.release_root(readable);
-                                runtime.release_root(response);
-                                runtime.release_root(id);
-                                runtime.release_root(status);
-                                runtime.release_root(undefined);
+                                release_roots(runtime, &head);
                                 runtime.release_root(socket_object);
                                 return Err(error);
                             }
                         };
+                        let start_channel = match start_subscribers {
+                            Some(_) => runtime.string_rooted(REQUEST_START_CHANNEL),
+                            None => runtime.root(Value::UNDEFINED),
+                        };
+                        let start_subscribers = start_subscribers
+                            .unwrap_or_else(|| runtime.root(Value::UNDEFINED));
+                        let body_text = latin1_text(message.body.as_deref().unwrap_or_default());
+                        // `REQUEST_DISPATCH_FACTORY`'s parameters; every root but the server's
+                        // belongs to this request.
+                        let mut arguments = head;
+                        arguments.extend([
+                            runtime.string_rooted(&body_text),
+                            runtime.root(if body_invalid { Value::TRUE } else { Value::FALSE }),
+                            runtime.root(Value::number(socket as f64)),
+                            runtime.root(Value::number(response_id as f64)),
+                            runtime.root(Value::number(f64::from(super::operations::DEFAULT_STATUS))),
+                            server_root,
+                            start_subscribers,
+                            start_channel,
+                        ]);
+                        let undefined = runtime.root(Value::UNDEFINED);
                         let delivered = {
                             let _scope = crate::modules::async_hooks_shared_vm::enter_context(
                                 shared_state,
                                 request_async_id,
                             );
-                            let diagnostic_result = match diagnostic_message {
-                                Some(message) => crate::modules::diagnostics_channel_shared_vm::publish_named_runtime(
-                                    runtime,
-                                    program,
-                                    REQUEST_START_CHANNEL,
-                                    message,
-                                ),
-                                None => Ok(()),
-                            };
-                            match diagnostic_result {
-                                Ok(()) => emit_event(
-                                    runtime,
-                                    program,
-                                    server_root,
-                                    "request",
-                                    &[readable, response],
-                                ),
-                                Err(error) => Err(error),
+                            runtime.call_rooted(request_dispatch, undefined, &arguments)
+                        };
+                        let delivered = match delivered {
+                            Ok(result) => {
+                                runtime.release_root(result);
+                                Ok(())
+                            }
+                            Err(error) => {
+                                let message = runtime.format_error(program, &error.error);
+                                if let Some(exception) = error.exception {
+                                    runtime.release_root(exception);
+                                }
+                                Err(message)
                             }
                         };
-                        if let Some(message) = diagnostic_message {
-                            runtime.release_root(message);
-                        }
-                        runtime.release_root(readable);
-                        runtime.release_root(response);
-                        runtime.release_root(id);
-                        runtime.release_root(status);
+                        arguments.retain(|root| *root != server_root);
+                        release_roots(runtime, &arguments);
                         runtime.release_root(undefined);
                         runtime.release_root(socket_object);
                         delivered?;
@@ -601,7 +542,7 @@ pub(crate) fn poll(
                     }
                     if let Some(head) = progress.head.as_ref() {
                         let reusable =
-                            super::protocol::response_keep_alive(&head.version, &head.headers);
+                            super::protocol::response_keep_alive(&head.version, &head.raw_headers);
                         if !reusable {
                             if let Some(client) = shared_state
                                 .borrow_mut()
@@ -952,7 +893,6 @@ fn deliver_client_response_head(
         runtime,
         message.status,
         message.message,
-        message.headers,
         message.raw_headers,
         false,
     )?;
@@ -1022,7 +962,7 @@ fn dispatch_server_upgrade(
         let connection = host.http.connections.get_mut(&socket_id).unwrap();
         connection.request_dispatched = true;
         connection.upgraded = true;
-        connection.received.clear();
+        connection.clear_received();
         (server_id, incoming_factory)
     };
     let create_socket = runtime
@@ -1067,7 +1007,6 @@ fn dispatch_server_upgrade(
         message.method,
         message.target,
         message.version,
-        message.headers,
         message.raw_headers,
         socket,
     ) {
@@ -1250,45 +1189,7 @@ fn deliver_client_body_chunk(
     if bytes.is_empty() {
         return Ok(());
     }
-    let global = runtime.global_root().map_err(|error| error.to_string())?;
-    let buffer_key = runtime.string_rooted("Buffer");
-    let buffer = runtime.get_property_rooted(global, buffer_key);
-    let buffer = match buffer {
-        Ok(buffer) => buffer,
-        Err(error) => {
-            runtime.release_root(buffer_key);
-            runtime.release_root(global);
-            return Err(error.to_string());
-        }
-    };
-    let from_key = runtime.string_rooted("from");
-    let from = runtime.get_property_rooted(buffer, from_key);
-    let from = match from {
-        Ok(from) => from,
-        Err(error) => {
-            runtime.release_root(from_key);
-            runtime.release_root(buffer);
-            runtime.release_root(buffer_key);
-            runtime.release_root(global);
-            return Err(error.to_string());
-        }
-    };
-    let body = runtime.string_rooted(&latin1_text(bytes));
-    let encoding = runtime.string_rooted("latin1");
-    let chunk = runtime.call_rooted(from, buffer, &[body, encoding]);
-    let chunk = match chunk {
-        Ok(chunk) => chunk,
-        Err(error) => {
-            runtime.release_root(body);
-            runtime.release_root(encoding);
-            runtime.release_root(from);
-            runtime.release_root(from_key);
-            runtime.release_root(buffer);
-            runtime.release_root(buffer_key);
-            runtime.release_root(global);
-            return Err(error.to_string());
-        }
-    };
+    let chunk = buffer_from_bytes(runtime, bytes)?;
     let push_key = runtime.string_rooted("push");
     let result = match runtime.get_property_rooted(readable, push_key) {
         Ok(push) => {
@@ -1300,13 +1201,6 @@ fn deliver_client_body_chunk(
     };
     runtime.release_root(push_key);
     runtime.release_root(chunk);
-    runtime.release_root(body);
-    runtime.release_root(encoding);
-    runtime.release_root(from);
-    runtime.release_root(from_key);
-    runtime.release_root(buffer);
-    runtime.release_root(buffer_key);
-    runtime.release_root(global);
     result
         .map(|value| runtime.release_root(value))
         .map(|_| ())
@@ -1451,7 +1345,7 @@ pub(crate) fn cleanup(
                 std::iter::once(client.request_root).chain(client.response_root)
             }));
             let responses = shared.responses.into_values().collect::<Vec<_>>();
-            roots.extend(shared.response_factory);
+            roots.extend(shared.request_dispatch);
             roots.extend(shared.incoming_factory);
             roots.extend(shared.response_tracking.into_iter().flat_map(super::state::ResponseTracking::roots));
             for socket in host.net_sockets.values_mut() {
@@ -1837,29 +1731,32 @@ fn queue_net_method_completion(
     Ok(())
 }
 
+/// A Buffer holding a copy of `bytes`: a Uint8Array owning the one copy, and
+/// `Buffer.from(arrayBuffer)` over its store, which Buffer shares rather than copies.
 fn buffer_from_bytes(runtime: &mut Runtime<NodeHost>, bytes: &[u8]) -> Result<RootId, String> {
+    let view = runtime.uint8_array_from_rooted(bytes.to_vec()).map_err(|error| error.to_string())?;
+    let store_key = runtime.string_rooted("buffer");
+    let store = runtime.get_property_rooted(view, store_key);
+    runtime.release_root(store_key);
+    runtime.release_root(view);
+    let store = store.map_err(|error| error.to_string())?;
     let global = runtime.global_root().map_err(|error| error.to_string())?;
     let buffer_key = runtime.string_rooted("Buffer");
-    let buffer = runtime
-        .get_property_rooted(global, buffer_key)
-        .map_err(|error| error.to_string())?;
+    let buffer = runtime.get_property_rooted(global, buffer_key);
     runtime.release_root(buffer_key);
     runtime.release_root(global);
+    let buffer = buffer.map_err(|error| error.to_string())?;
     let from_key = runtime.string_rooted("from");
-    let from = runtime
-        .get_property_rooted(buffer, from_key)
-        .map_err(|error| error.to_string())?;
+    let from = runtime.get_property_rooted(buffer, from_key);
     runtime.release_root(from_key);
-    let text = runtime.string_rooted(&latin1_text(bytes));
-    let encoding = runtime.string_rooted("latin1");
-    let chunk = runtime
-        .call_rooted(from, buffer, &[text, encoding])
-        .map_err(|error| error.to_string())?;
-    runtime.release_root(encoding);
-    runtime.release_root(text);
-    runtime.release_root(from);
+    let chunk = from.and_then(|from| {
+        let chunk = runtime.call_rooted(from, buffer, &[store]);
+        runtime.release_root(from);
+        chunk
+    });
     runtime.release_root(buffer);
-    Ok(chunk)
+    runtime.release_root(store);
+    chunk.map_err(|error| error.to_string())
 }
 
 fn emit(
@@ -1910,7 +1807,6 @@ fn request_head(
     method: String,
     path: String,
     version: String,
-    _headers: Vec<(String, String)>,
     raw_headers: Vec<(String, String)>,
     socket: RootId,
 ) -> Result<Vec<RootId>, String> {
@@ -1934,49 +1830,12 @@ fn request_head(
 /// The diagnostics channel a server's request start publishes to.
 const REQUEST_START_CHANNEL: &str = "http.server.request.start";
 
-fn diagnostics_message(
-    runtime: &mut Runtime<NodeHost>,
-    request: RootId,
-    response: RootId,
-    server: RootId,
-    socket: RootId,
-) -> Result<RootId, String> {
-    let message = runtime.object_rooted().map_err(|error| error.to_string())?;
-    for (name, value) in [
-        ("request", request),
-        ("response", response),
-        ("server", server),
-        ("socket", socket),
-    ] {
-        let retained = match duplicate_root(runtime, value) {
-            Ok(retained) => retained,
-            Err(error) => {
-                runtime.release_root(message);
-                return Err(error);
-            }
-        };
-        if let Err(error) = set_named(runtime, message, name, retained) {
-            runtime.release_root(message);
-            return Err(error);
-        }
-    }
-    Ok(message)
-}
-
-fn duplicate_root(runtime: &mut Runtime<NodeHost>, root: RootId) -> Result<RootId, String> {
-    let value = runtime
-        .rooted_value(root)
-        .ok_or_else(|| "shared HTTP value root is no longer live".to_owned())?;
-    Ok(runtime.root(value))
-}
-
 /// A client response's head as the incoming-message factory's leading arguments
 /// (`incoming::MessageHead`).
 fn response_head(
     runtime: &mut Runtime<NodeHost>,
     status: u16,
     message: String,
-    _headers: Vec<(String, String)>,
     raw_headers: Vec<(String, String)>,
     complete: bool,
 ) -> Result<Vec<RootId>, String> {

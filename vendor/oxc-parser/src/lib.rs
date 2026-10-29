@@ -213,6 +213,10 @@ pub struct ParserReturn<'a> {
     /// Whether recursive parsing stopped at Quench's stack budget.
     pub stack_exhausted: bool,
 
+    /// The start of each function body parsed lazily (`ParseOptions::lazy_function_bodies`),
+    /// in source order: the program holds it with its directives and no statements.
+    pub lazy_function_bodies: Box<[u32]>,
+
     /// Whether the file is [flow](https://flow.org).
     pub is_flow_language: bool,
 }
@@ -274,6 +278,18 @@ pub struct ParseOptions {
     ///
     /// Default: `true`
     pub enable_ident_hashes: bool,
+
+    /// When set, parse the bodies of plain JavaScript function declarations and expressions
+    /// that start at or after this offset, that no such body encloses and that are not
+    /// parenthesized, then release the arena they used and keep each as its directives only:
+    /// `ParserReturn::lazy_function_bodies` lists them, and a consumer parses each again from
+    /// its source span when it needs it. A consumer parsing one function's text again passes
+    /// an offset past that function's start, so the function itself parses whole. A body
+    /// whose parse left state the rest of the program reads (errors, escaped tokens past it,
+    /// module record entries, a new arena chunk) is kept whole.
+    ///
+    /// Default: `None`
+    pub lazy_function_bodies: Option<u32>,
 }
 
 impl Default for ParseOptions {
@@ -286,6 +302,7 @@ impl Default for ParseOptions {
             preserve_parens: true,
             allow_v8_intrinsics: false,
             enable_ident_hashes: true,
+            lazy_function_bodies: None,
         }
     }
 }
@@ -681,6 +698,13 @@ struct ParserImpl<'a, C: ParserConfig> {
 
     /// Precomputed typescript detection
     is_ts: bool,
+
+    /// How many lazily parsed function bodies enclose the current position
+    /// (`ParseOptions::lazy_function_bodies`).
+    lazy_depth: u32,
+
+    /// The start of each function body parsed lazily, in source order.
+    lazy_function_bodies: Vec<u32>,
 }
 
 impl<'a, C: ParserConfig> ParserImpl<'a, C> {
@@ -719,6 +743,8 @@ impl<'a, C: ParserConfig> ParserImpl<'a, C> {
             ast: AstBuilder::new(allocator),
             module_record_builder: ModuleRecordBuilder::new(allocator, source_type),
             is_ts: source_type.is_typescript(),
+            lazy_depth: 0,
+            lazy_function_bodies: Vec::new(),
         }
     }
 
@@ -810,7 +836,10 @@ impl<'a, C: ParserConfig> ParserImpl<'a, C> {
             self.lexer.finalize_tokens()
         };
 
-        program.comments = self.lexer.trivia_builder.comments;
+        program.comments = ArenaVec::from_iter_in(
+            std::mem::take(&mut self.lexer.trivia_builder.comments),
+            &self.ast,
+        );
 
         ParserReturn {
             program,
@@ -819,6 +848,7 @@ impl<'a, C: ParserConfig> ParserImpl<'a, C> {
             irregular_whitespaces,
             tokens,
             fatal_error: has_fatal_error,
+            lazy_function_bodies: std::mem::take(&mut self.lazy_function_bodies).into_boxed_slice(),
             stack_exhausted,
             is_flow_language,
         }

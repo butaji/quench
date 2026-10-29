@@ -38,7 +38,7 @@ impl<'a> Visit<'a> for Validator {
     }
 }
 
-pub(super) fn validate_parsed(parsed: &oxc_parser::ParserReturn<'_>) -> Result<(), ()> {
+pub(crate) fn validate_parsed(parsed: &oxc_parser::ParserReturn<'_>) -> Result<(), ()> {
     if parsed.stack_exhausted {
         return Err(());
     }

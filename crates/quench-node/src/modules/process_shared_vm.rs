@@ -2233,9 +2233,13 @@ fn drain_checkpoint(
                     .min(crate::modules::child_process_shared_vm::poll_interval());
                 #[cfg(quench_node_cares)]
                 let poll_interval = shared_state.borrow().cares.next_timeout().map_or(poll_interval, |timeout| poll_interval.min(timeout));
-                let wait = next_timer
-                    .map(|due| due.saturating_duration_since(std::time::Instant::now()))
-                    .map_or(poll_interval, |delay| delay.min(poll_interval));
+                let until_timer =
+                    next_timer.map(|due| due.saturating_duration_since(std::time::Instant::now()));
+                let wait = match until_timer {
+                    Some(delay) if !has_polled_shared_work(&shared_state) => delay,
+                    Some(delay) => delay.min(poll_interval),
+                    None => poll_interval,
+                };
                 if !wait.is_zero() {
                     #[cfg(unix)]
                     let extra = shared_state.borrow().child_output_descriptors();
@@ -2300,9 +2304,13 @@ fn drain_checkpoint(
                     .min(crate::modules::child_process_shared_vm::poll_interval());
                 #[cfg(quench_node_cares)]
                 let poll_interval = shared_state.borrow().cares.next_timeout().map_or(poll_interval, |timeout| poll_interval.min(timeout));
-                let wait = next_timer
-                    .map(|due| due.saturating_duration_since(std::time::Instant::now()))
-                    .map_or(poll_interval, |delay| delay.min(poll_interval));
+                let until_timer =
+                    next_timer.map(|due| due.saturating_duration_since(std::time::Instant::now()));
+                let wait = match until_timer {
+                    Some(delay) if !has_polled_shared_work(&shared_state) => delay,
+                    Some(delay) => delay.min(poll_interval),
+                    None => poll_interval,
+                };
                 if !wait.is_zero() {
                     #[cfg(unix)]
                     let extra = shared_state.borrow().child_output_descriptors();
@@ -2347,6 +2355,17 @@ fn run_and_clear_native_immediates(
 }
 
 fn has_referenced_shared_work(shared_state: &Rc<RefCell<crate::host::SharedNodeState>>) -> bool {
+    has_polled_shared_work(shared_state)
+        || shared_state.borrow().scheduler.has_refed_shared_timers()
+        || shared_state
+            .borrow()
+            .scheduler
+            .has_refed_shared_immediates()
+}
+
+/// Whether referenced work other than timers and immediates is pending: work the loop polls
+/// for at the subsystems' poll interval. Without it the loop sleeps until the next timer.
+fn has_polled_shared_work(shared_state: &Rc<RefCell<crate::host::SharedNodeState>>) -> bool {
     if crate::modules::worker_threads_shared_vm::has_work(&shared_state.borrow().workers) { return true; }
     #[cfg(quench_node_cares)]
     if shared_state.borrow().cares.has_work() { return true; }
@@ -2363,11 +2382,6 @@ fn has_referenced_shared_work(shared_state: &Rc<RefCell<crate::host::SharedNodeS
         || crate::modules::worker_shared_vm::has_work(shared_state)
         || super::fs_watch_shared_vm::has_work(&shared_state.borrow().fs_watch)
         || super::fs_stat_watch_shared_vm::has_work(&shared_state.borrow().fs_stat_watch)
-        || shared_state.borrow().scheduler.has_refed_shared_timers()
-        || shared_state
-            .borrow()
-            .scheduler
-            .has_refed_shared_immediates()
 }
 
 fn mark_timer_destroyed(runtime: &mut quench_runtime::Runtime<NodeHost>, handle: RootId) -> Result<(), RootedError> {
@@ -3654,22 +3668,24 @@ pub(crate) fn initialize_warning_policy(context: &mut NativeContext<'_, NodeHost
     // The bootstrap reads the environment before any script can change `process.env`.
     let disabled = environment(context).into_iter().any(|(name, value)| name == "NODE_NO_WARNINGS" && value == "1");
     if options.enabled("--warnings") && !disabled {
-        // Node's listener, or, unless a script can reach Node's own to compare, a listener of
-        // its name and length that loads Node's on the first warning: most runs never warn.
-        let callback = if options.enabled("--expose-internals") {
-            warning_export(context, "onWarning")?
+        if exposed {
+            let callback = warning_export(context, "onWarning")?;
+            let on = get(context, process, "on")?;
+            let event = context.string_rooted("warning");
+            context.call_rooted(on, process, &[event, callback])?;
         } else {
-            let factory = context.evaluate_script_rooted(
-                "(load) => function onWarning(warning) { return load()(warning); }",
-                "node:internal/process/warning-listener.js",
-            )?;
-            let load = context.host_function(crate::host::shared_vm::operation("processWarningListener"))?;
-            let undefined = context.undefined();
-            context.call_rooted(factory, undefined, &[load])?
-        };
-        let on = get(context, process, "on")?;
-        let event = context.string_rooted("warning");
-        context.call_rooted(on, process, &[event, callback])?;
+            // Node's own listener, registered as `process.on` would (`_events.warning`, one
+            // more event type) but loaded on the first read of that entry: by an emitted
+            // warning or a look at the listeners. Most runs never warn.
+            let events = get(context, process, "_events")?;
+            let initializer = context.host_function(crate::host::shared_vm::operation("processWarningListenerInitialize"))?;
+            context.define_lazy_data_properties_rooted(events, &[WARNING_EVENT], true, initializer)?;
+            let count = get(context, process, "_eventsCount")?;
+            let count = context.to_number(count)? + 1.0;
+            let count = context.number(count);
+            let key = context.string_rooted("_eventsCount");
+            context.set_property_rooted(process, key, count, process)?;
+        }
     }
     if options.enabled("--pending-deprecation") {
         let binding = get(context, process, "binding")?;
@@ -3802,8 +3818,17 @@ pub(crate) fn initialize_emit_warning(context: &mut NativeContext<'_, NodeHost>,
     Ok(context.undefined())
 }
 
-/// The default `warning` listener's implementation: Node's `onWarning`
-/// (`process_warning_shared_vm`).
-pub(crate) fn warning_listener(context: &mut NativeContext<'_, NodeHost>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
-    crate::modules::process_warning_shared_vm::on_warning(context)
+/// The event the default warning listener is registered for.
+const WARNING_EVENT: &str = "warning";
+
+/// Installs the default `warning` listener, Node's `onWarning` (`process_warning_shared_vm`),
+/// as the `process._events` entry `initialize_warning_policy` deferred.
+pub(crate) fn initialize_warning_listener(context: &mut NativeContext<'_, NodeHost>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
+    use super::event_constructor_shared_vm::get;
+    let process = context.host_mut().shared_state().borrow().process_module.ok_or_else(|| RootedError::host("process is not initialized"))?;
+    let listener = crate::modules::process_warning_shared_vm::on_warning(context)?;
+    let events = get(context, process, "_events")?;
+    let key = context.string_rooted(WARNING_EVENT);
+    context.define_data_property_rooted(events, key, listener, true, true, true)?;
+    Ok(context.undefined())
 }

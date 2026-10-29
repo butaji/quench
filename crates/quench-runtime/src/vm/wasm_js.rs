@@ -12,6 +12,16 @@ use crate::heap::{WasmHostTarget, WasmObjectSlot};
 use crate::{WasmType, WasmValue};
 use wasmparser::ExternalKind;
 
+/// Arguments of a Wasm call that a JavaScript caller passes without a heap allocation.
+const WASM_INLINE_ARGUMENTS: usize = 8;
+
+/// Whether a value of `ty` may encode into a fresh heap cell (`Vm::encode_wasm_value`): 64-bit
+/// payloads outside the in-place range (`Vm::encode_bits64`) and vectors. 32-bit values encode
+/// in place and references as the values they are.
+fn encoding_allocates(ty: WasmType) -> bool {
+    matches!(ty, WasmType::I64 | WasmType::F64 | WasmType::V128)
+}
+
 const DIRECT_EMSCRIPTEN_COPY_ENV: &str = "QUENCH_WASM_EMSCRIPTEN_MEMCPY_DIRECT";
 const RAW_I32_EMSCRIPTEN_COPY_ENV: &str = "QUENCH_WASM_EMSCRIPTEN_MEMCPY_RAW_I32";
 const EARLY_IMPORT_EMSCRIPTEN_COPY_ENV: &str = "QUENCH_WASM_EMSCRIPTEN_MEMCPY_EARLY_IMPORT";
@@ -427,8 +437,13 @@ fn kind_name(kind: ExternalKind) -> &'static str {
 /// The reference types a `WebAssembly.Table` descriptor names.
 fn descriptor_reference_type(name: &str) -> Option<wasmparser::RefType> {
     Some(match name {
-        "anyfunc" | "funcref" => wasmparser::RefType::FUNCREF,
+        "anyfunc" => wasmparser::RefType::FUNCREF,
         "externref" => wasmparser::RefType::EXTERNREF,
+        "anyref" => wasmparser::RefType::ANYREF,
+        "eqref" => wasmparser::RefType::EQREF,
+        "i31ref" => wasmparser::RefType::I31REF,
+        "structref" => wasmparser::RefType::STRUCTREF,
+        "arrayref" => wasmparser::RefType::ARRAYREF,
         _ => return None,
     })
 }
@@ -446,14 +461,18 @@ fn descriptor_value_type(name: &str) -> Option<WasmType> {
 
 /// The value type of a table's elements, as the JavaScript conversions see it.
 fn reference_value_type(element_type: wasmparser::RefType) -> WasmType {
-    WasmType::Reference {
-        kind: if element_type.heap_type() == wasmparser::HeapType::FUNC {
-            crate::WasmReferenceKind::Function
-        } else {
-            crate::WasmReferenceKind::External
-        },
-        nullable: element_type.is_nullable(),
-    }
+    reference_value_type_in(element_type, &crate::WasmTypes::default())
+}
+
+/// `reference_value_type` for a type `declarations` may name. A type the conversions have
+/// no form for (a shared one) converts as `externref` did before GC types reached them.
+fn reference_value_type_in(element_type: wasmparser::RefType, declarations: &crate::WasmTypes) -> WasmType {
+    declarations
+        .callable_value_type(wasmparser::ValType::Ref(element_type))
+        .unwrap_or(WasmType::Reference {
+            kind: crate::WasmReferenceKind::External,
+            nullable: element_type.is_nullable(),
+        })
 }
 
 impl<H: Host> Vm<H> {
@@ -703,14 +722,16 @@ impl<H: Host> Vm<H> {
                 let index = self.wasm_js_table_index(p, arg(0), length)?;
                 let value = self.wasm_table_get(this, index as u64)?;
                 let ty = self.wasm_table_element_type(this);
-                self.wasm_to_js(p, value, ty)
+                let declarations = self.wasm_table_declarations(this);
+                self.wasm_to_js(p, value, ty, declarations.as_ref())
             }
             Native::WasmTableSet => {
                 let length = self.wasm_table_receiver(p, this)?;
                 let index = self.wasm_js_table_index(p, arg(0), length)?;
                 let ty = self.wasm_table_element_type(this);
+                let declarations = self.wasm_table_declarations(this);
                 let value = match args.get(1) {
-                    Some(value) => self.js_to_wasm(p, *value, ty)?,
+                    Some(value) => self.js_to_wasm(p, *value, ty, declarations.as_ref())?,
                     None => self.wasm_table_default(ty),
                 };
                 if let Some(Cell::WasmTable { elements, .. }) = self.heap.get_mut(this) {
@@ -723,8 +744,9 @@ impl<H: Host> Vm<H> {
                 let length = self.wasm_table_receiver(p, this)?;
                 let delta = self.wasm_descriptor_u32(p, arg(0), "delta")?;
                 let ty = self.wasm_table_element_type(this);
+                let declarations = self.wasm_table_declarations(this);
                 let value = match args.get(1) {
-                    Some(value) => self.js_to_wasm(p, *value, ty)?,
+                    Some(value) => self.js_to_wasm(p, *value, ty, declarations.as_ref())?,
                     None => self.wasm_table_default(ty),
                 };
                 let Some(Cell::WasmTable { elements, .. }) = self.heap.get_mut(this) else {
@@ -749,7 +771,8 @@ impl<H: Host> Vm<H> {
             }
             Native::WasmGlobalValueGetter | Native::WasmGlobalValueOf => {
                 let (value, ty, _) = self.wasm_global_receiver(p, this)?;
-                self.wasm_to_js(p, value, ty)
+                let declarations = self.wasm_global_declarations(this);
+                self.wasm_to_js(p, value, ty, declarations.as_ref())
             }
             Native::WasmGlobalValueSetter => {
                 let (_, ty, mutable) = self.wasm_global_receiver(p, this)?;
@@ -759,7 +782,8 @@ impl<H: Host> Vm<H> {
                         "cannot set the value of an immutable WebAssembly.Global".into(),
                     ));
                 }
-                let value = self.js_to_wasm(p, arg(0), ty)?;
+                let declarations = self.wasm_global_declarations(this);
+                let value = self.js_to_wasm(p, arg(0), ty, declarations.as_ref())?;
                 if let Some(Cell::WasmGlobal { value: slot, .. }) = self.heap.get_mut(this) {
                     *slot = value;
                 }
@@ -844,7 +868,7 @@ impl<H: Host> Vm<H> {
                 }
                 let ty = reference_value_type(element_type);
                 let initial_value = match args.get(1) {
-                    Some(value) if !value.is_undefined() => self.js_to_wasm(p, *value, ty)?,
+                    Some(value) if !value.is_undefined() => self.js_to_wasm(p, *value, ty, None)?,
                     _ => self.wasm_table_default(ty),
                 };
                 self.alloc_wasm_table(
@@ -871,7 +895,7 @@ impl<H: Host> Vm<H> {
                     );
                 };
                 let value = match args.get(1) {
-                    Some(value) if !value.is_undefined() => self.js_to_wasm(p, *value, ty)?,
+                    Some(value) if !value.is_undefined() => self.js_to_wasm(p, *value, ty, None)?,
                     _ => self.wasm_global_default(ty),
                 };
                 Ok(self.alloc_wasm_global(value, ty, crate::WasmTypes::default(), mutable))
@@ -1248,8 +1272,9 @@ impl<H: Host> Vm<H> {
                 ),
             ));
         }
-        let encoded = self.js_to_wasm(p, value, ty)?;
-        Ok(self.alloc_wasm_global(encoded, ty, crate::WasmTypes::default(), false))
+        let declarations = module.signatures.declarations.clone();
+        let encoded = self.js_to_wasm(p, value, ty, Some(&declarations))?;
+        Ok(self.alloc_wasm_global(encoded, ty, declarations, false))
     }
 
     fn wasm_import_object(
@@ -1363,7 +1388,8 @@ impl<H: Host> Vm<H> {
             .retain(|_, handle| heap.weak_value(*handle).is_some());
     }
 
-    fn call_wasm_exported_function(
+    #[inline(never)]
+    pub(super) fn call_wasm_exported_function(
         &mut self,
         p: &ResidualProgram,
         args: &[Value],
@@ -1371,6 +1397,108 @@ impl<H: Host> Vm<H> {
         let function = self
             .active_native_env()
             .ok_or_else(|| JsError::validation("missing Wasm exported function".into()))?;
+        let Some(&FunctionRecord {
+            kind: FunctionKind::User(program, index),
+            env: environment,
+            ..
+        }) = self.heap.function(function)
+        else {
+            return self.call_wasm_host_export(p, function, args);
+        };
+        // The pool is shared, so the signature and declarations stay borrowed across the
+        // call instead of being copied per call (JetStream richards-wasm calls a short export
+        // two million times an iteration).
+        let signatures = self
+            .programs
+            .wasm_signatures_shared(program)
+            .ok_or_else(|| JsError::validation("missing Wasm function signature".into()))?;
+        let signature = signatures
+            .defined_signature(index)
+            .ok_or_else(|| JsError::validation("missing Wasm function signature".into()))?;
+        let declarations = Some(&signatures.declarations);
+        let mut encoded: smallvec::SmallVec<[Value; WASM_INLINE_ARGUMENTS]> =
+            smallvec::SmallVec::with_capacity(signature.params.len());
+        if signature.params.iter().any(|ty| encoding_allocates(*ty)) {
+            // Every argument converts before any encodes: a conversion can run JavaScript,
+            // and an allocated encoding is not rooted.
+            let mut values: smallvec::SmallVec<[WasmValue; WASM_INLINE_ARGUMENTS]> =
+                smallvec::SmallVec::with_capacity(signature.params.len());
+            for (position, &ty) in signature.params.iter().enumerate() {
+                let value = args.get(position).copied().unwrap_or(Value::UNDEFINED);
+                values.push(self.js_to_wasm_value(p, value, ty, declarations)?);
+            }
+            encoded.extend(values.into_iter().map(|value| self.encode_wasm_value(value)));
+        } else {
+            for (position, &ty) in signature.params.iter().enumerate() {
+                let value = args.get(position).copied().unwrap_or(Value::UNDEFINED);
+                let value = self.js_to_wasm_value(p, value, ty, declarations)?;
+                encoded.push(self.encode_wasm_value(value));
+            }
+        }
+        let previous = self.replace_active_program(program);
+        let result = match self.run_compiled(program, environment, index, &encoded) {
+            Some(result) => result,
+            None => match self.programs.get(program) {
+                Some(residual) => {
+                    // The interpreted call pushes a frame, which observes the frame stack: a
+                    // lane's deferred activations become frames first, from their caller's
+                    // program, as a call of guest code makes them (`runs_beside_activations`).
+                    if self.lane_deferred.is_some() {
+                        self.set_active_program(previous);
+                        self.materialize_deferred_lane();
+                        self.replace_active_program(program);
+                    }
+                    self.call_user(
+                        &residual,
+                        index,
+                        environment,
+                        Value::UNDEFINED,
+                        &encoded,
+                        CallContext::Internal,
+                    )
+                }
+                None => Err(JsError::validation("missing Wasm program".into())),
+            },
+        };
+        self.set_active_program(previous);
+        let result = result.map_err(|error| self.trap_raised_in_javascript(p, error))?;
+        match signature.results.as_slice() {
+            [] => Ok(Value::UNDEFINED),
+            &[ty] => {
+                let value = self.decode_wasm_value_in(result, ty, declarations)?;
+                self.wasm_value_to_js(p, value, ty)
+            }
+            types => {
+                let results = self.decode_wasm_result_types(types, result, declarations)?;
+                self.wasm_results_to_js(p, results, types)
+            }
+        }
+    }
+
+    /// `error`, leaving Wasm for the JavaScript that called an export: a trap gets its
+    /// `RuntimeError` here, while its JavaScript callers are on the frame stack (deferred lane
+    /// activations become frames first), as V8 captures the stack at the throw; made where a
+    /// handler takes it, its stack would name only the handler's frame. It stays a trap
+    /// (`JsError::wasm_trap`), which no Wasm handler catches.
+    fn trap_raised_in_javascript(&mut self, p: &ResidualProgram, mut error: JsError) -> JsError {
+        let Some(trap) = error.wasm_trap().filter(|_| error.thrown_value().is_none()) else {
+            return error;
+        };
+        self.materialize_deferred_lane();
+        if let Some(object) = self.wasm_js_error(p, Native::WasmRuntimeError, trap.to_string()).thrown_value() {
+            error.replace_thrown_value(object);
+        }
+        error
+    }
+
+    /// `call_wasm_exported_function` for an exported host function, which converts and
+    /// checks its own values.
+    fn call_wasm_host_export(
+        &mut self,
+        p: &ResidualProgram,
+        function: Value,
+        args: &[Value],
+    ) -> Result<Value, JsError> {
         let signature = self
             .wasm_callable_signature(function)
             .cloned()
@@ -1378,66 +1506,32 @@ impl<H: Host> Vm<H> {
         let mut values = Vec::with_capacity(signature.params.len());
         for (position, &ty) in signature.params.iter().enumerate() {
             let value = args.get(position).copied().unwrap_or(Value::UNDEFINED);
-            values.push(self.js_to_wasm_value(p, value, ty)?);
+            values.push(self.js_to_wasm_value(p, value, ty, None)?);
         }
         let encoded = values
             .into_iter()
             .map(|value| self.encode_wasm_value(value))
             .collect::<Vec<_>>();
-        let (result, declarations) = match self.heap.function(function) {
-            Some(FunctionRecord {
-                kind: FunctionKind::User(program, index),
-                env,
-                ..
-            }) => {
-                let (program, index, environment) = (*program, *index, *env);
-                let residual = self
-                    .programs
-                    .get(program)
-                    .ok_or_else(|| JsError::validation("missing Wasm program".into()))?;
-                let previous = self.replace_active_program(program);
-                let result = match self.run_compiled(program, environment, index, &encoded) {
-                    Some(result) => result,
-                    None => self.call_user(
-                        &residual,
-                        index,
-                        environment,
-                        Value::UNDEFINED,
-                        &encoded,
-                        CallContext::Internal,
-                    ),
-                };
-                self.set_active_program(previous);
-                let declarations = self
-                    .programs
-                    .wasm_signatures(program)
-                    .map(|signatures| signatures.declarations.clone());
-                (result?, declarations)
-            }
-            // A host function converts and checks its own values.
-            _ => (
-                self.call_value(p, function, Value::UNDEFINED, &encoded)?,
-                None,
-            ),
-        };
-        let results =
-            self.decode_wasm_result_types(&signature.results, result, declarations.as_ref())?;
-        self.wasm_results_to_js(p, results)
+        let result = self.call_value(p, function, Value::UNDEFINED, &encoded)?;
+        let results = self.decode_wasm_result_types(&signature.results, result, None)?;
+        self.wasm_results_to_js(p, results, &signature.results)
     }
 
-    /// A Wasm call's results as JavaScript: undefined, the single value, or an array.
+    /// A Wasm call's results, of types `types`, as JavaScript: undefined, the single value,
+    /// or an array.
     fn wasm_results_to_js(
         &mut self,
         p: &ResidualProgram,
         results: Vec<WasmValue>,
+        types: &[WasmType],
     ) -> Result<Value, JsError> {
-        match results.as_slice() {
-            [] => Ok(Value::UNDEFINED),
-            [value] => self.wasm_value_to_js(p, *value),
+        match (results.as_slice(), types) {
+            ([], _) => Ok(Value::UNDEFINED),
+            ([value], [ty]) => self.wasm_value_to_js(p, *value, *ty),
             _ => {
                 let mut values = Vec::with_capacity(results.len());
-                for value in results {
-                    values.push(self.wasm_value_to_js(p, value)?);
+                for (value, &ty) in results.into_iter().zip(types) {
+                    values.push(self.wasm_value_to_js(p, value, ty)?);
                 }
                 Ok(self.new_array(values))
             }
@@ -1459,9 +1553,18 @@ impl<H: Host> Vm<H> {
             .programs
             .get(self.active_program)
             .ok_or_else(|| JsError::validation("missing host caller program".into()))?;
+        // Only a concrete reference type needs the caller's declarations to convert.
+        let declarations = signature
+            .params
+            .iter()
+            .chain(&signature.results)
+            .any(|ty| ty.requires_declarations())
+            .then(|| self.programs.wasm_signatures(self.active_program))
+            .flatten()
+            .map(|signatures| signatures.declarations.clone());
         let mut arguments: smallvec::SmallVec<[Value; 8]> = smallvec::SmallVec::new();
         for (&value, &ty) in args.iter().zip(&signature.params) {
-            arguments.push(self.wasm_to_js(&program, value, ty)?);
+            arguments.push(self.wasm_to_js(&program, value, ty, declarations.as_ref())?);
         }
         let result = if let Some((view_environment, view_slot)) = memcpy_capture {
             let view = self
@@ -1501,7 +1604,7 @@ impl<H: Host> Vm<H> {
         };
         match signature.results.as_slice() {
             [] => Ok(Value::UNDEFINED),
-            [ty] => self.js_to_wasm(&program, result, *ty),
+            [ty] => self.js_to_wasm(&program, result, *ty, declarations.as_ref()),
             types => {
                 let roots = self.iterable_to_rooted_list(&program, result)?;
                 let converted = (|| {
@@ -1514,7 +1617,7 @@ impl<H: Host> Vm<H> {
                     let mut values = Vec::with_capacity(types.len());
                     for (&root, &ty) in roots.iter().zip(types) {
                         let value = self.heap.root_value(root).expect("rooted result");
-                        values.push(self.js_to_wasm_value(&program, value, ty)?);
+                        values.push(self.js_to_wasm_value(&program, value, ty, declarations.as_ref())?);
                     }
                     Ok(values)
                 })();
@@ -1725,21 +1828,37 @@ impl<H: Host> Vm<H> {
         }
     }
 
+    /// Whether `value` is a Wasm GC object (a struct or array reference) in JavaScript: an
+    /// exotic object with a null prototype and no properties, which every mutation refuses.
+    pub(super) fn is_wasm_gc_object(&self, value: Value) -> bool {
+        matches!(self.heap.get(value), Some(Cell::WasmGc { .. }))
+    }
+
+    /// The TypeError of a mutation of a Wasm GC object (V8: "WebAssembly objects are opaque").
+    pub(super) fn wasm_gc_opaque_error(&mut self, p: &ResidualProgram) -> JsError {
+        self.type_error(p, "WebAssembly objects are opaque".into())
+    }
+
     /// ToJSValue of an encoded Wasm value of type `ty`.
     fn wasm_to_js(
         &mut self,
         p: &ResidualProgram,
         value: Value,
         ty: WasmType,
+        declarations: Option<&crate::WasmTypes>,
     ) -> Result<Value, JsError> {
-        let value = self.decode_wasm_value(value, ty)?;
-        self.wasm_value_to_js(p, value)
+        let value = self.decode_wasm_value_in(value, ty, declarations)?;
+        self.wasm_value_to_js(p, value, ty)
     }
 
+    /// ToJSValue of `value`, of type `ty`. An internal reference leaves Wasm as `extern.convert_any`
+    /// would: null, an `i31` as its signed number, an internalized host value as itself. An
+    /// exception reference has no JavaScript representation.
     fn wasm_value_to_js(
         &mut self,
         p: &ResidualProgram,
         value: WasmValue,
+        ty: WasmType,
     ) -> Result<Value, JsError> {
         Ok(match value {
             WasmValue::I32(value) => Value::number(f64::from(value)),
@@ -1748,6 +1867,9 @@ impl<H: Host> Vm<H> {
             WasmValue::F64(bits) => Value::number(f64::from_bits(bits)),
             WasmValue::FuncRef(function) => self.wasm_js_function(function, None)?,
             WasmValue::ExternRef(value) => self.wasm_external_value(value),
+            WasmValue::GcRef(value) if !ty.is_exception_reference() => {
+                self.wasm_external_value(value)
+            }
             WasmValue::V128(_) | WasmValue::GcRef(_) => {
                 return Err(self.type_error(
                     p,
@@ -1763,16 +1885,19 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         value: Value,
         ty: WasmType,
+        declarations: Option<&crate::WasmTypes>,
     ) -> Result<Value, JsError> {
-        let value = self.js_to_wasm_value(p, value, ty)?;
+        let value = self.js_to_wasm_value(p, value, ty, declarations)?;
         Ok(self.encode_wasm_value(value))
     }
 
+    /// ToWebAssemblyValue of `value` for type `ty`; `declarations` own a concrete GC type.
     fn js_to_wasm_value(
         &mut self,
         p: &ResidualProgram,
         value: Value,
         ty: WasmType,
+        declarations: Option<&crate::WasmTypes>,
     ) -> Result<WasmValue, JsError> {
         Ok(match ty {
             WasmType::I32 => {
@@ -1793,31 +1918,62 @@ impl<H: Host> Vm<H> {
             }
             WasmType::F32 => WasmValue::F32((self.to_number(p, value)? as f32).to_bits()),
             WasmType::F64 => WasmValue::F64(self.to_number(p, value)?.to_bits()),
+            // A function reference is null or an exported Wasm function's closure, of the type.
             WasmType::Reference {
-                kind: crate::WasmReferenceKind::Function,
-                nullable,
+                kind:
+                    crate::WasmReferenceKind::Function
+                    | crate::WasmReferenceKind::DeclaredFunction { .. }
+                    | crate::WasmReferenceKind::BottomFunction,
+                ..
             } => {
-                if value.is_null() && nullable {
-                    WasmValue::FuncRef(Value::NULL)
-                } else if let Some(closure) = self.wasm_exported_closure(value) {
-                    WasmValue::FuncRef(closure)
+                let closure = if value.is_null() {
+                    Some(Value::NULL)
                 } else {
-                    return Err(self.type_error(
-                        p,
-                        "value must be null or an exported WebAssembly function".into(),
-                    ));
+                    self.wasm_exported_closure(value)
+                };
+                match closure {
+                    Some(closure) if self.wasm_reference_valid_in(closure, ty, declarations) => {
+                        WasmValue::FuncRef(closure)
+                    }
+                    _ => {
+                        return Err(self.type_error(
+                            p,
+                            "value must be null or an exported WebAssembly function of the type"
+                                .into(),
+                        ));
+                    }
                 }
             }
             WasmType::Reference {
-                kind: crate::WasmReferenceKind::External,
-                nullable,
+                kind: crate::WasmReferenceKind::External | crate::WasmReferenceKind::BottomExternal,
+                ..
             } => {
-                if value.is_null() && !nullable {
-                    return Err(
-                        self.type_error(p, "a non-nullable externref cannot be null".into())
-                    );
+                if !self.wasm_reference_valid_in(value, ty, declarations) {
+                    return Err(self.type_error(
+                        p,
+                        "value does not have the Wasm reference type".into(),
+                    ));
                 }
                 WasmValue::ExternRef(value)
+            }
+            // An internal reference enters as `any.convert_extern` would take it (null, an
+            // i31-range integer, a Wasm GC object as itself, any other value boxed), and
+            // must then have the type.
+            WasmType::Reference {
+                kind: crate::WasmReferenceKind::Internal(_) | crate::WasmReferenceKind::DeclaredGc { .. },
+                ..
+            } if !ty.is_exception_reference() => {
+                let internal = self.wasm_external_conversion(
+                    crate::wasm::reference::ExternalConversion::Internalize,
+                    value,
+                );
+                if !self.wasm_reference_valid_in(internal, ty, declarations) {
+                    return Err(self.type_error(
+                        p,
+                        "value does not have the Wasm reference type".into(),
+                    ));
+                }
+                WasmValue::GcRef(internal)
             }
             _ => {
                 return Err(self.type_error(
@@ -1909,9 +2065,27 @@ impl<H: Host> Vm<H> {
         Ok(index)
     }
 
+    /// The declarations of the module that defined `table`'s element type.
+    fn wasm_table_declarations(&self, table: Value) -> Option<crate::WasmTypes> {
+        match self.heap.get(table) {
+            Some(Cell::WasmTable { declarations, .. }) => Some((**declarations).clone()),
+            _ => None,
+        }
+    }
+
+    /// The declarations of the module that defined `global`'s type.
+    fn wasm_global_declarations(&self, global: Value) -> Option<crate::WasmTypes> {
+        match self.heap.get(global) {
+            Some(Cell::WasmGlobal { header, .. }) => Some(header.declarations.clone()),
+            _ => None,
+        }
+    }
+
     fn wasm_table_element_type(&self, table: Value) -> WasmType {
         match self.heap.get(table) {
-            Some(Cell::WasmTable { element_type, .. }) => reference_value_type(*element_type),
+            Some(Cell::WasmTable { element_type, declarations, .. }) => {
+                reference_value_type_in(*element_type, declarations)
+            }
             _ => unreachable!("checked table receiver"),
         }
     }

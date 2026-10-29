@@ -348,8 +348,10 @@ impl<H: Host> Vm<H> {
 
     /// A closure's object allocated finished: its own `length`, `name` and `prototype` under
     /// `shape`, as the recorded adds would leave them, inline where they fit, else in the
-    /// property arena.
-    fn finished_closure_object(
+    /// property arena. Inline: a closure's making is mostly this, and its object returns
+    /// through no temporary.
+    #[inline(always)]
+    pub(super) fn finished_closure_object(
         &mut self,
         function_prototype: Value,
         shape: u32,
@@ -655,7 +657,12 @@ impl<H: Host> Vm<H> {
             .shape()
     }
 
+    /// `realm`'s `Object.prototype`: the VM field for the active realm, which follows it
+    /// (`REALM_FOLLOWING_PROTOTYPES`), and the intrinsics table for any other.
     pub(super) fn realm_object_prototype(&self, realm: Value) -> Value {
+        if realm == self.realm.globals {
+            return self.object_proto;
+        }
         self.realm
             .intrinsics
             .builtin_prototypes
@@ -664,7 +671,11 @@ impl<H: Host> Vm<H> {
             .unwrap_or(self.object_proto)
     }
 
+    /// `realm`'s `Function.prototype`, read as `realm_object_prototype` reads its object one.
     pub(super) fn realm_function_prototype(&self, realm: Value) -> Value {
+        if realm == self.realm.globals {
+            return self.function_proto;
+        }
         self.realm
             .intrinsics
             .builtin_prototypes
@@ -716,7 +727,7 @@ impl<H: Host> Vm<H> {
                     return vm.proxy_construct(p, callee, new_target, args);
                 }
                 if !vm.is_constructable(p, callee) {
-                    return Err(vm.type_error(p, "value is not a constructor".into()));
+                    return Err(vm.type_error(p, super::call_printer::NOT_CONSTRUCTOR_MESSAGE.into()));
                 }
                 if !vm.is_constructable(p, new_target) {
                     return Err(vm.type_error(p, "newTarget is not a constructor".into()));
@@ -749,7 +760,7 @@ impl<H: Host> Vm<H> {
                         return Err(vm.type_error(p, "function index is outside its program".into()));
                     };
                     if !function.constructible {
-                        return Err(vm.type_error(p, "value is not a constructor".into()));
+                        return Err(vm.type_error(p, super::call_printer::NOT_CONSTRUCTOR_MESSAGE.into()));
                     }
                     if function.is_async {
                         return Err(JsError("async function is not a constructor".into()));
@@ -945,11 +956,18 @@ impl<H: Host> Vm<H> {
 
     /// The object `inline_construct_receiver` allocates, before it is allocated.
     pub(super) fn inline_construct_template(&mut self, callee: Value) -> Option<Object> {
+        self.inline_construct_template_by(callee, callee)
+    }
+
+    /// The receiver [[Construct]] of `constructor` makes with `new_target` before its body
+    /// runs (OrdinaryCreateFromConstructor): of `new_target`'s own data `prototype`, named by
+    /// `constructor` as the general path names it (`capture_constructed_name`).
+    pub(super) fn inline_construct_template_by(&mut self, new_target: Value, constructor: Value) -> Option<Object> {
         let prototype_atom = self.prototype_atom();
-        let prototype = self.own_function_prototype_data(callee, prototype_atom)?;
+        let prototype = self.own_function_prototype_data(new_target, prototype_atom)?;
         self.object_data(prototype)?;
         let mut object = Self::empty_object(prototype);
-        self.capture_constructed_name(&mut object, callee, true);
+        self.capture_constructed_name(&mut object, constructor, constructor == new_target);
         Some(object)
     }
 
@@ -1445,6 +1463,22 @@ impl<H: Host> Vm<H> {
         }
     }
 
+    /// `new Array(length)` of a Number `length` with `prototype` (ECMA-262 23.1.1.1 step 5):
+    /// an array of that length whose elements are all absent; `None` for a length that is no
+    /// array length, which throws a RangeError. Out of line: the lane makes it too
+    /// (`lane_native_construct`), whose frame then holds none of its temporaries.
+    #[inline(never)]
+    pub(super) fn array_of_length(&mut self, prototype: Value, length: f64) -> Option<Value> {
+        if !length.is_finite() || length < 0.0 || length.fract() != 0.0 || length > f64::from(u32::MAX) {
+            return None;
+        }
+        let array = self.heap.alloc(Cell::Array {
+            object: crate::heap::ArrayObject::new(Self::empty_object(prototype), Vec::new()),
+        });
+        self.heap.sparse_set_length(array, length as usize);
+        Some(array)
+    }
+
     fn construct_array_native(
         &mut self,
         p: &ResidualProgram,
@@ -1455,21 +1489,10 @@ impl<H: Host> Vm<H> {
         if let [length] = args
             && let Some(length) = length.as_number()
         {
-            if !length.is_finite()
-                || length < 0.0
-                || length.fract() != 0.0
-                || length > u32::MAX as f64
-            {
-                return Err(self.range_error(p, "Invalid array length".into()));
-            }
-            let array = self.heap.alloc(Cell::Array {
-                object: crate::heap::ArrayObject::new(
-                    Self::empty_object(prototype),
-                    Vec::new(),
-                ),
-            });
-            self.heap.sparse_set_length(array, length as usize);
-            return Ok(array);
+            return match self.array_of_length(prototype, length) {
+                Some(array) => Ok(array),
+                None => Err(self.range_error(p, "Invalid array length".into())),
+            };
         }
 
         Ok(self.heap.alloc(Cell::Array {

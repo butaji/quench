@@ -708,17 +708,8 @@ impl FunctionCompiler<'_, '_> {
     }
 
     fn set_prototype(&mut self, target: Register, prototype: Register) {
-        let object = self.load_name("Object");
-        let setter = self.reg();
-        let atom = self.owner.atom("setPrototypeOf");
-        let cache = self.owner.cache_site();
-        self.emit(
-            Op::GetField,
-            setter,
-            FieldBase::register(object).0,
-            cache,
-            atom,
-        );
+        // The intrinsic `Object.setPrototypeOf`, whatever `Object` names here.
+        let setter = self.load_name(crate::bytecode::INTRINSIC_SET_PROTOTYPE_OF_BINDING);
         let base = self.next_reg;
         let target_arg = self.reg();
         self.emit(Op::Move, target_arg, target, 0, 0);
@@ -729,7 +720,7 @@ impl FunctionCompiler<'_, '_> {
             Op::Call,
             result,
             setter,
-            object,
+            setter,
             crate::bytecode::ImmediateLayout::call_immediate(base, 2, false, false),
         );
     }
@@ -1249,11 +1240,7 @@ fn class_method_name(key: &PropertyKey<'_>) -> Option<String> {
     match key {
         PropertyKey::StaticIdentifier(id) => Some(id.name.to_string()),
         PropertyKey::PrivateIdentifier(id) => Some(id.name.to_string()),
-        PropertyKey::StringLiteral(value)
-            if !matches!(super::string::constant(value), Constant::StringUnits(_)) =>
-        {
-            Some(value.value.to_string())
-        }
+        PropertyKey::StringLiteral(value) if super::string::is_well_formed(value) => Some(value.value.to_string()),
         PropertyKey::NumericLiteral(value) => Some(crate::number_to_string::format(value.value)),
         PropertyKey::BigIntLiteral(value) => Some(value.value.to_string()),
         _ => None,

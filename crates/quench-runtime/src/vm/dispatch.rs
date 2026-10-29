@@ -74,6 +74,13 @@ impl<H: Host> Vm<H> {
             return None;
         }
         let callee = self.read(f, i.register_b());
+        // A generator's `next()` resumes its suspended frame in place.
+        if i.op() == Op::Call && i.call_window().count == 0 {
+            let generator = self.read(f, i.register_c());
+            if self.steps_as_generator(generator, callee) {
+                return self.try_in_loop_generator_step(f, pc, callee, generator, i.result_register(), false);
+            }
+        }
         let entry = self.in_loop_call_entry(p, callee)?;
         let target = (entry.program, entry.function, entry.env);
         if entry.push == super::InLoopPush::Settles {
@@ -211,6 +218,7 @@ impl<H: Host> Vm<H> {
             call_guard,
             construct_this: None,
             settles: None,
+            generator: None,
         }))
     }
 
@@ -935,7 +943,7 @@ impl<H: Host> Vm<H> {
                 let atom = i.atom_index();
                 let brand = PrivateBrand { home, name: atom };
                 if object != home {
-                    if !self.object_data(object).is_some_and(Object::is_extensible) {
+                    if !self.object_data(object).is_some_and(|object| self.private_element_addable(object)) {
                         return Err(self.type_error(
                             p,
                             "Cannot add private method to a non-extensible object".into(),
@@ -1005,7 +1013,7 @@ impl<H: Host> Vm<H> {
                 self.read(f, i.register_b()),
                 self.read(f, i.register_c()),
             )?,
-            Op::ToPropertyKey | Op::GetIterator | Op::AppendArray => {
+            Op::ToPropertyKey | Op::GetIterator | Op::IteratorClose | Op::AppendArray => {
                 let [a, b] = value_step_operands(i).map(|register| register.map(|register| self.read(f, register)));
                 if let Some(value) = self.value_step(p, i, a, b)? {
                     self.write(f, i.result_register(), value);
@@ -1020,10 +1028,6 @@ impl<H: Host> Vm<H> {
                 }
             }
             Op::SuperCallCheck => self.check_super_call(p)?,
-            Op::IteratorClose => {
-                let result = self.iterator_close(p, self.read(f, i.register_b()))?;
-                self.write(f, i.result_register(), result);
-            }
             Op::IteratorCleanupPush => self.frames[f].active_iterators.push(ActiveIterator {
                 iterator: i.register_a(),
                 done: i.register_b(),
@@ -1579,6 +1583,7 @@ impl<H: Host> Vm<H> {
                     call_guard,
                     construct_this: None,
                     settles: None,
+                    generator: None,
                 });
             }
             Op::CallKnown => {
@@ -1718,6 +1723,7 @@ impl<H: Host> Vm<H> {
                             call_guard: pushed?,
                             construct_this: Some(this),
                             settles: None,
+                            generator: None,
                         });
                     }
                 }
@@ -1856,7 +1862,7 @@ pub(super) fn value_step_operands(i: WideInstruction) -> [Option<crate::bytecode
 }
 
 impl<H: Host> Vm<H> {
-    /// `ToPropertyKey`, `GetIterator` or `AppendArray` of its operand values
+    /// `ToPropertyKey`, `GetIterator`, `IteratorClose` or `AppendArray` of its operand values
     /// (`value_step_operands`): the value it writes to its result register, if any. The
     /// general step and a frameless activation's (`lane_step_beside_activations`) share it.
     pub(super) fn value_step(
@@ -1870,6 +1876,7 @@ impl<H: Host> Vm<H> {
         match i.op() {
             Op::ToPropertyKey => self.to_property_key(p, operand).map(Some),
             Op::GetIterator => self.get_iterator(p, operand).map(Some),
+            Op::IteratorClose => self.iterator_close(p, operand).map(Some),
             Op::AppendArray => {
                 let array = a.expect("AppendArray names its array");
                 self.append_array_literal_holes(array, i.array_length())?;

@@ -9,7 +9,9 @@ pub(crate) struct State {
     next_request: u64,
     next_response: u64,
     pub(crate) status_reasons: FxHashMap<u16, Vec<u8>>,
-    pub(crate) response_factory: Option<RootId>,
+    /// The guest function a parsed server request enters JavaScript through
+    /// (`operations::REQUEST_DISPATCH_FACTORY`).
+    pub(crate) request_dispatch: Option<RootId>,
     pub(crate) incoming_factory: Option<RootId>,
     pub(crate) response_tracking: Option<ResponseTracking>,
     pub(crate) servers: FxHashMap<u64, Server>,
@@ -83,6 +85,20 @@ pub(crate) struct ServerConnection {
     pub(crate) received: Vec<u8>,
     pub(crate) request_dispatched: bool,
     pub(crate) upgraded: bool,
+}
+
+/// Receive-buffer capacity a connection keeps between requests: room for a request head
+/// and a small body. A keep-alive connection that once received a large body otherwise held
+/// that capacity until it closed.
+const RETAINED_RECEIVE_CAPACITY: usize = 16 << 10;
+
+impl ServerConnection {
+    /// Empties the receive buffer once its bytes are consumed, keeping at most
+    /// `RETAINED_RECEIVE_CAPACITY` of its room.
+    pub(crate) fn clear_received(&mut self) {
+        self.received.clear();
+        self.received.shrink_to(RETAINED_RECEIVE_CAPACITY);
+    }
 }
 
 pub(crate) struct Response {
@@ -354,7 +370,7 @@ impl State {
             next_request: 1,
             next_response: 1,
             status_reasons: FxHashMap::default(),
-            response_factory: None,
+            request_dispatch: None,
             incoming_factory: None,
             response_tracking: None,
             servers: FxHashMap::default(),
@@ -417,7 +433,7 @@ impl State {
             next_request,
             next_response,
             status_reasons,
-            response_factory,
+            request_dispatch,
             incoming_factory,
             response_tracking,
             servers,
@@ -450,7 +466,7 @@ impl State {
             writer.u32(u32::from(*code));
             writer.bytes(reason);
         }
-        response_factory.write(writer)?;
+        request_dispatch.write(writer)?;
         incoming_factory.write(writer)?;
         response_tracking.write(writer)?;
         Ok(())
@@ -465,7 +481,7 @@ impl State {
             let code = u16::try_from(reader.u32()?).map_err(|_| "invalid snapshot status code")?;
             self.status_reasons.insert(code, reader.bytes()?);
         }
-        self.response_factory = HostSnap::read(reader)?;
+        self.request_dispatch = HostSnap::read(reader)?;
         self.incoming_factory = HostSnap::read(reader)?;
         self.response_tracking = HostSnap::read(reader)?;
         self.origins.clear();

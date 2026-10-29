@@ -10,6 +10,24 @@ const JAVASCRIPT_MODULE_TYPE: &str = "javascript";
 use crate::{ModuleSource, module_identity::ModuleIdentity};
 use rustc_hash::FxHashSet;
 
+/// Where SpeciesConstructor(promise, %Promise%) found the realm's `%Promise%` for receivers
+/// of one shape and prototype under one prototype layout epoch (`Vm::promise_species_proved`):
+/// `constructor` in a data slot of a prototype, and its own `@@species` slot holding the
+/// intrinsic getter. Every collection advances the epoch, so no value here outlives its record.
+#[derive(Clone, Copy)]
+pub(super) struct PromiseSpeciesProof {
+    shape: u32,
+    prototype: Value,
+    epoch: u64,
+    realm: Value,
+    holder: Value,
+    holder_slot: u32,
+    constructor: Value,
+    constructor_shape: u32,
+    species_slot: usize,
+    getter: Value,
+}
+
 fn module_cache_key(name: &str, module_type: &str) -> String {
     format!("{}:{module_type}", crate::module_identity::normalized_text(name))
 }
@@ -1155,6 +1173,17 @@ impl<H: Host> Vm<H> {
         args: &[Value],
         callee: Value,
     ) -> Result<Value, JsError> {
+        self.as_native_activation(native, callee, |vm| vm.call_native(p, native, this, args))
+    }
+
+    /// Runs `body` as the native `callee` of kind `native` runs: in its realm, under its
+    /// native activation, which stack traces and `caller` read, and its stack guard.
+    pub(super) fn as_native_activation<R>(
+        &mut self,
+        native: Native,
+        callee: Value,
+        body: impl FnOnce(&mut Self) -> Result<R, JsError>,
+    ) -> Result<R, JsError> {
         // A realm's own natives run in that realm; a native shared by every realm runs in
         // its caller's, which is the realm whose objects it builds.
         let realm = match self.heap.function(callee) {
@@ -1180,12 +1209,13 @@ impl<H: Host> Vm<H> {
             .active_native
             .push(super::activation::NativeActivation {
                 callable: callee,
+                receiver: Value::UNDEFINED,
                 frame_depth: self.frames.len(),
                 boundary,
             });
         let result = (|| {
             let _stack = self.enter_stack()?;
-            self.call_native(p, native, this, args)
+            body(self)
         })();
         self.realm.promise.active_native.pop();
         self.switch_realm_global(previous_global);
@@ -1229,6 +1259,7 @@ impl<H: Host> Vm<H> {
             .active_native
             .push(super::activation::NativeActivation {
                 callable: method,
+                receiver: Value::UNDEFINED,
                 frame_depth: self.frames.len(),
                 boundary: super::activation::NativeCallBoundary::Opaque,
             });
@@ -1253,17 +1284,25 @@ impl<H: Host> Vm<H> {
     }
 
     pub(super) fn native_with_realm(&mut self, kind: Native, env: Value, realm: Value) -> Value {
-        let function = self.heap.alloc_function(FunctionRecord {
-            object: Self::empty_object(self.realm_function_prototype(realm)),
-            realm,
-            kind: FunctionKind::Native(kind),
-            env,
-        });
         let promise_resolver = !env.is_null()
             && matches!(
                 kind,
                 Native::PromiseResolve | Native::PromiseReject | Native::PromiseAggregateJob
             );
+        let function_prototype = self.realm_function_prototype(realm);
+        // Every promise makes two resolving functions, whose own `length` (1) and `name` ("")
+        // reach the shape the first one's adds recorded: the next ones are made finished there.
+        if promise_resolver && let Some(shape) = self.resolver_function_shape {
+            let name = self.atom_string(self.runtime_atoms.empty);
+            let object = self.finished_closure_object(function_prototype, shape, [Value::number(1.0), name], None);
+            return self.heap.alloc_function(FunctionRecord { object, realm, kind: FunctionKind::Native(kind), env });
+        }
+        let function = self.heap.alloc_function(FunctionRecord {
+            object: Self::empty_object(function_prototype),
+            realm,
+            kind: FunctionKind::Native(kind),
+            env,
+        });
         let anonymous_capability_executor =
             !env.is_null() && kind == Native::PromiseCapabilityExecutor;
         let anonymous_proxy_revoke = !env.is_null() && kind == Native::ProxyRevoke;
@@ -1287,8 +1326,8 @@ impl<H: Host> Vm<H> {
             );
         }
         if promise_resolver || anonymous_capability_executor || anonymous_proxy_revoke {
-            let atom = self.intern_atom("name");
-            let empty_name = self.heap.alloc_string("".into());
+            let atom = self.runtime_atoms.name;
+            let empty_name = self.atom_string(self.runtime_atoms.empty);
             let _ = self.set_property_with_attributes(
                 function,
                 atom,
@@ -1302,6 +1341,12 @@ impl<H: Host> Vm<H> {
                     setter: None,
                 },
             );
+        }
+        if promise_resolver {
+            self.resolver_function_shape = self
+                .object_data(function)
+                .map(crate::heap::Object::shape)
+                .filter(|&shape| !self.shape_is_dictionary(shape));
         }
         function
     }
@@ -2883,8 +2928,8 @@ impl<H: Host> Vm<H> {
         let local_slots = local_slots(root);
         let mut values = Vec::with_capacity(imports.len());
         for import in imports {
-            let module = &self
-                .host_resolved_module(referrer, &import.source)
+            let module_name = self
+                .resolved_module_name(referrer, &import.source)
                 .map_err(|error| self.module_load_error(p, error))?
                 .ok_or_else(|| self.type_error(p, "module import was not resolved".into()))?;
             let local = self
@@ -2896,13 +2941,16 @@ impl<H: Host> Vm<H> {
                 values.push((
                     local,
                     crate::vm::program_store::ModuleImport::Value(
-                        self.module_source_value(p, &module)?,
+                        {
+                            let module = self.imported_module(p, referrer, &import.source)?;
+                            self.module_source_value(p, &module)?
+                        },
                     ),
                 ));
                 continue;
             }
             let module_type = import.module_type.as_deref().unwrap_or("javascript");
-            let key = module_cache_key(&module.name, module_type);
+            let key = module_cache_key(&module_name, module_type);
             let outcome = self
                 .realm
                 .promise
@@ -2937,14 +2985,16 @@ impl<H: Host> Vm<H> {
                         pending_namespace
                     }
                     Some(ModuleOutcome::Pending(_))
-                        if self_import_referrer(referrer, &module.name) =>
+                        if self_import_referrer(referrer, &module_name) =>
                     {
+                        let module = self.imported_module(p, referrer, &import.source)?;
                         self.pending_self_import_namespace(p, &module, &key, pending_namespace)?
                     }
                     Some(ModuleOutcome::Errored(reason)) => {
                         return Err(JsError::thrown(reason, "module import failed".into()));
                     }
-                    None if self_import_referrer(referrer, &module.name) => {
+                    None if self_import_referrer(referrer, &module_name) => {
+                        let module = self.imported_module(p, referrer, &import.source)?;
                         match self.root_module_namespace(p, &module)? {
                             Some(namespace) => Some(namespace),
                             None => self.resolve_self_import_namespace(p, &module, active)?,
@@ -2957,7 +3007,7 @@ impl<H: Host> Vm<H> {
             };
             let Some(namespace) = namespace else {
                 if let crate::bytecode::ModuleImportName::Named(name) = &import.imported
-                    && Self::static_module_declares_export(&module, name) == Some(false)
+                    && Self::static_module_declares_export(&self.imported_module(p, referrer, &import.source)?, name) == Some(false)
                 {
                     return self
                         .missing_module_export(p, &import.source, name)
@@ -3335,9 +3385,27 @@ impl<H: Host> Vm<H> {
         }
         let module = self.host.resolve_dynamic_import(referrer, specifier)?;
         if let Some(module) = &module {
+            self.resolved_module_names.insert(key.clone(), module.name.clone());
             self.resolved_module_requests.insert(key, module.clone());
         }
         Ok(module)
+    }
+
+    /// The name of the module `host_resolved_module` resolves (referrer, specifier) to, from
+    /// the resolutions kept across collections when it has been resolved before.
+    fn resolved_module_name(&mut self, referrer: &str, specifier: &str) -> Result<Option<String>, crate::ModuleLoadError> {
+        let key = (referrer.to_owned(), specifier.to_owned());
+        if let Some(name) = self.resolved_module_names.get(&key) {
+            return Ok(Some(name.clone()));
+        }
+        Ok(self.host_resolved_module(referrer, specifier)?.map(|module| module.name))
+    }
+
+    /// The module an import of `p` resolves to, as an import binding needs it.
+    fn imported_module(&mut self, p: &ResidualProgram, referrer: &str, specifier: &str) -> Result<ModuleSource, JsError> {
+        self.host_resolved_module(referrer, specifier)
+            .map_err(|error| self.module_load_error(p, error))?
+            .ok_or_else(|| self.type_error(p, "module import was not resolved".into()))
     }
 
     fn resolve_module_request(
@@ -3540,11 +3608,10 @@ impl<H: Host> Vm<H> {
         self.decode_cached_program(bytes, text, 0, &module.name, specialized).ok()
     }
 
-    /// Offers the host the compiled program of a static module (`kept_static_module_program`).
-    fn keep_static_module_program(&mut self, module: &ModuleSource, program: ProgramId) {
-        if let Some(residual) = self.programs.get(program)
-            && let Some(bytes) = self.encode_cached_program(&residual)
-        {
+    /// Offers the host the compiled program of a static module (`kept_static_module_program`),
+    /// before its store releases its records, which encoding would compile again.
+    fn keep_static_module_program(&mut self, module: &ModuleSource, residual: &ResidualProgram) {
+        if let Some(bytes) = self.encode_cached_program(residual) {
             self.host
                 .keep_compiled_program(&module.name, &[self.specialization_part(), STATIC_MODULE_GOAL, &module.source], &bytes);
         }
@@ -3590,6 +3657,7 @@ impl<H: Host> Vm<H> {
                     &module.source,
                     &module.name,
                     &*self,
+                    self.released_records(true),
                 )
                 .map_err(|diagnostics| {
                     if diagnostics
@@ -3604,11 +3672,12 @@ impl<H: Host> Vm<H> {
                         )
                     }
                 })?;
-                let program = self
+                // Encoded with this VM's atoms, which storing it then finds interned.
+                let residual = self.intern_program_atoms(residual);
+                self.keep_static_module_program(module, &residual);
+                self
                     .store_module_program(residual)
-                    .ok_or_else(|| self.type_error(p, "module program store is full".into()))?;
-                self.keep_static_module_program(module, program);
-                program
+                    .ok_or_else(|| self.type_error(p, "module program store is full".into()))?
             }
         };
         let residual = self
@@ -4154,6 +4223,7 @@ impl<H: Host> Vm<H> {
                     &module.source,
                     &module.name,
                     &*self,
+                    crate::compile::ReleasedRecords::Dropped,
                 )
                 .map_err(|diagnostics| {
                     if diagnostics
@@ -4424,6 +4494,7 @@ impl<H: Host> Vm<H> {
             &module.source,
             &module.name,
             &*self,
+            crate::compile::ReleasedRecords::Dropped,
         )
         .map_err(|diagnostics| {
             if diagnostics
@@ -5388,13 +5459,35 @@ impl<H: Host> Vm<H> {
             let observed = self.plain_named_load(value, constructor_atom)?;
             return (observed == receiver).then_some(value);
         }
-        let then = if self.object_data(value).is_some() {
-            let then_atom = self.runtime_atoms.then;
-            self.plain_named_load(value, then_atom)?
-        } else {
-            Value::UNDEFINED
-        };
+        let then = self.plain_resolution_then(value)?;
         let promise = self.promise_object_with_parent(None).ok()?;
+        self.resolve_fresh_promise_plainly(p, promise, value, then).then_some(promise)
+    }
+
+    /// The `then` `promise_resolve_value` would read from a resolution `value`, where the read
+    /// observes nothing: `undefined` for a non-object, else its plain-data `then`
+    /// (`plain_named_load`). `None` where the read could run guest code.
+    pub(super) fn plain_resolution_then(&mut self, value: Value) -> Option<Value> {
+        if self.object_data(value).is_none() {
+            return Some(Value::UNDEFINED);
+        }
+        let then_atom = self.runtime_atoms.then;
+        self.plain_named_load(value, then_atom)
+    }
+
+    /// `promise_resolve_value` of a promise no one has observed yet, with the `then`
+    /// `plain_resolution_then` read from `value`, under a host that observes no promise
+    /// lifecycle: a callable `then` enqueues the thenable job, anything else fulfills the
+    /// promise, whose lack of reactions enqueues nothing. Neither runs guest code. `false`
+    /// when the promise is no promise record.
+    pub(super) fn resolve_fresh_promise_plainly(
+        &mut self,
+        p: &ResidualProgram,
+        promise: Value,
+        value: Value,
+        then: Value,
+    ) -> bool {
+        debug_assert!(!self.host.observes_promise_lifecycle());
         if self.is_function(then) {
             let execution_context = self.host.capture_job_context(None);
             self.realm.jobs.push_back(super::PendingJob::Thenable(ThenableJob {
@@ -5404,11 +5497,9 @@ impl<H: Host> Vm<H> {
                 promise,
                 execution_context,
             }));
-        } else {
-            // A fresh promise has no reactions, so the settle enqueues nothing.
-            self.promise_settle(p, promise, PromiseState::Fulfilled, value).ok()?;
+            return true;
         }
-        Some(promise)
+        self.promise_settle(p, promise, PromiseState::Fulfilled, value).is_ok()
     }
 
     /// Whether `promise`'s species steps provably answer the intrinsic `%Promise%`: its
@@ -5418,13 +5509,92 @@ impl<H: Host> Vm<H> {
     /// its receiver (`has_intrinsic_species_getter`). Both reads observe nothing, so a
     /// failed proof only leaves the observable steps to the general path.
     fn promise_species_intrinsic(&mut self, promise: Value) -> bool {
+        if self.promise_species_proved(promise) {
+            return true;
+        }
         let constructor_atom = self.runtime_atoms.constructor;
         let Some(constructor) = self.plain_named_load(promise, constructor_atom) else {
             return false;
         };
-        constructor.is_undefined()
-            || (constructor == self.intrinsic_promise_constructor()
-                && self.has_intrinsic_species_getter(constructor))
+        if constructor.is_undefined() {
+            return true;
+        }
+        let intrinsic = constructor == self.intrinsic_promise_constructor() && self.has_intrinsic_species_getter(constructor);
+        if intrinsic {
+            self.record_promise_species_proof(promise, constructor);
+        }
+        intrinsic
+    }
+
+    /// Whether the last `PromiseSpeciesProof` answers `promise`: SpeciesConstructor(promise,
+    /// %Promise%) then reads `constructor` as the realm's `%Promise%` from the prototype data
+    /// slot it was found in, and that constructor's own `@@species` still holds the intrinsic
+    /// getter. A receiver of the proved shape and prototype finds `constructor` where the walk
+    /// did while the prototype layout epoch holds (`plain_proved_get`); the two slots are read
+    /// again, as a data write to either changes no layout.
+    #[inline]
+    fn promise_species_proved(&self, promise: Value) -> bool {
+        let Some(proof) = self.promise_species_proof.get() else {
+            return false;
+        };
+        let Some(data) = self.heap.ordinary_object(promise) else {
+            return false;
+        };
+        if data.shape() != proof.shape
+            || data.proto() != proof.prototype
+            || data.has_side_descriptors()
+            || proof.epoch != crate::heap::prototype_layout_epoch()
+            || proof.realm != self.realm.globals
+        {
+            return false;
+        }
+        let (Some(holder), Some(constructor)) =
+            (self.heap.ordinary_object(proof.holder), self.object_data(proof.constructor))
+        else {
+            return false;
+        };
+        // SAFETY: the proof's walk found `constructor` in this data slot of the holder's shape,
+        // which the epoch keeps.
+        let found = unsafe { self.heap.property_get_shaped(holder, proof.holder_slot as usize) };
+        found == Some(proof.constructor)
+            && constructor.shape() == proof.constructor_shape
+            && self.heap.property_get(constructor, proof.species_slot) == Some(proof.getter)
+    }
+
+    /// Records the `PromiseSpeciesProof` of `promise`, whose `constructor` read found the
+    /// realm's `%Promise%` with its intrinsic `@@species` getter: where the read's proof found
+    /// the constructor, and the getter's slot, when both were proved under this epoch.
+    fn record_promise_species_proof(&self, promise: Value, constructor: Value) {
+        use super::symbol_load_proof::SymbolLoadAnswer;
+        let epoch = crate::heap::prototype_layout_epoch();
+        let (Some(data), Some(constructor_data)) = (self.heap.ordinary_object(promise), self.object_data(constructor))
+        else {
+            return;
+        };
+        let key = PropertyKey::string(self.runtime_atoms.constructor);
+        let Some(SymbolLoadAnswer::Inherited { prototype, holder, slot }) = self.symbol_load_proofs.answer(data.shape(), key, epoch)
+        else {
+            return;
+        };
+        let constructor_shape = constructor_data.shape();
+        let Some(species_slot) = self.proved_species_slot(constructor_shape, epoch) else {
+            return;
+        };
+        let Some(getter) = self.heap.property_get(constructor_data, species_slot) else {
+            return;
+        };
+        self.promise_species_proof.set(Some(PromiseSpeciesProof {
+            shape: data.shape(),
+            prototype,
+            epoch,
+            realm: self.realm.globals,
+            holder,
+            holder_slot: slot,
+            constructor,
+            constructor_shape,
+            species_slot,
+            getter,
+        }));
     }
 
     pub(super) fn promise_then(
@@ -5523,6 +5693,10 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         promise: Value,
     ) -> Result<Value, JsError> {
+        // A read that runs no guest code and finds the intrinsic species answers at once.
+        if self.promise_species_intrinsic(promise) {
+            return Ok(self.intrinsic_promise_constructor());
+        }
         let constructor_atom = self.runtime_atoms.constructor;
         let constructor = self.get_property(p, promise, constructor_atom)?;
         if constructor.is_undefined() {
@@ -5547,6 +5721,11 @@ impl<H: Host> Vm<H> {
         constructor: Value,
         value: Value,
     ) -> Result<Value, JsError> {
+        // A promise whose `constructor` read runs no guest code and names `constructor` is
+        // itself, as the [[Get]] below would find.
+        if self.is_promise(value) && self.promise_constructor_data(value) == Some(constructor) {
+            return Ok(value);
+        }
         let constructor = self.heap.root(constructor);
         let value = self.heap.root(value);
         let outcome = (|| {
@@ -5576,6 +5755,21 @@ impl<H: Host> Vm<H> {
         self.heap.release_root(constructor);
         self.heap.release_root(value);
         outcome
+    }
+
+    /// `promise.constructor` where its read runs no guest code: absent from the promise's own
+    /// shape, which answers for it (`shape_property_lookup`), and a data property of its
+    /// prototype's. A getter reads as `undefined` here (`slot_data_value`), which names no
+    /// constructor. `None` leaves the read to [[Get]].
+    fn promise_constructor_data(&self, promise: Value) -> Option<Value> {
+        let atom = self.runtime_atoms.constructor;
+        let own = self.shape_property_lookup(promise, atom)?;
+        if self.shape_slot(own.shape(), atom).is_some() {
+            return None;
+        }
+        let holder = self.shape_property_lookup(own.proto(), atom)?;
+        let slot = self.shape_slot(holder.shape(), atom)?;
+        self.slot_data_value(holder, slot)
     }
 
     fn finally_handler_function(

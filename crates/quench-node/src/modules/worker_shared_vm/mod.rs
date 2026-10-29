@@ -134,6 +134,9 @@ pub(crate) fn initialize_globals(c: &mut Context<'_>, _: RootId, _: &[RootId]) -
 
 /// Register `endpoint` as a port of this VM and return its new JavaScript object.
 fn adopt(c: &mut Context<'_>, endpoint: Arc<Endpoint>) -> Result<RootId, RootedError> {
+    let wake = crate::modules::napi::wake_signal()
+        .map_err(|error| RootedError::host(error.to_string()))?;
+    endpoint.attach_wake(wake);
     let api = api(c)?;
     let id = {
         let state = state(c);

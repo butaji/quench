@@ -5,15 +5,38 @@ use std::hash::{Hash, Hasher};
 use std::ops::Range;
 use std::rc::Rc;
 
-thread_local! {
-    /// Bytes of text made on demand (a rope's flat units, a wide string's host text) since
-    /// the collector last took them. A string is charged its flat bytes when allocated; text
-    /// made later is charged here, so collections follow the memory programs materialize.
-    static MATERIALIZED_BYTES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+/// Bytes of text made on demand since the collector last took them. A string is charged its
+/// flat bytes when allocated; text made later is charged here, so collections follow the
+/// memory programs materialize.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct MaterializedText {
+    /// A string's own flat units, made by flattening: `JsString::flat_unit_bytes` counts them
+    /// from now on, so the sweep that frees the string releases them from the payload ledger.
+    pub(crate) units: usize,
+    /// Text held beside the units (a wide string's host text, decoded text kept as UTF-8),
+    /// which `flat_unit_bytes` never counts.
+    pub(crate) beside: usize,
 }
 
-fn charge_materialized(bytes: usize) {
-    MATERIALIZED_BYTES.with(|total| total.set(total.get().saturating_add(bytes)));
+thread_local! {
+    static MATERIALIZED: std::cell::Cell<MaterializedText> =
+        const { std::cell::Cell::new(MaterializedText { units: 0, beside: 0 }) };
+}
+
+fn charge_materialized(change: impl FnOnce(&mut MaterializedText)) {
+    MATERIALIZED.with(|total| {
+        let mut text = total.get();
+        change(&mut text);
+        total.set(text);
+    });
+}
+
+fn charge_materialized_units(bytes: usize) {
+    charge_materialized(|text| text.units = text.units.saturating_add(bytes));
+}
+
+fn charge_materialized_beside(bytes: usize) {
+    charge_materialized(|text| text.beside = text.beside.saturating_add(bytes));
 }
 
 /// Decoded text at least this many bytes long keeps its UTF-8 until its units are read
@@ -36,10 +59,10 @@ fn wide_units(text: &str, length: usize) -> Rc<[u16]> {
     unsafe { storage.assume_init() }
 }
 
-/// Text bytes made on demand and not yet charged, which the caller now charges.
+/// Text made on demand and not yet charged, which the caller now charges.
 #[inline(always)]
-pub(crate) fn take_materialized_bytes() -> usize {
-    MATERIALIZED_BYTES.with(|total| total.replace(0))
+pub(crate) fn take_materialized_text() -> MaterializedText {
+    MATERIALIZED.with(|total| total.replace(MaterializedText::default()))
 }
 
 /// Heap-owned JavaScript string. Its code units are authoritative: one byte each when every
@@ -321,6 +344,27 @@ impl<'a> Units<'a> {
         self.iter().collect()
     }
 
+    /// These units' UTF-8 encoding, each lone surrogate encoded as the replacement character
+    /// (`utf8_len` counts it): an ASCII run's bytes as they are stored.
+    pub(crate) fn to_utf8(self) -> Vec<u8> {
+        match self {
+            Self::Ascii(bytes) => bytes.to_vec(),
+            Self::Wide(units) => String::from_utf16_lossy(units).into_bytes(),
+        }
+    }
+
+    /// The length of these units' UTF-8 encoding, each lone surrogate encoded as the
+    /// replacement character, as V8's `String::Utf8Length` counts it: an ASCII run's length,
+    /// or a wide run's code points summed without copying the units.
+    pub(crate) fn utf8_len(self) -> usize {
+        match self {
+            Self::Ascii(bytes) => bytes.len(),
+            Self::Wide(units) => char::decode_utf16(units.iter().copied())
+                .map(|unit| unit.unwrap_or(char::REPLACEMENT_CHARACTER).len_utf8())
+                .sum(),
+        }
+    }
+
     /// The units as UTF-16, borrowed when they already are.
     pub(crate) fn wide(self) -> Cow<'a, [u16]> {
         match self {
@@ -352,6 +396,9 @@ impl<'a> Units<'a> {
         if let (Self::Ascii(haystack), Units::Ascii(needle)) = (self, search) {
             if start > last {
                 return None;
+            }
+            if let [unit] = needle {
+                return memchr::memchr(*unit, &haystack[start..]).map(|offset| start + offset);
             }
             return memchr::memmem::find(&haystack[start..], needle).map(|offset| start + offset);
         }
@@ -585,7 +632,7 @@ impl JsStringInner {
             let slot = self.aside.get();
             if (*slot).is_none() {
                 let host = make();
-                charge_materialized(host.len());
+                charge_materialized_beside(host.len());
                 *slot = Some(Rc::new(Aside::Host(host)));
             }
             match (*slot).as_deref() {
@@ -862,7 +909,7 @@ impl JsString {
         if text.is_ascii() || text.len() < DEFERRED_DECODE_MIN_BYTES {
             return Self::from_str(text);
         }
-        charge_materialized(text.len());
+        charge_materialized_beside(text.len());
         Self::shared(JsStringInner::decoded(Rc::from(text), text.encode_utf16().count()))
     }
 
@@ -919,7 +966,7 @@ impl JsString {
         inner.flat.get_or_init(|| {
             let units = Self::flattened(inner);
             inner.release_halves();
-            charge_materialized(match units.view() {
+            charge_materialized_units(match units.view() {
                 Units::Ascii(bytes) => bytes.len(),
                 Units::Wide(units) => std::mem::size_of_val(units),
             });
@@ -1208,6 +1255,16 @@ impl JsString {
         }
         let mut parts = Vec::new();
         let mut cursor = 0;
+        if let (Units::Ascii(haystack), Units::Ascii(needle)) = (units, separator) {
+            // One searcher serves every match; occurrences come back non-overlapping, as split
+            // consumes them.
+            for offset in memchr::memmem::find_iter(haystack, needle) {
+                parts.push(Self::from_unit_run(units.slice(cursor..offset)));
+                cursor = offset + needle.len();
+            }
+            parts.push(Self::from_unit_run(units.slice(cursor..units.len())));
+            return parts;
+        }
         while let Some(offset) = units.find(separator, cursor) {
             parts.push(Self::from_unit_run(units.slice(cursor..offset)));
             cursor = offset + separator.len();

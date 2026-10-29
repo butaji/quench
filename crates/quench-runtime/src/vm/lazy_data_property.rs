@@ -407,7 +407,12 @@ impl<H: Host> Vm<H> {
                         .lazy_data_properties(holder)
                         .filter_map(|(key, candidate)| (candidate == group).then_some(key))
                         .collect::<Vec<_>>();
-                    for key in keys {
+                    // Last defined first: each removal of a redefined member then returns the
+                    // holder to the shape it had before adding it, where removing them front
+                    // first vacates slot after slot until the holder turns dictionary
+                    // (`Vm::delete_shape_property`), which no field cache serves:
+                    // `Buffer.prototype`'s 96 members made every Buffer method read a miss.
+                    for key in keys.into_iter().rev() {
                         let redefined = vm
                             .lazy_data_accessor(holder, key)
                             .and_then(|accessor| vm.lazy_member(accessor))

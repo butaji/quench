@@ -51,10 +51,9 @@ impl<H: Host> Vm<H> {
                     })
                 });
             if let Some(existing) = existing {
-                let Some(elements) = self.heap.array_elements_mut(existing) else {
+                if self.heap.grow_array_elements(existing, |elements| elements.push(value)).is_none() {
                     return Err(JsError("array group bucket is not an array".into()));
-                };
-                elements.make_mut().push(value);
+                }
                 continue;
             }
             let bucket = self.heap.alloc(Cell::Array {

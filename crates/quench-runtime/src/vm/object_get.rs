@@ -65,6 +65,12 @@ impl<H: Host> Vm<H> {
         })
     }
 
+    /// The slot of `@@species` on a constructor of `shape`, where `has_intrinsic_species_getter`
+    /// proved it under `epoch`.
+    pub(super) fn proved_species_slot(&self, shape: u32, epoch: u64) -> Option<usize> {
+        self.species_slot_proof.get().filter(|proof| proof.shape == shape && proof.epoch == epoch).map(|proof| proof.slot)
+    }
+
     /// `has_intrinsic_species_getter` past its proof: the getter of `constructor`'s own
     /// `@@species` accessor, recording its slot when the shape alone says the slot holds the
     /// getter (`ShapeAttributes::slot_getter` on a non-dictionary shape).
@@ -246,11 +252,16 @@ impl<H: Host> Vm<H> {
         key: RootId,
         result: RootId,
     ) -> Result<(), JsError> {
-        let Some(descriptor) = self.own_property_descriptor_record(
-            p,
-            self.heap.root_value(target).unwrap(),
-            self.heap.root_value(key).unwrap(),
-        )?
+        let (target, key) = (self.heap.root_value(target).unwrap(), self.heap.root_value(key).unwrap());
+        // No own property constrains the result: the shape shows it without a descriptor.
+        if self
+            .string_key_atom(key)
+            .and_then(|atom| self.shape_own_presence(target, atom))
+            == Some(false)
+        {
+            return Ok(());
+        }
+        let Some(descriptor) = self.own_property_descriptor_record(p, target, key)?
         else {
             return Ok(());
         };
@@ -818,13 +829,20 @@ impl<H: Host> Vm<H> {
         object: Value,
         key: PropertyKey,
     ) -> Option<Option<Value>> {
-        // An array is ordinary for a symbol key: only index keys and `length` are exotic.
-        let symbol = key.symbol_value().is_some();
+        // An array is ordinary for any key but an index and `length`: a symbol, or a name such
+        // as `constructor`, which `ArraySpeciesCreate` reads of every array a method copies.
+        let array_ordinary = match key {
+            PropertyKey::Symbol(_) => true,
+            PropertyKey::String(atom) => {
+                atom != self.length_atom && !self.atom_class(atom).contains(AtomClass::ARRAY_INDEX)
+            }
+            PropertyKey::Private(_) => false,
+        };
         let mut current = object;
         loop {
             let data = match self.heap.ordinary_object(current) {
                 Some(data) => data,
-                None if symbol && self.heap.array(current).is_some() => self.heap.object(current)?,
+                None if array_ordinary && self.heap.array(current).is_some() => self.heap.object(current)?,
                 None => return None,
             };
             if data.is_module_namespace() || data.deferred_module().is_some() {
@@ -1228,11 +1246,17 @@ impl<H: Host> Vm<H> {
         self.object_data_mut(target).is_some_and(|object| object.set_private_field(PrivateBrand { home, name: atom }, value))
     }
 
+    /// Whether `object` may gain a private element: always, unless the host applies
+    /// non-extensibility to private elements (`Host::nonextensible_applies_to_private`).
+    pub(super) fn private_element_addable(&self, object: &Object) -> bool {
+        object.is_extensible() || !self.host.nonextensible_applies_to_private()
+    }
+
     pub(super) fn initialize_private_field(&mut self, p: &ResidualProgram, target: Value, home: Value, atom: Atom, value: Value) -> Result<(), JsError> {
-        let Some(extensible) = self.object_data(target).map(Object::is_extensible) else {
+        let Some(addable) = self.object_data(target).map(|object| self.private_element_addable(object)) else {
             return Err(self.type_error(p, "Cannot add private field to a non-object".into()));
         };
-        if !extensible {
+        if !addable {
             return Err(self.type_error(p, "Cannot add private field to a non-extensible object".into()));
         }
         if let Some(object) = self.object_data_mut(target)

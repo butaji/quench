@@ -106,7 +106,7 @@ impl ProgramEntry {
             script_or_module,
             reclaimable,
             pass,
-            roots_pending: _,
+            minor_root_traces: _,
         } = self;
         if wasm_signatures.is_some() || residual.kind == crate::bytecode::ProgramKind::Wasm {
             return Err(SnapshotError::unsupported("WebAssembly"));
@@ -240,7 +240,7 @@ impl ProgramEntry {
             script_or_module,
             reclaimable,
             pass,
-            roots_pending: true,
+            minor_root_traces: PromotionAge::OLDEST.minors(),
         })
     }
 }

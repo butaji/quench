@@ -101,8 +101,9 @@ impl MethodArguments for crate::bytecode::ResidualProgram {
     }
 }
 
-/// Records which functions liveness covers; the collector derives a covered function's
-/// per-pc root masks when it first finds one on the stack (`ResidualProgram::register_root_mask`).
+/// Records which functions liveness covers and, for each covered one, its `Call`s whose
+/// result is dead (`dead_call_results`); the collector derives a covered function's per-pc
+/// root masks when it first finds one on the stack (`ResidualProgram::register_root_mask`).
 pub(crate) fn mark_register_roots<'a>(
     functions: impl IntoIterator<Item = &'a mut Function>,
     methods: &(impl MethodArguments + ?Sized),
@@ -110,9 +111,44 @@ pub(crate) fn mark_register_roots<'a>(
     superinstructions: &[Superinstruction],
 ) {
     for function in functions {
-        let covered = transfers(function, methods, fields, superinstructions).is_some();
-        function.register_roots = crate::bytecode::RegisterRoots::new(covered);
+        function.register_roots = register_roots(function, methods, fields, superinstructions);
     }
+}
+
+/// `function`'s liveness coverage and dead call results, as `mark_register_roots` records them.
+pub(crate) fn register_roots(
+    function: &Function,
+    methods: &(impl MethodArguments + ?Sized),
+    fields: &[FieldSite],
+    superinstructions: &[Superinstruction],
+) -> crate::bytecode::RegisterRoots {
+    match transfers(function, methods, fields, superinstructions) {
+        Some(transfers) => {
+            let live = analyze_transfers(function, &transfers);
+            crate::bytecode::RegisterRoots::with_dead_call_results(true, dead_call_results(function, &live))
+        }
+        None => crate::bytecode::RegisterRoots::new(false),
+    }
+}
+
+/// The pcs, in order, of `function`'s `Call`s that write their result to a register (no
+/// result flags) that is dead after the call, under `live`: a lane call may let the callee
+/// skip building a result nothing reads (`ImmediateLayout::LANE_CALL_RESULT_UNUSED_FLAG`).
+/// A lane derived each from the per-pc masks on its first run, 3-6% of the instructions of
+/// cached npm runs (axios, schema-utils, ajv-formats), which a compile-cache hit now keeps.
+fn dead_call_results(function: &Function, live: &[RegisterSet]) -> crate::heap::ThinBoxSlice<u32> {
+    function
+        .instructions()
+        .enumerate()
+        .filter(|(pc, instruction)| {
+            instruction.op() == crate::bytecode::Op::Call
+                && instruction.result_flags() == 0
+                && live.get(pc + 1).is_some_and(|&after| {
+                    register_dead(after, usize::from(instruction.a() & crate::bytecode::REGISTER_MASK))
+                })
+        })
+        .map(|(pc, _)| u32::try_from(pc).expect("a function's pcs fit u32"))
+        .collect()
 }
 
 pub(crate) fn analyze(
@@ -219,6 +255,10 @@ fn resumes_into_handler(op: Op) -> bool {
 }
 
 pub(super) fn add_suspended_exception_roots(function: &Function, live: &mut [RegisterSet]) {
+    // Most functions have no handler for an abrupt resumption to enter.
+    if function.handlers.is_empty() {
+        return;
+    }
     for (pc, instruction) in function.instructions().enumerate() {
         if !resumes_into_handler(instruction.op()) {
             continue;
@@ -231,7 +271,119 @@ pub(super) fn add_suspended_exception_roots(function: &Function, live: &mut [Reg
     }
 }
 
+/// The transfer of an op whose field layout alone decides it: each of A, B and C a register
+/// it reads, writes or both, or a field naming no register; no register window or pair,
+/// operand, field base, optional register, numeric local target, method site or
+/// superinstruction (`uses`, `definitions`). Most instructions are of such ops.
+#[derive(Clone, Copy)]
+struct FixedTransfer {
+    /// The fields, in `InstructionField::ALL` order, whose register the op reads.
+    reads: [bool; 3],
+    /// The fields, in that order, whose register the op writes.
+    writes: [bool; 3],
+    reads_result: bool,
+    has_result: bool,
+}
+
+impl FixedTransfer {
+    /// `op`'s fixed transfer, when its layout decides one.
+    const fn of(op: Op) -> Option<Self> {
+        if matches!(
+            op.immediate_layout(),
+            ImmediateLayout::CallWindow
+                | ImmediateLayout::CallWindowWithEvalFlags
+                | ImmediateLayout::SingleArgumentCallWindowWithEvalFlags
+                | ImmediateLayout::RegisterPair
+        ) || matches!(op.immediate_role(), ImmediateRole::MethodSiteIndex | ImmediateRole::SuperinstructionIndex)
+        {
+            return None;
+        }
+        let mut reads = [false; 3];
+        let mut writes = [false; 3];
+        let mut index = 0;
+        while index < InstructionField::ALL.len() {
+            let layout = op.field_layout(InstructionField::ALL[index]);
+            match layout {
+                FieldLayout::RegisterWindowBase
+                | FieldLayout::Operand
+                | FieldLayout::NumericIndexOperand
+                | FieldLayout::FieldBase
+                | FieldLayout::OptionalRegister
+                | FieldLayout::OptionalReadRegister
+                | FieldLayout::ConstructArguments
+                | FieldLayout::NumericLocalTarget => return None,
+                _ => {}
+            }
+            reads[index] = layout.reads_register();
+            writes[index] = layout.writes_register();
+            index += 1;
+        }
+        Some(Self {
+            reads,
+            writes,
+            reads_result: op.result_layout().reads_result_register(),
+            has_result: op.has_result_register(),
+        })
+    }
+
+    /// The registers of `instruction`'s fields that `flags` marks.
+    #[inline(always)]
+    fn registers(instruction: WideInstruction, flags: [bool; 3]) -> RegisterSet {
+        let mut set = 0;
+        let mut index = 0;
+        while index < flags.len() {
+            if flags[index] {
+                set |= register_bit(instruction.field_value(InstructionField::ALL[index]));
+            }
+            index += 1;
+        }
+        set
+    }
+
+    #[inline(always)]
+    fn uses(self, instruction: WideInstruction) -> RegisterSet {
+        let result = if self.reads_result { register_bit(instruction.result_register()) } else { 0 };
+        Self::registers(instruction, self.reads) | result
+    }
+
+    #[inline(always)]
+    fn definitions(self, instruction: WideInstruction) -> RegisterSet {
+        let result = if self.has_result && !instruction.returns_from_frame() && !instruction.writes_numeric_local() {
+            register_bit(instruction.result_register())
+        } else {
+            0
+        };
+        Self::registers(instruction, self.writes) | result
+    }
+}
+
+/// `FixedTransfer::of` of every op, by op.
+const FIXED_TRANSFERS: [Option<FixedTransfer>; Op::COUNT] = {
+    let mut table = [None; Op::COUNT];
+    let mut index = 0;
+    while index < Op::COUNT {
+        if let Some(op) = Op::from_index(index) {
+            table[index] = FixedTransfer::of(op);
+        }
+        index += 1;
+    }
+    table
+};
+
 pub(super) fn uses(
+    instruction: WideInstruction,
+    methods: &(impl MethodArguments + ?Sized),
+    fields: &[FieldSite],
+    superinstructions: &[Superinstruction],
+) -> RegisterSet {
+    if let Some(fixed) = FIXED_TRANSFERS[instruction.op() as usize] {
+        return fixed.uses(instruction);
+    }
+    general_uses(instruction, methods, fields, superinstructions)
+}
+
+/// `uses` of an instruction whose op has no `FixedTransfer`.
+fn general_uses(
     instruction: WideInstruction,
     methods: &(impl MethodArguments + ?Sized),
     fields: &[FieldSite],
@@ -306,6 +458,17 @@ fn field_uses(instruction: WideInstruction, field: InstructionField, fields: &[F
 }
 
 pub(super) fn definitions(
+    instruction: WideInstruction,
+    superinstructions: &[Superinstruction],
+) -> RegisterSet {
+    if let Some(fixed) = FIXED_TRANSFERS[instruction.op() as usize] {
+        return fixed.definitions(instruction);
+    }
+    general_definitions(instruction, superinstructions)
+}
+
+/// `definitions` of an instruction whose op has no `FixedTransfer`.
+fn general_definitions(
     instruction: WideInstruction,
     superinstructions: &[Superinstruction],
 ) -> RegisterSet {
@@ -395,8 +558,14 @@ fn nested_member(member: Instr) -> Option<WideInstruction> {
     (!member.is_wide()).then(|| member.as_wide())
 }
 
+/// The registers `base..base + count` that the set covers, as `register_bit` of each.
 fn range(base: u16, count: u16) -> RegisterSet {
-    (0..count).fold(0, |mask, offset| mask | register_bit(base + offset))
+    let start = u32::from(base).min(RegisterSet::BITS);
+    let end = (u32::from(base) + u32::from(count)).min(RegisterSet::BITS);
+    match end - start {
+        0 => 0,
+        span => (RegisterSet::MAX >> (RegisterSet::BITS - span)) << start,
+    }
 }
 
 /// The set of `register` alone; empty past the set's width.
@@ -411,6 +580,45 @@ pub(crate) fn register_bit(register: u16) -> RegisterSet {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn fixed_transfers_match_the_general_derivation() {
+        // Every op with a fixed transfer, over field values in and past the set's width and
+        // every result flag combination the A field can carry.
+        let values: [u16; 6] = [0, 1, 63, 127, 128, u16::MAX >> 4];
+        let mut checked = 0;
+        for index in 0..Op::COUNT {
+            let op = Op::from_index(index).unwrap();
+            if FIXED_TRANSFERS[index].is_none() {
+                continue;
+            }
+            for &a in values.iter().chain(&[crate::bytecode::RETURN_REGISTER, crate::bytecode::NUMERIC_LOCAL_TARGET, 5 | crate::bytecode::RETURN_REGISTER]) {
+                for &b in &values {
+                    for &c in &values {
+                        let instruction = WideInstruction::new(op, a, b, c, 0);
+                        let no_methods: &[MethodSite] = &[];
+                        assert_eq!(uses(instruction, no_methods, &[], &[]), general_uses(instruction, no_methods, &[], &[]), "{op:?} {a} {b} {c}");
+                        assert_eq!(definitions(instruction, &[]), general_definitions(instruction, &[]), "{op:?} {a} {b} {c}");
+                        checked += 1;
+                    }
+                }
+            }
+        }
+        assert!(checked > 0);
+    }
+
+    #[test]
+    fn register_ranges_are_their_registers_bits() {
+        let width = RegisterSet::BITS as u16;
+        for base in (0..width + 4).chain([u16::MAX - 2, u16::MAX]) {
+            for count in (0..width + 4).chain([u16::MAX - base.min(u16::MAX)]) {
+                let expected = (0..count)
+                    .filter_map(|offset| base.checked_add(offset))
+                    .fold(0, |mask, register| mask | register_bit(register));
+                assert_eq!(range(base, count), expected, "base {base} count {count}");
+            }
+        }
+    }
     use crate::bytecode::Op;
 
     const NO_METHODS: &[MethodSite] = &[];
@@ -473,6 +681,7 @@ mod tests {
             dynamic_scope_access: Default::default(),
             js_tier_candidate: Default::default(),
             call_plan: Default::default(),
+            initializer: Default::default(),
             handlers: vec![].into(),
             register_roots: Default::default(),
             undefined_register: None,

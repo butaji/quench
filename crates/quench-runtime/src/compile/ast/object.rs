@@ -58,7 +58,19 @@ impl FunctionCompiler<'_, '_> {
             self.emit(Op::MakeObjectLiteral, dst, value_registers[0], count, site);
             return dst;
         }
-        self.emit(Op::MakeObject, dst, 0, 0, 0);
+        // A literal led by `__proto__: value` starts as an object of that prototype
+        // (`object_literal_create`): its new object is unobservable before the value is.
+        let leading_prototype = match value.properties.first() {
+            Some(ObjectPropertyKind::ObjectProperty(first)) if Self::is_object_literal_prototype(first) => {
+                let prototype = self.expression(&first.value);
+                self.object_literal_create(dst, prototype);
+                true
+            }
+            _ => {
+                self.emit(Op::MakeObject, dst, 0, 0, 0);
+                false
+            }
+        };
         let super_atom = value
             .properties
             .iter()
@@ -78,7 +90,7 @@ impl FunctionCompiler<'_, '_> {
         }
         // Each property's temporaries are dead once it is defined on `dst`.
         let temporaries = self.next_reg;
-        for property in &value.properties {
+        for property in &value.properties[usize::from(leading_prototype)..] {
             self.next_reg = temporaries;
             let property = match property {
                 ObjectPropertyKind::ObjectProperty(property) => property,
@@ -265,6 +277,21 @@ impl FunctionCompiler<'_, '_> {
             && !property.computed
             && !property.shorthand
             && Self::static_key(&property.key) == Some("__proto__")
+    }
+
+    fn object_literal_create(&mut self, object: Register, prototype: Register) {
+        let callee = self.load_name("\0quench:object-literal-create");
+        let this = self.literal(Constant::Undefined);
+        let start = self.next_reg;
+        let slot = self.reg();
+        self.emit(Op::Move, slot, prototype, 0, 0);
+        self.emit(
+            Op::Call,
+            object,
+            callee,
+            this,
+            crate::bytecode::ImmediateLayout::call_immediate(start, 1, false, false),
+        );
     }
 
     fn object_literal_prototype(&mut self, object: Register, prototype: Register) {

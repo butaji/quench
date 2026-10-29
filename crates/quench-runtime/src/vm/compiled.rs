@@ -25,8 +25,8 @@
 
 use super::*;
 use crate::bytecode::{
-    ControlFlowLayout, FieldLookup, Function, JsDenotation, Operand, OperandKind, RETURN_REGISTER,
-    WideInstruction,
+    ControlFlowLayout, FieldLookup, Function, JsDenotation, Operand, OperandKind, ResidualProgram,
+    RETURN_REGISTER, WideInstruction,
 };
 use crate::wasm::conversion::ScalarConversionOperator;
 use crate::wasm::float::{
@@ -49,9 +49,10 @@ use std::rc::{Rc, Weak};
 
 #[path = "compiled/osr_loop.rs"]
 mod osr_loop;
+mod wavefront;
 pub(super) use osr_loop::{
-    ArrayUse, FieldReceiver, FieldUse, InlineCallee, InlineFrame, LoopEntry, LoopOutcome, LoopRegion, Observation,
-    RegionRejection, Widening,
+    ArrayUse, FieldReceiver, FieldUse, InlineCallee, InlineFrame, LoopEntry, LoopOutcome, LoopRegion, NativeFieldLoad,
+    Observation, RegionAnalysisFailure, RegionRejection, Widening,
 };
 
 #[derive(Clone, Copy)]
@@ -69,6 +70,11 @@ pub(super) enum RegionExit {
     Resume(u32),
     Fallback(u32),
     Recompile(u32),
+    /// As `Fallback`, at an append that found its array's backing full. The general path
+    /// grows the backing geometrically (`UniqueElements::reserve`), so an array leaves this
+    /// way a logarithmic number of times in its length, and these exits do not mark the
+    /// region as one whose values leave the subset.
+    Grow(u32),
 }
 
 impl RegionExit {
@@ -81,6 +87,7 @@ impl RegionExit {
             Self::Resume(pc) => (1, pc),
             Self::Fallback(pc) => (2, pc),
             Self::Recompile(pc) => (3, pc),
+            Self::Grow(pc) => (4, pc),
         };
         ((kind as u64) << Self::KIND_SHIFT) | payload as u64
     }
@@ -91,6 +98,7 @@ impl RegionExit {
             1 => Self::Resume(payload),
             2 => Self::Fallback(payload),
             3 => Self::Recompile(payload),
+            4 => Self::Grow(payload),
             _ => Self::EntryMiss(payload),
         }
     }
@@ -128,7 +136,7 @@ impl RegionExitBlocks {
         reported: RegionExit,
     ) {
         let pc = match outcome {
-            RegionExit::Resume(pc) | RegionExit::Fallback(pc) | RegionExit::Recompile(pc) => pc,
+            RegionExit::Resume(pc) | RegionExit::Fallback(pc) | RegionExit::Recompile(pc) | RegionExit::Grow(pc) => pc,
             RegionExit::EntryMiss(_) => unreachable!("entry miss does not write back"),
         };
         let word = builder.ins().iconst(types::I64, reported.encode() as i64);
@@ -528,7 +536,7 @@ pub(super) fn compile_js_numeric_region(
     let context = parameters[0];
     let arguments = parameters[3];
     let result_pointer = parameters[4];
-    let mut body = Body::new(builder, context, None);
+    let mut body = Body::new(builder, context, None, Int32Extension::Zero);
     let mut registers = vec![false; usize::from(function.registers)];
     let mut locals = vec![None; usize::from(function.locals)];
 
@@ -1441,6 +1449,250 @@ fn emit_js_dense_array_get(
     );
 }
 
+/// The address of the own data field a site's field cache entry names on the receiver in
+/// the frame word at `base_offset`, as the lane's own-field hits find it
+/// (`Vm::own_field_entry_hit`, `Vm::primary_own_field_store_hit`): a direct-object receiver
+/// whose exact shape is the entry's receiver, an entry naming no holder, and plain arena
+/// storage, whose slot the shape fixes. Plain storage carries no extras, so the receiver is
+/// neither a module namespace nor an arguments object. The entry, the record and the arena
+/// are read on every execution, so a cache refill, a receiver change or arena movement is
+/// seen; any failed proof branches to `fallback`.
+fn emit_js_own_field_slot(
+    builder: &mut FunctionBuilder<'_>,
+    arguments: ir::Value,
+    payload: ir::Value,
+    base_offset: i32,
+    site: u16,
+    fallback: ir::Block,
+) -> ir::Value {
+    use crate::heap::NATIVE_OBJECT_LAYOUT as OBJECT;
+    use crate::value::ValueLayout;
+    use super::NATIVE_FIELD_CACHE_LAYOUT as CACHE;
+
+    let base = builder.ins().load(types::I64, MemFlagsData::trusted(), arguments, base_offset);
+    let family = builder.ins().band_imm_u(base, ValueLayout::HEAP_FAMILY_MASK as i64);
+    let is_object = builder.ins().icmp_imm_u(IntCC::Equal, family, ValueLayout::DIRECT_OBJECT_TAG as i64);
+    emit_js_guard(builder, is_object, fallback);
+    let record_id = builder.ins().ireduce(types::I32, base);
+    let record_id = builder.ins().uextend(types::I64, record_id);
+    let in_reservation = builder.ins().icmp_imm_u(
+        IntCC::UnsignedLessThan,
+        record_id,
+        i64::try_from(OBJECT.record_capacity).expect("object record capacity fits i64"),
+    );
+    emit_js_guard(builder, in_reservation, fallback);
+
+    let entries = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, field_entries));
+    let records = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, object_record_base));
+    let values = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, property_values));
+    let values_len = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, property_len));
+    for base in [entries, records, values] {
+        let present = builder.ins().icmp_imm_u(IntCC::NotEqual, base, 0);
+        emit_js_guard(builder, present, fallback);
+    }
+
+    // The site's entry, its words complemented as stored.
+    let entry = builder.ins().iadd_imm_s(
+        entries,
+        i64::try_from(usize::from(site) * CACHE.entry_size).expect("field cache offset fits i64"),
+    );
+    let entry_word = |builder: &mut FunctionBuilder<'_>, offset: usize, complement: u32| {
+        let offset = i32::try_from(offset).expect("field cache word offset fits i32");
+        let stored = builder.ins().load(types::I32, MemFlagsData::trusted(), entry, offset);
+        builder.ins().bxor_imm_u(stored, i64::from(complement))
+    };
+    let holder = entry_word(builder, CACHE.holder_offset, CACHE.holder_complement);
+    let own = builder.ins().icmp_imm_u(IntCC::Equal, holder, i64::from(CACHE.own_holder));
+    emit_js_guard(builder, own, fallback);
+    let receiver_shape = entry_word(builder, CACHE.receiver_offset, CACHE.receiver_complement);
+
+    let record_offset = builder.ins().imul_imm_u(
+        record_id,
+        i64::try_from(OBJECT.record_size).expect("object record size fits i64"),
+    );
+    let object = builder.ins().iadd(records, record_offset);
+    // The exact shape carries the dictionary bit, so a dictionary never matches.
+    let shape = builder.ins().load(
+        types::I32,
+        MemFlagsData::trusted(),
+        object,
+        i32::try_from(OBJECT.auxiliary_offset).expect("auxiliary offset fits i32"),
+    );
+    let same_shape = builder.ins().icmp(IntCC::Equal, shape, receiver_shape);
+    emit_js_guard(builder, same_shape, fallback);
+    let meta = builder.ins().load(
+        types::I32,
+        MemFlagsData::trusted(),
+        object,
+        i32::try_from(OBJECT.meta_offset).expect("meta offset fits i32"),
+    );
+    let inline = builder.ins().band_imm_u(meta, i64::from(OBJECT.inline_storage_mask));
+    let arena_storage = builder.ins().icmp_imm_u(IntCC::Equal, inline, 0);
+    emit_js_guard(builder, arena_storage, fallback);
+    // Plain storage: the payload word is the arena start alone, its upper half zero, which
+    // an extras word never is (`Object::plain_storage_start`).
+    let storage = builder.ins().load(
+        types::I64,
+        MemFlagsData::trusted(),
+        object,
+        i32::try_from(OBJECT.payload_offset).expect("payload offset fits i32"),
+    );
+    let upper = builder.ins().ushr_imm_u(storage, i64::from(u32::BITS));
+    let plain = builder.ins().icmp_imm_u(IntCC::Equal, upper, 0);
+    emit_js_guard(builder, plain, fallback);
+
+    let slot = entry_word(builder, CACHE.slot_offset, CACHE.slot_complement);
+    let slot = builder.ins().band_imm_u(slot, i64::from(u16::MAX));
+    let slot = builder.ins().uextend(types::I64, slot);
+    let position = builder.ins().iadd(storage, slot);
+    let in_arena = builder.ins().icmp(IntCC::UnsignedLessThan, position, values_len);
+    emit_js_guard(builder, in_arena, fallback);
+    let value_offset = builder.ins().imul_imm_u(
+        position,
+        i64::try_from(OBJECT.property_value_size).expect("property value size fits i64"),
+    );
+    builder.ins().iadd(values, value_offset)
+}
+
+/// A word of the running dispatch's payload (`JsStepDispatch`).
+fn emit_js_payload_word(builder: &mut FunctionBuilder<'_>, payload: ir::Value, offset: usize) -> ir::Value {
+    let offset = i32::try_from(offset).expect("JS dispatch offset fits i32");
+    builder.ins().load(types::I64, MemFlagsData::trusted(), payload, offset)
+}
+
+/// The VM step that resumes at this PC on any failed proof (`emit_js_step_fallback`), in
+/// its own block after the direct path.
+struct JsExactFallback {
+    context: ir::Value,
+    callout: ir::Value,
+    callout_signature: ir::SigRef,
+    result_pointer: ir::Value,
+    stopped_block: ir::Block,
+    continue_block: ir::Block,
+    pc: usize,
+}
+
+impl JsExactFallback {
+    fn emit(&self, builder: &mut FunctionBuilder<'_>, fallback: ir::Block) {
+        builder.switch_to_block(fallback);
+        emit_js_step_fallback(
+            builder,
+            self.context,
+            self.callout,
+            self.callout_signature,
+            self.result_pointer,
+            self.stopped_block,
+            self.continue_block,
+            self.pc,
+        );
+    }
+}
+
+/// Lower an own data-field read (`emit_js_own_field_slot`); the destination stays untouched
+/// on a failed proof, which resumes `Vm::step` at this GetField PC and may fill the cache.
+fn emit_js_own_field_get(
+    builder: &mut FunctionBuilder<'_>,
+    arguments: ir::Value,
+    payload: ir::Value,
+    base_offset: i32,
+    site: u16,
+    destination_offset: i32,
+    next: ir::Block,
+    exact: &JsExactFallback,
+) {
+    let fallback = builder.create_block();
+    let address = emit_js_own_field_slot(builder, arguments, payload, base_offset, site, fallback);
+    let value = builder.ins().load(types::I64, MemFlagsData::trusted(), address, 0);
+    builder.ins().store(MemFlagsData::trusted(), value, arguments, destination_offset);
+    builder.ins().jump(next, &[]);
+    exact.emit(builder, fallback);
+}
+
+/// Lower a returning own data-field read: the value `emit_js_own_field_slot` finds becomes
+/// the frame's result as the native `Return` makes it, a requested interrupt first taking
+/// the exact-PC callout; any failed proof resumes `Vm::step` at this GetField PC.
+fn emit_js_own_field_return(
+    builder: &mut RegionCore<'_>,
+    arguments: ir::Value,
+    payload: ir::Value,
+    base_offset: i32,
+    site: u16,
+    result_pointer: ir::Value,
+    exact: &JsExactFallback,
+) {
+    let fallback = builder.create_block();
+    let address = emit_js_own_field_slot(builder, arguments, payload, base_offset, site, fallback);
+    let value = builder.ins().load(types::I64, MemFlagsData::trusted(), address, 0);
+    let returns = builder.create_block();
+    let interrupted = builder.interrupt_requested();
+    builder.ins().brif(interrupted, fallback, &[], returns, &[]);
+    builder.switch_to_block(returns);
+    builder.seal_block(returns);
+    builder.ins().store(MemFlagsData::trusted(), value, result_pointer, 0);
+    let status = builder.ins().iconst(
+        types::I32,
+        i64::from(JS_GENERAL_RETURN_STATUS_BASE)
+            + i64::try_from(exact.pc).expect("bounded general-dispatch PC"),
+    );
+    builder.ins().return_(&[status]);
+    exact.emit(builder, fallback);
+}
+
+/// Lower an own data-field store as the lane's store hit makes it
+/// (`Vm::primary_own_field_store_hit`, `Vm::cached_field_store_hit`): in specialized
+/// execution, of a name no method cache names (whose store would invalidate it), to the slot
+/// `emit_js_own_field_slot` finds. Only a value outside the heap is stored here, which the
+/// write barrier never logs; a heap value, like every failed proof, resumes `Vm::step` at
+/// this SetField PC with nothing written.
+#[allow(clippy::too_many_arguments)]
+fn emit_js_own_field_set(
+    builder: &mut FunctionBuilder<'_>,
+    arguments: ir::Value,
+    payload: ir::Value,
+    base_offset: i32,
+    value_offset: i32,
+    atom: Atom,
+    site: u16,
+    next: ir::Block,
+    exact: &JsExactFallback,
+) {
+    use crate::value::ValueLayout;
+
+    let fallback = builder.create_block();
+    let specialized = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, stores_specialized));
+    let specialized = builder.ins().icmp_imm_u(IntCC::NotEqual, specialized, 0);
+    emit_js_guard(builder, specialized, fallback);
+    let value = builder.ins().load(types::I64, MemFlagsData::trusted(), arguments, value_offset);
+    let tag = builder.ins().band_imm_u(value, ValueLayout::TAG_MASK as i64);
+    let immediate = builder.ins().icmp_imm_u(IntCC::NotEqual, tag, ValueLayout::HEAP_TAG as i64);
+    emit_js_guard(builder, immediate, fallback);
+    // The atom's bit among the names method caches hold (`Vm::method_caches_may_name`).
+    let word_index = atom / u64::BITS;
+    let words = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, method_cache_atoms));
+    let words_len = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, method_cache_atom_words));
+    let word_present = builder.create_block();
+    let name_free = builder.create_block();
+    let covered = builder.ins().icmp_imm_u(IntCC::UnsignedGreaterThan, words_len, i64::from(word_index));
+    builder.ins().brif(covered, word_present, &[], name_free, &[]);
+    builder.switch_to_block(word_present);
+    builder.seal_block(word_present);
+    let word = builder.ins().load(
+        types::I64,
+        MemFlagsData::trusted(),
+        words,
+        i32::try_from(word_index as usize * std::mem::size_of::<u64>()).expect("atom word offset fits i32"),
+    );
+    let named = builder.ins().band_imm_u(word, (1_u64 << (atom % u64::BITS)) as i64);
+    let unnamed = builder.ins().icmp_imm_u(IntCC::Equal, named, 0);
+    builder.ins().brif(unnamed, name_free, &[], fallback, &[]);
+    builder.switch_to_block(name_free);
+    builder.seal_block(name_free);
+    let address = emit_js_own_field_slot(builder, arguments, payload, base_offset, site, fallback);
+    builder.ins().store(MemFlagsData::trusted(), value, address, 0);
+    builder.ins().jump(next, &[]);
+    exact.emit(builder, fallback);
+}
+
 /// Read the VM's atomic cancellation flag at a JS loop backedge. The caller
 /// sends a set flag to the exact-PC `Vm::step` callout, which reports the same
 /// interruption as the interpreter before consuming the branch.
@@ -1666,6 +1918,84 @@ pub(super) fn compile_js_general_dispatch(
                 stopped_block,
                 continue_block,
                 pc,
+            );
+            general_dispatch_native_pcs[pc] = 1;
+            continue;
+        }
+        if instruction.op() == Op::GetField
+            && instruction.result_flags() == 0
+            && !instruction.returns_from_frame()
+            && !instruction.writes_current_this()
+            && instruction.numeric_local_target().is_none()
+            && let Some(next) = next
+            && let Some(FieldLookup::Atom { base, cache_site, .. }) = instruction.field_lookup()
+            && let Some(base_offset) = base.register_index().and_then(register_offset)
+            && let Some(destination_offset) = register_offset(instruction.result_register())
+        {
+            let exact = JsExactFallback {
+                context,
+                callout,
+                callout_signature,
+                result_pointer,
+                stopped_block,
+                continue_block,
+                pc,
+            };
+            emit_js_own_field_get(&mut builder, arguments, payload, base_offset, cache_site, destination_offset, next, &exact);
+            general_dispatch_native_pcs[pc] = 1;
+            continue;
+        }
+        // A GetField that returns its value (`return object.field`), as a getter body is: the
+        // read, then the native `Return`'s completion.
+        if instruction.op() == Op::GetField
+            && (instruction.result_flags() == 0
+                || instruction.result_flags() == crate::bytecode::RETURN_REGISTER)
+            && instruction.returns_from_frame()
+            && !instruction.writes_current_this()
+            && instruction.numeric_local_target().is_none()
+            && let Some(FieldLookup::Atom { base, cache_site, .. }) = instruction.field_lookup()
+            && let Some(base_offset) = base.register_index().and_then(register_offset)
+        {
+            let exact = JsExactFallback {
+                context,
+                callout,
+                callout_signature,
+                result_pointer,
+                stopped_block,
+                continue_block,
+                pc,
+            };
+            emit_js_own_field_return(&mut builder, arguments, payload, base_offset, cache_site, result_pointer, &exact);
+            general_dispatch_native_pcs[pc] = 1;
+            continue;
+        }
+        if instruction.op() == Op::SetField
+            && instruction.result_flags() == 0
+            && !instruction.returns_from_frame()
+            && !instruction.writes_current_this()
+            && let Some(next) = next
+            && let Some(base_offset) = register_offset(instruction.register_b())
+            && let Some(value_offset) = register_offset(instruction.register_a())
+        {
+            let exact = JsExactFallback {
+                context,
+                callout,
+                callout_signature,
+                result_pointer,
+                stopped_block,
+                continue_block,
+                pc,
+            };
+            emit_js_own_field_set(
+                &mut builder,
+                arguments,
+                payload,
+                base_offset,
+                value_offset,
+                instruction.atom_index(),
+                instruction.cache_site_index(),
+                next,
+                &exact,
             );
             general_dispatch_native_pcs[pc] = 1;
             continue;
@@ -2594,10 +2924,10 @@ fn view(ty: crate::WasmType) -> usize {
         .expect("compiled values are numeric scalars")
 }
 
-/// The machine type of a register's view as `ty`. An i32 view holds its value zero-extended to
-/// 64 bits, so an access can use it as an address offset as it is: x64's 32-bit operations
-/// already clear the upper half, and Cranelift elides the extension of their results, but not
-/// across the block parameters a loop carries.
+/// The machine type of a register's view as `ty`. An i32 view holds its value extended to 64
+/// bits as the body's reads use it (`Int32Extension`), so an access can use it as an address
+/// offset as it is: Cranelift elides the extension of the results of x64's 32-bit operations,
+/// but not across the block parameters a loop carries.
 fn view_ir(ty: crate::WasmType) -> ir::Type {
     match ty {
         crate::WasmType::I32 => types::I64,
@@ -2665,6 +2995,9 @@ fn float_unary_operator(op: Op, tag: u32) -> Option<(F64UnaryOperator, crate::Wa
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Slot {
     Value(Kind),
+    /// A 128-bit SIMD value. Only SIMD instructions, moves and vector accesses read it, so
+    /// it never meets a call, a return or a scalar view (`Emitter::vector`).
+    Vector,
     /// An instance binding: the environment slot it was loaded from.
     Binding(u32),
     /// The function's memory binding; only direct accesses read it.
@@ -2849,7 +3182,10 @@ fn jit_root_override() -> Result<Option<usize>, ()> {
     })
 }
 
-fn jit_wasm_selective_enabled() -> bool {
+/// Whether Wasm modules stay selective for good, compiling only their hot roots
+/// (`WasmModuleCompile::NEVER`): an A/B arm against the default, which compiles a long runner
+/// whole.
+pub(super) fn jit_wasm_selective_enabled() -> bool {
     JIT_WASM_SELECTIVE.enabled()
 }
 
@@ -3316,6 +3652,87 @@ const MEMCPY_CACHE_FUNCTION: i32 = std::mem::offset_of!(EmscriptenMemcpyCache, f
 /// The callout's signature: (context, function index, arguments, result) ->
 /// status; arguments and result are Wasm bits, one word each.
 type Callout = unsafe extern "C" fn(*mut CallContext, u64, *const u64, *mut u64) -> i64;
+type OsrProbeCallout = unsafe extern "C" fn(*mut CallContext, u64, u64, *mut u64) -> i64;
+
+#[repr(C)]
+struct OsrProbePayload {
+    function: u32,
+    frame: usize,
+    program: Option<Rc<ResidualProgram>>,
+    diagnostics_enabled: bool,
+}
+
+/// The OSR probe's first word is otherwise a cache site, which is bounded by `u16`.
+/// `u64::MAX` selects an initialized frame-owned local read; the second word is its slot.
+const OSR_INITIALIZED_LOCAL_READ: u64 = u64::MAX;
+
+/// A no-guest-effect JavaScript OSR helper. For a field probe, `receiver_bits` is passed in
+/// the ABI's arguments word as a raw `Value` and the first word is its cache site. For an
+/// initialized-local read, the first word is `OSR_INITIALIZED_LOCAL_READ` and the second is
+/// a local slot. A miss returns before a guest-visible operation runs.
+unsafe extern "C" fn osr_probe<H: Host>(
+    context: *mut CallContext,
+    cache_site: u64,
+    receiver_bits: u64,
+    result: *mut u64,
+) -> i64 {
+    let active = ACTIVE_CONTEXT.with(|current| current.replace(std::ptr::null_mut()));
+    // SAFETY: `CompiledOsrRegion::run` owns this context, VM and payload until this
+    // synchronous callback returns. The helper performs no guest call and retains no pointer.
+    let context_ref = unsafe { &mut *context };
+    let called = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        if context_ref.vm.is_null() || result.is_null() {
+            return None;
+        }
+        // SAFETY: the stack payload lives through this native entry and owns a residual Rc,
+        // avoiding a ProgramStore lookup/refcount on every probed field read.
+        let payload = unsafe { &*context_ref.adapter_payload.cast::<OsrProbePayload>() };
+        let program = payload.program.as_deref()?;
+        let vm = unsafe { &mut *context_ref.vm.cast::<Vm<H>>() };
+        if cache_site == OSR_INITIALIZED_LOCAL_READ {
+            if vm.lane_has_activations()
+                || vm.frames.get(payload.frame).is_none_or(|frame| frame.function != payload.function)
+            {
+                return None;
+            }
+            let slot = usize::try_from(receiver_bits).ok()?;
+            return vm.initialized_frame_binding(program, payload.frame, slot);
+        }
+        let site = u16::try_from(cache_site).ok()?;
+        // The ABI slot is used as a raw 64-bit Value, never as an address.
+        let receiver = Value::from_bits(receiver_bits);
+        let probe = vm.cached_field_hit(program, receiver, site);
+        if payload.diagnostics_enabled {
+            let function = payload.function;
+            vm.programs.record_js_jit_field_cache_probe(
+                context_ref.program,
+                function,
+                site,
+                matches!(&probe, super::object::FieldCacheProbe::Hit(_)),
+            );
+        }
+        match probe {
+            super::object::FieldCacheProbe::Hit(value) => Some(value),
+            super::object::FieldCacheProbe::OrdinaryMiss
+            | super::object::FieldCacheProbe::Ineligible => None,
+        }
+    }));
+    ACTIVE_CONTEXT.with(|current| current.set(active));
+
+    match called {
+        Ok(Some(value)) => {
+            // SAFETY: generated code supplies a valid result word.
+            unsafe { result.write(value.to_bits()) };
+            0
+        }
+        Ok(None) => 1,
+        Err(panic) => {
+            context_ref.raised = Some(Raised::Panic(panic));
+            RAISED_STATUS
+        }
+    }
+}
+
 type DirectMemcpyLeaf = unsafe extern "C" fn(*mut CallContext, u64, i32, i32, i32) -> i64;
 type ReferenceCallout = unsafe extern "C" fn(
     *mut CallContext,
@@ -3329,18 +3746,43 @@ type ReferenceCallout = unsafe extern "C" fn(
 ) -> i64;
 type DiagnosticReferenceCallout = ReferenceCallout;
 
-/// A monomorphic target certificate for one same-artifact indirect-call site.
-/// The body pointer is owned by this artifact's code mapping. The VM publishes
-/// the epoch last after a successful target return and a table-slot recheck;
+/// A target certificate for same-artifact indirect calls: element `index` of instance `env`'s
+/// table in binding `table` is this artifact's `function`, of type `signature`, whose code is
+/// `body`. An
+/// artifact's call sites share its certificates, one per table index's low bits
+/// (`reference_dispatch_entries`). The body pointer is owned by this artifact's code mapping.
+/// The VM publishes the epoch last after a successful target return and a table-slot recheck;
 /// a nonzero epoch is the validity bit.
 #[repr(C)]
 #[derive(Clone, Copy)]
 struct FastReferenceCache {
     epoch: u64,
     env: Value,
+    table: u64,
     index: u64,
+    signature: u64,
     function: u64,
     body: u64,
+}
+
+/// Certificates an artifact keeps per indirect call site (`reference_dispatch_entries`): a site
+/// whose targets vary dispatches through all of them (JetStream richards-wasm sends each task
+/// through one site to one of four functions; a certificate per site held only the last).
+const REFERENCE_DISPATCH_ENTRIES_PER_SITE: usize = 4;
+
+/// The most certificates an artifact keeps, however many sites it has: a direct-mapped cache
+/// whose collisions cost only a callout.
+const MAX_REFERENCE_DISPATCH_ENTRIES: usize = 256;
+
+/// The certificates of an artifact with `sites` indirect call sites, indexed by the table
+/// index's low bits: a power of two, none without sites.
+fn reference_dispatch_entries(sites: usize) -> usize {
+    if sites == 0 {
+        return 0;
+    }
+    (sites * REFERENCE_DISPATCH_ENTRIES_PER_SITE)
+        .next_power_of_two()
+        .min(MAX_REFERENCE_DISPATCH_ENTRIES)
 }
 
 impl Default for FastReferenceCache {
@@ -3348,7 +3790,9 @@ impl Default for FastReferenceCache {
         Self {
             epoch: 0,
             env: Value::NULL,
+            table: 0,
             index: 0,
+            signature: 0,
             function: 0,
             body: 0,
         }
@@ -3374,6 +3818,54 @@ unsafe extern "C" fn compiled_memory_fill(address: u64, byte: u64, length: u64) 
     // supported host's address size.
     unsafe {
         std::ptr::write_bytes(address as usize as *mut u8, byte as u8, length as usize);
+    }
+    0
+}
+
+/// Whether `field` of `instruction` is the unused second operand of a one-operand SIMD
+/// operator, which lowering leaves naming register 0 and nothing reads.
+fn unary_simd_spare(instruction: WideInstruction, field: crate::bytecode::InstructionField) -> bool {
+    instruction.op() == Op::WasmSimd
+        && field == crate::bytecode::InstructionField::C
+        && crate::wasm::simd::SimdKernel::of(instruction.imm())
+            .is_some_and(|(kernel, _)| kernel.right.is_none())
+}
+
+/// The machine type compiled code holds a Wasm vector in (`Slot::Vector`).
+const VECTOR_IR: ir::Type = types::I8X16;
+
+/// The words of a SIMD kernel callout (`compiled_simd_kernel`), by position: each operand
+/// and the result take two, low then high; a scalar sits in the low word.
+const SIMD_KERNEL_LEFT: usize = 0;
+const SIMD_KERNEL_RIGHT: usize = 2;
+const SIMD_KERNEL_RESULT: usize = 4;
+const SIMD_KERNEL_WORDS: usize = 6;
+
+/// Applies the SIMD operator `selector` names to the operand words at `words` and writes
+/// its result there (`SIMD_KERNEL_RESULT`): the kernel the interpreter runs, so compiled
+/// code needs no lowering of its own for an operator.
+unsafe extern "C" fn compiled_simd_kernel(selector: u64, words: *mut u64) {
+    let (kernel, lane) =
+        crate::wasm::simd::SimdKernel::of(selector as u32).expect("planned SIMD operator");
+    // SAFETY: the emitter passes its slot of SIMD_KERNEL_WORDS words.
+    let words = unsafe { std::slice::from_raw_parts_mut(words, SIMD_KERNEL_WORDS) };
+    let operand = |at: usize| u128::from(words[at]) | (u128::from(words[at + 1]) << u64::BITS);
+    let result = kernel.apply_bits(operand(SIMD_KERNEL_LEFT), operand(SIMD_KERNEL_RIGHT), lane);
+    words[SIMD_KERNEL_RESULT] = result as u64;
+    words[SIMD_KERNEL_RESULT + 1] = (result >> u64::BITS) as u64;
+}
+
+/// `memory.copy` within one memory, whose ranges the caller checked: overlapping ranges copy
+/// as if through a temporary buffer.
+unsafe extern "C" fn compiled_memory_copy(destination: u64, source: u64, length: u64) -> i64 {
+    // Wasm32 operands are zero-extended before this call; they fit every supported host's
+    // address size.
+    unsafe {
+        std::ptr::copy(
+            source as usize as *const u8,
+            destination as usize as *mut u8,
+            length as usize,
+        );
     }
     0
 }
@@ -4019,7 +4511,9 @@ unsafe fn reference_callout_inner<H: Host, const DIAGNOSTICS: bool>(
                 let cache = unsafe { &mut *fast_cache };
                 cache.epoch = 0;
                 cache.env = context.env;
+                cache.table = u64::from(table_slot);
                 cache.index = index;
+                cache.signature = signature_index;
                 cache.function = function as u64;
                 cache.body = body;
                 cache.epoch = vm.wasm_reference_epoch.get();
@@ -4401,8 +4895,9 @@ pub(super) struct CompiledProgram {
     /// site. The vector is only pointers until a site becomes hot, and each
     /// cache weakly references its callee artifact to avoid Rc cycles.
     reference_call_caches: std::cell::RefCell<Vec<Option<Box<IndirectCallCacheEntry>>>>,
-    /// Stable per-site target certificates for native direct dispatch. These
-    /// do not retain heap values and are invalidated by the VM epoch.
+    /// Target certificates for native direct dispatch, by table index
+    /// (`reference_dispatch_entries`). These do not retain heap values and are
+    /// invalidated by the VM epoch.
     reference_fast_caches: Box<[UnsafeCell<FastReferenceCache>]>,
     /// The owner and bytecode PC for each entry in `reference_call_caches`.
     reference_cache_sites: Vec<(usize, usize, u32)>,
@@ -4664,10 +5159,14 @@ impl CompiledProgram {
     #[cfg(test)]
     pub(super) fn reference_fast_cache_matches_target(
         &self,
-        site: usize,
+        index: usize,
         target_function: usize,
     ) -> bool {
-        let Some(cache) = self.reference_fast_caches.get(site) else {
+        let entries = self.reference_fast_caches.len();
+        let Some(cache) = (entries != 0)
+            .then(|| self.reference_fast_caches.get(index & (entries - 1)))
+            .flatten()
+        else {
             return false;
         };
         let Some(body) = self.table.get(target_function).copied() else {
@@ -4937,15 +5436,37 @@ impl CompiledOsrRegion {
     /// # Safety
     /// `registers` is the running activation's register file, at least `Function::registers`
     /// long; `entry` was built for this region from the current values of its arrays and
-    /// captures, which nothing changes while the call runs; `interrupt` is the VM's, whose
-    /// poll page the region was compiled for (`compile_osr_region`).
-    pub(super) unsafe fn run(
+    /// captures, which nothing changes while the call runs; `vm` and `interrupt` belong to
+    /// this lane activation, which excludes other mutable VM access while native code runs.
+    pub(super) unsafe fn run<H: Host>(
         &self,
         registers: *mut crate::value::Value,
         entry: &mut LoopEntry,
-        interrupt: &crate::execution_interrupt::ExecutionInterrupt,
+        vm: *mut Vm<H>,
+        program: ProgramId,
+        function: u32,
+        frame: usize,
+        interrupt: *const crate::execution_interrupt::ExecutionInterrupt,
     ) -> LoopOutcome {
-        let mut context = CallContext::interrupt_only(interrupt);
+        // SAFETY: the caller keeps the VM alive and excludes other mutable VM access while
+        // native code runs. The interrupt reference is used only to construct raw ABI fields.
+        let mut context = CallContext::interrupt_only(unsafe { &*interrupt });
+        // Keep the immutable residual alive independently of the mutable VM borrow while the
+        // native region invokes its no-guest-effect field or initialized-local probe.
+        let (program_data, diagnostics_enabled) = unsafe {
+            let vm = &*vm;
+            (vm.programs.get(program), vm.programs.js_jit_diagnostics_enabled())
+        };
+        let mut payload = OsrProbePayload {
+            function,
+            frame,
+            program: program_data,
+            diagnostics_enabled,
+        };
+        context.vm = vm.cast();
+        context.program = program;
+        context.callout = osr_probe::<H> as OsrProbeCallout as usize;
+        context.adapter_payload = (&mut payload as *mut OsrProbePayload).cast();
         let mut word = 0u64;
         // SAFETY: as the caller promises; the code reads and writes only those and the
         // result word.
@@ -4960,6 +5481,9 @@ impl CompiledOsrRegion {
                 self.entry,
             )
         };
+        if let Some(Raised::Panic(panic)) = context.raised.take() {
+            std::panic::resume_unwind(panic);
+        }
         if i64::from(status) == TERMINATED_STATUS {
             LoopOutcome::Terminated
         } else {
@@ -4989,15 +5513,16 @@ pub(super) fn analyze_inlining_osr_region<'a>(
 }
 
 /// Analyze a loop candidate through the shared region compiler's OSR mode.
-pub(super) fn analyze_osr_region(
+/// Analyze a loop candidate and preserve the function PC that blocked admission.
+pub(super) fn analyze_osr_region_detailed(
     function: &Function,
     decoded: &[WideInstruction],
     constants: &[crate::value::Value],
     sites: &[crate::bytecode::FieldSite],
-    live: Option<&crate::compile::liveness::RegisterMasks>,
+    live: Option<&std::rc::Rc<crate::compile::liveness::RegisterMasks>>,
     header: u32,
     backedge: u32,
-) -> Result<LoopRegion, RegionRejection> {
+) -> Result<LoopRegion, RegionAnalysisFailure> {
     osr_loop::region(function, decoded, constants, sites, live, header, backedge)
 }
 
@@ -5045,13 +5570,14 @@ pub(super) fn compile_osr_region(
     track_backedges: bool,
 ) -> Option<CompiledOsrRegion> {
     let isa = super::jit_backend::target_isa(LOOP_TIER_OPT_LEVELS[policy as usize]?)?;
-    let (function, widenings) = osr_loop::lower(
-        region,
-        observation,
-        &*isa,
-        poll_address(interrupt),
-        track_backedges,
-    )?;
+    // A row-recurrence stencil nest computes its rows in pairs (`wavefront`); any other region
+    // takes the loop tier's lowering.
+    let wavefront = wavefront::recognize(region)
+        .and_then(|nest| wavefront::lower(region, &nest, &*isa, poll_address(interrupt)));
+    let (function, widenings) = match wavefront {
+        Some(function) => (function, std::collections::BTreeMap::new()),
+        None => osr_loop::lower(region, observation, &*isa, poll_address(interrupt), track_backedges)?,
+    };
     let clif = native_dump_directory().map(|_| function.display().to_string());
     let (_code, entry) = compile_and_publish_entry(function, &*isa, osr_loop::MAX_CODE_BYTES)?;
     if let (Some(directory), Some(clif)) = (native_dump_directory(), clif) {
@@ -5283,11 +5809,42 @@ struct JsStepDispatch {
     /// Stable base of this VM's direct-array record reservation. The field is
     /// refreshed after VM callouts because the reservation may be lazy.
     array_record_base: usize,
+    /// The heap facts generated field reads use (`emit_js_own_field_get`): the object
+    /// record reservation, the property value arena and its length, and the field cache
+    /// entries of `program_id`'s sites; zero where absent. A callout may grow or compact any
+    /// of them, so each is read again after one (`refresh_heap_bases`).
+    object_record_base: usize,
+    property_values: usize,
+    property_len: usize,
+    field_entries: usize,
+    /// The names method caches hold (`Vm::method_caches_may_name`), one bit each, and its
+    /// length in words; and whether the VM and program run specialized, which a cached store
+    /// requires (`Vm::cached_field_store_hit`).
+    method_cache_atoms: usize,
+    method_cache_atom_words: usize,
+    stores_specialized: usize,
     #[cfg(test)]
     island_steps: u64,
     #[cfg(test)]
     global_name_cache_hits: u64,
     outcome: Option<JsNativeStep>,
+}
+
+impl JsStepDispatch {
+    /// Reads the heap bases generated code uses again, after anything that may have grown,
+    /// compacted or replaced them.
+    fn refresh_heap_bases<H: Host>(&mut self, vm: &Vm<H>) {
+        self.array_record_base = vm.heap.array_record_base().map_or(0, |base| base as usize);
+        self.object_record_base = vm.heap.object_record_base().map_or(0, |base| base as usize);
+        let (values, len) = vm.heap.native_property_values();
+        (self.property_values, self.property_len) = (values as usize, len);
+        self.field_entries = vm.program_field_entries(self.program_id).unwrap_or(0);
+        let atoms = vm.method_cache_atoms.words();
+        (self.method_cache_atoms, self.method_cache_atom_words) = (atoms.as_ptr() as usize, atoms.len());
+        self.stores_specialized = usize::from(
+            vm.specialized && vm.programs.residual(self.program_id).is_some_and(|program| program.specialized),
+        );
+    }
 }
 
 fn js_native_frame_storage_unchanged(frame: &Frame, dispatch: &JsStepDispatch) -> bool {
@@ -5523,9 +6080,9 @@ unsafe extern "C" fn js_step_callout<H: Host>(
         let mut next = next_pc;
         loop {
             let layout = current_instruction.op().control_flow_layout();
-            let direct_call_target = if vm.programs.js_jit_diagnostics_enabled()
-                && matches!(current_instruction.op(), Op::Call | Op::CallArray)
-            {
+            let is_call = matches!(current_instruction.op(), Op::Call | Op::CallArray);
+            let diagnostics_enabled = is_call && vm.programs.js_jit_diagnostics_enabled();
+            let direct_call_target = if diagnostics_enabled && is_call {
                 vm.frames[dispatch.frame]
                     .registers
                     .get(usize::from(current_instruction.register_b()))
@@ -5540,8 +6097,17 @@ unsafe extern "C" fn js_step_callout<H: Host>(
             } else {
                 None
             };
+            let sample_call = diagnostics_enabled
+                && is_call
+                && vm.programs.should_sample_js_jit_call_site(
+                    dispatch.program_id,
+                    vm.frames[dispatch.frame].function,
+                    current_pc,
+                    current_instruction.op(),
+                );
+            let call_sample_started = sample_call.then(std::time::Instant::now);
             let step = if dispatch.allow_inline_calls
-                && matches!(current_instruction.op(), Op::Call | Op::CallArray)
+                && is_call
             {
                 match vm.try_inline_user_call(
                     &program,
@@ -5592,9 +6158,7 @@ unsafe extern "C" fn js_step_callout<H: Host>(
                     dispatch.allow_inline_calls,
                 )
             };
-            if matches!(current_instruction.op(), Op::Call | Op::CallArray)
-                && vm.programs.js_jit_diagnostics_enabled()
-            {
+            if is_call && diagnostics_enabled {
                 let outcome = match &step {
                     Ok(super::StepResult::Continue) => {
                         super::program_store::JsJitCallOutcome::Continue
@@ -5623,12 +6187,12 @@ unsafe extern "C" fn js_step_callout<H: Host>(
                     current_instruction.op(),
                     direct_call_target,
                     outcome,
+                    call_sample_started.map(|started| {
+                        u64::try_from(started.elapsed().as_nanos()).unwrap_or(u64::MAX)
+                    }),
                 );
             }
-            dispatch.array_record_base = vm
-                .heap
-                .array_record_base()
-                .map_or(0, |base| base as usize);
+            dispatch.refresh_heap_bases(vm);
             match step {
                 Ok(super::StepResult::Continue) => {
                     if next >= body.code.len() {
@@ -6417,10 +6981,11 @@ struct Plan {
 impl Plan {
     /// The plan as its callers see it: only the function being compiled
     /// holds its per-instruction facts.
-    fn interface(self) -> Self {
+    fn interface(&self) -> Self {
         Self {
+            params: self.params.clone(),
+            result: self.result,
             operands: Vec::new(),
-            ..self
         }
     }
 
@@ -6822,6 +7387,54 @@ impl<H: Host> Analysis<'_, H> {
         }
     }
 
+    /// The slot a constant defines: a vector's, or its machine kind's (`constant_kind`).
+    fn constant_slot(&self, value: Value) -> Slot {
+        if self.vm.heap.v128(value).is_some() {
+            Slot::Vector
+        } else {
+            Slot::Value(self.constant_kind(value))
+        }
+    }
+
+    /// A vector constant's bits.
+    fn constant_vector(&self, value: Value) -> Option<u128> {
+        self.vm.heap.v128(value).map(u128::from_le_bytes)
+    }
+
+    /// Check `register` names the function's memory for a vector access: the memory
+    /// register, or a register an instance binding loaded the same unshared memory into
+    /// (lowering binds the memory afresh for each such access), which then is the
+    /// function's compiled memory (`memory_slot`).
+    fn vector_memory(
+        &self,
+        function: &Function,
+        state: &AnalysisState,
+        register: u16,
+        memory_register: Option<u16>,
+        memory_slot: &mut Option<u32>,
+    ) -> Option<()> {
+        match state.get(register, function.registers)? {
+            Slot::Memory if Some(register) == memory_register => {}
+            Slot::Binding(slot)
+                if self.binds_unshared_memory(slot) && memory_slot.is_none_or(|known| known == slot) =>
+            {
+                *memory_slot = Some(slot);
+            }
+            _ => return None,
+        }
+        memory_slot.is_some_and(|slot| self.supports_compiled_memory(slot)).then_some(())
+    }
+
+    /// The byte offset a vector access adds to its address (`Op::WasmMemoryAddress`).
+    fn memory_offset(&self, index: usize) -> Option<u64> {
+        self.vm.decode_bits64(self.constant(index)?)
+    }
+
+    /// A shuffle's lane selectors: sixteen byte indices into its two operands.
+    fn shuffle_lanes(&self, index: usize) -> Option<[u8; crate::wasm::V128_BYTES]> {
+        self.vm.heap.v128(self.constant(index)?)
+    }
+
     fn constant_bits(&self, value: Value) -> i64 {
         match self.vm.decode_bits64(value) {
             Some(bits) => bits as i64,
@@ -7084,11 +7697,20 @@ impl<H: Host> Analysis<'_, H> {
         // The memory register is read only by direct accesses through it.
         if memory_register.is_some_and(|memory| {
             !direct_access(op)
-                && !matches!(op, Op::WasmMemorySize | Op::WasmMemoryFill)
+                && !matches!(
+                    op,
+                    Op::WasmMemorySize
+                        | Op::WasmMemoryFill
+                        | Op::WasmMemoryCopy
+                        | Op::WasmMemoryAddress
+                        | Op::WasmMemoryLoad
+                        | Op::WasmMemoryStore
+                )
                 && op != Op::WasmInstanceBinding
                 && crate::bytecode::InstructionField::ALL.iter().any(|field| {
                     op.field_layout(*field).reads_register()
                         && instruction.field_value(*field) == memory
+                        && !unary_simd_spare(instruction, *field)
                 })
         }) {
             return None;
@@ -7167,26 +7789,75 @@ impl<H: Host> Analysis<'_, H> {
                 let result = Kind::of(operator.result_type())?;
                 set(state, instruction.a(), Slot::Value(result))
             }
-            Op::Move => {
-                let kind = value(state, instruction.b())?;
-                set(state, instruction.a(), Slot::Value(kind))
-            }
+            Op::Move => match state.get(instruction.b(), function.registers)? {
+                Slot::Vector => set(state, instruction.a(), Slot::Vector),
+                _ => {
+                    let kind = value(state, instruction.b())?;
+                    set(state, instruction.a(), Slot::Value(kind))
+                }
+            },
             Op::LoadConst => {
                 let constant = self.constant(instruction.constant_index())?;
-                set(
-                    state,
-                    instruction.a(),
-                    Slot::Value(self.constant_kind(constant)),
-                )
+                set(state, instruction.a(), self.constant_slot(constant))
             }
             Op::WasmFillRegisters => {
                 let constant = self.constant(instruction.constant_index())?;
-                let kind = self.constant_kind(constant);
+                let slot = self.constant_slot(constant);
                 let window = instruction.register_window();
                 for offset in 0..window.count {
-                    set(state, window.base + offset, Slot::Value(kind))?;
+                    set(state, window.base + offset, slot)?;
                 }
                 Some(())
+            }
+            // A vector access's effective address: a 32-bit address plus the access's offset,
+            // as 64 bits, so the sum cannot wrap.
+            Op::WasmMemoryAddress => {
+                self.vector_memory(function, state, instruction.c(), memory_register, memory_slot)?;
+                self.memory_offset(instruction.constant_index())?;
+                i32_value(state, instruction.b())?;
+                set(state, instruction.a(), Slot::Value(Kind::I64))
+            }
+            Op::WasmMemoryLoad | Op::WasmMemoryStore => {
+                self.vector_memory(function, state, instruction.b(), memory_register, memory_slot)?;
+                if value(state, instruction.c())? != Kind::I64 {
+                    return None;
+                }
+                if op == Op::WasmMemoryLoad {
+                    (crate::wasm::memory::MemoryLoad::from_tag(instruction.imm())?
+                        == crate::wasm::memory::MemoryLoad::V128Load)
+                        .then_some(())?;
+                    set(state, instruction.a(), Slot::Vector)
+                } else {
+                    (crate::wasm::memory::MemoryStore::from_tag(instruction.imm())?
+                        == crate::wasm::memory::MemoryStore::V128Store)
+                        .then_some(())?;
+                    (state.get(instruction.a(), function.registers)? == Slot::Vector).then_some(())
+                }
+            }
+            Op::WasmSimd => {
+                let (kernel, lane) = crate::wasm::simd::SimdKernel::of(instruction.imm())?;
+                let operand = |register: u16, ty: crate::WasmType| match ty {
+                    crate::WasmType::V128 => {
+                        (state.get(register, function.registers)? == Slot::Vector).then_some(())
+                    }
+                    ty => (value(state, register)? == Kind::of(ty)?).then_some(()),
+                };
+                operand(instruction.b(), kernel.left)?;
+                if let Some(right) = kernel.right {
+                    operand(instruction.c(), right)?;
+                }
+                let result = match kernel.result_type(lane) {
+                    crate::WasmType::V128 => Slot::Vector,
+                    ty => Slot::Value(Kind::of(ty)?),
+                };
+                set(state, instruction.a(), result)
+            }
+            Op::WasmSimdShuffle => {
+                self.shuffle_lanes(instruction.constant_index())?;
+                for register in [instruction.b(), instruction.c()] {
+                    (state.get(register, function.registers)? == Slot::Vector).then_some(())?;
+                }
+                set(state, instruction.a(), Slot::Vector)
             }
             Op::WasmI32Unary => {
                 I32UnaryOperator::from_tag(instruction.imm())?;
@@ -7240,6 +7911,20 @@ impl<H: Host> Analysis<'_, H> {
                 i32_value(state, instruction.b())?;
                 i32_value(state, instruction.c())?;
                 i32_value(state, destination)
+            }
+            // A copy within the function's one memory: both memory operands name it.
+            Op::WasmMemoryCopy => {
+                let (destination, source) = instruction.register_pair();
+                if Some(instruction.a()) != memory_register
+                    || Some(instruction.b()) != memory_register
+                    || state.get(instruction.a(), function.registers) != Some(Slot::Memory)
+                    || !memory_slot.is_some_and(|slot| self.supports_compiled_memory(slot))
+                {
+                    return None;
+                }
+                i32_value(state, destination)?;
+                i32_value(state, source)?;
+                i32_value(state, instruction.c())
             }
             Op::WasmIndirectTarget if self.callouts => {
                 let Slot::Binding(table) = state.get(instruction.b(), function.registers)? else {
@@ -7938,16 +8623,29 @@ struct Body<'b> {
     core: RegionCore<'b>,
     /// Per register, its views, declared on first use.
     variables: Vec<Option<[Variable; VIEW_TYPES.len()]>>,
-    /// Each i32 read from a register's view, by the zero-extended value it was read from.
-    zero_extended: std::collections::HashMap<ir::Value, ir::Value>,
+    /// How each register's i32 view extends its value to the 64 bits it is stored in.
+    int32_extension: Int32Extension,
+    /// Each i32 read from a register's view, by the extended value it was read from.
+    extended: std::collections::HashMap<ir::Value, ir::Value>,
+}
+
+/// How a register's i32 view holds its value in 64 bits (`view_ir`): as the operations
+/// that read the view use it, so each takes the stored value as it is.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Int32Extension {
+    /// A Wasm i32 is an unsigned address offset.
+    Zero,
+    /// A JS Number held as an i32 is signed, and an element access scales its sign extension.
+    Sign,
 }
 
 impl<'b> Body<'b> {
-    fn new(builder: FunctionBuilder<'b>, context: ir::Value, poll: Option<i64>) -> Self {
+    fn new(builder: FunctionBuilder<'b>, context: ir::Value, poll: Option<i64>, int32_extension: Int32Extension) -> Self {
         Self {
             core: RegionCore::new(builder, context, poll),
             variables: Vec::new(),
-            zero_extended: std::collections::HashMap::new(),
+            int32_extension,
+            extended: std::collections::HashMap::new(),
         }
     }
 
@@ -7977,22 +8675,31 @@ impl<'b> Body<'b> {
             return stored;
         }
         let value = self.builder.ins().ireduce(types::I32, stored);
-        self.zero_extended.insert(value, stored);
+        self.extended.insert(value, stored);
         value
     }
 
-    /// `value`, an i32, zero-extended to 64 bits: the i32 view it was read from, if any.
-    fn zero_extend(&mut self, value: ir::Value) -> ir::Value {
-        match self.zero_extended.get(&value) {
-            Some(&wide) => wide,
-            None => self.builder.ins().uextend(types::I64, value),
+    /// `value`, an i32, extended to 64 bits as `extension` does: the i32 view it was read
+    /// from, if the view holds it so.
+    fn extend(&mut self, value: ir::Value, extension: Int32Extension) -> ir::Value {
+        match self.extended.get(&value) {
+            Some(&wide) if extension == self.int32_extension => wide,
+            _ => match extension {
+                Int32Extension::Zero => self.builder.ins().uextend(types::I64, value),
+                Int32Extension::Sign => self.builder.ins().sextend(types::I64, value),
+            },
         }
+    }
+
+    /// `value`, an i32, zero-extended to 64 bits.
+    fn zero_extend(&mut self, value: ir::Value) -> ir::Value {
+        self.extend(value, Int32Extension::Zero)
     }
 
     /// The stored form of `value` in the register's view as `ty` (`view_ir`).
     fn view_value(&mut self, ty: crate::WasmType, value: ir::Value) -> ir::Value {
         match ty {
-            crate::WasmType::I32 => self.zero_extend(value),
+            crate::WasmType::I32 => self.extend(value, self.int32_extension),
             _ => value,
         }
     }
@@ -8048,6 +8755,9 @@ struct Emitter<'a, 'b, H: Host> {
     blocks: Vec<Option<ir::Block>>,
     /// Dense ids for the compiled artifact's actual indirect call sites.
     reference_site_ids: &'a [(usize, usize)],
+    /// The artifact's certificate count less one (`reference_dispatch_entries`), which selects
+    /// a table index's certificate.
+    reference_dispatch_mask: u64,
     /// Selects the diagnostics ABI at compile time; both ABIs carry site ids.
     diagnostics_enabled: bool,
     base: ir::Value,
@@ -8084,6 +8794,12 @@ struct Emitter<'a, 'b, H: Host> {
     /// Copies of an unrolled body to emit right after its latch: the block, the loop, and the
     /// copy its back edge enters.
     pending_copies: Vec<(ir::Block, UnrolledLoop, usize, Option<ir::Block>)>,
+    /// Per register, its 128-bit SIMD variable (`Slot::Vector`), declared at its first
+    /// vector definition; scalar views never hold a vector.
+    vectors: Vec<Option<Variable>>,
+    /// The words a SIMD kernel callout reads its operands from and writes its result to
+    /// (`compiled_simd_kernel`), made at the first callout.
+    simd_words: Option<ir::StackSlot>,
 }
 
 impl<H: Host> Emitter<'_, '_, H> {
@@ -8950,10 +9666,16 @@ impl<H: Host> Emitter<'_, '_, H> {
             self.body.core.context,
             CONTEXT_REFERENCE_FAST_CACHES,
         );
-        let fast_cache = self.body.core.builder.ins().iadd_imm_s(
-            fast_cache_base,
-            (site_id * std::mem::size_of::<FastReferenceCache>()) as i64,
-        );
+        // The certificate of the index's low bits (`reference_dispatch_entries`).
+        let entry = self
+            .body.core.builder
+            .ins()
+            .band_imm_u(index, self.reference_dispatch_mask as i64);
+        let entry_offset = self
+            .body.core.builder
+            .ins()
+            .imul_imm_u(entry, std::mem::size_of::<FastReferenceCache>() as i64);
+        let fast_cache = self.body.core.builder.ins().iadd(fast_cache_base, entry_offset);
         let cached_epoch = self.body.core.builder.ins().load(
             types::I64,
             MemFlagsData::trusted(),
@@ -9017,8 +9739,30 @@ impl<H: Host> Emitter<'_, '_, H> {
             std::mem::offset_of!(FastReferenceCache, index) as i32,
         );
         let index_matches = self.body.core.builder.ins().icmp(IntCC::Equal, index, cached_index);
+        let cached_signature = self.body.core.builder.ins().load(
+            types::I64,
+            MemFlagsData::trusted(),
+            fast_cache,
+            std::mem::offset_of!(FastReferenceCache, signature) as i32,
+        );
+        let signature_matches = self
+            .body.core.builder
+            .ins()
+            .icmp(IntCC::Equal, signature_index, cached_signature);
+        let cached_table = self.body.core.builder.ins().load(
+            types::I64,
+            MemFlagsData::trusted(),
+            fast_cache,
+            std::mem::offset_of!(FastReferenceCache, table) as i32,
+        );
+        let table_matches = self.body.core.builder.ins().icmp(IntCC::Equal, table_slot, cached_table);
+        let signature_matches = self.body.core.builder.ins().band(signature_matches, table_matches);
         let epoch_and_env_match = self.body.core.builder.ins().band(epoch_matches, env_matches);
-        let cache_matches = self.body.core.builder.ins().band(epoch_and_env_match, index_matches);
+        let index_and_signature_match = self.body.core.builder.ins().band(index_matches, signature_matches);
+        let cache_matches = self
+            .body.core.builder
+            .ins()
+            .band(epoch_and_env_match, index_and_signature_match);
         self.body.core.builder
             .ins()
             .brif(cache_matches, check_entry, &[], slow_call, &[]);
@@ -9370,6 +10114,294 @@ impl<H: Host> Emitter<'_, '_, H> {
     }
 
     /// Emit the instruction at `pc`; returns whether control falls through.
+    /// The SIMD variable of `register`.
+    fn vector(&mut self, register: u16) -> Variable {
+        let index = usize::from(register);
+        if self.vectors.len() <= index {
+            self.vectors.resize(index + 1, None);
+        }
+        if let Some(variable) = self.vectors[index] {
+            return variable;
+        }
+        let variable = self.body.core.builder.declare_var(VECTOR_IR);
+        self.vectors[index] = Some(variable);
+        variable
+    }
+
+    fn read_vector(&mut self, register: u16) -> ir::Value {
+        let variable = self.vector(register);
+        self.body.core.builder.use_var(variable)
+    }
+
+    /// Define `register` as the vector `value`, of any lane shape.
+    fn write_vector(&mut self, register: u16, value: ir::Value) {
+        let value = self.lanes(VECTOR_IR, value);
+        let variable = self.vector(register);
+        self.known.retain(|(known, _)| *known != register);
+        self.body.core.builder.def_var(variable, value);
+    }
+
+    /// `value`, a vector, viewed with the lane shape `ty`: the same bits.
+    fn lanes(&mut self, ty: ir::Type, value: ir::Value) -> ir::Value {
+        if self.body.core.builder.func.dfg.value_type(value) == ty {
+            return value;
+        }
+        let flags = MemFlagsData::new().with_endianness(ir::Endianness::Little);
+        self.body.core.builder.ins().bitcast(ty, flags, value)
+    }
+
+    /// The address of a vector access at the 64-bit effective address `register`, after
+    /// trapping unless all of its bytes are in the memory.
+    fn vector_address(&mut self, register: u16) -> ir::Value {
+        let address = self.read(register, Kind::I64);
+        let end = self
+            .body.core.builder
+            .ins()
+            .iadd_imm_u(address, crate::wasm::V128_BYTES as i64);
+        let memory_length = self.body.core.builder.ins().load(
+            types::I64,
+            MemFlagsData::trusted(),
+            self.body.core.context,
+            CONTEXT_MEMORY_LENGTH,
+        );
+        let out_of_bounds =
+            self.body.core.builder
+                .ins()
+                .icmp(IntCC::UnsignedGreaterThan, end, memory_length);
+        self.trap_if(out_of_bounds, crate::WasmTrap::OutOfBoundsMemory);
+        self.body.core.builder.ins().iadd(self.base, address)
+    }
+
+    /// The instructions that define or read vectors (`Slot::Vector`); `None` for any other.
+    fn vector_instruction(&mut self, pc: usize, instruction: WideInstruction) -> Option<bool> {
+        let (a, b, c) = (instruction.a(), instruction.b(), instruction.c());
+        match instruction.op() {
+            Op::Move if self.plan.operand(pc) == Slot::Vector => {
+                let value = self.read_vector(b);
+                self.write_vector(a, value);
+            }
+            Op::LoadConst | Op::WasmFillRegisters => {
+                let constant = self.analysis.constant(instruction.constant_index())?;
+                let bits = self.analysis.constant_vector(constant)?;
+                let registers = if instruction.op() == Op::LoadConst {
+                    a..a + 1
+                } else {
+                    let window = instruction.register_window();
+                    window.base..window.base + window.count
+                };
+                for register in registers {
+                    let value = self.vector_constant(bits);
+                    self.write_vector(register, value);
+                }
+            }
+            Op::WasmMemoryAddress => {
+                let offset = self
+                    .analysis
+                    .memory_offset(instruction.constant_index())
+                    .expect("planned");
+                let address = self.read(b, Kind::I32);
+                let address = self.body.core.builder.ins().uextend(types::I64, address);
+                // A memory32 offset is below 2^32, so the 64-bit sum cannot wrap.
+                let address = self.body.core.builder.ins().iadd_imm_u(address, offset as i64);
+                self.write(a, Kind::I64, address);
+            }
+            Op::WasmMemoryLoad => {
+                let address = self.vector_address(c);
+                let flags = self.flags(Region::LinearMemory);
+                let value = self.body.core.builder.ins().load(VECTOR_IR, flags, address, 0);
+                self.write_vector(a, value);
+            }
+            Op::WasmMemoryStore => {
+                let address = self.vector_address(c);
+                let value = self.read_vector(a);
+                let flags = self.flags(Region::LinearMemory);
+                self.body.core.builder.ins().store(flags, value, address, 0);
+            }
+            Op::WasmSimdShuffle => {
+                let lanes = self
+                    .analysis
+                    .shuffle_lanes(instruction.constant_index())
+                    .expect("planned");
+                let mask = self
+                    .body.core.builder
+                    .func
+                    .dfg
+                    .immediates
+                    .push(ir::ConstantData::from(lanes.to_vec()));
+                let (left, right) = (self.read_vector(b), self.read_vector(c));
+                let value = self.body.core.builder.ins().shuffle(left, right, mask);
+                self.write_vector(a, value);
+            }
+            Op::WasmSimd => self.simd(pc, instruction),
+            _ => return None,
+        }
+        Some(true)
+    }
+
+    fn vector_constant(&mut self, bits: u128) -> ir::Value {
+        let constant = self
+            .body.core.builder
+            .func
+            .dfg
+            .constants
+            .insert(ir::ConstantData::from(bits.to_le_bytes().to_vec()));
+        self.body.core.builder.ins().vconst(VECTOR_IR, constant)
+    }
+
+    /// A SIMD operator: one Cranelift instruction where one has its exact semantics, else
+    /// the operator's own kernel (`SimdKernel::apply_bits`), which the interpreter runs too.
+    fn simd(&mut self, pc: usize, instruction: WideInstruction) {
+        use crate::wasm::simd::SimdOperator as S;
+        let (a, b, c) = (instruction.a(), instruction.b(), instruction.c());
+        let (operator, _) = S::from_selector(instruction.imm()).expect("planned");
+        // Lane-wise integer arithmetic, bitwise logic and shifts: Cranelift reduces a vector
+        // shift's count modulo the lane width, as Wasm does.
+        let lanes = match operator {
+            S::V128And | S::V128Or | S::V128Xor | S::V128AndNot | S::V128Not => Some(VECTOR_IR),
+            S::I8x16Add | S::I8x16Sub => Some(types::I8X16),
+            S::I16x8Add | S::I16x8Sub | S::I16x8Shl | S::I16x8ShrU | S::I16x8ShrS => {
+                Some(types::I16X8)
+            }
+            S::I32x4Add | S::I32x4Sub | S::I32x4Shl | S::I32x4ShrU | S::I32x4ShrS => {
+                Some(types::I32X4)
+            }
+            S::I64x2Add | S::I64x2Sub | S::I64x2Shl | S::I64x2ShrU | S::I64x2ShrS => {
+                Some(types::I64X2)
+            }
+            _ => None,
+        };
+        if let Some(ty) = lanes {
+            let left = self.read_vector(b);
+            let left = self.lanes(ty, left);
+            let builder = &mut self.body.core.builder;
+            let value = match operator {
+                S::V128Not => builder.ins().bnot(left),
+                S::I16x8Shl | S::I32x4Shl | S::I64x2Shl
+                | S::I16x8ShrU | S::I32x4ShrU | S::I64x2ShrU
+                | S::I16x8ShrS | S::I32x4ShrS | S::I64x2ShrS => {
+                    let count = self.read(c, Kind::I32);
+                    let builder = &mut self.body.core.builder;
+                    match operator {
+                        S::I16x8Shl | S::I32x4Shl | S::I64x2Shl => builder.ins().ishl(left, count),
+                        S::I16x8ShrU | S::I32x4ShrU | S::I64x2ShrU => {
+                            builder.ins().ushr(left, count)
+                        }
+                        _ => builder.ins().sshr(left, count),
+                    }
+                }
+                _ => {
+                    let right = self.read_vector(c);
+                    let right = self.lanes(ty, right);
+                    let builder = &mut self.body.core.builder;
+                    match operator {
+                        S::V128And => builder.ins().band(left, right),
+                        S::V128Or => builder.ins().bor(left, right),
+                        S::V128Xor => builder.ins().bxor(left, right),
+                        S::V128AndNot => builder.ins().band_not(left, right),
+                        S::I8x16Add | S::I16x8Add | S::I32x4Add | S::I64x2Add => {
+                            builder.ins().iadd(left, right)
+                        }
+                        _ => builder.ins().isub(left, right),
+                    }
+                }
+            };
+            self.write_vector(a, value);
+            return;
+        }
+        if matches!(operator, S::I64x2ExtMulLowI32x4U) {
+            let (left, right) = (self.read_vector(b), self.read_vector(c));
+            let (left, right) = (self.lanes(types::I32X4, left), self.lanes(types::I32X4, right));
+            let builder = &mut self.body.core.builder;
+            let left = builder.ins().uwiden_low(left);
+            let right = builder.ins().uwiden_low(right);
+            let value = builder.ins().imul(left, right);
+            self.write_vector(a, value);
+            return;
+        }
+        self.simd_kernel(pc, instruction);
+    }
+
+    /// `simd` through the kernel: operands to words, `compiled_simd_kernel`, the result back.
+    fn simd_kernel(&mut self, _pc: usize, instruction: WideInstruction) {
+        let (a, b, c) = (instruction.a(), instruction.b(), instruction.c());
+        let (kernel, lane) = crate::wasm::simd::SimdKernel::of(instruction.imm()).expect("planned");
+        let word = types::I64.bytes();
+        let slot = match self.simd_words {
+            Some(slot) => slot,
+            None => {
+                let slot = self.body.core.builder.create_sized_stack_slot(ir::StackSlotData::new(
+                    ir::StackSlotKind::ExplicitSlot,
+                    SIMD_KERNEL_WORDS as u32 * word,
+                    crate::wasm::V128_BYTES.trailing_zeros() as u8,
+                ));
+                self.simd_words = Some(slot);
+                slot
+            }
+        };
+        let operand = |emitter: &mut Self, register: u16, ty: crate::WasmType, at: usize| {
+            let offset = (at as u32 * word) as i32;
+            let (low, high) = match ty {
+                crate::WasmType::V128 => {
+                    let value = emitter.read_vector(register);
+                    let value = emitter.lanes(types::I64X2, value);
+                    let builder = &mut emitter.body.core.builder;
+                    (builder.ins().extractlane(value, 0), builder.ins().extractlane(value, 1))
+                }
+                ty => {
+                    let kind = Kind::of(ty).expect("planned");
+                    let value = emitter.read(register, kind);
+                    let builder = &mut emitter.body.core.builder;
+                    let value = if kind == Kind::I32 {
+                        builder.ins().uextend(types::I64, value)
+                    } else {
+                        value
+                    };
+                    (value, builder.ins().iconst(types::I64, 0))
+                }
+            };
+            let builder = &mut emitter.body.core.builder;
+            builder.ins().stack_store(types::I64, low, slot, offset);
+            builder.ins().stack_store(types::I64, high, slot, offset + word as i32);
+        };
+        operand(self, b, kernel.left, SIMD_KERNEL_LEFT);
+        if let Some(right) = kernel.right {
+            operand(self, c, right, SIMD_KERNEL_RIGHT);
+        }
+        let mut signature = Signature::new(self.call_conv);
+        signature.params.push(AbiParam::new(types::I64));
+        signature.params.push(AbiParam::new(types::I64));
+        let signature = self.body.core.builder.import_signature(signature);
+        let target = self.body.core.builder.ins().iconst(
+            types::I64,
+            compiled_simd_kernel as *const () as usize as i64,
+        );
+        let selector = self
+            .body.core.builder
+            .ins()
+            .iconst(types::I64, i64::from(instruction.imm()));
+        let words = self.body.core.builder.ins().stack_addr(types::I64, slot, 0);
+        self.body.core.builder
+            .ins()
+            .call_indirect(signature, target, &[selector, words]);
+        let result = (SIMD_KERNEL_RESULT as u32 * word) as i32;
+        match kernel.result_type(lane) {
+            crate::WasmType::V128 => {
+                let value = self.body.core.builder.ins().stack_load(types::I64, VECTOR_IR, slot, result);
+                self.write_vector(a, value);
+            }
+            ty => {
+                let kind = Kind::of(ty).expect("planned");
+                let value = self.body.core.builder.ins().stack_load(types::I64, types::I64, slot, result);
+                let value = if kind == Kind::I32 {
+                    self.body.core.builder.ins().ireduce(types::I32, value)
+                } else {
+                    value
+                };
+                self.write(a, kind, value);
+            }
+        }
+    }
+
     fn instruction(
         &mut self,
         function: &Function,
@@ -9378,6 +10410,9 @@ impl<H: Host> Emitter<'_, '_, H> {
     ) -> bool {
         let op = instruction.op();
         let (a, b, c) = (instruction.a(), instruction.b(), instruction.c());
+        if let Some(done) = self.vector_instruction(pc, instruction) {
+            return done;
+        }
         if let Some(operator) = I32BinaryOperator::from_register_op(op) {
             let left = self.read(b, Kind::I32);
             let right = self.read(c, Kind::I32);
@@ -9465,6 +10500,47 @@ impl<H: Host> Emitter<'_, '_, H> {
             let pages = self.body.core.builder.ins().ushr_imm_u(bytes, 16);
             let pages = self.body.core.builder.ins().ireduce(types::I32, pages);
             self.write(a, Kind::I32, pages);
+            return true;
+        }
+        if op == Op::WasmMemoryCopy {
+            let (destination, source) = instruction.register_pair();
+            let destination = self.read(destination, Kind::I32);
+            let destination = self.body.core.builder.ins().uextend(types::I64, destination);
+            let source = self.read(source, Kind::I32);
+            let source = self.body.core.builder.ins().uextend(types::I64, source);
+            let raw_length = self.read(c, Kind::I32);
+            let length = self.body.core.builder.ins().uextend(types::I64, raw_length);
+            let memory_length = self.body.core.builder.ins().load(
+                types::I64,
+                MemFlagsData::trusted(),
+                self.body.core.context,
+                CONTEXT_MEMORY_LENGTH,
+            );
+            // Both ranges are checked before any byte moves; 32-bit operands cannot overflow
+            // their 64-bit sums.
+            for start in [destination, source] {
+                let end = self.body.core.builder.ins().iadd(start, length);
+                let out_of_bounds =
+                    self.body.core.builder
+                        .ins()
+                        .icmp(IntCC::UnsignedGreaterThan, end, memory_length);
+                self.trap_if(out_of_bounds, crate::WasmTrap::OutOfBoundsMemory);
+            }
+            let destination = self.body.core.builder.ins().iadd(self.base, destination);
+            let source = self.body.core.builder.ins().iadd(self.base, source);
+            let mut signature = Signature::new(self.call_conv);
+            for _ in 0..3 {
+                signature.params.push(AbiParam::new(types::I64));
+            }
+            signature.returns.push(AbiParam::new(types::I64));
+            let signature = self.body.core.builder.import_signature(signature);
+            let target = self.body.core.builder.ins().iconst(
+                types::I64,
+                compiled_memory_copy as *const () as usize as i64,
+            );
+            self.body.core.builder
+                .ins()
+                .call_indirect(signature, target, &[destination, source, length]);
             return true;
         }
         if op == Op::WasmMemoryFill {
@@ -9743,10 +10819,162 @@ impl<H: Host> Emitter<'_, '_, H> {
     }
 }
 
+/// The machine code of a built function and its calls to other compiled functions; `None`
+/// when Cranelift refuses it or its code needs a relocation other than such a call. It reads
+/// only the function and the target, so any thread may run it.
+fn compile_built(
+    isa: &dyn cranelift_codegen::isa::TargetIsa,
+    func: ir::Function,
+) -> Option<(Vec<u8>, Vec<Call>)> {
+    let mut context = cranelift_codegen::Context::for_function(func);
+    let compiled = context
+        .compile(isa, &mut cranelift_codegen::control::ControlPlane::default())
+        .ok()?;
+    let code = compiled.code_buffer().to_vec();
+    let relocations = compiled.buffer.relocs().to_vec();
+    let names = context.func.params.user_named_funcs();
+    let calls = relocations
+        .iter()
+        .map(|relocation| {
+            let cranelift_codegen::FinalizedRelocTarget::ExternalName(ir::ExternalName::User(
+                name,
+            )) = relocation.target
+            else {
+                return None;
+            };
+            let name = names.get(name)?;
+            (name.namespace == FUNCTION_NAMESPACE).then_some(Call {
+                offset: relocation.offset as usize,
+                kind: relocation.kind,
+                addend: relocation.addend,
+                callee: name.index as usize,
+            })
+        })
+        .collect::<Option<Vec<_>>>()?;
+    Some((code, calls))
+}
+
+/// Built functions queued for each compile worker: one compiling and one ready keeps every
+/// worker busy while the building thread stays ahead, and bounds the Cranelift functions
+/// alive at once (each holds its whole body's IR) to a few per worker.
+const BUILT_FUNCTIONS_QUEUED_PER_WORKER: usize = 2;
+
+/// The Cranelift IR instructions the compile workers may hold at once, queued and compiling,
+/// under each memory policy (`MemoryPolicy`). Every worker holds its function's whole IR and
+/// Cranelift's working set grows with it, so the parallel compile of a whole module peaks
+/// with the functions in flight; a function heavier than the bound compiles alone. A bound
+/// on the count of queued functions did not move the peak (one queued per worker instead
+/// of two, memory-first `--jit`, tsf-wasm 43.5-44.5 MB either way).
+/// Memory-first bounds them at 50,000, about a third of tsf-wasm's 157k (its largest function
+/// 53.6k). JetStream `--jit`, memory-first, unpinned x86_64, 4 cores, median of 6,
+/// 2026-10-27: tsf-wasm max RSS 46.6 -> 42.0 MB, Score 23.2 -> 22.1, First 11.2 -> 10.0;
+/// sqlite3-wasm 73.6 -> 58.4 MB, Score 16.7 -> 16.2, First 2.96 -> 2.80. Throughput keeps
+/// every worker fed (unbounded; the same rows, median of 8, were unchanged).
+const WASM_COMPILE_INSTRUCTIONS_IN_FLIGHT: [Option<usize>; crate::MemoryPolicy::ALL.len()] =
+    [None, Some(50_000)];
+
+/// A function's compiled body with its calls, and its compiled entry (`build_entry`).
+type CompiledBody = (Vec<u8>, Vec<Call>, Vec<u8>);
+
+/// The compile result of the function at an index, with its instruction count, which leaves
+/// the in-flight bound when the result arrives.
+type CompiledBuilt = (usize, usize, Option<CompiledBody>);
+
+/// A built function's body and entry, compiled (`compile_built`, `compile_entry`).
+fn compile_body_and_entry(
+    isa: &dyn cranelift_codegen::isa::TargetIsa,
+    func: ir::Function,
+    entry: ir::Function,
+) -> Option<CompiledBody> {
+    let (code, calls) = compile_built(isa, func)?;
+    Some((code, calls, compile_entry(isa, entry)?))
+}
+
+/// Each of `count` functions' compiled body, by index, from the built functions `build`
+/// yields in any order: the building stays on this thread, which owns the VM, and the
+/// compiling, which needs only the function and the target, runs on one worker per
+/// available CPU, holding at most `policy`'s `WASM_COMPILE_INSTRUCTIONS_IN_FLIGHT`. `None`
+/// when any function fails to build or compile, as the sequential artifact fails.
+fn compile_built_functions(
+    isa: &dyn cranelift_codegen::isa::TargetIsa,
+    count: usize,
+    policy: crate::MemoryPolicy,
+    build: impl Iterator<Item = Option<(usize, ir::Function, ir::Function)>>,
+) -> Option<Vec<Option<CompiledBody>>> {
+    let workers = std::thread::available_parallelism()
+        .map_or(1, std::num::NonZeroUsize::get)
+        .min(count);
+    let mut bodies: Vec<Option<CompiledBody>> = std::iter::repeat_with(|| None).take(count).collect();
+    if workers <= 1 {
+        for built in build {
+            let (index, func, entry) = built?;
+            bodies[index] = Some(compile_body_and_entry(isa, func, entry)?);
+        }
+        return Some(bodies);
+    }
+    let bound = WASM_COMPILE_INSTRUCTIONS_IN_FLIGHT[policy as usize];
+    let failed = std::sync::atomic::AtomicBool::new(false);
+    let (work, queue) =
+        std::sync::mpsc::sync_channel::<(usize, ir::Function, ir::Function)>(workers * BUILT_FUNCTIONS_QUEUED_PER_WORKER);
+    let queue = std::sync::Mutex::new(queue);
+    let (done, results) = std::sync::mpsc::channel::<CompiledBuilt>();
+    let mut place = |(index, _, body): CompiledBuilt| bodies[index] = body;
+    let built_all = std::thread::scope(|scope| {
+        for _ in 0..workers {
+            let (queue, done, failed) = (&queue, done.clone(), &failed);
+            scope.spawn(move || {
+                loop {
+                    let next = queue.lock().ok().and_then(|queue| queue.recv().ok());
+                    let Some((index, func, entry)) = next else { break };
+                    let instructions = func.dfg.num_insts();
+                    let body = if failed.load(std::sync::atomic::Ordering::Relaxed) {
+                        None
+                    } else {
+                        compile_body_and_entry(isa, func, entry)
+                    };
+                    if body.is_none() {
+                        failed.store(true, std::sync::atomic::Ordering::Relaxed);
+                    }
+                    let _ = done.send((index, instructions, body));
+                }
+            });
+        }
+        drop(done);
+        let mut built_all = true;
+        // The instructions and the count of the functions sent and not yet compiled.
+        let (mut in_flight, mut pending) = (0, 0);
+        for built in build {
+            let Some((index, func, entry)) = built else {
+                built_all = false;
+                break;
+            };
+            let instructions = func.dfg.num_insts();
+            while pending > 0 && bound.is_some_and(|bound| in_flight + instructions > bound) {
+                let Ok(result) = results.recv() else { break };
+                in_flight -= result.1;
+                pending -= 1;
+                place(result);
+            }
+            if failed.load(std::sync::atomic::Ordering::Relaxed) || work.send((index, func, entry)).is_err() {
+                break;
+            }
+            in_flight += instructions;
+            pending += 1;
+        }
+        drop(work);
+        built_all
+    });
+    if !built_all || failed.into_inner() {
+        return None;
+    }
+    results.into_iter().for_each(place);
+    Some(bodies)
+}
+
 impl<'a, H: Host> Analysis<'a, H> {
-    /// Compile `index` with `plan`; `None` when Cranelift refuses it or its
-    /// code needs a relocation other than a call to a compiled function.
-    fn compile_function(
+    /// The Cranelift function of `index` with `plan`, ready for `compile_built`; `None` when
+    /// a construct has no lowering.
+    fn build_function(
         &self,
         isa: &dyn cranelift_codegen::isa::TargetIsa,
         index: usize,
@@ -9756,8 +10984,9 @@ impl<'a, H: Host> Analysis<'a, H> {
         fixed_base: Option<i32>,
         globals: &[u32],
         reference_site_ids: &'a [(usize, usize)],
+        reference_dispatch_mask: u64,
         diagnostics_enabled: bool,
-    ) -> Option<(Vec<u8>, Vec<Call>)> {
+    ) -> Option<ir::Function> {
         let function = &self.code.function(index);
         let call_conv = isa.default_call_conv();
         let memory = MemoryArguments::of(fixed_base, guarded);
@@ -9846,10 +11075,11 @@ impl<'a, H: Host> Analysis<'a, H> {
             regions,
             globals,
             analysis: self,
-            body: Body::new(builder, context, poll_address(&self.vm.execution_interrupt)),
+            body: Body::new(builder, context, poll_address(&self.vm.execution_interrupt), Int32Extension::Zero),
             plan,
             blocks: vec![None; function.code.len()],
             reference_site_ids,
+            reference_dispatch_mask,
             diagnostics_enabled,
             base,
             length,
@@ -9875,6 +11105,8 @@ impl<'a, H: Host> Analysis<'a, H> {
             },
             backedge: None,
             pending_copies: Vec::new(),
+            vectors: Vec::new(),
+            simd_words: None,
         };
         // Registers start at i32 zero, as an activation's register file does.
         for register in 0..function.registers {
@@ -9972,46 +11204,21 @@ impl<'a, H: Host> Analysis<'a, H> {
         emitter.finish_traps();
         emitter.body.core.builder.seal_all_blocks();
         emitter.body.into_builder().finalize(isa.frontend_config());
-        let mut context = cranelift_codegen::Context::for_function(func);
-        let compiled = context
-            .compile(
-                isa,
-                &mut cranelift_codegen::control::ControlPlane::default(),
-            )
-            .ok()?;
-        let code = compiled.code_buffer().to_vec();
-        let relocations = compiled.buffer.relocs().to_vec();
-        let names = context.func.params.user_named_funcs();
-        let calls = relocations
-            .iter()
-            .map(|relocation| {
-                let cranelift_codegen::FinalizedRelocTarget::ExternalName(ir::ExternalName::User(
-                    name,
-                )) = relocation.target
-                else {
-                    return None;
-                };
-                let name = names.get(name)?;
-                (name.namespace == FUNCTION_NAMESPACE).then_some(Call {
-                    offset: relocation.offset as usize,
-                    kind: relocation.kind,
-                    addend: relocation.addend,
-                    callee: name.index as usize,
-                })
-            })
-            .collect::<Option<Vec<_>>>()?;
-        Some((code, calls))
+        Some(func)
     }
 
     /// The C entry of `index`: unpack arguments, call through the table and
     /// store the result.
-    fn compile_entry(
+    /// The native entry of function `index` with `plan`: the trampoline a VM call enters,
+    /// which loads the arguments and calls the body through the table. Built here and
+    /// compiled beside the body (`compile_built_functions`), as it reads nothing but these.
+    fn build_entry(
         &self,
         isa: &dyn cranelift_codegen::isa::TargetIsa,
         index: usize,
         plan: &Plan,
         memory: MemoryArguments,
-    ) -> Option<Vec<u8>> {
+    ) -> ir::Function {
         let call_conv = isa.default_call_conv();
         let signature = native_entry_signature(isa.pointer_type(), call_conv);
         let mut func = ir::Function::with_name_signature(
@@ -10080,18 +11287,18 @@ impl<'a, H: Host> Analysis<'a, H> {
         let status = builder.ins().ireduce(types::I32, results[0]);
         builder.ins().return_(&[status]);
         builder.finalize(isa.frontend_config());
-        let mut context = cranelift_codegen::Context::for_function(func);
-        let compiled = context
-            .compile(
-                isa,
-                &mut cranelift_codegen::control::ControlPlane::default(),
-            )
-            .ok()?;
-        if !compiled.buffer.relocs().is_empty() {
-            return None;
-        }
-        Some(compiled.code_buffer().to_vec())
+        func
     }
+}
+
+/// The compiled code of an entry `build_entry` built, which calls only through the table.
+fn compile_entry(isa: &dyn cranelift_codegen::isa::TargetIsa, func: ir::Function) -> Option<Vec<u8>> {
+    let mut context = cranelift_codegen::Context::for_function(func);
+    let compiled = context.compile(isa, &mut cranelift_codegen::control::ControlPlane::default()).ok()?;
+    if !compiled.buffer.relocs().is_empty() {
+        return None;
+    }
+    Some(compiled.code_buffer().to_vec())
 }
 
 /// The guard reservation of an unshared memory binding.
@@ -10099,6 +11306,26 @@ impl<'a, H: Host> Analysis<'a, H> {
 /// displacement.
 fn displacement_base(base: *mut u8) -> Option<i32> {
     i32::try_from(base as usize).ok()
+}
+
+/// The bytes of the unshared memory `binding` names and their guard reservation, if any,
+/// read under one borrow: a native entry needs both (`run_compiled_inner`). `None` when the
+/// memory is shared or its bytes are borrowed by a suspended host access, which the general
+/// path reports exactly.
+fn memory_and_guard<H: Host>(
+    vm: &Vm<H>,
+    binding: Value,
+) -> Option<((*mut u8, usize), Option<(*mut u8, usize)>)> {
+    let Some(Cell::WasmMemory { bytes, .. }) = vm.heap.get(binding) else {
+        return None;
+    };
+    let crate::wasm::memory::MemoryStorage::Unshared(state) = &**bytes else {
+        return None;
+    };
+    let mut state = state.try_borrow_mut().ok()?;
+    let guard = state.bytes.guard();
+    let view = (state.bytes.as_mut_ptr(), state.bytes.len());
+    (!view.0.is_null()).then_some((view, guard))
 }
 
 fn guarded_memory<H: Host>(vm: &Vm<H>, binding: Value) -> Option<(*mut u8, usize)> {
@@ -10562,6 +11789,11 @@ impl<H: Host> Vm<H> {
         self.execution_mode = mode;
     }
 
+    /// Compile each Wasm module whole at its first entry (`Runtime::compile_wasm_eagerly`).
+    pub(crate) fn compile_wasm_eagerly(&mut self) {
+        self.programs.compile_wasm_modules_at_first_entry();
+    }
+
     pub(crate) fn execution_mode(&self) -> ExecutionMode {
         self.execution_mode
     }
@@ -10600,10 +11832,16 @@ impl<H: Host> Vm<H> {
         if matches!(state, Some(super::program_store::JsTierState::Unsupported)) {
             return self.programs.js_jit_diagnostics_enabled();
         }
+        // A loop-free candidate shorter than a native entry's overhead
+        // (`JS_TIER_LANE_ENTRY_RECORDS`) runs cheaper as the frameless activation itself.
+        let pays_in_lane = |body: &crate::bytecode::Function| {
+            body.code.len() >= JS_TIER_LANE_ENTRY_RECORDS || body.loops()
+        };
+        let candidate = facts.candidate && program.function_get(function as usize).is_some_and(pays_in_lane);
         // Keep bounded candidates on a frame entry until the shared tier has
         // settled. Lane target caches otherwise preserve a frameless route
         // across the later promotion and no longer consult tiering.
-        facts.candidate || self.js_general_tier_takes(program, function, &facts)
+        candidate || self.js_general_tier_takes(program, function, &facts)
     }
 
     /// Whether the general baseline may take `function`: a general candidate the tier admits
@@ -10978,16 +12216,21 @@ impl<H: Host> Vm<H> {
             local_count: 0,
             native_pcs: std::ptr::null(),
             native_pc_count: 0,
-            array_record_base: self
-                .heap
-                .array_record_base()
-                .map_or(0, |base| base as usize),
+            array_record_base: 0,
+            object_record_base: 0,
+            property_values: 0,
+            property_len: 0,
+            field_entries: 0,
+            method_cache_atoms: 0,
+            method_cache_atom_words: 0,
+            stores_specialized: 0,
             #[cfg(test)]
             island_steps: 0,
             #[cfg(test)]
             global_name_cache_hits: 0,
             outcome: None,
         };
+        dispatch.refresh_heap_bases(self);
         // Native dispatch starts at the next unexecuted bytecode. Callouts
         // overwrite this with the exact failing PC before invoking VM semantics.
         self.frames[frame].pc = start_pc;
@@ -12060,6 +13303,9 @@ impl<H: Host> Vm<H> {
         // The callable set is the greatest fixpoint: assume every function
         // compiles, drop those that cannot, until nothing changes.
         let mut callable;
+        // Each callable function's full plan from the pass that settled the set, which its
+        // compilation reads, and the interfaces its callers read.
+        let mut full_plans: Vec<Option<Plan>>;
         let mut plans: Vec<Option<Plan>>;
         let mut memory_slot;
         let mut guarded;
@@ -12067,17 +13313,16 @@ impl<H: Host> Vm<H> {
             callable = allowed.clone();
             loop {
                 memory_slot = None;
-                plans = (0..count)
+                full_plans = (0..count)
                     .map(|index| {
                         if callable[index] {
-                            analysis
-                                .plan(index, &callable, &mut memory_slot)
-                                .map(Plan::interface)
+                            analysis.plan(index, &callable, &mut memory_slot)
                         } else {
                             None
                         }
                     })
                     .collect();
+                plans = full_plans.iter().map(|plan| plan.as_ref().map(Plan::interface)).collect();
                 let next: Vec<bool> = plans.iter().map(Option::is_some).collect();
                 if next == callable {
                     break;
@@ -12116,55 +13361,47 @@ impl<H: Host> Vm<H> {
             eprintln!("QUENCH_WASM_JIT_OPT_LEVEL {opt_level}");
         }
         let isa = super::jit_backend::target_isa(opt_level)?;
-        // The full plan of a callable function, derived again where needed.
-        let plan = |index: usize| analysis.plan(index, &callable, &mut memory_slot.clone());
         let mut reference_site_ids = vec![Vec::new(); count];
         let mut reference_call_sites = Vec::new();
         let mut reference_cache_sites = Vec::new();
         let mut reference_cache_count = 0usize;
-        for index in 0..count {
-            if plans[index].is_none() {
-                continue;
-            }
-            let full_plan = plan(index)?;
-            let function = &code.function(index);
-            for (pc, packed) in function.code.iter().enumerate() {
-                let instruction = super::dispatch_fast::decoded_instruction(function, *packed);
-                if instruction.op() == Op::Call
-                    && let Slot::IndirectReference { table, .. } = full_plan.operand(pc)
-                {
-                    let site_id = reference_cache_count;
-                    reference_cache_count += 1;
-                    reference_site_ids[index].push((pc, site_id));
-                    reference_cache_sites.push((index, pc, table));
-                    if diagnostics_enabled {
-                        reference_call_sites.push(ReferenceCallSiteDiagnostics {
-                            function: index,
-                            pc,
-                            counts: std::cell::Cell::new(ReferenceCallSiteCounts::default()),
-                            targets: std::cell::RefCell::new(Vec::new()),
-                        });
-                    }
-                }
-            }
-        }
         // The globals compiled code accesses, each once.
         let mut globals: Vec<u32> = Vec::new();
+        // One pass over each callable function's full plan finds both what every body's
+        // compilation reads first: its indirect reference sites and the globals it accesses.
         for index in 0..count {
             if plans[index].is_none() {
                 continue;
             }
-            let plan = plan(index)?;
+            let full_plan = full_plans[index].as_ref()?;
             let function = &code.function(index);
             for (pc, packed) in function.code.iter().enumerate() {
                 let instruction = super::dispatch_fast::decoded_instruction(function, *packed);
-                if !matches!(instruction.op(), Op::WasmGlobalGet | Op::WasmGlobalSet) {
-                    continue;
-                }
-                if let Some(Slot::Binding(slot)) = plan.operands[pc]
-                    && !globals.contains(&slot)
-                {
-                    globals.push(slot);
+                match instruction.op() {
+                    Op::Call => {
+                        if let Slot::IndirectReference { table, .. } = full_plan.operand(pc) {
+                            let site_id = reference_cache_count;
+                            reference_cache_count += 1;
+                            reference_site_ids[index].push((pc, site_id));
+                            reference_cache_sites.push((index, pc, table));
+                            if diagnostics_enabled {
+                                reference_call_sites.push(ReferenceCallSiteDiagnostics {
+                                    function: index,
+                                    pc,
+                                    counts: std::cell::Cell::new(ReferenceCallSiteCounts::default()),
+                                    targets: std::cell::RefCell::new(Vec::new()),
+                                });
+                            }
+                        }
+                    }
+                    Op::WasmGlobalGet | Op::WasmGlobalSet => {
+                        if let Some(Slot::Binding(slot)) = full_plan.operands[pc]
+                            && !globals.contains(&slot)
+                        {
+                            globals.push(slot);
+                        }
+                    }
+                    _ => {}
                 }
             }
         }
@@ -12185,25 +13422,27 @@ impl<H: Host> Vm<H> {
                 .map(|aligned| aligned / FUNCTION_ALIGNMENT * FUNCTION_ALIGNMENT)?
                 .checked_add(appended)
         };
-        for index in 0..count {
-            if plans[index].is_none() {
-                continue;
-            }
-            let full_plan = plan(index)?;
-            let body_compile_started = diagnostics_enabled.then(std::time::Instant::now);
-            let body_memory_before = body_compile_started.and_then(|_| jit_memory_snapshot());
-            let body_result = analysis.compile_function(
+        // Largest first: the longest compile starts at once and the rest fill around it, so
+        // the slowest function does not finish last on one worker (bodies are placed by index).
+        let mut build_order: Vec<usize> = (0..count).filter(|&index| plans[index].is_some()).collect();
+        build_order.sort_by_key(|&index| std::cmp::Reverse(code.function(index).code.len()));
+        let build = build_order.into_iter().map(|index| {
+            let full_plan = full_plans[index].as_ref()?;
+            let body_build_started = diagnostics_enabled.then(std::time::Instant::now);
+            let body_memory_before = body_build_started.and_then(|_| jit_memory_snapshot());
+            let built = analysis.build_function(
                 &*isa,
                 index,
-                &full_plan,
+                full_plan,
                 &plans,
                 guarded,
                 fixed_base,
                 &globals,
                 &reference_site_ids[index],
+                reference_dispatch_entries(reference_cache_count).saturating_sub(1) as u64,
                 diagnostics_enabled,
             );
-            if let Some(started) = body_compile_started {
+            if let Some(started) = body_build_started {
                 let memory_after = jit_memory_snapshot();
                 eprintln!(
                     "QUENCH_WASM_JIT_BODY_MEMORY function={index} elapsed_us={} rss_kib_before={:?} rss_kib_after={:?} hwm_kib_before={:?} hwm_kib_after={:?}",
@@ -12214,7 +13453,15 @@ impl<H: Host> Vm<H> {
                     memory_after.map(|memory| memory.1),
                 );
             }
-            let (body, function_calls) = body_result?;
+            let entry = analysis.build_entry(&*isa, index, plans[index].as_ref()?, MemoryArguments::of(fixed_base, guarded));
+            Some((index, built?, entry))
+        });
+        let mut bodies = compile_built_functions(&*isa, count, self.memory_policy(), build)?;
+        for index in 0..count {
+            if plans[index].is_none() {
+                continue;
+            }
+            let (body, function_calls, entry) = bodies[index].take()?;
             let body_projected_len = projected_code_len(bytes.len(), body.len())?;
             if root.is_some() && body_projected_len > MAX_JIT_ROOT_CODE_BYTES {
                 if diagnostics_enabled {
@@ -12230,8 +13477,6 @@ impl<H: Host> Vm<H> {
             offsets[index] = Some(offset);
             spans.push((offset, body_len, index));
             calls.extend(function_calls.into_iter().map(|call| (offset, call)));
-            let memory = MemoryArguments::of(fixed_base, guarded);
-            let entry = analysis.compile_entry(&*isa, index, plans[index].as_ref()?, memory)?;
             let entry_projected_len = projected_code_len(bytes.len(), entry.len())?;
             if root.is_some() && entry_projected_len > MAX_JIT_ROOT_CODE_BYTES {
                 if diagnostics_enabled {
@@ -12341,7 +13586,7 @@ impl<H: Host> Vm<H> {
                     .take(reference_cache_count)
                     .collect(),
             ),
-            reference_fast_caches: (0..reference_cache_count)
+            reference_fast_caches: (0..reference_dispatch_entries(reference_cache_count))
                 .map(|_| UnsafeCell::new(FastReferenceCache::default()))
                 .collect::<Vec<_>>()
                 .into_boxed_slice(),
@@ -12496,7 +13741,7 @@ impl<H: Host> Vm<H> {
                 .programs
                 .residual(program)
                 .is_some_and(|code| code.kind == crate::bytecode::ProgramKind::Wasm);
-        let baseline = match self.programs.compiled(program) {
+        let mut baseline = match self.programs.compiled(program) {
             Some(compiled) => compiled,
             None => {
                 if self
@@ -12543,16 +13788,16 @@ impl<H: Host> Vm<H> {
                         );
                     }
                     self.programs.set_compiled(program, compiled.clone());
+                    self.programs.settle_wasm_module_tier(program);
                     self.programs.compiled(program).flatten()
-                } else if jit_wasm_selective_enabled()
-                    && self
-                        .programs
-                        .residual(program)
-                        .is_some_and(|code| code.kind == crate::bytecode::ProgramKind::Wasm)
+                } else if self
+                    .programs
+                    .residual(program)
+                    .is_some_and(|code| code.kind == crate::bytecode::ProgramKind::Wasm)
+                    && self.programs.wasm_module_starts_interpreted(program)
                 {
-                    // Selective mode starts cold Wasm functions in the
-                    // interpreter. Hot roots are promoted after the entry
-                    // gate below, avoiding module-wide cold compilation.
+                    // A Wasm module starts in the interpreter and compiles whole once it runs
+                    // long (`WasmModuleTier`); a small one compiles whole below, at once.
                     self.programs.set_compiled(program, None);
                     None
                 } else {
@@ -12579,10 +13824,47 @@ impl<H: Host> Vm<H> {
                         );
                     }
                     self.programs.set_compiled(program, compiled.clone());
+                    self.programs.settle_wasm_module_tier(program);
                     self.programs.compiled(program).flatten()
                 }
             }
         };
+        // A selective module whose interpreted work came due compiles whole (`WasmModuleTier`).
+        if baseline.is_none()
+            && !wasm_root_only
+            && !wasm_root_first
+            && matches!(self.programs.compiled(program), Some(None))
+            && self.programs.note_wasm_module_entry(program)
+            && self.programs.claim_wasm_module_escalation(program)
+        {
+            // The module's code is about to run natively, so the interpreter's views of it go
+            // first, and the compile reuses their memory, unless a frame of it is on the stack,
+            // whose lane run may hold their records, or a lane activation deferred beside this
+            // call (`runs_beside_activations`), a frame not on it. An interpreted run derives
+            // them again.
+            if !self.deferred_activations_run(program) && !self.frames.iter().any(|frame| frame.program == program) {
+                self.programs.release_lane_views(program);
+            }
+            let started = jit_diagnostics_enabled().then(std::time::Instant::now);
+            let compiled = self.compile_program(program, env).map(Rc::new);
+            if let Some(started) = started {
+                let bytecodes: usize = self.programs.residual(program).map_or(0, |code| {
+                    (0..code.functions.len())
+                        .filter_map(|index| code.function_get(index))
+                        .map(|function| function.code.len())
+                        .sum()
+                });
+                eprintln!(
+                    "QUENCH_WASM_JIT_STATS {{\"program\":{},\"module_escalated\":true,\"compiled\":{},\"bytecodes\":{},\"compile_ns\":{}}}",
+                    program.raw(),
+                    compiled.is_some(),
+                    bytecodes,
+                    started.elapsed().as_nanos(),
+                );
+            }
+            self.programs.set_compiled(program, compiled);
+            baseline = self.programs.compiled(program).flatten();
+        }
         // Root-first mode earns further tiering only after its selected root
         // produced an artifact. If admission fails, leave the workload in the
         // interpreter instead of silently becoming ordinary selective JIT.
@@ -12626,8 +13908,7 @@ impl<H: Host> Vm<H> {
             let (base, length, guard, memory_binding) = match compiled.memory_slot {
                 Some(slot) => {
                     let binding = self.heap.environment_slot(env, slot as usize)?;
-                    let view = super::dispatch_fast::unshared_memory(self, binding)?;
-                    let guard = guarded_memory(self, binding);
+                    let (view, guard) = memory_and_guard(self, binding)?;
                     // Code compiled without bounds checks needs this memory's guard.
                     if compiled.guarded && guard.is_none() {
                         return None;
@@ -13222,6 +14503,14 @@ const VOID_RESULT_CONSTANT: usize = 1;
 
 /// `compiled`'s body run directly on `arguments`, its parameters, when each is a Number
 /// its guards admit: the call a known callee makes without a frame (`js_jit_compiled_call`).
+/// The lane records a loop-free body runs below which a frameless activation is cheaper than
+/// the JavaScript tier's native entry of it. A direct native entry (`lane_tier_prologue`,
+/// `direct_call`, the shared entry) costs about 380 machine instructions past the
+/// activation, and a lane record about 20 (callgrind, typescript-lib under `--jit`,
+/// 2026-10-28: 9.7M native entries of 3- to 12-instruction predicates such as
+/// `isLineBreak`), so a body shorter than this cannot recoup its entries.
+const JS_TIER_LANE_ENTRY_RECORDS: usize = 20;
+
 fn direct_call(
     compiled: &CompiledJsFunction,
     arguments: &[Value],

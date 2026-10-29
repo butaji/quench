@@ -124,6 +124,7 @@ pub(crate) mod tty_shared_vm;
 pub(crate) mod tty_state;
 pub(crate) mod url_binding_shared_vm;
 pub(crate) mod url_shared_vm;
+pub(crate) mod webidl_shared_vm;
 pub(crate) mod util_callbackify_shared_vm;
 pub(crate) mod util_env;
 pub(crate) mod util_parse_args_shared_vm;

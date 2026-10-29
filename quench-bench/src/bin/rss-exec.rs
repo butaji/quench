@@ -2,16 +2,22 @@
 //! cannot read a child's resource usage themselves (a JavaScript runner on quench-node).
 //!
 //! ```sh
-//! rss-exec [--evict PATH]... -- COMMAND [ARGUMENT]...
+//! rss-exec [--evict PATH]... [--cpu N] -- COMMAND [ARGUMENT]...
 //! ```
 //!
 //! The child inherits stdin, stdout and stderr. After it exits, the last line on stderr is
 //! `rss-exec maxrss_kib=N status=S`; `status` is the exit code, or 128 plus the signal that
 //! ended it. `--evict PATH` drops PATH's cached pages first on Linux
-//! (`POSIX_FADV_DONTNEED`), so each run faults its executable in as a cold start does.
-//! Darwin has no per-file page-cache eviction: there `--evict` only marks the descriptor
-//! `F_NOCACHE`, so a page an earlier run faulted in stays resident, and a Darwin board
-//! must use `/usr/bin/time -l` instead of claiming eviction here.
+//! (`POSIX_FADV_DONTNEED`), writing PATH's dirty pages back first, as the advice drops only
+//! clean pages, so each run faults its executable in as a cold start does. Pages another
+//! process maps stay cached whatever it advises, so the board that runs this must not be PATH
+//! itself (`quench-bench/v8-v7-rss.cjs`). Darwin has no per-file page-cache eviction: there
+//! `--evict` only marks the descriptor `F_NOCACHE`, so a page an earlier run faulted in stays
+//! resident, and a Darwin board must use `/usr/bin/time -l` instead of claiming eviction here.
+//! `--cpu N` runs the command on CPU N alone: since Linux 6.2 a process's resident counters
+//! are per-CPU, and its peak is taken from their approximate sum, so a process that migrates
+//! between CPUs reports a peak up to a few hundred KiB low at random (V8-v7 RayTrace on one
+//! binary, x86_64 4-vCPU VM, 2026-10-25: 2436-2824 KiB over 20 runs, 2796 in all 20 pinned).
 //!
 //! `ru_maxrss` counts KiB on Linux and bytes on Darwin; the report is KiB on both.
 //!
@@ -24,6 +30,7 @@ use std::os::unix::ffi::OsStrExt;
 /// What the command line asks for.
 struct Request {
     evict: Vec<OsString>,
+    cpu: Option<usize>,
     command: Vec<OsString>,
 }
 
@@ -35,11 +42,16 @@ const USAGE_STATUS: i32 = 2;
 
 fn parse(arguments: impl Iterator<Item = OsString>) -> Result<Request, String> {
     let mut evict = Vec::new();
+    let mut cpu = None;
     let mut arguments = arguments.peekable();
     loop {
         match arguments.next() {
             Some(argument) if argument == "--evict" => {
                 evict.push(arguments.next().ok_or("--evict needs a path")?);
+            }
+            Some(argument) if argument == "--cpu" => {
+                let value = arguments.next().ok_or("--cpu needs a CPU number")?;
+                cpu = Some(value.to_str().and_then(|text| text.parse().ok()).ok_or("--cpu needs a CPU number")?);
             }
             Some(argument) if argument == "--" => break,
             Some(argument) => return Err(format!("unexpected argument {argument:?}")),
@@ -50,13 +62,14 @@ fn parse(arguments: impl Iterator<Item = OsString>) -> Result<Request, String> {
     if command.is_empty() {
         return Err("missing COMMAND after --".into());
     }
-    Ok(Request { evict, command })
+    Ok(Request { evict, cpu, command })
 }
 
 /// Drops `path`'s pages from the page cache; a path that cannot be opened is reported.
 #[cfg(target_os = "linux")]
 fn evict(path: &OsString) -> Result<(), String> {
     let file = std::fs::File::open(path).map_err(|error| format!("{path:?}: {error}"))?;
+    file.sync_data().map_err(|error| format!("{path:?}: {error}"))?;
     use std::os::fd::AsRawFd;
     // SAFETY: the descriptor is open for the call; advice changes no file contents.
     let result =
@@ -79,6 +92,27 @@ fn evict(path: &OsString) -> Result<(), String> {
         return Err(format!("{path:?}: F_NOCACHE failed ({})", std::io::Error::last_os_error()));
     }
     Ok(())
+}
+
+/// Confines this process, and so the command it spawns, to `cpu`.
+#[cfg(target_os = "linux")]
+fn pin(cpu: usize) -> Result<(), String> {
+    // SAFETY: the set is a plain bit mask this function owns; `sched_setaffinity` only reads it.
+    unsafe {
+        let mut set: libc::cpu_set_t = std::mem::zeroed();
+        libc::CPU_SET(cpu, &mut set);
+        if libc::sched_setaffinity(0, std::mem::size_of::<libc::cpu_set_t>(), &set) != 0 {
+            return Err(format!("CPU {cpu}: {}", std::io::Error::last_os_error()));
+        }
+    }
+    Ok(())
+}
+
+/// Confining a process to a CPU reads a Linux per-CPU resident counter; other hosts have no
+/// equivalent and refuse the request instead of reporting a pinned board they did not run.
+#[cfg(not(target_os = "linux"))]
+fn pin(_: usize) -> Result<(), String> {
+    Err("--cpu needs Linux".to_owned())
 }
 
 fn c_string(argument: &OsString) -> Result<CString, String> {
@@ -154,13 +188,19 @@ fn main() {
     let request = match parse(std::env::args_os().skip(1)) {
         Ok(request) => request,
         Err(message) => {
-            eprintln!("rss-exec: {message}\nusage: rss-exec [--evict PATH]... -- COMMAND [ARGUMENT]...");
+            eprintln!("rss-exec: {message}\nusage: rss-exec [--evict PATH]... [--cpu N] -- COMMAND [ARGUMENT]...");
             std::process::exit(USAGE_STATUS);
         }
     };
     for path in &request.evict {
         if let Err(message) = evict(path) {
             eprintln!("rss-exec: evict {message}");
+            std::process::exit(USAGE_STATUS);
+        }
+    }
+    if let Some(cpu) = request.cpu {
+        if let Err(message) = pin(cpu) {
+            eprintln!("rss-exec: pin {message}");
             std::process::exit(USAGE_STATUS);
         }
     }

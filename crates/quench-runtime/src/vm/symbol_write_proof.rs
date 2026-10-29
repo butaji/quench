@@ -13,6 +13,12 @@ use super::Value;
 /// that working set in 1.5 KiB.
 const SYMBOL_WRITE_PROOF_ENTRIES: usize = 1 << 6;
 
+/// Entries each write site keeps, most recent first. A constructor shared by two object
+/// families writes one symbol to two shapes in turn: Node's `Stream` constructor runs for
+/// every request's IncomingMessage and its ServerResponse, so a single entry would be
+/// replaced at every call and the write would take the full path each time.
+const SITE_WRITE_WAYS: usize = 2;
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 struct SymbolWriteProof {
     prototype: Value,
@@ -25,7 +31,10 @@ pub(super) struct SymbolWriteProofs {
     /// Per lane write site: the write it made last (`SiteSymbolWrite`), so the site's next
     /// write to a receiver of that shape is one compare and the store. Sites map as the
     /// symbol read sites do (`symbol_load_proof::site_index`).
-    sites: super::shape_memo::DirectMappedTable<SiteSymbolWrite, { super::symbol_load_proof::SITE_OWN_READ_ENTRIES }>,
+    sites: super::shape_memo::DirectMappedTable<
+        SiteSymbolWrite,
+        { super::symbol_load_proof::SITE_OWN_READ_ENTRIES * SITE_WRITE_WAYS },
+    >,
 }
 
 /// What `Vm::set_plain_symbol_property` did for `key` on an extensible receiver of the
@@ -77,14 +86,26 @@ impl SymbolWriteProofs {
     /// holds.
     #[inline(always)]
     pub(super) fn site_step(&self, site: usize, shape: u32, key: Value, epoch: u64) -> Option<SymbolWriteStep> {
-        self.sites
-            .get(super::symbol_load_proof::site_index(site))
-            .filter(|write| write.site == site && write.shape == shape && write.key == key && write.epoch == epoch)
+        let first = Self::site_entry(site);
+        (first..first + SITE_WRITE_WAYS)
+            .filter_map(|index| self.sites.get(index))
+            .find(|write| write.site == site && write.shape == shape && write.key == key && write.epoch == epoch)
             .map(|write| write.step)
     }
 
+    /// Records the step as the site's most recent write, keeping the one before it.
     pub(super) fn record_site_step(&self, site: usize, shape: u32, key: Value, epoch: u64, step: SymbolWriteStep) {
-        self.sites.set(super::symbol_load_proof::site_index(site), SiteSymbolWrite { site, shape, key, epoch, step });
+        let first = Self::site_entry(site);
+        if let Some(previous) = self.sites.get(first) {
+            self.sites.set(first + 1, previous);
+        }
+        self.sites.set(first, SiteSymbolWrite { site, shape, key, epoch, step });
+    }
+
+    /// The first of the `SITE_WRITE_WAYS` entries of lane site `site`.
+    #[inline(always)]
+    fn site_entry(site: usize) -> usize {
+        super::symbol_load_proof::site_index(site) * SITE_WRITE_WAYS
     }
 
     pub(super) fn clear(&self) {

@@ -721,9 +721,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
     fn static_key<'c>(key: &'c PropertyKey<'c>) -> Option<&'c str> {
         match key {
             PropertyKey::StaticIdentifier(id) => Some(id.name.as_str()),
-            PropertyKey::StringLiteral(value)
-                if !matches!(super::string::constant(value), Constant::StringUnits(_)) =>
-            {
+            PropertyKey::StringLiteral(value) if super::string::is_well_formed(value) => {
                 Some(value.value.as_str())
             }
             _ => None,
@@ -792,6 +790,14 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
             .map_or(self.temporary_floor, |register| {
                 self.temporary_floor.max(register + 1)
             });
+    }
+
+    /// Compiles `body` with the temporaries allocated past `result` free again: the caller
+    /// proves that only `result` and the registers below it are live where `body` starts.
+    pub(super) fn reuse_temporaries_from<T>(&mut self, result: Register, body: impl FnOnce(&mut Self) -> T) -> T {
+        debug_assert!(result >= self.temporary_floor && result < self.next_reg);
+        self.next_reg = result + 1;
+        body(self)
     }
 
     /// Compiles `body` with every register allocated so far kept from statement-level

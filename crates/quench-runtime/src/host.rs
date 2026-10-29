@@ -131,6 +131,13 @@ pub trait Host {
     /// Offers the host a compiled host program's compact form (`kept_compiled_program`).
     fn keep_compiled_program(&mut self, _name: &str, _parts: &[&str], _bytes: &[u8]) {}
 
+    /// Whether `keep_compiled_program` keeps what it is offered: a host without a compile
+    /// cache answers no, and the runtime then encodes nothing to offer it. Only a host that
+    /// keeps programs overrides both.
+    fn keeps_compiled_programs(&self) -> bool {
+        false
+    }
+
     /// A native compilation (a WebAssembly module's, or a JavaScript function's or loop
     /// region's) is about to start: like `at_collection_boundary`, the code about to run (the
     /// code generator) differs from the code that ran before it.
@@ -140,11 +147,12 @@ pub trait Host {
     /// scratch memory, freed by now, are no longer needed while the program runs on.
     fn after_native_compilation(&mut self) {}
 
-    /// A snapshot restore has read `bytes`, part of the snapshot the host gave it
-    /// (`Runtime::restore_snapshot`), and reads them again only to decode a function's record
-    /// on its first call: a host that mapped them may return their pages, so they are not
-    /// resident beside the state decoded from them.
-    fn snapshot_bytes_read(_bytes: &[u8])
+    /// The runtime has read `bytes`, part of bytes the host gave it (a snapshot's,
+    /// `Runtime::restore_snapshot`, or a compiled program's, `kept_compiled_program`), and
+    /// reads them again only to decode a function's record on its first call: a host that
+    /// mapped them may return their pages, so they are not resident beside what was decoded
+    /// from them.
+    fn kept_bytes_read(_bytes: &[u8])
     where
         Self: Sized,
     {
@@ -156,6 +164,14 @@ pub trait Host {
     /// ECMAScript proper tail calls discard strict caller activations. Hosts
     /// matching engines that retain those observable frames can disable them.
     fn proper_tail_calls(&self) -> bool {
+        true
+    }
+
+    /// The stage 3 proposal "non-extensible applies to private": adding a private field,
+    /// method or accessor to a non-extensible object throws (Test262
+    /// `nonextensible-applies-to-private`). Hosts matching engines that do not ship it (V8,
+    /// so Node) add them as before.
+    fn nonextensible_applies_to_private(&self) -> bool {
         true
     }
 

@@ -74,7 +74,7 @@ impl<H: Host> Vm<H> {
             })
     }
 
-    fn store_mapped_argument(&mut self, arguments: Value, slot: usize, value: Value) {
+    pub(super) fn store_mapped_argument(&mut self, arguments: Value, slot: usize, value: Value) {
         let Some(index) = self.mapped_argument_index(arguments, slot) else {
             return;
         };

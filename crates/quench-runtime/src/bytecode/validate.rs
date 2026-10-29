@@ -164,7 +164,9 @@ fn promoted_local_layout_is_valid(function: &super::Function, atoms: &super::Ato
             })
         });
     let eligible_function = function.parent.is_some()
-        && !function.is_async
+        // An async body that never suspends runs to completion as an ordinary one does
+        // (`Compiler::promoted_local_plan`'s `async_body`).
+        && !(function.is_async && function.suspends())
         && !function.is_generator
         && !function.derived_constructor
         // An arrow inside an initializer owns its locals (`compile/arrow.rs`).
@@ -530,6 +532,20 @@ impl ResidualProgram {
             }
             if function.registers > REGISTER_MASK {
                 return Err(format!("function {index} has too many registers"));
+            }
+            // A call plan decides how an activation is laid out, so a seeded one is the
+            // function's own derivation, as is every other fact an encoding keeps.
+            if !function.derived_facts_hold(self) {
+                return Err(format!("function {index} carries facts its code does not derive"));
+            }
+            // A lane lets the callee of a dead result skip building it, so each claim is the
+            // compiler's own derivation (`liveness::register_roots`).
+            if !function.register_roots.dead_call_results().is_empty()
+                && crate::compile::liveness::register_roots(function, self, &self.field_sites, &self.superinstructions)
+                    .dead_call_results()
+                    != function.register_roots.dead_call_results()
+            {
+                return Err(format!("function {index} claims dead call results its liveness does not prove"));
             }
             if function
                 .self_binding_slot
@@ -1103,8 +1119,9 @@ fn selective_capture_layout_is_eligible(
         && !function.is_class_constructor
         && !function.derived_constructor
         && !function.class_initializer
-        // The compiler splits a rest list that binds directly too (`selective_layout_is_safe`).
-        && function.parameters_own_their_slots(|atom| atoms.get(atom))
+        // The compiler splits a rest list that binds directly and a list binding its names
+        // apart too (`selective_layout_is_safe`).
+        && function.arguments_own_their_slots(|atom| atoms.get(atom))
         && local_atoms_are_static
         && mapped_arguments_are_captured
 }
@@ -1127,6 +1144,36 @@ mod tests {
             .functions
             .iter()
             .any(|function| function.rest && function.selective_capture_slots.is_some()));
+    }
+
+    #[test]
+    fn non_suspending_async_promoted_locals_are_validated() {
+        // A non-suspending async body promotes its locals as an ordinary one does; one that
+        // awaits keeps them in frame slots. The validator accepts what the compiler emits, for
+        // default and trailing-comma parameter lists too (Test262 async dflt-params-*,
+        // params-trailing-comma-*).
+        let program = crate::Engine::specialize(
+            "async function trailing(a,) { return a; } async function defaults(a, b = a + 1) { let c = b; return c; } \
+             const arrow = async (x = 1, y,) => x + y; async function waits(a) { const b = await a; return b; } \
+             trailing(1); defaults(1); arrow(2, 3); waits(4);",
+            "async-promoted-locals.js",
+        )
+        .unwrap();
+        // Validation compiles every released function first.
+        assert_eq!(program.validate(), Ok(()));
+        let promoted = |name: &str| {
+            program.functions.iter().any(|function| {
+                function.is_async
+                    && !function.local_registers.is_empty()
+                    && function.header().name.is_some_and(|atom| &program.atoms[atom as usize] == name)
+            })
+        };
+        assert!(promoted("trailing"));
+        assert!(
+            program.functions.iter().any(|function| function.is_async && function.is_arrow && !function.local_registers.is_empty()),
+            "a non-suspending async arrow with defaults and a trailing comma promotes its locals"
+        );
+        assert!(!promoted("waits"), "an awaiting body keeps its locals in frame slots");
     }
 
     #[test]
@@ -1284,6 +1331,7 @@ mod tests {
             dynamic_scope_access: Default::default(),
             js_tier_candidate: Default::default(),
             call_plan: Default::default(),
+            initializer: Default::default(),
             handlers: vec![].into(),
             register_roots: crate::bytecode::RegisterRoots::new(root != u32::MAX),
             undefined_register: None,
@@ -1315,6 +1363,8 @@ mod tests {
             replay: None,
             encoded_records: None,
             validated: Default::default(),
+            undefined_constant: Default::default(),
+            load_encoding: Default::default(),
             closure_reads: None,
         }
     }

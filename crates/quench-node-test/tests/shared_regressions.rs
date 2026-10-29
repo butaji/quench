@@ -120,6 +120,152 @@ console.log(p1(7));
 }
 
 #[test]
+fn warmed_frameless_calls_keep_arguments_and_legacy_caller_like_node() {
+    // `Array(...)` makes the closure-holding activation a frame between its `arguments`
+    // reads, and `peek.caller` reads the frame stack from a frameless caller.
+    let source = r#"
+function outer(r) {
+  function f() {
+    var x = Array(arguments.length);
+    for (var g = 0; g < x.length; g++) x[g] = arguments[g];
+    function b() { r.apply(null, x); }
+    b();
+  }
+  return function m() { f(null, 'body'); };
+}
+function peek() { return peek.caller ? Array.from(peek.caller.arguments).join(',') : 'none'; }
+function host(a, b) { a = 9; return peek(); }
+for (let k = 0; k < 6; k++) {
+  outer(function (e, v) { console.log(k, e, v); })();
+  console.log(host(1, 2));
+}
+"#;
+
+    let node = observe_node_source(source);
+    assert!(node.status.success(), "Node oracle failed: {node:?}");
+    let quench = observe_source(source);
+    assert_eq!(
+        quench.outcome(),
+        RunResult::Pass,
+        "Quench failed: {:?}",
+        quench.worker
+    );
+    assert_eq!(quench.stdout, node.stdout, "Node and Quench output differ");
+}
+
+#[test]
+fn warmed_environment_rest_calls_with_fewer_values_than_parameters_match_node() {
+    // A closure-holding function with fixed parameters before a rest list runs as a
+    // frameless environment activation once warm; calls passing fewer values than its
+    // fixed parameters gather an empty rest list (they panicked before cbaf372c1).
+    let source = r#"
+function outer() {
+  function r(a, b, ...m) {
+    const f = () => m.length + (a === undefined ? 0 : 1) + (b === undefined ? 0 : 10);
+    return f();
+  }
+  let sum = 0;
+  for (let i = 0; i < 3000; i++) sum += r() + r(1) + r(1, 2) + r(1, 2, 3, 4);
+  return sum;
+}
+console.log(outer());
+const o = { r(a, b, ...m) { const g = () => m; return g().length + (b ?? 0); } };
+let t = 0;
+for (let i = 0; i < 3000; i++) t += o.r(i) + o.r.call(o) + o.r.apply(o, [1]) + o.r(1, 2, 3);
+console.log(t);
+"#;
+
+    let node = observe_node_source(source);
+    assert!(node.status.success(), "Node oracle failed: {node:?}");
+    let quench = observe_source(source);
+    assert_eq!(
+        quench.outcome(),
+        RunResult::Pass,
+        "Quench failed: {:?}",
+        quench.worker
+    );
+    assert_eq!(quench.stdout, node.stdout, "Node and Quench output differ");
+}
+
+#[test]
+fn server_request_start_publishes_and_emits_like_node() {
+    // A parsed server request enters JavaScript once: it makes the request and response,
+    // publishes `http.server.request.start` to a subscriber snapshot with Node's message
+    // order and the channel name, then emits `request` on the server.
+    let source = r#"
+const dc = require('diagnostics_channel');
+const http = require('http');
+const seen = [];
+let starts = 0;
+function start(message, name) {
+  seen.push(['start', Object.keys(message).join(), name, this === undefined || this === globalThis,
+    message.request instanceof http.IncomingMessage, message.response.req === message.request,
+    message.server === server]);
+  if (++starts === 2) dc.unsubscribe('http.server.request.start', start);
+}
+dc.subscribe('http.server.request.start', start);
+const server = http.createServer(function (request, response) {
+  seen.push(['request', this === server, arguments.length, request.method, request.url,
+    response.statusCode, response.req === request]);
+  response.end('ok');
+});
+server.listen(0, async () => {
+  const { port } = server.address();
+  for (const path of ['/a', '/b?c=1', '/d']) {
+    await new Promise((done) => http.get({ port, path }, (response) => {
+      response.resume();
+      response.on('end', done);
+    }));
+  }
+  console.log(JSON.stringify(seen));
+  server.close();
+});
+"#;
+
+    let node = observe_node_source(source);
+    assert!(node.status.success(), "Node oracle failed: {node:?}");
+    let quench = observe_source(source);
+    assert_eq!(
+        quench.outcome(),
+        RunResult::Pass,
+        "Quench failed: {:?}",
+        quench.worker
+    );
+    assert_eq!(quench.stdout, node.stdout, "Node and Quench output differ");
+}
+
+#[test]
+fn diagnostics_subscriber_throws_are_uncaught_on_the_next_tick_like_node() {
+    // A subscriber's throw neither ends `publish` nor the server's request start: Node
+    // reports it as an uncaught exception on the next tick and runs the other subscribers.
+    let source = r#"
+const http = require('http');
+const dc = require('diagnostics_channel');
+const seen = [];
+process.on('uncaughtException', (e) => { seen.push('uncaught ' + e.message); });
+dc.subscribe('http.server.request.start', () => { seen.push('sub1'); throw new Error('sub1'); });
+dc.subscribe('http.server.request.start', () => { seen.push('sub2'); });
+const ch = dc.channel('custom');
+ch.subscribe(() => { seen.push('c1'); throw new Error('c1'); });
+ch.subscribe(() => { seen.push('c2'); });
+ch.publish({}); seen.push('after publish');
+const srv = http.createServer((req, res) => { seen.push('request'); res.end('x'); });
+srv.listen(0, () => { http.get({ port: srv.address().port }, (r) => { r.resume(); r.on('end', () => { seen.push('done ' + r.statusCode); setImmediate(() => { console.log(JSON.stringify(seen)); srv.close(); }); }); }); });
+"#;
+
+    let node = observe_node_source(source);
+    assert!(node.status.success(), "Node oracle failed: {node:?}");
+    let quench = observe_source(source);
+    assert_eq!(
+        quench.outcome(),
+        RunResult::Pass,
+        "Quench failed: {:?}",
+        quench.worker
+    );
+    assert_eq!(quench.stdout, node.stdout, "Node and Quench output differ");
+}
+
+#[test]
 fn deep_named_calls_raise_catchable_range_error_and_recover() {
     let source = r#"
 function Box() {}
@@ -193,6 +339,117 @@ WebAssembly.instantiate(m, { env: { log() {} } })
 }
 
 #[test]
+fn webassembly_internal_references_reach_javascript_like_node() {
+    // (module (func "i31" (result i31ref) (ref.i31 -5)) (func "wide" (result anyref)
+    //   (ref.i31 0x7fffffff)) (func "nullAny" (result anyref)) (func "nullNone" (result nullref))
+    //   (func "host" (param externref) (result anyref) (any.convert_extern))
+    //   (func "pair" (result anyref i32) (ref.i31 7) 1) (global "g" anyref (ref.i31 3)))
+    let source = r#"
+const bytes = new Uint8Array([0,97,115,109,1,0,0,0,1,23,5,96,0,1,108,96,0,1,110,96,0,1,113,96,1,111,1,110,96,0,2,110,127,3,7,6,0,1,1,2,3,4,6,8,1,110,0,65,3,251,28,11,7,53,7,3,105,51,49,0,0,4,119,105,100,101,0,1,7,110,117,108,108,65,110,121,0,2,8,110,117,108,108,78,111,110,101,0,3,4,104,111,115,116,0,4,4,112,97,105,114,0,5,1,103,3,0,10,45,6,6,0,65,123,251,28,11,10,0,65,255,255,255,255,7,251,28,11,4,0,208,110,11,4,0,208,113,11,6,0,32,0,251,26,11,8,0,65,7,251,28,65,1,11]);
+const e = new WebAssembly.Instance(new WebAssembly.Module(bytes)).exports;
+const object = {};
+console.log(e.i31(), e.wide(), e.nullAny(), e.nullNone(), JSON.stringify(e.pair()), e.g.value);
+console.log(e.host(object) === object, e.host('s'), e.host(1.5), e.host(42), e.host(null));
+"#;
+    let node = observe_node_source(source);
+    assert!(node.status.success(), "Node oracle failed: {node:?}");
+    let quench = observe_source(source);
+    assert_eq!(quench.outcome(), RunResult::Pass, "{:?}", quench.worker);
+    assert_eq!(quench.stdout, node.stdout);
+}
+
+#[test]
+fn webassembly_gc_objects_are_opaque_exotic_objects_like_node() {
+    // (module (type $s (struct (field i32))) (func "st" (result anyref) (struct.new $s 1))
+    //   (func "back" (param externref) (result i32) (ref.test (ref $s) (any.convert_extern))))
+    let source = r#"
+const wasmModule = new WebAssembly.Module(new Uint8Array([0,97,115,109,1,0,0,0,1,14,3,95,1,127,0,96,0,1,110,96,1,111,1,127,3,3,2,1,2,7,13,2,2,115,116,0,0,4,98,97,99,107,0,1,10,19,2,7,0,65,1,251,0,0,11,9,0,32,0,251,26,251,20,0,11,0,11,4,110,97,109,101,4,4,1,0,1,115]));
+const e = new WebAssembly.Instance(wasmModule).exports;
+const r = e.st();
+const out = [];
+const t = (n, f) => { try { const v = f(); out.push(n + '=' + (typeof v === 'object' && v !== null ? JSON.stringify(v) : String(v))); } catch (err) { out.push(n + '!' + err.constructor.name); } };
+t('typeof', () => typeof r); t('keys', () => Object.keys(r)); t('x', () => r.x); t('proto', () => Object.getPrototypeOf(r));
+t('set', () => { 'use strict'; r.x = 1; }); t('str', () => String(r)); t('plus', () => r + 1); t('in', () => 'x' in r);
+t('ext', () => Object.isExtensible(r)); t('frozen', () => Object.isFrozen(r)); t('wrap', () => Object(r) === r); t('back', () => e.back(r));
+t('def', () => Object.defineProperty(r, 'y', { value: 1 })); t('setproto', () => Object.setPrototypeOf(r, {})); t('rsetproto', () => Reflect.setPrototypeOf(r, null));
+t('del', () => { 'use strict'; delete r.x; }); t('freeze', () => Object.freeze(r)); t('rset', () => Reflect.set(r, 'x', 1)); t('rpe', () => Reflect.preventExtensions(r));
+t('gopd', () => Object.getOwnPropertyDescriptor(r, 'x')); t('spread', () => ({ ...r })); t('create', () => Object.getPrototypeOf(Object.create(r)) === r);
+t('json', () => JSON.stringify([r])); t('sym', () => { 'use strict'; r[Symbol.iterator] = 1; });
+console.log(out.join(' '));
+"#;
+    let node = observe_node_source(source);
+    assert!(node.status.success(), "Node oracle failed: {node:?}");
+    let quench = observe_source(source);
+    assert_eq!(quench.outcome(), RunResult::Pass, "{:?}", quench.worker);
+    assert_eq!(quench.stdout, node.stdout);
+}
+
+#[test]
+fn webassembly_values_enter_reference_types_like_node() {
+    // Exports taking anyref, eqref, i31ref, structref, (ref null $s), (ref $s) and nullref;
+    // anyref and (ref null $s) globals and tables; imports returning anyref and (ref null $s);
+    // and the JS API's reference type names for WebAssembly.Global and WebAssembly.Table.
+    let source = r#"
+let ret = null;
+const wasmModule = new WebAssembly.Module(new Uint8Array([0,97,115,109,1,0,0,0,1,59,12,95,1,127,0,95,1,126,0,96,0,1,110,96,0,1,99,0,96,1,110,1,110,96,1,109,1,127,96,1,108,1,127,96,1,107,1,127,96,1,99,0,1,127,96,1,100,0,1,127,96,1,113,1,127,96,0,1,127,2,22,2,3,101,110,118,3,103,101,116,0,2,3,101,110,118,4,103,101,116,115,0,3,3,12,11,4,5,6,7,8,9,10,2,2,2,11,4,8,2,110,0,2,99,0,0,2,6,12,2,110,1,208,110,11,99,0,1,208,0,11,7,86,15,3,97,110,121,0,2,2,101,113,0,3,3,105,51,49,0,4,2,115,116,0,5,1,115,0,6,3,115,110,110,0,7,4,110,111,110,101,0,8,2,109,107,0,9,3,109,107,116,0,10,3,105,109,112,0,11,4,105,109,112,115,0,12,1,103,3,0,2,103,115,3,1,3,116,97,98,1,0,4,116,97,98,115,1,1,10,70,11,4,0,32,0,11,7,0,32,0,251,20,108,11,6,0,32,0,251,29,11,5,0,32,0,209,11,5,0,32,0,209,11,4,0,65,1,11,4,0,65,1,11,7,0,65,1,251,0,0,11,7,0,66,1,251,0,1,11,4,0,16,0,11,5,0,16,1,209,11,0,28,4,110,97,109,101,1,12,2,0,3,103,101,116,1,4,103,101,116,115,4,7,2,0,1,115,1,1,116]));
+const e = new WebAssembly.Instance(wasmModule, { env: { get: () => ret, gets: () => ret } }).exports;
+const s = e.mk(), t = e.mkt(), o = {};
+const show = x => x === null ? 'null' : typeof x === 'object' ? (x === o ? 'o' : x === s ? 's' : x === t ? 't' : 'obj') : typeof x + ':' + String(x);
+const out = [];
+const c = (n, f) => { try { out.push(n + '=' + show(f())); } catch (err) { out.push(n + '!' + err.constructor.name); } };
+for (const [name, x] of [['null', null], ['undef', undefined], ['num', 5], ['big', 2 ** 30], ['frac', 1.5], ['o', o], ['s', s], ['t', t], ['bigint', 1n]]) {
+  for (const f of ['any', 'eq', 'i31', 'st', 's', 'snn', 'none']) c(f + '(' + name + ')', () => e[f](x));
+  c('g=' + name, () => { e.g.value = x; return e.g.value; });
+  c('gs=' + name, () => { e.gs.value = x; return e.gs.value; });
+  c('tab=' + name, () => { e.tab.set(0, x); return e.tab.get(0); });
+  c('tabs=' + name, () => { e.tabs.set(0, x); return e.tabs.get(0); });
+  c('imp=' + name, () => { ret = x; return e.imp(); });
+  c('imps=' + name, () => { ret = x; return e.imps(); });
+}
+for (const ty of ['anyfunc', 'funcref', 'externref', 'anyref', 'eqref', 'i31ref', 'structref', 'arrayref', 'nullref', 'exnref']) {
+  c('global:' + ty, () => { const g = new WebAssembly.Global({ value: ty, mutable: true }); g.value = 7; return g.value; });
+  c('table:' + ty, () => { const table = new WebAssembly.Table({ element: ty, initial: 1 }); table.set(0, 7); return table.get(0); });
+}
+console.log(out.join(' '));
+"#;
+    let node = observe_node_source(source);
+    assert!(node.status.success(), "Node oracle failed: {node:?}");
+    let quench = observe_source(source);
+    assert_eq!(quench.outcome(), RunResult::Pass, "{:?}", quench.worker);
+    assert_eq!(quench.stdout, node.stdout);
+}
+
+#[test]
+fn non_callable_calls_name_their_callee_like_node() {
+    // V8's CallPrinter: names, property chains, computed keys, sequences, operators,
+    // literals, nested calls and constructions, optional chains and private fields.
+    let source = r#"
+'use strict';
+const o = { a: { b: 2, 1: 3 }, n: null, s: 'str', arr: [1] };
+const value = { valueOf: 1 };
+let x = 5, k = 'b', f = () => 1, u;
+class C { #p = 1; m() { return this.#p(); } static s() { return super.toString.call(1)(); } }
+const cases = [
+  () => value.valueOf(), () => o.a.b(), () => o.a['b'](), () => o.a[1](), () => o.a[k](), () => (0, value.valueOf)(),
+  () => x(), () => u(), () => o.s(), () => o.n(), () => o.zz(), () => o?.a.b(), () => o.a?.b(), () => o.a.b?.(),
+  () => f()(), () => (x || o.a.b)(), () => (x && 3)(), () => (x + 1)(), () => (-x)(), () => (typeof x)(), () => (void 0)(),
+  () => (x++)(), () => (x ? 1 : 2)(), () => (x = 3)(), () => [1, 2]['length'](), () => [](), () => ({}).a(), () => ({ a: 1, b: 2 })(),
+  () => 'abc'(), () => 'abc'.length(), () => (1)(), () => /re/g.lastIndex(), () => new C().m(), () => this(),
+  () => new o.a.b(), () => new x(), () => new (f())(), () => new o.a['b'](), () => new f(),
+  () => (function () {})()(), () => (() => 1)()(), () => o.arr[0](), () => new Date().getTime()(), () => `t`(), () => (null)(), () => (true)(),
+  () => o.a
+    .b(), () => [...o.arr].x(), () => JSON.parse('1')(), () => (x, k, o.a.b)(), () => (x == 1)(), () => (x in o)(), () => (x instanceof Object)(),
+];
+for (const c of cases) { try { c(); console.log('no error'); } catch (e) { console.log(e.constructor.name + ': ' + e.message); } }
+"#;
+    let node = observe_node_source(source);
+    assert!(node.status.success(), "Node oracle failed: {node:?}");
+    let quench = observe_source(source);
+    assert_eq!(quench.outcome(), RunResult::Pass, "{:?}", quench.worker);
+    assert_eq!(quench.stdout, node.stdout);
+}
+
+#[test]
 fn vm_context_lexicals_survive_collection_and_prototypes_end_in_the_context() {
     // A context's script-scope `let` is reachable only through the realm while its code
     // runs; collections inside that code must keep it alive.
@@ -240,6 +497,91 @@ const h = Promise.resolve(4);
 Object.defineProperty(h, 'constructor', { get() { throw new Error('boom'); } });
 new Promise(r => r(h)).catch(error => log.push('h:' + error.message));
 setTimeout(() => console.log(log.join(' ')), 0);
+"#;
+    let node = observe_node_source(source);
+    assert!(node.status.success(), "Node oracle failed: {node:?}");
+    let quench = observe_source(source);
+    assert_eq!(quench.outcome(), RunResult::Pass, "{:?}", quench.worker);
+    assert_eq!(quench.stdout, node.stdout);
+}
+
+/// A Wasm export called from a lane's frameless activations runs beside them
+/// (`Native::runs_beside_activations`): its results, the stack its JavaScript import observes
+/// (the activations, then frames, in order), and its trap are a frame-stack call's. The
+/// trap's `RuntimeError` names the JavaScript callers it left, not the frame that caught it.
+#[test]
+fn wasm_export_calls_beside_frameless_activations_report_like_node() {
+    let source = r#"
+const section = (id, bytes) => [id, bytes.length, ...bytes];
+const name = (s) => [s.length, ...[...s].map((c) => c.charCodeAt(0))];
+const types = [2, 0x60, 0, 0, 0x60, 1, 0x7f, 1, 0x7f];
+const imports = [1, ...name('env'), ...name('cb'), 0, 0];
+const funcs = [1, 1];
+const exps = [1, ...name('run'), 0, 1];
+const run = [0x20, 0, 0x45, 0x04, 0x40, 0x00, 0x0b,
+  0x20, 0, 0x41, 1, 0x46, 0x04, 0x40, 0x10, 0, 0x0b,
+  0x20, 0, 0x41, 1, 0x6a, 0x0b];
+const code = [1, run.length + 1, 0, ...run];
+const bytes = new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0, ...section(1, types), ...section(2, imports),
+  ...section(3, funcs), ...section(7, exps), ...section(10, code)]);
+const callers = (stack) => stack.split('\n').map((line) => /at (\w+) /.exec(line)?.[1])
+  .filter((name) => ['cb', 'inner', 'middle', 'outer'].includes(name)).join(' < ');
+const wasm = new WebAssembly.Instance(new WebAssembly.Module(bytes), {
+  env: { cb() { console.log('import sees', callers(new Error('cb').stack)); } },
+}).exports;
+function inner(x) { return wasm.run(x); }
+function middle(x) { return inner(x) + 0; }
+function outer(n) { let sum = 0; for (let i = 2; i < n; i++) sum += middle(i); return sum; }
+console.log(outer(3000), outer(3000));
+function calls(x) { return middle(x); }
+calls(1);
+try { calls(0); } catch (e) { console.log(e.constructor.name, e.message, callers(e.stack)); }
+"#;
+    let node = observe_node_source(source);
+    assert!(node.status.success(), "Node oracle failed: {node:?}");
+    let quench = observe_source(source);
+    assert_eq!(quench.outcome(), RunResult::Pass, "{:?}", quench.worker);
+    assert_eq!(quench.stdout, node.stdout);
+}
+
+#[test]
+fn bigint_conversions_and_wasm_export_calls_report_like_node() {
+    // ToBigInt and the BigInt constructor name the value they reject as V8 does, and a call
+    // of a Wasm export converts its arguments in order, once each, through the same
+    // conversions (i64 arguments are BigInts).
+    let source = r#"
+const cases = [[], [1.5], [NaN], [Infinity], [undefined], [null], [Symbol('s')], [Symbol()], ['x'], ['1.5'], [{}], [{ valueOf() { return 2.5; } }], [1e21], [-0], ['  12  ']];
+for (const args of cases)
+  try { console.log('ok', String(BigInt(...args))); } catch (e) { console.log(e.constructor.name + ': ' + e.message); }
+for (const v of [{ [Symbol.toPrimitive]() { return 1; } }, 1n, '0x10', '', 'abc', 12.0])
+  try { console.log('ok', String(BigInt.asUintN(8, v))); } catch (e) { console.log(e.constructor.name + ': ' + e.message); }
+try { 1n + 1; } catch (e) { console.log(e.constructor.name + ': ' + e.message); }
+// Export-call semantics: coercion order and side effects, f64, i64 <-> BigInt, missing
+// arguments, multi-value results, errors.
+const section = (id, bytes) => [id, bytes.length, ...bytes];
+const types = [3,
+  0x60, 2, 0x7f, 0x7c, 1, 0x7c,   // (i32, f64) -> f64
+  0x60, 1, 0x7e, 1, 0x7e,         // (i64) -> i64
+  0x60, 0, 2, 0x7f, 0x7f];        // () -> (i32, i32)
+const funcs = [3, 0, 1, 2];
+const name = (s) => [s.length, ...[...s].map((c) => c.charCodeAt(0))];
+const exps = [3, ...name("mix"), 0, 0, ...name("inc64"), 0, 1, ...name("pair"), 0, 2];
+const body = (code) => [code.length + 1, 0, ...code];
+const code = [3,
+  ...body([0x20, 0, 0xb7, 0x20, 1, 0xa0, 0x0b]),
+  ...body([0x20, 0, 0x42, 1, 0x7c, 0x0b]),
+  ...body([0x41, 1, 0x41, 2, 0x0b])];
+const bytes = new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0,
+  ...section(1, types), ...section(3, funcs), ...section(7, exps), ...section(10, code)]);
+const { mix, inc64, pair } = new WebAssembly.Instance(new WebAssembly.Module(bytes)).exports;
+const log = [];
+const tracked = (label, value) => ({ valueOf() { log.push(label); return value; } });
+const show = (f) => { try { return String(f()); } catch (e) { return e.constructor.name + ': ' + e.message; } };
+console.log(show(() => mix(tracked('a', 2.9), tracked('b', 0.25))), log.join(','));
+console.log(show(() => mix()), show(() => mix(-1, 1.5, 'extra')), show(() => mix(2 ** 32 + 5, NaN)));
+console.log(show(() => inc64(41n)), show(() => inc64(2n ** 63n - 1n)), show(() => inc64(1)));
+console.log(show(() => JSON.stringify(pair())), mix.length, inc64.length, pair.length, mix.name);
+console.log(show(() => mix({ valueOf() { throw new RangeError('boom'); } })));
 "#;
     let node = observe_node_source(source);
     assert!(node.status.success(), "Node oracle failed: {node:?}");

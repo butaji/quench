@@ -29,6 +29,7 @@ mod values;
 mod work;
 
 pub(crate) use abi::*;
+pub(crate) use work::WakeSignal;
 
 pub(crate) fn wake_fd() -> Option<std::os::fd::RawFd> {
     work::wake_fd()
@@ -42,6 +43,10 @@ pub(crate) fn thread_wake() -> std::io::Result<std::sync::Arc<work::WakeSignal>>
 /// Notify a retained wake signal after a completion is visible to its thread.
 pub(crate) fn notify_wake(signal: &work::WakeSignal) {
     work::notify_wake(signal);
+}
+
+pub(crate) fn wake_signal() -> std::io::Result<Arc<WakeSignal>> {
+    work::wake_signal()
 }
 
 pub(crate) fn drain_wake() {

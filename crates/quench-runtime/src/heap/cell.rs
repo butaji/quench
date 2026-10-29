@@ -64,6 +64,39 @@ mod cell_layout_tests {
         assert_eq!(layout.record_align, std::mem::align_of::<ArrayObject>());
         assert_eq!(layout.elements_offset, NATIVE_ARRAY_ELEMENTS_OFFSET);
     }
+
+    #[test]
+    fn native_object_layout_is_derived_from_the_current_storage_types() {
+        assert_eq!(NATIVE_OBJECT_RECORD_SIZE, std::mem::size_of::<Object>());
+        assert_eq!(NATIVE_OBJECT_RECORD_ALIGN, std::mem::align_of::<Object>());
+        assert_eq!(
+            NATIVE_OBJECT_META_OFFSET,
+            std::mem::offset_of!(Object, meta)
+        );
+        assert_eq!(
+            NATIVE_OBJECT_AUXILIARY_OFFSET,
+            std::mem::offset_of!(Object, auxiliary)
+        );
+        assert_eq!(
+            NATIVE_OBJECT_PAYLOAD_OFFSET,
+            std::mem::offset_of!(Object, payload)
+        );
+        assert_eq!(
+            NATIVE_OBJECT_EXTRAS_ARENA_START_OFFSET,
+            std::mem::offset_of!(ObjectExtras, arena_start)
+        );
+
+        let layout = super::super::NATIVE_OBJECT_LAYOUT;
+        assert_eq!(layout.record_size, std::mem::size_of::<Object>());
+        assert_eq!(layout.record_align, std::mem::align_of::<Object>());
+        assert_eq!(layout.meta_offset, NATIVE_OBJECT_META_OFFSET);
+        assert_eq!(layout.auxiliary_offset, NATIVE_OBJECT_AUXILIARY_OFFSET);
+        assert_eq!(layout.payload_offset, NATIVE_OBJECT_PAYLOAD_OFFSET);
+        assert_eq!(
+            layout.extras_arena_start_offset,
+            NATIVE_OBJECT_EXTRAS_ARENA_START_OFFSET
+        );
+    }
 }
 
 impl WeakMapEntries {
@@ -127,6 +160,7 @@ pub(crate) enum Native {
     ReflectSet,
     SuperSet,
     ObjectLiteralPrototype,
+    ObjectLiteralCreate,
     ReflectOwnKeys,
     ReflectGetPrototypeOf,
     ReflectSetPrototypeOf,
@@ -898,33 +932,69 @@ impl Native {
     /// its arguments and the heap, and reaches guest code only through getters, coercions,
     /// proxy traps, species constructors or a `JSON.parse` reviver, whose calls make the activations frames first
     /// (`Vm::materialize_deferred_lane`): `assert.deepEqual` calls `Object.prototype.toString`
-    /// on every value it compares (10,210 materializations in the color-convert npm scenario).
+    /// on every value it compares (10,210 materializations in the color-convert npm scenario),
+    /// and TypeScript's CommonJS re-export helper (`__createBinding`) reads each export's
+    /// descriptor (208,883 in the typescript-eslint npm scenario), and Express decodes each
+    /// query value with `decodeURIComponent` (one per request). A Wasm export converts its
+    /// arguments with coercions, reaches JavaScript only through its imports' calls and runs
+    /// its own code natively, or pushes a frame for it only after making the activations
+    /// frames (`Vm::call_wasm_exported_function`); its trap becomes an error object where the
+    /// general path raises it (JetStream richards-wasm calls an export 2.1 million times an
+    /// iteration from a frameless activation).
     pub(crate) fn runs_beside_activations(self) -> bool {
         matches!(
             self,
             Self::ObjectLiteralPrototype
+                | Self::ObjectLiteralCreate
                 | Self::ObjectKeys
+                | Self::ObjectAssign
                 | Self::ObjectDefineProperty
                 | Self::ObjectGetPrototypeOf
+                | Self::ObjectSetPrototypeOf
                 | Self::ObjectEntries
                 | Self::ObjectGetOwnPropertyNames
                 | Self::ObjectHasOwn
+                | Self::ObjectGetOwnPropertyDescriptor
                 | Self::ObjectPrototypeHasOwnProperty
                 | Self::ObjectPrototypeToString
                 | Self::ReflectGetPrototypeOf
+                | Self::ReflectSetPrototypeOf
                 | Self::ForInKeys
                 | Self::ArrayJoin
                 | Self::ArraySplice
                 | Self::StringSplit
                 | Self::StringMatch
+                | Self::StringReplace
+                | Self::StringReplaceAll
+                | Self::NumberString
+                | Self::MapEntries
+                | Self::ArraySlice
+                | Self::ArrayMap
+                | Self::ArrayForEach
+                | Self::ArrayFilter
+                | Self::ArraySome
+                | Self::ArrayEvery
+                | Self::ArrayFind
+                | Self::ArrayFindIndex
+                | Self::ArrayFindLast
+                | Self::ArrayFindLastIndex
                 | Self::RegExpTest
                 | Self::JsonParse
                 | Self::JsonStringify
                 | Self::ParseInt
+                | Self::EncodeUri
+                | Self::EncodeUriComponent
+                | Self::DecodeUri
+                | Self::DecodeUriComponent
                 | Self::ArrayShift
                 | Self::WeakMapSet
                 | Self::FinalizationRegistryRegister
                 | Self::TypedArrayToStringTag
+                | Self::FunctionBind
+                | Self::Array
+                | Self::PromiseResolve
+                | Self::PromiseWithResolvers
+                | Self::WasmExportedFunction
         )
     }
 
@@ -1326,11 +1396,18 @@ impl InlineObjectHeader {
     };
 
     pub(crate) fn of(proto: Value, shape: u32) -> Self {
-        let object = Object::with_property_storage(
-            proto,
-            ValueVec::inline_property_storage(shape),
-            [Value::UNDEFINED; INLINE_PROPERTY_COUNT],
-        );
+        Self::of_storage(proto, ValueVec::inline_property_storage(shape))
+    }
+
+    /// The header words of an object with prototype `proto` whose `shape`'s values live in an
+    /// arena run (`Object::from_run_header`), as `Object::with_property_storage` sets them
+    /// apart from the run's position.
+    pub(crate) fn of_run(proto: Value, shape: u32) -> Self {
+        Self::of_storage(proto, ValueVec::from_parts(0, shape))
+    }
+
+    fn of_storage(proto: Value, storage: ValueVec) -> Self {
+        let object = Object::with_property_storage(proto, storage, [Value::UNDEFINED; INLINE_PROPERTY_COUNT]);
         Self {
             meta: object.meta,
             auxiliary: object.auxiliary,
@@ -1338,6 +1415,7 @@ impl InlineObjectHeader {
     }
 }
 
+#[repr(C)]
 pub(crate) struct Object {
     /// The prototype's heap index (`PROTO_INDEX_BITS`, with null and undefined sentinels) and
     /// the `OBJECT_*` flags: array, inline storage, and the integrity bits `ValueVec` keeps.
@@ -1451,6 +1529,33 @@ impl Default for DisplacedInline {
 
 const EXTRAS_TAG: u64 = 0x7fff_0000_0000_0000;
 const EXTRAS_TAG_MASK: u64 = 0xffff_0000_0000_0000;
+
+/// Layout facts for the generated read-only ordinary-object field path. Keep these derived
+/// from the authoritative storage declarations; native code checks the object and extras
+/// representation bits before using any offset below.
+pub(super) const NATIVE_OBJECT_RECORD_SIZE: usize = std::mem::size_of::<Object>();
+pub(super) const NATIVE_OBJECT_RECORD_ALIGN: usize = std::mem::align_of::<Object>();
+pub(super) const NATIVE_OBJECT_META_OFFSET: usize = std::mem::offset_of!(Object, meta);
+pub(super) const NATIVE_OBJECT_AUXILIARY_OFFSET: usize = std::mem::offset_of!(Object, auxiliary);
+pub(super) const NATIVE_OBJECT_PAYLOAD_OFFSET: usize = std::mem::offset_of!(Object, payload);
+pub(super) const NATIVE_OBJECT_EXTRAS_ARENA_START_OFFSET: usize =
+    std::mem::offset_of!(ObjectExtras, arena_start);
+pub(super) const NATIVE_OBJECT_INLINE_STORAGE_MASK: u32 = OBJECT_INLINE_STORAGE;
+pub(super) const NATIVE_OBJECT_ARRAY_MASK: u32 = OBJECT_ARRAY;
+pub(super) const NATIVE_OBJECT_EXTRAS_TAG: u64 = EXTRAS_TAG;
+pub(super) const NATIVE_OBJECT_EXTRAS_TAG_MASK: u64 = EXTRAS_TAG_MASK;
+
+const _: () =
+    assert!(NATIVE_OBJECT_META_OFFSET + std::mem::size_of::<u32>() <= NATIVE_OBJECT_RECORD_SIZE);
+const _: () = assert!(
+    NATIVE_OBJECT_AUXILIARY_OFFSET + std::mem::size_of::<u32>() <= NATIVE_OBJECT_RECORD_SIZE
+);
+const _: () =
+    assert!(NATIVE_OBJECT_PAYLOAD_OFFSET + std::mem::size_of::<u64>() <= NATIVE_OBJECT_RECORD_SIZE);
+const _: () = assert!(
+    NATIVE_OBJECT_EXTRAS_ARENA_START_OFFSET + std::mem::size_of::<u32>()
+        <= std::mem::size_of::<ObjectExtras>()
+);
 
 impl Clone for Object {
     fn clone(&self) -> Self {
@@ -1614,6 +1719,7 @@ enum PrototypeLookupState {
 }
 
 #[derive(Clone, Debug, Default)]
+#[repr(C)]
 struct ObjectExtras {
     prototype_lookup: PrototypeLookupState,
     /// The object's inline property values, displaced from its payload by the extras pointer.
@@ -1818,6 +1924,40 @@ impl Object {
         }
     }
 
+    /// The storage start of an object whose values live in the arena and that has no
+    /// extras: its payload word is then that start alone (`set_properties`), and its upper
+    /// half is zero, which an extras word (`EXTRAS_TAG`) never is. `None` for inline storage
+    /// or extras, whose start `storage_position` decodes.
+    #[inline(always)]
+    pub(crate) fn plain_storage_start(&self) -> Option<usize> {
+        let plain = self.meta & OBJECT_INLINE_STORAGE == 0 && self.payload >> u32::BITS == 0;
+        debug_assert!(!plain || self.extras_pointer().is_none());
+        plain.then_some(self.payload as usize)
+    }
+
+    /// The storage start of an object whose values live in the arena behind extras, as a
+    /// prototype's do (its `PrototypeLookupState` lives there): the start the extras hold
+    /// (`storage_position`). `None` for inline storage or no extras.
+    #[inline(always)]
+    pub(crate) fn extras_storage_start(&self) -> Option<usize> {
+        if self.meta & OBJECT_INLINE_STORAGE != 0 {
+            return None;
+        }
+        // SAFETY: an extras pointer names the extras this object owns.
+        self.extras_pointer().map(|extras| unsafe { (*extras).arena_start } as usize)
+    }
+
+    /// `plain_storage_start` of an object outside dictionary storage, whose start bits are
+    /// then an arena start rather than a dictionary id (`ValueVec::is_dictionary`): the
+    /// fast case of a read that also serves dictionaries (`Heap::property_get_shaped`).
+    #[inline(always)]
+    pub(crate) fn plain_shaped_start(&self) -> Option<usize> {
+        if self.auxiliary & crate::value_vec::DICTIONARY_STORAGE != 0 {
+            return None;
+        }
+        self.plain_storage_start()
+    }
+
     #[inline(always)]
     fn storage_position(&self) -> u32 {
         match self.extras() {
@@ -1887,7 +2027,7 @@ impl Object {
     fn pack_inline(values: [Value; INLINE_PROPERTY_COUNT]) -> Option<u64> {
         let mut word = 0;
         for (slot, value) in values.into_iter().enumerate() {
-            word |= u64::from(value.to_narrow()?) << (slot as u32 * u32::BITS);
+            word |= u64::from(value.to_narrow_reference()?) << (slot as u32 * u32::BITS);
         }
         Some(word)
     }
@@ -1933,6 +2073,22 @@ impl Object {
 
     /// Stores the inline property slots: in the payload word when each value has a narrow
     /// form and the object has no extras, else in the extras.
+    /// Stores `values` in the inline slots as one payload word, when the object keeps them
+    /// there (inline storage, no extras) and each has a narrow form; `false` otherwise,
+    /// changing nothing.
+    pub(crate) fn store_packed_inline_values(&mut self, values: [Value; INLINE_PROPERTY_COUNT]) -> bool {
+        if !self.properties().has_inline_property_storage() || self.extras_pointer().is_some() {
+            return false;
+        }
+        match Self::pack_inline(values) {
+            Some(word) => {
+                self.payload = word;
+                true
+            }
+            None => false,
+        }
+    }
+
     fn store_inline_values(&mut self, values: [Value; INLINE_PROPERTY_COUNT]) {
         match (self.extras_mut_existing(), Self::pack_inline(values)) {
             (Some(extras), _) => extras.inline_properties.0 = values,
@@ -1978,6 +2134,16 @@ impl Object {
             auxiliary: header.auxiliary,
             payload: Self::pack_inline(inline)?,
         })
+    }
+
+    /// An object of a run header (`InlineObjectHeader::of_run`) whose values start at arena
+    /// position `start`: what `with_property_storage` makes of that run, which has no extras.
+    pub(crate) fn from_run_header(header: InlineObjectHeader, start: u32) -> Self {
+        Self {
+            meta: header.meta,
+            auxiliary: header.auxiliary,
+            payload: u64::from(start),
+        }
     }
 
     #[inline(always)]
@@ -2796,8 +2962,8 @@ impl EnvironmentSlots {
         }
     }
 
-    /// The indexes a sparse storage lists, ascending.
-    fn sparse_indexes(&self) -> impl Iterator<Item = usize> + '_ {
+    /// The indexes a sparse storage lists, ascending; none for dense storage.
+    pub(crate) fn sparse_indexes(&self) -> impl Iterator<Item = usize> + '_ {
         let entries = if self.0.marked() {
             self.0.len().saturating_sub(SPARSE_ENTRIES_START) / SPARSE_ENTRY_WORDS
         } else {

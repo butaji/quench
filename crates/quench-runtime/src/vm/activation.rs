@@ -19,6 +19,9 @@ pub(crate) enum Completion {
 #[derive(Clone, Copy, Debug)]
 pub(super) struct NativeActivation {
     pub callable: Value,
+    /// What the activation runs on and keeps alive besides its callable: an in-place
+    /// generator step's generator (`Vm::try_in_loop_generator_step`), `undefined` for others.
+    pub receiver: Value,
     pub frame_depth: usize,
     pub boundary: NativeCallBoundary,
 }

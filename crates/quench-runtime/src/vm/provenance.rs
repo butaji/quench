@@ -259,6 +259,11 @@ impl<H: Host> Vm<H> {
     /// Whether the prototype chain from `object` holds a function before it ends or reaches a
     /// proxy, where `prepare_function_info_prototypes` stops.
     fn chain_reaches_function(&self, mut object: Value) -> bool {
+        // An object record is neither a function nor a proxy, so a run of them is passed
+        // reading only each one's prototype, without the cell families' dispatch.
+        while let Some(record) = object.direct_object_index() {
+            object = self.heap.object_record_by_id(record).proto();
+        }
         while let Some(data) = self.object_data(object) {
             if self.proxy_parts(object).is_some() {
                 return false;

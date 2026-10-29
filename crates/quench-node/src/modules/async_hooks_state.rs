@@ -103,11 +103,13 @@ pub(crate) struct SharedAsyncHooksState {
     /// died when a collection ran since.
     pub(crate) promise_resources_pruned_epoch: u64,
     pub(super) scoped_resource: Option<(u64, RootId)>,
+    /// The scopes `AsyncResource#runInAsyncScope` entered and has not left, innermost last
+    /// (`async_hooks_shared_vm::enter_async_scope`).
+    pub(super) entered_scopes: Vec<super::async_hooks_shared_vm::EnteredScope>,
     /// Each context's AsyncLocalStorage values, by storage ID: a context's frame is found,
     /// copied and dropped whole, without scanning the other contexts'.
     pub(super) local_stores: FxHashMap<StoreContext, Vec<(u64, RootId)>>,
     pub(super) store_references: FxHashMap<RootId, usize>,
-    pub(super) destroyed_resources: FxHashSet<u64>,
     /// The AsyncLocalStorage instances entered since their last `disable()`. Like Node's
     /// storage hook, an enabled one makes promises tracked (`tracks_promises`).
     pub(super) enabled_local_storages: FxHashSet<u64>,
@@ -127,9 +129,9 @@ impl SharedAsyncHooksState {
             promise_resources: FxHashMap::default(),
             promise_resources_pruned_epoch: 0,
             scoped_resource: None,
+            entered_scopes: Vec::new(),
             local_stores: FxHashMap::default(),
             store_references: FxHashMap::default(),
-            destroyed_resources: FxHashSet::default(),
             enabled_local_storages: FxHashSet::default(),
         }
     }
@@ -193,9 +195,9 @@ impl SharedAsyncHooksState {
             promise_resources,
             promise_resources_pruned_epoch: _,
             scoped_resource,
+            entered_scopes,
             local_stores,
             store_references,
-            destroyed_resources,
             enabled_local_storages,
         } = self;
         let cells = &identity.0;
@@ -204,7 +206,8 @@ impl SharedAsyncHooksState {
                 && cells.current_trigger_id.get() == ROOT_TRIGGER_ASYNC_ID
                 && cells.current_store.get() == StoreContext::Resource(ROOT_ASYNC_ID)
                 && default_trigger_async_id.is_none()
-                && scoped_resource.is_none(),
+                && scoped_resource.is_none()
+                && entered_scopes.is_empty(),
             "an async execution context",
         )?;
         require_quiescent(
@@ -214,7 +217,6 @@ impl SharedAsyncHooksState {
                 && promise_resources.is_empty()
                 && local_stores.is_empty()
                 && store_references.is_empty()
-                && destroyed_resources.is_empty()
                 && enabled_local_storages.is_empty(),
             "an async resource",
         )?;

@@ -28,6 +28,9 @@ mod capture_scope;
 mod class;
 mod early;
 mod frame_registers;
+mod lazy_bodies;
+#[cfg(feature = "verify-replay")]
+mod free_names;
 mod syntax_message;
 pub(crate) mod liveness;
 mod locals;
@@ -40,7 +43,7 @@ mod register_profile;
 pub(crate) mod replay;
 mod rewrite;
 mod sequence;
-mod stack;
+pub(crate) mod stack;
 mod string;
 mod template;
 use ast::{FunctionCompiler, StatementCompletion};
@@ -649,6 +652,12 @@ impl Engine {
         link_plan.reexports.is_empty().then_some(link_plan.locals)
     }
 
+    /// Whether `source` parses as `source_type` with no syntax error OXC reports, holding
+    /// one function's tree at a time (`lazy_bodies::syntax_valid`).
+    pub fn syntax_valid(source: &str, source_type: SourceType) -> bool {
+        lazy_bodies::syntax_valid(source, source_type)
+    }
+
     pub fn specialize(source: &str, name: &str) -> Result<ResidualProgram, Vec<Diagnostic>> {
         Self::specialize_with_mode(
             source,
@@ -666,8 +675,9 @@ impl Engine {
         source: &str,
         name: &str,
         atom_prefix: &dyn AtomPrefix,
+        released: ReleasedRecords,
     ) -> Result<ResidualProgram, Vec<Diagnostic>> {
-        Self::specialize_script_shaped(source, name, atom_prefix, ParsedProgramShape::Any)
+        Self::specialize_script_shaped(source, name, atom_prefix, ParsedProgramShape::Any, released)
     }
 
     /// `specialize_script_with_atom_prefix` for a program whose functions keep their records:
@@ -677,7 +687,7 @@ impl Engine {
         name: &str,
         atom_prefix: &dyn AtomPrefix,
     ) -> Result<ResidualProgram, Vec<Diagnostic>> {
-        Self::specialize_script_shaped(source, name, atom_prefix, ParsedProgramShape::KeptRecords)
+        Self::specialize_script_shaped(source, name, atom_prefix, ParsedProgramShape::KeptRecords, ReleasedRecords::Dropped)
     }
 
     fn specialize_script_shaped(
@@ -685,6 +695,7 @@ impl Engine {
         name: &str,
         atom_prefix: &dyn AtomPrefix,
         shape: ParsedProgramShape,
+        released: ReleasedRecords,
     ) -> Result<ResidualProgram, Vec<Diagnostic>> {
         Self::specialize_with_mode_and_private_names(
             source,
@@ -698,6 +709,7 @@ impl Engine {
             &[],
             &[],
             shape,
+            released,
         )
     }
     pub fn specialize_unspecialized(
@@ -774,6 +786,7 @@ impl Engine {
             private_names,
             annex_b_forbidden_names,
             ParsedProgramShape::Eval(context, body_span),
+            ReleasedRecords::Dropped,
         )
     }
 
@@ -789,8 +802,9 @@ impl Engine {
         source: &str,
         name: &str,
         atom_prefix: &dyn AtomPrefix,
+        released: ReleasedRecords,
     ) -> Result<ResidualProgram, Vec<Diagnostic>> {
-        Self::specialize_with_mode(
+        Self::specialize_with_mode_and_private_names(
             source,
             name,
             SpecializationMode::of(atom_prefix),
@@ -799,6 +813,10 @@ impl Engine {
             true,
             false,
             false,
+            &[],
+            &[],
+            ParsedProgramShape::Any,
+            released,
         )
     }
     pub fn specialize_module(source: &str, name: &str) -> Result<ResidualProgram, Vec<Diagnostic>> {
@@ -887,8 +905,10 @@ impl Engine {
             &[],
             &[],
             expected_shape,
+            ReleasedRecords::Dropped,
         )
     }
+    #[allow(clippy::too_many_arguments)]
     fn specialize_with_mode_and_private_names(
         source: &str,
         name: &str,
@@ -901,10 +921,61 @@ impl Engine {
         private_name_overrides: &[(String, String)],
         annex_b_forbidden_names: &[String],
         expected_shape: ParsedProgramShape,
+        released: ReleasedRecords,
+    ) -> Result<ResidualProgram, Vec<Diagnostic>> {
+        let compile = |lazy| {
+            Self::specialize_parsing(
+                source,
+                name,
+                mode,
+                atom_prefix,
+                source_type,
+                module_goal,
+                capture_script_completion,
+                inherited_strict,
+                private_name_overrides,
+                annex_b_forbidden_names,
+                expected_shape,
+                lazy,
+                released,
+            )
+        };
+        // Lazy function bodies apply to source a replay can parse again; a program that does
+        // not compile with them compiles eagerly, which reports its own diagnostics.
+        if matches!(expected_shape, ParsedProgramShape::Any)
+            && lazy_bodies::enabled()
+            && let Ok(program) = compile(true)
+        {
+            return Ok(program);
+        }
+        compile(false)
+    }
+
+    /// `specialize_with_mode_and_private_names`, with the function bodies parsed lazily when
+    /// `lazy` (`lazy_bodies`).
+    #[allow(clippy::too_many_arguments)]
+    fn specialize_parsing(
+        source: &str,
+        name: &str,
+        mode: SpecializationMode,
+        atom_prefix: &dyn AtomPrefix,
+        source_type: SourceType,
+        module_goal: bool,
+        capture_script_completion: bool,
+        inherited_strict: bool,
+        private_name_overrides: &[(String, String)],
+        annex_b_forbidden_names: &[String],
+        expected_shape: ParsedProgramShape,
+        lazy: bool,
+        released: ReleasedRecords,
     ) -> Result<ResidualProgram, Vec<Diagnostic>> {
         let normalized = early::normalize_hashbang(source);
         let allocator = Allocator::with_capacity(normalized.len().saturating_mul(6));
-        let mut parsed = annex_b_targets::parse_program(&allocator, &normalized, source_type);
+        let mut parsed = lazy_bodies::parse(&allocator, &normalized, source_type, lazy.then_some(0));
+        #[cfg(feature = "verify-replay")]
+        if !lazy {
+            lazy_bodies::verify(name, &normalized, &parsed.program);
+        }
         if parsed.stack_exhausted {
             return Err(vec![Diagnostic::stack_exhausted(name)]);
         }
@@ -1005,9 +1076,11 @@ impl Engine {
                 })
                 .collect());
         }
-        let private_name_ids = private_name_ids(&semantic.semantic);
-        let private_name_labels = private_name_labels(&semantic.semantic);
-        let prototype_unobservable = call_only::prototype_unobservable_functions(&semantic.semantic, &parsed.program);
+        let mut private_name_ids = private_name_ids(&semantic.semantic);
+        let mut private_name_labels = private_name_labels(&semantic.semantic);
+        let mut prototype_unobservable = call_only::prototype_unobservable_functions(&semantic.semantic, &parsed.program);
+        #[cfg(feature = "verify-replay")]
+        let free_names = free_names::free_names(&semantic.semantic, &parsed.program);
         let inherited_private_ids = if wrapped_eval
         {
             let mut ids = FxHashSet::default();
@@ -1047,6 +1120,27 @@ impl Engine {
         // Validate in method grammar, then remove the context wrapper. Original
         // spans still address `normalized`, retaining exact nested function source.
         drop(semantic);
+        if lazy {
+            // The lazily parsed bodies, checked and analyzed one at a time before code
+            // generation (`lazy_bodies::body_facts`).
+            let root_strict = module_goal
+                || inherited_strict
+                || parsed.program.directives.iter().any(|directive| directive.directive == "use strict");
+            let first_private_id = private_name_ids.values().max().map_or(0, |id| id + 1);
+            let Some(facts) = lazy_bodies::body_facts(
+                &normalized,
+                &parsed.program,
+                &parsed.lazy_function_bodies,
+                source_type,
+                root_strict,
+                first_private_id,
+            ) else {
+                return Err(vec![Diagnostic::unsupported(name, "SyntaxError: a lazily parsed function body does not check alone")]);
+            };
+            private_name_ids.extend(facts.private_name_ids);
+            private_name_labels.extend(facts.private_name_labels);
+            prototype_unobservable.extend(facts.prototype_unobservable);
+        }
         // Parsing and analysis are done; the code generator's work starts here.
         compile_phase_boundary(CompilePhase::CodeGeneration);
         let eval_context = if let ParsedProgramShape::Eval(context, _) = expected_shape {
@@ -1078,19 +1172,29 @@ impl Engine {
         };
         let mut compiler = Compiler::new(name, &normalized, mode, atom_prefix, private_name_ids);
         compiler.prototype_unobservable = prototype_unobservable;
+        #[cfg(feature = "verify-replay")]
+        {
+            compiler.free_names = free_names;
+        }
         compiler.source_type = source_type;
         // Eval code and dynamic functions are compiled from a wrapper, or a tree changed after
         // parsing, that their source text alone does not give back. A released function
         // compiles again from its replay on first call (`ResidualProgram::function`).
         compiler.replayable_source = matches!(expected_shape, ParsedProgramShape::Any);
+        compiler.load_encoding =
+            (compiler.replayable_source && released == ReleasedRecords::Encoded).then(Default::default);
         compiler.private_name_labels = private_name_labels;
         compiler.private_name_overrides = private_aliases;
         compiler.capture_script_completion = capture_script_completion;
         compiler.eval_context = eval_context;
-        compiler.eval_annex_b_collisions = early::annex_b_function_names(&parsed.program.body)
-            .into_iter()
-            .filter_map(|(span, name)| annex_b_forbidden_names.contains(&name).then_some(span))
-            .collect();
+        // Only an eval's caller forbids names (its lexical bindings); without one no function
+        // collides, and the walk would find nothing to keep.
+        if !annex_b_forbidden_names.is_empty() {
+            compiler.eval_annex_b_collisions = early::annex_b_function_names(&parsed.program.body)
+                .into_iter()
+                .filter_map(|(span, name)| annex_b_forbidden_names.contains(&name).then_some(span))
+                .collect();
+        }
         let emitted = compiler.program(&parsed.program, module_goal, inherited_strict);
         #[cfg(feature = "profile-memory")]
         if std::env::var_os("QUENCH_MEMORY").is_some() {
@@ -1150,6 +1254,12 @@ pub enum CompilePhase {
     /// A function compiles, or decodes from its program's kept bytes, on its first call: code
     /// that has not run before is about to.
     FirstCall,
+    /// A compiled program is complete and its encoding for the host's compile cache starts:
+    /// the parser's and code generator's work is over, and the encoder's begins.
+    Encoding,
+    /// A function's lane view derives from its bytecode (`dispatch_fast`) once its first runs
+    /// are over: the deriver's code, and then the lane handlers, are about to run.
+    LaneDerivation,
 }
 
 /// What a compilation does at each `CompilePhase`, set once by the embedding.
@@ -1305,28 +1415,6 @@ struct ModuleParts {
     requests: Vec<crate::bytecode::ModuleRequest>,
     imports: Vec<crate::bytecode::ModuleImportBinding>,
     link_plan: Option<crate::bytecode::ModuleLinkPlan>,
-}
-
-fn source_function_count(program: &Program<'_>) -> usize {
-    struct Counter(usize);
-    impl<'a> oxc_ast_visit::Visit<'a> for Counter {
-        fn visit_function(
-            &mut self,
-            function: &oxc_ast::ast::Function<'a>,
-            flags: oxc_syntax::scope::ScopeFlags,
-        ) {
-            self.0 += 1;
-            oxc_ast_visit::walk::walk_function(self, function, flags);
-        }
-
-        fn visit_arrow_function_expression(&mut self, arrow: &ArrowFunctionExpression<'a>) {
-            self.0 += 1;
-            oxc_ast_visit::walk::walk_arrow_function_expression(self, arrow);
-        }
-    }
-    let mut counter = Counter(0);
-    oxc_ast_visit::Visit::visit_program(&mut counter, program);
-    counter.0
 }
 
 fn has_top_level_await(statements: &[Statement<'_>]) -> bool {
@@ -1569,6 +1657,12 @@ struct Compiler<'a> {
     source: &'a str,
     text: &'a str,
     source_line_starts: std::borrow::Cow<'a, [usize]>,
+    /// The line start partition `source_position` found last, which the next position,
+    /// emitted from the same or a nearby node, most often falls on.
+    last_source_line: std::cell::Cell<usize>,
+    /// The UTF-16 excess partitions `source_position` found last, at a position and at its
+    /// line's start.
+    last_utf16_excess: [std::cell::Cell<usize>; 2],
     source_comments: Vec<Span>,
     /// Byte offset of each non-ASCII character with the running excess of
     /// UTF-8 bytes over UTF-16 units through it; columns count UTF-16 units.
@@ -1590,6 +1684,20 @@ struct Compiler<'a> {
     /// The source starts of the function expressions whose `prototype` no program text
     /// observes (`call_only`); empty where the source was not analyzed.
     prototype_unobservable: FxHashSet<u32>,
+    /// In a replay, the starts of the function bodies the load released
+    /// (`ProgramReplay::lazy_bodies`), which the replay releases too (`Nesting::Recorded`).
+    lazy_bodies: FxHashSet<u32>,
+    /// The starts of the function bodies compiled from their source parsed again, which a
+    /// replay stands in the same way (`ProgramReplay::lazy_bodies`).
+    lazy_compiled: Vec<u32>,
+    /// The arenas lazily parsed functions are parsed again in, one per nesting of such
+    /// functions, each reset and reused: an arena per function interleaved its blocks with
+    /// the program's long-lived records, and the heap kept the holes between them.
+    lazy_arenas: Vec<Allocator>,
+    /// Each function's free names (`free_names`), which `verify_predicted_captures` checks
+    /// against what the function's compilation captured.
+    #[cfg(feature = "verify-replay")]
+    free_names: free_names::FreeNames,
     private_name_labels: FxHashMap<(u32, u32), String>,
     private_name_overrides: FxHashMap<u32, String>,
     constants: SiteTable<'a, Constant>,
@@ -1628,8 +1736,8 @@ struct Compiler<'a> {
     dynamic_binding_scopes: u32,
     /// The replays of functions finished and released during the load.
     early_replays: FxHashMap<u32, replay::FunctionReplay>,
-    /// The source starts of function expressions called where they are made, which run at
-    /// once and so keep their records (`note_invoked_callee`).
+    /// The source starts of function expressions called where they are made or marked as
+    /// about to run, which keep their records (`note_invoked_callee`).
     invoked_functions: FxHashSet<u32>,
     /// How each replayable function was compiled, with the cursors it started from.
     replay_calls: FxHashMap<u32, (replay::TableCursors, replay::ReplayCall)>,
@@ -1640,6 +1748,45 @@ struct Compiler<'a> {
     replay_program: Option<&'a ResidualProgram>,
     /// Whether the program's functions compile again from their text alone.
     replayable_source: bool,
+    /// The compile-cache records of the functions released during the load, when its
+    /// program will be encoded (`ReleasedRecords::Encoded`).
+    load_encoding: Option<crate::bytecode::LoadEncoding>,
+}
+
+/// What a compilation keeps of each record it releases during its load
+/// (`Compiler::finish_early`) beside the function's header and replay.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ReleasedRecords {
+    /// Nothing: the function compiles again from its source on its first read.
+    Dropped,
+    /// Its compile-cache encoding, for a program its host encodes once compiled: the
+    /// encoding copies it instead of compiling every released function again (npm scenario,
+    /// cold, empty cache, x86_64 callgrind: prettier 4.32 -> 2.98 G instructions, cold
+    /// `import typescript` 19.7 -> 11.3 G).
+    Encoded,
+}
+
+/// The compiler's tables as the derived facts of a function it finished read them
+/// (`FactTables`): every function nested in it is finished too, so each it makes has its
+/// record or its released header.
+struct LoadTables<'c, 'a> {
+    atoms: &'c CompilerAtoms<'a>,
+    functions: &'c replay::FunctionTable<'a>,
+    superinstructions: &'c [crate::bytecode::Superinstruction],
+}
+
+impl crate::bytecode::FactTables for LoadTables<'_, '_> {
+    fn atom_name(&self, atom: usize) -> Option<&str> {
+        self.atoms.get(atom)
+    }
+
+    fn function_is_arrow(&self, function: usize) -> Option<bool> {
+        self.functions.is_arrow(u32::try_from(function).ok()?)
+    }
+
+    fn superinstructions(&self) -> &[crate::bytecode::Superinstruction] {
+        self.superinstructions
+    }
 }
 
 type MethodSiteSpec = (Atom, u16, Vec<Register>, Option<(Atom, u16)>);
@@ -1647,17 +1794,34 @@ type MethodSiteSpec = (Atom, u16, Vec<Register>, Option<(Atom, u16)>);
 /// Byte offset of each non-ASCII character of `text` with the running excess of UTF-8 bytes
 /// over UTF-16 units through it.
 fn source_utf16_excess(text: &str) -> Vec<(usize, usize)> {
-    if text.is_ascii() {
-        return Vec::new();
-    }
+    let bytes = text.as_bytes();
+    let mut table = Vec::new();
     let mut excess = 0;
-    text.char_indices()
-        .filter(|(_, character)| !character.is_ascii())
-        .map(|(offset, character)| {
-            excess += character.len_utf8() - character.len_utf16();
-            (offset, excess)
-        })
-        .collect()
+    let mut offset = 0;
+    while let Some(skipped) = ascii_prefix_len(&bytes[offset..]) {
+        offset += skipped;
+        let character = text[offset..].chars().next().expect("a non-ASCII byte starts a character");
+        excess += character.len_utf8() - character.len_utf16();
+        table.push((offset, excess));
+        offset += character.len_utf8();
+    }
+    table
+}
+
+/// The bytes of `bytes` before its first non-ASCII byte, `None` when every one is ASCII:
+/// a word of bytes at a time, as source text is nearly all ASCII.
+fn ascii_prefix_len(bytes: &[u8]) -> Option<usize> {
+    const WORD: usize = size_of::<u64>();
+    const HIGH_BITS: u64 = u64::from_ne_bytes([0x80; WORD]);
+    let mut words = bytes.chunks_exact(WORD);
+    let mut offset = 0;
+    for word in &mut words {
+        if u64::from_ne_bytes(word.try_into().expect("a whole word")) & HIGH_BITS != 0 {
+            break;
+        }
+        offset += WORD;
+    }
+    bytes[offset..].iter().position(|byte| !byte.is_ascii()).map(|position| offset + position)
 }
 
 /// The name prefix of a catch parameter's capture marker (`Compiler::capture_marker`).
@@ -1803,6 +1967,80 @@ impl<'a> From<&'a Constant> for ConstantKey<'a> {
             Constant::Null => Self::Null,
             Constant::Undefined => Self::Undefined,
         }
+    }
+}
+
+/// Whether a load lowers every record it keeps instead of leaving it to the record's first
+/// read: under `verify-replay`, and in tests that compare the two (`LOWER_AT_LOAD`).
+fn lowers_at_load() -> bool {
+    #[cfg(test)]
+    if LOWER_AT_LOAD.with(std::cell::Cell::get) {
+        return true;
+    }
+    cfg!(feature = "verify-replay")
+}
+
+#[cfg(test)]
+thread_local! {
+    pub(crate) static LOWER_AT_LOAD: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// The index of the line of `starts` holding `offset`: the last line start at or before it, or
+/// the first line when none is. `last`, the line found before, is tried first and updated.
+fn source_line_index(starts: &[usize], last: &std::cell::Cell<usize>, offset: usize) -> usize {
+    partition_point_from(starts, last, |start| *start <= offset).saturating_sub(1)
+}
+
+/// `slice.partition_point(holds)`, trying `last`, the point found before, first and updating
+/// it: positions are asked for in nearly source order, so most fall where the last did.
+fn partition_point_from<T>(slice: &[T], last: &std::cell::Cell<usize>, holds: impl Fn(&T) -> bool) -> usize {
+    let point = last.get();
+    let before = point.checked_sub(1).is_none_or(|index| slice.get(index).is_some_and(&holds));
+    if point <= slice.len() && before && slice.get(point).is_none_or(|item| !holds(item)) {
+        return point;
+    }
+    let point = slice.partition_point(holds);
+    last.set(point);
+    point
+}
+
+/// The program tables a function's lowering reads, final once every function's rewrites
+/// have added their sites: at load the compiler's, after it the finished program's.
+pub(crate) struct LoweringTables<'t> {
+    pub(crate) methods: &'t dyn liveness::MethodArguments,
+    pub(crate) field_sites: &'t [FieldSite],
+    pub(crate) superinstructions: &'t [crate::bytecode::Superinstruction],
+    pub(crate) specialized: bool,
+    pub(crate) undefined_constant: u32,
+}
+
+/// The lowering passes after a function's dispatch class is settled (`settle_dispatch`):
+/// numeric and plain-local specialization and frame registers. They add no table entries,
+/// so they run equally at load and on a function's first read from its finished program.
+pub(crate) fn lower_settled<'a>(
+    function: &mut BcFunction,
+    tables: &LoweringTables<'_>,
+    atom_name: impl Fn(usize) -> Option<&'a str>,
+) {
+    let LoweringTables { methods, field_sites, superinstructions, specialized, undefined_constant } = *tables;
+    if function.dispatch == DispatchClass::Numeric {
+        let live = liveness::analyze(function, methods, field_sites, superinstructions);
+        numeric::apply(function, live.as_deref());
+    }
+    // Renaming a plain slot's operations keeps it plain (validation re-derives the same
+    // proof from the specialized code), so frame registers start from the same slots.
+    let plain_slots = Compiler::specialize_plain_local_operations(function, superinstructions);
+    frame_registers::promote(function, plain_slots, superinstructions, undefined_constant, atom_name);
+    if specialized {
+        rewrite::coalesce_promoted_moves(function, methods, field_sites, superinstructions);
+    }
+    if function
+        .code
+        .iter()
+        .any(|instruction| instruction.op() == Op::StoreLocalPlain)
+    {
+        let live = liveness::analyze(function, methods, field_sites, superinstructions);
+        numeric::apply_plain_local_stores(function, live.as_deref());
     }
 }
 
@@ -1972,6 +2210,8 @@ impl<'a> Compiler<'a> {
             source,
             text,
             source_line_starts,
+            last_source_line: std::cell::Cell::new(0),
+            last_utf16_excess: Default::default(),
             source_comments: Vec::new(),
             source_utf16_excess,
             mode,
@@ -1985,6 +2225,11 @@ impl<'a> Compiler<'a> {
             private_name_references: 0,
             private_name_ids,
             prototype_unobservable: FxHashSet::default(),
+            lazy_bodies: FxHashSet::default(),
+            lazy_compiled: Vec::new(),
+            lazy_arenas: Vec::new(),
+            #[cfg(feature = "verify-replay")]
+            free_names: FxHashMap::default(),
             private_name_labels: FxHashMap::default(),
             private_name_overrides: FxHashMap::default(),
             constants: SiteTable::default(),
@@ -2015,6 +2260,7 @@ impl<'a> Compiler<'a> {
             source_type: oxc_span::SourceType::default(),
             replay_program: None,
             replayable_source: false,
+            load_encoding: None,
         }
     }
 
@@ -2078,7 +2324,8 @@ impl<'a> Compiler<'a> {
     }
 
     /// Notes a function expression called where it is made: `(function () {})()`, an arrow
-    /// likewise, or either through `.call` or `.apply`. A replay of it would only compile it
+    /// likewise, or either through `.call` or `.apply`; or one marked as about to run by
+    /// parentheses, as engines read `(function () {})`. A replay of it would only compile it
     /// again a moment after its load did.
     fn note_invoked_callee(&mut self, callee: &Expression<'_>) {
         let callee = match callee.without_parentheses() {
@@ -2173,10 +2420,11 @@ impl<'a> Compiler<'a> {
         );
         self.rewrite_function(&mut function);
         let undefined_constant = self.constant(Constant::Undefined);
-        // The record is released below and only its header stays, so production settles just
-        // the dispatch class the header keeps; `verify-replay` keeps the whole record to
-        // compare each replay with.
-        if cfg!(feature = "verify-replay") {
+        // The record is released below and only its header stays, so a load that drops it
+        // settles just the dispatch class the header keeps. One that encodes it finishes it as
+        // a replay would, against tables whose entries for it are final (`lower_settled`);
+        // `verify-replay` keeps the whole record to compare each replay with.
+        if cfg!(feature = "verify-replay") || self.load_encoding.is_some() {
             self.lower_function(&mut function, undefined_constant);
             liveness::mark_register_roots(
                 std::iter::once(&mut function),
@@ -2186,6 +2434,14 @@ impl<'a> Compiler<'a> {
             );
         } else {
             self.settle_dispatch(&mut function);
+        }
+        if let Some(encoding) = &mut self.load_encoding {
+            let tables = LoadTables {
+                atoms: &self.atoms,
+                functions: &self.functions,
+                superinstructions: self.superinstructions.as_slice(),
+            };
+            encoding.add(id, &function, &tables);
         }
         self.early_replays.insert(
             id,
@@ -2212,6 +2468,15 @@ impl<'a> Compiler<'a> {
         function: &oxc_ast::ast::Function<'_>,
         mut context: replay::PlainFunctionContext,
     ) -> u32 {
+        // A released body holds its stand-in wherever the function is compiled, and a node
+        // may be compiled more than once (the right operand of `??`); the function parsed
+        // again holds its own statements.
+        if let Some(body) = &function.body
+            && lazy_bodies::is_stand_in(body)
+        {
+            self.lazy_compiled.push(body.span.start);
+            return self.compile_lazy_function(function, context);
+        }
         if self.replayable_source {
             context.scopes = context.scopes.recording();
         }
@@ -2263,9 +2528,151 @@ impl<'a> Compiler<'a> {
                 ..FunctionOptions::default()
             },
         );
+        #[cfg(feature = "verify-replay")]
+        self.verify_predicted_captures(id, function.span.start, &context.scopes);
         context.scopes = context.scopes.into_memo();
         self.record_replay_call(id, entry, private_names, replay::ReplayCall::Plain(context));
         id
+    }
+
+    /// A function whose body was parsed lazily, compiled from its source parsed again alone
+    /// (`lazy_bodies`). A body that fails an early check alone fails the compilation, which
+    /// then compiles the program eagerly; until then its stand-in compiles in its place.
+    fn compile_lazy_function(
+        &mut self,
+        function: &oxc_ast::ast::Function<'_>,
+        context: replay::PlainFunctionContext,
+    ) -> u32 {
+        let snippet = &self.text[function.span.start as usize..function.span.end as usize];
+        let (text, offset) = lazy_bodies::text_alone(
+            snippet,
+            replay::plain_function_wrapper(&context),
+            context.inherited_strict,
+            self.source_type,
+        );
+        let mut allocator = self.lazy_arenas.pop().unwrap_or_else(|| lazy_bodies::arena(&text));
+        allocator.reset();
+        let id = self.compile_parsed_again(&allocator, &text, offset, function, context);
+        self.lazy_arenas.push(allocator);
+        id
+    }
+
+    /// `compile_lazy_function`, with `text` (the function's source at `offset`, wrapped)
+    /// parsed in `allocator`.
+    fn compile_parsed_again(
+        &mut self,
+        allocator: &Allocator,
+        text: &str,
+        offset: u32,
+        function: &oxc_ast::ast::Function<'_>,
+        context: replay::PlainFunctionContext,
+    ) -> u32 {
+        let nesting = if self.replay_target.is_some() {
+            lazy_bodies::Nesting::Recorded(&self.lazy_bodies)
+        } else {
+            lazy_bodies::Nesting::Parse
+        };
+        let reparsed = lazy_bodies::reparse(
+            allocator,
+            text,
+            offset,
+            function.span.start.wrapping_sub(offset),
+            self.source_type,
+            nesting,
+        );
+        let Some(reparsed) = reparsed.filter(|reparsed| reparsed.function().is_some_and(|again| again.span == function.span)) else {
+            self.reject(function.span, "SyntaxError: a lazily parsed function body does not compile alone");
+            return self.compile_plain_function(function, context);
+        };
+        let again = reparsed.function().expect("checked above");
+        self.compile_plain_function(again, context)
+    }
+
+    /// Checks, under `QUENCH_LAZY_FACTS_LOG`, that the free names of function `id` (starting
+    /// at `start`), resolved through the scopes it closes over, are the captures its compiled
+    /// subtree made of bindings outside it: what a lazily compiled function would report to
+    /// the layouts around it without its code (TOD-196).
+    #[cfg(feature = "verify-replay")]
+    fn verify_predicted_captures(&self, id: u32, start: u32, scopes: &capture_scope::ScopeChain) {
+        // Only a replayable source's functions can compile lazily.
+        if std::env::var_os("QUENCH_LAZY_FACTS_LOG").is_none() || self.replay_target.is_some() || !self.replayable_source {
+            return;
+        }
+        let Some(names) = self.free_names.get(&start) else {
+            eprintln!("lazy-facts missing start={start}");
+            return;
+        };
+        let chain = capture_scope::ScopeChain::new(scopes.levels().to_vec());
+        let mut predicted: Vec<(u32, u16)> = names
+            .iter()
+            .filter_map(|name| self.atoms.find(name))
+            .filter_map(|atom| chain.find(atom))
+            .map(|(depth, slot)| (depth as u32 + 1, slot))
+            .collect();
+        predicted.sort_unstable();
+        predicted.dedup();
+        let id = id as usize;
+        let exit = self.function_exits[id].functions as usize;
+        let depth_below = |mut function: usize| {
+            let mut depth = 0u32;
+            while function != id {
+                function = self.function_facts[function].parent.expect("a descendant has a parent") as usize;
+                depth += 1;
+            }
+            depth
+        };
+        let mut actual: Vec<(u32, u16)> = (id..exit)
+            .flat_map(|function| {
+                let depth = depth_below(function);
+                self.function_facts[function]
+                    .captures
+                    .iter()
+                    .filter(move |(distance, _)| *distance > depth)
+                    .map(move |(distance, slot)| (distance - depth, *slot))
+            })
+            .collect();
+        actual.sort_unstable();
+        actual.dedup();
+        let verdict = if predicted == actual {
+            "same"
+        } else if actual.iter().all(|capture| predicted.contains(capture)) {
+            "superset"
+        } else {
+            "missing"
+        };
+        // The names of captures the prediction lacks, from the scope level holding each slot.
+        let unpredicted: Vec<String> = actual
+            .iter()
+            .filter(|capture| !predicted.contains(capture))
+            .map(|&(distance, slot)| {
+                chain
+                    .levels()
+                    .get(distance as usize - 1)
+                    .and_then(|level| level.iter().find(|(_, s)| **s == slot).map(|(atom, _)| self.atoms[*atom as usize].to_string()))
+                    .unwrap_or_else(|| format!("?{distance}:{slot}"))
+            })
+            .collect();
+        // Bindings the compilation found that the free names do not name: a memo built
+        // from the free names would answer such a lookup "unbound".
+        // A capture marker (`capture_marker`) is asked for by the name it marks.
+        let source_of = |atom: Atom| {
+            self.capture_markers
+                .iter()
+                .find_map(|(&(_, source), &marker)| (marker == atom).then_some(source))
+                .unwrap_or(atom)
+        };
+        let unasked: Vec<String> = scopes
+            .recorded_atoms()
+            .into_iter()
+            .map(|atom| self.atoms[source_of(atom) as usize].to_string())
+            .filter(|name| !names.iter().any(|free| **free == **name))
+            .collect();
+        let verdict = if unasked.is_empty() { verdict } else { "unasked" };
+        eprintln!(
+            "lazy-facts {verdict} source={} start={start} functions={} unpredicted={unpredicted:?} unasked={unasked:?} predicted={predicted:?} actual={actual:?}",
+            self.source,
+            exit - id
+        );
     }
 
     /// A method of an object literal, compiled from its syntax and `context`.
@@ -2386,25 +2793,26 @@ impl<'a> Compiler<'a> {
 
     fn source_position(&self, offset: u32) -> SourcePosition {
         let offset = (offset as usize).min(self.text.len());
-        let line_index = self
-            .source_line_starts
-            .partition_point(|start| *start <= offset)
-            .saturating_sub(1);
+        let line_index = self.source_line_index(offset);
         let line_start = self.source_line_starts[line_index];
-        let excess_before = |offset: usize| {
-            let index = self
-                .source_utf16_excess
-                .partition_point(|(character, _)| *character < offset);
+        let excess_before = |offset: usize, last: &std::cell::Cell<usize>| {
+            let index = partition_point_from(&self.source_utf16_excess, last, |(character, _)| *character < offset);
             index
                 .checked_sub(1)
                 .map_or(0, |index| self.source_utf16_excess[index].1)
         };
-        let column = offset - line_start - (excess_before(offset) - excess_before(line_start));
+        let [at_offset, at_line] = &self.last_utf16_excess;
+        let column = offset - line_start - (excess_before(offset, at_offset) - excess_before(line_start, at_line));
         SourcePosition {
             pc: 0,
             line: u32::try_from(line_index.saturating_add(1)).unwrap_or(u32::MAX),
             column: u32::try_from(column.saturating_add(1)).unwrap_or(u32::MAX),
         }
+    }
+
+    /// The index of the line holding `offset` (`source_line_index`).
+    fn source_line_index(&self, offset: usize) -> usize {
+        source_line_index(&self.source_line_starts, &self.last_source_line, offset)
     }
 
     /// Emits every function of `program`: all the compiler reads of its tree. `finish` makes
@@ -2416,9 +2824,6 @@ impl<'a> Compiler<'a> {
         inherited_strict: bool,
     ) -> Result<(Self, ModuleParts), Vec<Diagnostic>> {
         self.source_comments = program.comments.iter().map(|comment| comment.span).collect();
-        // One slot per source function and the root, reserved once: grown by doubling, the
-        // slots of a large script stood up to twice its functions beside its tree.
-        self.functions.reserve_exact(source_function_count(program) + 1);
         self.module_goal = module_goal;
         let module_requests = if module_goal {
             module_requests(&program.body)
@@ -2440,26 +2845,11 @@ impl<'a> Compiler<'a> {
                 .iter()
                 .any(|directive| directive.directive == "use strict");
         let async_module = module_goal && has_top_level_await(&program.body);
-        if let Some(name) =
-            early::strict_restricted_assignment_early_error(program, self.root_strict)
-        {
-            self.reject(
-                Span::default(),
-                format!("SyntaxError: assignment to {name} is not allowed in strict mode"),
-            );
-        }
-        if self.root_strict
-            && let Some(error) = early::strict_octal_numeric_early_error(program)
-        {
-            self.reject(Span::default(), error);
-        }
-        if let Some(error) = early::block_early_error(program, self.root_strict) {
-            self.reject(Span::default(), error);
-        }
-        if let Some(error) = early::strict_binding_early_error(program, self.root_strict) {
-            self.reject(Span::default(), error);
-        }
-        if let Some(error) = early::parameter_early_error(program, self.root_strict) {
+        let (functions, errors) = early::program_early_errors(program, self.root_strict);
+        // One slot per source function and the root, reserved once: grown by doubling, the
+        // slots of a large script stood up to twice its functions beside its tree.
+        self.functions.reserve_exact(functions + 1);
+        for error in errors {
             self.reject(Span::default(), error);
         }
         self.compile_function(
@@ -2696,7 +3086,7 @@ impl<'a> Compiler<'a> {
             .into_iter()
             .enumerate()
             .map(|(id, entry)| match entry {
-                replay::FunctionEntry::Compiled(function) => Some(function),
+                replay::FunctionEntry::Compiled(function) => Some(*function),
                 replay::FunctionEntry::Released(function) => {
                     released.insert(id, function);
                     None
@@ -2786,30 +3176,58 @@ impl<'a> Compiler<'a> {
             let records: Vec<BcFunction> = functions.iter().flatten().cloned().collect();
             capture_profile::report(&records);
         }
+        // Lowering adds no table entries, so a record waits for it until its first read
+        // (`ResidualProgram::function`), which most of a bundle's functions never have; the
+        // header's dispatch class is settled here. The root, which runs as soon as the program
+        // does, lowers here, and every record does under `verify-replay`, as each replay it
+        // compares with is lowered.
         let undefined_constant = self.constant(Constant::Undefined);
-        for function in functions.iter_mut().flatten() {
-            self.lower_function(function, undefined_constant);
+        let lower_at_load = lowers_at_load();
+        let lowered_here = |id: usize| lower_at_load || id == crate::vm::ROOT_FUNCTION_ID as usize;
+        for (id, function) in functions.iter_mut().enumerate() {
+            let Some(function) = function else { continue };
+            if lowered_here(id) {
+                self.lower_function(function, undefined_constant);
+                function.register_roots = liveness::register_roots(
+                    function,
+                    self.method_sites.as_slice(),
+                    self.field_sites.as_slice(),
+                    self.superinstructions.as_slice(),
+                );
+            } else {
+                self.settle_dispatch(function);
+            }
+            function.shrink_to_fit();
         }
-        liveness::mark_register_roots(
-            functions.iter_mut().flatten(),
-            self.method_sites.as_slice(),
-            self.field_sites.as_slice(),
-            self.superinstructions.as_slice(),
-        );
         #[cfg(feature = "profile-memory")]
         if std::env::var_os("QUENCH_MEMORY").is_some() && released.is_empty() {
-            let records: Vec<BcFunction> = functions.iter().flatten().cloned().collect();
+            let records: Vec<BcFunction> = functions
+                .iter()
+                .enumerate()
+                .filter_map(|(id, function)| Some((id, function.clone()?)))
+                .map(|(id, mut function)| {
+                    if !lowered_here(id) {
+                        lower_settled(
+                            &mut function,
+                            &LoweringTables {
+                                methods: self.method_arguments(),
+                                field_sites: self.field_sites.as_slice(),
+                                superinstructions: self.superinstructions.as_slice(),
+                                specialized: self.mode == SpecializationMode::Enabled,
+                                undefined_constant,
+                            },
+                            |atom| self.atoms.get(atom),
+                        );
+                    }
+                    function
+                })
+                .collect();
             register_profile::report(
                 &records,
                 self.method_sites.as_slice(),
                 self.field_sites.as_slice(),
                 self.superinstructions.as_slice(),
             );
-        }
-        for function in functions.iter_mut().flatten() {
-            function.code.shrink_to_fit();
-            function.wide.shrink_to_fit();
-            function.source_positions.shrink_to_fit();
         }
         let (mut method_sites, mut method_arguments) =
             Self::flatten_method_sites(self.method_sites.into_vec());
@@ -2852,7 +3270,8 @@ impl<'a> Compiler<'a> {
                 let mut slots = Vec::with_capacity(functions.len());
                 slots.extend(functions.into_iter().enumerate().map(|(id, function)| {
                     match function {
-                        Some(function) => FunctionSlot::compiled(function),
+                        Some(function) if lowered_here(id) => FunctionSlot::compiled(function),
+                        Some(function) => FunctionSlot::unlowered(function),
                         None => FunctionSlot::released(released[&id].header),
                     }
                 }));
@@ -2871,6 +3290,12 @@ impl<'a> Compiler<'a> {
                     source_type: self.source_type,
                     root_strict: self.root_strict,
                     module_goal: self.module_goal,
+                    lazy_bodies: {
+                        let mut starts = std::mem::take(&mut self.lazy_compiled);
+                        starts.sort_unstable();
+                        starts.dedup();
+                        starts.into_boxed_slice()
+                    },
                     specialized: self.mode == SpecializationMode::Enabled,
                     atoms,
                     exits: std::mem::take(&mut self.function_exits).into_boxed_slice(),
@@ -2889,7 +3314,9 @@ impl<'a> Compiler<'a> {
             }),
             encoded_records: None,
             validated: Default::default(),
+            undefined_constant: Default::default(),
             closure_reads,
+            load_encoding: crate::bytecode::LoadRecords::new(self.load_encoding.take()),
         };
         #[cfg(feature = "profile-aggregate")]
         debug_assert!(crate::profile::instruction_word_domains_fit(&program));
@@ -3182,6 +3609,7 @@ impl<'a> Compiler<'a> {
     fn promoted_local_plan(
         &mut self,
         eligible: bool,
+        async_body: bool,
         arguments_only: Option<usize>,
         own_arguments: Option<(bool, &[Atom])>,
         body: &[Statement<'_>],
@@ -3202,7 +3630,6 @@ impl<'a> Compiler<'a> {
         // unless the body rebinds no parameter and cannot observe the mapping
         // (`FixedRegisterLocalFacts::arguments_mapping_unobserved`).
         let unaliased_arguments = eligible
-            && register_local_facts.safe
             && own_arguments.is_some_and(|(strict, parameters)| {
                 !strict
                     && !rebinds_parameter(parameters)
@@ -3215,7 +3642,10 @@ impl<'a> Compiler<'a> {
             (_, None) => false,
             (_, Some((strict, _))) => strict || unaliased_arguments,
         };
-        if !eligible || !register_local_facts.safe || !arguments_allow_promotion {
+        // An async body that may suspend keeps its locals in frame slots; one that never
+        // awaits runs to completion as an ordinary body does (`CallPlan::settles_in_loop`).
+        let suspends = async_body && register_local_facts.suspends;
+        if !eligible || suspends || !register_local_facts.safe || !arguments_allow_promotion {
             return PromotedLocalPlan { unaliased_arguments, ..Default::default() };
         }
         let arguments_atom = self.atom("arguments");
@@ -3377,7 +3807,6 @@ impl<'a> Compiler<'a> {
             && options.defaults.is_some_and(FunctionCompiler::arguments_promotable_apart);
         let promote_plain_locals = parent.is_some()
             && (direct_parameters || hidden_parameters)
-            && !options.async_function
             && !options.generator
             && !options.derived_constructor
             && !options.class_initializer
@@ -3395,6 +3824,7 @@ impl<'a> Compiler<'a> {
             && !dynamic_eval;
         let PromotedLocalPlan { promoted_local_slots, clobbered_local_slots, unaliased_arguments } = self.promoted_local_plan(
             promote_plain_locals,
+            options.async_function,
             hidden_parameters.then_some(params.len()),
             Some((root_strict, &params)),
             body,
@@ -3591,6 +4021,7 @@ impl<'a> Compiler<'a> {
             dynamic_scope_access: Default::default(),
             js_tier_candidate: Default::default(),
             call_plan: Default::default(),
+            initializer: Default::default(),
             handlers: function.handlers.into(),
             register_roots: Default::default(),
             undefined_register,
@@ -3630,6 +4061,9 @@ impl<'a> Compiler<'a> {
             header.name.is_none() && header.inferred_name.is_none() && !header.is_class_constructor;
         if nameable {
             self.functions.name_released(id, name);
+            if let Some(encoding) = &mut self.load_encoding {
+                encoding.name(id, name);
+            }
         }
         nameable
     }
@@ -3702,34 +4136,21 @@ impl<'a> Compiler<'a> {
         }
     }
 
-    /// The finishing passes of one function after every function's rewrites: shared returns,
-    /// dispatch class, numeric and plain-local specialization and frame registers.
+    /// The finishing passes of one function after every function's rewrites: its dispatch
+    /// class (`settle_dispatch`), then the passes the class leaves (`lower_settled`).
     fn lower_function(&self, function: &mut BcFunction, undefined_constant: u32) {
-        let method_sites = self.method_arguments();
-        let field_sites = self.field_sites.as_slice();
-        let superinstructions = self.superinstructions.as_slice();
         self.settle_dispatch(function);
-        if function.dispatch == DispatchClass::Numeric {
-            let live = liveness::analyze(function, method_sites, field_sites, superinstructions);
-            numeric::apply(function, live.as_deref());
-        }
-        // Renaming a plain slot's operations keeps it plain (validation re-derives the same
-        // proof from the specialized code), so frame registers start from the same slots.
-        let plain_slots = Self::specialize_plain_local_operations(function, superinstructions);
-        frame_registers::promote(function, plain_slots, superinstructions, undefined_constant, |atom| {
-            self.atoms.get(atom)
-        });
-        if self.mode == SpecializationMode::Enabled {
-            rewrite::coalesce_promoted_moves(function, method_sites, field_sites, superinstructions);
-        }
-        if function
-            .code
-            .iter()
-            .any(|instruction| instruction.op() == Op::StoreLocalPlain)
-        {
-            let live = liveness::analyze(function, method_sites, field_sites, superinstructions);
-            numeric::apply_plain_local_stores(function, live.as_deref());
-        }
+        lower_settled(
+            function,
+            &LoweringTables {
+                methods: self.method_arguments(),
+                field_sites: self.field_sites.as_slice(),
+                superinstructions: self.superinstructions.as_slice(),
+                specialized: self.mode == SpecializationMode::Enabled,
+                undefined_constant,
+            },
+            |atom| self.atoms.get(atom),
+        );
     }
 
     /// The lowering passes the dispatch class reads (shared returns and strict sets), then

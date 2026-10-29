@@ -4,7 +4,166 @@ use super::activation::{
 use super::promise::{PromiseReaction, PromiseState};
 use super::*;
 
+/// How a generator's resumption stopped (`Vm::resume_generator_step`).
+pub(super) enum GeneratorStep {
+    /// At a `yield` of the value.
+    Yielded(Value),
+    /// At a `yield*` passing its delegate's own result object on.
+    Delegated(Value),
+    /// Its body completed with the value, or it had completed before.
+    Done(Value),
+}
+
+/// A generator step its caller's frame resumed in place (`Vm::try_in_loop_generator_step`):
+/// whether the step's result is the object an iteration step reuses
+/// (`Vm::reused_iterator_result`) rather than a fresh one. The generator is the receiver of
+/// the step's native activation, which keeps it alive while its frame runs.
+pub(crate) struct GeneratorResume {
+    reuses_result: bool,
+}
+
+/// How a generator resumed in place stopped running its frame: a `yield` of a value, which
+/// suspends the frame at its resume register (or a `yield*` passing its delegate's result
+/// on), or a return.
+pub(super) enum InLoopGeneratorStop {
+    Yielded { destination: crate::bytecode::Register, delegated_result: Option<Value> },
+    Returned,
+}
+
 impl<H: Host> Vm<H> {
+    /// Whether `try_in_loop_generator_step` resumes `generator` in place: a suspended
+    /// generator of this realm and program that is not running or done.
+    pub(super) fn generator_resumes_in_place(&self, generator: Value) -> bool {
+        let Some(IteratorRecord { ext, .. }) = self.heap.iterator(generator) else {
+            return false;
+        };
+        ext.generator.as_deref().is_some_and(|record| {
+            !record.running
+                && !record.done
+                && record.realm == self.realm.globals
+                && record.continuation.as_ref().is_some_and(|continuation| continuation.program() == self.active_program)
+        })
+    }
+
+    /// `next()` of `generator`, a suspended synchronous generator of this realm and program
+    /// that `method` (this realm's `%GeneratorPrototype%.next`, `steps_as_generator`) steps,
+    /// called with no arguments from frame `f`'s call record that resumes at `pc`: its frame
+    /// pushed in place as an in-loop call pushes a callee's (`resume_generator_in_place`), and
+    /// the pending call completes with the step's result (`finish_in_loop_generator_step`).
+    /// `None` leaves any other step to the native call.
+    pub(super) fn try_in_loop_generator_step(
+        &mut self,
+        f: usize,
+        pc: usize,
+        method: Value,
+        generator: Value,
+        destination: crate::bytecode::Register,
+        reuses_result: bool,
+    ) -> Option<Result<StepResult, JsError>> {
+        if !self.generator_resumes_in_place(generator) {
+            return None;
+        }
+        let resumed = self.resume_generator_in_place(f, pc, method, generator, reuses_result)?;
+        Some(resumed.map(|(call_guard, resume)| StepResult::PushFrame {
+            destination,
+            call_guard,
+            construct_this: None,
+            settles: None,
+            generator: Some(resume),
+        }))
+    }
+
+    /// The in-place step of `generator`, which `generator_resumes_in_place` admits: frame
+    /// `f` resumes at `pc` after it, and the generator's frame is pushed under the native
+    /// activation `generator_iteration_step` runs it in, so the body sees the same activation
+    /// stack; the step's guest call and its resumption. `None` when the guest-call budget
+    /// leaves the step to the native call.
+    pub(super) fn resume_generator_in_place(
+        &mut self,
+        f: usize,
+        pc: usize,
+        method: Value,
+        generator: Value,
+        reuses_result: bool,
+    ) -> Option<Result<(crate::stack::GuestCallGuard, GeneratorResume), JsError>> {
+        let call_guard = crate::stack::GuestCallGuard::enter().ok()?;
+        if let Err(error) = self.check_execution_interrupt() {
+            return Some(Err(error));
+        }
+        let record = self.generator_record_mut(generator)?;
+        record.running = true;
+        let continuation = record.continuation.take()?;
+        let resume_register = continuation.resume_register;
+        let mut frame = continuation.resume(self.with_stack.len());
+        if let Some(register) = resume_register {
+            *frame.registers.get_mut(usize::from(register))? = Value::UNDEFINED;
+        }
+        self.frames[f].pc = pc;
+        self.frames[f].pc_is_resume = true;
+        self.realm.promise.active_native.push(super::activation::NativeActivation {
+            callable: method,
+            receiver: generator,
+            frame_depth: self.frames.len(),
+            boundary: super::activation::NativeCallBoundary::Opaque,
+        });
+        self.activate_frame(&mut frame);
+        self.frames.push(frame);
+        Some(Ok((call_guard, GeneratorResume { reuses_result })))
+    }
+
+    /// The result of a generator step `resume` made in place, whose popped `frame` stopped
+    /// at `stop` with `value`, as `resume_generator_step` and the step's native finish it: a
+    /// yield keeps the frame as the generator's continuation and a return finishes the
+    /// generator, each leaving the native activation; the step's iterator result, or the
+    /// delegate's own result a `yield*` passes on.
+    pub(super) fn finish_in_loop_generator_step(
+        &mut self,
+        mut frame: Box<Frame>,
+        resume: GeneratorResume,
+        value: Value,
+        stop: InLoopGeneratorStop,
+    ) -> Value {
+        let generator = self.realm.promise.active_native.pop().expect("a resumed generator's activation").receiver;
+        let done = match stop {
+            InLoopGeneratorStop::Yielded { destination, delegated_result } => {
+                frame.with_objects = self.with_stack.split_off(frame.with_base);
+                if let Some(record) = self.generator_record_mut(generator) {
+                    record.running = false;
+                    record.continuation =
+                        Some(Continuation::suspend(frame, Completion::Yield(value), Some(destination), Value::UNDEFINED));
+                }
+                if let Some(result) = delegated_result {
+                    return result;
+                }
+                false
+            }
+            InLoopGeneratorStop::Returned => {
+                self.finish_frame_scopes(&frame);
+                self.pool_frame(frame);
+                if let Some(record) = self.generator_record_mut(generator) {
+                    record.running = false;
+                    record.done = true;
+                }
+                true
+            }
+        };
+        if resume.reuses_result {
+            self.reused_iterator_result(value, done)
+        } else {
+            self.iterator_result(value, done).expect("an iterator result allocates")
+        }
+    }
+
+    /// A generator step `resume` made in place whose frame threw: the generator finishes, as
+    /// `resume_generator_step` finishes it, and the native activation ends; the caller's
+    /// unwind goes on with the error.
+    pub(super) fn abandon_in_loop_generator_step(&mut self, _resume: GeneratorResume) {
+        let generator = self.realm.promise.active_native.pop().expect("a resumed generator's activation").receiver;
+        if let Some(record) = self.generator_record_mut(generator) {
+            record.running = false;
+            record.done = true;
+        }
+    }
     pub(super) fn generator_prototype_method(
         &mut self,
         p: &ResidualProgram,
@@ -1230,11 +1389,28 @@ impl<H: Host> Vm<H> {
 
     fn resume_generator(
         &mut self,
-        _p: &ResidualProgram,
+        p: &ResidualProgram,
         generator: Value,
         args: &[Value],
         initial_error: Option<JsError>,
     ) -> Result<Value, JsError> {
+        match self.resume_generator_step(p, generator, args, initial_error)? {
+            GeneratorStep::Yielded(value) => self.iterator_result(value, false),
+            GeneratorStep::Done(value) => self.iterator_result(value, true),
+            GeneratorStep::Delegated(result) => Ok(result),
+        }
+    }
+
+    /// Resumes `generator` as `next`, `return` or `throw` do, and says how it stopped, so a
+    /// caller that only reads the result's `value` and `done` (`Vm::generator_iteration_step`)
+    /// need not allocate one.
+    pub(super) fn resume_generator_step(
+        &mut self,
+        _p: &ResidualProgram,
+        generator: Value,
+        args: &[Value],
+        initial_error: Option<JsError>,
+    ) -> Result<GeneratorStep, JsError> {
         let (continuation, realm, done) = {
             let Some(record) = self.generator_record_mut(generator) else {
                 return Err(JsError("generator receiver is invalid".into()));
@@ -1256,7 +1432,7 @@ impl<H: Host> Vm<H> {
             if let Some(error) = initial_error {
                 return Err(error);
             }
-            return self.iterator_result(Value::UNDEFINED, true);
+            return Ok(GeneratorStep::Done(Value::UNDEFINED));
         }
         let continuation = continuation.ok_or_else(|| JsError("generator is suspended".into()))?;
         if matches!(continuation.completion, Completion::GeneratorStart)
@@ -1291,11 +1467,10 @@ impl<H: Host> Vm<H> {
         let previous_global = self.switch_realm_global(realm);
         self.activate_frame(&mut frame);
         self.frames.push(frame);
-        let result = self.run_frame_general_with_error(
-            &execution_program,
-            self.frames.len() - 1,
-            initial_error,
-        );
+        let result = match initial_error {
+            None => self.run_resumed_frame(&execution_program, self.frames.len() - 1),
+            error => self.run_frame_general_with_error(&execution_program, self.frames.len() - 1, error),
+        };
         let mut frame = self.frames.pop().expect("generator frame exists");
         self.deactivate_frame(&mut frame, &result);
         self.set_active_program(previous_program);
@@ -1318,19 +1493,16 @@ impl<H: Host> Vm<H> {
                 delegated_result,
                 frame: None,
             } => {
+                let continuation =
+                    self.suspend_activation(frame, Completion::Yield(value), Some(destination), Value::UNDEFINED);
                 if let Some(record) = self.generator_record_mut(generator) {
                     record.running = false;
-                    record.continuation = Some(Continuation::suspend(
-                        frame,
-                        Completion::Yield(value),
-                        Some(destination),
-                        Value::UNDEFINED,
-                    ));
+                    record.continuation = Some(continuation);
                 }
-                match delegated_result {
-                    Some(result) => Ok(result),
-                    None => self.iterator_result(value, false),
-                }
+                Ok(match delegated_result {
+                    Some(result) => GeneratorStep::Delegated(result),
+                    None => GeneratorStep::Yielded(value),
+                })
             }
             FrameOutcome::Complete(value) | FrameOutcome::ConstructComplete { value, .. } => {
                 self.pool_frame(frame);
@@ -1338,7 +1510,7 @@ impl<H: Host> Vm<H> {
                     record.running = false;
                     record.done = true;
                 }
-                self.iterator_result(value, true)
+                Ok(GeneratorStep::Done(value))
             }
             FrameOutcome::Await { .. } => {
                 self.pool_frame(frame);
@@ -1569,7 +1741,7 @@ impl<H: Host> Vm<H> {
                     destination,
                     frame: None,
                 }) => {
-                    let continuation = Continuation::suspend(
+                    let continuation = vm.suspend_activation(
                         frame,
                         Completion::Await(value),
                         Some(destination),
@@ -1601,7 +1773,7 @@ impl<H: Host> Vm<H> {
         destination: u16,
         delegated: bool,
     ) -> Result<(), JsError> {
-        let continuation = Continuation::suspend(
+        let continuation = self.suspend_activation(
             frame,
             Completion::Yield(value),
             Some(destination),

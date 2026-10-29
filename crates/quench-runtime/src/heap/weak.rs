@@ -26,6 +26,16 @@ pub(super) struct EphemeronWork {
 }
 
 impl EphemeronWork {
+    /// Whether some weak map value waits for `identity` to be marked: `newly_marked` has
+    /// work for it beyond scanning a weak map's own entries.
+    #[inline(always)]
+    pub(super) fn awaits_key(&self, identity: Value) -> bool {
+        !self.heads.is_empty() && self.heads.contains_key(&identity)
+    }
+
+    // Inlined into each mark visit, as `Heap::array_children`: most calls find no weak map
+    // and no pending key.
+    #[inline(always)]
     pub(super) fn newly_marked(
         &mut self,
         identity: Value,
@@ -46,6 +56,7 @@ impl EphemeronWork {
         self.scan_owner(identity, Some(cell), is_marked, work);
     }
 
+    #[inline(always)]
     fn scan_owner(
         &mut self,
         identity: Value,
@@ -83,7 +94,15 @@ impl EphemeronWork {
 }
 
 impl Heap {
-    pub(super) fn prune_weak_entries(&mut self, full: bool) -> Vec<(Value, Value)> {
+    /// Prunes the weak entries whose keys or targets the mark left unmarked: every live weak
+    /// cell's after a full collection, the young and remembered ones' after a minor one. The
+    /// young weak cells a minor collection under `age` keeps young (`PromotionAge::ages`)
+    /// stay listed for the next one: marked, not yet aged.
+    pub(super) fn prune_weak_entries(
+        &mut self,
+        full: bool,
+        age: PromotionAge,
+    ) -> Vec<(Value, Value)> {
         let Self {
             object_records,
             array_records,
@@ -94,6 +113,7 @@ impl Heap {
             string_records,
             v128_records,
             marks,
+            aged,
             slots,
             young_weak,
             remembered,
@@ -130,7 +150,14 @@ impl Heap {
                 }
             }
         }
-        young_weak.clear();
+        if full || !age.ages() {
+            young_weak.clear();
+        } else {
+            young_weak.retain(|&index| {
+                let (word, bit) = slot_bit(index as usize);
+                is_marked(Value::heap(index)) && aged.get(word).is_none_or(|ages| ages & bit == 0)
+            });
+        }
         finalization_jobs
     }
 

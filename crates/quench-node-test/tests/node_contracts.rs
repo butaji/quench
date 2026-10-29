@@ -47,6 +47,20 @@ fn advanced_ipc_contract_matches_node() {
     assert_contract_matches_node("child_process/advanced_ipc_contract.cjs");
 }
 
+/// Primitives the console's writing methods write before and after `util` and
+/// `diagnostics_channel` load, with and without `FORCE_COLOR`.
+#[test]
+fn console_primitive_log_contract_matches_node() {
+    assert_contract_matches_node("console/primitive_log_contract.cjs");
+}
+
+/// Plain and nested objects and short arrays `console.log` writes before `inspect` loads,
+/// and the values it leaves to `inspect`.
+#[test]
+fn console_inspect_contract_matches_node() {
+    assert_contract_matches_node("console/inspect_contract.cjs");
+}
+
 /// Stdio write encodings, callback timing and argument errors.
 #[test]
 fn stdio_write_contract_matches_node() {

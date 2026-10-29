@@ -152,8 +152,13 @@ impl<H: Host> Vm<H> {
                             return Ok(true);
                         }
                     }
-                    // [[GetOwnProperty]] itself: presence needs no descriptor object.
-                    if vm.ordinary_get_own_property(p, current, key)?.is_some() {
+                    // [[GetOwnProperty]] itself: presence needs no descriptor object, and an
+                    // authoritative shape needs no property lookup either.
+                    let own = match key_atom.and_then(|atom| vm.shape_own_presence(current, atom)) {
+                        Some(present) => present,
+                        None => vm.ordinary_get_own_property(p, current, key)?.is_some(),
+                    };
+                    if own {
                         return Ok(true);
                     }
                     let next = vm.object_get_prototype_of(p, current)?;
@@ -166,6 +171,21 @@ impl<H: Host> Vm<H> {
             vm.heap.release_root(current_root);
             result
         })
+    }
+
+    /// Whether an ordinary object has an own property `atom`, read from its shape where the
+    /// shape answers it (`shape_property_lookup`): a lazy data property holds its slot before
+    /// it materializes, so presence needs no materialization. An index key, which elements
+    /// may hold outside the shape, and an arguments object, which maps its indices, give
+    /// `None`, as does any other object: [[GetOwnProperty]] answers them.
+    pub(super) fn shape_own_presence(&self, object: Value, atom: crate::bytecode::Atom) -> Option<bool> {
+        if self.atom_class(atom).contains(super::object::AtomClass::ARRAY_INDEX)
+            || self.heap.ordinary_object(object)?.is_arguments_object()
+        {
+            return None;
+        }
+        let data = self.shape_property_lookup(object, atom)?;
+        Some(self.shape_slot(data.shape(), atom).is_some())
     }
 
     pub(super) fn instanceof(

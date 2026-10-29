@@ -121,7 +121,7 @@ crate::snapshot::snap_struct!(RuntimeAtoms {
     lexical_this, new_target, regexp_exec, regexp_flags, last_index, regexp_flag_accessors, then,
     constructor, next, name, empty, value, done, iterator_return, writable, enumerable, configurable,
     get, set,
-    bound_target, bound_this, bound_args,
+    bound_target, bound_this, bound_args, char_code_at,
 });
 crate::snapshot::snap_struct!(RealmIntrinsics {
     arguments_objects, iterator_prototypes, builtin_prototypes, function_constructors,
@@ -309,6 +309,8 @@ impl<H: Host> Vm<H> {
             active_registers: _,
             lane_raised,
             lane_returned,
+            lane_native,
+            lane_native_returned,
             active_layout: _,
             active_constants: _,
             active_field_entries: _,
@@ -327,7 +329,10 @@ impl<H: Host> Vm<H> {
             symbol_load_proofs: _,
             private_site_homes: _,
             array_iteration_proof: _,
+            array_species_proof: _,
+            for_in_own_keys: _,
             species_slot_proof: _,
+            promise_species_proof: _,
             index_free_chain_proof: _,
             function_name_shapes: _,
             typeof_names: _,
@@ -349,6 +354,7 @@ impl<H: Host> Vm<H> {
             string_concats: _,
             string_atoms: _,
             recent_atom_strings: _,
+            ascii_unit_strings: _,
             call_targets: _,
             field_caches: _,
             inherited_field_indices: _,
@@ -364,7 +370,8 @@ impl<H: Host> Vm<H> {
             prototype_atom,
             instanceof_constructor_layouts: _,
             closure_shapes: _,
-            iterator_result_shape: _,
+            resolver_function_shape: _,
+            iterator_result_header: _,
             reused_iterator_result: _,
             descriptor_shapes: _,
             descriptor_layout: _,
@@ -379,6 +386,9 @@ impl<H: Host> Vm<H> {
             to_precision_atom,
             runtime_atoms,
             constructed_shapes: _,
+            // Templates name roots of the running heap; a restored heap starts without any,
+            // and its hosts capture them again.
+            object_templates: _,
             method_caches: _,
             megamorphic_methods: _,
             method_cache_atoms: _,
@@ -404,6 +414,7 @@ impl<H: Host> Vm<H> {
             lane_deferred: _,
             // Resolutions are the process's (its files), not the snapshot's.
             resolved_module_requests: _,
+            resolved_module_names: _,
             host_beside_activations: _,
         } = self;
         let Realm {
@@ -423,7 +434,8 @@ impl<H: Host> Vm<H> {
             ("a with statement", with_stack.is_empty()),
             ("a pending job", jobs.is_empty() && kept_alive.is_empty() && !native_microtask_running),
             ("an Atomics waiter", shared_async_waiters.is_empty() && !test262_agent.installed),
-            ("a lane completion", lane_raised.is_none() && lane_returned.is_none()),
+            ("a lane completion", lane_raised.is_none() && lane_returned.is_none() && lane_native_returned.is_none()),
+            ("a lane native call", lane_native.is_none()),
             (
                 "an eval or construction",
                 !direct_eval
@@ -509,7 +521,7 @@ impl<H: Host> Vm<H> {
         entry: &ResidualProgram,
         read_host: impl FnOnce(&mut H, &mut crate::SnapshotReader<'_, '_>) -> Result<(), String>,
     ) -> SnapshotResult<ResidualProgram> {
-        let mut reader = Reader::new((*bytes).as_ref(), Some(H::snapshot_bytes_read))?;
+        let mut reader = Reader::new((*bytes).as_ref(), Some(H::kept_bytes_read))?;
         self.specialized = reader.bool()?;
         self.read_atoms(&mut reader)?;
         self.heap = Heap::read_snapshot(&mut reader, self.heap.memory_policy())?;

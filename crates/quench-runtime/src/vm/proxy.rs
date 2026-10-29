@@ -21,7 +21,7 @@ impl<H: Host> Vm<H> {
                 .chain(args.iter().copied()),
             |vm| {
                 if !vm.is_function(target) {
-                    return Err(vm.type_error(p, "value is not callable".into()));
+                    return Err(vm.type_error(p, super::call_printer::NOT_CALLABLE_MESSAGE.into()));
                 }
                 let trap_atom = vm.intern_atom("apply");
                 let trap = vm.get_property(p, handler, trap_atom)?;

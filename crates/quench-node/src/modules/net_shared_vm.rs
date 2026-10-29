@@ -1086,8 +1086,9 @@ pub(crate) fn cleanup(transport: &mut Transport) {
 /// Wait up to `timeout` for the transport to have work: a pending connection on a listener,
 /// data or end on a socket the host reads, or room for a socket's queued bytes. The event
 /// loop's idle wait: readiness ends it at once, where a fixed sleep made every arrival wait
-/// out the interval. Sources outside the transport keep the interval as their bound, and a
-/// transport with nothing to watch sleeps it.
+/// out the interval. A watched signal's arrival ends it too (`process_signals_state::wake_fd`).
+/// Sources polled outside the transport (`extra`) keep the interval as their bound, and with
+/// nothing to watch the wait sleeps.
 pub(crate) fn wait_ready(
     transport: &Transport,
     extra: &[std::os::fd::RawFd],
@@ -1128,6 +1129,9 @@ pub(crate) fn wait_ready(
         descriptors.push(watch(fd, libc::POLLIN));
     }
     if let Some(fd) = crate::modules::napi::wake_fd() {
+        descriptors.push(watch(fd, libc::POLLIN));
+    }
+    if let Some(fd) = crate::modules::process_signals_state::wake_fd() {
         descriptors.push(watch(fd, libc::POLLIN));
     }
     if descriptors.is_empty() {

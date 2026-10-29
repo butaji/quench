@@ -27,8 +27,12 @@ impl FunctionCompiler<'_, '_> {
         let previous = self
             .current_source_position
             .replace((position.line, position.column));
+        let start = self.next_reg;
         let result = self.expression_at_current_position(expression, debug_name);
         self.current_source_position = previous;
+        // An expression hands its consumer one register: every temporary it allocated
+        // besides its result is dead once it completes, and the next one reuses them.
+        self.next_reg = if result >= start { result + 1 } else { start };
         result
     }
 
@@ -143,7 +147,12 @@ impl FunctionCompiler<'_, '_> {
             }
             Expression::NewExpression(value) => self.construct(value),
             Expression::SequenceExpression(value) => self.sequence_expression(value, debug_name),
-            Expression::ParenthesizedExpression(value) => self.expression_with_debug_name(&value.expression, debug_name),
+            Expression::ParenthesizedExpression(value) => {
+                // `(function () {})` is the conventional mark of a function about to run, as
+                // a bundle's module functions and a UMD factory are.
+                self.owner.note_invoked_callee(&value.expression);
+                self.expression_with_debug_name(&value.expression, debug_name)
+            }
             Expression::AwaitExpression(value) if self.async_function => {
                 let source = self.expression(&value.argument);
                 let destination = self.reg();
@@ -474,7 +483,7 @@ impl FunctionCompiler<'_, '_> {
 
     fn throw_immutable_binding(&mut self, atom: Atom) {
         let _ = self.load_atom(atom);
-        let constructor = self.load_name("TypeError");
+        let constructor = self.load_name(crate::bytecode::INTRINSIC_TYPE_ERROR_BINDING);
         let message = self.literal(Constant::String(ASSIGNMENT_TO_CONSTANT.into()));
         let argument = self.reg();
         self.emit(Op::Move, argument, message, 0, 0);
@@ -605,6 +614,7 @@ impl FunctionCompiler<'_, '_> {
     }
 
     pub(crate) fn emit_binary(&mut self, op: u32, left: Operand, right: Operand) -> Register {
+        let (op, left, right) = constant_right(op, left, right);
         let dst = self.reg();
         self.emit(Op::Binary, dst, left.0, right.0, op);
         dst
@@ -693,7 +703,7 @@ impl FunctionCompiler<'_, '_> {
     }
     /// Compiles an expression whose value is discarded. A postfix update then needs no
     /// separate ToNumeric of the old value: `IncDec` performs the conversion itself.
-    pub(super) fn effect_expression(&mut self, expression: &Expression<'_>) -> Register {
+    pub(in crate::compile) fn effect_expression(&mut self, expression: &Expression<'_>) -> Register {
         match expression {
             Expression::UpdateExpression(value) => self.update(value, false),
             _ => self.expression(expression),
@@ -879,13 +889,8 @@ impl FunctionCompiler<'_, '_> {
                 } else {
                     Operand::register(self.last_operand(&binary.right))
                 };
-            return self.emit(
-                Op::JumpBinaryFalse,
-                binary.operator as u16,
-                left.0,
-                right.0,
-                0,
-            );
+            let (operator, left, right) = constant_right(binary.operator as u32, left, right);
+            return self.emit(Op::JumpBinaryFalse, operator as u16, left.0, right.0, 0);
         }
         // `!x` is false exactly when `x` is truthy, and ToBoolean has no effects.
         if let Expression::UnaryExpression(unary) = value
@@ -911,5 +916,33 @@ impl FunctionCompiler<'_, '_> {
             self.emit(Op::LoadThis, dst, 0, 0, 0);
         }
         dst
+    }
+}
+
+/// A comparison of a constant with a register, `C < r`, as the mirrored comparison of the
+/// register with the constant, `r > C`: the forms the lane specializes take the constant on the
+/// right. A constant is a primitive, so neither order has an effect to keep, and each relation
+/// holds of its mirror exactly (NaN makes both false). Any other operation stays as it is.
+fn constant_right(op: u32, left: Operand, right: Operand) -> (u32, Operand, Operand) {
+    use crate::bytecode::OperandKind;
+    use oxc_ast::ast::BinaryOperator as B;
+    if left.kind() != Some(OperandKind::Constant) || right.kind() != Some(OperandKind::Register) {
+        return (op, left, right);
+    }
+    let mirrored = [
+        (B::LessThan, B::GreaterThan),
+        (B::GreaterThan, B::LessThan),
+        (B::LessEqualThan, B::GreaterEqualThan),
+        (B::GreaterEqualThan, B::LessEqualThan),
+        (B::Equality, B::Equality),
+        (B::Inequality, B::Inequality),
+        (B::StrictEquality, B::StrictEquality),
+        (B::StrictInequality, B::StrictInequality),
+    ]
+    .into_iter()
+    .find(|(operator, _)| *operator as u32 == op);
+    match mirrored {
+        Some((_, mirror)) => (mirror as u32, right, left),
+        None => (op, left, right),
     }
 }

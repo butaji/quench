@@ -356,6 +356,7 @@ impl<H: Host> Vm<H> {
             .active_native
             .push(super::activation::NativeActivation {
                 callable: wrapper,
+                receiver: Value::UNDEFINED,
                 frame_depth: self.frames.len(),
                 boundary: super::activation::NativeCallBoundary::Opaque,
             });

@@ -144,6 +144,57 @@ fn convert(value: u128, op: super::conversion::ScalarConversionOperator) -> Wasm
     WasmValue::V128(result)
 }
 
+/// An operator as an execution needs it (`SimdOperator::kernel`).
+pub(crate) struct SimdKernel {
+    pub(crate) left: WasmType,
+    pub(crate) right: Option<WasmType>,
+    /// How many lanes a lane immediate may name: one for an operator without one.
+    lanes: u32,
+    pub(crate) apply: fn(WasmValue, Option<WasmValue>, u8) -> WasmValue,
+}
+
+impl SimdKernel {
+    /// The kernel and lane immediate a selector names: none for an unknown operator or a
+    /// lane past its count.
+    #[inline]
+    pub(crate) fn of(selector: u32) -> Option<(&'static Self, u8)> {
+        let kernel = SimdOperator::KERNELS.get((selector >> SELECTOR_LANE_BITS) as usize)?;
+        let lane = (selector & SELECTOR_LANE_MASK) as u8;
+        (u32::from(lane) < kernel.lanes).then_some((kernel, lane))
+    }
+
+    /// The type of the operator's result, read off its own semantics: a kernel is pure and
+    /// total, so applied to zero operands it answers with a value of that type.
+    pub(crate) fn result_type(&self, lane: u8) -> WasmType {
+        self.apply_bits_typed(0, 0, lane).ty()
+    }
+
+    /// The operator applied to operands given as bits, its result as bits: a vector whole,
+    /// a scalar in the low bits (`ScalarBits`), as compiled code holds them.
+    pub(crate) fn apply_bits(&self, left: u128, right: u128, lane: u8) -> u128 {
+        match self.apply_bits_typed(left, right, lane) {
+            WasmValue::V128(bits) => bits,
+            value => u128::from(scalar(value)),
+        }
+    }
+
+    fn apply_bits_typed(&self, left: u128, right: u128, lane: u8) -> WasmValue {
+        let value = |ty, bits: u128| match ty {
+            WasmType::V128 => WasmValue::V128(bits),
+            ty => WasmValue::from_bits(ty, bits as u64),
+        };
+        (self.apply)(value(self.left, left), self.right.map(|ty| value(ty, right)), lane)
+    }
+}
+
+/// The lanes a lane immediate may name, from the operator's lane width when it has one.
+const fn lane_count(widths: &[u32]) -> u32 {
+    match widths {
+        [width] => u128::BITS / *width,
+        _ => 1,
+    }
+}
+
 macro_rules! simd_operators {
     ($($name:ident [$($lane:ident: $width:expr)?]: $left:ident, $right:expr => |$a:ident, $b:ident, $l:ident| $body:expr;)* ) => {
         #[derive(Clone, Copy, Debug)]
@@ -151,14 +202,17 @@ macro_rules! simd_operators {
         pub(crate) enum SimdOperator { $($name,)* }
         impl SimdOperator {
             const ALL: &'static [Self] = &[$(Self::$name,)*];
+            /// Each operator's signature and body by selector position, so an execution reads
+            /// one table entry instead of matching the operator for each of them.
+            const KERNELS: &'static [SimdKernel] = &[$(SimdKernel {
+                left: WasmType::$left,
+                right: $right,
+                lanes: lane_count(&[$($width)?]),
+                apply: |$a, $b, $l| { let _ = (&$a, &$b, &$l); $body },
+            },)*];
             pub(crate) fn from_selector(selector: u32) -> Option<(Self, u8)> {
-                let op = *Self::ALL.get((selector >> SELECTOR_LANE_BITS) as usize)?;
-                let lane = (selector & SELECTOR_LANE_MASK) as u8;
-                let count = op.lane_width().map_or(1, |width| u128::BITS / width);
-                (u32::from(lane) < count).then_some((op, lane))
-            }
-            fn lane_width(self) -> Option<u32> {
-                match self { $(Self::$name => [$($width)?].first().copied(),)* }
+                let (_, lane) = SimdKernel::of(selector)?;
+                Some((Self::ALL[(selector >> SELECTOR_LANE_BITS) as usize], lane))
             }
             pub(super) fn selector(self, lane: u8) -> u32 { ((self as u32) << SELECTOR_LANE_BITS) | u32::from(lane) }
             pub(super) fn from_wasm(op: &wasmparser::Operator<'_>) -> Option<(Self, u8)> {
@@ -167,14 +221,14 @@ macro_rules! simd_operators {
                     _ => None,
                 }
             }
-            pub(crate) fn left_type(self) -> WasmType { match self { $(Self::$name => WasmType::$left,)* } }
-            pub(crate) fn right_type(self) -> Option<WasmType> { match self { $(Self::$name => $right,)* } }
+            pub(crate) fn right_type(self) -> Option<WasmType> { Self::KERNELS[self as usize].right }
             pub(crate) fn apply(self, left: WasmValue, right: Option<WasmValue>, index: u8) -> WasmValue {
                 match self {
                     $(Self::$name => { let ($a, $b, $l) = (left, right, index); let _ = (&$a, &$b, &$l); $body },)*
                 }
             }
         }
+
     }
 }
 

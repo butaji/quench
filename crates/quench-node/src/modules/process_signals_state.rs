@@ -283,6 +283,12 @@ mod platform {
         }
     }
 
+    /// The read end of the handlers' pipe while any signal is watched: readable once a
+    /// watched signal arrives, so the event loop's idle wait ends at it.
+    pub(crate) fn wake_fd() -> Option<RawFd> {
+        HUB.lock().ok()?.as_ref().map(|hub| hub.reader.as_raw_fd())
+    }
+
     #[derive(Default)]
     pub(crate) struct SignalState {
         id: Option<u64>,
@@ -371,6 +377,10 @@ mod platform {
 
 #[cfg(not(target_os = "linux"))]
 mod platform {
+    pub(crate) fn wake_fd() -> Option<std::os::fd::RawFd> {
+        None
+    }
+
     #[derive(Default)]
     pub(crate) struct SignalState;
     impl SignalState {
@@ -387,7 +397,7 @@ mod platform {
     }
 }
 
-pub(crate) use platform::SignalState;
+pub(crate) use platform::{wake_fd, SignalState};
 #[cfg(target_os = "linux")]
 pub(crate) use platform::SIGNALS;
 #[cfg(target_os = "linux")]

@@ -73,7 +73,7 @@ impl<H: Host> Vm<H> {
         _callee: Value,
         _cell: Option<&Cell>,
     ) -> Result<CallTarget, JsError> {
-        Err(JsError("value is not callable".into()))
+        Err(JsError(super::call_printer::NOT_CALLABLE_MESSAGE.into()))
     }
 
     /// A call of `callee` that `Native::is_pure_string_method` admits for `receiver` and
@@ -84,28 +84,50 @@ impl<H: Host> Vm<H> {
     pub(super) fn pure_string_method_call(
         &mut self,
         p: &ResidualProgram,
-        callee: Value,
+        native: Native,
         receiver: Value,
         args: &[Value],
     ) -> Option<Value> {
-        let Some(FunctionRecord {
-            kind: FunctionKind::Native(native),
-            ..
-        }) = self.heap.function(callee)
-        else {
-            return None;
-        };
-        let native = *native;
         if !native.is_pure_string_method()
             || !self.heap.is_string(receiver)
             || args.iter().any(|argument| self.is_object_like(*argument))
         {
             return None;
         }
+        if let Some(value) = self.string_search_in_place(native, receiver, args) {
+            return Some(value);
+        }
         let result = self.call_primitive_native(p, native, receiver, args).ok();
         // A string method reads its receiver as text, which it may make on demand.
         self.heap.charge_materialized_text();
         result
+    }
+
+    /// `indexOf`, `includes` or `startsWith` of a flat string receiver searching for a flat
+    /// string, from a position left out or passed as an integer: every conversion the
+    /// method makes is then the value itself, so the search reads the units in place, as
+    /// `call_primitive_native` would after copying them. `None` leaves any other call to it.
+    fn string_search_in_place(&self, native: Native, receiver: Value, args: &[Value]) -> Option<Value> {
+        if !matches!(native, Native::StringIndexOf | Native::StringIncludes | Native::StringStartsWith) {
+            return None;
+        }
+        let [search, rest @ ..] = args else {
+            return None;
+        };
+        let text = self.heap.string(receiver)?.existing_flat()?.view();
+        let needle = self.heap.string(*search)?.existing_flat()?.view();
+        let length = text.len();
+        // A position below zero reads as zero and one past the end as the end, for all three.
+        let position = match rest.first() {
+            None => 0,
+            Some(position) if position.is_undefined() => 0,
+            Some(position) => usize::try_from(position.as_int()?).unwrap_or(0).min(length),
+        };
+        Some(match native {
+            Native::StringIndexOf => Value::number(text.find(needle, position).map_or(-1.0, |index| index as f64)),
+            Native::StringIncludes => Value::boolean(text.find(needle, position).is_some()),
+            _ => Value::boolean(text.slice(position..length).starts_with(needle)),
+        })
     }
 
     pub(super) fn call_primitive_native(
@@ -233,6 +255,9 @@ impl<H: Host> Vm<H> {
                         .alloc_string(super::wtf16::JsString::from_units(&[])));
                 };
                 let units = receiver.units();
+                if let Some(value) = units.get(index).and_then(|unit| self.ascii_unit_string(unit)) {
+                    return Ok(value);
+                }
                 let value = units.get_range(index..index + 1).map_or_else(
                     || super::wtf16::JsString::from_units(&[]),
                     super::wtf16::JsString::from_unit_run,
@@ -679,8 +704,37 @@ impl<H: Host> Vm<H> {
     }
 
     pub(super) fn string_from_units(&mut self, units: &[u16]) -> Result<Value, JsError> {
+        if let &[unit] = units
+            && let Some(value) = self.ascii_unit_string(unit)
+        {
+            return Ok(value);
+        }
         Ok(self
             .heap
             .alloc_string(super::wtf16::JsString::from_units(units)))
+    }
+
+    /// The string of the one code unit `unit`, when it is ASCII: the one made last, until a
+    /// collection (`Vm::ascii_unit_strings`). Strings have no identity, so sharing one is
+    /// unobservable.
+    pub(super) fn ascii_unit_string(&mut self, unit: u16) -> Option<Value> {
+        let index = usize::from(unit);
+        if index >= super::ASCII_UNITS {
+            return None;
+        }
+        let strings = self
+            .ascii_unit_strings
+            .get_or_insert_with(|| Box::new([Value::UNDEFINED; super::ASCII_UNITS]));
+        if !strings[index].is_undefined() {
+            return Some(strings[index]);
+        }
+        let byte = [unit as u8];
+        // SAFETY: an ASCII byte is UTF-8.
+        let text = super::wtf16::JsString::from_str(unsafe { std::str::from_utf8_unchecked(&byte) });
+        let value = self.heap.alloc_string(text);
+        if let Some(strings) = &mut self.ascii_unit_strings {
+            strings[index] = value;
+        }
+        Some(value)
     }
 }

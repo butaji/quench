@@ -250,15 +250,14 @@ impl<H: Host> Vm<H> {
                 self.write(f, i.result_register(), value);
             }
             Op::WasmSimd => {
-                let (operator, lane) = crate::wasm::simd::SimdOperator::from_selector(i.imm())
-                    .expect("validated SIMD operator");
-                let left =
-                    self.decode_wasm_value(self.read(f, i.register_b()), operator.left_type())?;
-                let right = operator
-                    .right_type()
+                let (kernel, lane) =
+                    crate::wasm::simd::SimdKernel::of(i.imm()).expect("validated SIMD operator");
+                let left = self.decode_wasm_value(self.read(f, i.register_b()), kernel.left)?;
+                let right = kernel
+                    .right
                     .map(|ty| self.decode_wasm_value(self.read(f, i.register_c()), ty))
                     .transpose()?;
-                let value = self.encode_wasm_value(operator.apply(left, right, lane));
+                let value = self.encode_wasm_value((kernel.apply)(left, right, lane));
                 self.write(f, i.result_register(), value);
             }
             Op::WasmSimdShuffle => {

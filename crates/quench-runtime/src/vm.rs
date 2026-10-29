@@ -83,6 +83,9 @@ struct RuntimeAtoms {
     bound_target: Atom,
     bound_this: Atom,
     bound_args: Atom,
+    /// `String.prototype.charCodeAt`, whose intactness a host's string scan checks
+    /// (`Vm::embedding_string_char_code_at_intact`).
+    char_code_at: Atom,
 }
 pub(crate) mod activation;
 mod agent;
@@ -101,6 +104,7 @@ mod bigint;
 mod boolean;
 mod builtins;
 mod call_arguments;
+mod call_printer;
 mod coercion;
 mod collections;
 mod construction;
@@ -154,6 +158,7 @@ mod method_cache;
 mod plain_equality;
 mod module;
 mod number;
+mod object_template;
 mod object;
 mod shape_memo;
 mod symbol_write_proof;
@@ -661,6 +666,14 @@ struct FieldCache {
     holder: u32,
     slot: u16,
 }
+
+impl FieldCache {
+    /// The entry of an own data field at `slot` of receivers of exact shape `receiver`.
+    #[inline(always)]
+    const fn own(receiver: u32, slot: u16) -> Self {
+        Self { receiver, holder: NO_FIELD_HOLDER, slot }
+    }
+}
 /// The internal keys of a bound function's environment object.
 const BOUND_TARGET_KEY: &str = "\0quench:bound-target";
 const BOUND_THIS_KEY: &str = "\0quench:bound-this";
@@ -772,6 +785,31 @@ impl site_table::SiteEntry for FieldCache {
         }
     }
 }
+/// Layout facts for generated code that reads a field cache entry as `SiteEntry for
+/// FieldCache` stores it: three words, each complemented against `EMPTY_CACHE`.
+pub(super) struct NativeFieldCacheLayout {
+    pub(super) entry_size: usize,
+    pub(super) receiver_offset: usize,
+    pub(super) holder_offset: usize,
+    pub(super) slot_offset: usize,
+    pub(super) receiver_complement: u32,
+    pub(super) holder_complement: u32,
+    pub(super) slot_complement: u32,
+    /// The holder an own data field's entry names.
+    pub(super) own_holder: u32,
+}
+
+pub(super) const NATIVE_FIELD_CACHE_LAYOUT: NativeFieldCacheLayout = NativeFieldCacheLayout {
+    entry_size: std::mem::size_of::<<FieldCache as site_table::SiteEntry>::Stored>(),
+    receiver_offset: 0,
+    holder_offset: std::mem::size_of::<u32>(),
+    slot_offset: 2 * std::mem::size_of::<u32>(),
+    receiver_complement: EMPTY_CACHE.receiver,
+    holder_complement: EMPTY_CACHE.holder,
+    slot_complement: EMPTY_CACHE.slot as u32,
+    own_holder: NO_FIELD_HOLDER,
+};
+
 /// One cached property-add transition: an extensible ordinary object of `source_shape` whose
 /// prototype chain still has exactly `prototype_shapes[..prototype_depth]` gains `atom` at `slot`
 /// and moves to `target_shape`.
@@ -849,18 +887,40 @@ impl FieldAddCacheSet {
         }
         self.rest().iter().find(matches)
     }
+    /// `find`, preferring the entry whose chain proof holds for a receiver whose prototype
+    /// `link` names: receivers of one shape under different prototypes (subclasses whose
+    /// constructors share their parent's stores) each keep an entry of their chain.
     #[inline(always)]
-    fn find_mut(&mut self, source_shape: u32, atom: Atom) -> Option<&mut FieldAddCache> {
-        let len = usize::from(self.len);
-        let matches = |cache: &FieldAddCache| cache.source_shape == source_shape && cache.atom == atom;
-        if len > 0 && matches(&self.first) {
-            return Some(&mut self.first);
+    fn find_for(&self, source_shape: u32, atom: Atom, link: ProtoLink) -> Option<&FieldAddCache> {
+        let first = self.find(source_shape, atom)?;
+        if first.proof_holds(link) {
+            return Some(first);
         }
-        let rest = self.rest.as_deref_mut()?;
-        rest[..len.saturating_sub(1)].iter_mut().find(|cache| matches(cache))
+        let proved = |cache: &&FieldAddCache| {
+            cache.source_shape == source_shape && cache.atom == atom && cache.proof_holds(link)
+        };
+        Some(self.rest().iter().find(proved).unwrap_or(first))
     }
-    /// Replaces the entry for the same source shape and atom, else appends, evicting the oldest
-    /// entry when the set is full.
+    /// The indexes of the entries for receivers of `source_shape` adding `atom`, one per
+    /// prototype chain the site recorded.
+    fn matching(&self, source_shape: u32, atom: Atom) -> impl Iterator<Item = usize> + '_ {
+        self.entries()
+            .enumerate()
+            .filter(move |(_, cache)| cache.source_shape == source_shape && cache.atom == atom)
+            .map(|(index, _)| index)
+    }
+    fn entry(&self, index: usize) -> &FieldAddCache {
+        if index == 0 { &self.first } else { &self.rest()[index - 1] }
+    }
+    fn entry_mut(&mut self, index: usize) -> &mut FieldAddCache {
+        if index == 0 {
+            &mut self.first
+        } else {
+            &mut self.rest.as_deref_mut().expect("a later entry lives in the box")[index - 1]
+        }
+    }
+    /// Replaces the entry for the same source shape, atom and prototype chain shapes, else
+    /// appends, evicting the oldest entry when the set is full.
     fn insert(&mut self, cache: FieldAddCache) {
         let mut entries = [FieldAddCache::EMPTY; FIELD_ADD_CACHE_WAYS];
         let len = usize::from(self.len);
@@ -869,7 +929,11 @@ impl FieldAddCacheSet {
         }
         let kept = match entries[..len]
             .iter()
-            .position(|entry| entry.source_shape == cache.source_shape && entry.atom == cache.atom)
+            .position(|entry| {
+                entry.source_shape == cache.source_shape
+                    && entry.atom == cache.atom
+                    && entry.prototype_shapes() == cache.prototype_shapes()
+            })
         {
             Some(index) => {
                 entries.copy_within(index + 1..len, index);
@@ -1096,6 +1160,8 @@ const STRING_ATOM_CACHE_SIZE: usize = 256;
 const ATOM_STRING_CACHE_SIZE: usize = STRING_ATOM_CACHE_SIZE;
 /// An empty `Vm::recent_atom_strings` slot: no atom has this id.
 const NO_RECENT_ATOM: Atom = Atom::MAX;
+/// The code units below which a unit is ASCII.
+const ASCII_UNITS: usize = 0x80;
 #[derive(Clone, Copy)]
 struct StringConcatCache {
     left: Value,
@@ -1582,6 +1648,9 @@ pub(super) enum StepResult {
         /// For an async callee pushed in place: its rooted promise
         /// (`PendingGeneralCall::settles`).
         settles: Option<crate::heap::RootId>,
+        /// For a generator resumed in place: its rooted generator
+        /// (`PendingGeneralCall::generator`).
+        generator: Option<generator::GeneratorResume>,
     },
     Return(Value),
     Await {
@@ -1614,6 +1683,21 @@ pub(super) enum FrameOutcome {
         delegated_result: Option<Value>,
         frame: Option<Box<Frame>>,
     },
+}
+
+impl FrameOutcome {
+    /// The value a call's completed activation yields: a return, or a constructor's.
+    #[inline(always)]
+    fn into_value(self) -> Result<Value, JsError> {
+        match self {
+            Self::Complete(value) | Self::ConstructComplete { value, .. } => Ok(value),
+            Self::ParameterInitializationComplete => {
+                Err(JsError("parameter initialization escaped a generator activation".into()))
+            }
+            Self::Await { .. } => Err(JsError("await requires async continuation".into())),
+            Self::Yield { .. } => Err(JsError("yield requires generator continuation".into())),
+        }
+    }
 }
 #[cfg(feature = "profile-aggregate")]
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
@@ -1784,12 +1868,23 @@ pub(crate) struct Vm<H> {
     /// same (referrer, specifier) each time (ECMA-262 HostLoadImportedModule), as Node's
     /// module map does; a collection drops the sources held here.
     resolved_module_requests: rustc_hash::FxHashMap<(String, String), crate::host::ModuleSource>,
+    /// The name of the module each (referrer, specifier) resolved to, kept across collections
+    /// (`Vm::resolved_module_name`): binding a loaded module's imports needs only its record's
+    /// name, and resolving it again after a collection read its file anew. typescript.js
+    /// (9 MB) imported from an ES module was read and wrapped again at the run's peak.
+    resolved_module_names: rustc_hash::FxHashMap<(String, String), String>,
     /// Per host function, `Host::host_function_runs_beside_activations`, derived on first use.
     host_beside_activations: std::cell::OnceCell<Box<[bool]>>,
     /// The completion a frame's own call record returns, made by a lane activation
     /// (`dispatch_fast::lane_frame_return`), which the general loop returns from the frame
     /// at that instruction once the lane exits there.
     lane_returned: Option<Value>,
+    /// The native a lane call is running from its caller's frame (`dispatch_fast::lane_call_native`),
+    /// whose calls of JavaScript run frameless in that lane (`Vm::lane_native_callback`).
+    lane_native: Option<dispatch_fast::LaneNativeCall>,
+    /// The completion of a native's frameless callback (`Completion::ReturnsToNative`), which
+    /// its run hands to the native once the lane exits there.
+    lane_native_returned: Option<Value>,
     /// `program_cache_layouts[active_program]`, kept by `set_active_program`.
     active_layout: ProgramCacheLayout,
     /// The active program's materialized constants, kept by `set_active_program` and by
@@ -1822,7 +1917,11 @@ pub(crate) struct Vm<H> {
     /// Lane private-name sites' homes (`private_site_home`).
     private_site_homes: private_site_home::PrivateSiteHomes,
     array_iteration_proof: Option<iterators::ArrayIterationProof>,
+    array_species_proof: Option<array::ArraySpeciesProof>,
+    for_in_own_keys: Option<object_static::ForInOwnKeys>,
     species_slot_proof: std::cell::Cell<Option<object_get::SpeciesSlotProof>>,
+    /// The last proof that a promise's species constructor is `%Promise%` (`promise_species_proved`).
+    promise_species_proof: std::cell::Cell<Option<promise::PromiseSpeciesProof>>,
     index_free_chain_proof: std::cell::Cell<Option<object::IndexFreeChainProof>>,
     enumerable_keys: enumerable_key_memo::EnumerableKeyMemo,
     shape_attribute_memo: shape_memo::ShapeAttributeMemo,
@@ -1858,6 +1957,10 @@ pub(crate) struct Vm<H> {
     /// A program compiled at run time spells its property names with such atoms, and
     /// `Object.keys` of its objects had made each key's string again on every call.
     recent_atom_strings: Option<Box<[(Atom, Value); ATOM_STRING_CACHE_SIZE]>>,
+    /// The one-unit ASCII strings recently made (`charAt`, `String.fromCharCode`), by unit;
+    /// collection empties it, as `recent_atom_strings`. A loop building a string a unit at a
+    /// time (V8-v7 Crypto's hex conversion) had allocated each unit's string anew.
+    ascii_unit_strings: Option<Box<[Value; ASCII_UNITS]>>,
     call_targets: Box<[InLoopCallTarget; CALL_TARGET_CACHE_SIZE]>,
     field_caches: site_table::SiteTable<FieldCache>,
     /// Field load sites whose data property was found beyond the immediate prototype, by
@@ -1894,15 +1997,18 @@ pub(crate) struct Vm<H> {
     /// `prototype` (`construction::ClosureShapes`); derived from shapes, so field-cache
     /// invalidation clears it.
     closure_shapes: [Option<construction::ClosureShapes>; 2],
+    /// The shape a promise's resolving function's own `length` and `name` reach
+    /// (`Vm::native_with_realm`); derived from shapes, so field-cache invalidation clears it.
+    resolver_function_shape: Option<u32>,
     /// The parts of a recorded closure that depend on its function and realm alone
     /// (`construction::ClosureTemplate`); derived from shapes, so field-cache invalidation
     /// clears it.
     closure_templates: Box<[Option<construction::ClosureTemplate>; CLOSURE_TEMPLATES]>,
-    /// The shape of an iterator result `{ value, done }` (`Vm::iterator_result`); derived
-    /// from shapes, so field-cache invalidation clears it.
-    iterator_result_shape: Option<u32>,
+    /// The header of an iterator result `{ value, done }` (`Vm::iterator_result`) and the
+    /// prototype it was derived for; derived from shapes, so field-cache invalidation clears it.
+    iterator_result_header: Option<(Value, crate::heap::InlineObjectHeader)>,
     /// The one `{ value, done }` result a lane iterator step reuses (`Vm::reused_iterator_result`),
-    /// `undefined` until the first; cleared with `iterator_result_shape`.
+    /// `undefined` until the first; cleared with `iterator_result_header`.
     reused_iterator_result: Value,
     /// The shapes of a complete data and accessor property descriptor object
     /// (`Vm::property_descriptor_object`), indexed by `accessor`; derived from shapes, so
@@ -1937,6 +2043,8 @@ pub(crate) struct Vm<H> {
     runtime_atoms: RuntimeAtoms,
     /// `Vm::constructed_shape` answers; cleared by every collection.
     constructed_shapes: [provenance::ConstructedShape; provenance::CONSTRUCTED_SHAPE_ENTRIES],
+    /// The host's object templates (`object_template`), indexed by their ids.
+    object_templates: Vec<object_template::ObjectTemplate>,
     method_caches: Vec<[MethodCache; 2]>,
     megamorphic_methods: Vec<MethodCacheSet>,
     method_cache_atoms: method_cache::MethodCacheAtoms,
@@ -2808,7 +2916,10 @@ impl<H: Host> Vm<H> {
         self.symbol_load_proofs.clear();
         self.private_site_homes.clear();
         self.array_iteration_proof = None;
+        self.array_species_proof = None;
+        self.for_in_own_keys = None;
         self.species_slot_proof.set(None);
+        self.promise_species_proof.set(None);
         self.index_free_chain_proof.set(None);
         self.enumerable_keys.clear();
         self.shape_attribute_memo.clear();
@@ -2865,6 +2976,7 @@ impl<H: Host> Vm<H> {
             bound_target: self.intern_atom(BOUND_TARGET_KEY),
             bound_this: self.intern_atom(BOUND_THIS_KEY),
             bound_args: self.intern_atom(BOUND_ARGS_KEY),
+            char_code_at: self.intern_atom("charCodeAt"),
         };
         self.field_caches = site_table::SiteTable::with_empty(usize::from(program.cache_sites));
         self.refresh_active_field_entries();
@@ -2892,9 +3004,10 @@ impl<H: Host> Vm<H> {
         self.programs.reset(program.clone());
         self.instanceof_constructor_layouts = [None; INSTANCEOF_CONSTRUCTOR_LAYOUTS];
         self.closure_shapes = [None; 2];
+        self.resolver_function_shape = None;
         self.function_name_shapes.clear();
         self.closure_templates.fill(None);
-        self.iterator_result_shape = None;
+        self.iterator_result_header = None;
         self.reused_iterator_result = Value::UNDEFINED;
         self.descriptor_shapes = [None; 2];
         self.descriptor_layout = None;
@@ -3027,14 +3140,28 @@ impl<H: Host> Vm<H> {
     /// index reads. A program's layout is appended before the program can run.
     #[inline(always)]
     pub(super) fn set_active_program(&mut self, program: ProgramId) {
+        let constants = std::ptr::from_ref(self.programs.constants(program));
+        self.activate_program(program, constants);
+    }
+
+    /// `set_active_program` with `program`'s constants (`ProgramStore::constants`) in hand.
+    #[inline(always)]
+    pub(super) fn activate_program(&mut self, program: ProgramId, constants: *const [Value]) {
         self.active_program = program;
         self.active_layout = self.program_cache_layouts[program.raw() as usize];
-        self.active_constants = self.programs.constants(program);
+        self.active_constants = constants;
         self.refresh_active_field_entries();
     }
 
     /// Re-derive `active_field_entries` after the active program or the field cache table
     /// changed.
+    /// The field cache entries of `program`'s sites, for generated code that reads them
+    /// (`NATIVE_FIELD_CACHE_LAYOUT`); valid until the cache table grows or is replaced.
+    pub(super) fn program_field_entries(&self, program: ProgramId) -> Option<usize> {
+        let layout = self.program_cache_layouts.get(program.raw() as usize)?;
+        Some(self.field_caches.entries_from(layout.field_base) as usize)
+    }
+
     pub(super) fn refresh_active_field_entries(&mut self) {
         self.active_field_entries = self.field_caches.entries_from(self.active_layout.field_base);
     }
@@ -3167,7 +3294,13 @@ impl<H: Host> Vm<H> {
         target: Option<CallTarget>,
     ) -> Result<Value, JsError> {
         // Guest code observes the frame stack; a native that runs beside activations does not.
+        // A script callee of such a native runs as an activation above them where it can.
         if self.lane_deferred.is_some() && !self.callee_runs_beside_activations(callee) {
+            if matches!(self.heap.function(callee), Some(FunctionRecord { kind: FunctionKind::User(..), .. }))
+                && let Some(result) = self.lane_deferred_callback(callee, this, args)
+            {
+                return result;
+            }
             self.materialize_deferred_lane();
         }
         if matches!(self.heap.get(callee), Some(Cell::Proxy { .. })) {
@@ -3185,6 +3318,13 @@ impl<H: Host> Vm<H> {
                 self.call_native_guarded(p, native, this, args, callee)
             }
             CallTarget::User(program_id, id, env) => {
+                // A native a lane called runs its callee in that lane where the lane's own call
+                // of it would.
+                if self.lane_native.is_some()
+                    && let Some(result) = self.lane_native_callback(callee, this, args)
+                {
+                    return result;
+                }
                 let program = self.programs.get(program_id).ok_or_else(|| {
                     self.type_error(p, "function belongs to an unavailable program".into())
                 })?;

@@ -957,6 +957,7 @@ impl Engine {
                 dynamic_scope_access: Default::default(),
                 js_tier_candidate: Default::default(),
                 call_plan: Default::default(),
+                initializer: Default::default(),
                 handlers: lowering.handlers.into(),
                 register_roots: Default::default(),
                 undefined_register: None,
@@ -993,6 +994,8 @@ impl Engine {
             replay: None,
             encoded_records: None,
             validated: Default::default(),
+            undefined_constant: Default::default(),
+            load_encoding: Default::default(),
             closure_reads: None,
         };
         program

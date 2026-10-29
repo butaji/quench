@@ -248,9 +248,10 @@ unsafe extern "C" fn provider_name(name: *const c_char, data: *mut c_void) {
 unsafe extern "C" fn provider_names(md: *mut EVP_MD, data: *mut c_void) {
     unsafe { EVP_MD_names_do_all(md, Some(provider_name), data) };
 }
-/// Node26's legacy-alias plus provider-name policy, derived from native metadata.
+/// Node26's legacy-alias plus provider-name policy, derived from native metadata: each name
+/// a digest fetch accepts, in order, with the digest it fetched.
 /// No global cache: provider/FIPS selection changes cannot leave stale names.
-pub fn supported_names() -> Vec<String> {
+pub fn supported_digests() -> Vec<(String, Digest)> {
     openssl::init();
     let mut names = Vec::<String>::new();
     let data = &mut names as *mut _ as *mut c_void;
@@ -260,6 +261,6 @@ pub fn supported_names() -> Vec<String> {
     }
     names
         .into_iter()
-        .filter(|name| Digest::fetch_preserving_errors(name).is_some())
+        .filter_map(|name| Digest::fetch_preserving_errors(&name).map(|digest| (name, digest)))
         .collect()
 }

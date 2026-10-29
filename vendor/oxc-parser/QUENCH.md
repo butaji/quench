@@ -8,6 +8,10 @@ upstream revision `7f56ec9301e7327b4402c3010c87803b58b6ea30`, path
 The local patch connects recursive parsing to Quench's shared `quench-stack`
 budget, preserves exhaustion as structured parser state, supports the
 runtime's Annex B call-assignment-target lowering option, and preserves sloppy
-`let:` label parsing. OXC remains the sole JavaScript and TypeScript parser.
+`let:` label parsing, and adds `ParseOptions::lazy_function_bodies`: the parser can
+release the arena a plain function body used and keep the body as its directives,
+listing it in `ParserReturn::lazy_function_bodies` (TOD-929). Comments are kept in a
+heap vector so they outlive such a body; the arena rewind uses `oxc_allocator`'s
+`from_raw_parts` feature. OXC remains the sole JavaScript and TypeScript parser.
 `QUENCH.patch` records these changes against the published 0.153.0 crate
 source.

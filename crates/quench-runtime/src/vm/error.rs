@@ -285,6 +285,11 @@ impl JsError {
         )))
     }
 
+    /// Whether this is a JavaScript error whose message is `text`.
+    pub(super) fn has_message(&self, text: &str) -> bool {
+        matches!(&self.0.payload.description, ErrorDescription::Text { message, .. } if message == text)
+    }
+
     pub(super) fn into_message(self) -> String {
         match self.0.payload.description {
             ErrorDescription::Text { message, .. } | ErrorDescription::WasmLink(message) => message,
@@ -1522,21 +1527,21 @@ impl<H: Host> Vm<H> {
         program: &ResidualProgram,
         value: Option<Value>,
     ) -> Result<Value, JsError> {
-        let Some(value) = value else {
-            return Err(self.type_error(program, "cannot convert value to BigInt".into()));
+        let primitive = match value {
+            Some(value) => self.to_primitive(program, value, "number")?,
+            None => Value::UNDEFINED,
         };
-        let primitive = self.to_primitive(program, value, "number")?;
         if matches!(self.heap.get(primitive), Some(Cell::BigInt(_))) {
             return Ok(primitive);
         }
-        if matches!(self.heap.get(primitive), Some(Cell::Symbol(_))) {
-            return Err(self.type_error(program, "cannot convert Symbol to BigInt".into()));
-        }
         if let Some(number) = primitive.as_number() {
             let Some(integer) = crate::bigint::number_as_bigint(number) else {
+                let detail = self.detail_string(primitive);
                 return Err(self.range_error(
                     program,
-                    "cannot convert non-integral Number to BigInt".into(),
+                    format!(
+                        "The number {detail} cannot be converted to a BigInt because it is not an integer"
+                    ),
                 ));
             };
             return Ok(self.heap.alloc(Cell::bigint(integer)));
@@ -1548,10 +1553,13 @@ impl<H: Host> Vm<H> {
             let parsed = crate::bigint::parse_string(text.host_string());
             return match parsed {
                 Some(value) => Ok(self.heap.alloc(Cell::bigint(value))),
-                None => self.syntax_error_result(program, "invalid BigInt value"),
+                None => {
+                    let message = self.bigint_conversion_message(primitive);
+                    self.syntax_error_result(program, &message)
+                }
             };
         }
-        Err(self.type_error(program, "cannot convert value to BigInt".into()))
+        Err(self.type_error(program, self.bigint_conversion_message(primitive)))
     }
 
     pub(super) fn create_realm(&mut self, program: &ResidualProgram) -> Result<Value, JsError> {

@@ -104,7 +104,12 @@ impl<H: Host> Vm<H> {
             return Ok(Value::UNDEFINED);
         }
         let residual =
-            match crate::Engine::specialize_script_with_atom_prefix(source, source_name, &*self) {
+            match crate::Engine::specialize_script_with_atom_prefix(
+                source,
+                source_name,
+                &*self,
+                crate::compile::ReleasedRecords::Dropped,
+            ) {
                 Ok(residual) => residual,
                 Err(diagnostics) => {
                     if diagnostics
@@ -407,7 +412,25 @@ impl<H: Host> Vm<H> {
         if self.specialized { "specialized" } else { "unspecialized" }
     }
 
+    /// What a compilation keeps of the records its load releases: their compile-cache
+    /// encoding when its program is `cached` and the host keeps compiled programs, which
+    /// `encode_cached_program` then copies.
+    pub(super) fn released_records(&self, cached: bool) -> crate::compile::ReleasedRecords {
+        if cached && self.host.keeps_compiled_programs() {
+            crate::compile::ReleasedRecords::Encoded
+        } else {
+            crate::compile::ReleasedRecords::Dropped
+        }
+    }
+
     pub(super) fn encode_cached_program(&self, program: &crate::ResidualProgram) -> Option<Vec<u8>> {
+        // The compilation is over either way (`CompilePhase::Encoding`); a host that keeps no
+        // programs is offered none, so nothing is encoded (async-fs, cold: 43 encodings,
+        // 2.4% of its instructions).
+        crate::compile::compile_phase_boundary(crate::compile::CompilePhase::Encoding);
+        if !self.host.keeps_compiled_programs() {
+            return None;
+        }
         let (bytes, atoms) = program.encode_compact();
         atoms
             .iter()
@@ -426,11 +449,17 @@ impl<H: Host> Vm<H> {
         &mut self, bytes: crate::KeptBytes, text: crate::bytecode::SourceText, base: usize, name: &str,
         specialized: bool,
     ) -> Result<crate::ResidualProgram, String> {
+        let read = bytes.clone();
         let mut program = crate::ResidualProgram::decode_compact(
             bytes,
             &mut |name| self.intern_atom(name),
             text,
         )?;
+        // The decode read the body to check and decode it; the program reads the bytes again
+        // only for a function's record on its first call. A run that loads many modules
+        // before its first release had kept every decoded body resident (undici npm scenario:
+        // 4.2 MB of compile-cache pages at its 30 MB peak).
+        H::kept_bytes_read((*read).as_ref());
         let source_matches = program.source.as_ref().is_some_and(|source| source.base as usize == base);
         if program.source_name != name || !source_matches || program.specialized != specialized {
             return Err("cached program does not match its body".into());
@@ -487,11 +516,13 @@ impl<H: Host> Vm<H> {
         {
             return Ok(kept);
         }
-        // A program keeping only static text cannot compile its functions again from it.
+        // A program keeping only static text cannot compile its functions again from it. One
+        // the host's compile cache keeps encodes each record its load releases.
         let compiled = if keep_records {
             crate::Engine::specialize_kept_script_with_atom_prefix(source, name, &*self)
         } else {
-            crate::Engine::specialize_script_with_atom_prefix(source, name, &*self)
+            let released = self.released_records(cache_key.is_some());
+            crate::Engine::specialize_script_with_atom_prefix(source, name, &*self, released)
         };
         let mut residual = compiled
             .map_err(|diagnostics| {

@@ -141,7 +141,12 @@ impl FunctionCompiler<'_, '_> {
                 .reject(first.span, "invalid template escape sequence");
             return self.literal(Constant::Undefined);
         };
-        let mut result = self.literal(super::string::template_constant(&first.value));
+        // Every substitution becomes a string (ToString) before it is concatenated, so an empty
+        // text part adds nothing: `"" + s` is `s`. The result starts at the first non-empty
+        // part, and empty parts are not concatenated.
+        let empty = |value: &oxc_ast::ast::TemplateElementValue<'_>| value.cooked.as_ref().is_some_and(|text| text.is_empty());
+        let mut result = (!empty(&first.value) || template.expressions.is_empty())
+            .then(|| self.literal(super::string::template_constant(&first.value)));
         for (index, expression) in template.expressions.iter().enumerate() {
             let expression_value = self.expression(expression);
             let expression_string = self.reg();
@@ -152,11 +157,15 @@ impl FunctionCompiler<'_, '_> {
                 0,
                 crate::bytecode::UNARY_TO_STRING,
             );
-            result = self.emit_binary(
-                BinaryOperator::Addition as u32,
-                Operand::register(result),
-                Operand::register(expression_string),
-            );
+            let joined = match result {
+                Some(result) => self.emit_binary(
+                    BinaryOperator::Addition as u32,
+                    Operand::register(result),
+                    Operand::register(expression_string),
+                ),
+                None => expression_string,
+            };
+            result = Some(joined);
             let Some(quasi) = template.quasis.get(index + 1) else {
                 break;
             };
@@ -165,13 +174,16 @@ impl FunctionCompiler<'_, '_> {
                     .reject(quasi.span, "invalid template escape sequence");
                 return self.literal(Constant::Undefined);
             };
+            if empty(&quasi.value) {
+                continue;
+            }
             let tail = self.literal(super::string::template_constant(&quasi.value));
-            result = self.emit_binary(
+            result = Some(self.emit_binary(
                 BinaryOperator::Addition as u32,
-                Operand::register(result),
+                Operand::register(joined),
                 Operand::register(tail),
-            );
+            ));
         }
-        result
+        result.expect("a template with a substitution has a result")
     }
 }

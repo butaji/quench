@@ -51,16 +51,32 @@ impl<H: Host> Vm<H> {
 
     /// Append an own data element to an unexposed dense array. No guest code runs.
     pub(super) fn append_fresh_array_element(&mut self, array: Value, value: Value) -> usize {
-        let Some(elements) = self.heap.array_elements_mut(array) else {
+        let Some(length) = self.heap.grow_array_elements(array, |elements| {
+            elements.push(value);
+            elements.len()
+        }) else {
             unreachable!("fresh array owner remains an array");
         };
-        let elements = super::index::mutable_array_elements(elements);
+        length
+    }
+
+    /// Store element `index` of a dense array no guest code reaches, at most one past its
+    /// end: its own data property, every element a default one. The store passes the write
+    /// barrier, since the array may have been promoted while guest code ran.
+    pub(super) fn store_fresh_array_element(&mut self, array: Value, index: usize, value: Value) {
+        let Some(object) = self.heap.array_store_mut(array, value) else {
+            unreachable!("fresh array owner remains an array");
+        };
+        let elements = super::index::mutable_array_elements(object.elements_mut());
+        if index < elements.len() {
+            elements[index] = value;
+            return;
+        }
+        debug_assert_eq!(index, elements.len(), "a fresh array grows by one element at a time");
         let capacity = elements.capacity();
         elements.push(value);
-        let length = elements.len();
         let grown = elements.capacity() - capacity;
         self.heap.charge_payload_growth(grown * size_of::<Value>());
-        length
     }
 
     pub(super) fn new_array_with_prototype(

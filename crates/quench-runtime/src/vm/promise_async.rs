@@ -16,6 +16,20 @@ impl<H: Host> Vm<H> {
     /// Clears the registers of a suspending frame that are dead where it resumes, the ones a
     /// collection of it on the frame stack skips (its root mask at `frame.pc`): its
     /// continuation then keeps alive only what the resumed code can read.
+    /// `Continuation::suspend` of `frame` at an await or yield, with the registers liveness
+    /// finds dead there cleared first (`release_dead_registers`): a suspended activation is
+    /// traced whole, so a dead temporary otherwise stayed reachable until it resumed.
+    pub(super) fn suspend_activation(
+        &self,
+        mut frame: Box<super::Frame>,
+        completion: Completion,
+        resume_register: Option<u16>,
+        promise: Value,
+    ) -> Continuation {
+        self.release_dead_registers(&mut frame);
+        Continuation::suspend(frame, completion, resume_register, promise)
+    }
+
     fn release_dead_registers(&self, frame: &mut super::Frame) {
         let Some(mask) = self
             .programs
@@ -76,10 +90,9 @@ impl<H: Host> Vm<H> {
                 super::FrameOutcome::Await {
                     value,
                     destination,
-                    frame: Some(mut frame),
+                    frame: Some(frame),
                 } => {
-                    vm.release_dead_registers(&mut frame);
-                    let continuation = Continuation::suspend(
+                    let continuation = vm.suspend_activation(
                         frame,
                         Completion::Await(value),
                         Some(destination),
@@ -154,7 +167,7 @@ impl<H: Host> Vm<H> {
         let pushed = self.push_in_loop_call(p, f, pc, target, callee, this, unsafe { &*arguments }, destination);
         Some(match pushed {
             Some(Ok(StepResult::PushFrame { destination, call_guard, construct_this, .. })) => {
-                Ok(StepResult::PushFrame { destination, call_guard, construct_this, settles: Some(root) })
+                Ok(StepResult::PushFrame { destination, call_guard, construct_this, settles: Some(root), generator: None })
             }
             Some(Err(error)) => {
                 let promise = self.release_settled_call_root(root);
@@ -367,7 +380,10 @@ impl<H: Host> Vm<H> {
         let initial_error = resume
             .rejected
             .then(|| JsError::thrown(value, "await rejected".into()));
-        let result = self.run_frame_general_with_error(p, self.frames.len() - 1, initial_error);
+        let result = match initial_error {
+            Some(error) => self.run_frame_general_with_error(p, self.frames.len() - 1, Some(error)),
+            None => self.run_resumed_frame(p, self.frames.len() - 1),
+        };
         let mut frame = self.frames.pop().expect("resumed frame exists");
         self.deactivate_frame(&mut frame, &result);
         let result = match result {
@@ -400,8 +416,7 @@ impl<H: Host> Vm<H> {
                 destination,
                 frame: None,
             } => {
-                self.release_dead_registers(&mut frame);
-                let continuation = Continuation::suspend(
+                let continuation = self.suspend_activation(
                     frame,
                     Completion::Await(value),
                     Some(destination),

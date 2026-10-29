@@ -25,8 +25,12 @@ pub(crate) trait ClosureReadSource {
     fn closure_reads(&self, program: u32) -> Option<&ClosureReads>;
     /// The atom of the lexical `this` binding (`LEXICAL_THIS_BINDING`).
     fn lexical_this(&self) -> Atom;
-    /// Whether an environment of `function` may hold root projection slots: a program root.
-    fn may_hold_projections(&self, function: u32) -> bool;
+    /// The function whose environments may hold root projection slots: a program's root.
+    fn projection_function(&self) -> u32;
+    /// Whether an environment of `function` may hold root projection slots.
+    fn may_hold_projections(&self, function: u32) -> bool {
+        function == self.projection_function()
+    }
     /// Whether `slot` of an environment of `function` in `program` is a root projection of a
     /// global var or module import, which every read goes through
     /// (`RootSlotRule::Projection`), rather than a binding.
@@ -156,10 +160,24 @@ impl PartialEnvironment {
     }
 }
 
+/// What a full collection's environment trace refines.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum EnvironmentReads {
+    /// Closure edges through their closures' reads, and program roots' projection slots.
+    Closures,
+    /// Program roots' projection slots alone: a closure's environment edge is an ordinary
+    /// edge. A projection slot holds a copy of a global var a store left there, which no
+    /// reader reads, so every full collection reads it for its initialization alone and
+    /// clears its value; otherwise a dropped global's last value stayed reachable until the
+    /// next full collection that refines closures.
+    Projections,
+}
+
 /// One full collection's environment trace (see the module documentation). Without a
 /// source, as in a minor collection, every environment is traced whole as any other cell.
 pub(crate) struct EnvironmentTrace<'s> {
     source: Option<&'s dyn ClosureReadSource>,
+    reads: EnvironmentReads,
     /// What the edges traced so far read of each environment they reached, in the order
     /// they reached them.
     partial: Vec<PartialEnvironment>,
@@ -179,10 +197,11 @@ pub(crate) struct EnvironmentTrace<'s> {
 
 
 impl<'s> EnvironmentTrace<'s> {
-    /// A trace through `source`.
-    pub(crate) fn new(source: Option<&'s dyn ClosureReadSource>) -> Self {
+    /// A trace through `source` of what `reads` names.
+    pub(crate) fn new(source: Option<&'s dyn ClosureReadSource>, reads: EnvironmentReads) -> Self {
         Self {
             source,
+            reads,
             partial: Vec::new(),
             entries: rustc_hash::FxHashMap::default(),
             pending: Vec::new(),
@@ -204,10 +223,27 @@ impl<'s> EnvironmentTrace<'s> {
         position
     }
 
+    /// Whether this trace follows closure edges and the environments they reach through
+    /// their reads (`closure`, `whole`). Without a source, a closure's environment edge is an
+    /// ordinary edge, and an environment is marked and traced whole as any other cell.
+    pub(super) fn reads_closures(&self) -> bool {
+        self.source.is_some() && self.reads == EnvironmentReads::Closures
+    }
+
+    /// The function whose environments this trace takes whole edges into while closures are
+    /// ordinary edges (`EnvironmentReads::Projections`), for marking that runs apart from it.
+    pub(super) fn projection_function(&self) -> Option<u32> {
+        self.source
+            .filter(|_| self.reads == EnvironmentReads::Projections)
+            .map(|source| source.projection_function())
+    }
+
     /// A function's edge to its closure environment `environment`.
     pub(super) fn closure(&mut self, environment: Value, kind: &FunctionKind, work: &mut Vec<Value>) {
         match (self.source, kind) {
-            (Some(_), FunctionKind::User(program, function)) if environment.legacy_heap_index().is_some() => {
+            (Some(_), FunctionKind::User(program, function))
+                if self.reads == EnvironmentReads::Closures && environment.legacy_heap_index().is_some() =>
+            {
                 self.pending.push(EnvironmentEdge::Closure {
                     environment,
                     program: program.raw(),
@@ -415,13 +451,32 @@ impl Heap {
                     return;
                 }
                 let source = trace.source.expect("edges are traced only with a source");
-                for slot in (0..slots.len()).filter_map(|slot| u16::try_from(slot).ok()) {
+                let mut read = |slot: u16| {
                     // A projection's reads go through it, and its stores check only that it
                     // is initialized.
                     if program.is_some_and(|program| source.slot_is_projection(program, function, slot)) {
                         read_initialization(slots, partial, slot, pending);
                     } else {
                         read_slot(slots, partial, slot, work, pending);
+                    }
+                };
+                match slots.default_owner() {
+                    // A per-iteration copy: its unlisted slots are its default owner's, the
+                    // environment it was copied from, so code running in it reads that owner
+                    // whole. One edge there, rather than one per unlisted slot, reads every
+                    // copy of one owner in the owner's slots, at most adding the slots the
+                    // copies list (playwright, npm lane 2026-10-27: 198K binary searches and
+                    // as many slot edges, 6% of the run).
+                    Some(owner) => {
+                        for slot in slots.sparse_indexes().filter_map(|slot| u16::try_from(slot).ok()) {
+                            read(slot);
+                        }
+                        pending.push(EnvironmentEdge::Whole { environment: owner });
+                    }
+                    None => {
+                        for slot in (0..slots.len()).filter_map(|slot| u16::try_from(slot).ok()) {
+                            read(slot);
+                        }
                     }
                 }
                 if has_parent {

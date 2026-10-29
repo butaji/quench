@@ -4,6 +4,10 @@ use super::property_key::PropertyKey;
 use super::*;
 use crate::heap::IteratorZipMode;
 
+/// Registered iterators of one Map or Set before registration first prunes the finished and
+/// collected ones (`Vm::collection_iterator`); below it the registry stays as appended.
+const ITERATOR_REGISTRY_PRUNE_START: usize = 8;
+
 #[derive(Clone, Copy)]
 enum IteratorPrimitiveHandling {
     IterateStrings,
@@ -38,6 +42,15 @@ pub(super) struct ArrayIterationProof {
 /// The slots of an iterator result's shape (`Vm::iterator_result`): `value`, then `done`.
 const ITERATOR_RESULT_VALUE_SLOT: usize = 0;
 const ITERATOR_RESULT_DONE_SLOT: usize = 1;
+
+/// What an iteration step's call is (`Vm::iteration_step`): one the lane makes in place, of
+/// an array iterator or a generator, or any other call.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum IterationStep {
+    Array,
+    Generator,
+    Call,
+}
 
 impl<H: Host> Vm<H> {
     /// ArrayAccumulation of a spread element: every value `source` iterates is appended to the
@@ -1015,10 +1028,16 @@ impl<H: Host> Vm<H> {
                 generator: None,
             },
         });
-        match self.heap.get_mut(source) {
+        let registered = match self.heap.get_mut(source) {
             Some(Cell::Map { entries, .. }) => entries.register_iterator(iterator),
             Some(Cell::Set { entries, .. }) => entries.register_iterator(iterator),
-            _ => {}
+            _ => 0,
+        };
+        // Finished and collected iterators stay registered until the collection compacts or
+        // clears; pruning at each doubling bounds the registry by twice its running iterators
+        // at an amortized constant cost per registration.
+        if registered >= ITERATOR_REGISTRY_PRUNE_START && registered.is_power_of_two() {
+            self.heap.move_collection_iterators(source, |slot| slot);
         }
         Ok(iterator)
     }
@@ -3411,11 +3430,57 @@ impl<H: Host> Vm<H> {
     /// Whether `method` is this realm's %ArrayIteratorPrototype%.next and `iterator` one of
     /// its array iterators, so a step may run without the call and its result object.
     pub(super) fn steps_as_array_iterator(&self, iterator: Value, method: Value) -> bool {
-        self.is_current_realm_native(method, Native::ArrayIteratorNext)
-            && matches!(
-            self.heap.iterator(iterator),
-            Some(IteratorRecord { kind, .. }) if kind.is_array_iterator()
-        )
+        self.iteration_step(iterator, method) == IterationStep::Array
+    }
+
+    /// What a step calling `method` of `iterator` is, from one read of the iterator's record:
+    /// this realm's `%ArrayIteratorPrototype%.next` of an array iterator
+    /// (`steps_as_array_iterator`), this realm's `Generator.prototype.next` of a generator
+    /// that is not running (`steps_as_generator`), or another call.
+    #[inline(always)]
+    pub(super) fn iteration_step(&self, iterator: Value, method: Value) -> IterationStep {
+        match self.heap.iterator(iterator) {
+            Some(IteratorRecord { kind, .. })
+                if kind.is_array_iterator() && self.is_current_realm_native(method, Native::ArrayIteratorNext) =>
+            {
+                IterationStep::Array
+            }
+            Some(IteratorRecord { kind: IteratorKind::Generator, ext, .. })
+                if ext.generator.as_ref().is_some_and(|record| !record.running)
+                    && self.is_current_realm_native(method, Native::GeneratorNext) =>
+            {
+                IterationStep::Generator
+            }
+            _ => IterationStep::Call,
+        }
+    }
+
+    /// Whether a for-of step calling `method` of `iterator` (`lane_iteration_step`) is this
+    /// realm's `Generator.prototype.next` of a generator that is not running, which the step
+    /// resumes in place (`generator_iteration_step`).
+    pub(super) fn steps_as_generator(&self, iterator: Value, method: Value) -> bool {
+        self.iteration_step(iterator, method) == IterationStep::Generator
+    }
+
+    /// The step `steps_as_generator` admits: `next()` of `generator` called as the general
+    /// path calls the native `method` (`call_native_guarded`, `call_native`), with a result
+    /// only the step's `done` and `value` reads observe (`reused_iterator_result`), or the
+    /// delegate's own result a `yield*` passes on.
+    pub(super) fn generator_iteration_step(
+        &mut self,
+        p: &ResidualProgram,
+        method: Value,
+        generator: Value,
+    ) -> Result<Value, JsError> {
+        self.as_native_activation(Native::GeneratorNext, method, |vm| {
+            vm.check_execution_interrupt()?;
+            let step = vm.with_call_roots([generator], |vm| vm.resume_generator_step(p, generator, &[], None))?;
+            Ok(match step {
+                super::generator::GeneratorStep::Yielded(value) => vm.reused_iterator_result(value, false),
+                super::generator::GeneratorStep::Done(value) => vm.reused_iterator_result(value, true),
+                super::generator::GeneratorStep::Delegated(result) => result,
+            })
+        })
     }
 
     fn array_iterator_item(
@@ -3527,28 +3592,39 @@ impl<H: Host> Vm<H> {
             self.reused_iterator_result = result;
             return result;
         }
-        self.heap.property_set(result, ITERATOR_RESULT_VALUE_SLOT, value);
-        self.heap
-            .property_set(result, ITERATOR_RESULT_DONE_SLOT, if done { Value::TRUE } else { Value::FALSE });
+        let done = if done { Value::TRUE } else { Value::FALSE };
+        let mut slots = [Value::UNDEFINED; crate::value_vec::INLINE_PROPERTY_COUNT];
+        slots[ITERATOR_RESULT_VALUE_SLOT] = value;
+        slots[ITERATOR_RESULT_DONE_SLOT] = done;
+        self.heap.set_leading_properties(result, slots);
         result
     }
 
     pub(super) fn iterator_result(&mut self, value: Value, done: bool) -> Result<Value, JsError> {
-        let shape = match self.iterator_result_shape {
-            Some(shape) => shape,
-            None => {
-                // `ITERATOR_RESULT_VALUE_SLOT` and `ITERATOR_RESULT_DONE_SLOT` name these slots.
-                let atoms = [self.runtime_atoms.value, self.runtime_atoms.done];
-                let shape = self.literal_shape(&atoms);
-                self.iterator_result_shape = Some(shape);
-                shape
+        let prototype = self.realm_object_prototype(self.realm.globals);
+        // Its two slots are the inline ones, so the header of the realm's prototype and the
+        // shape, derived once, makes every result (`Heap::alloc_object_from_header`).
+        const _: () = assert!(crate::value_vec::INLINE_PROPERTY_COUNT == 2);
+        let header = match self.iterator_result_header {
+            Some((derived_for, header)) if derived_for == prototype => header,
+            cached => {
+                let shape = match cached {
+                    Some((_, header)) => header.shape(),
+                    None => {
+                        // `ITERATOR_RESULT_VALUE_SLOT` and `ITERATOR_RESULT_DONE_SLOT` name these slots.
+                        let atoms = [self.runtime_atoms.value, self.runtime_atoms.done];
+                        self.literal_shape(&atoms)
+                    }
+                };
+                let header = crate::heap::InlineObjectHeader::of(prototype, shape);
+                self.iterator_result_header = Some((prototype, header));
+                header
             }
         };
-        let prototype = self.realm_object_prototype(self.realm.globals);
-        Ok(self.heap.alloc_object_with_properties(
+        Ok(self.heap.alloc_object_from_header(
+            header,
             prototype,
-            shape,
-            &[value, if done { Value::TRUE } else { Value::FALSE }],
+            [value, if done { Value::TRUE } else { Value::FALSE }],
         ))
     }
 }

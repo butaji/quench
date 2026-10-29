@@ -87,6 +87,13 @@ impl<H: Host> Runtime<H> {
         self.vm.set_execution_mode(mode);
     }
 
+    /// Compile each Wasm module whole at its first call under [`crate::ExecutionMode::Compiled`],
+    /// instead of starting it in the interpreter and compiling it once it runs long: a
+    /// conformance run uses it to exercise every module's compiled code.
+    pub fn compile_wasm_eagerly(&mut self) {
+        self.vm.compile_wasm_eagerly();
+    }
+
     /// Choose how this runtime trades memory for speed; see [`crate::MemoryPolicy`]. Set it
     /// at startup, before the program runs; a runtime that sets none uses the default.
     pub fn set_memory_policy(&mut self, policy: crate::MemoryPolicy) {
@@ -9764,7 +9771,7 @@ print(Object.getPrototypeOf(new A(2).transferToFixedLength(3)) === P);
         let mut runtime = Runtime::new(host);
         runtime
             .compile_and_execute(ExecutionRequest::script(
-                "var registry = new FinalizationRegistry(function(held) { print(held); }); var target = {}; registry.register(target, 7); target = undefined; for (var i = 0; i < 300000; i = i + 1) { var temporary = {}; } print(\"done\");",
+                "var registry = new FinalizationRegistry(function(held) { print(held); }); var target = {}; registry.register(target, 7); target = undefined; for (var i = 0; i < 1200000; i = i + 1) { var temporary = {}; } print(\"done\");",
                 "finalization-drain.js",
             ))
             .unwrap();
