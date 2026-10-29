@@ -18361,3 +18361,37 @@ fn object_templates_copy_constructions_until_a_read_of_them_changes() {
     call(&mut vm, "addKey", &[]);
     assert!(vm.instantiate_object_template(id).is_none());
 }
+
+#[test]
+fn array_create_results_follow_species_changes_after_the_proof() {
+    let source = r#"
+function check(actual, expected, label) { if (JSON.stringify(actual) !== JSON.stringify(expected)) throw Error(label + ': ' + JSON.stringify(actual)); }
+for (let round = 0; round < 3; round++) {
+  check([1, , 3].map((x) => x * 2), [2, null, 6], 'holes stay holes');
+  check(Object.keys([1, , 3].map((x) => x)), ['0', '2'], 'hole keys');
+  check([1, 2, 3, 4].filter((x) => x % 2), [1, 3], 'filter');
+}
+const own = [1, 2]; own.constructor = { [Symbol.species]: function Own(n) { this.own = n; } };
+check(own.map((x) => x), { 0: 1, 1: 2, own: 2 }, 'own constructor');
+const saved = Array.prototype.constructor;
+Array.prototype.constructor = { [Symbol.species]: function Proto(n) { this.proto = n; } };
+check([5].map((x) => x), { 0: 5, proto: 1 }, 'prototype constructor replaced in place');
+check([5].filter(() => true), { 0: 5, proto: 0 }, 'filter species');
+Array.prototype.constructor = saved;
+check([5].map((x) => x), [5], 'restored');
+const species = Object.getOwnPropertyDescriptor(Array, Symbol.species);
+Object.defineProperty(Array, Symbol.species, { get() { return function Got(n) { this.got = n; }; }, configurable: true });
+check([5].map((x) => x), { 0: 5, got: 1 }, 'species getter replaced');
+Object.defineProperty(Array, Symbol.species, species);
+const shrinking = [1, 2, 3, 4];
+check(shrinking.map((x, i) => { if (i === 0) shrinking.length = 2; return x; }), [1, 2, null, null], 'receiver shrinks');
+const kept = [];
+for (let i = 0; i < 2000; i++) kept.push({ i });
+const mapped = kept.map((o) => ({ o, pad: new Array(8).fill(o.i) }));
+if (mapped[1999].o.i !== 1999 || mapped.length !== 2000) throw Error('values stored across collections');
+"#;
+    for compile in [Engine::specialize, Engine::specialize_unspecialized] {
+        let program = compile(source, "array-create-species.js").unwrap();
+        Vm::new(TestHost::default()).execute(&program).unwrap();
+    }
+}
