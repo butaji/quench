@@ -102,6 +102,9 @@ pub(super) struct GenerationalPacing {
     /// what it ages (`AGED_DEATH_TO_KEEP_AGING`): with it on, little that minors promote dies
     /// old, so the promoted-garbage share would turn it off exactly where it works.
     pub(super) aging_interval: u32,
+    /// Whether minors age from the first collection, before any full collection has measured
+    /// promotions dying old: the first aged-death measurement then keeps or ends it.
+    pub(super) ages_from_start: bool,
 }
 
 /// How many minor collections a young cell or record survives before it is promoted (old,
@@ -175,6 +178,8 @@ const THROUGHPUT_PROMOTION_AGE: PromotionAge = PromotionAge::First;
 const THROUGHPUT_PROMOTED_GARBAGE_AGING: Ratio = Ratio::new(1, 2);
 /// Full collections after aging was turned off before it may turn on again.
 const THROUGHPUT_AGING_INTERVAL: u32 = 4;
+/// Throughput ages from its first collection (`GenerationalPacing::ages_from_start`).
+const THROUGHPUT_AGES_FROM_START: bool = true;
 /// Memory-first measures no aging: `MEMORY_FIRST_PROMOTION_AGE` always.
 const NO_AGING: Ratio = Ratio::new(0, 1);
 
@@ -217,6 +222,9 @@ pub(super) struct PacingState {
     /// collection freed, while aging is on (`AGED_DEATH_TO_KEEP_AGING`); none until the first
     /// minor collection after aging turned on measures it.
     aged_death: Option<u32>,
+    /// Whether a collection has been planned: before the first, minors age as the table's
+    /// `ages_from_start` says.
+    started: bool,
     /// Consecutive full collections that found promotions dying old, which turn aging on at
     /// `FULLS_FINDING_PROMOTED_GARBAGE_TO_AGE`.
     promoted_garbage_fulls: u32,
@@ -229,7 +237,11 @@ impl PacingState {
     /// The minor collections a survivor needs to become old now: the table's, or the oldest
     /// while promotions were found dying old (`GenerationalPacing::promoted_garbage_aging`).
     pub(super) fn promotion_age(&self, pacing: &GenerationalPacing) -> PromotionAge {
-        if self.aging { PromotionAge::OLDEST } else { pacing.promotion_age }
+        if self.aging || (!self.started && pacing.ages_from_start) {
+            PromotionAge::OLDEST
+        } else {
+            pacing.promotion_age
+        }
     }
 
     pub(super) fn regime(&self, pacing: &GenerationalPacing) -> Regime {
@@ -297,6 +309,12 @@ pub(super) struct NextCollection {
 impl GenerationalPacing {
     /// The state transition after each collection, and the plan for the next one.
     pub(super) fn plan(&self, state: &mut PacingState, outcome: CollectionOutcome) -> NextCollection {
+        if !state.started {
+            state.started = true;
+            // The first collection aged its survivors (`PacingState::promotion_age`): its
+            // next minor measures their fates.
+            state.aging = self.ages_from_start;
+        }
         if outcome.full {
             // What a minor collection would have kept: the previous live weight and this
             // cycle's expected survivors. A full collection pays when it reclaims old garbage
@@ -461,6 +479,7 @@ impl GenerationalPacing {
             .unwrap_or(self.promotion_age),
             promoted_garbage_aging: ratio("QUENCH_GC_PROMOTED_GARBAGE_AGING", self.promoted_garbage_aging),
             aging_interval: read("QUENCH_GC_AGING_INTERVAL", self.aging_interval as usize) as u32,
+            ages_from_start: read("QUENCH_GC_AGES_FROM_START", usize::from(self.ages_from_start)) != 0,
         }
     }
 }
@@ -576,6 +595,7 @@ pub(super) const THROUGHPUT_PACING: GenerationalPacing = GenerationalPacing {
     promotion_age: THROUGHPUT_PROMOTION_AGE,
     promoted_garbage_aging: THROUGHPUT_PROMOTED_GARBAGE_AGING,
     aging_interval: THROUGHPUT_AGING_INTERVAL,
+    ages_from_start: THROUGHPUT_AGES_FROM_START,
 };
 
 /// Memory-first pacing on the owner's direction of 2026-10-17 (TOD-123), selected by
@@ -620,6 +640,7 @@ pub(super) const MEMORY_FIRST_PACING: GenerationalPacing = GenerationalPacing {
     promotion_age: MEMORY_FIRST_PROMOTION_AGE,
     promoted_garbage_aging: NO_AGING,
     aging_interval: 0,
+    ages_from_start: false,
 };
 
 /// The external budget's floor (`GenerationalPacing::minimum_external_budget`) under
