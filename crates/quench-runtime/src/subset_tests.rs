@@ -875,3 +875,34 @@ print(out.join(" "));
 "#;
     assert_eq!(output(source), ["undefinedundefined foo2 foo2 p3 undefinedundefined K m 0 renamed renamed"]);
 }
+
+#[test]
+fn for_of_steps_that_read_done_and_value_in_place_keep_iteration_semantics() {
+    // A for-of step over a plain array writes its `done` and `value` registers itself
+    // (`lane_iterator_step_reads`): arrays with holes, growing and shrinking under the loop,
+    // `break` and `continue`, destructuring, typed arrays and strings, generators, a patched
+    // `%ArrayIteratorPrototype%.next`, an own `Symbol.iterator`, a throw out of the body and
+    // a binding that outlives the loop. Node 26 prints the same.
+    let source = r#"
+(function () {
+const out = [];
+function sum(xs) { let s = 0; for (const v of xs) s += v === undefined ? 100 : v; return s; }
+const holes = [1, , 3]; holes.length = 5;
+for (let r = 0; r < 300; r++) sum([1, 2, 3]);
+out.push(sum([1, 2, 3]), sum(holes), sum([]), sum(new Int8Array([4, 5])), sum("12"));
+const grow = [1, 2]; let n = 0; for (const v of grow) { if (grow.length < 6) grow.push(v * 10); n += v; } out.push(n, grow.join());
+const shrink = [1, 2, 3, 4]; let m = 0; for (const v of shrink) { shrink.pop(); m += v; } out.push(m);
+let b = 0; for (const v of [1, 2, 3, 4]) { if (v === 3) break; if (v === 1) continue; b += v; } out.push(b);
+let d = ""; for (const [k, v] of [["a", 1], ["b", 2]]) d += k + v; out.push(d);
+let e = ""; for (const [i, v] of ["x", "y"].entries()) e += i + v; out.push(e);
+function* g() { yield 7; yield 8; } out.push(sum(g()));
+const proto = Object.getPrototypeOf([][Symbol.iterator]()); const next = proto.next;
+let calls = 0; proto.next = function () { calls++; return next.call(this); }; out.push(sum([1, 2]), calls); proto.next = next;
+const custom = [1, 2]; custom[Symbol.iterator] = function* () { yield 40; }; out.push(sum(custom));
+let thrown = ""; try { for (const v of [1, 2]) { throw new Error("t" + v); } } catch (x) { thrown = x.message; } out.push(thrown);
+let last; for (last of [5, 6]) {} out.push(last);
+print(out.join(" "));
+})();
+"#;
+    assert_eq!(output(source), ["6 304 0 9 012 333 1,2,10,20,100,200 3 2 a1b2 0x1y 15 3 3 40 t1 6"]);
+}
