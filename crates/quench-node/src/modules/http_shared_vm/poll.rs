@@ -380,10 +380,9 @@ pub(crate) fn poll(
                                 .request_dispatch
                                 .ok_or_else(|| "HTTP request dispatch is unavailable".to_owned())?;
                             let http10 = message.version == "1.0";
-                            let close_after_response = http10 || message.headers.iter().any(|(name, value)| {
-                                name.eq_ignore_ascii_case("connection")
-                                    && value.eq_ignore_ascii_case("close")
-                            });
+                            let close_after_response = http10
+                                || super::protocol::header(&message.raw_headers, "connection")
+                                    .is_some_and(|value| value.eq_ignore_ascii_case("close"));
                             host.http
                                 .connections
                                 .get_mut(&socket)
@@ -403,7 +402,7 @@ pub(crate) fn poll(
                                     body: Default::default(),
                                     send_date: true,
                                     http10,
-                                    use_chunked_encoding_by_default: !http10 || message.headers.iter().any(|(name, value)| name.eq_ignore_ascii_case("te") && value.split(',').any(|token| token.trim().eq_ignore_ascii_case("chunked"))),
+                                    use_chunked_encoding_by_default: !http10 || super::protocol::header(&message.raw_headers, "te").is_some_and(|value| value.split(',').any(|token| token.trim().eq_ignore_ascii_case("chunked"))),
                                     lifecycle: super::state::ResponseLifecycle::Open,
                                     owner: None,
                                 },
@@ -417,7 +416,6 @@ pub(crate) fn poll(
                             message.method,
                             message.target,
                             message.version,
-                            message.headers,
                             message.raw_headers,
                             socket_object,
                         ) {
@@ -844,7 +842,6 @@ fn deliver_client_response_head(
         runtime,
         message.status,
         message.message,
-        message.headers,
         message.raw_headers,
         false,
     )?;
@@ -914,7 +911,7 @@ fn dispatch_server_upgrade(
         let connection = host.http.connections.get_mut(&socket_id).unwrap();
         connection.request_dispatched = true;
         connection.upgraded = true;
-        connection.received.clear();
+        connection.clear_received();
         (server_id, incoming_factory)
     };
     let create_socket = runtime
@@ -959,7 +956,6 @@ fn dispatch_server_upgrade(
         message.method,
         message.target,
         message.version,
-        message.headers,
         message.raw_headers,
         socket,
     ) {
@@ -1142,45 +1138,7 @@ fn deliver_client_body_chunk(
     if bytes.is_empty() {
         return Ok(());
     }
-    let global = runtime.global_root().map_err(|error| error.to_string())?;
-    let buffer_key = runtime.string_rooted("Buffer");
-    let buffer = runtime.get_property_rooted(global, buffer_key);
-    let buffer = match buffer {
-        Ok(buffer) => buffer,
-        Err(error) => {
-            runtime.release_root(buffer_key);
-            runtime.release_root(global);
-            return Err(error.to_string());
-        }
-    };
-    let from_key = runtime.string_rooted("from");
-    let from = runtime.get_property_rooted(buffer, from_key);
-    let from = match from {
-        Ok(from) => from,
-        Err(error) => {
-            runtime.release_root(from_key);
-            runtime.release_root(buffer);
-            runtime.release_root(buffer_key);
-            runtime.release_root(global);
-            return Err(error.to_string());
-        }
-    };
-    let body = runtime.string_rooted(&latin1_text(bytes));
-    let encoding = runtime.string_rooted("latin1");
-    let chunk = runtime.call_rooted(from, buffer, &[body, encoding]);
-    let chunk = match chunk {
-        Ok(chunk) => chunk,
-        Err(error) => {
-            runtime.release_root(body);
-            runtime.release_root(encoding);
-            runtime.release_root(from);
-            runtime.release_root(from_key);
-            runtime.release_root(buffer);
-            runtime.release_root(buffer_key);
-            runtime.release_root(global);
-            return Err(error.to_string());
-        }
-    };
+    let chunk = buffer_from_bytes(runtime, bytes)?;
     let push_key = runtime.string_rooted("push");
     let result = match runtime.get_property_rooted(readable, push_key) {
         Ok(push) => {
@@ -1192,13 +1150,6 @@ fn deliver_client_body_chunk(
     };
     runtime.release_root(push_key);
     runtime.release_root(chunk);
-    runtime.release_root(body);
-    runtime.release_root(encoding);
-    runtime.release_root(from);
-    runtime.release_root(from_key);
-    runtime.release_root(buffer);
-    runtime.release_root(buffer_key);
-    runtime.release_root(global);
     result
         .map(|value| runtime.release_root(value))
         .map(|_| ())
@@ -1729,29 +1680,32 @@ fn queue_net_method_completion(
     Ok(())
 }
 
+/// A Buffer holding a copy of `bytes`: a Uint8Array owning the one copy, and
+/// `Buffer.from(arrayBuffer)` over its store, which Buffer shares rather than copies.
 fn buffer_from_bytes(runtime: &mut Runtime<NodeHost>, bytes: &[u8]) -> Result<RootId, String> {
+    let view = runtime.uint8_array_from_rooted(bytes.to_vec()).map_err(|error| error.to_string())?;
+    let store_key = runtime.string_rooted("buffer");
+    let store = runtime.get_property_rooted(view, store_key);
+    runtime.release_root(store_key);
+    runtime.release_root(view);
+    let store = store.map_err(|error| error.to_string())?;
     let global = runtime.global_root().map_err(|error| error.to_string())?;
     let buffer_key = runtime.string_rooted("Buffer");
-    let buffer = runtime
-        .get_property_rooted(global, buffer_key)
-        .map_err(|error| error.to_string())?;
+    let buffer = runtime.get_property_rooted(global, buffer_key);
     runtime.release_root(buffer_key);
     runtime.release_root(global);
+    let buffer = buffer.map_err(|error| error.to_string())?;
     let from_key = runtime.string_rooted("from");
-    let from = runtime
-        .get_property_rooted(buffer, from_key)
-        .map_err(|error| error.to_string())?;
+    let from = runtime.get_property_rooted(buffer, from_key);
     runtime.release_root(from_key);
-    let text = runtime.string_rooted(&latin1_text(bytes));
-    let encoding = runtime.string_rooted("latin1");
-    let chunk = runtime
-        .call_rooted(from, buffer, &[text, encoding])
-        .map_err(|error| error.to_string())?;
-    runtime.release_root(encoding);
-    runtime.release_root(text);
-    runtime.release_root(from);
+    let chunk = from.and_then(|from| {
+        let chunk = runtime.call_rooted(from, buffer, &[store]);
+        runtime.release_root(from);
+        chunk
+    });
     runtime.release_root(buffer);
-    Ok(chunk)
+    runtime.release_root(store);
+    chunk.map_err(|error| error.to_string())
 }
 
 fn emit(
@@ -1802,7 +1756,6 @@ fn request_head(
     method: String,
     path: String,
     version: String,
-    _headers: Vec<(String, String)>,
     raw_headers: Vec<(String, String)>,
     socket: RootId,
 ) -> Result<Vec<RootId>, String> {
@@ -1832,7 +1785,6 @@ fn response_head(
     runtime: &mut Runtime<NodeHost>,
     status: u16,
     message: String,
-    _headers: Vec<(String, String)>,
     raw_headers: Vec<(String, String)>,
     complete: bool,
 ) -> Result<Vec<RootId>, String> {

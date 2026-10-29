@@ -104,7 +104,12 @@ impl<H: Host> Vm<H> {
             return Ok(Value::UNDEFINED);
         }
         let residual =
-            match crate::Engine::specialize_script_with_atom_prefix(source, source_name, &*self) {
+            match crate::Engine::specialize_script_with_atom_prefix(
+                source,
+                source_name,
+                &*self,
+                crate::compile::ReleasedRecords::Dropped,
+            ) {
                 Ok(residual) => residual,
                 Err(diagnostics) => {
                     if diagnostics
@@ -407,6 +412,17 @@ impl<H: Host> Vm<H> {
         if self.specialized { "specialized" } else { "unspecialized" }
     }
 
+    /// What a compilation keeps of the records its load releases: their compile-cache
+    /// encoding when its program is `cached` and the host keeps compiled programs, which
+    /// `encode_cached_program` then copies.
+    pub(super) fn released_records(&self, cached: bool) -> crate::compile::ReleasedRecords {
+        if cached && self.host.keeps_compiled_programs() {
+            crate::compile::ReleasedRecords::Encoded
+        } else {
+            crate::compile::ReleasedRecords::Dropped
+        }
+    }
+
     pub(super) fn encode_cached_program(&self, program: &crate::ResidualProgram) -> Option<Vec<u8>> {
         // The compilation is over either way (`CompilePhase::Encoding`); a host that keeps no
         // programs is offered none, so nothing is encoded (async-fs, cold: 43 encodings,
@@ -500,11 +516,13 @@ impl<H: Host> Vm<H> {
         {
             return Ok(kept);
         }
-        // A program keeping only static text cannot compile its functions again from it.
+        // A program keeping only static text cannot compile its functions again from it. One
+        // the host's compile cache keeps encodes each record its load releases.
         let compiled = if keep_records {
             crate::Engine::specialize_kept_script_with_atom_prefix(source, name, &*self)
         } else {
-            crate::Engine::specialize_script_with_atom_prefix(source, name, &*self)
+            let released = self.released_records(cache_key.is_some());
+            crate::Engine::specialize_script_with_atom_prefix(source, name, &*self, released)
         };
         let mut residual = compiled
             .map_err(|diagnostics| {

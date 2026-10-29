@@ -255,6 +255,9 @@ impl<H: Host> Vm<H> {
                         .alloc_string(super::wtf16::JsString::from_units(&[])));
                 };
                 let units = receiver.units();
+                if let Some(value) = units.get(index).and_then(|unit| self.ascii_unit_string(unit)) {
+                    return Ok(value);
+                }
                 let value = units.get_range(index..index + 1).map_or_else(
                     || super::wtf16::JsString::from_units(&[]),
                     super::wtf16::JsString::from_unit_run,
@@ -701,8 +704,37 @@ impl<H: Host> Vm<H> {
     }
 
     pub(super) fn string_from_units(&mut self, units: &[u16]) -> Result<Value, JsError> {
+        if let &[unit] = units
+            && let Some(value) = self.ascii_unit_string(unit)
+        {
+            return Ok(value);
+        }
         Ok(self
             .heap
             .alloc_string(super::wtf16::JsString::from_units(units)))
+    }
+
+    /// The string of the one code unit `unit`, when it is ASCII: the one made last, until a
+    /// collection (`Vm::ascii_unit_strings`). Strings have no identity, so sharing one is
+    /// unobservable.
+    pub(super) fn ascii_unit_string(&mut self, unit: u16) -> Option<Value> {
+        let index = usize::from(unit);
+        if index >= super::ASCII_UNITS {
+            return None;
+        }
+        let strings = self
+            .ascii_unit_strings
+            .get_or_insert_with(|| Box::new([Value::UNDEFINED; super::ASCII_UNITS]));
+        if !strings[index].is_undefined() {
+            return Some(strings[index]);
+        }
+        let byte = [unit as u8];
+        // SAFETY: an ASCII byte is UTF-8.
+        let text = super::wtf16::JsString::from_str(unsafe { std::str::from_utf8_unchecked(&byte) });
+        let value = self.heap.alloc_string(text);
+        if let Some(strings) = &mut self.ascii_unit_strings {
+            strings[index] = value;
+        }
+        Some(value)
     }
 }

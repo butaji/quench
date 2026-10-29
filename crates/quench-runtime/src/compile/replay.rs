@@ -371,6 +371,13 @@ impl<'a> FunctionTable<'a> {
         }
     }
 
+    /// Whether function `id` is an arrow, from its record or its released header.
+    pub(super) fn is_arrow(&self, id: u32) -> Option<bool> {
+        self.get(id)
+            .map(|function| function.is_arrow)
+            .or_else(|| self.header_without_record(id).map(|header| header.is_arrow))
+    }
+
     /// Names a released function made from an anonymous definition.
     pub(super) fn name_released(&mut self, id: u32, name: Atom) {
         if let Self::Owned(entries) = self

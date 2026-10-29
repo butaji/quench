@@ -31,6 +31,7 @@ pub(crate) fn intrinsic_name_native(name: &str) -> Option<crate::heap::Native> {
         "\0quench:super-set" => Native::SuperSet,
         SUPER_BASE_BINDING => Native::ReflectGetPrototypeOf,
         "\0quench:object-literal-prototype" => Native::ObjectLiteralPrototype,
+        "\0quench:object-literal-create" => Native::ObjectLiteralCreate,
         "\0quench:object-define-property" => Native::ObjectDefineProperty,
         "\0quench:object-freeze" => Native::ObjectFreeze,
         // What the compiler's own throws, class setup and `using` declarations call: the
@@ -1527,8 +1528,48 @@ pub(crate) enum KeptArguments {
     Passes,
 }
 
-/// The facts before the call plan in `Function::derived_facts`' packing.
-const DERIVED_FACT_COUNT: u32 = 4;
+/// The facts before the call plan in `Function::derived_facts`' packing, by bit position.
+#[derive(Clone, Copy)]
+pub(crate) enum DerivedFact {
+    ActivationBindings,
+    LiveParameters,
+    StaticNameScope,
+    DynamicScopeAccess,
+}
+
+impl DerivedFact {
+    pub(crate) const fn bit(self) -> u32 {
+        1 << self as u32
+    }
+}
+
+const DERIVED_FACT_COUNT: u32 = DerivedFact::DynamicScopeAccess as u32 + 1;
+
+/// The tables a function's derived facts read beyond its record (`Function::derived_facts`):
+/// its program's atom names, the kinds of the functions it makes and the superinstructions.
+/// A finished program answers them, and so does its compiler while it loads once the
+/// function and every function nested in it are finished (`Compiler::finish_early`).
+pub(crate) trait FactTables {
+    /// The atom's text, or `None` for an id outside the table.
+    fn atom_name(&self, atom: usize) -> Option<&str>;
+    /// Whether function `function` is an arrow, or `None` for an id outside the table.
+    fn function_is_arrow(&self, function: usize) -> Option<bool>;
+    fn superinstructions(&self) -> &[Superinstruction];
+}
+
+impl FactTables for ResidualProgram {
+    fn atom_name(&self, atom: usize) -> Option<&str> {
+        self.atoms.get(atom)
+    }
+
+    fn function_is_arrow(&self, function: usize) -> Option<bool> {
+        self.functions.get(function).map(|slot| slot.header().is_arrow)
+    }
+
+    fn superinstructions(&self) -> &[Superinstruction] {
+        &self.superinstructions
+    }
+}
 
 /// `CallPlan`'s flags as bits, in this order; the struct literal names every field, so a
 /// field left out of the list does not compile.
@@ -2143,41 +2184,37 @@ impl Function {
     /// its own name lookups (`activation_binding_reads`) or by an arrow function it makes,
     /// which inherits them. Any other closure has its own. `functions` is the owning
     /// program's table.
-    pub(crate) fn activation_bindings_observable(
-        &self,
-        atoms: &AtomTable,
-        functions: &[FunctionSlot],
-    ) -> bool {
-        *self.activation_bindings.get_or_init(|| self.derive_activation_bindings_observable(atoms, functions))
+    pub(crate) fn activation_bindings_observable(&self, tables: &impl FactTables) -> bool {
+        *self.activation_bindings.get_or_init(|| self.derive_activation_bindings_observable(tables))
     }
 
-    fn derive_activation_bindings_observable(&self, atoms: &AtomTable, functions: &[FunctionSlot]) -> bool {
-        self.activation_binding_reads(atoms)
+    fn derive_activation_bindings_observable(&self, tables: &impl FactTables) -> bool {
+        self.activation_binding_reads(tables)
             || self.instructions().any(|instruction| {
                 instruction.op() == Op::MakeClosure
-                    && functions
-                        .get(instruction.closure_function_index() as usize)
-                        .is_none_or(|closure| closure.header().is_arrow)
+                    && tables
+                        .function_is_arrow(instruction.closure_function_index() as usize)
+                        .is_none_or(|is_arrow| is_arrow)
             })
     }
 
     /// Whether the activation itself may read its implicit bindings through a name or scope
     /// operation, or must keep them for its kind of activation.
-    fn activation_binding_reads(&self, atoms: &AtomTable) -> bool {
-        self.is_class_constructor || self.binding_reads_beside_class(atoms)
+    fn activation_binding_reads(&self, tables: &impl FactTables) -> bool {
+        self.is_class_constructor || self.binding_reads_beside_class(tables)
     }
 
     /// `activation_binding_reads` but for a class constructor's own kind: a base class
     /// constructor's body that reaches none of its implicit bindings (`new.target`, `super`
     /// and the like read hidden names) needs none to run frameless when constructed.
-    fn binding_reads_beside_class(&self, atoms: &AtomTable) -> bool {
-        self.is_async || self.is_generator || self.body_binding_reads(atoms)
+    fn binding_reads_beside_class(&self, tables: &impl FactTables) -> bool {
+        self.is_async || self.is_generator || self.body_binding_reads(tables)
     }
 
     /// `binding_reads_beside_class` but for a suspendable kind's own: what the body itself
     /// reads. A non-suspending async body reaching none runs as an ordinary one would
     /// (`CallPlan::settles_in_loop`), its promise held by its call.
-    fn body_binding_reads(&self, atoms: &AtomTable) -> bool {
+    fn body_binding_reads(&self, tables: &impl FactTables) -> bool {
         self.derived_constructor
             // A field initializer or static block keeps its instance's implicit bindings; an
             // arrow inside one (also `class_initializer`) binds none of its own.
@@ -2190,8 +2227,9 @@ impl Function {
                     instruction.op(),
                     Op::LoadName | Op::LoadNameCall | Op::LoadNameTypeof
                 ) && usize::try_from(instruction.atom_index()).is_ok_and(|atom| {
-                    atom >= atoms.len()
-                        || atoms[atom].starts_with('\0') && !is_intrinsic_name(&atoms[atom])
+                    tables
+                        .atom_name(atom)
+                        .is_none_or(|name| name.starts_with('\0') && !is_intrinsic_name(name))
                 })
                     || matches!(
                         instruction.op(),
@@ -2242,16 +2280,14 @@ impl Function {
     /// does for parameters that live only in the frame: no code or closure uses an `arguments`
     /// binding, the parameters are simple, and each is a plain or register-promoted local.
     /// Otherwise the arguments are reflected as passed.
-    pub(crate) fn reflects_live_parameters(&self, program: &ResidualProgram) -> bool {
-        *self.live_parameter_reflection.get_or_init(|| self.derive_reflects_live_parameters(program))
+    pub(crate) fn reflects_live_parameters(&self, tables: &impl FactTables) -> bool {
+        *self.live_parameter_reflection.get_or_init(|| self.derive_reflects_live_parameters(tables))
     }
 
-    fn derive_reflects_live_parameters(&self, program: &ResidualProgram) -> bool {
+    fn derive_reflects_live_parameters(&self, tables: &impl FactTables) -> bool {
         {
-            let atoms = &program.atoms;
             let arguments_used = self.local_atoms.iter().enumerate().any(|(slot, &atom)| {
-                usize::try_from(atom)
-                    .is_ok_and(|atom| atom < atoms.len() && &atoms[atom] == "arguments")
+                usize::try_from(atom).is_ok_and(|atom| tables.atom_name(atom) == Some("arguments"))
                     && (self.local_slot_captured(slot)
                         || self.instructions().any(|instruction| {
                             instruction.op().immediate_role() == ImmediateRole::LocalSlot
@@ -2263,7 +2299,7 @@ impl Function {
                 && self.simple_parameters
                 && !self.rest
                 && (0..self.params).all(|parameter| {
-                    self.plain_local(program, usize::from(parameter))
+                    self.plain_local(tables, usize::from(parameter))
                         || self
                             .local_registers
                             .iter()
@@ -2330,13 +2366,12 @@ impl Function {
 
     /// The function's `CallPlan`, derived on first use.
     #[inline(always)]
-    pub(crate) fn call_plan(&self, program: &ResidualProgram) -> CallPlan {
-        *self.call_plan.get_or_init(|| self.derive_call_plan(program))
+    pub(crate) fn call_plan(&self, tables: &impl FactTables) -> CallPlan {
+        *self.call_plan.get_or_init(|| self.derive_call_plan(tables))
     }
 
-    fn derive_call_plan(&self, program: &ResidualProgram) -> CallPlan {
+    fn derive_call_plan(&self, tables: &impl FactTables) -> CallPlan {
         {
-            let atoms = &program.atoms;
             let promoted_parameters = self
                 .local_registers
                 .iter()
@@ -2359,18 +2394,18 @@ impl Function {
             // (`activation_binding_reads`) or its home as a capture, as any closure reads one.
             // Ordinary but for a rest parameter, which a frameless activation gathers
             // (`CallEntry::Gathers`) and a plain frame does not.
-            let ordinary_with_rest = registers_layout && !self.activation_binding_reads(atoms);
+            let ordinary_with_rest = registers_layout && !self.activation_binding_reads(tables);
             // A base class constructor laid out as an ordinary function runs frameless when
             // constructed (`lane_script_construct`); its calls, which throw, keep a frame.
             let constructs_frameless = registers_layout
                 && self.is_class_constructor
                 && !self.rest
-                && !self.binding_reads_beside_class(atoms);
+                && !self.binding_reads_beside_class(tables);
             let ordinary = ordinary_with_rest && !self.rest;
             // A non-suspending async body laid out as an ordinary one's, which keeps no
             // passed values: its activation settles its call's promise.
             let settles_with_registers = registers_layout_of_any_kind
-                && !self.body_binding_reads(atoms)
+                && !self.body_binding_reads(tables)
                 && !self.rest
                 && self.arguments_slot.is_none();
             // A field initializer is an ordinary method call on the instance whose
@@ -2388,7 +2423,7 @@ impl Function {
                 && !self.parameter_eval_arguments_error
                 && !self.suspends();
             let legacy_reflection = !self.has_restricted_legacy_caller_access();
-            let live_parameters = self.reflects_live_parameters(program);
+            let live_parameters = self.reflects_live_parameters(tables);
             let kept_arguments = self.kept_arguments();
             let forwards_arguments = kept_arguments == Some(KeptArguments::Forwards);
             let addresses_locals = self.instructions().any(|instruction| {
@@ -2407,7 +2442,7 @@ impl Function {
                 // Each argument fills its own slot, a hidden one where the list binds its names
                 // apart; a rest list binding directly fills its slot with the gathered array
                 // (`lane_activate_environment`).
-                && self.arguments_own_their_slots(|atom| atoms.get(atom))
+                && self.arguments_own_their_slots(|atom| tables.atom_name(atom))
                 && self.self_binding_slot.is_none()
                 && !self.inherited_with_scope
                 && self.local_registers.is_empty()
@@ -2416,7 +2451,7 @@ impl Function {
                 && self.selective_capture_slots.is_some()
                 && self.initial_register == InitialRegister::Undefined
                 && !self.has_dynamic_scope_access()
-                && !self.activation_binding_reads(atoms)
+                && !self.activation_binding_reads(tables)
                 && self.instructions().all(|instruction| {
                     let op = instruction.op();
                     op.immediate_role() != ImmediateRole::SuperinstructionIndex
@@ -2467,32 +2502,35 @@ impl Function {
     /// The facts below and the call plan, each derived now and packed as an encoding keeps
     /// them (`binary::write_function`): derived lazily, they had cost 3-7% of the instructions
     /// of cached npm runs (axios, playwright), which each run derived again.
-    pub(crate) fn derived_facts(&self, program: &ResidualProgram) -> u32 {
+    /// `names_resolve_statically` is given: the one fact that reads the enclosing functions,
+    /// which a compiler finishing this function early has not finished yet
+    /// (`binary::LoadEncoding`).
+    pub(crate) fn derived_facts(&self, tables: &impl FactTables, names_resolve_statically: bool) -> u32 {
         let facts = [
-            self.activation_bindings_observable(&program.atoms, &program.functions),
-            self.reflects_live_parameters(program),
-            self.names_resolve_statically(program),
-            self.has_dynamic_scope_access(),
+            (DerivedFact::ActivationBindings, self.activation_bindings_observable(tables)),
+            (DerivedFact::LiveParameters, self.reflects_live_parameters(tables)),
+            (DerivedFact::StaticNameScope, names_resolve_statically),
+            (DerivedFact::DynamicScopeAccess, self.has_dynamic_scope_access()),
         ];
-        let flags = facts.iter().enumerate().fold(0, |bits, (index, &fact)| bits | (u32::from(fact) << index));
-        flags | (self.call_plan(program).to_bits() << DERIVED_FACT_COUNT)
+        let flags = facts.iter().fold(0, |bits, &(fact, holds)| if holds { bits | fact.bit() } else { bits });
+        flags | (self.call_plan(tables).to_bits() << DERIVED_FACT_COUNT)
     }
 
     /// Seeds the facts `derived_facts` packed; a fact already derived keeps its value.
     pub(crate) fn seed_derived_facts(&self, bits: u32) {
-        let fact = |index: u32| bits & (1 << index) != 0;
-        let _ = self.activation_bindings.set(fact(0));
-        let _ = self.live_parameter_reflection.set(fact(1));
-        let _ = self.static_name_scope.set(fact(2));
-        let _ = self.dynamic_scope_access.set(fact(3));
+        let fact = |fact: DerivedFact| bits & fact.bit() != 0;
+        let _ = self.activation_bindings.set(fact(DerivedFact::ActivationBindings));
+        let _ = self.live_parameter_reflection.set(fact(DerivedFact::LiveParameters));
+        let _ = self.static_name_scope.set(fact(DerivedFact::StaticNameScope));
+        let _ = self.dynamic_scope_access.set(fact(DerivedFact::DynamicScopeAccess));
         let _ = self.call_plan.set(CallPlan::from_bits(bits >> DERIVED_FACT_COUNT));
     }
 
     /// Whether each fact `derived_facts` packs is this function's own derivation, whether it
     /// was derived or seeded (`ResidualProgram::validate`).
     pub(crate) fn derived_facts_hold(&self, program: &ResidualProgram) -> bool {
-        self.activation_bindings_observable(&program.atoms, &program.functions)
-            == self.derive_activation_bindings_observable(&program.atoms, &program.functions)
+        self.activation_bindings_observable(program)
+            == self.derive_activation_bindings_observable(program)
             && self.reflects_live_parameters(program) == self.derive_reflects_live_parameters(program)
             && self.names_resolve_statically(program) == self.derive_names_resolve_statically(program)
             && self.has_dynamic_scope_access() == self.derive_dynamic_scope_access()
@@ -2971,9 +3009,7 @@ impl Function {
     }
 
     fn derive_names_resolve_statically(&self, program: &ResidualProgram) -> bool {
-        let atoms = &program.atoms;
-        !self.has_dynamic_scope_access()
-            && !self.contains_with_statement(|atom| atom < atoms.len() && &atoms[atom] == WITH_ENTER_BINDING)
+        self.own_names_resolve_statically(program)
             && self.parent.is_none_or(|parent| {
                 program
                     .function_get(parent as usize)
@@ -2981,12 +3017,19 @@ impl Function {
             })
     }
 
+    /// `names_resolve_statically` but for the enclosing functions: this function itself has
+    /// no dynamic scope access and contains no `with` statement.
+    pub(crate) fn own_names_resolve_statically(&self, tables: &impl FactTables) -> bool {
+        !self.has_dynamic_scope_access()
+            && !self.contains_with_statement(|atom| tables.atom_name(atom) == Some(WITH_ENTER_BINDING))
+    }
+
     /// The memoized `plain_local_slots` projection for this residual's atoms.
     #[inline(always)]
-    pub(crate) fn plain_local(&self, program: &ResidualProgram, slot: usize) -> bool {
+    pub(crate) fn plain_local(&self, tables: &impl FactTables, slot: usize) -> bool {
         self.plain_locals
             .get_or_init(|| {
-                self.plain_local_slots(&program.superinstructions).into()
+                self.plain_local_slots(tables.superinstructions()).into()
             })
             .get(slot)
             .copied()
@@ -3792,6 +3835,9 @@ pub struct ResidualProgram {
     /// What each function's closures read of the environments they close over, when the
     /// compiler derived it; without it a closure keeps its whole scope chain.
     pub(crate) closure_reads: Option<std::rc::Rc<ClosureReads>>,
+    /// The compile-cache records of the functions its load released, encoded as each was
+    /// finished, until its compact encoding takes them (`binary::LoadEncoding`).
+    pub(crate) load_encoding: LoadRecords,
 }
 
 /// The encoded records of a decoded program's deferred functions (`binary::decode_program`):
@@ -4179,7 +4225,7 @@ impl ResidualProgram {
 mod binary;
 mod closure_reads;
 pub(crate) use closure_reads::{ClosureReads, EnvironmentDemand, FunctionReadFacts};
-pub(crate) use binary::{decode_static_module_analysis, encode_static_module_analysis};
+pub(crate) use binary::{decode_static_module_analysis, encode_static_module_analysis, LoadEncoding, LoadRecords};
 mod disassemble;
 #[cfg(test)]
 mod tests;

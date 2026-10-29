@@ -60,6 +60,7 @@ const NATIVES: &[Native] = &[
     Native::ReflectSet,
     Native::SuperSet,
     Native::ObjectLiteralPrototype,
+    Native::ObjectLiteralCreate,
     Native::ReflectOwnKeys,
     Native::ReflectGetPrototypeOf,
     Native::ReflectSetPrototypeOf,

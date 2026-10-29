@@ -572,7 +572,7 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "httpResponseRemoveHeader" (2) => crate::modules::http_shared_vm::response_remove_header,
         method "httpResponseWrite" (7) => crate::modules::http_shared_vm::response_write,
         method "httpResponseFinish" (7) => crate::modules::http_shared_vm::response_finish,
-        method "httpResponseWriteHead" (6) => crate::modules::http_shared_vm::response_write_head,
+        method "httpResponseWriteHead" (7) => crate::modules::http_shared_vm::response_write_head,
         method "httpResponseInitialize" (2) => crate::modules::http_shared_vm::response_initialize,
         method "httpResponseSend" (4) => crate::modules::http_shared_vm::response_send,
         method "assertStrictEqual" (2) => crate::modules::assert_shared_vm::strict_equal,
@@ -795,6 +795,9 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "tlsCollectAltName" (1) => crate::modules::tls_shared_vm::identity::collect_alt_name,
         method "tlsCheckServerIdentity" (2) => crate::modules::tls_shared_vm::identity::check_server_identity,
         method "httpIncomingBody" (1) => crate::modules::http_shared_vm::incoming::body,
+        method "objectTemplateCapture" (3) => crate::modules::http_shared_vm::incoming::capture_template,
+        method "objectTemplateCopy" (1) => crate::modules::http_shared_vm::incoming::copy_template,
+        method "byteStringEnd" (1) => crate::modules::webidl_shared_vm::byte_string_end,
         method "httpIncomingRead" (1) => crate::modules::http_shared_vm::incoming::read,
         method "httpIncomingDestroy" (2) => crate::modules::http_shared_vm::incoming::destroy,
         method "encodingUtf8" (0) => crate::modules::encoding_binding_shared_vm::encode,
@@ -1067,6 +1070,8 @@ const BESIDE_ACTIVATIONS: &[&str] = &[
     "asyncResourceExitScope",
     "stringDecoderDecode",
     "markAsUncloneable",
+    "objectTemplateCopy",
+    "byteStringEnd",
 ];
 
 impl quench_runtime::Host for NodeHost {
@@ -1504,6 +1509,7 @@ impl quench_runtime::Host for NodeHost {
         #[cfg(feature = "profile-memory")]
         context.profile_memory_checkpoint("node_event_target_polyfill");
         context.scoped(install_event_emitter)?;
+        commonjs::record_bootstrap_originals(context)?;
         #[cfg(feature = "profile-memory")]
         context.profile_memory_checkpoint("node_event_emitter_polyfill");
         crate::host::resident_pages::release_read_only_pages();

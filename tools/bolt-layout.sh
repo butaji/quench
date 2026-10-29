@@ -15,16 +15,14 @@
 # 2. Assembles the training corpus from the repository under target/layout-corpus: the
 #    interpreter curriculum (quench-bench/deegen-curriculum), the numbered diagnostic micros
 #    (quench-bench/micros), Node library modules compiled without running
-#    (COMPILE_ONLY_MODULES), a sample of Test262's RegExp built-ins tests with their harness,
-#    and the Wasm ESM corpus of the spec testsuite. That is the qualification corpus. The
-#    package workloads in tools/layout-corpus join it only when QUENCH_LAYOUT_NODE_MODULES
-#    names an npm `node_modules` holding them, for diagnostic layouts: with them the V8-v7
-#    rows' max RSS rose to the target (pinned, 2026-10-25: Crypto 0.95 -> 1.02-1.06 of it),
-#    as the packages' code shares the hot text. The scored engine suites are never run.
-#    The corpus used is written to target/layout-corpus/MANIFEST and printed at the end.
+#    (COMPILE_ONLY_MODULES), the Test262 tests tools/layout-corpus/test262.list names with
+#    their harness, the package workloads tools/layout-corpus/npm-*.js on the packages its
+#    package-lock.json pins (installed with `npm ci` under target/layout-packages), and the
+#    Wasm ESM corpus of the spec testsuite. The scored engine suites are never run. The
+#    corpus used is written to target/layout-corpus/MANIFEST and printed at the end.
 # 3. Profiles start-up (cachegrind) and the run phase after the entry's compilation
 #    (callgrind, split at quench_entry_compiled), without and with --jit; the --jit profiles
-#    of the micros and packages run under memory-first, whose JS tier compiles less.
+#    of the micros and package workloads run under memory-first, whose JS tier compiles less.
 # 4. Writes crates/quench-node/link/x86_64-linux-static.order, converts the profiles for
 #    BOLT, relinks, and writes the bolted binary beside the relinked one (`-bolt`).
 #
@@ -53,9 +51,6 @@ tools_dir="$target_dir/$profile"
 
 # Seconds each profiled program may run under valgrind; a killed run writes no profile.
 profile_timeout=600
-# Every this-many-th eligible RegExp built-ins test joins the corpus: the RegExp compiler's and
-# matcher's paths without a third of the suite's profiling time.
-test262_stride=3
 # Node library modules the corpus compiles without running them: large modules whose parser,
 # analysis and code generation paths a short script's own compilation does not reach.
 COMPILE_ONLY_MODULES=(
@@ -65,8 +60,11 @@ COMPILE_ONLY_MODULES=(
     internal/crypto/keys
 )
 # The interpreter's dispatch stays whole: a program reaches whichever of its blocks its code
-# needs (docs/README.md).
-DENSE_FUNCTIONS=(--dense 13dispatch_fast --dense run_frame_general_until)
+# needs (docs/README.md). The order keeps the lane dispatch whole; BOLT also keeps the general
+# frame loop's blocks together.
+ORDER_DENSE_FUNCTIONS=(--dense 13dispatch_fast)
+BOLT_DENSE_FUNCTIONS=(--dense 13dispatch_fast --dense run_frame_general_until)
+package_dir="$target_dir/layout-packages"
 
 if [[ -n "${RUSTFLAGS:-}" ]]; then
     printf 'unset RUSTFLAGS: it would replace the layout build flags and the repository rustflags\n' >&2
@@ -77,7 +75,7 @@ if [[ ! -f "$wasm_testsuite/address.wast" ]]; then
     printf 'the Wasm testsuite is missing: git submodule update --init %s\n' "$wasm_testsuite" >&2
     exit 1
 fi
-for tool in valgrind "$llvm_bolt"; do
+for tool in valgrind npm "$llvm_bolt"; do
     command -v "$tool" >/dev/null || { printf '%s not found\n' "$tool" >&2; exit 1; }
 done
 
@@ -120,8 +118,16 @@ test262_field() {
 
 rm -rf "$corpus"
 mkdir -p "$corpus"
-: >"$corpus/000-empty.cjs"
+# The repository's package.json declares ES modules; the corpus's scripts load as CommonJS, as a
+# script outside a package scope does, so their profiles take the CommonJS entry path, which
+# marks the entry's compilation (quench_entry_compiled) that splits the run-phase profiles.
+printf '{"type": "commonjs"}\n' >"$corpus/package.json"
+# The first start-up profile writes one line, as every program it lays out for does.
+printf 'console.log(1)\n' >"$corpus/000-print.cjs"
 cp quench-bench/deegen-curriculum/[0-9]*.js "$corpus/"
+# The micros' shared payload, run bare: it stops at its first statement with a ReferenceError,
+# so it trains the uncaught-error report.
+cp quench-bench/micros/payload.js "$corpus/micro-payload.js"
 for micro in quench-bench/micros/[0-9]*.js; do
     cp "$micro" "$corpus/micro-$(basename "$micro")"
 done
@@ -136,30 +142,23 @@ for module in "${COMPILE_ONLY_MODULES[@]}"; do
 done
 test262=tests/test262
 index=0
-eligible=0
 while IFS= read -r test; do
-    flags="$(test262_field "$test" flags)"
-    if [[ " $flags " =~ \ (module|async|raw|CanBlockIsTrue|CanBlockIsFalse)\  ]] \
-        || grep -q '^negative:' "$test"; then
-        continue
-    fi
-    eligible=$((eligible + 1))
-    (( (eligible - 1) % test262_stride == 0 )) || continue
+    flags="$(test262_field "$test262/$test" flags)"
     {
         [[ " $flags " == *" onlyStrict "* ]] && printf '"use strict";\n'
-        cat "$test262/harness/assert.js" "$test262/harness/sta.js"
-        for include in $(test262_field "$test" includes); do
-            cat "$test262/harness/$include"
+        for harness in assert.js sta.js $(test262_field "$test262/$test" includes); do
+            cat "$test262/harness/$harness"; echo
         done
-        cat "$test"
+        cat "$test262/$test"
     } >"$corpus/$(printf 'z-t%04d.js' "$index")"
     index=$((index + 1))
-done < <(find "$test262/test/built-ins/RegExp" -name '*.js' ! -name '*_FIXTURE.js' | sort)
-package_corpus="none"
-if [[ -n "${QUENCH_LAYOUT_NODE_MODULES:-}" ]]; then
-    cp tools/layout-corpus/npm-*.js "$corpus/"
-    package_corpus="tools/layout-corpus under $QUENCH_LAYOUT_NODE_MODULES (diagnostic)"
-fi
+done <tools/layout-corpus/test262.list
+rm -rf "$package_dir"
+mkdir -p "$package_dir"
+cp tools/layout-corpus/package.json tools/layout-corpus/package-lock.json "$package_dir/"
+(cd "$package_dir" && npm ci --ignore-scripts --no-audit --no-fund --silent)
+export QUENCH_LAYOUT_NODE_MODULES="$package_dir/node_modules"
+cp tools/layout-corpus/npm-*.js "$corpus/"
 "$tools_dir/wasm-esm-corpus" "$corpus/wasm-esm" "$wasm_testsuite"/{address,block,br,\
 br_if,br_table,bulk,call,call_indirect,conversions,data,elem,endianness,exports,f32,f64,fac,\
 forward,func,global,i32,i64,if,imports,int_exprs,int_literals,labels,left-to-right,load,\
@@ -203,18 +202,18 @@ callgrind wasm-esm-no-jit "$corpus/wasm-esm/run.mjs"
 callgrind wasm-esm-jit --jit "$corpus/wasm-esm/run.mjs" returns
 
 # Profiles go in priority order: start-up first, then the run phase without Test262, then
-# Test262, so the RegExp tests add only the code the rest did not execute.
-"$tools_dir/symbol-order" "$binary" "$order" --foreign-first "${DENSE_FUNCTIONS[@]}" \
-    "$startup/000-empty.cjs.out" $(ls "$startup"/*.js.out) \
+# Test262, so its tests add only the code the rest did not execute.
+"$tools_dir/symbol-order" "$binary" "$order" --foreign-first "${ORDER_DENSE_FUNCTIONS[@]}" \
+    "$startup/000-print.cjs.out" $(ls "$startup"/*.js.out) \
     "$startup/wasm-kernels-no-jit.out" "$startup/wasm-kernels-jit.out" \
-    --run "$run/000-empty.cjs.out" $(ls "$run"/*.js.out | grep -v /z-t) \
+    --run "$run/000-print.cjs.out" $(ls "$run"/*.js.out | grep -v /z-t) \
     --run $(ls "$run"/z-t*.js.out)
 # The profiles' addresses are the profiled link's: convert them before relinking. The Wasm
 # ESM corpus's profiles come last (`--late`), so BOLT lays the Wasm load path behind the
 # code the JavaScript profiles run instead of among it, where V8-v7 runs kept it resident
 # (pinned, 2026-10-25: 40-128 KiB on every row at full weight).
 "$tools_dir/bolt-profile" "$binary" "$target_dir/layout-bolt" --order "$order" \
-    "${DENSE_FUNCTIONS[@]}" $(ls "$run"/*.out* | grep -v /wasm-esm-) \
+    "${BOLT_DENSE_FUNCTIONS[@]}" $(ls "$run"/*.out* | grep -v /wasm-esm-) \
     --late "$run"/wasm-esm-*.out*
 build
 "$llvm_bolt" "$binary" -o "$binary-bolt" -data="$target_dir/layout-bolt/profile.fdata" \
@@ -225,10 +224,11 @@ tools/check-link-order.sh "$binary" "$order"
     printf 'commit: %s\n' "$(git rev-parse HEAD)"
     printf 'pgo profile: %s\n' "${profdata:-none}"
     printf 'hot call-site threshold: %s\n' "${QUENCH_PGO_HOT_CALLSITE_THRESHOLD:-default}"
-    printf 'curriculum: %d, micros: %d, compile-only modules: %d, test262 RegExp: %d of %d\n' \
+    printf 'curriculum: %d, micros: %d, compile-only modules: %d, test262: %d\n' \
         "$(ls "$corpus"/[0-9]*.js | wc -l)" "$(ls "$corpus"/micro-*.js | wc -l)" \
-        "${#COMPILE_ONLY_MODULES[@]}" "$(ls "$corpus"/z-t*.js | wc -l)" "$eligible"
+        "${#COMPILE_ONLY_MODULES[@]}" "$(ls "$corpus"/z-t*.js | wc -l)"
     printf 'wasm esm corpus: %s, laid out late\n' "$(git -C "$wasm_testsuite" rev-parse HEAD)"
-    printf 'packages: %s\n' "$package_corpus"
+    printf 'packages: %d workloads on tools/layout-corpus/package-lock.json\n' \
+        "$(ls "$corpus"/npm-*.js | wc -l)"
 } | tee "$corpus/MANIFEST"
 printf 'laid-out binary: %s-bolt\n' "$binary"

@@ -42,6 +42,11 @@ use cranelift_codegen::ir::{
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
 use oxc_ast::ast::{BinaryOperator, UnaryOperator};
 
+/// The most iterations an innermost nested counted loop's proved copy runs between its
+/// enclosing loop's polls (`Lowering::polls_skipped`): at a few dozen instructions each,
+/// a termination request waits on the order of a millisecond.
+const POLL_FREE_TRIPS: i64 = 1 << 16;
+
 /// The most instructions a region spans. Native code polls termination only at backward
 /// jumps, so the bound keeps compile time and code size proportional to small loop bodies.
 const MAX_REGION_INSTRUCTIONS: usize = 512;
@@ -70,6 +75,9 @@ pub(crate) enum LoopOutcome {
     /// As `Exit`, because a value the code held as an `i32` is none; the next compilation
     /// widens what the code names for the PC (`CompiledLoop::widening`).
     Widen(u32),
+    /// As `Exit`, at an append whose array's backing is full, which the general path grows
+    /// (`RegionExit::Grow`).
+    Grow(u32),
     /// Termination was requested while the code ran: its poll faulted, so registers may
     /// hold values of an unfinished iteration, which nothing reads before the request ends
     /// the execution.
@@ -97,19 +105,20 @@ const WIDEN_REGISTER: u64 = 1 << u16::BITS;
 const WIDEN_CAPTURE: u64 = WIDEN_REGISTER << 1;
 const WIDEN_UNIT: u64 = WIDEN_CAPTURE << 1;
 const WIDEN_FIELD: u64 = WIDEN_UNIT << 1;
-const _: () = assert!(WIDEN_FIELD <= u32::MAX as u64);
+const WIDEN_ELEMENTS: u64 = WIDEN_FIELD << 1;
+const _: () = assert!(WIDEN_ELEMENTS <= u32::MAX as u64);
 const WIDEN_PAYLOAD: u64 = WIDEN_REGISTER - 1;
 
 impl Widening {
-    /// The not-entered word of an entry guard's widening; element reads are guarded where
-    /// they run, so an entry never names them.
+    /// The not-entered word of an entry guard's widening: an array's elements are named by
+    /// the entry scan of an array whose reads drop their guard (`Lowering::scan_int32`).
     fn code(self) -> u32 {
         match self {
             Self::Register(register) => (WIDEN_REGISTER | u64::from(register)) as u32,
             Self::Capture(index) => (WIDEN_CAPTURE | u64::from(index)) as u32,
             Self::Unit(register) => (WIDEN_UNIT | u64::from(register)) as u32,
             Self::Field(index) => (WIDEN_FIELD | u64::from(index)) as u32,
-            Self::Elements(_) => 0,
+            Self::Elements(register) => (WIDEN_ELEMENTS | u64::from(register)) as u32,
         }
     }
 
@@ -123,6 +132,8 @@ impl Widening {
             Some(Self::Unit(payload))
         } else if word & WIDEN_FIELD != 0 {
             Some(Self::Field(payload))
+        } else if word & WIDEN_ELEMENTS != 0 {
+            Some(Self::Elements(payload))
         } else {
             None
         }
@@ -136,6 +147,7 @@ impl LoopOutcome {
             super::RegionExit::Resume(pc) => Self::Resume(pc),
             super::RegionExit::Fallback(pc) => Self::Exit(pc),
             super::RegionExit::Recompile(pc) => Self::Widen(pc),
+            super::RegionExit::Grow(pc) => Self::Grow(pc),
         }
     }
 }
@@ -1128,6 +1140,16 @@ pub(super) fn inline_region<'a>(
 }
 
 impl LoopRegion {
+    /// The region's instructions, from its header.
+    pub(super) fn instructions(&self) -> &[WideInstruction] {
+        &self.instructions
+    }
+
+    /// The Number constant at `index` the region reads.
+    pub(super) fn number_constant(&self, index: usize) -> Option<f64> {
+        self.constants.get(&index).copied()
+    }
+
     fn entry_count(&self) -> usize {
         self.numbers.len() + self.tagged.len()
     }
@@ -1145,7 +1167,7 @@ impl LoopRegion {
 
     /// Whether the interpreter may read `register` resuming at `pc` before writing it; every
     /// register is, where liveness does not cover the function.
-    fn is_live(&self, pc: u32, register: Register) -> bool {
+    pub(super) fn is_live(&self, pc: u32, register: Register) -> bool {
         let Some(live) = &self.live else {
             return true;
         };
@@ -1207,11 +1229,11 @@ const MAX_INDEXED_LENGTH: usize = i32::MAX as usize;
 /// The first record word counts executions of the region's own backward edge when shared
 /// GeneralDispatch pricing is enabled.
 const ENTRY_BACKEDGE_COUNT: usize = 0;
-const ENTRY_CAPTURES: usize = 1;
+pub(super) const ENTRY_CAPTURES: usize = 1;
 const WORD_BYTES: i32 = 8;
 /// An array's entry words: its element pointer, its length, then its capacity (which only
 /// a written array's appends read).
-const ARRAY_WORDS: usize = 3;
+pub(super) const ARRAY_WORDS: usize = 3;
 const FIELD_STORE_WORDS: usize = 1;
 const DYNAMIC_FIELD_HEAP_WORDS: usize = 3;
 /// The scratch registers' address an inlining region's record ends with.
@@ -1937,6 +1959,9 @@ fn admit(
         | Op::LoadNameTypeof
             => {}
         Op::Call | Op::CallArray => {}
+        // A return leaves the loop: the lane resumes at it with the state written back, and
+        // runs it.
+        Op::Return => {}
         Op::Jump => {}
         Op::JumpBinaryFalse => {
             if let Some(branch) = identity_branch(instruction, constants) {
@@ -3147,6 +3172,9 @@ struct Lowering<'a, 'b> {
     copy: Option<usize>,
     /// Shared handoff blocks; this tier fills per-PC leaves with its live-state writeback.
     exits: super::RegionExitBlocks,
+    /// The pointers only leaving uses (`Handoff`), stored at entry so that cold leave
+    /// blocks reload them and no loop holds a register for them.
+    handoff: ir::StackSlot,
     registers: ir::Value,
     /// An inlining region's scratch registers (`LoopEntry::scratch`).
     scratch: Option<ir::Value>,
@@ -3157,6 +3185,12 @@ struct Lowering<'a, 'b> {
     track_backedges: bool,
     /// Each array as native code indexes it, by register.
     arrays: std::collections::BTreeMap<Register, ArrayView>,
+    /// The entry values native code reads from memory at each use instead of holding
+    /// them (`Resident`).
+    resident: Resident,
+    /// The arrays whose elements entry found all `i32`s, which the region keeps so, so
+    /// their reads need no tag guard (`Lowering::scan_int32`).
+    int32_arrays: std::collections::BTreeSet<Register>,
     widenings: std::collections::BTreeMap<u32, Widening>,
     /// Per block, the first block of the chain it continues: each block after the first
     /// has its predecessors inside the chain (a guard's passing branch, the join of a test
@@ -3209,6 +3243,88 @@ fn straight_pcs(region: &LoopRegion, counted: &[CountedLoop]) -> Vec<bool> {
         .collect()
 }
 
+/// The entry values a region with nested loops keeps in memory: those it reads in no
+/// innermost nested counted loop. Each would otherwise stay in a register through that
+/// loop, which its own values then lose to spills; a value the loop reads stays held.
+/// Arrays reside in the entry record, unboxed fields and captures in a slot of their own.
+#[derive(Default)]
+struct Resident {
+    /// Per resident array register, its first entry word and whether the region writes it.
+    arrays: std::collections::BTreeMap<Register, (usize, bool)>,
+    /// Per field and per capture, its word in `slot` when it resides there.
+    fields: Vec<Option<usize>>,
+    captures: Vec<Option<usize>>,
+    values: usize,
+    slot: Option<ir::StackSlot>,
+}
+
+impl Resident {
+    fn of(region: &LoopRegion, counted: &[CountedLoop], arrays_start: usize) -> Self {
+        let nested: Vec<&CountedLoop> = counted
+            .iter()
+            .filter(|inner| inner.header != region.header)
+            .filter(|inner| {
+                !counted.iter().any(|other| {
+                    other.header != inner.header && inner.contains(other.header) && inner.contains(other.backedge)
+                })
+            })
+            .collect();
+        let mut resident = Self {
+            fields: vec![None; region.fields.len()],
+            captures: vec![None; region.captures.len()],
+            ..Self::default()
+        };
+        if nested.is_empty() {
+            return resident;
+        }
+        let hot = |offset: usize| nested.iter().any(|inner| inner.contains(region.header + offset as u32));
+        let instructions = region.instructions.iter().enumerate();
+        let read_hot = |used: &dyn Fn(&WideInstruction) -> bool| instructions.clone().any(|(offset, instruction)| hot(offset) && used(instruction));
+        for (index, array) in region.arrays.iter().enumerate() {
+            let indexes = |instruction: &WideInstruction| match instruction.op() {
+                Op::GetIndex => instruction.operand_b().register_index() == Some(array.register),
+                Op::SetIndex => instruction.register_b() == array.register,
+                _ => false,
+            };
+            if !read_hot(&indexes) {
+                resident.arrays.insert(array.register, (arrays_start + ARRAY_WORDS * index, array.written));
+            }
+        }
+        for field in 0..region.fields.len() {
+            let read = region.field_reads.iter().any(|(offset, read)| *read == field && hot(*offset as usize));
+            if !read {
+                resident.fields[field] = Some(resident.values);
+                resident.values += 1;
+            }
+        }
+        for (index, slot) in region.captures.iter().enumerate() {
+            let loads = |instruction: &WideInstruction| instruction.op() == Op::LoadCapture && instruction.capture_slot() == *slot;
+            if !read_hot(&loads) {
+                resident.captures[index] = Some(resident.values);
+                resident.values += 1;
+            }
+        }
+        resident
+    }
+}
+
+/// The pointers a region's entry stores for its leave blocks (`Lowering::handoff`), by
+/// word of the slot.
+#[derive(Clone, Copy)]
+enum Handoff {
+    Registers,
+    Scratch,
+    Result,
+}
+
+impl Handoff {
+    const COUNT: u32 = 3;
+
+    fn offset(self) -> i32 {
+        self as i32 * WORD_BYTES
+    }
+}
+
 fn flags() -> ir::MemFlagsData {
     ir::MemFlagsData::trusted()
 }
@@ -3244,6 +3360,13 @@ impl<'a, 'b> Lowering<'a, 'b> {
             unreachable!("the entry signature has five parameters")
         };
         let callout = builder.ins().load(types::I64, super::invariant(), context, super::CONTEXT_CALLOUT);
+        let handoff = builder.create_sized_stack_slot(ir::StackSlotData::new(
+            ir::StackSlotKind::ExplicitSlot,
+            Handoff::COUNT * WORD_BYTES as u32,
+            WORD_BYTES.trailing_zeros() as u8,
+        ));
+        builder.ins().stack_store(pointer, registers, handoff, Handoff::Registers.offset());
+        builder.ins().stack_store(pointer, result, handoff, Handoff::Result.offset());
         let blocks = (region.header..=region.backedge).map(|_| builder.create_block()).collect();
         let straight = straight_pcs(region, &counted);
         let preheaders = counted.iter().map(|_| builder.create_block()).collect();
@@ -3284,6 +3407,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
             proved_blocks,
             copy: None,
             exits: super::RegionExitBlocks::default(),
+            handoff,
             chains: std::collections::HashMap::new(),
             exact: std::collections::BTreeMap::new(),
             element_reads: std::collections::HashMap::new(),
@@ -3297,6 +3421,8 @@ impl<'a, 'b> Lowering<'a, 'b> {
             result,
             track_backedges,
             arrays: std::collections::BTreeMap::new(),
+            resident: Resident::default(),
+            int32_arrays: std::collections::BTreeSet::new(),
             widenings: std::collections::BTreeMap::new(),
         }
     }
@@ -3381,7 +3507,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
     fn start(&mut self, counted: &CountedLoop, base: Base) -> ir::Value {
         let value = match base {
             Base::Constant => return self.body.builder.ins().iconst(types::I64, 0),
-            Base::Capture(index) => self.captures[index].value,
+            Base::Capture(index) => self.capture(index).value,
             Base::Start(register) => {
                 let web = self.webs.read(self.region, counted.header, register);
                 self.web(web).value
@@ -3423,6 +3549,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
     /// runs for iterations `0..=trips` and one after it for `0..trips`; an affine value is
     /// monotonic in the iteration, so its extremes are at the first and last of them.
     fn proof(&mut self, counted: &CountedLoop) -> ir::Value {
+        let poll_free = self.polls_skipped(counted);
         let tested = self.affine_start(counted, counted.induction);
         let bound = self.affine_start(counted, counted.bound);
         let step = counted.base_step(counted.induction.base);
@@ -3467,7 +3594,8 @@ impl<'a, 'b> Lowering<'a, 'b> {
             let (low, high) = if step >= 0 { (first, last) } else { (last, first) };
             let (above, below) = match fact.bound {
                 Bound::Index(array) => {
-                    let length = self.length(self.arrays[&array]);
+                    let view = self.array(array);
+                    let length = self.length(view);
                     (
                         self.body.builder.ins().icmp_imm_s(IntCC::SignedGreaterThanOrEqual, low, 0),
                         self.body.builder.ins().icmp(IntCC::SignedLessThan, high, length),
@@ -3497,15 +3625,140 @@ impl<'a, 'b> Lowering<'a, 'b> {
             let within = if fact.pc < counted.test { within } else { self.body.builder.ins().bor(within, none) };
             holds = self.body.builder.ins().band(holds, within);
         }
+        if poll_free {
+            let bounded = self.body.builder.ins().icmp_imm_u(IntCC::UnsignedLessThanOrEqual, trips, POLL_FREE_TRIPS);
+            holds = self.body.builder.ins().band(holds, bounded);
+        }
         holds
+    }
+
+    /// Whether `counted`'s proved copy runs without polling termination at its backward
+    /// jump: an innermost loop nested in the region, whose proof also bounds its trips by
+    /// `POLL_FREE_TRIPS`. The enclosing loops still poll at theirs, so a termination
+    /// request waits at most that many iterations of the inner loop.
+    fn polls_skipped(&self, counted: &CountedLoop) -> bool {
+        counted.header != self.region.header
+            && !self.counted.iter().any(|other| {
+                other.header != counted.header && counted.contains(other.header) && counted.contains(other.backedge)
+            })
     }
 
     /// Writes the outcome `word` to the result word and returns the status of a run that
     /// finished.
     fn finish(&mut self, word: ir::Value) {
-        self.body.builder.ins().store(flags(), word, self.result, 0);
+        let result = self.handed_off(Handoff::Result);
+        self.body.builder.ins().store(flags(), word, result, 0);
         let status = self.body.builder.ins().iconst(types::I32, 0);
         self.body.builder.ins().return_(&[status]);
+    }
+
+    /// Proves at entry, for each array an innermost nested loop reads as `i32`s, that every
+    /// element is one, when every store of the region stores an `i32` (so each stays one,
+    /// whichever array it writes): the reads then take the payload with no tag guard. A
+    /// region without nested loops runs too few iterations per entry to repay the scan. An
+    /// element of another kind, or a hole, widens the array's reads for the next compilation.
+    fn scan_int32(&mut self) {
+        let region = self.region;
+        let nested = self.counted.iter().any(|counted| counted.header != region.header);
+        let stores_int32 = (region.header..=region.backedge).all(|pc| {
+            let instruction = region.instructions[(pc - region.header) as usize];
+            instruction.op() != Op::SetIndex || {
+                let web = self.webs.read(region, pc, instruction.register_a());
+                self.representations[web] == Representation::Int32
+            }
+        });
+        if !nested || !stores_int32 {
+            return;
+        }
+        let read_int32: std::collections::BTreeSet<Register> = region
+            .instructions
+            .iter()
+            .filter(|instruction| {
+                instruction.op() == Op::GetIndex
+                    && !region.tagged.contains(&instruction.result_register())
+                    && element_representation(instruction, self.observation) == Representation::Int32
+            })
+            .filter_map(|instruction| instruction.operand_b().register_index())
+            .filter(|register| !self.resident.arrays.contains_key(register))
+            .collect();
+        for register in read_int32 {
+            let Some(view) = self.arrays.get(&register).copied() else { continue };
+            let length = self.length(view);
+            let head = self.chain(self.body.builder.current_block().expect("lowering inside a block"));
+            let test = self.body.builder.create_block();
+            let element = self.body.builder.create_block();
+            let next = self.body.builder.create_block();
+            let done = self.body.builder.create_block();
+            let index = self.body.builder.append_block_param(test, types::I64);
+            let zero = self.body.builder.ins().iconst(types::I64, 0);
+            self.body.builder.ins().jump(test, &[ir::BlockArg::Value(zero)]);
+            self.body.builder.switch_to_block(test);
+            let finished = self.body.builder.ins().icmp(IntCC::UnsignedGreaterThanOrEqual, index, length);
+            self.body.builder.ins().brif(finished, done, &[], element, &[]);
+            self.body.builder.switch_to_block(element);
+            let offset = self.body.builder.ins().imul_imm_u(index, i64::from(WORD_BYTES));
+            let address = self.body.builder.ins().iadd(view.elements, offset);
+            let bits = self.body.builder.ins().load(types::I64, flags(), address, 0);
+            let tag = self.body.builder.ins().band_imm_u(bits, ValueLayout::TAG_MASK as i64);
+            let other = self.body.builder.ins().icmp_imm_u(IntCC::NotEqual, tag, ValueLayout::INT_TAG as i64);
+            let widen = self.not_entered(Some(Widening::Elements(register)));
+            self.body.builder.ins().brif(other, widen, &[], next, &[]);
+            self.body.builder.switch_to_block(next);
+            let stepped = self.body.builder.ins().iadd_imm_s(index, 1);
+            self.body.builder.ins().jump(test, &[ir::BlockArg::Value(stepped)]);
+            self.body.builder.switch_to_block(done);
+            self.chains.insert(done, head);
+            self.int32_arrays.insert(register);
+        }
+    }
+
+    /// Stores an entry value that resides in memory (`Resident`) to its slot.
+    fn reside(&mut self, slot: Option<usize>, value: ir::Value) {
+        if let (Some(slot), Some(stack)) = (slot, self.resident.slot) {
+            self.body.builder.ins().stack_store(self.pointer, value, stack, slot as i32 * WORD_BYTES);
+        }
+    }
+
+    /// An entry value as unboxed at entry: loaded from its slot when it resides there.
+    fn resident_value(&mut self, slot: Option<usize>, entry: Typed) -> Typed {
+        let (Some(slot), Some(stack)) = (slot, self.resident.slot) else {
+            return entry;
+        };
+        let ty = self.body.builder.func.dfg.value_type(entry.value);
+        let value = self.body.builder.ins().stack_load(self.pointer, ty, stack, slot as i32 * WORD_BYTES);
+        Typed { value, representation: entry.representation }
+    }
+
+    fn field(&mut self, index: usize) -> Typed {
+        self.resident_value(self.resident.fields[index], self.fields[index])
+    }
+
+    fn capture(&mut self, index: usize) -> Typed {
+        self.resident_value(self.resident.captures[index], self.captures[index])
+    }
+
+    /// The view of the array `register` holds, loading its words where it resides in the
+    /// entry record.
+    fn array_view(&mut self, register: Register) -> Option<ArrayView> {
+        let Some(&(base, written)) = self.resident.arrays.get(&register) else {
+            return self.arrays.get(&register).copied();
+        };
+        let elements = self.word(base);
+        let access = if written {
+            ArrayAccess::Written { capacity: self.word(base + 2) }
+        } else {
+            ArrayAccess::Read { length: self.word(base + 1) }
+        };
+        Some(ArrayView { elements, access })
+    }
+
+    fn array(&mut self, register: Register) -> ArrayView {
+        self.array_view(register).expect("a region array")
+    }
+
+    /// `pointer` as entry stored it (`Lowering::handoff`), loaded where it is used.
+    fn handed_off(&mut self, pointer: Handoff) -> ir::Value {
+        self.body.builder.ins().stack_load(self.pointer, types::I64, self.handoff, pointer.offset())
     }
 
     fn word(&mut self, index: usize) -> ir::Value {
@@ -3557,7 +3810,18 @@ impl<'a, 'b> Lowering<'a, 'b> {
     fn enter(&mut self) -> Option<()> {
         let fields_start = ENTRY_CAPTURES + self.region.captures.len();
         let arrays_start = fields_start + self.region.fields.len();
+        self.resident = Resident::of(self.region, &self.counted, arrays_start);
+        if self.resident.values > 0 {
+            self.resident.slot = Some(self.body.builder.create_sized_stack_slot(ir::StackSlotData::new(
+                ir::StackSlotKind::ExplicitSlot,
+                self.resident.values as u32 * WORD_BYTES as u32,
+                WORD_BYTES.trailing_zeros() as u8,
+            )));
+        }
         for (index, array) in self.region.arrays.iter().enumerate() {
+            if self.resident.arrays.contains_key(&array.register) {
+                continue;
+            }
             let base = arrays_start + ARRAY_WORDS * index;
             let elements = self.word(base);
             let access = if array.written {
@@ -3572,6 +3836,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
             let representation = self.entry_representations.captures[index];
             let otherwise = self.not_entered(Some(Widening::Capture(index as u16)));
             let value = self.unbox(bits, representation, otherwise);
+            self.reside(self.resident.captures[index], value);
             self.captures.push(Typed { value, representation });
         }
         for index in 0..self.region.fields.len() {
@@ -3583,16 +3848,20 @@ impl<'a, 'b> Lowering<'a, 'b> {
                 let otherwise = self.not_entered(Some(Widening::Field(index as u16)));
                 self.unbox(bits, representation, otherwise)
             };
+            self.reside(self.resident.fields[index], value);
             self.fields.push(Typed { value, representation });
         }
+        self.scan_int32();
         if let Some(inlining) = &self.region.inlining {
             // The scratch registers' address follows arrays and field-store slots; each
             // inlined callee is still the function its field held when the region was made.
-            self.scratch = Some(self.word(
+            let scratch = self.word(
                 arrays_start
                     + ARRAY_WORDS * self.region.arrays.len()
                     + self.region.field_store_sites.len(),
-            ));
+            );
+            self.body.builder.ins().stack_store(self.pointer, scratch, self.handoff, Handoff::Scratch.offset());
+            self.scratch = Some(scratch);
             for frame in inlining.frames.clone() {
                 let held = self.fields[frame.field].value;
                 let other = self.body.builder.ins().icmp_imm_u(IntCC::NotEqual, held, frame.callee.to_bits() as i64);
@@ -3796,14 +4065,16 @@ impl<'a, 'b> Lowering<'a, 'b> {
     /// file, an inlined callee's to the entry's scratch registers (`LoopEntry::scratch`),
     /// from which leaving at its instruction makes its activation.
     fn store_registers(&mut self, registers: &[(Register, Definition)]) {
+        let file = self.handed_off(Handoff::Registers);
+        let scratch = self.scratch.map(|_| self.handed_off(Handoff::Scratch));
         for &(register, web) in registers {
             let value = self.web(web);
             let bits = self.boxed(value);
-            let (file, slot) = match (&self.region.inlining, self.scratch) {
+            let (file, slot) = match (&self.region.inlining, scratch) {
                 (Some(inlining), Some(scratch)) if register >= inlining.caller_registers => {
                     (scratch, register - inlining.caller_registers)
                 }
-                _ => (self.registers, register),
+                _ => (file, register),
             };
             self.body.builder.ins().store(flags(), bits, file, i32::from(slot) * WORD_BYTES);
         }
@@ -3816,6 +4087,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
             super::RegionExit::Resume(pc) => super::RegionExit::Resume(self.region.exit_pc(pc)),
             super::RegionExit::Fallback(pc) => super::RegionExit::Fallback(self.region.exit_pc(pc)),
             super::RegionExit::Recompile(pc) => super::RegionExit::Recompile(self.region.exit_pc(pc)),
+            super::RegionExit::Grow(pc) => super::RegionExit::Grow(self.region.exit_pc(pc)),
             super::RegionExit::EntryMiss(_) => outcome,
         };
         self.exits.leave(&mut self.body.builder, outcome, reported);
@@ -4127,7 +4399,11 @@ impl<'a, 'b> Lowering<'a, 'b> {
     /// backward jump checks for termination first (`Body::interrupt_safepoint`), which ends
     /// the run as `LoopOutcome::Terminated`.
     fn jump(&mut self, pc: u32, target: u32) -> Option<()> {
-        if target <= pc {
+        let proved_backedge = self.copy.is_some_and(|index| {
+            let counted = &self.counted[index];
+            pc == counted.backedge && target == counted.header && self.polls_skipped(counted)
+        });
+        if target <= pc && !proved_backedge {
             self.body.interrupt_safepoint();
             if self.track_backedges && pc == self.region.backedge && target == self.region.header {
                 let offset = i32::try_from(ENTRY_BACKEDGE_COUNT * std::mem::size_of::<u64>())
@@ -4250,7 +4526,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
             && self.straight[offset]
             && !self.proved(next))
             .then_some(())?;
-        let array = *self.arrays.get(&read.operand_b().register_index()?)?;
+        let array = self.array_view(read.operand_b().register_index()?)?;
         let (left, right) = (
             self.body.extend(left.value, super::Int32Extension::Sign),
             self.body.extend(right.value, super::Int32Extension::Sign),
@@ -4308,7 +4584,8 @@ impl<'a, 'b> Lowering<'a, 'b> {
         let past = self.body.builder.ins().icmp(IntCC::NotEqual, index, length);
         self.guard(pc, past);
         let full = self.body.builder.ins().icmp(IntCC::UnsignedGreaterThanOrEqual, length, capacity);
-        self.guard(pc, full);
+        let grow = self.exits.outcome_block(&mut self.body.builder, super::RegionExit::Grow(pc));
+        self.pass_unless(full, grow);
         let grown = self.body.builder.ins().iadd_imm_s(length, 1);
         let word = self.body.builder.ins().ireduce(types::I32, grown);
         self.body.builder.ins().store(flags(), word, array.elements, crate::heap::LENGTH_FROM_VALUES);
@@ -4622,7 +4899,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
             Op::LoadCapture => {
                 let slot = instruction.capture_slot();
                 let index = self.region.captures.iter().position(|capture| *capture == slot)?;
-                let value = self.captures[index];
+                let value = self.capture(index);
                 self.define(instruction.result_register(), value);
                 self.fall_through(pc)
             }
@@ -4729,7 +5006,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
                 let value = if self.region.dynamic_field_reads.contains_key(&(pc - self.region.header)) {
                     self.dynamic_field(pc, field)?
                 } else {
-                    self.fields[field]
+                    self.field(field)
                 };
                 self.define(instruction.result_register(), value);
                 self.fall_through(pc)
@@ -4769,7 +5046,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
                 // An index sum just before checked this read's bounds (`index_sum`).
                 let bounded = self.bounded_reads.remove(&pc);
                 let base = instruction.operand_b().register_index()?;
-                let array = self.arrays[&base];
+                let array = self.array(base);
                 let key = self.operand(instruction.operand_c())?;
                 let representation = if self.region.tagged.contains(&instruction.result_register()) {
                     Representation::Tagged
@@ -4804,6 +5081,10 @@ impl<'a, 'b> Lowering<'a, 'b> {
                 // A hole is tagged, so unboxing sends it to the general path too. A Float64
                 // element loads straight into a float register.
                 let value = match representation {
+                    Representation::Int32 if self.int32_arrays.contains(&base) => {
+                        let bits = self.body.builder.ins().load(types::I64, flags(), address, displacement);
+                        self.body.builder.ins().ireduce(types::I32, bits)
+                    }
                     Representation::Int32 => {
                         let bits = self.body.builder.ins().load(types::I64, flags(), address, displacement);
                         let widen = self.widen_block(pc, Widening::Elements(base));
@@ -4831,7 +5112,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
             }
             Op::SetIndex => {
                 self.element_stores += 1;
-                let array = self.arrays[&instruction.register_b()];
+                let array = self.array(instruction.register_b());
                 let key = self.register(instruction.register_c());
                 let (index, element) = self.element_index(pc, key);
                 self.store_index(pc, array, index);
@@ -4858,6 +5139,10 @@ impl<'a, 'b> Lowering<'a, 'b> {
             | Op::Call
             | Op::CallArray => {
                 self.leave(super::RegionExit::Fallback(pc));
+                Some(())
+            }
+            Op::Return => {
+                self.leave(super::RegionExit::Resume(pc));
                 Some(())
             }
             Op::Jump => self.jump(pc, instruction.jump_target()),

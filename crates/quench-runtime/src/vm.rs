@@ -83,6 +83,9 @@ struct RuntimeAtoms {
     bound_target: Atom,
     bound_this: Atom,
     bound_args: Atom,
+    /// `String.prototype.charCodeAt`, whose intactness a host's string scan checks
+    /// (`Vm::embedding_string_char_code_at_intact`).
+    char_code_at: Atom,
 }
 pub(crate) mod activation;
 mod agent;
@@ -155,6 +158,7 @@ mod method_cache;
 mod plain_equality;
 mod module;
 mod number;
+mod object_template;
 mod object;
 mod shape_memo;
 mod symbol_write_proof;
@@ -1156,6 +1160,8 @@ const STRING_ATOM_CACHE_SIZE: usize = 256;
 const ATOM_STRING_CACHE_SIZE: usize = STRING_ATOM_CACHE_SIZE;
 /// An empty `Vm::recent_atom_strings` slot: no atom has this id.
 const NO_RECENT_ATOM: Atom = Atom::MAX;
+/// The code units below which a unit is ASCII.
+const ASCII_UNITS: usize = 0x80;
 #[derive(Clone, Copy)]
 struct StringConcatCache {
     left: Value,
@@ -1911,6 +1917,7 @@ pub(crate) struct Vm<H> {
     /// Lane private-name sites' homes (`private_site_home`).
     private_site_homes: private_site_home::PrivateSiteHomes,
     array_iteration_proof: Option<iterators::ArrayIterationProof>,
+    array_species_proof: Option<array::ArraySpeciesProof>,
     for_in_own_keys: Option<object_static::ForInOwnKeys>,
     species_slot_proof: std::cell::Cell<Option<object_get::SpeciesSlotProof>>,
     /// The last proof that a promise's species constructor is `%Promise%` (`promise_species_proved`).
@@ -1950,6 +1957,10 @@ pub(crate) struct Vm<H> {
     /// A program compiled at run time spells its property names with such atoms, and
     /// `Object.keys` of its objects had made each key's string again on every call.
     recent_atom_strings: Option<Box<[(Atom, Value); ATOM_STRING_CACHE_SIZE]>>,
+    /// The one-unit ASCII strings recently made (`charAt`, `String.fromCharCode`), by unit;
+    /// collection empties it, as `recent_atom_strings`. A loop building a string a unit at a
+    /// time (V8-v7 Crypto's hex conversion) had allocated each unit's string anew.
+    ascii_unit_strings: Option<Box<[Value; ASCII_UNITS]>>,
     call_targets: Box<[InLoopCallTarget; CALL_TARGET_CACHE_SIZE]>,
     field_caches: site_table::SiteTable<FieldCache>,
     /// Field load sites whose data property was found beyond the immediate prototype, by
@@ -2032,6 +2043,8 @@ pub(crate) struct Vm<H> {
     runtime_atoms: RuntimeAtoms,
     /// `Vm::constructed_shape` answers; cleared by every collection.
     constructed_shapes: [provenance::ConstructedShape; provenance::CONSTRUCTED_SHAPE_ENTRIES],
+    /// The host's object templates (`object_template`), indexed by their ids.
+    object_templates: Vec<object_template::ObjectTemplate>,
     method_caches: Vec<[MethodCache; 2]>,
     megamorphic_methods: Vec<MethodCacheSet>,
     method_cache_atoms: method_cache::MethodCacheAtoms,
@@ -2903,6 +2916,7 @@ impl<H: Host> Vm<H> {
         self.symbol_load_proofs.clear();
         self.private_site_homes.clear();
         self.array_iteration_proof = None;
+        self.array_species_proof = None;
         self.for_in_own_keys = None;
         self.species_slot_proof.set(None);
         self.promise_species_proof.set(None);
@@ -2962,6 +2976,7 @@ impl<H: Host> Vm<H> {
             bound_target: self.intern_atom(BOUND_TARGET_KEY),
             bound_this: self.intern_atom(BOUND_THIS_KEY),
             bound_args: self.intern_atom(BOUND_ARGS_KEY),
+            char_code_at: self.intern_atom("charCodeAt"),
         };
         self.field_caches = site_table::SiteTable::with_empty(usize::from(program.cache_sites));
         self.refresh_active_field_entries();
@@ -3279,7 +3294,13 @@ impl<H: Host> Vm<H> {
         target: Option<CallTarget>,
     ) -> Result<Value, JsError> {
         // Guest code observes the frame stack; a native that runs beside activations does not.
+        // A script callee of such a native runs as an activation above them where it can.
         if self.lane_deferred.is_some() && !self.callee_runs_beside_activations(callee) {
+            if matches!(self.heap.function(callee), Some(FunctionRecord { kind: FunctionKind::User(..), .. }))
+                && let Some(result) = self.lane_deferred_callback(callee, this, args)
+            {
+                return result;
+            }
             self.materialize_deferred_lane();
         }
         if matches!(self.heap.get(callee), Some(Cell::Proxy { .. })) {

@@ -160,6 +160,7 @@ pub(crate) enum Native {
     ReflectSet,
     SuperSet,
     ObjectLiteralPrototype,
+    ObjectLiteralCreate,
     ReflectOwnKeys,
     ReflectGetPrototypeOf,
     ReflectSetPrototypeOf,
@@ -944,6 +945,7 @@ impl Native {
         matches!(
             self,
             Self::ObjectLiteralPrototype
+                | Self::ObjectLiteralCreate
                 | Self::ObjectKeys
                 | Self::ObjectAssign
                 | Self::ObjectDefineProperty
@@ -956,11 +958,26 @@ impl Native {
                 | Self::ObjectPrototypeHasOwnProperty
                 | Self::ObjectPrototypeToString
                 | Self::ReflectGetPrototypeOf
+                | Self::ReflectSetPrototypeOf
                 | Self::ForInKeys
                 | Self::ArrayJoin
                 | Self::ArraySplice
                 | Self::StringSplit
                 | Self::StringMatch
+                | Self::StringReplace
+                | Self::StringReplaceAll
+                | Self::NumberString
+                | Self::MapEntries
+                | Self::ArraySlice
+                | Self::ArrayMap
+                | Self::ArrayForEach
+                | Self::ArrayFilter
+                | Self::ArraySome
+                | Self::ArrayEvery
+                | Self::ArrayFind
+                | Self::ArrayFindIndex
+                | Self::ArrayFindLast
+                | Self::ArrayFindLastIndex
                 | Self::RegExpTest
                 | Self::JsonParse
                 | Self::JsonStringify

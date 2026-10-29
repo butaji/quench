@@ -1,5 +1,17 @@
 use super::*;
 
+/// Where `Vm::array_species_is_array_create` found `Array.prototype.constructor` for an array
+/// of `shape`, which has no own `constructor`, under `epoch`. A change to the prototype's layout
+/// advances the epoch; every collection advances it too, so a proof never names a reused shape.
+/// The slot's value may change in place, so each use reads it.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) struct ArraySpeciesProof {
+    shape: u32,
+    epoch: u64,
+    prototype: Value,
+    constructor_slot: usize,
+}
+
 impl<H: Host> Vm<H> {
     pub(super) fn indexed_at_index(
         &mut self,
@@ -655,14 +667,9 @@ impl<H: Host> Vm<H> {
         {
             return false;
         }
-        let Some(object) = self.heap.array_mut(array) else {
+        if self.heap.grow_array_elements(array, |elements| elements.extend_from_slice(values)).is_none() {
             unreachable!("matched an array above");
-        };
-        let elements = super::index::mutable_array_elements(object.elements_mut());
-        let capacity = elements.capacity();
-        elements.extend_from_slice(values);
-        let grown = elements.capacity() - capacity;
-        self.heap.charge_payload_growth(grown * size_of::<Value>());
+        }
         true
     }
 
@@ -696,14 +703,9 @@ impl<H: Host> Vm<H> {
         if !self.array_indices_store_plainly(this, length..final_length) {
             return None;
         }
-        let Some(object) = self.heap.array_mut(this) else {
+        if self.heap.grow_array_elements(this, |elements| elements.extend_from_slice(args)).is_none() {
             unreachable!("matched an array above");
-        };
-        let elements = super::index::mutable_array_elements(object.elements_mut());
-        let capacity = elements.capacity();
-        elements.extend_from_slice(args);
-        let grown = elements.capacity() - capacity;
-        self.heap.charge_payload_growth(grown * size_of::<Value>());
+        }
         Some(Value::number(final_length as f64))
     }
 
@@ -716,10 +718,9 @@ impl<H: Host> Vm<H> {
         {
             return false;
         }
-        let Some(object) = self.heap.array_mut(this) else {
+        if self.heap.grow_array_elements(this, |elements| elements.push(value)).is_none() {
             unreachable!("matched an array above");
-        };
-        super::index::mutable_array_elements(object.elements_mut()).push(value);
+        }
         true
     }
 
@@ -738,13 +739,11 @@ impl<H: Host> Vm<H> {
         let Some(object) = self.heap.array_store_mut(array, value) else {
             return false;
         };
-        let elements = super::index::mutable_array_elements(object.elements_mut());
-        if index == length {
-            elements.push(value);
-        } else {
-            elements[index] = value;
+        if index < length {
+            super::index::mutable_array_elements(object.elements_mut())[index] = value;
+            return true;
         }
-        true
+        self.heap.grow_array_elements(array, |elements| elements.push(value)).is_some()
     }
 
     /// ArrayAccumulation's CreateDataPropertyOrThrow of `values` at a dense literal's next
@@ -757,14 +756,9 @@ impl<H: Host> Vm<H> {
         if length.checked_add(values.len()).is_none_or(|end| end > MAX_ARRAY_LENGTH) {
             return false;
         }
-        let Some(object) = self.heap.array_mut(array) else {
+        if self.heap.grow_array_elements(array, |elements| elements.extend_from_slice(values)).is_none() {
             unreachable!("matched an array above");
-        };
-        let elements = super::index::mutable_array_elements(object.elements_mut());
-        let capacity = elements.capacity();
-        elements.extend_from_slice(values);
-        let grown = elements.capacity() - capacity;
-        self.heap.charge_payload_growth(grown * size_of::<Value>());
+        }
         true
     }
 
@@ -948,6 +942,9 @@ impl<H: Host> Vm<H> {
         source: Value,
         length: usize,
     ) -> Result<Value, JsError> {
+        if self.array_species_is_array_create(source) {
+            return self.array_create(p, length);
+        }
         let mut constructor = if self.is_array(p, source)? {
             // An array's `constructor` is a data property of its chain where none runs guest code
             // (`plain_property_lookup`); a Proxy or an accessor takes the general read.
@@ -992,6 +989,65 @@ impl<H: Host> Vm<H> {
             return Err(self.type_error(p, "array species is not a constructor".into()));
         }
         self.construct_value(p, constructor, &[Value::number(length as f64)])
+    }
+
+    /// Whether ArraySpeciesCreate of `source` is this realm's ArrayCreate with every Get on the
+    /// way reading a data property: an ordinary Array with no own `constructor` whose
+    /// prototype is this realm's `Array.prototype`, which holds this realm's `Array` as its
+    /// `constructor`, whose `@@species` is the intrinsic getter. A proof for the receiver's
+    /// shape under the current `prototype_layout_epoch` names the slot to read
+    /// (`ArraySpeciesProof`).
+    pub(super) fn array_species_is_array_create(&mut self, source: Value) -> bool {
+        let prototype = self.array_prototype_for_realm(self.realm.globals);
+        let Some(array) = self.heap.array(source) else {
+            return false;
+        };
+        if array.is_arguments_object() || array.has_side_descriptors() || array.proto() != prototype {
+            return false;
+        }
+        let (shape, epoch) = (array.shape(), crate::heap::prototype_layout_epoch());
+        let proof = match self.array_species_proof {
+            Some(proof) if proof.shape == shape && proof.epoch == epoch && proof.prototype == prototype => proof,
+            _ => match self.prove_array_species(shape, prototype, epoch) {
+                Some(proof) => proof,
+                None => return false,
+            },
+        };
+        self.object_data(prototype)
+            .and_then(|data| self.heap.property_get(data, proof.constructor_slot))
+            .is_some_and(|constructor| self.realm_array_constructor(constructor) && self.has_intrinsic_species_getter(constructor))
+    }
+
+    /// Whether `value` is this realm's `Array`, the constructor ArrayCreate stands for.
+    fn realm_array_constructor(&self, value: Value) -> bool {
+        matches!(
+            self.heap.function(value),
+            Some(FunctionRecord { kind: FunctionKind::Native(Native::Array), realm, .. }) if *realm == self.realm.globals
+        )
+    }
+
+    /// `array_species_is_array_create`'s lookups past its proof, recorded once the prototype
+    /// it reads is a marked prototype, so a later change to its layout advances the epoch and
+    /// retires the proof.
+    #[cold]
+    #[inline(never)]
+    fn prove_array_species(&mut self, shape: u32, prototype: Value, epoch: u64) -> Option<ArraySpeciesProof> {
+        let key = PropertyKey::string(self.runtime_atoms.constructor);
+        if self.property_shape_slot(shape, key).is_some() {
+            return None;
+        }
+        let data = self.object_data(prototype)?;
+        let constructor_slot = self.property_shape_slot(data.shape(), key)?;
+        if self.slot_attributes(data, constructor_slot)?.accessor {
+            return None;
+        }
+        let proof = ArraySpeciesProof { shape, epoch, prototype, constructor_slot };
+        self.heap.mark_prototype(prototype);
+        // Marking an object that was no prototype yet leaves the epoch where it was.
+        if crate::heap::prototype_layout_epoch() == epoch {
+            self.array_species_proof = Some(proof);
+        }
+        Some(proof)
     }
 
     pub(super) fn is_array(&mut self, p: &ResidualProgram, value: Value) -> Result<bool, JsError> {

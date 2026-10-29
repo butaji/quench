@@ -28,8 +28,8 @@ impl crate::heap::ClosureReadSource for ProgramClosureReads<'_> {
         self.lexical_this
     }
 
-    fn may_hold_projections(&self, function: u32) -> bool {
-        function == ROOT_FUNCTION_ID
+    fn projection_function(&self) -> u32 {
+        ROOT_FUNCTION_ID
     }
 
     fn slot_is_projection(&self, program: u32, function: u32, slot: u16) -> bool {
@@ -38,6 +38,10 @@ impl crate::heap::ClosureReadSource for ProgramClosureReads<'_> {
             && !self.programs.root_slot_is_binding(ProgramId::from_raw(program), slot, true)
     }
 }
+
+/// Pooled frames a full collection keeps (`Vm::frame_pool`): a depth ordinary call chains
+/// reach between collections, each frame bounded by `RETAINED_FRAME_VALUES` per buffer.
+const POOLED_FRAMES_KEPT_BY_FULL_COLLECTIONS: usize = 64;
 
 fn shape_reclaim_threshold_met(shape_count: usize, unreachable: usize) -> bool {
     unreachable >= shape_count.div_ceil(SHAPE_COMPACTION_MIN_RECLAIM_DENOMINATOR)
@@ -405,6 +409,15 @@ impl<H: Host> Vm<H> {
         let mut phase_started = std::time::Instant::now();
         self.constructed_shapes.fill(super::provenance::ConstructedShape::EMPTY);
         self.enumerable_keys.clear();
+        // Prepared regexp subjects share their strings' text: kept across a collection, they
+        // would keep a dropped subject's text alive however large, as no string holds them.
+        self.regexp_subjects.clear();
+        if full {
+            // Recursion leaves one pooled frame per level it reached; a full collection keeps the
+            // few that ordinary call depth reuses, and later deeper calls allocate their own.
+            self.frame_pool.truncate(POOLED_FRAMES_KEPT_BY_FULL_COLLECTIONS);
+            self.frame_pool.shrink_to(POOLED_FRAMES_KEPT_BY_FULL_COLLECTIONS);
+        }
         #[cfg(feature = "profile-aggregate")]
         for (index, frame) in self.frames.iter().enumerate() {
             self.profile.gc_frame(
@@ -454,7 +467,7 @@ impl<H: Host> Vm<H> {
         // every source costs each root a step through every nesting level. The previous
         // collection's count sizes the vector, which otherwise regrows from empty each time.
         let mut roots = Vec::with_capacity(self.gc_root_count);
-        self.programs.extend_roots(&mut roots, full);
+        self.programs.extend_roots(&mut roots, full, self.heap.promotion_age());
         roots.extend(self.wasm_js.roots());
         roots.extend([
             self.realm.globals,
@@ -920,6 +933,9 @@ impl<H: Host> Vm<H> {
         if let Some(strings) = &mut self.recent_atom_strings {
             strings.fill((super::NO_RECENT_ATOM, Value::UNDEFINED));
         }
+        if let Some(strings) = &mut self.ascii_unit_strings {
+            strings.fill(Value::UNDEFINED);
+        }
         #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
         self.heap.record_vm_gc_phase(3, after_collection_started);
         self.host.at_collection_boundary(self.memory_policy());
@@ -983,6 +999,7 @@ impl<H: Host> Vm<H> {
             .collect::<Vec<_>>();
         self.heap.remap_live_object_shapes(&mapping, &lengths);
         self.startup_intrinsics.remap_shapes(&mapping);
+        self.remap_object_template_shapes(&mapping);
         self.shapes = shapes;
         self.shape_constructors.clear();
         self.transitions = transitions;

@@ -251,6 +251,35 @@ fn lane_polymorphic_field_stores_keep_assignment_semantics() {
 }
 
 #[test]
+fn lane_polymorphic_field_hints_keep_lookup_semantics() {
+    // A polymorphic read keeps its last own entry as its record's hint: receivers of one
+    // shape, then alternating ones, a site a prototype's entry answers, which drops the hint,
+    // and receivers whose field changes value, shape or holder all read what the general
+    // lookup reads, from a plain record and a returning one.
+    let source = r#"
+      const out = [];
+      function get(o) { return o.x; }
+      function read(o) { const v = o.x; return v + 1; }
+      const os = [{ x: 1, a: 0 }, { x: 2, b: 0 }, { x: 3, c: 0 }];
+      let s = 0;
+      for (let r = 0; r < 200; r++) for (let k = 0; k < 3; k++) { const o = os[r < 100 ? 0 : k]; s += get(o) + read(o); }
+      out.push(s);
+      class B {} B.prototype.x = 40;
+      const held = [new B(), { x: 5, d: 0 }, new B()];
+      s = 0; for (let r = 0; r < 100; r++) for (const o of held) s += read(o) + get(o);
+      out.push(s);
+      os[0].x = "s"; delete os[1].b; os[1].x = 7; B.prototype.x = 1;
+      out.push(os.map(get).join(","), os.map(read).join(","), held.map(read).join(","));
+      print(out.join(" "));
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    let program = Engine::specialize(source, "lane-polymorphic-hints.js").unwrap();
+    vm.execute(&program).unwrap();
+    assert_eq!(output.borrow().as_slice(), ["2400 17300 s,7,3 s1,8,4 2,6,2"]);
+}
+
+#[test]
 fn lane_global_undefined_reads_keep_binding_semantics() {
     // A static global read of `undefined` answers its value in the lane, while a direct
     // eval's `var undefined` and a `with` object's property still shadow it, and neither an
@@ -671,6 +700,30 @@ fn minor_collection_keeps_accessor_pairs_added_to_old_owners() {
     vm.collect_slow(&program, false);
     assert_eq!(weak.map(|handle| vm.heap.weak_value(handle)), [Some(getter), Some(setter)]);
     assert!(vm.heap.release_root(owner_root));
+}
+
+/// A program's changed roots are traced by as many minor collections as promote what they
+/// hold: under `PromotionAge::Second` the first leaves a new constant young and unmarked,
+/// and only the second promotes it.
+#[test]
+fn minor_collections_trace_changed_program_roots_until_promoted() {
+    use crate::heap::PromotionAge;
+
+    let program = Engine::specialize("", "aged-program-constant.js").unwrap();
+    for age in PromotionAge::ALL {
+        let mut vm = Vm::new(TestHost::default());
+        vm.heap.set_promotion_age_for_test(age);
+        let id = vm.programs.insert(program.clone()).unwrap();
+        vm.collect_slow(&program, true);
+        let constant = vm.heap.alloc_string("young constant".into());
+        let weak = vm.heap.weak_handle(constant).unwrap();
+        vm.programs.set_constants(id, vec![constant]);
+        for _ in 0..=PromotionAge::OLDEST.minors() {
+            vm.collect_slow(&program, false);
+            assert_eq!(vm.heap.weak_value(weak), Some(constant), "{age:?}");
+        }
+        assert!(vm.heap.is_old(constant), "{age:?}");
+    }
 }
 
 #[test]
@@ -12189,6 +12242,246 @@ fn shared_osr_appends_and_fills_holes_in_place() {
 }
 
 #[test]
+#[cfg(not(quench_profiled))]
+fn shared_osr_wavefront_pairs_keep_stencil_sweep_results() {
+    // A Gauss-Seidel sweep's row loop runs its rows in pairs (`compiled::wavefront`): each
+    // case reads what program order reads, bit for bit: an odd last row, integral results,
+    // signed zeros and NaN, an element whose `valueOf` runs (which restores the pair and
+    // leaves for the general path), and an array read and written as one (not entered).
+    let source = r#"
+      function bump(x) { x[0] = x[0] + 1; }
+      function sweep(x, x0, a, c, width, height, rowSize, sweeps) {
+        var invC = 1 / c;
+        for (var k = 0; k < sweeps; k++) {
+          for (var j = 1; j <= height; j++) {
+            var lastRow = (j - 1) * rowSize, currentRow = j * rowSize, nextRow = (j + 1) * rowSize;
+            var lastX = x[currentRow];
+            ++currentRow;
+            for (var i = 1; i <= width; i++)
+              lastX = x[currentRow] = (x0[currentRow] + a * (lastX + x[++currentRow] + x[++lastRow] + x[++nextRow])) * invC;
+          }
+          bump(x);
+        }
+      }
+      function make(n, f) { var a = []; for (var i = 0; i < n; i++) a.push(f(i)); return a; }
+      function digest(x) { var h = 0; for (var i = 0; i < x.length; i++) h = (h * 31 + (Object.is(x[i], -0) ? 7 : x[i] !== x[i] ? 11 : Math.floor(x[i] * 4096))) | 0; return h; }
+      var log = [], out = [];
+      function run(width, height, a, c, fill, fill0, alias, poke) {
+        var rowSize = width + 2, n = rowSize * (height + 2);
+        var x = make(n, fill), x0 = alias ? x : make(n, fill0);
+        if (poke) x[3 * rowSize + 4] = { valueOf: function () { log.push("valueOf"); return 2; } };
+        for (var r = 0; r < 40; r++) sweep(x, x0, a, c, width, height, rowSize, 3);
+        out.push(digest(x));
+      }
+      run(8, 6, 1, 4, function (i) { return (i % 7) * 0.25 + 0.5; }, function (i) { return (i % 5) * 0.125; }, false, false);
+      run(8, 7, 1, 4, function (i) { return (i % 7) * 0.25 + 0.5; }, function (i) { return (i % 5) * 0.125; }, false, false);
+      run(6, 4, 0, 1, function (i) { return i % 3; }, function (i) { return i % 9 - 4; }, false, false);
+      run(6, 4, 1, 3, function (i) { return i === 20 ? NaN : -0; }, function (i) { return i % 4 ? -0 : 0; }, false, false);
+      run(8, 6, 1, 4, function (i) { return (i % 7) * 0.25 + 0.5; }, function (i) { return (i % 5) * 0.125; }, false, true);
+      run(8, 6, 0.5, 2.5, function (i) { return (i % 7) * 0.25 + 0.5; }, null, true, false);
+      print(out.join(" ") + " " + log.length);
+    "#;
+    let expected = ["2081041934 -575006534 -311107584 -869203481 2081041934 -1370797326 2"];
+    let program = Engine::specialize(source, "osr-wavefront.js").unwrap();
+    let interpreted = Rc::new(RefCell::new(Vec::new()));
+    Vm::new(TestHost::writing_to(interpreted.clone())).execute(&program).unwrap();
+    assert_eq!(interpreted.borrow().as_slice(), expected);
+    let function_id = program
+        .functions
+        .iter()
+        .position(|function| function.header().name.is_some_and(|name| &program.atoms[name as usize] == "sweep"))
+        .unwrap();
+    for policy in crate::MemoryPolicy::ALL {
+        let output = Rc::new(RefCell::new(Vec::new()));
+        let mut compiled = Vm::new(TestHost::writing_to(output.clone()));
+        compiled.set_memory_policy(policy);
+        compiled.set_execution_mode(crate::ExecutionMode::Compiled);
+        compiled.programs.enable_js_jit_diagnostics();
+        compiled.execute(&program).unwrap();
+        assert_eq!(output.borrow().as_slice(), expected, "{policy:?}");
+        if !super::compiled::loop_tier_compiles(policy) {
+            continue;
+        }
+        let views = compiled
+            .programs
+            .lane_views(super::program_store::ProgramId::MAIN)
+            .expect("main program lane views");
+        let osr = views
+            .get(function_id)
+            .and_then(super::program_store::derived_lane_view)
+            .expect("hot sweep lane view")
+            .osr_diagnostics();
+        assert!(osr.native_region_runs > 0, "no native sweep under {policy:?}: {osr:?}");
+    }
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
+fn shared_osr_appends_past_a_full_backing_keep_the_region_native() {
+    // Each call appends to a fresh array past its backing's capacity (V8-v7 Crypto's
+    // `bnpMultiplyTo` into a new `BigInteger`): the general path grows the backing and the
+    // region keeps running natively, through more such exits than a region may take of
+    // values leaving the subset.
+    let source = r#"
+      function fill(n) {
+        var a = [];
+        for (var i = 0; i < n; i++) a[i] = (i * 7 + 3) & 255;
+        return a;
+      }
+      var sum = 0;
+      for (var k = 0; k < 3000; k++) {
+        var a = fill(40 + (k & 7));
+        sum = (sum * 31 + a[a.length - 1] + a.length) | 0;
+      }
+      print(sum);
+    "#;
+    let program = Engine::specialize(source, "osr-append-grow.js").unwrap();
+    let interpreted = Rc::new(RefCell::new(Vec::new()));
+    Vm::new(TestHost::writing_to(interpreted.clone())).execute(&program).unwrap();
+    let expected = interpreted.borrow().clone();
+    let function_id = program
+        .functions
+        .iter()
+        .position(|function| function.header().name.is_some_and(|name| &program.atoms[name as usize] == "fill"))
+        .unwrap();
+    for policy in crate::MemoryPolicy::ALL {
+        let output = Rc::new(RefCell::new(Vec::new()));
+        let mut compiled = Vm::new(TestHost::writing_to(output.clone()));
+        compiled.set_memory_policy(policy);
+        compiled.set_execution_mode(crate::ExecutionMode::Compiled);
+        compiled.programs.enable_js_jit_diagnostics();
+        compiled.execute(&program).unwrap();
+        assert_eq!(*output.borrow(), expected, "{policy:?}");
+        if !super::compiled::loop_tier_compiles(policy) {
+            continue;
+        }
+        let views = compiled
+            .programs
+            .lane_views(super::program_store::ProgramId::MAIN)
+            .expect("main program lane views");
+        let osr = views
+            .get(function_id)
+            .and_then(super::program_store::derived_lane_view)
+            .expect("hot fill lane view")
+            .osr_diagnostics();
+        assert!(osr.native_region_runs > 2000, "fill left native code under {policy:?}: {osr:?}");
+        assert_eq!(osr.exits, 0, "{policy:?}: {osr:?}");
+    }
+}
+
+#[test]
+fn shared_osr_int32_element_scans_keep_nested_loop_results() {
+    // A nested loop reads arrays entry scanned to hold only `i32`s, without a tag guard
+    // per read: a double, a hole past a grown length and a negative zero each fail the
+    // scan, which widens the array's reads for the next compilation; results match Node.
+    let source = r#"
+function run(a, w, n) {
+  var s = 0;
+  for (var i = 0; i < n; i++) {
+    for (var j = 0; j < a.length; j++) { s = (s + a[j] * (i + 1)) | 0; w[j] = (w[j] + a[j]) | 0; }
+  }
+  return s;
+}
+var out = [];
+for (var k = 0; k < 400; k++) {
+  var a = [], w = [];
+  for (var j = 0; j < 30; j++) { a.push((j * 7 + k) | 0); w.push(j); }
+  if (k == 300) a[5] = 2.5;
+  if (k == 350) { a.length = 40; }
+  if (k == 370) a[3] = -0;
+  out.push(run(a, w, 20), w[7], w[29]);
+}
+var h = 0; for (var i = 0; i < out.length; i++) h = (h * 31 + (out[i] | 0) + (out[i] !== out[i] ? 7 : 0)) | 0;
+print(h + " " + out.slice(-6).join(","));
+    "#;
+    let expected = ["-2093528250 3146850,8947,12049,3153150,8967,12069"];
+    let program = Engine::specialize(source, "osr-int32-scan.js").unwrap();
+    for mode in [None, Some(crate::ExecutionMode::Compiled)] {
+        let output = Rc::new(RefCell::new(Vec::new()));
+        let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+        if let Some(mode) = mode {
+            vm.set_execution_mode(mode);
+        }
+        vm.execute(&program).unwrap();
+        assert_eq!(output.borrow().as_slice(), expected, "{mode:?}");
+    }
+}
+
+#[test]
+fn char_at_and_from_char_code_share_ascii_unit_strings() {
+    // One-unit ASCII results come from a cache a collection empties (`ascii_unit_strings`);
+    // every other unit, an index out of range and a coerced index take the native. The
+    // output is Node's, through many collections.
+    let source = r#"
+var s = "aZé中😀~", out = [];
+for (var i = -1; i < 9; i++) out.push(JSON.stringify(s.charAt(i)), s.charAt(i).length);
+var junk = []; for (var k = 0; k < 200000; k++) junk.push({k: k, t: String.fromCharCode(65 + k % 26) + s.charAt(k % 3)});
+out.push(junk[12345].t, String.fromCharCode(0).length, String.fromCharCode(127).length, String.fromCharCode(128).charCodeAt(0), "x".charAt(0) === "x", "abc".charAt(1.7), "abc".charAt("2"));
+var r = ""; for (var j = 0; j < 300; j++) r += "0123456789abcdef".charAt(j & 15); out.push(r.length, r.slice(250));
+print(out.join("|"));
+    "#;
+    let expected = [r#"""|0|"a"|1|"Z"|1|"é"|1|"中"|1|"\ud83d"|1|"\ude00"|1|"~"|1|""|0|""|0|Va|1|1|128|true|b|c|300|abcdef0123456789abcdef0123456789abcdef0123456789ab"#];
+    let program = Engine::specialize(source, "ascii-unit-strings.js").unwrap();
+    for mode in [None, Some(crate::ExecutionMode::Compiled)] {
+        let output = Rc::new(RefCell::new(Vec::new()));
+        let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+        if let Some(mode) = mode {
+            vm.set_execution_mode(mode);
+        }
+        vm.execute(&program).unwrap();
+        assert_eq!(output.borrow().as_slice(), expected, "{mode:?}");
+    }
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
+fn shared_osr_returns_inside_a_loop_resume_the_lane_at_the_return() {
+    // A loop that returns from inside its body runs natively and leaves at the `Return`,
+    // which the lane runs with the state written back; leaving so never retires the loop.
+    let source = r#"
+      function cmp(a, b) { var i = a.length; while (--i >= 0) { var r = a[i] - b[i]; if (r != 0) return r; } return 0; }
+      var a = [], b = [];
+      for (var i = 0; i < 200; i++) { a.push(i * 3 & 255); b.push(i * 3 & 255); }
+      var s = 0;
+      for (var k = 0; k < 3000; k++) {
+        b[k % 200] = (k & 1) ? a[k % 200] + 1 : a[k % 200];
+        s = (s + cmp(a, b) * (k % 7)) | 0;
+        b[k % 200] = a[k % 200];
+      }
+      print(s);
+    "#;
+    let program = Engine::specialize(source, "osr-loop-return.js").unwrap();
+    let interpreted = Rc::new(RefCell::new(Vec::new()));
+    Vm::new(TestHost::writing_to(interpreted.clone())).execute(&program).unwrap();
+    assert_eq!(interpreted.borrow().as_slice(), ["-4498"]);
+    let function_id = program
+        .functions
+        .iter()
+        .position(|function| function.header().name.is_some_and(|name| &program.atoms[name as usize] == "cmp"))
+        .unwrap();
+    for policy in crate::MemoryPolicy::ALL {
+        let output = Rc::new(RefCell::new(Vec::new()));
+        let mut compiled = Vm::new(TestHost::writing_to(output.clone()));
+        compiled.set_memory_policy(policy);
+        compiled.set_execution_mode(crate::ExecutionMode::Compiled);
+        compiled.programs.enable_js_jit_diagnostics();
+        compiled.execute(&program).unwrap();
+        assert_eq!(output.borrow().as_slice(), ["-4498"], "{policy:?}");
+        if !super::compiled::loop_tier_compiles(policy) {
+            continue;
+        }
+        let views = compiled.programs.lane_views(super::program_store::ProgramId::MAIN).expect("main program lane views");
+        let osr = views
+            .get(function_id)
+            .and_then(super::program_store::derived_lane_view)
+            .expect("hot cmp lane view")
+            .osr_diagnostics();
+        assert!(osr.native_region_runs > 2000, "{policy:?}: {osr:?}");
+        assert_eq!(osr.exits, 0, "{policy:?}: {osr:?}");
+    }
+}
+
+#[test]
 fn shared_osr_indexes_the_row_a_loop_reads_each_iteration() {
     // `a[e][f] = x` in a loop over `e` indexes the row `a[e]` the iteration read, not the
     // row the region entered with: the region declines an indexed register it defines
@@ -18274,4 +18567,119 @@ print(JSON.stringify(out));
     let mut vm = Vm::new(TestHost::writing_to(output.clone()));
     vm.execute(&Engine::specialize(source, "constant-left.js").unwrap()).unwrap();
     assert_eq!(output.borrow().as_slice(), [r#"["0f1t0f1t0f1t0f1t0f1t0f0f1t1t1t","0f1t0f1t0f1t0f1t0f1t0f0f1t1t1t","0f0f1t1t1t0f1t0f0f0f0f0f0f0f1t","0f1t0f1t0f1t0f1t0f1t0f0f0f1t1t","1t0f1t0f0f1t0f1t1t0f0f0f0f0f0f","0f0f0f0f0f1t0f1t0f0f0f0f0f0f0f","1t0f1t0f0f1t0f1t1t0f0f0f0f0f0f","0f1t0f1t0f1t0f1t0f1t0f0f0f1t1t","0f0f1t1t1t0f0f1t0f0f0f0f0f0f1t","0f0f0f0f0f1t0f1t1t0f0f0f0f0f0f","0f1t0f1t0f1t0f1t0f1t0f0f0f1t1t","0f1t0f1t0f1t0f1t0f1t1t0f0f1t1t","0f0f0f0f0f1t0f1t0f0f1t0f0f0f0f","0f0f1t1t1t0f0f1t0f0f0f0f0f0f1t","0f1t0f1t0f1t0f1t0f1t0f0f0f1t1t","1t0f1t0f0f1t0f1t1t0f0f0f0f0f0f","1t0f1t0f0f1t0f1t1t0f0f0f0f0f0f","1t0f1t0f0f1t0f1t1t0f0f0f0f0f0f","0f1t0f1t0f1t0f1t0f1t0f0f0f1t1t","EEEEEEEE0f1t0f1tEEEE0fEE0fEEEE",true,false,true,3,67]"#]);
+}
+
+#[test]
+fn object_templates_copy_constructions_until_a_read_of_them_changes() {
+    let source = r#"
+      var kState = Symbol('state');
+      function State() { this.buffer = []; this.length = 0; this[kState] = 1.5; }
+      State.prototype.flag = 0;
+      function Message() { this.state = new State(); this.events = { __proto__: null }; this.url = ''; this.flag = State.prototype.flag; }
+      function make() { return new Message(); }
+      function makeAt(url, socket) { var m = new Message(); m.url = url; m.socket = socket; return m; }
+      function probes() { return [State.prototype, 'flag']; }
+      function parameters() { return ['url', 'socket']; }
+      function atCheck(copy, url, socket) { return same(copy, makeAt(url, socket)) && copy.url === url && copy.socket === socket; }
+      function describe(m) {
+        return JSON.stringify([Reflect.ownKeys(m).map(String), Object.getPrototypeOf(m) === Message.prototype,
+          Reflect.ownKeys(m.state).map(String), Object.getPrototypeOf(m.state) === State.prototype, m.state[kState],
+          Object.getPrototypeOf(m.events), Array.isArray(m.state.buffer), m.flag]);
+      }
+      function same(a, b) { return describe(a) === describe(b); }
+      // Two copies equal to a construction, sharing none of the objects it makes anew.
+      function check(first, second, constructed) { return same(first, constructed) && same(second, constructed) && distinct(first, second); }
+      function distinct(a, b) { return a !== b && a.state !== b.state && a.state.buffer !== b.state.buffer && a.events !== b.events; }
+      function setFlag(value) { State.prototype.flag = value; }
+      function addKey() { Message.prototype.extra = 1; }
+      function churn() { for (var k = 0; k < 20000; k++) { var o = {}; o['junk' + k] = k; } }
+    "#;
+    let mut vm = Vm::new(TestHost::default());
+    let program = Engine::specialize(source, "object-templates.js").unwrap();
+    vm.execute(&program).unwrap();
+    let call = |vm: &mut Vm<TestHost>, name: &str, args: &[Value]| {
+        let atom = vm.intern_atom(name);
+        let function = vm.own_property(vm.realm.globals, atom).unwrap();
+        vm.call_value(&program, function, Value::UNDEFINED, args).unwrap()
+    };
+    let capture = |vm: &mut Vm<TestHost>| {
+        let (template, witness) = (call(vm, "make", &[]), call(vm, "make", &[]));
+        let probes = call(vm, "probes", &[]);
+        let pair = vm.heap.array_elements(probes).unwrap().as_slice().to_vec();
+        vm.capture_object_template(template, witness, &[(pair[0], pair[1])], &[]).unwrap()
+    };
+    let id = capture(&mut vm);
+    // Values this test holds are unrooted: each check takes them in one call made once they
+    // exist, before anything else allocates.
+    let check = |vm: &mut Vm<TestHost>, id| {
+        let constructed = call(vm, "make", &[]);
+        let (first, second) = (vm.instantiate_object_template(id, &[]).unwrap(), vm.instantiate_object_template(id, &[]).unwrap());
+        assert_eq!(call(vm, "check", &[first, second, constructed]), Value::TRUE);
+    };
+    check(&mut vm, id);
+
+    // Shape compaction renumbers the guarded shapes; the template follows.
+    call(&mut vm, "churn", &[]);
+    let shapes = vm.shapes.len();
+    vm.collect_now(&program);
+    assert!(vm.shapes.len() < shapes, "the collection compacted the shape table");
+    check(&mut vm, id);
+
+    // A probed value and a guarded layout each retire the template.
+    call(&mut vm, "setFlag", &[Value::number(2.0)]);
+    assert!(vm.instantiate_object_template(id, &[]).is_none());
+    let id = capture(&mut vm);
+    assert!(vm.instantiate_object_template(id, &[]).is_some());
+
+    // Parameters: constructions that differ there, copies that take the caller's values.
+    let (a, b) = (Value::number(1.0), Value::number(2.0));
+    let (template, witness) = (call(&mut vm, "makeAt", &[a, Value::TRUE]), call(&mut vm, "makeAt", &[b, Value::FALSE]));
+    let probes = call(&mut vm, "probes", &[]);
+    let pair = vm.heap.array_elements(probes).unwrap().as_slice().to_vec();
+    let keys = call(&mut vm, "parameters", &[]);
+    let keys = vm.heap.array_elements(keys).unwrap().as_slice().to_vec();
+    assert!(vm.capture_object_template(template, witness, &[(pair[0], pair[1])], &[]).is_none(), "differing primitives need parameters");
+    let parameterized = vm.capture_object_template(template, witness, &[(pair[0], pair[1])], &keys).unwrap();
+    let c = Value::number(3.0);
+    let copy = vm.instantiate_object_template(parameterized, &[c, Value::NULL]).unwrap();
+    assert_eq!(call(&mut vm, "atCheck", &[copy, c, Value::NULL]), Value::TRUE);
+    assert!(vm.instantiate_object_template(parameterized, &[c]).is_none(), "one argument per parameter");
+
+    call(&mut vm, "addKey", &[]);
+    assert!(vm.instantiate_object_template(id, &[]).is_none());
+    assert!(vm.instantiate_object_template(parameterized, &[c, Value::NULL]).is_none());
+}
+
+#[test]
+fn array_create_results_follow_species_changes_after_the_proof() {
+    let source = r#"
+function check(actual, expected, label) { if (JSON.stringify(actual) !== JSON.stringify(expected)) throw Error(label + ': ' + JSON.stringify(actual)); }
+for (let round = 0; round < 3; round++) {
+  check([1, , 3].map((x) => x * 2), [2, null, 6], 'holes stay holes');
+  check(Object.keys([1, , 3].map((x) => x)), ['0', '2'], 'hole keys');
+  check([1, 2, 3, 4].filter((x) => x % 2), [1, 3], 'filter');
+}
+const own = [1, 2]; own.constructor = { [Symbol.species]: function Own(n) { this.own = n; } };
+check(own.map((x) => x), { 0: 1, 1: 2, own: 2 }, 'own constructor');
+const saved = Array.prototype.constructor;
+Array.prototype.constructor = { [Symbol.species]: function Proto(n) { this.proto = n; } };
+check([5].map((x) => x), { 0: 5, proto: 1 }, 'prototype constructor replaced in place');
+check([5].filter(() => true), { 0: 5, proto: 0 }, 'filter species');
+Array.prototype.constructor = saved;
+check([5].map((x) => x), [5], 'restored');
+const species = Object.getOwnPropertyDescriptor(Array, Symbol.species);
+Object.defineProperty(Array, Symbol.species, { get() { return function Got(n) { this.got = n; }; }, configurable: true });
+check([5].map((x) => x), { 0: 5, got: 1 }, 'species getter replaced');
+Object.defineProperty(Array, Symbol.species, species);
+const shrinking = [1, 2, 3, 4];
+check(shrinking.map((x, i) => { if (i === 0) shrinking.length = 2; return x; }), [1, 2, null, null], 'receiver shrinks');
+const kept = [];
+for (let i = 0; i < 2000; i++) kept.push({ i });
+const mapped = kept.map((o) => ({ o, pad: new Array(8).fill(o.i) }));
+if (mapped[1999].o.i !== 1999 || mapped.length !== 2000) throw Error('values stored across collections');
+"#;
+    for compile in [Engine::specialize, Engine::specialize_unspecialized] {
+        let program = compile(source, "array-create-species.js").unwrap();
+        Vm::new(TestHost::default()).execute(&program).unwrap();
+    }
 }

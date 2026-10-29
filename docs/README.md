@@ -65,7 +65,15 @@ Score column. It is not the memory qualification binary: PGO's inlining grows th
 text (3.45 -> 4.60 MB), and its MemoryFirst max RSS failed the V8-v7 target on Crypto and
 RayTrace pinned (TOD-197), so the memory qualification binary is the non-PGO layout,
 `tools/bolt-layout.sh production`, with the repository corpus it records in
-`target/layout-corpus/MANIFEST` (the Wasm ESM corpus laid out `--late`, no npm packages).
+`target/layout-corpus/MANIFEST`: the Test262 tests `tools/layout-corpus/test262.list` names,
+the package workloads on the packages `tools/layout-corpus/package-lock.json` pins (`npm ci`),
+and the Wasm ESM corpus laid out `--late`. The corpus directory declares CommonJS: under the
+repository's `"type": "module"` its scripts loaded as ES modules, which never take the
+CommonJS entry path the V8-v7 runs take nor mark `quench_entry_compiled`, so the run-phase
+profiles were not split from start-up. With CommonJS scripts and the packages, pinned max RSS
+matched the qualified layout on every V8-v7 row checked (RayTrace, Crypto, RegExp,
+NavierStokes, DeltaBlue, Richards, 2026-10-29); without the packages it was 50-190 KiB higher
+on five of them.
 A PGO layout becomes the qualification binary only once it passes both columns. Every
 mode keeps the repository's
 `.cargo/config.toml` rustflags (`-D warnings`, the function alignment): the script
@@ -259,6 +267,23 @@ keyed by the executable that wrote it (path, size, modification time and runtime
 module's name and the exact text compiled, and is written to a temporary file renamed into
 place. An entry that is missing, unreadable or does not decode costs only the compilation it
 would have saved.
+
+A compilation parses function bodies lazily: the parser releases the tree of each outermost
+plain function body, a pass before code generation checks and analyzes each such body parsed
+alone, and code generation parses each function again where it compiles it, so the whole
+program's tree never exists at once (cold `import typescript`: 101 -> 68 MB max RSS). A
+program that does not compile that way compiles eagerly and reports the eager diagnostics.
+`QUENCH_EAGER_FUNCTION_BODIES` (any value) compiles eagerly, for measuring the two. CommonJS
+goal detection checks syntax the same way (`Engine::syntax_valid`).
+
+A compilation whose program the host keeps (`ReleasedRecords::Encoded`) encodes the record of
+each function it finishes and releases during its load as it releases it, lowered as its
+first call would lower it (`binary::LoadEncoding`); the cache entry extends that region of
+records instead of compiling every released function again only to write it. Whether names
+resolve statically in a function also reads the functions around it, which finish after it,
+so the entry settles that one fact when it is written. A module is encoded before its store
+releases the records it kept. Its warm decode is unchanged: the records are those a replay
+writes, under compact atom ids numbered in another order.
 
 A decoded program parses nothing, so it reaches none of a compilation's phase boundaries
 (`set_compile_phase_boundary`), where the host releases its read-only pages. The runtime calls

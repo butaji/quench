@@ -10,6 +10,20 @@ fn collect_minor(heap: &mut Heap, roots: impl IntoIterator<Item = Value>) -> Vec
     heap.collect_with_object_roots(roots, |_, _, _, _, _| {}, None, None, false)
 }
 
+/// A heap whose minor collections promote at `age`.
+fn heap_at(age: PromotionAge) -> Heap {
+    let mut heap = Heap::new();
+    heap.set_promotion_age_for_test(age);
+    heap
+}
+
+/// Runs `scenario` on a heap of each promotion age.
+fn for_each_promotion_age(mut scenario: impl FnMut(&mut Heap, PromotionAge)) {
+    for age in PromotionAge::ALL {
+        scenario(&mut heap_at(age), age);
+    }
+}
+
 #[test]
 #[cfg(not(feature = "profile-aggregate"))]
 fn direct_array_record_base_resolves_the_current_live_array_value() {
@@ -50,7 +64,10 @@ fn direct_array_record_base_resolves_the_current_live_array_value() {
 
 #[test]
 fn minor_collection_traces_remembered_object_and_sparse_array_edges() {
-    let mut heap = Heap::new();
+    for_each_promotion_age(|heap, _| minor_collection_traces_remembered_edges(heap));
+}
+
+fn minor_collection_traces_remembered_edges(heap: &mut Heap) {
     let owner = heap.alloc(Cell::Array {
         object: ArrayObject::new(plain_object(), vec![Value::UNDEFINED]),
     });
@@ -68,7 +85,7 @@ fn minor_collection_traces_remembered_object_and_sparse_array_edges() {
     heap.sparse_set(sparse, sparse_index, sparse_child);
     let garbage = heap.alloc(Cell::Error("unreachable young".into()));
 
-    collect_minor(&mut heap, [owner, sparse]);
+    collect_minor(heap, [owner, sparse]);
     assert!(heap.get(child).is_some());
     assert_eq!(heap.sparse_get(sparse, sparse_index), Some(sparse_child));
     assert!(heap.get(sparse_child).is_some());
@@ -83,7 +100,10 @@ fn minor_collection_traces_remembered_object_and_sparse_array_edges() {
 
 #[test]
 fn parallel_mark_matches_serial_verifier_for_full_and_minor_collections() {
-    let mut heap = Heap::new();
+    for_each_promotion_age(|heap, _| parallel_mark_matches_serial_verifier(heap));
+}
+
+fn parallel_mark_matches_serial_verifier(heap: &mut Heap) {
     let children = (0..PARALLEL_MARK_MINIMUM_CELLS)
         .map(|_| heap.alloc(Cell::Error("parallel survivor".into())))
         .collect::<Vec<_>>();
@@ -104,7 +124,7 @@ fn parallel_mark_matches_serial_verifier_for_full_and_minor_collections() {
         // The set is only traced, never searched, so the key hash is immaterial.
         young.iter().for_each(|child| entries.push(*child, 0));
     }
-    collect_minor(&mut heap, [root]);
+    collect_minor(heap, [root]);
     assert!(young.iter().all(|child| heap.get(*child).is_some()));
 
     if let Some(Cell::Set { entries, .. }) = heap.get_mut(root) {
@@ -224,7 +244,10 @@ fn parallel_sweep_releases_shared_array_payloads() {
 
 #[test]
 fn minor_collection_handles_old_weak_maps_and_weak_refs() {
-    let mut heap = Heap::new();
+    for_each_promotion_age(|heap, _| minor_collection_handles_old_weak_cells(heap));
+}
+
+fn minor_collection_handles_old_weak_cells(heap: &mut Heap) {
     let old_key = heap.alloc(Cell::Object(plain_object()));
     let old_value = heap.alloc(Cell::Object(plain_object()));
     let mut entries = WeakMapEntries::default();
@@ -250,7 +273,7 @@ fn minor_collection_handles_old_weak_maps_and_weak_refs() {
         *slot = Some(target);
     }
 
-    collect_minor(&mut heap, [map, key, weak_ref]);
+    collect_minor(heap, [map, key, weak_ref]);
     assert!(heap.is_live(value));
     assert!(matches!(
         heap.get(weak_ref),
@@ -267,7 +290,10 @@ fn minor_collection_handles_old_weak_maps_and_weak_refs() {
 
 #[test]
 fn minor_collection_keeps_records_written_into_old_records_and_frees_young_garbage() {
-    let mut heap = Heap::new();
+    for_each_promotion_age(minor_collection_keeps_records_written_into_old_records);
+}
+
+fn minor_collection_keeps_records_written_into_old_records(heap: &mut Heap, age: PromotionAge) {
     let owner = heap.alloc(Cell::Object(plain_object()));
     let array = heap.alloc(Cell::Array {
         object: ArrayObject::new(plain_object(), vec![Value::UNDEFINED]),
@@ -286,15 +312,22 @@ fn minor_collection_keeps_records_written_into_old_records_and_frees_young_garba
     // The barrier logged both owners, so they are young until the minor traces them.
     assert!(!heap.is_old(owner) && !heap.is_old(array));
 
-    collect_minor(&mut heap, [owner, array]);
-    assert!(heap.is_live(child) && heap.is_old(child));
-    assert!(heap.is_live(element) && heap.is_old(element));
+    collect_minor(heap, [owner, array]);
+    assert!(heap.is_live(child) && heap.is_old(child) != age.ages());
+    assert!(heap.is_live(element) && heap.is_old(element) != age.ages());
     assert!(!heap.is_live(garbage));
+    // Owners stay old; those of what may stay young are carried to the next minor collection.
     assert!(heap.is_old(owner) && heap.is_old(array));
+    assert_eq!(heap.carried_owners.len(), if age.ages() { 2 } else { 0 });
+    if age.ages() {
+        collect_minor(heap, [owner, array]);
+        assert!(heap.is_old(child) && heap.is_old(element));
+        assert!(heap.is_old(owner) && heap.is_old(array));
+    }
 
     // An old record that loses its last reference survives minors and dies at a full one.
     heap.object_mut(owner).unwrap().set_inline_property(0, Value::UNDEFINED);
-    collect_minor(&mut heap, [owner, array]);
+    collect_minor(heap, [owner, array]);
     assert!(heap.is_live(child));
     heap.collect([owner, array]);
     assert!(!heap.is_live(child));
@@ -303,7 +336,10 @@ fn minor_collection_keeps_records_written_into_old_records_and_frees_young_garba
 
 #[test]
 fn records_written_twice_are_logged_once_per_cycle() {
-    let mut heap = Heap::new();
+    for_each_promotion_age(|heap, _| records_written_twice_are_logged_once(heap));
+}
+
+fn records_written_twice_are_logged_once(heap: &mut Heap) {
     let owner = heap.alloc(Cell::Object(plain_object()));
     heap.collect([owner]);
     for value in 0..4 {
@@ -312,7 +348,7 @@ fn records_written_twice_are_logged_once_per_cycle() {
             .set_inline_property(0, Value::number(f64::from(value)));
     }
     assert_eq!(heap.object_records.remembered_count(), 1);
-    collect_minor(&mut heap, [owner]);
+    collect_minor(heap, [owner]);
     assert_eq!(heap.object_records.remembered_count(), 0);
     assert!(heap.is_old(owner));
 }
@@ -1145,4 +1181,269 @@ fn wide_environment_clones_store_only_the_slots_they_do_not_share() {
     // A narrow environment's copy stays dense.
     let narrow = environment(&mut heap, vec![Value::TRUE; 2].into());
     assert_eq!(heap.clone_environment_slots(narrow, &[0], &[]).unwrap().0.len(), 2);
+}
+
+/// The owners remembered for the next minor collection, of every family these tests use.
+/// The old owners the next minor collection traces: those the barriers logged, and those the
+/// last minor collection carried (`Heap::carried_owners`).
+fn remembered_owners(heap: &Heap) -> usize {
+    heap.remembered.len()
+        + heap.object_records.remembered_count()
+        + heap.array_records.remembered_count()
+        + heap.carried_owners.len()
+}
+
+#[test]
+fn aged_survivors_die_at_the_next_minor_collection_or_become_old() {
+    let mut heap = heap_at(PromotionAge::Second);
+    let allocate = |heap: &mut Heap| {
+        let cell = heap.alloc(Cell::Error("aged".into()));
+        let object = heap.alloc(Cell::Object(plain_object()));
+        assert!(cell.legacy_heap_index().is_some() && object.direct_object_index().is_some());
+        [cell, object]
+    };
+    let dying = allocate(&mut heap);
+    let surviving = allocate(&mut heap);
+    collect_minor(&mut heap, dying.into_iter().chain(surviving));
+    for value in dying.into_iter().chain(surviving) {
+        assert!(heap.is_live(value) && !heap.is_old(value), "{value:?} survives young");
+    }
+    collect_minor(&mut heap, surviving);
+    for value in dying {
+        assert!(!heap.is_live(value), "{value:?} dies young");
+    }
+    for value in surviving {
+        assert!(heap.is_live(value) && heap.is_old(value), "{value:?} survives old");
+    }
+    // Old, they outlive minor collections.
+    collect_minor(&mut heap, []);
+    assert!(surviving.iter().all(|value| heap.is_live(*value)));
+    heap.collect([]);
+    assert!(surviving.iter().all(|value| !heap.is_live(*value)));
+}
+
+/// An aged `owner` takes a young `child` past the barrier, which logs only old owners; the
+/// minor collection that promotes the owner remembers it, so the next one keeps the child,
+/// which only the owner reaches, and promotes it.
+fn promoted_owner_remembers_its_young_child(
+    owner: impl FnOnce(&mut Heap) -> Value,
+    child: impl FnOnce(&mut Heap) -> Value,
+    store: impl FnOnce(&mut Heap, Value, Value),
+) {
+    let mut heap = heap_at(PromotionAge::Second);
+    let owner = owner(&mut heap);
+    collect_minor(&mut heap, [owner]);
+    assert!(heap.is_live(owner) && !heap.is_old(owner));
+    let child = child(&mut heap);
+    store(&mut heap, owner, child);
+    assert_eq!(remembered_owners(&heap), 0, "the barrier logs no young owner");
+    collect_minor(&mut heap, [owner]);
+    assert!(heap.is_live(child) && !heap.is_old(child));
+    assert_eq!(remembered_owners(&heap), 1, "the promoted owner may hold a young child");
+    collect_minor(&mut heap, []);
+    assert!(heap.is_live(owner) && heap.is_old(owner));
+    assert!(heap.is_live(child) && heap.is_old(child));
+    // The owner, not written since it was carried, holds nothing young and is dropped; the
+    // child just promoted is carried once.
+    assert!(!heap.carried_owners.contains(&owner));
+    assert_eq!(remembered_owners(&heap), 1);
+    collect_minor(&mut heap, []);
+    assert_eq!(remembered_owners(&heap), 0, "nothing was written or promoted");
+    collect_minor(&mut heap, []);
+    assert!(heap.is_live(child) && remembered_owners(&heap) == 0);
+    heap.collect([]);
+    assert!(!heap.is_live(owner) && !heap.is_live(child));
+}
+
+#[test]
+fn promoted_cells_remember_their_young_children() {
+    promoted_owner_remembers_its_young_child(
+        |heap| {
+            heap.alloc(Cell::Set {
+                object: Box::new(plain_object()),
+                entries: Box::new(Vec::<Value>::new().into()),
+            })
+        },
+        |heap| heap.alloc(Cell::Error("young child".into())),
+        |heap, owner, child| {
+            if let Some(Cell::Set { entries, .. }) = heap.get_mut(owner) {
+                // The set is only traced, never searched, so the key hash is immaterial.
+                entries.push(child, 0);
+            }
+        },
+    );
+}
+
+#[test]
+fn promoted_object_records_remember_their_young_children() {
+    promoted_owner_remembers_its_young_child(
+        |heap| heap.alloc(Cell::Object(plain_object())),
+        |heap| heap.alloc(Cell::Object(plain_object())),
+        |heap, owner, child| heap.object_mut(owner).unwrap().set_inline_property(0, child),
+    );
+}
+
+#[test]
+fn promoted_array_records_remember_their_young_string_elements() {
+    promoted_owner_remembers_its_young_child(
+        |heap| {
+            heap.alloc(Cell::Array {
+                object: ArrayObject::new(plain_object(), vec![Value::UNDEFINED]),
+            })
+        },
+        |heap| heap.alloc_string("young element".into()),
+        |heap, owner, child| heap.array_elements_mut(owner).unwrap().make_mut()[0] = child,
+    );
+}
+
+#[test]
+fn old_owners_stay_remembered_until_their_aged_children_are_promoted_or_freed() {
+    let mut heap = heap_at(PromotionAge::Second);
+    let [keeper, dropper] = [(); 2].map(|()| heap.alloc(Cell::Object(plain_object())));
+    heap.collect([keeper, dropper]);
+    let [kept, dropped] = [(); 2].map(|()| heap.alloc(Cell::Object(plain_object())));
+    heap.object_mut(keeper).unwrap().set_inline_property(0, kept);
+    heap.object_mut(dropper).unwrap().set_inline_property(0, dropped);
+    collect_minor(&mut heap, [keeper, dropper]);
+    assert!(heap.is_live(kept) && heap.is_live(dropped));
+    assert_eq!(remembered_owners(&heap), 2, "both owners hold an aged child");
+
+    heap.object_mut(dropper).unwrap().set_inline_property(0, Value::UNDEFINED);
+    collect_minor(&mut heap, [keeper, dropper]);
+    assert!(heap.is_live(kept) && heap.is_old(kept));
+    assert!(!heap.is_live(dropped), "an aged child no owner holds dies at a minor collection");
+    assert!(heap.is_old(keeper) && heap.is_old(dropper));
+    // The keeper, not written since it was carried, is dropped; the written dropper and the
+    // promoted child are carried once more, and nothing after a minor with no writes.
+    assert!(!heap.carried_owners.contains(&keeper));
+    collect_minor(&mut heap, [keeper, dropper]);
+    assert!(heap.is_live(kept) && heap.is_old(kept));
+    assert_eq!(remembered_owners(&heap), 0);
+}
+
+#[test]
+fn weak_entries_of_aged_keys_and_targets_are_pruned_when_they_die() {
+    for old_weak_cells in [true, false] {
+        let mut heap = heap_at(PromotionAge::Second);
+        let map = heap.alloc(Cell::WeakMap {
+            object: Box::new(plain_object()),
+            entries: Box::default(),
+        });
+        let weak_ref = heap.alloc(Cell::WeakRef {
+            object: Box::new(plain_object()),
+            target: None,
+        });
+        if old_weak_cells {
+            heap.collect([map, weak_ref]);
+        }
+        let [key, value, referent] = [(); 3].map(|()| heap.alloc(Cell::Object(plain_object())));
+        if let Some(Cell::WeakMap { entries, .. }) = heap.get_mut(map) {
+            entries.insert(key, value);
+        }
+        let target = heap.weak_handle(referent).unwrap();
+        if let Some(Cell::WeakRef { target: slot, .. }) = heap.get_mut(weak_ref) {
+            *slot = Some(target);
+        }
+        collect_minor(&mut heap, [map, weak_ref, key, referent]);
+        assert!([key, value, referent].iter().all(|value| heap.is_live(*value) && !heap.is_old(*value)));
+
+        collect_minor(&mut heap, [map, weak_ref]);
+        assert!(![key, value, referent].iter().any(|value| heap.is_live(*value)));
+        assert!(matches!(heap.get(map), Some(Cell::WeakMap { entries, .. }) if entries.iter().next().is_none()));
+        assert!(matches!(heap.get(weak_ref), Some(Cell::WeakRef { target: None, .. })));
+    }
+}
+
+#[test]
+fn ephemeron_values_of_young_rooted_keys_survive_until_promoted() {
+    for old_map in [true, false] {
+        let mut heap = heap_at(PromotionAge::Second);
+        let map = heap.alloc(Cell::WeakMap {
+            object: Box::new(plain_object()),
+            entries: Box::default(),
+        });
+        if old_map {
+            heap.collect([map]);
+        }
+        let [key, value] = [(); 2].map(|()| heap.alloc(Cell::Object(plain_object())));
+        if let Some(Cell::WeakMap { entries, .. }) = heap.get_mut(map) {
+            entries.insert(key, value);
+        }
+        for _ in 0..=PromotionAge::Second.minors() {
+            collect_minor(&mut heap, [map, key]);
+            assert!(heap.is_live(value), "the key keeps its value");
+        }
+        assert!(heap.is_old(key) && heap.is_old(value));
+        heap.collect([map]);
+        assert!(!heap.is_live(key) && !heap.is_live(value));
+    }
+}
+
+#[test]
+fn full_collection_promotes_aged_survivors() {
+    let mut heap = heap_at(PromotionAge::Second);
+    let cell = heap.alloc(Cell::Error("aged".into()));
+    let object = heap.alloc(Cell::Object(plain_object()));
+    collect_minor(&mut heap, [cell, object]);
+    heap.collect([cell, object]);
+    assert!(heap.is_old(cell) && heap.is_old(object));
+    assert!(heap.young.is_empty() && heap.aged.iter().all(|ages| *ages == 0));
+    collect_minor(&mut heap, []);
+    assert!(heap.is_live(cell) && heap.is_live(object), "old survivors outlive minor collections");
+}
+
+#[test]
+fn promotion_age_may_change_between_minor_collections() {
+    for (first, second) in [(PromotionAge::Second, PromotionAge::First), (PromotionAge::First, PromotionAge::Second)] {
+        let mut heap = heap_at(first);
+        let [dying, surviving] = [(); 2].map(|()| heap.alloc(Cell::Object(plain_object())));
+        let cell = heap.alloc(Cell::Error("survivor".into()));
+        collect_minor(&mut heap, [dying, surviving, cell]);
+        heap.set_promotion_age_for_test(second);
+        collect_minor(&mut heap, [surviving, cell]);
+        assert!(!heap.is_live(dying) || !first.ages());
+        assert!(heap.is_live(surviving) && heap.is_live(cell));
+        assert!(heap.is_old(surviving) && heap.is_old(cell));
+    }
+}
+
+#[test]
+fn snapshots_restore_aged_survivors_as_old() {
+    let mut heap = heap_at(PromotionAge::Second);
+    let cell = heap.alloc(Cell::Error("aged".into()));
+    let object = heap.alloc(Cell::Object(plain_object()));
+    collect_minor(&mut heap, [cell, object]);
+    let mut writer = crate::snapshot::Writer::new();
+    heap.write_snapshot(&mut writer).unwrap();
+    let bytes = writer.finish();
+    let mut reader = crate::snapshot::Reader::new(&bytes, None).unwrap();
+    let mut restored = Heap::read_snapshot(&mut reader, MemoryPolicy::default()).unwrap();
+    restored.set_promotion_age_for_test(PromotionAge::Second);
+    assert!(restored.is_old(cell) && restored.is_old(object));
+    collect_minor(&mut restored, []);
+    assert!(restored.is_live(cell) && restored.is_live(object));
+    // The original's aged survivors still die young.
+    collect_minor(&mut heap, []);
+    assert!(!heap.is_live(cell) && !heap.is_live(object));
+}
+
+#[test]
+fn a_rope_flattened_and_freed_between_collections_leaves_the_payload_ledger_balanced() {
+    use crate::vm::wtf16::JsString;
+    let mut heap = Heap::new();
+    let kept = heap.alloc_string(JsString::from_str(&"k".repeat(4096)));
+    collect_minor(&mut heap, [kept]);
+    let before = heap.payload_bytes;
+    assert!(before > 0);
+    // Halves longer than a rope leaf join as a rope, which owns no units until read.
+    let half = JsString::from_str(&"a".repeat(1024));
+    let mut rope = half.clone();
+    rope.push_js_string(&half);
+    let value = heap.alloc_string(rope.clone());
+    assert_eq!(heap.string(value).map(JsString::flat_unit_bytes), Some(0));
+    assert_eq!(rope.units().len(), 2048);
+    drop(rope);
+    // The freed rope releases the units it flattened, which the ledger now holds.
+    collect_minor(&mut heap, [kept]);
+    assert_eq!(heap.payload_bytes, before);
 }

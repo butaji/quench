@@ -675,8 +675,9 @@ impl Engine {
         source: &str,
         name: &str,
         atom_prefix: &dyn AtomPrefix,
+        released: ReleasedRecords,
     ) -> Result<ResidualProgram, Vec<Diagnostic>> {
-        Self::specialize_script_shaped(source, name, atom_prefix, ParsedProgramShape::Any)
+        Self::specialize_script_shaped(source, name, atom_prefix, ParsedProgramShape::Any, released)
     }
 
     /// `specialize_script_with_atom_prefix` for a program whose functions keep their records:
@@ -686,7 +687,7 @@ impl Engine {
         name: &str,
         atom_prefix: &dyn AtomPrefix,
     ) -> Result<ResidualProgram, Vec<Diagnostic>> {
-        Self::specialize_script_shaped(source, name, atom_prefix, ParsedProgramShape::KeptRecords)
+        Self::specialize_script_shaped(source, name, atom_prefix, ParsedProgramShape::KeptRecords, ReleasedRecords::Dropped)
     }
 
     fn specialize_script_shaped(
@@ -694,6 +695,7 @@ impl Engine {
         name: &str,
         atom_prefix: &dyn AtomPrefix,
         shape: ParsedProgramShape,
+        released: ReleasedRecords,
     ) -> Result<ResidualProgram, Vec<Diagnostic>> {
         Self::specialize_with_mode_and_private_names(
             source,
@@ -707,6 +709,7 @@ impl Engine {
             &[],
             &[],
             shape,
+            released,
         )
     }
     pub fn specialize_unspecialized(
@@ -783,6 +786,7 @@ impl Engine {
             private_names,
             annex_b_forbidden_names,
             ParsedProgramShape::Eval(context, body_span),
+            ReleasedRecords::Dropped,
         )
     }
 
@@ -798,8 +802,9 @@ impl Engine {
         source: &str,
         name: &str,
         atom_prefix: &dyn AtomPrefix,
+        released: ReleasedRecords,
     ) -> Result<ResidualProgram, Vec<Diagnostic>> {
-        Self::specialize_with_mode(
+        Self::specialize_with_mode_and_private_names(
             source,
             name,
             SpecializationMode::of(atom_prefix),
@@ -808,6 +813,10 @@ impl Engine {
             true,
             false,
             false,
+            &[],
+            &[],
+            ParsedProgramShape::Any,
+            released,
         )
     }
     pub fn specialize_module(source: &str, name: &str) -> Result<ResidualProgram, Vec<Diagnostic>> {
@@ -896,8 +905,10 @@ impl Engine {
             &[],
             &[],
             expected_shape,
+            ReleasedRecords::Dropped,
         )
     }
+    #[allow(clippy::too_many_arguments)]
     fn specialize_with_mode_and_private_names(
         source: &str,
         name: &str,
@@ -910,6 +921,7 @@ impl Engine {
         private_name_overrides: &[(String, String)],
         annex_b_forbidden_names: &[String],
         expected_shape: ParsedProgramShape,
+        released: ReleasedRecords,
     ) -> Result<ResidualProgram, Vec<Diagnostic>> {
         let compile = |lazy| {
             Self::specialize_parsing(
@@ -925,6 +937,7 @@ impl Engine {
                 annex_b_forbidden_names,
                 expected_shape,
                 lazy,
+                released,
             )
         };
         // Lazy function bodies apply to source a replay can parse again; a program that does
@@ -954,6 +967,7 @@ impl Engine {
         annex_b_forbidden_names: &[String],
         expected_shape: ParsedProgramShape,
         lazy: bool,
+        released: ReleasedRecords,
     ) -> Result<ResidualProgram, Vec<Diagnostic>> {
         let normalized = early::normalize_hashbang(source);
         let allocator = Allocator::with_capacity(normalized.len().saturating_mul(6));
@@ -1158,7 +1172,6 @@ impl Engine {
         };
         let mut compiler = Compiler::new(name, &normalized, mode, atom_prefix, private_name_ids);
         compiler.prototype_unobservable = prototype_unobservable;
-        compiler.lazy_bodies = parsed.lazy_function_bodies.iter().copied().collect();
         #[cfg(feature = "verify-replay")]
         {
             compiler.free_names = free_names;
@@ -1168,6 +1181,8 @@ impl Engine {
         // parsing, that their source text alone does not give back. A released function
         // compiles again from its replay on first call (`ResidualProgram::function`).
         compiler.replayable_source = matches!(expected_shape, ParsedProgramShape::Any);
+        compiler.load_encoding =
+            (compiler.replayable_source && released == ReleasedRecords::Encoded).then(Default::default);
         compiler.private_name_labels = private_name_labels;
         compiler.private_name_overrides = private_aliases;
         compiler.capture_script_completion = capture_script_completion;
@@ -1669,7 +1684,8 @@ struct Compiler<'a> {
     /// The source starts of the function expressions whose `prototype` no program text
     /// observes (`call_only`); empty where the source was not analyzed.
     prototype_unobservable: FxHashSet<u32>,
-    /// The starts of the function bodies parsed lazily and not compiled yet (`lazy_bodies`).
+    /// In a replay, the starts of the function bodies the load released
+    /// (`ProgramReplay::lazy_bodies`), which the replay releases too (`Nesting::Recorded`).
     lazy_bodies: FxHashSet<u32>,
     /// The starts of the function bodies compiled from their source parsed again, which a
     /// replay stands in the same way (`ProgramReplay::lazy_bodies`).
@@ -1732,6 +1748,45 @@ struct Compiler<'a> {
     replay_program: Option<&'a ResidualProgram>,
     /// Whether the program's functions compile again from their text alone.
     replayable_source: bool,
+    /// The compile-cache records of the functions released during the load, when its
+    /// program will be encoded (`ReleasedRecords::Encoded`).
+    load_encoding: Option<crate::bytecode::LoadEncoding>,
+}
+
+/// What a compilation keeps of each record it releases during its load
+/// (`Compiler::finish_early`) beside the function's header and replay.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ReleasedRecords {
+    /// Nothing: the function compiles again from its source on its first read.
+    Dropped,
+    /// Its compile-cache encoding, for a program its host encodes once compiled: the
+    /// encoding copies it instead of compiling every released function again (npm scenario,
+    /// cold, empty cache, x86_64 callgrind: prettier 4.32 -> 2.98 G instructions, cold
+    /// `import typescript` 19.7 -> 11.3 G).
+    Encoded,
+}
+
+/// The compiler's tables as the derived facts of a function it finished read them
+/// (`FactTables`): every function nested in it is finished too, so each it makes has its
+/// record or its released header.
+struct LoadTables<'c, 'a> {
+    atoms: &'c CompilerAtoms<'a>,
+    functions: &'c replay::FunctionTable<'a>,
+    superinstructions: &'c [crate::bytecode::Superinstruction],
+}
+
+impl crate::bytecode::FactTables for LoadTables<'_, '_> {
+    fn atom_name(&self, atom: usize) -> Option<&str> {
+        self.atoms.get(atom)
+    }
+
+    fn function_is_arrow(&self, function: usize) -> Option<bool> {
+        self.functions.is_arrow(u32::try_from(function).ok()?)
+    }
+
+    fn superinstructions(&self) -> &[crate::bytecode::Superinstruction] {
+        self.superinstructions
+    }
 }
 
 type MethodSiteSpec = (Atom, u16, Vec<Register>, Option<(Atom, u16)>);
@@ -2205,6 +2260,7 @@ impl<'a> Compiler<'a> {
             source_type: oxc_span::SourceType::default(),
             replay_program: None,
             replayable_source: false,
+            load_encoding: None,
         }
     }
 
@@ -2364,10 +2420,11 @@ impl<'a> Compiler<'a> {
         );
         self.rewrite_function(&mut function);
         let undefined_constant = self.constant(Constant::Undefined);
-        // The record is released below and only its header stays, so production settles just
-        // the dispatch class the header keeps; `verify-replay` keeps the whole record to
-        // compare each replay with.
-        if cfg!(feature = "verify-replay") {
+        // The record is released below and only its header stays, so a load that drops it
+        // settles just the dispatch class the header keeps. One that encodes it finishes it as
+        // a replay would, against tables whose entries for it are final (`lower_settled`);
+        // `verify-replay` keeps the whole record to compare each replay with.
+        if cfg!(feature = "verify-replay") || self.load_encoding.is_some() {
             self.lower_function(&mut function, undefined_constant);
             liveness::mark_register_roots(
                 std::iter::once(&mut function),
@@ -2377,6 +2434,14 @@ impl<'a> Compiler<'a> {
             );
         } else {
             self.settle_dispatch(&mut function);
+        }
+        if let Some(encoding) = &mut self.load_encoding {
+            let tables = LoadTables {
+                atoms: &self.atoms,
+                functions: &self.functions,
+                superinstructions: self.superinstructions.as_slice(),
+            };
+            encoding.add(id, &function, &tables);
         }
         self.early_replays.insert(
             id,
@@ -2403,8 +2468,11 @@ impl<'a> Compiler<'a> {
         function: &oxc_ast::ast::Function<'_>,
         mut context: replay::PlainFunctionContext,
     ) -> u32 {
+        // A released body holds its stand-in wherever the function is compiled, and a node
+        // may be compiled more than once (the right operand of `??`); the function parsed
+        // again holds its own statements.
         if let Some(body) = &function.body
-            && self.lazy_bodies.remove(&body.span.start)
+            && lazy_bodies::is_stand_in(body)
         {
             self.lazy_compiled.push(body.span.start);
             return self.compile_lazy_function(function, context);
@@ -2516,7 +2584,6 @@ impl<'a> Compiler<'a> {
             self.reject(function.span, "SyntaxError: a lazily parsed function body does not compile alone");
             return self.compile_plain_function(function, context);
         };
-        self.lazy_bodies.extend(reparsed.lazy_bodies.iter().copied());
         let again = reparsed.function().expect("checked above");
         self.compile_plain_function(again, context)
     }
@@ -3226,6 +3293,7 @@ impl<'a> Compiler<'a> {
                     lazy_bodies: {
                         let mut starts = std::mem::take(&mut self.lazy_compiled);
                         starts.sort_unstable();
+                        starts.dedup();
                         starts.into_boxed_slice()
                     },
                     specialized: self.mode == SpecializationMode::Enabled,
@@ -3248,6 +3316,7 @@ impl<'a> Compiler<'a> {
             validated: Default::default(),
             undefined_constant: Default::default(),
             closure_reads,
+            load_encoding: crate::bytecode::LoadRecords::new(self.load_encoding.take()),
         };
         #[cfg(feature = "profile-aggregate")]
         debug_assert!(crate::profile::instruction_word_domains_fit(&program));
@@ -3992,6 +4061,9 @@ impl<'a> Compiler<'a> {
             header.name.is_none() && header.inferred_name.is_none() && !header.is_class_constructor;
         if nameable {
             self.functions.name_released(id, name);
+            if let Some(encoding) = &mut self.load_encoding {
+                encoding.name(id, name);
+            }
         }
         nameable
     }
