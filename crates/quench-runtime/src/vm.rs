@@ -1139,8 +1139,9 @@ struct InLoopCallTarget {
 enum InLoopPush {
     /// An ordinary body (`CallPlan::in_loop`), whose return is the call's value.
     Body,
-    /// An async body that never suspends (`CallPlan::settles_in_loop`), whose completion
-    /// settles the promise the call returns; only a plain call pushes it.
+    /// An async body (`CallPlan::settles_in_loop`, or one that may suspend), whose completion
+    /// settles the promise the call returns and whose first suspension returns that promise
+    /// to the caller; only a plain call pushes it.
     Settles,
 }
 const EMPTY_CALL_TARGET: InLoopCallTarget = InLoopCallTarget {

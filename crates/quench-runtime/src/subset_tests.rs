@@ -933,6 +933,37 @@ print(out.join(" "));
 }
 
 #[test]
+fn async_calls_pushed_in_place_suspend_at_their_first_await_in_order() {
+    // A plain call of an async body that may suspend is pushed in place by the general loop
+    // (`Vm::try_settling_call`), and its first `await` suspends that frame into the
+    // continuation its promise's reaction resumes while the caller continues with the
+    // promise (`run_general_loop`'s `Await`): calls nested three deep, a call whose
+    // caller logs before the callee resumes, a throw before and after the first await
+    // into a `try`/`finally`, loops of awaited calls, recursion and an `arguments` read,
+    // interleaved with plain reactions. Node 26 prints the same.
+    let source = r#"
+(function () {
+const log = [];
+async function leaf(x) { log.push("l" + x); const v = await x; log.push("L" + v); return v * 2; }
+async function mid(x) { log.push("m" + x); const a = await leaf(x); log.push("M" + a); const b = await Promise.resolve(a + 1); return b; }
+async function early(x) { if (x > 1) throw new Error("e" + x); await null; throw new Error("late" + x); }
+async function guarded(x) { try { await early(x); } catch (e) { return "caught " + e.message; } finally { log.push("f" + x); } }
+async function loop(n) { let s = 0; for (let i = 0; i < n; i++) s += await mid(i); return s; }
+async function recurse(n) { if (n === 0) return 0; const r = await recurse(n - 1); return r + n; }
+async function args() { const a = arguments.length; await 0; return a + arguments.length; }
+function sync() { const p = mid(7); log.push("sync after mid"); return p; }
+const runs = [mid(1), sync(), guarded(1), guarded(2), loop(5), recurse(20), args(1, 2, 3)];
+Promise.resolve().then(() => log.push("t1")).then(() => log.push("t2")).then(() => log.push("t3")).then(() => log.push("t4"));
+Promise.all(runs).then((values) => { print(values.join(" ") + " | " + log.join(",")); });
+})();
+"#;
+    assert_eq!(
+        output(source),
+        ["3 15 caught late1 caught e2 25 210 6 | m1,l1,m7,l7,sync after mid,m0,l0,L1,L7,f2,L0,t1,M2,M14,f1,M0,t2,t3,m1,l1,t4,L1,M2,m2,l2,L2,M4,m3,l3,L3,M6,m4,l4,L4,M8"]
+    );
+}
+
+#[test]
 fn awaits_a_resumed_frame_suspends_from_the_lane_keep_their_order_and_errors() {
     // A resumed async frame whose lane run stops at an `await` suspends without the general
     // loop when the awaited value converts without observing anything
