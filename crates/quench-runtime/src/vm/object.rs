@@ -1563,6 +1563,41 @@ impl<H: Host> Vm<H> {
         true
     }
 
+    /// `define_field_cached`'s hit inline, for an object record: the site's add entry for its
+    /// exact shape and `atom` proves the key absent, and a define never consults the
+    /// prototype chain, so no chain proof applies; the receiver admits it as
+    /// `class_field_define_target` does. A plain append makes no call, as in
+    /// `proved_field_add_hit`. `false` changes nothing and leaves the define to
+    /// `define_field_cached`.
+    #[inline(always)]
+    pub(super) fn proved_field_define_hit(&mut self, object: Value, atom: Atom, value: Value, site: u16) -> bool {
+        let Some(record_id) = object.direct_object_index() else {
+            return false;
+        };
+        let receiver = self.heap.object_record_by_id(record_id);
+        if !receiver.admits_cached_add()
+            || receiver.boxed_primitive().is_some()
+            || receiver.stack_data().is_some()
+            || receiver.has_error_data()
+        {
+            return false;
+        }
+        let Some((_, cache)) = self.field_add_entry(self.field_cache_index(site), receiver.exact_shape(), atom) else {
+            return false;
+        };
+        let (target_shape, slot) = (cache.target_shape, usize::from(cache.slot));
+        if self.method_caches_may_name(atom) {
+            return false;
+        }
+        if !(receiver.admits_plain_append(slot, value)
+            && self.heap.record_property_append_plain(record_id, slot, value, target_shape))
+        {
+            self.heap.record_property_add_moving(object, slot, value, target_shape);
+        }
+        self.profile.field_cache_hit(0, 0);
+        true
+    }
+
     /// Whether the site has recorded a cached property add (`try_cached_field_add`).
     pub(super) fn field_site_adds(&self, site: u16) -> bool {
         self.field_add_indices.get(self.field_cache_index(site)) != NO_FIELD_ADD_SET

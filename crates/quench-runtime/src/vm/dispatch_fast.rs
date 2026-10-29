@@ -5719,6 +5719,12 @@ script_handler! {
     fn lane_define_field<>(cx, r, ip, i, view) {
         let vm = unsafe { vm(cx) };
         let object = r.get(i.b);
+        // An object record, which is never a proxy, takes its site's proved define inline.
+        if vm.proved_field_define_hit(object, i.imm(), r.get(i.a), i.c) {
+            // Adding a property can allocate.
+            note_allocation(vm);
+            next!(cx, r, following(ip), Carried::script(cx))
+        }
         if !vm.lane_stack.activations.is_empty() && vm.proxy_parts(object).is_some() {
             return exit(ip);
         }
