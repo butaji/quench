@@ -1383,10 +1383,12 @@ impl ShapeTransition {
         }
     }
 }
-/// Constructor layouts `instanceof` remembers (`Vm::instanceof_constructor_layouts`): a
-/// power of two that holds the few constructors a request's `instanceof` sites test
-/// (`Uint8Array`, `ReadableStream`, `Headers`, `Error`) without evicting one another.
-pub(crate) const INSTANCEOF_CONSTRUCTOR_LAYOUTS: usize = 4;
+/// Constructor layouts `instanceof` remembers (`Vm::instanceof_constructor_layouts`), and the
+/// parent constructors proved to inherit the native `@@hasInstance`
+/// (`Vm::instanceof_inheriting_holders`): a power of two that holds the constructors a
+/// program's `instanceof` sites test (`Uint8Array`, `Buffer`, `Array`, `Map`,
+/// `ReadableStream`, `Headers`, `Error`, a framework's classes) without evicting one another.
+pub(crate) const INSTANCEOF_CONSTRUCTOR_LAYOUTS: usize = 16;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum DictionaryTrigger {
@@ -1987,6 +1989,12 @@ pub(crate) struct Vm<H> {
     /// data `prototype` at the paired slot, direct-mapped by shape; derived from shapes, so
     /// field-cache invalidation clears them.
     instanceof_constructor_layouts: [Option<(u32, usize)>; INSTANCEOF_CONSTRUCTOR_LAYOUTS],
+    /// Constructor prototypes (a subclass's parent constructor, `%TypedArray%`) proved to
+    /// inherit the native `@@hasInstance` (`Vm::inherits_native_has_instance`), each with the
+    /// prototype-layout epoch its proof holds under: the proof marks every link of the chain
+    /// a prototype, so any change to one, and every collection, retires it. Direct-mapped by
+    /// the holder's cell.
+    instanceof_inheriting_holders: [Option<(Value, u64)>; INSTANCEOF_CONSTRUCTOR_LAYOUTS],
     /// The shapes an ordinary closure's own properties step through, without and with a
     /// `prototype` (`construction::ClosureShapes`); derived from shapes, so field-cache
     /// invalidation clears it.
@@ -2997,6 +3005,7 @@ impl<H: Host> Vm<H> {
         self.private_homes.clear();
         self.programs.reset(program.clone());
         self.instanceof_constructor_layouts = [None; INSTANCEOF_CONSTRUCTOR_LAYOUTS];
+        self.instanceof_inheriting_holders = [None; INSTANCEOF_CONSTRUCTOR_LAYOUTS];
         self.closure_shapes = [None; 2];
         self.resolver_function_shape = None;
         self.function_name_shapes.clear();
