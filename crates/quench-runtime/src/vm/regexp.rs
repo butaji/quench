@@ -2786,18 +2786,18 @@ impl<H: Host> Vm<H> {
             // Each matched substring is copied out (`JsString::from_unit_run`): captures are
             // short, and a copy measured cheaper than `JsString::substring`'s sharing
             // (V8-v7 RegExp Score run, callgrind: 50 against 75 instructions a capture).
-            let values = std::iter::once(Some(matched.range.clone()))
-                .chain(matched.captures.iter().cloned())
-                .map(|range| {
-                    range.map_or(Value::UNDEFINED, |range| {
-                        vm.heap.alloc_string(JsString::from_unit_run(input.units().slice(range)))
-                    })
-                })
-                .collect::<Vec<_>>();
+            let units = input.units();
+            let values = crate::heap::ArrayElements::from_fn(1 + matched.captures.len(), |index| {
+                let range = match index.checked_sub(1) {
+                    None => Some(matched.range.clone()),
+                    Some(capture) => matched.captures[capture].clone(),
+                };
+                range.map_or(Value::UNDEFINED, |range| vm.heap.alloc_string(JsString::from_unit_run(units.slice(range))))
+            });
             let named = regexp_named_capture_ranges(&matched);
             // The groups object is made before the result array: no guest code runs and no
             // collection is taken between them, so the order is unobservable.
-            let groups = vm.regexp_groups_object(&named, input.units())?;
+            let groups = vm.regexp_groups_object(&named, units)?;
             let index = Value::number(matched.range.start as f64);
             let input_value = vm.string_value_from(argument, &input);
             let array = crate::heap::ArrayObject::new(Self::empty_object(vm.array_proto), values);
