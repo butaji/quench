@@ -3,6 +3,8 @@
 //! The host boundary owns Node policy and API behavior. JavaScript semantics
 //! and execution belong to the shared runtime.
 
+#[macro_use]
+mod undici_bindings;
 pub mod esm_imports;
 pub mod host;
 pub mod modules;

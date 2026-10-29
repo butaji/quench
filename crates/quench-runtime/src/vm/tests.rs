@@ -18337,7 +18337,10 @@ fn object_templates_copy_constructions_until_a_read_of_them_changes() {
       State.prototype.flag = 0;
       function Message() { this.state = new State(); this.events = { __proto__: null }; this.url = ''; this.flag = State.prototype.flag; }
       function make() { return new Message(); }
+      function makeAt(url, socket) { var m = new Message(); m.url = url; m.socket = socket; return m; }
       function probes() { return [State.prototype, 'flag']; }
+      function parameters() { return ['url', 'socket']; }
+      function atCheck(copy, url, socket) { return same(copy, makeAt(url, socket)) && copy.url === url && copy.socket === socket; }
       function describe(m) {
         return JSON.stringify([Reflect.ownKeys(m).map(String), Object.getPrototypeOf(m) === Message.prototype,
           Reflect.ownKeys(m.state).map(String), Object.getPrototypeOf(m.state) === State.prototype, m.state[kState],
@@ -18363,14 +18366,14 @@ fn object_templates_copy_constructions_until_a_read_of_them_changes() {
         let (template, witness) = (call(vm, "make", &[]), call(vm, "make", &[]));
         let probes = call(vm, "probes", &[]);
         let pair = vm.heap.array_elements(probes).unwrap().as_slice().to_vec();
-        vm.capture_object_template(template, witness, &[(pair[0], pair[1])]).unwrap()
+        vm.capture_object_template(template, witness, &[(pair[0], pair[1])], &[]).unwrap()
     };
     let id = capture(&mut vm);
     // Values this test holds are unrooted: each check takes them in one call made once they
     // exist, before anything else allocates.
     let check = |vm: &mut Vm<TestHost>, id| {
         let constructed = call(vm, "make", &[]);
-        let (first, second) = (vm.instantiate_object_template(id).unwrap(), vm.instantiate_object_template(id).unwrap());
+        let (first, second) = (vm.instantiate_object_template(id, &[]).unwrap(), vm.instantiate_object_template(id, &[]).unwrap());
         assert_eq!(call(vm, "check", &[first, second, constructed]), Value::TRUE);
     };
     check(&mut vm, id);
@@ -18384,11 +18387,27 @@ fn object_templates_copy_constructions_until_a_read_of_them_changes() {
 
     // A probed value and a guarded layout each retire the template.
     call(&mut vm, "setFlag", &[Value::number(2.0)]);
-    assert!(vm.instantiate_object_template(id).is_none());
+    assert!(vm.instantiate_object_template(id, &[]).is_none());
     let id = capture(&mut vm);
-    assert!(vm.instantiate_object_template(id).is_some());
+    assert!(vm.instantiate_object_template(id, &[]).is_some());
+
+    // Parameters: constructions that differ there, copies that take the caller's values.
+    let (a, b) = (Value::number(1.0), Value::number(2.0));
+    let (template, witness) = (call(&mut vm, "makeAt", &[a, Value::TRUE]), call(&mut vm, "makeAt", &[b, Value::FALSE]));
+    let probes = call(&mut vm, "probes", &[]);
+    let pair = vm.heap.array_elements(probes).unwrap().as_slice().to_vec();
+    let keys = call(&mut vm, "parameters", &[]);
+    let keys = vm.heap.array_elements(keys).unwrap().as_slice().to_vec();
+    assert!(vm.capture_object_template(template, witness, &[(pair[0], pair[1])], &[]).is_none(), "differing primitives need parameters");
+    let parameterized = vm.capture_object_template(template, witness, &[(pair[0], pair[1])], &keys).unwrap();
+    let c = Value::number(3.0);
+    let copy = vm.instantiate_object_template(parameterized, &[c, Value::NULL]).unwrap();
+    assert_eq!(call(&mut vm, "atCheck", &[copy, c, Value::NULL]), Value::TRUE);
+    assert!(vm.instantiate_object_template(parameterized, &[c]).is_none(), "one argument per parameter");
+
     call(&mut vm, "addKey", &[]);
-    assert!(vm.instantiate_object_template(id).is_none());
+    assert!(vm.instantiate_object_template(id, &[]).is_none());
+    assert!(vm.instantiate_object_template(parameterized, &[c, Value::NULL]).is_none());
 }
 
 #[test]
