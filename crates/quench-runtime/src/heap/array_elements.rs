@@ -49,6 +49,7 @@ pub(crate) struct ArrayElements {
 pub(super) const NATIVE_HEADER_POINTER_OFFSET: usize =
     std::mem::offset_of!(ArrayElements, header);
 pub(super) const NATIVE_HEADER_LENGTH_OFFSET: usize = std::mem::offset_of!(Header, len);
+pub(super) const NATIVE_HEADER_OWNERS_OFFSET: usize = std::mem::offset_of!(Header, owners);
 pub(super) const NATIVE_HEADER_VALUES_OFFSET: usize = VALUES_OFFSET;
 
 const _: () = assert!(NATIVE_HEADER_POINTER_OFFSET == 0);
