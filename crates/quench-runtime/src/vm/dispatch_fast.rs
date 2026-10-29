@@ -10694,11 +10694,12 @@ script_handler! {
     fn lane_iterator_step<>(cx, r, ip, i, view) {
         let vm = unsafe { vm(cx) };
         let (method, iterator) = (r.get(i.b), r.get(i.c));
-        if unsafe { (*cx).script_calls } && vm.steps_as_generator(iterator, method) {
-            sibling!(lane_generator_step::<H>, r, ip, Carried::script(cx))
-        }
-        if !vm.steps_as_array_iterator(iterator, method) {
-            sibling!(lane_script_call::<H, ANY_ARGC>, r, ip, Carried::script(cx))
+        match vm.iteration_step(iterator, method) {
+            super::iterators::IterationStep::Generator if unsafe { (*cx).script_calls } => {
+                sibling!(lane_generator_step::<H>, r, ip, Carried::script(cx))
+            }
+            super::iterators::IterationStep::Array => {}
+            _ => sibling!(lane_script_call::<H, ANY_ARGC>, r, ip, Carried::script(cx)),
         }
         let Some(result) = lane_array_iteration_result(vm, iterator) else {
             sibling!(lane_native_call::<H>, r, ip, Carried::script(cx))
@@ -10721,6 +10722,47 @@ script_handler! {
         }
         let value = lane_call_from_frame(cx, ip, |vm, code| vm.generator_iteration_step(code, method, iterator));
         lane_native_complete(cx, ip, i, value)
+    }
+}
+
+script_handler! {
+    /// `lane_iterator_step` of a for-of step (`lane_for_of_step`) over a plain array: the
+    /// step's `done` and `value` go to the registers its reads of `done` and `value` write,
+    /// and the step goes on where they would, into the body or out of the loop. The result
+    /// object only those reads observe is not written. Any other step runs as
+    /// `lane_iterator_step` and the records after it.
+    fn lane_iterator_step_reads<THREADED: bool>(cx, r, ip, i, view) {
+        let form = if THREADED { ForOfTest::Threaded } else { ForOfTest::Emitted };
+        let vm = unsafe { vm(cx) };
+        let (method, iterator) = (r.get(i.b), r.get(i.c));
+        // SAFETY: the view checked the step's records (`lane_for_of_step`).
+        let (done_read, value_read) = unsafe { (&*ip.add(FOR_OF_DONE_READ), &*ip.add(form.value_read())) };
+        let reads_step = done_read.imm() == vm.runtime_atoms.done && value_read.imm() == vm.runtime_atoms.value;
+        match vm.iteration_step(iterator, method) {
+            super::iterators::IterationStep::Array if reads_step => {}
+            // A generator's step resumes it in place, as `lane_iterator_step` makes it.
+            super::iterators::IterationStep::Generator if unsafe { (*cx).script_calls } => {
+                sibling!(lane_generator_step::<H>, r, ip, Carried::script(cx))
+            }
+            _ => sibling!(lane_iterator_step::<H>, r, ip, Carried::script(cx)),
+        }
+        let Some(step) = vm.step_present_array_value(iterator) else {
+            sibling!(lane_iterator_step::<H>, r, ip, Carried::script(cx))
+        };
+        match step {
+            Some(value) => {
+                r.set(done_read.a, Value::FALSE);
+                r.set(value_read.a, value);
+                // SAFETY: the step's records end at its `value` read, never the view's last.
+                next!(cx, r, unsafe { ip.add(form.records()) }, Carried::script(cx))
+            }
+            None => {
+                r.set(done_read.a, Value::TRUE);
+                // SAFETY: the exit records the distance to its validated target.
+                let exit = unsafe { ip.add(form.exit()) };
+                next!(cx, r, unsafe { exit.byte_offset((*exit).jump()) }, Carried::script(cx))
+            }
+        }
     }
 }
 
@@ -16245,6 +16287,68 @@ fn lane_iteration_step(decoded: &[WideInstruction], pc: usize) -> bool {
         })
 }
 
+/// The records of a for-of step after its iteration `Call` (`lane_for_of_step`), by offset
+/// from it: the `done` read of the step's result, then its test.
+const FOR_OF_DONE_READ: usize = 2;
+const FOR_OF_DONE_TEST: usize = 3;
+
+/// How a for-of step's records test its `done` read (`lane_for_of_step`). As `for_of` emits
+/// it, a `JumpFalse` into the body jumps over the `Jump` that leaves the loop; the rewrite
+/// that threads a jump over a jump makes them one `JumpTrue` that leaves it.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ForOfTest {
+    /// `JumpFalse` to the `value` read, past a `Jump` out of the loop.
+    Emitted,
+    /// `JumpTrue` out of the loop, the `value` read after it.
+    Threaded,
+}
+
+impl ForOfTest {
+    /// The offset of the record that leaves the loop: the `Jump` after the test, or the
+    /// threaded test itself.
+    const fn exit(self) -> usize {
+        match self {
+            Self::Emitted => FOR_OF_DONE_TEST + 1,
+            Self::Threaded => FOR_OF_DONE_TEST,
+        }
+    }
+
+    /// The offset of the `value` read, which follows the record that leaves the loop.
+    const fn value_read(self) -> usize {
+        self.exit() + 1
+    }
+
+    /// The records the step spans, its `Call` through its `value` read.
+    const fn records(self) -> usize {
+        self.value_read() + 1
+    }
+}
+
+/// How the iteration step at `pc` (`lane_iteration_step`) begins a for-of step: after its
+/// `RequireIteratorResult`, a plain read of the result into a register, a test of that
+/// register (`ForOfTest`), and a second plain read of the result where the body begins.
+/// `lane_iterator_step_reads` then makes the reads from the step itself; their atoms it
+/// tests as it runs.
+fn lane_for_of_step(decoded: &[WideInstruction], pc: usize) -> Option<ForOfTest> {
+    let result = decoded[pc].result_register();
+    let record = |offset: usize| decoded.get(pc + offset).copied();
+    let reads_result = |offset: usize| {
+        record(offset).is_some_and(|read| read.op() == Op::GetField && read.result_flags() == 0 && read.b() == result)
+    };
+    let done = record(FOR_OF_DONE_READ).filter(|_| reads_result(FOR_OF_DONE_READ))?.result_register();
+    let test = record(FOR_OF_DONE_TEST).filter(|test| test.a() == done)?;
+    let form = match test.op() {
+        Op::JumpFalse => ForOfTest::Emitted,
+        Op::JumpTrue => ForOfTest::Threaded,
+        _ => return None,
+    };
+    let exit = record(form.exit())?;
+    let leaves = exit.op() == if form == ForOfTest::Emitted { Op::Jump } else { Op::JumpTrue }
+        && exit.jump_target() as usize > pc + form.value_read();
+    let enters = form == ForOfTest::Threaded || test.jump_target() as usize == pc + form.value_read();
+    (leaves && enters && reads_result(form.value_read())).then_some(form)
+}
+
 /// A nested `GetField` whose only result flag stores its value to a field of `this` too
 /// (`lane_get_field_sink`).
 fn lane_sinks_field(instruction: WideInstruction) -> bool {
@@ -16440,7 +16544,11 @@ fn derive_lane_view<'live, H: Host>(
                 })
             } else if op == Op::Call && lane_iteration_step(&decoded, pc) {
                 Some(LaneHandler {
-                    handler: lane_iterator_step::<H> as Handler,
+                    handler: match lane_for_of_step(&decoded, pc) {
+                        Some(ForOfTest::Emitted) => lane_iterator_step_reads::<H, false> as Handler,
+                        Some(ForOfTest::Threaded) => lane_iterator_step_reads::<H, true> as Handler,
+                        None => lane_iterator_step::<H> as Handler,
+                    },
                     produces: false,
                 })
             } else if op == Op::StoreEnvLocal && resolves_names {

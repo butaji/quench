@@ -43,6 +43,15 @@ pub(super) struct ArrayIterationProof {
 const ITERATOR_RESULT_VALUE_SLOT: usize = 0;
 const ITERATOR_RESULT_DONE_SLOT: usize = 1;
 
+/// What an iteration step's call is (`Vm::iteration_step`): one the lane makes in place, of
+/// an array iterator or a generator, or any other call.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum IterationStep {
+    Array,
+    Generator,
+    Call,
+}
+
 impl<H: Host> Vm<H> {
     /// ArrayAccumulation of a spread element: every value `source` iterates is appended to the
     /// literal `array`.
@@ -3421,23 +3430,36 @@ impl<H: Host> Vm<H> {
     /// Whether `method` is this realm's %ArrayIteratorPrototype%.next and `iterator` one of
     /// its array iterators, so a step may run without the call and its result object.
     pub(super) fn steps_as_array_iterator(&self, iterator: Value, method: Value) -> bool {
-        self.is_current_realm_native(method, Native::ArrayIteratorNext)
-            && matches!(
-            self.heap.iterator(iterator),
-            Some(IteratorRecord { kind, .. }) if kind.is_array_iterator()
-        )
+        self.iteration_step(iterator, method) == IterationStep::Array
+    }
+
+    /// What a step calling `method` of `iterator` is, from one read of the iterator's record:
+    /// this realm's `%ArrayIteratorPrototype%.next` of an array iterator
+    /// (`steps_as_array_iterator`), this realm's `Generator.prototype.next` of a generator
+    /// that is not running (`steps_as_generator`), or another call.
+    #[inline(always)]
+    pub(super) fn iteration_step(&self, iterator: Value, method: Value) -> IterationStep {
+        match self.heap.iterator(iterator) {
+            Some(IteratorRecord { kind, .. })
+                if kind.is_array_iterator() && self.is_current_realm_native(method, Native::ArrayIteratorNext) =>
+            {
+                IterationStep::Array
+            }
+            Some(IteratorRecord { kind: IteratorKind::Generator, ext, .. })
+                if ext.generator.as_ref().is_some_and(|record| !record.running)
+                    && self.is_current_realm_native(method, Native::GeneratorNext) =>
+            {
+                IterationStep::Generator
+            }
+            _ => IterationStep::Call,
+        }
     }
 
     /// Whether a for-of step calling `method` of `iterator` (`lane_iteration_step`) is this
     /// realm's `Generator.prototype.next` of a generator that is not running, which the step
     /// resumes in place (`generator_iteration_step`).
     pub(super) fn steps_as_generator(&self, iterator: Value, method: Value) -> bool {
-        self.is_current_realm_native(method, Native::GeneratorNext)
-            && matches!(
-                self.heap.iterator(iterator),
-                Some(IteratorRecord { kind: IteratorKind::Generator, ext, .. })
-                    if ext.generator.as_ref().is_some_and(|record| !record.running)
-            )
+        self.iteration_step(iterator, method) == IterationStep::Generator
     }
 
     /// The step `steps_as_generator` admits: `next()` of `generator` called as the general
