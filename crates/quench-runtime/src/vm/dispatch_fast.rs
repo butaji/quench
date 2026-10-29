@@ -6289,16 +6289,10 @@ const STRICT_INEQUALITY_OPERATOR: u32 = oxc_ast::ast::BinaryOperator::StrictIneq
 
 /// Whether `value` is strictly equal to `constant`, a constant that is no Number: a boolean,
 /// null or undefined is equal only to itself, a heap constant (a string or BigInt) also to
-/// a value of equal contents (`Vm::strict_equal`), where two `typeof` names are equal only
-/// when identical (`Vm::typeof_name`).
+/// a value of equal contents (`Vm::heap_values_strictly_equal`).
 #[inline(always)]
 fn strictly_equal_constant<H: Host>(vm: &Vm<H>, value: Value, constant: Value) -> bool {
-    // The constant is rarely a typeof name, so its test usually decides that one alone.
-    value == constant
-        || (constant.is_heap()
-            && value.is_heap()
-            && !(vm.is_typeof_name(constant) && vm.is_typeof_name(value))
-            && vm.heap_values_strictly_equal(value, constant))
+    value == constant || (constant.is_heap() && value.is_heap() && vm.heap_values_strictly_equal(value, constant))
 }
 
 lane_handler! {

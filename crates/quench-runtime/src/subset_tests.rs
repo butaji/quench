@@ -902,6 +902,34 @@ print(out.join(" "));
 }
 
 #[test]
+fn strict_compares_against_heap_constants_keep_their_results() {
+    // A lane strict (in)equality against a string or BigInt constant
+    // (`lane_jump_strict_constant_false`) is identity or equal contents: `typeof` names
+    // against built strings of the same text, one-unit and empty strings, composed and
+    // decomposed text, BigInts of equal value and values of other types. Node 26 prints the
+    // same.
+    let source = r#"
+(function () {
+const values = [1, "1", "number", "num" + "ber", ["str", "ing"].join(""), "string", undefined, null, 1n, 10n ** 20n, Symbol.iterator, {}, "/", "a/".slice(1), "", "é", "é".normalize(), true];
+const counts = [0, 0, 0, 0, 0, 0, 0];
+for (let r = 0; r < 200; r++) {
+  for (const v of values) {
+    if (v === "number") counts[0]++;
+    if (typeof v === "number") counts[1]++;
+    if (v !== "string") counts[2]++;
+    if (v === "/") counts[3]++;
+    if (v === 100000000000000000000n) counts[4]++;
+    if (v === "é") counts[5]++;
+    if (typeof v !== "bigint" && v !== "") counts[6]++;
+  }
+}
+print(counts.join(" "));
+})();
+"#;
+    assert_eq!(output(source), ["400 200 3200 400 200 400 3000"]);
+}
+
+#[test]
 fn own_field_stores_into_slot_cells_keep_their_semantics() {
     // An own-field store into an object without a record (a RegExp's `lastIndex`, a Map's,
     // a Date's or a function's property) takes the own store's cell path
