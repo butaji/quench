@@ -853,6 +853,13 @@ mod tests {
         CollectionOutcome { full: true, since_full: 0, ..minor(live + kept, live + promoted, 0) }
     }
 
+    /// Minors promote `promoted` onto `live`, and the full collection after them finds every
+    /// promotion dead.
+    fn promotions_die_old(pacing: &GenerationalPacing, state: &mut PacingState, live: usize, promoted: usize) {
+        pacing.plan(state, minor(live + promoted, live, promoted));
+        pacing.plan(state, full_after_promoting(live, promoted, 0));
+    }
+
     #[test]
     fn promotions_dying_old_turn_aging_on_until_aged_survivors_outlive_their_second_minor() {
         let pacing = MemoryPolicy::Throughput.table();
@@ -860,9 +867,16 @@ mod tests {
         let live = 1 << 20;
         let promoted = 1 << 16;
         assert_eq!(state.promotion_age(&pacing), pacing.promotion_age);
-        // Minors promote; the full collection finds every promotion dead.
-        pacing.plan(&mut state, minor(live + promoted, live, promoted));
-        pacing.plan(&mut state, full_after_promoting(live, promoted, 0));
+        // One full collection finding promotions dead is not enough; one that finds them
+        // living on in between starts the count again.
+        promotions_die_old(&pacing, &mut state, live, promoted);
+        assert_eq!(state.promotion_age(&pacing), pacing.promotion_age);
+        pacing.plan(&mut state, full_after_promoting(live, promoted, promoted));
+        for _ in 1..FULLS_FINDING_PROMOTED_GARBAGE_TO_AGE {
+            promotions_die_old(&pacing, &mut state, live, promoted);
+            assert_eq!(state.promotion_age(&pacing), pacing.promotion_age);
+        }
+        promotions_die_old(&pacing, &mut state, live, promoted);
         assert_eq!(state.promotion_age(&pacing), PromotionAge::OLDEST);
         // Aged survivors that their second minor frees keep aging on.
         let freed = AgedFates { died: 9, promoted: 1 };
@@ -881,14 +895,27 @@ mod tests {
             pacing.plan(&mut state, CollectionOutcome { aged: outliving, ..minor(live, live, promoted) });
         }
         assert_eq!(state.promotion_age(&pacing), pacing.promotion_age);
-        for _ in 0..pacing.aging_interval {
-            pacing.plan(&mut state, minor(live + promoted, live, promoted));
-            pacing.plan(&mut state, full_after_promoting(live, promoted, 0));
+        for _ in 0..pacing.aging_interval + FULLS_FINDING_PROMOTED_GARBAGE_TO_AGE - 1 {
+            promotions_die_old(&pacing, &mut state, live, promoted);
             assert_eq!(state.promotion_age(&pacing), pacing.promotion_age);
         }
-        pacing.plan(&mut state, minor(live + promoted, live, promoted));
-        pacing.plan(&mut state, full_after_promoting(live, promoted, 0));
+        promotions_die_old(&pacing, &mut state, live, promoted);
         assert_eq!(state.promotion_age(&pacing), PromotionAge::OLDEST);
+    }
+
+    #[test]
+    fn aging_that_outlives_its_first_measurement_turns_off_at_once() {
+        let pacing = MemoryPolicy::Throughput.table();
+        let mut state = PacingState::default();
+        let live = 1 << 20;
+        let promoted = 1 << 16;
+        for _ in 0..FULLS_FINDING_PROMOTED_GARBAGE_TO_AGE {
+            promotions_die_old(&pacing, &mut state, live, promoted);
+        }
+        assert_eq!(state.promotion_age(&pacing), PromotionAge::OLDEST);
+        let outliving = AgedFates { died: 1, promoted: 9 };
+        pacing.plan(&mut state, CollectionOutcome { aged: outliving, ..minor(live, live, promoted) });
+        assert_eq!(state.promotion_age(&pacing), pacing.promotion_age);
     }
 
     #[test]
