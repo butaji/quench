@@ -850,8 +850,9 @@ struct ProgramEntry {
     /// its `import()` specifiers; `None` for a program that is its own.
     script_or_module: Option<Rc<str>>,
     /// Dynamic code (eval, `Function`, host scripts): reclaimed once nothing
-    /// can run it. The main program and modules stay for the realm's life.
-    reclaimable: bool,
+    /// can run it, with the footprint the collector was charged for it
+    /// (`ProgramFootprint`). The main program and modules stay for the realm's life.
+    reclaimable: Option<usize>,
     /// The reclamation pass current at insertion.
     pass: u64,
     /// The minor collections that must still trace its root values, which changed since a
@@ -935,6 +936,8 @@ pub(crate) struct ProgramStore {
     reclaim_passes: u64,
     /// Reclaimable programs inserted since the last reclamation pass.
     unchecked_reclaimable: usize,
+    /// The sum of the stored reclaimable programs' footprints (`reclaimable_bytes`).
+    reclaimable_bytes: usize,
     /// The entry facts every function shares whose facts are all unset
     /// (`JsEntryFacts::is_unset`): most functions the tier
     /// watches, which had each held a copy (V8-v7 Crypto `--jit`: 32 -> 21 KiB at the heap's peak).
@@ -983,6 +986,7 @@ impl Default for ProgramStore {
             owned_scripts: FxHashMap::default(),
             reclaim_passes: 0,
             unchecked_reclaimable: 0,
+            reclaimable_bytes: 0,
             no_entry_facts: Rc::default(),
             js_jit_tracked_functions: 0,
             js_jit_tracking_exhaustions: 0,
@@ -1067,11 +1071,12 @@ impl ProgramStore {
     }
 
     /// Inserts dynamic code that `reclaim_unreferenced` may later drop.
-    pub(crate) fn insert_reclaimable_shared(&mut self, program: Rc<ResidualProgram>) -> Option<ProgramId> {
+    pub(crate) fn insert_reclaimable_shared(&mut self, program: Rc<ResidualProgram>, footprint: usize) -> Option<ProgramId> {
         let id = self.insert_shared(program)?;
         if let Some(entry) = self.entry_mut(id) {
-            entry.reclaimable = true;
+            entry.reclaimable = Some(footprint);
         }
+        self.reclaimable_bytes = self.reclaimable_bytes.saturating_add(footprint);
         self.unchecked_reclaimable += 1;
         Some(id)
     }
@@ -1079,6 +1084,11 @@ impl ProgramStore {
     #[cfg(test)]
     pub(crate) fn live_count(&self) -> usize {
         self.programs.iter().flatten().count()
+    }
+
+    /// The footprints of the reclaimable programs still stored (`ProgramEntry::reclaimable`).
+    pub(crate) fn reclaimable_bytes(&self) -> usize {
+        self.reclaimable_bytes
     }
 
     /// Whether dynamic code may be reclaimable, including dropped host owners.
@@ -1117,7 +1127,8 @@ impl ProgramStore {
         let mut pending = 0;
         for (index, slot) in self.programs.iter_mut().enumerate() {
             let Some(entry) = slot else { continue };
-            if !entry.reclaimable || referenced.get(index).copied().unwrap_or(true) {
+            let Some(footprint) = entry.reclaimable else { continue };
+            if referenced.get(index).copied().unwrap_or(true) {
                 continue;
             }
             if entry.pass >= previous_pass {
@@ -1165,6 +1176,7 @@ impl ProgramStore {
                 reclaimed_wasm_baselines.1 += compiled.mapped_bytes();
             }
             *slot = None;
+            self.reclaimable_bytes = self.reclaimable_bytes.saturating_sub(footprint);
             reclaimed.extend(ProgramId::from_index(index));
         }
         self.js_jit_tracked_functions = self
@@ -1428,7 +1440,7 @@ impl ProgramStore {
             scope: ProgramScope::Own,
             origin,
             script_or_module: None,
-            reclaimable: false,
+            reclaimable: None,
             pass: self.reclaim_passes,
             minor_root_traces: PromotionAge::OLDEST.minors(),
         })));

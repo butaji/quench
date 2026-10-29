@@ -522,6 +522,9 @@ pub(crate) struct Heap {
     /// Bytes of reclaimable programs installed since the last full collection
     /// (`charge_reclaimable_program`).
     reclaimable_program_bytes_since_full: usize,
+    /// Bytes of the reclaimable programs the last full collection kept, which the next one's
+    /// program growth is measured against.
+    reclaimable_program_bytes_after_full: usize,
     young: Vec<u32>,
     /// The young cells with weak entries (weak maps and sets, weak refs, finalization
     /// registries): a minor collection prunes only these and the remembered cells.
@@ -807,6 +810,7 @@ impl Heap {
             remembered: Vec::with_capacity(384),
             carried_owners: Vec::new(),
             reclaimable_program_bytes_since_full: 0,
+            reclaimable_program_bytes_after_full: 0,
             young: Vec::with_capacity(384),
             free_by_slab: Vec::with_capacity(12),
             free_slabs: Vec::with_capacity(12),
@@ -1711,6 +1715,7 @@ impl Heap {
         self.allocated_at_collection = 0;
         self.allocated_at_full = 0;
         self.reclaimable_program_bytes_since_full = 0;
+        self.reclaimable_program_bytes_after_full = 0;
         self.live_after_full = 0;
         self.live_at_environment_trim = None;
         self.full_due = false;
@@ -1809,17 +1814,24 @@ impl Heap {
                 self.pacing_state.cap_backoff,
             )
             || self.pacing().old_growth_reached(
-                self.live_after_full,
+                self.reclaimable_program_bytes_after_full / payload_unit(),
                 self.reclaimable_program_bytes_since_full / payload_unit(),
             )
     }
     /// Charges a reclaimable program (dynamic code: `eval`, `new Function`, scripts) of
-    /// `bytes` (`ProgramFootprint`) as old growth: only a full collection finds it
-    /// unreferenced and reclaims it, and minor collections, which free the heap garbage that
-    /// made it, never would. Without it, a loop of `new Function` under Throughput ran two
-    /// full collections in 80K programs and held every program.
+    /// `bytes` (`ProgramFootprint`) as old growth of the programs the last full collection
+    /// kept: only a full collection finds a program unreferenced and reclaims it, and minor
+    /// collections, which free the heap garbage that made it, never would. Without it, a loop
+    /// of `new Function` under Throughput ran two full collections in 80K programs and held
+    /// every program. Measured against the programs kept rather than the heap, a large
+    /// program that stays (a benchmark harness's compiler) makes its own growth threshold
+    /// instead of a full collection at each heap peak.
     pub(crate) fn charge_reclaimable_program(&mut self, bytes: usize) {
         self.reclaimable_program_bytes_since_full = self.reclaimable_program_bytes_since_full.saturating_add(bytes);
+    }
+    /// Records the footprints of the reclaimable programs a full collection kept.
+    pub(crate) fn set_reclaimable_programs_after_full(&mut self, bytes: usize) {
+        self.reclaimable_program_bytes_after_full = bytes;
     }
     /// Every collection may be minor, so the legacy young list and barrier are always kept.
     fn tracks_young_cells(&self) -> bool {

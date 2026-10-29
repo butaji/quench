@@ -78,6 +78,7 @@ impl ProgramStore {
         store.global_eval_programs = global_eval_programs;
         store.reclaim_passes = reader.u64()?;
         store.unchecked_reclaimable = reader.len()?;
+        store.reclaimable_bytes = store.programs.iter().flatten().filter_map(|entry| entry.reclaimable).sum();
         Ok(store)
     }
 }
@@ -171,7 +172,7 @@ impl ProgramEntry {
             }
         }
         script_or_module.snap(writer)?;
-        writer.bool(*reclaimable);
+        reclaimable.snap(writer)?;
         writer.u64(*pass);
         Ok(())
     }
@@ -216,7 +217,7 @@ impl ProgramEntry {
             _ => return Err(SnapshotError("invalid snapshot program origin".into())),
         };
         let script_or_module = Snap::unsnap(reader)?;
-        let reclaimable = reader.bool()?;
+        let reclaimable: Option<usize> = Snap::unsnap(reader)?;
         let pass = reader.u64()?;
         Ok(Self {
             regexp_literals: vec![None; regexp_literal_sites],

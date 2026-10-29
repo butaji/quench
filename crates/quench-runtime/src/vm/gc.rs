@@ -871,6 +871,9 @@ impl<H: Host> Vm<H> {
         if full && self.programs.has_unchecked_reclaimable() {
             self.reclaim_unreferenced_programs();
         }
+        if full {
+            self.heap.set_reclaimable_programs_after_full(self.programs.reclaimable_bytes());
+        }
         // Do shape work immediately after sweep. In particular, dead method
         // cache handles must be pruned before any runtime cleanup can allocate
         // a new heap cell into a freed slot.
