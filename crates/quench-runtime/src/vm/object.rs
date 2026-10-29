@@ -1423,7 +1423,8 @@ impl<H: Host> Vm<H> {
             return false;
         }
         let Some(record_id) = object.direct_object_index() else {
-            return false;
+            // An object without a record, as a RegExp's `lastIndex` store reaches, out of line.
+            return LOGS && self.primary_cell_field_store_hit(object, value, site);
         };
         let receiver = self.heap.object_record_by_id(record_id);
         if receiver.is_module_namespace() || receiver.is_arguments_object() {
@@ -1441,6 +1442,20 @@ impl<H: Host> Vm<H> {
         }
         self.profile.field_cache_hit(0, 0);
         true
+    }
+
+    /// `primary_own_field_store_hit` of an object in a slot cell: its exact shape the site's
+    /// own entry (`Heap::cell_property_set_exact`).
+    #[inline(never)]
+    fn primary_cell_field_store_hit(&mut self, object: Value, value: Value, site: u16) -> bool {
+        let cache = self.field_cache_entry(site);
+        let (shape, slot) = (cache.receiver, cache.slot as usize);
+        // SAFETY: a recorded own entry names a non-dictionary shape holding `slot`.
+        cache.holder == NO_FIELD_HOLDER && unsafe { self.heap.cell_property_set_exact(object, shape, slot, value) }
+            && {
+                self.profile.field_cache_hit(0, 0);
+                true
+            }
     }
 
     /// `primary_own_field_store_hit` at a site past one shape (`field_site_polymorphic`): the

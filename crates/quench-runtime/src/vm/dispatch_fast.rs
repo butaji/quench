@@ -5940,8 +5940,9 @@ script_handler! {
         let vm = unsafe { vm(cx) };
         let polymorphic = vm.field_site_polymorphic(i.c);
         let adds = vm.field_site_adds(i.c);
-        // A receiver outside the object records (a RegExp's or a function's cell) never hits
-        // the own-record store, so its site takes the general cached write from now on.
+        // A receiver outside the object records (a RegExp's or a function's cell) hits the
+        // own store's logged path (`Vm::primary_cell_field_store_hit`) only at one shape, so
+        // a polymorphic site of one takes the general cached write from now on.
         let cell_receiver = !THIS && r.get(i.b).direct_object_index().is_none() && vm.is_object_like(r.get(i.b));
         // A private field's store takes the private element path (`lane_set_field`).
         let handler: Option<Handler> = if vm.is_private_name(i.imm()) {
@@ -5950,7 +5951,7 @@ script_handler! {
             Some(if THIS { lane_set_this_field_add::<H> } else { lane_set_object_field_add::<H> })
         } else if polymorphic && !adds && !cell_receiver {
             Some(lane_set_field_polymorphic::<H, THIS>)
-        } else if adds || polymorphic || cell_receiver {
+        } else if adds || polymorphic {
             Some(if THIS { lane_set_this_field::<H> } else { lane_set_object_field::<H> })
         } else {
             None
@@ -6288,15 +6289,10 @@ const STRICT_INEQUALITY_OPERATOR: u32 = oxc_ast::ast::BinaryOperator::StrictIneq
 
 /// Whether `value` is strictly equal to `constant`, a constant that is no Number: a boolean,
 /// null or undefined is equal only to itself, a heap constant (a string or BigInt) also to
-/// a value of equal contents (`Vm::strict_equal`), where two `typeof` names are equal only
-/// when identical (`Vm::typeof_name`).
+/// a value of equal contents (`Vm::heap_values_strictly_equal`).
 #[inline(always)]
 fn strictly_equal_constant<H: Host>(vm: &Vm<H>, value: Value, constant: Value) -> bool {
-    value == constant
-        || (constant.is_heap()
-            && value.is_heap()
-            && !(vm.is_typeof_name(value) && vm.is_typeof_name(constant))
-            && vm.strict_equal(value, constant))
+    value == constant || (constant.is_heap() && value.is_heap() && vm.heap_values_strictly_equal(value, constant))
 }
 
 lane_handler! {
