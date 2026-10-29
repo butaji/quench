@@ -5,10 +5,6 @@ use crate::bytecode::{
     SET_THIS_REGISTER, SourcePosition, Superinstruction, WideInstruction,
 };
 use oxc_allocator::Allocator;
-/// The parse arena reserved per source byte: a compilation that outgrows its first chunk
-/// allocates a second beside the allocations the compilation keeps, and the freed chunks
-/// leave partly resident gaps among them. V8-v7 Crypto's 58 KB source used 565 KB.
-const AST_ARENA_BYTES_PER_SOURCE_BYTE: usize = 12;
 use replay::SiteTable;
 use oxc_ast::ast::*;
 use oxc_parser::Parser;
@@ -444,7 +440,7 @@ impl Engine {
     fn analyze_static_module(source: &str, module_name: &str) -> StaticModuleAnalysis {
         let unbounded = StaticModuleAnalysis { early_error: None, plan: None };
         let normalized = early::normalize_hashbang(source);
-        let allocator = Allocator::with_capacity(normalized.len().saturating_mul(AST_ARENA_BYTES_PER_SOURCE_BYTE));
+        let allocator = Allocator::with_capacity(normalized.len().saturating_mul(6));
         let parsed = Parser::new(&allocator, &normalized, SourceType::mjs()).parse();
         if stack::validate_parsed(&parsed).is_err() {
             return unbounded;
@@ -518,7 +514,7 @@ impl Engine {
 
     pub(crate) fn static_module_throw(source: &str) -> Option<StaticModuleThrow> {
         let normalized = early::normalize_hashbang(source);
-        let allocator = Allocator::with_capacity(normalized.len().saturating_mul(AST_ARENA_BYTES_PER_SOURCE_BYTE));
+        let allocator = Allocator::with_capacity(normalized.len().saturating_mul(6));
         let parsed = Parser::new(&allocator, &normalized, SourceType::mjs()).parse();
         if stack::validate_parsed(&parsed).is_err() {
             return None;
@@ -577,7 +573,7 @@ impl Engine {
         module_name: &str,
     ) -> Option<Vec<(String, Constant)>> {
         let normalized = early::normalize_hashbang(source);
-        let allocator = Allocator::with_capacity(normalized.len().saturating_mul(AST_ARENA_BYTES_PER_SOURCE_BYTE));
+        let allocator = Allocator::with_capacity(normalized.len().saturating_mul(6));
         let parsed = Parser::new(&allocator, &normalized, SourceType::mjs()).parse();
         if stack::validate_parsed(&parsed).is_err() {
             return None;
@@ -909,7 +905,7 @@ impl Engine {
         expected_shape: ParsedProgramShape,
     ) -> Result<ResidualProgram, Vec<Diagnostic>> {
         let normalized = early::normalize_hashbang(source);
-        let allocator = Allocator::with_capacity(normalized.len().saturating_mul(AST_ARENA_BYTES_PER_SOURCE_BYTE));
+        let allocator = Allocator::with_capacity(normalized.len().saturating_mul(6));
         let mut parsed = annex_b_targets::parse_program(&allocator, &normalized, source_type);
         if parsed.stack_exhausted {
             return Err(vec![Diagnostic::stack_exhausted(name)]);
