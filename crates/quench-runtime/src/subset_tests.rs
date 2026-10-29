@@ -848,3 +848,30 @@ print(out.join('\n'));
 {"z":3,"w":1}
 {"z":3,"w":1}"##);
 }
+
+#[test]
+fn function_information_reads_through_prototype_chains_keep_their_values() {
+    // `name` and `length` read through chains of plain objects skip the function-information
+    // walk (`chain_reaches_function`), while a chain that reaches a function, directly or
+    // past plain objects, still reads its own `name` and `length`, renamed or not. Node 26
+    // prints the same.
+    let source = r#"
+(function () {
+const out = [];
+function foo(a, b) {}
+const viaFn = Object.create(foo);
+const viaObj = Object.create(Object.create(foo));
+const plain = { name: "p", length: 3 };
+const bare = {};
+let s = "";
+for (let i = 0; i < 2000; i++) { const o = [viaFn, viaObj, plain, bare][i % 4]; s = String(o.name) + o.length; }
+out.push(s, viaFn.name + viaFn.length, viaObj.name + viaObj.length, plain.name + plain.length, String(bare.name) + bare.length);
+class K { static m() {} }
+out.push(Object.create(K).name, Object.create(K.m).name, Object.create(K.m).length);
+Object.defineProperty(foo, "name", { value: "renamed" });
+out.push(viaObj.name, Object.create(Object.create(Object.create(foo))).name);
+print(out.join(" "));
+})();
+"#;
+    assert_eq!(output(source), ["undefinedundefined foo2 foo2 p3 undefinedundefined K m 0 renamed renamed"]);
+}
