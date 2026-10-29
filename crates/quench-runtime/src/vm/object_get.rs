@@ -523,11 +523,11 @@ impl<H: Host> Vm<H> {
     /// (`lookup_array_index_atom`), read as `plain_property_lookup` reads a name. `None` for a
     /// chain through an exotic or arguments object, whose indices live outside the shape, an
     /// index no atom spells yet, or what that walk declines.
-    pub(super) fn plain_index_get(&self, object: Value, index: usize) -> Option<Value> {
+    pub(super) fn plain_index_get(&mut self, object: Value, index: usize) -> Option<Value> {
         if !self.ordinary_index_chain(object) {
             return None;
         }
-        self.plain_property_get(object, PropertyKey::string(self.lookup_array_index_atom(index)?))
+        self.plain_proved_get(object, PropertyKey::string(self.lookup_array_index_atom(index)?))
     }
 
     /// `set_plain_named_property` of array index `index` on a chain `plain_index_get` reads.
@@ -640,26 +640,36 @@ impl<H: Host> Vm<H> {
         }
     }
 
-    /// A symbol-keyed read at lane site `site` (a record's address) of the own data slot its
-    /// site entry names for `object`'s shape (`SymbolLoadProofs::site_own_slot`).
+    /// A symbol- or index-keyed read at lane site `site` (a record's address) of the own data
+    /// slot its site entry names for `object`'s shape (`SymbolLoadProofs::site_own_slot`). An
+    /// arguments object's indices are exotic whatever its shape says.
     #[inline(always)]
-    pub(super) fn site_symbol_own_read(&self, site: usize, object: Value, key: Value) -> Option<Value> {
+    pub(super) fn site_keyed_own_read(&self, site: usize, object: Value, key: Value) -> Option<Value> {
         let data = self.heap.ordinary_object(object)?;
         let epoch = crate::heap::prototype_layout_epoch();
         let slot = self.symbol_load_proofs.site_own_slot(site, data.shape(), key, epoch)?;
+        if data.is_arguments_object() {
+            return None;
+        }
         // SAFETY: the entry copies a proof's own data slot of this shape.
         Some(unsafe { self.heap.property_get_unchecked(data, slot as usize) })
     }
 
-    /// Records at lane site `site` the own slot a proof gives `key` on `object`'s shape, for
-    /// `site_symbol_own_read`; nothing for any other key or answer.
-    pub(super) fn record_site_symbol_read(&self, site: usize, object: Value, key: Value) {
-        if !matches!(self.heap.get(key), Some(Cell::Symbol(_))) {
-            return;
-        }
+    /// Records at lane site `site` the own slot a proof gives `key`, a symbol or an array
+    /// index, on `object`'s shape, for `site_keyed_own_read`; nothing for any other key or
+    /// answer.
+    pub(super) fn record_site_keyed_read(&self, site: usize, object: Value, key: Value) {
+        let property = match key.as_int() {
+            Some(index) => match usize::try_from(index).ok().and_then(|index| self.lookup_array_index_atom(index)) {
+                Some(atom) => PropertyKey::string(atom),
+                None => return,
+            },
+            None if matches!(self.heap.get(key), Some(Cell::Symbol(_))) => PropertyKey::symbol(key),
+            None => return,
+        };
         if let Some(data) = self.heap.ordinary_object(object) {
             let epoch = crate::heap::prototype_layout_epoch();
-            self.symbol_load_proofs.record_site_own_slot(site, data.shape(), key, epoch);
+            self.symbol_load_proofs.record_site_own_slot(site, data.shape(), key, property, epoch);
         }
     }
 

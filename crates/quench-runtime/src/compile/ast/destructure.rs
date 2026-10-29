@@ -7,6 +7,15 @@ struct BindingIterator {
     done: Register,
 }
 
+/// What a destructuring property reads (`FunctionCompiler::pattern_key`).
+#[derive(Clone, Copy)]
+enum PatternKey {
+    /// A `GetIndex` of a key register: a property key or an array index.
+    Index(Register),
+    /// A `GetField` of a static name.
+    Named(Atom),
+}
+
 #[derive(Clone, Copy)]
 pub(super) enum AssignmentReference {
     Abrupt(Register),
@@ -314,42 +323,14 @@ impl FunctionCompiler<'_, '_> {
                             self.store_atom(atom, selected);
                         }
                         AssignmentTargetProperty::AssignmentTargetPropertyProperty(property) => {
-                            if let Some(expression) = property.name.as_expression() {
-                                let raw_key = self.expression(expression);
-                                let key = self.reg();
-                                self.emit(Op::ToPropertyKey, key, raw_key, 0, 0);
-                                let reference =
-                                    self.prepare_maybe_default_reference(&property.binding);
-                                excluded.push(key);
-                                self.emit(Op::GetIndex, selected, value, key, 0);
-                                self.assign_maybe_default_prepared(
-                                    &property.binding,
-                                    selected,
-                                    reference,
-                                );
-                            } else if let Some(name) = Self::binding_key(&property.name) {
-                                let atom = self.owner.atom(name);
-                                let reference =
-                                    self.prepare_maybe_default_reference(&property.binding);
-                                excluded.push(self.literal(Constant::String(name.into())));
-                                let cache = self.owner.cache_site();
-                                self.emit(
-                                    Op::GetField,
-                                    selected,
-                                    FieldBase::register(value).0,
-                                    cache,
-                                    atom,
-                                );
-                                self.assign_maybe_default_prepared(
-                                    &property.binding,
-                                    selected,
-                                    reference,
-                                );
-                            } else {
-                                self.owner
-                                    .reject(property.span(), "destructuring key is unsupported");
+                            let Some((key, excluded_key)) = self.pattern_key(&property.name) else {
+                                self.owner.reject(property.span(), "destructuring key is unsupported");
                                 continue;
-                            }
+                            };
+                            let reference = self.prepare_maybe_default_reference(&property.binding);
+                            excluded.push(excluded_key);
+                            self.read_pattern_key(selected, value, key);
+                            self.assign_maybe_default_prepared(&property.binding, selected, reference);
                         }
                     }
                 }
@@ -649,28 +630,14 @@ impl FunctionCompiler<'_, '_> {
                 let mut excluded = Vec::with_capacity(object.properties.len());
                 for property in &object.properties {
                     let dst = self.reg();
-                    if let Some(expression) = property.key.as_expression() {
-                        let key = self.expression(expression);
-                        let property_key = self.reg();
-                        self.emit(Op::ToPropertyKey, property_key, key, 0, 0);
-                        excluded.push(property_key);
-                        let reference = self.resolve_binding_pattern(&property.value);
-                        self.emit(Op::GetIndex, dst, value, property_key, 0);
-                        self.bind_pattern_with_reference(&property.value, dst, reference);
+                    let Some((key, excluded_key)) = self.pattern_key(&property.key) else {
+                        self.owner.reject(property.span, "destructuring key is unsupported");
                         continue;
-                    } else if let Some(key) = Self::binding_key(&property.key) {
-                        excluded.push(self.literal(Constant::String(key.into())));
-                        let atom = self.owner.atom(key);
-                        let reference = self.resolve_binding_pattern(&property.value);
-                        let cache = self.owner.cache_site();
-                        self.emit(Op::GetField, dst, FieldBase::register(value).0, cache, atom);
-                        self.bind_pattern_with_reference(&property.value, dst, reference);
-                        continue;
-                    } else {
-                        self.owner
-                            .reject(property.span, "destructuring key is unsupported");
-                        continue;
-                    }
+                    };
+                    excluded.push(excluded_key);
+                    let reference = self.resolve_binding_pattern(&property.value);
+                    self.read_pattern_key(dst, value, key);
+                    self.bind_pattern_with_reference(&property.value, dst, reference);
                 }
                 if let Some(rest) = &object.rest {
                     let rest_value = self.emit_copy_data_properties(value, &excluded);
@@ -714,13 +681,38 @@ impl FunctionCompiler<'_, '_> {
         }
     }
 
-    fn binding_key<'a>(key: &'a PropertyKey<'a>) -> Option<&'a str> {
+    /// Evaluates destructuring property key `key`: the read it names (`read_pattern_key`) and
+    /// the property key a rest element excludes. A literal naming an array index reads its
+    /// integer (`literal_index_key`), a static name its atom, and any other expression's value
+    /// converts to a property key once, before the property's target is resolved.
+    fn pattern_key(&mut self, key: &PropertyKey<'_>) -> Option<(PatternKey, Register)> {
+        if let Some(index) = key.as_expression().and_then(Self::literal_index_key) {
+            let excluded = self.literal(Constant::String(index.to_string().into()));
+            return Some((PatternKey::Index(self.literal(Constant::Number(f64::from(index)))), excluded));
+        }
+        if let Some(name) = Self::static_key(key) {
+            let excluded = self.literal(Constant::String(name.into()));
+            return Some((PatternKey::Named(self.owner.atom(name)), excluded));
+        }
+        let raw = self.expression(key.as_expression()?);
+        let converted = self.reg();
+        self.emit(Op::ToPropertyKey, converted, raw, 0, 0);
+        Some((PatternKey::Index(converted), converted))
+    }
+
+    /// Reads the property `key` names (`pattern_key`) of `value` into `dst`.
+    fn read_pattern_key(&mut self, dst: Register, value: Register, key: PatternKey) {
         match key {
-            PropertyKey::StaticIdentifier(id) => Some(id.name.as_str()),
-            PropertyKey::StringLiteral(value) => Some(value.value.as_str()),
-            _ => None,
+            PatternKey::Index(key) => {
+                self.emit(Op::GetIndex, dst, value, key, 0);
+            }
+            PatternKey::Named(atom) => {
+                let cache = self.owner.cache_site();
+                self.emit(Op::GetField, dst, FieldBase::register(value).0, cache, atom);
+            }
         }
     }
+
 
     fn require_object_coercible(&mut self, value: Register) {
         let null = self.literal(Constant::Null);

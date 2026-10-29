@@ -20,8 +20,11 @@
 #    Wasm kernels' start-up. The Wasm ESM corpus (docs/README.md) is not part of it: laid out
 #    `--late` it added 0.98 MB of hot text and raised V8-v7 max RSS (pinned, 2026-10-29:
 #    RegExp 4900 -> 5084 KiB, Richards 2288 -> 2364, DeltaBlue --jit 2684 -> 2732), failing
-#    the target on two of three boards. The scored engine suites are never run. The
-#    corpus used is written to target/layout-corpus/MANIFEST and printed at the end.
+#    the target on two of three boards. QUENCH_LAYOUT_HTTP_ROUNDS, when set, adds the plain
+#    node:http server and client that tools/pgo-build.sh trains on
+#    (tests/npm-perf/workloads/http-echo-isolation.cjs, that many keep-alive exchanges) to the
+#    run phase, for diagnostic layouts of the server path. The scored engine suites are never
+#    run. The corpus used is written to target/layout-corpus/MANIFEST and printed at the end.
 # 3. Profiles start-up (cachegrind) and the run phase after the entry's compilation
 #    (callgrind, split at quench_entry_compiled), without and with --jit, under the
 #    memory-first policy.
@@ -193,6 +196,10 @@ programs "$packages" | xargs -P "$jobs" -I{} bash -c 'cachegrind jitmf-{} --jit 
 programs "$numbered" | xargs -P "$jobs" -I{} bash -c 'callgrind jit-{} --jit "$corpus/{}"'
 programs "$packages" | xargs -P "$jobs" -I{} bash -c 'callgrind jitmf-{} --jit "$corpus/{}"'
 programs | xargs -P "$jobs" -I{} bash -c 'callgrind {} "$corpus/{}"'
+if (( ${QUENCH_LAYOUT_HTTP_ROUNDS:-0} > 0 )); then
+    QUENCH_BENCH_ROUNDS="$QUENCH_LAYOUT_HTTP_ROUNDS" callgrind http-echo-isolation.js \
+        "$root_dir/tests/npm-perf/workloads/http-echo-isolation.cjs"
+fi
 
 # Profiles go in priority order: start-up first, then the run phase without Test262, then
 # Test262, so its tests add only the code the rest did not execute.
@@ -218,5 +225,6 @@ tools/check-link-order.sh "$binary" "$order"
         "${#COMPILE_ONLY_MODULES[@]}" "$(ls "$corpus"/z-t*.js | wc -l)"
     printf 'packages: %d workloads on tools/layout-corpus/package-lock.json\n' \
         "$(ls "$corpus"/npm-*.js | wc -l)"
+    printf 'http exchanges: %s\n' "${QUENCH_LAYOUT_HTTP_ROUNDS:-0}"
 } | tee "$corpus/MANIFEST"
 printf 'laid-out binary: %s-bolt\n' "$binary"

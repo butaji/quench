@@ -3566,12 +3566,13 @@ script_handler! {
     }
 }
 
-/// `plain_keyed_get` at lane site `ip`, recording the own slot a symbol key's proof gives
-/// for the site's next read (`Vm::site_symbol_own_read`). Out of line: the site's hits skip it.
+/// `plain_keyed_get` at lane site `ip`, recording the own slot a symbol or index key's proof
+/// gives for the site's next read (`Vm::site_keyed_own_read`). Out of line: the site's hits
+/// skip it.
 #[inline(never)]
 fn lane_site_keyed_get<H: Host>(vm: &mut Vm<H>, ip: Ip, base: Value, key: Value) -> Option<Value> {
     let value = vm.plain_keyed_get(base, key)?;
-    vm.record_site_symbol_read(ip.addr(), base, key);
+    vm.record_site_keyed_read(ip.addr(), base, key);
     Some(value)
 }
 
@@ -3592,13 +3593,14 @@ lane_handler! {
             return exit(ip);
         };
         let vm = unsafe { vm(cx) };
+        let key = vm.canonical_index_key(key);
         let Some(value) = vm
             .dense_array_element(base, key)
             .or_else(|| vm.absent_array_element(base, key))
             .or_else(|| vm.plain_keyed_get(base, key))
             .or_else(|| vm.plain_typed_element(base, key))
             .or_else(|| lane_string_element(vm, base, key))
-            .or_else(|| vm.string_index_element(base, key))
+            .or_else(|| vm.keyed_array_length(base, key))
         else {
             return exit(ip);
         };
@@ -3628,7 +3630,7 @@ script_handler! {
         let vm = unsafe { vm(cx) };
         let (base, key) = (r.get(i.b), r.get(i.c));
         // A symbol-keyed read this site made of the same shape and key reads its own slot.
-        if let Some(value) = vm.site_symbol_own_read(ip.addr(), base, key) {
+        if let Some(value) = vm.site_keyed_own_read(ip.addr(), base, key) {
             r.set(i.a, value);
             next!(cx, r, following(ip), Carried::script(cx))
         }
@@ -3685,12 +3687,13 @@ fn lane_get_index_beside_activations<H: Host>(
 /// element. Out of line, as `lane_set_index_slot_store`.
 #[inline(never)]
 fn lane_index_slot_element<H: Host>(vm: &mut Vm<H>, ip: Ip, base: Value, key: Value) -> Option<Value> {
+    let key = vm.canonical_index_key(key);
     vm.dense_array_element(base, key)
         .or_else(|| vm.absent_array_element(base, key))
         .or_else(|| lane_site_keyed_get(vm, ip, base, key))
         .or_else(|| vm.plain_typed_element(base, key))
         .or_else(|| lane_string_element(vm, base, key))
-        .or_else(|| vm.string_index_element(base, key))
+        .or_else(|| vm.keyed_array_length(base, key))
 }
 
 script_handler! {
@@ -5719,6 +5722,12 @@ script_handler! {
     fn lane_define_field<>(cx, r, ip, i, view) {
         let vm = unsafe { vm(cx) };
         let object = r.get(i.b);
+        // An object record, which is never a proxy, takes its site's proved define inline.
+        if vm.proved_field_define_hit(object, i.imm(), r.get(i.a), i.c) {
+            // Adding a property can allocate.
+            note_allocation(vm);
+            next!(cx, r, following(ip), Carried::script(cx))
+        }
         if !vm.lane_stack.activations.is_empty() && vm.proxy_parts(object).is_some() {
             return exit(ip);
         }
@@ -9683,6 +9692,30 @@ impl<H: Host> Vm<H> {
             .unwrap_or(false)
     }
 
+    /// Whether `native` called on `receiver` runs beside activations as the natives of
+    /// `runs_beside_activations` do: `%IteratorPrototype%.next` of an array, string, map or set
+    /// iterator, whose step reads its source alone. A generator's step resumes its frame and an
+    /// iterator helper's may step one, so those take frames first.
+    fn steps_beside_activations(&self, native: Native, receiver: Value) -> bool {
+        use crate::heap::IteratorKind;
+        native == Native::IteratorNext
+            && self.heap.iterator(receiver).is_some_and(|iterator| {
+                matches!(
+                    iterator.kind,
+                    IteratorKind::Array
+                        | IteratorKind::ArrayKeys
+                        | IteratorKind::ArrayValues
+                        | IteratorKind::ArrayEntries
+                        | IteratorKind::String
+                        | IteratorKind::MapKeys
+                        | IteratorKind::MapValues
+                        | IteratorKind::MapEntries
+                        | IteratorKind::SetValues
+                        | IteratorKind::SetEntries
+                )
+            })
+    }
+
     /// Whether `callee` is a native that runs beside a lane's activations
     /// (`runs_beside_activations`), which a call made while they stay frameless may make
     /// without making them frames.
@@ -12106,7 +12139,9 @@ fn lane_call_native<H: Host>(
     let call_pc = unsafe { ip.offset_from((*cx).base) } as usize;
     // A native that observes frames only through the points `materialize_deferred_lane`
     // guards runs beside the activations; the first such point makes them frames.
-    if !vm.lane_stack.activations.is_empty() && vm.runs_beside_activations(native, callee) {
+    if !vm.lane_stack.activations.is_empty()
+        && (vm.runs_beside_activations(native, callee) || vm.steps_beside_activations(native, receiver))
+    {
         vm.lane_deferred = Some(DeferredLaneCall { cx: cx.cast(), call_pc, frames: vm.frames.len() });
         let result = vm.call_native_guarded(unsafe { &*(*cx).code }, native, receiver, arguments.as_slice(), callee);
         note_allocation(vm);

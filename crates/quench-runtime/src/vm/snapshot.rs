@@ -370,6 +370,7 @@ impl<H: Host> Vm<H> {
             length_atom,
             prototype_atom,
             instanceof_constructor_layouts: _,
+            instanceof_inheriting_holders: _,
             closure_shapes: _,
             resolver_function_shape: _,
             iterator_result_header: _,

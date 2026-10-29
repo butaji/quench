@@ -1000,16 +1000,13 @@ fn static_index_field_cache_admits_only_shape_backed_storage() {
             "{mode}"
         );
         if vm.specialized {
-            let atom = vm.intern_atom("ordinary");
-            let ordinary = vm.own_property(vm.realm.globals, atom).unwrap();
+            // A canonical index literal reads by its integer (`literal_index_key`), never
+            // through a named field site.
             let index = vm.intern_atom("0");
-            let entries = field_cache_entries(&vm, &program, index);
             assert!(
-                !entries.is_empty(),
-                "ordinary indexed names must still exercise the field cache"
+                field_cache_entries(&vm, &program, index).is_empty(),
+                "canonical index names read as integer keys"
             );
-            let ordinary_shape = vm.object_data(ordinary).unwrap().shape();
-            assert!(entries.iter().all(|entry| entry.receiver == ordinary_shape));
             let atom = vm.intern_atom("view");
             let view = vm.own_property(vm.realm.globals, atom).unwrap();
             let noncanonical = vm.intern_atom("01");
