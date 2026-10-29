@@ -869,6 +869,7 @@ impl<H: Host> Vm<H> {
         let heap = &self.heap;
         self.private_homes
             .retain(|key, _| heap.is_live(key.environment));
+        self.private_site_homes.prune_dead(|value| heap.is_live(value));
         if full && self.programs.has_unchecked_reclaimable() {
             self.reclaim_unreferenced_programs();
         }

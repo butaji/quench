@@ -1167,8 +1167,7 @@ impl<H: Host> Vm<H> {
         frame: bool,
         atom: Atom,
     ) -> Option<PrivateBrand> {
-        let epoch = self.heap.collection_epoch();
-        if let Some(home) = self.private_site_homes.home(site, environment, epoch) {
+        if let Some(home) = self.private_site_homes.home(site, environment) {
             return Some(PrivateBrand { home, name: atom });
         }
         let brand = if frame {
@@ -1177,7 +1176,7 @@ impl<H: Host> Vm<H> {
             self.memoized_private_brand(p, environment, function, atom)?
         };
         if p.function_get(function as usize).is_some_and(|body| body.binding_sites.is_empty()) {
-            self.private_site_homes.record(site, environment, epoch, brand.home);
+            self.private_site_homes.record(site, environment, brand.home);
         }
         Some(brand)
     }
@@ -1193,8 +1192,7 @@ impl<H: Host> Vm<H> {
         object: Value,
     ) -> Option<super::private_site_home::PrivateElement> {
         use super::private_site_home::PrivateElement;
-        let epoch = self.heap.collection_epoch();
-        if let Some(element) = self.private_site_homes.element(site, epoch, brand.home) {
+        if let Some(element) = self.private_site_homes.element(site, brand.home) {
             return Some(element);
         }
         let key = PropertyKey::string(brand.name);
@@ -1215,7 +1213,7 @@ impl<H: Host> Vm<H> {
                 return None;
             }
         };
-        self.private_site_homes.record_element(site, epoch, brand.home, element);
+        self.private_site_homes.record_element(site, brand.home, element);
         Some(element)
     }
 
