@@ -902,6 +902,43 @@ print(out.join(" "));
 }
 
 #[test]
+fn regexp_tests_through_a_proved_builtin_exec_keep_exec_lookups() {
+    // `test` calls the builtin exec in place while a proof for the RegExp's shape names the
+    // prototype's `exec` slot (`RegExpExecProof`): a patched, restored, own, deleted and
+    // accessor `exec`, a RegExp with another prototype and a prototype without `exec`.
+    // Node 26 prints the same.
+    let source = r#"
+(function () {
+const out = [];
+const re = /b/y;
+function run(r, s) { let n = 0; for (let i = 0; i < 200; i++) { r.lastIndex = 1; if (r.test(s)) n++; } return n; }
+out.push(run(re, "abc"));
+const proto = RegExp.prototype, exec = proto.exec;
+let calls = 0;
+proto.exec = function (s) { calls++; return exec.call(this, s); };
+out.push(run(re, "abc"), calls);
+proto.exec = exec; calls = 0;
+out.push(run(re, "abc"), calls);
+const own = /b/y; own.exec = function () { calls++; return null; };
+out.push(run(own, "abc"), calls); calls = 0;
+delete own.exec; out.push(run(own, "abc"));
+Object.defineProperty(proto, "exec", { get() { calls++; return exec; }, configurable: true });
+out.push(run(re, "abc"), calls);
+Object.defineProperty(proto, "exec", { value: exec, writable: true, configurable: true }); calls = 0;
+out.push(run(re, "abc"));
+const sub = /b/y; Object.setPrototypeOf(sub, Object.create(proto, { exec: { value() { calls++; return {}; } } }));
+out.push(run(sub, "abc"), calls); calls = 0;
+delete proto.exec;
+let threw = ""; try { run(/b/y, "abc"); } catch (e) { threw = e.constructor.name; } out.push(threw);
+proto.exec = exec;
+out.push(run(/b/y, "abc"), run(/c/y, "abc"));
+print(out.join(" "));
+})();
+"#;
+    assert_eq!(output(source), ["200 200 200 200 0 0 200 200 200 200 200 200 200  200 0"]);
+}
+
+#[test]
 fn sticky_searches_their_start_set_excludes_keep_their_matches() {
     // A sticky search whose one position admits no match start is refused before the
     // subject is prepared (`Regex::excludes_search`): starts in and past the subject, the
