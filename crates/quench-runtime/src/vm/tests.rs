@@ -12408,6 +12408,84 @@ print(h + " " + out.slice(-6).join(","));
 }
 
 #[test]
+fn shared_osr_inner_loops_park_outer_registers_through_exits() {
+    // The inner loop names none of `p`, `q`, `t`, `u`: it parks them (`Parking`), and both
+    // its exit to the outer loop and a guard leaving inside it (a double, then a string
+    // element) give them back; results match Node.
+    let source = r#"
+function run(a, n) {
+  var s = 0, p = 1, q = 2, t = 3, u = 4;
+  for (var i = 0; i < n; i++) {
+    p = (p * 3 + i) | 0; q = (q + p) | 0; t = (t ^ q) | 0; u = (u + t * 2) | 0;
+    var c = 0;
+    for (var j = 0; j < a.length; j++) { c = (c + a[j] * j) | 0; }
+    s = (s + c + p + q + t + u) | 0;
+  }
+  return s + "," + p + "," + q + "," + t + "," + u;
+}
+var out = [];
+for (var k = 0; k < 300; k++) {
+  var a = []; for (var j = 0; j < 20; j++) a.push((j * 5 + k) | 0);
+  if (k == 250) a[7] = 1.5;
+  if (k == 270) a[9] = "x";
+  out.push(run(a, 15));
+}
+print(out.slice(-3).join(";") + " " + out[100] + " " + out[250] + " " + out[270]);
+    "#;
+    let expected = [concat!(
+        "215270622,17936126,26904137,20245649,70677662;215273472,17936126,26904137,20245649,70677662;",
+        "215276322,17936126,26904137,20245649,70677662 214709172,17936126,26904137,20245649,70677662 ",
+        "215106897,17936126,26904137,20245649,70677662 214990047,17936126,26904137,20245649,70677662"
+    )];
+    let program = Engine::specialize(source, "osr-parking.js").unwrap();
+    for mode in [None, Some(crate::ExecutionMode::Compiled)] {
+        let output = Rc::new(RefCell::new(Vec::new()));
+        let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+        if let Some(mode) = mode {
+            vm.set_execution_mode(mode);
+        }
+        vm.execute(&program).unwrap();
+        assert_eq!(output.borrow().as_slice(), expected, "{mode:?}");
+    }
+}
+
+#[test]
+fn shared_osr_reads_fields_of_receivers_the_loop_loads() {
+    // A receiver an indexed read loads, moved into its variable, is a tagged value whose
+    // field reads load natively: inline storage (two fields, negative integers), an object
+    // whose double moves its values out of inline storage and one of another shape leave
+    // for the lane; results match Node.
+    let source = r#"
+function run(list, n) {
+  var s = 0;
+  for (var k = 0; k < n; k++) { var o = list[k & 7]; s = (s + o.a * 3 + o.b) | 0; }
+  return s;
+}
+var out = [];
+for (var r = 0; r < 300; r++) {
+  var list = [];
+  for (var j = 0; j < 8; j++) list.push({ a: j - 3 + r, b: (j * 7) | 0 });
+  if (r == 200) list[3].a = 1.5;
+  if (r == 250) list[5] = { a: 2, b: 3, c: 4 };
+  if (r == 260) list[1].b = -1000000;
+  out.push(run(list, 500));
+}
+print(out.slice(-3).join(",") + " " + out[100] + " " + out[200] + " " + out[250] + " " + out[260]);
+    "#;
+    let expected = ["458420,459920,461420 162920 275372 339436 -62597521"];
+    let program = Engine::specialize(source, "osr-loaded-receivers.js").unwrap();
+    for mode in [None, Some(crate::ExecutionMode::Compiled)] {
+        let output = Rc::new(RefCell::new(Vec::new()));
+        let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+        if let Some(mode) = mode {
+            vm.set_execution_mode(mode);
+        }
+        vm.execute(&program).unwrap();
+        assert_eq!(output.borrow().as_slice(), expected, "{mode:?}");
+    }
+}
+
+#[test]
 fn char_at_and_from_char_code_share_ascii_unit_strings() {
     // One-unit ASCII results come from a cache a collection empties (`ascii_unit_strings`);
     // every other unit, an index out of range and a coerced index take the native. The

@@ -1,5 +1,5 @@
---- a/cranelift-codegen/src/egraph/elaborate.rs	2026-10-13 10:49:13.130123371 +0000
-+++ b/cranelift-codegen/src/egraph/elaborate.rs	2026-10-13 10:49:13.142048854 +0000
+--- a/cranelift-codegen/src/egraph/elaborate.rs	2026-10-29 12:45:24.746649251 +0000
++++ b/cranelift-codegen/src/egraph/elaborate.rs	2026-10-29 12:45:24.756306526 +0000
 @@ -47,6 +47,10 @@
      /// Map from Value to the best (lowest-cost) Value in its eclass
      /// (tree of union value-nodes).
@@ -258,8 +258,38 @@
          self.elaborate_domtree(&self.domtree);
          self.stats.elaborate_func_post_insts += self.func.dfg.num_insts() as u64;
      }
---- a/cranelift-codegen/src/isa/x64/inst/mod.rs	2026-10-13 10:49:13.136888100 +0000
-+++ b/cranelift-codegen/src/isa/x64/inst/mod.rs	2026-10-13 10:49:13.149259678 +0000
+--- a/cranelift-codegen/src/isa/x64/inst.isle	2026-10-29 12:45:24.748536039 +0000
++++ b/cranelift-codegen/src/isa/x64/inst.isle	2026-10-29 12:45:26.326323560 +0000
+@@ -492,6 +492,15 @@
+ ;; A helper to both check that the `Imm64` and `Offset32` values sum to less
+ ;; than 32-bits AND return this summed `u32` value. Also, the `Imm64` will be
+ ;; zero-extended from `Type` up to 64 bits. This is useful for `to_amode`.
++;; Quench: the overflow arithmetic a branch's flag comes from, when it is the
++;; instruction right before the branch (`fused_overflow_flag`).
++(decl pure partial fused_overflow_flag (Inst Value) Inst)
++(extern constructor fused_overflow_flag fused_overflow_flag)
++
++;; Quench: whether a lowered instruction reads an overflow arithmetic's flag value.
++(decl pure overflow_flag_read (Inst) bool)
++(extern constructor overflow_flag_read overflow_flag_read)
++
+ (decl pure partial sum_extend_fits_in_32_bits (Type Imm64 Offset32) u32)
+ (extern constructor sum_extend_fits_in_32_bits sum_extend_fits_in_32_bits)
+ 
+@@ -1630,6 +1639,11 @@
+ (rule (value32_zeros_upper32 (ishl _ _ _)) true)
+ (rule (value32_zeros_upper32 (ushr _ _ _)) true)
+ (rule (value32_zeros_upper32 (uload32 _ _ _ _)) true)
++;; Quench: a 32-bit load writes its register with `movl` or `movzx` to a
++;; 32-bit destination, which zeroes the upper 32 bits.
++(rule (value32_zeros_upper32 (load $I32 _ _ _)) true)
++(rule (value32_zeros_upper32 (uload8 $I32 _ _ _)) true)
++(rule (value32_zeros_upper32 (uload16 $I32 _ _ _)) true)
+ (rule -1 (value32_zeros_upper32 _) false)
+ 
+ ;;;; Helpers for Working SSE tidbits ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+--- a/cranelift-codegen/src/isa/x64/inst/mod.rs	2026-10-29 12:45:24.747094149 +0000
++++ b/cranelift-codegen/src/isa/x64/inst/mod.rs	2026-10-29 12:45:26.326665248 +0000
 @@ -1478,6 +1478,12 @@
          }
      }
@@ -273,30 +303,135 @@
      fn function_alignment() -> FunctionAlignment {
          FunctionAlignment {
              minimum: 1,
---- a/cranelift-codegen/src/isa/x64/inst.isle	2026-10-13 10:49:13.137060623 +0000
-+++ b/cranelift-codegen/src/isa/x64/inst.isle	2026-10-13 10:49:13.149692781 +0000
-@@ -1630,6 +1630,11 @@
- (rule (value32_zeros_upper32 (ishl _ _ _)) true)
- (rule (value32_zeros_upper32 (ushr _ _ _)) true)
- (rule (value32_zeros_upper32 (uload32 _ _ _ _)) true)
-+;; Quench: a 32-bit load writes its register with `movl` or `movzx` to a
-+;; 32-bit destination, which zeroes the upper 32 bits.
-+(rule (value32_zeros_upper32 (load $I32 _ _ _)) true)
-+(rule (value32_zeros_upper32 (uload8 $I32 _ _ _)) true)
-+(rule (value32_zeros_upper32 (uload16 $I32 _ _ _)) true)
- (rule -1 (value32_zeros_upper32 _) false)
+--- a/cranelift-codegen/src/isa/x64/lower.isle	2026-10-29 12:45:24.750929227 +0000
++++ b/cranelift-codegen/src/isa/x64/lower.isle	2026-10-29 12:45:26.326956346 +0000
+@@ -161,6 +161,17 @@
  
- ;;;; Helpers for Working SSE tidbits ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
---- a/cranelift-codegen/src/lib.rs	2026-10-13 10:49:13.137638623 +0000
-+++ b/cranelift-codegen/src/lib.rs	2026-10-13 10:49:13.151838691 +0000
+ ;;;; Helpers for `*_overflow` ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+ 
++;; Quench: overflow arithmetic whose flag no lowered instruction reads as a value
++;; emits only the arithmetic: a branch on the flag right after it jumps on the OF
++;; it sets (`lower_branch` of `brif`); the flag's output is the result's register,
++;; which nothing reads.
++(decl overflow_op (Inst CC ProducesFlags) InstOutput)
++(rule 1 (overflow_op inst _ (ProducesFlags.ProducesFlagsReturnsResultWithConsumer op result))
++      (if-let false (overflow_flag_read inst))
++      (let ((_ Unit (emit op)))
++        (output_pair result result)))
++(rule 0 (overflow_op _ cc producer) (construct_overflow_op cc producer))
++
+ (decl construct_overflow_op (CC ProducesFlags) InstOutput)
+ (rule (construct_overflow_op cc inst)
+       (let ((results ValueRegs (with_flags inst
+@@ -204,8 +215,8 @@
+ 
+ ;;;; Rules for `sadd_overflow` ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+ 
+-(rule 1 (lower (sadd_overflow _ x y @ (value_type (fits_in_64 ty))))
+-      (construct_overflow_op_alu ty (CC.O) (ProduceFlagsOp.Add) x y))
++(rule 1 (lower inst @ (sadd_overflow _ x y @ (value_type (fits_in_64 ty))))
++      (overflow_op inst (CC.O) (x64_produce_flags (ProduceFlagsOp.Add) ty x y)))
+ 
+ (rule 0 (lower (sadd_overflow _ x y @ (value_type $I128)))
+         (construct_overflow_op_alu_128 (CC.O) (ProduceFlagsOp.Add) (ChainFlagsOp.Adc) x y))
+@@ -220,8 +231,8 @@
+ 
+ ;;;; Rules for `ssub_overflow` ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+ 
+-(rule 1 (lower (ssub_overflow _ x y @ (value_type (fits_in_64 ty))))
+-      (construct_overflow_op_alu ty (CC.O) (ProduceFlagsOp.Sub) x y))
++(rule 1 (lower inst @ (ssub_overflow _ x y @ (value_type (fits_in_64 ty))))
++      (overflow_op inst (CC.O) (x64_produce_flags (ProduceFlagsOp.Sub) ty x y)))
+ 
+ (rule 0 (lower (ssub_overflow _ x y @ (value_type $I128)))
+         (construct_overflow_op_alu_128 (CC.O) (ProduceFlagsOp.Sub) (ChainFlagsOp.Sbb) x y))
+@@ -242,6 +253,14 @@
+ (rule 3 (lower (smul_overflow _ x y @ (value_type (ty_int_ref_16_to_64 ty))))
+       (construct_overflow_op (CC.O) (x64_mul_lo_with_flags_paired ty true x y)))
+ 
++;; Quench: the two-operand `imul` sets OF exactly when the signed product does
++;; not fit, so a 32- or 64-bit product needs neither `rax`/`rdx` nor the high
++;; half the one-operand form writes to them.
++(rule 4 (lower inst @ (smul_overflow _ x y @ (value_type $I32)))
++      (overflow_op inst (CC.O) (asm_produce_flags (x64_imull_rm_raw x (gpr_mem_32_for_ty $I32 y)))))
++(rule 4 (lower inst @ (smul_overflow _ x y @ (value_type $I64)))
++      (overflow_op inst (CC.O) (asm_produce_flags (x64_imulq_rm_raw x (gpr_mem_64_for_ty $I64 y)))))
++
+ ;;;; Rules for `sadd_sat` ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+ 
+ (rule (lower (sadd_sat (multi_lane 8 16) x y))
+@@ -3603,6 +3622,16 @@
+ (rule (lower_branch (brif val _ _) (two_targets then else))
+       (emit_side_effect (jmp_cond_result (is_nonzero_cmp val) then else)))
+ 
++;; Quench: a branch on the overflow flag of the arithmetic right before it jumps on
++;; the OF that arithmetic leaves (`overflow_op`), instead of materializing the flag
++;; and testing it. Reading the arithmetic's result has it lowered even where nothing
++;; else reads it.
++(rule 1 (lower_branch branch @ (brif val _ _) (two_targets then else))
++      (if-let arithmetic (fused_overflow_flag branch val))
++      (if-let (first_result result) arithmetic)
++      (let ((_ Reg (put_in_reg result)))
++        (emit_side_effect (jmp_cond_result (CondResult.CC (ProducesFlags.AlreadyExistingFlags) (CC.O)) then else))))
++
+ ;; Rules for `br_table` ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+ 
+ (rule (lower_branch (br_table idx @ (value_type ty) _) (jump_table_targets default_target jt_targets))
+--- a/cranelift-codegen/src/isa/x64/lower/isle.rs	2026-10-29 12:45:24.740075420 +0000
++++ b/cranelift-codegen/src/isa/x64/lower/isle.rs	2026-10-29 12:45:26.327392082 +0000
+@@ -1362,6 +1362,28 @@
+         }
+     }
+ 
++    /// Quench: the 32- or 64-bit signed overflow arithmetic whose flag `flag` is, when
++    /// that arithmetic is the instruction right before `branch` in its block: lowered
++    /// there, it leaves OF set for the branch.
++    fn fused_overflow_flag(&mut self, branch: Inst, flag: Value) -> Option<Inst> {
++        let dfg = self.lower_ctx.dfg();
++        let crate::ir::ValueDef::Result(inst, 1) = dfg.value_def(flag) else {
++            return None;
++        };
++        let fused = matches!(
++            dfg.insts[inst].opcode(),
++            Opcode::SaddOverflow | Opcode::SsubOverflow | Opcode::SmulOverflow
++        ) && matches!(dfg.value_type(dfg.first_result(inst)), types::I32 | types::I64)
++            && self.lower_ctx.f.layout.prev_inst(branch) == Some(inst);
++        fused.then_some(inst)
++    }
++
++    /// Quench: whether any lowered instruction reads `inst`'s overflow flag as a value.
++    fn overflow_flag_read(&mut self, inst: Inst) -> bool {
++        let flag = self.lower_ctx.dfg().inst_results(inst)[1];
++        self.lower_ctx.value_is_lowered(flag)
++    }
++
+     #[inline]
+     fn sum_extend_fits_in_32_bits(
+         &mut self,
+--- a/cranelift-codegen/src/lib.rs	2026-10-29 12:45:24.749193695 +0000
++++ b/cranelift-codegen/src/lib.rs	2026-10-29 12:45:26.327574910 +0000
 @@ -1,4 +1,5 @@
  //! Cranelift code generation library.
 +#![allow(warnings)]
  #![deny(missing_docs)]
  // Display feature requirements in the documentation when building on docs.rs
  #![cfg_attr(docsrs, feature(doc_cfg))]
---- a/cranelift-codegen/src/machinst/mod.rs	2026-10-13 10:49:13.138108574 +0000
-+++ b/cranelift-codegen/src/machinst/mod.rs	2026-10-13 10:49:13.150544465 +0000
+--- a/cranelift-codegen/src/machinst/lower.rs	2026-10-29 12:45:24.740757464 +0000
++++ b/cranelift-codegen/src/machinst/lower.rs	2026-10-29 12:45:26.330347932 +0000
+@@ -1634,6 +1634,11 @@
+         self.value_lowered_uses[val] += 1
+     }
+ 
++    /// Quench: whether an instruction lowered so far reads `val` from its register(s).
++    pub(crate) fn value_is_lowered(&self, val: Value) -> bool {
++        self.value_lowered_uses[val] > 0
++    }
++
+     /// Put the `idx`th input into register(s) and return the assigned register.
+     pub fn put_input_in_regs(&mut self, ir_inst: Inst, idx: usize) -> ValueRegs<Reg> {
+         let val = self.f.dfg.inst_args(ir_inst)[idx];
+--- a/cranelift-codegen/src/machinst/mod.rs	2026-10-29 12:45:24.749300799 +0000
++++ b/cranelift-codegen/src/machinst/mod.rs	2026-10-29 12:45:26.330403981 +0000
 @@ -363,6 +363,12 @@
      /// order.
      fn gen_nop_units() -> Vec<Vec<u8>>;
@@ -310,8 +445,8 @@
      /// Align a basic block offset (from start of function).  By default, no
      /// alignment occurs.
      fn align_basic_block(offset: CodeOffset) -> CodeOffset {
---- a/cranelift-codegen/src/machinst/vcode.rs	2026-10-13 10:49:13.138197915 +0000
-+++ b/cranelift-codegen/src/machinst/vcode.rs	2026-10-13 10:49:13.150096315 +0000
+--- a/cranelift-codegen/src/machinst/vcode.rs	2026-10-29 12:45:24.749531379 +0000
++++ b/cranelift-codegen/src/machinst/vcode.rs	2026-10-29 12:45:26.330493334 +0000
 @@ -76,6 +76,11 @@
  pub trait VCodeInst: MachInst + MachInstEmit {}
  impl<I: MachInst + MachInstEmit> VCodeInst for I {}
@@ -400,8 +535,25 @@
              while new_offset > buffer.cur_offset() {
                  // Pad with NOPs up to the aligned block offset.
                  let nop = I::gen_nop((new_offset - buffer.cur_offset()) as usize);
---- a/cranelift-codegen/src/opts/cprop.isle	2026-10-13 10:49:13.138429116 +0000
-+++ b/cranelift-codegen/src/opts/cprop.isle	2026-10-13 10:49:13.150722742 +0000
+--- a/cranelift-codegen/src/opts.rs	2026-10-29 12:45:24.750297781 +0000
++++ b/cranelift-codegen/src/opts.rs	2026-10-29 12:45:26.330573599 +0000
+@@ -338,6 +338,14 @@
+         Ieee64::with_float(n as f64)
+     }
+ 
++    fn f32_from_bits(&mut self, n: u64) -> Ieee32 {
++        Ieee32::with_bits(n as u32)
++    }
++
++    fn f64_from_bits(&mut self, n: u64) -> Ieee64 {
++        Ieee64::with_bits(n)
++    }
++
+     fn u64_bswap16(&mut self, n: u64) -> u64 {
+         (n as u16).swap_bytes() as u64
+     }
+--- a/cranelift-codegen/src/opts/cprop.isle	2026-10-29 12:45:24.750091037 +0000
++++ b/cranelift-codegen/src/opts/cprop.isle	2026-10-29 12:45:26.330974587 +0000
 @@ -352,6 +352,17 @@
  (decl f64_from_sint (i64) Ieee64)
  (extern constructor f64_from_sint f64_from_sint)
@@ -420,37 +572,3 @@
  ;; Constant fold bswap of a constant.
  (rule (simplify (bswap $I16 (iconst ty (u64_from_imm64 n))))
        (subsume (iconst $I16 (imm64 (u64_bswap16 n)))))
---- a/cranelift-codegen/src/opts.rs	2026-10-13 10:49:13.138727592 +0000
-+++ b/cranelift-codegen/src/opts.rs	2026-10-13 10:49:13.151116416 +0000
-@@ -338,6 +338,14 @@
-         Ieee64::with_float(n as f64)
-     }
- 
-+    fn f32_from_bits(&mut self, n: u64) -> Ieee32 {
-+        Ieee32::with_bits(n as u32)
-+    }
-+
-+    fn f64_from_bits(&mut self, n: u64) -> Ieee64 {
-+        Ieee64::with_bits(n)
-+    }
-+
-     fn u64_bswap16(&mut self, n: u64) -> u64 {
-         (n as u16).swap_bytes() as u64
-     }
---- a/cranelift-codegen/src/isa/x64/lower.isle
-+++ b/cranelift-codegen/src/isa/x64/lower.isle
-@@ -242,6 +242,14 @@
- (rule 3 (lower (smul_overflow _ x y @ (value_type (ty_int_ref_16_to_64 ty))))
-       (construct_overflow_op (CC.O) (x64_mul_lo_with_flags_paired ty true x y)))
- 
-+;; Quench: the two-operand `imul` sets OF exactly when the signed product does
-+;; not fit, so a 32- or 64-bit product needs neither `rax`/`rdx` nor the high
-+;; half the one-operand form writes to them.
-+(rule 4 (lower (smul_overflow _ x y @ (value_type $I32)))
-+      (construct_overflow_op (CC.O) (asm_produce_flags (x64_imull_rm_raw x (gpr_mem_32_for_ty $I32 y)))))
-+(rule 4 (lower (smul_overflow _ x y @ (value_type $I64)))
-+      (construct_overflow_op (CC.O) (asm_produce_flags (x64_imulq_rm_raw x (gpr_mem_64_for_ty $I64 y)))))
-+
- ;;;; Rules for `sadd_sat` ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
- 
- (rule (lower (sadd_sat (multi_lane 8 16) x y))

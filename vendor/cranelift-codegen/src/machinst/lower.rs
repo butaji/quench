@@ -1634,6 +1634,11 @@ impl<'func, I: VCodeInst> Lower<'func, I> {
         self.value_lowered_uses[val] += 1
     }
 
+    /// Quench: whether an instruction lowered so far reads `val` from its register(s).
+    pub(crate) fn value_is_lowered(&self, val: Value) -> bool {
+        self.value_lowered_uses[val] > 0
+    }
+
     /// Put the `idx`th input into register(s) and return the assigned register.
     pub fn put_input_in_regs(&mut self, ir_inst: Inst, idx: usize) -> ValueRegs<Reg> {
         let val = self.f.dfg.inst_args(ir_inst)[idx];

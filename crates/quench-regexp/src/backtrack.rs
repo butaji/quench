@@ -1429,6 +1429,24 @@ impl Program {
                     .is_some_and(|units| first.is_none_or(|first| !units.contains(first))))
     }
 
+    /// Whether no match starts at `start` of a subject of `length` units, whose unit there is
+    /// `first` (`None` at its end): the pattern's start positions (`starts`) admit neither
+    /// that unit nor an edge there, as `next_start` finds for a one-position search. Only an
+    /// ASCII unit is decided, as it is one whole code point whichever units the program reads.
+    pub(crate) fn start_excludes(&self, start: usize, length: usize, first: Option<u32>) -> bool {
+        let Some(starts) = &self.starts else {
+            return false;
+        };
+        if starts.at_start && start == 0 {
+            return false;
+        }
+        match first {
+            Some(unit) if unit < ASCII_UNITS => !starts.units.contains(unit),
+            Some(_) => false,
+            None => !(starts.at_end && start == length),
+        }
+    }
+
     pub(crate) fn anchored_at_start(&self) -> bool {
         self.anchored
     }
