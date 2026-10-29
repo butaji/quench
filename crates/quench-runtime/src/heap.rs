@@ -522,8 +522,8 @@ pub(crate) struct Heap {
     /// Bytes of reclaimable programs installed since the last full collection
     /// (`charge_reclaimable_program`).
     reclaimable_program_bytes_since_full: usize,
-    /// Bytes of the reclaimable programs the last full collection kept, which the next one's
-    /// program growth is measured against.
+    /// Bytes of the reclaimable programs that stayed at the last full collection, which the
+    /// next one's program growth is measured against.
     reclaimable_program_bytes_after_full: usize,
     young: Vec<u32>,
     /// The young cells with weak entries (weak maps and sets, weak refs, finalization
@@ -1823,13 +1823,13 @@ impl Heap {
     /// kept: only a full collection finds a program unreferenced and reclaims it, and minor
     /// collections, which free the heap garbage that made it, never would. Without it, a loop
     /// of `new Function` under Throughput ran two full collections in 80K programs and held
-    /// every program. Measured against the programs kept rather than the heap, a large
-    /// program that stays (a benchmark harness's compiler) makes its own growth threshold
-    /// instead of a full collection at each heap peak.
+    /// every program. Measured against the programs that stay (`ProgramStore::
+    /// settled_reclaimable_bytes`), a large program a process keeps raises its own threshold,
+    /// while a stream of short-lived ones keeps the minimum.
     pub(crate) fn charge_reclaimable_program(&mut self, bytes: usize) {
         self.reclaimable_program_bytes_since_full = self.reclaimable_program_bytes_since_full.saturating_add(bytes);
     }
-    /// Records the footprints of the reclaimable programs a full collection kept.
+    /// Records the footprints of the reclaimable programs that stay, after a full collection.
     pub(crate) fn set_reclaimable_programs_after_full(&mut self, bytes: usize) {
         self.reclaimable_program_bytes_after_full = bytes;
     }

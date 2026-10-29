@@ -936,8 +936,8 @@ pub(crate) struct ProgramStore {
     reclaim_passes: u64,
     /// Reclaimable programs inserted since the last reclamation pass.
     unchecked_reclaimable: usize,
-    /// The sum of the stored reclaimable programs' footprints (`reclaimable_bytes`).
-    reclaimable_bytes: usize,
+    /// `settled_reclaimable_bytes`, as the last reclamation pass found it.
+    settled_reclaimable_bytes: usize,
     /// The entry facts every function shares whose facts are all unset
     /// (`JsEntryFacts::is_unset`): most functions the tier
     /// watches, which had each held a copy (V8-v7 Crypto `--jit`: 32 -> 21 KiB at the heap's peak).
@@ -986,7 +986,7 @@ impl Default for ProgramStore {
             owned_scripts: FxHashMap::default(),
             reclaim_passes: 0,
             unchecked_reclaimable: 0,
-            reclaimable_bytes: 0,
+            settled_reclaimable_bytes: 0,
             no_entry_facts: Rc::default(),
             js_jit_tracked_functions: 0,
             js_jit_tracking_exhaustions: 0,
@@ -1076,7 +1076,6 @@ impl ProgramStore {
         if let Some(entry) = self.entry_mut(id) {
             entry.reclaimable = Some(footprint);
         }
-        self.reclaimable_bytes = self.reclaimable_bytes.saturating_add(footprint);
         self.unchecked_reclaimable += 1;
         Some(id)
     }
@@ -1086,9 +1085,12 @@ impl ProgramStore {
         self.programs.iter().flatten().count()
     }
 
-    /// The footprints of the reclaimable programs still stored (`ProgramEntry::reclaimable`).
-    pub(crate) fn reclaimable_bytes(&self) -> usize {
-        self.reclaimable_bytes
+    /// The footprints of the reclaimable programs the last reclamation pass found still
+    /// referenced after a pass before it (`ProgramEntry::reclaimable`): programs that stay.
+    /// Those inserted since are still pending (`reclaim_unreferenced`) and are not counted,
+    /// so a stream of short-lived programs does not raise its own threshold.
+    pub(crate) fn settled_reclaimable_bytes(&self) -> usize {
+        self.settled_reclaimable_bytes
     }
 
     /// Whether dynamic code may be reclaimable, including dropped host owners.
@@ -1125,10 +1127,14 @@ impl ProgramStore {
         let mut reclaimed_shared_js = Vec::new();
         let mut reclaimed_rejected = 0usize;
         let mut pending = 0;
+        let mut settled = 0usize;
         for (index, slot) in self.programs.iter_mut().enumerate() {
             let Some(entry) = slot else { continue };
             let Some(footprint) = entry.reclaimable else { continue };
             if referenced.get(index).copied().unwrap_or(true) {
+                if entry.pass < previous_pass {
+                    settled = settled.saturating_add(footprint);
+                }
                 continue;
             }
             if entry.pass >= previous_pass {
@@ -1176,9 +1182,9 @@ impl ProgramStore {
                 reclaimed_wasm_baselines.1 += compiled.mapped_bytes();
             }
             *slot = None;
-            self.reclaimable_bytes = self.reclaimable_bytes.saturating_sub(footprint);
             reclaimed.extend(ProgramId::from_index(index));
         }
+        self.settled_reclaimable_bytes = settled;
         self.js_jit_tracked_functions = self
             .js_jit_tracked_functions
             .saturating_sub(reclaimed_tiers.0);

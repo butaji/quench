@@ -872,7 +872,7 @@ impl<H: Host> Vm<H> {
             self.reclaim_unreferenced_programs();
         }
         if full {
-            self.heap.set_reclaimable_programs_after_full(self.programs.reclaimable_bytes());
+            self.heap.set_reclaimable_programs_after_full(self.programs.settled_reclaimable_bytes());
         }
         // Do shape work immediately after sweep. In particular, dead method
         // cache handles must be pruned before any runtime cleanup can allocate

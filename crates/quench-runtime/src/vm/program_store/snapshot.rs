@@ -78,7 +78,6 @@ impl ProgramStore {
         store.global_eval_programs = global_eval_programs;
         store.reclaim_passes = reader.u64()?;
         store.unchecked_reclaimable = reader.len()?;
-        store.reclaimable_bytes = store.programs.iter().flatten().filter_map(|entry| entry.reclaimable).sum();
         Ok(store)
     }
 }
