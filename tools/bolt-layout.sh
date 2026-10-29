@@ -20,7 +20,10 @@
 #    package workloads in tools/layout-corpus join it only when QUENCH_LAYOUT_NODE_MODULES
 #    names an npm `node_modules` holding them, for diagnostic layouts: with them the V8-v7
 #    rows' max RSS rose to the target (pinned, 2026-10-25: Crypto 0.95 -> 1.02-1.06 of it),
-#    as the packages' code shares the hot text. The scored engine suites are never run.
+#    as the packages' code shares the hot text. QUENCH_LAYOUT_HTTP_ROUNDS, when set, adds the
+#    plain node:http server and client that tools/pgo-build.sh trains on
+#    (tests/npm-perf/workloads/http-echo-isolation.cjs, that many keep-alive exchanges) to the
+#    run phase, for diagnostic layouts of the server path. The scored engine suites are never run.
 #    The corpus used is written to target/layout-corpus/MANIFEST and printed at the end.
 # 3. Profiles start-up (cachegrind) and the run phase after the entry's compilation
 #    (callgrind, split at quench_entry_compiled), without and with --jit; the --jit profiles
@@ -199,6 +202,10 @@ programs "$numbered" | xargs -P "$jobs" -I{} bash -c 'callgrind jit-{} --jit "$c
 programs "$packages" | xargs -P "$jobs" -I{} bash -c \
     'QUENCH_MEMORY_POLICY=memory-first callgrind jitmf-{} --jit "$corpus/{}"'
 programs | xargs -P "$jobs" -I{} bash -c 'callgrind {} "$corpus/{}"'
+if (( ${QUENCH_LAYOUT_HTTP_ROUNDS:-0} > 0 )); then
+    QUENCH_BENCH_ROUNDS="$QUENCH_LAYOUT_HTTP_ROUNDS" callgrind http-echo-isolation.js \
+        "$root_dir/tests/npm-perf/workloads/http-echo-isolation.cjs"
+fi
 callgrind wasm-esm-no-jit "$corpus/wasm-esm/run.mjs"
 callgrind wasm-esm-jit --jit "$corpus/wasm-esm/run.mjs" returns
 
@@ -230,5 +237,6 @@ tools/check-link-order.sh "$binary" "$order"
         "${#COMPILE_ONLY_MODULES[@]}" "$(ls "$corpus"/z-t*.js | wc -l)" "$eligible"
     printf 'wasm esm corpus: %s, laid out late\n' "$(git -C "$wasm_testsuite" rev-parse HEAD)"
     printf 'packages: %s\n' "$package_corpus"
+    printf 'http exchanges: %s\n' "${QUENCH_LAYOUT_HTTP_ROUNDS:-0}"
 } | tee "$corpus/MANIFEST"
 printf 'laid-out binary: %s-bolt\n' "$binary"
