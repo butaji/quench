@@ -1459,13 +1459,16 @@ impl<H: Host> Vm<H> {
             let mut executing = ExecutingProgram { id: program, retained: None };
             let mut running = frame;
             let pc = self.run_fast_lane(p, cursor.program, cursor.lane, &mut running, pc, &mut pending_calls, &mut executing, true);
-            let yields = running == frame
+            let stops_here = running == frame
                 && pending_calls.is_empty()
                 && executing.id == program
                 && self.lane_raised.is_none()
-                && !p.function(function as usize).is_async
                 && pc < p.function(function as usize).code.len();
-            if yields {
+            let asynchronous = p.function(function as usize).is_async;
+            if stops_here && asynchronous && let Some(outcome) = self.lane_stop_awaits(p, frame, cursor.instruction(pc), pc) {
+                return Ok(outcome);
+            }
+            if stops_here && !asynchronous {
                 let instruction = cursor.instruction(pc);
                 if instruction.op() == Op::Yield {
                     let value = self.read(frame, instruction.register_b());
@@ -1489,6 +1492,32 @@ impl<H: Host> Vm<H> {
         self.set_active_program(previous_program);
         self.switch_realm_global(previous_global);
         outcome
+    }
+
+    /// The suspension of an async frame `frame` whose lane run stopped at its `Await` record
+    /// `instruction` at `pc`, made as the general loop's `Await` makes it, where the awaited
+    /// value's conversion observes nothing: a non-object as it is, or an object
+    /// `lane_promise_resolve` converts without running guest code. `None` leaves any other
+    /// stop, or a conversion that could throw into the frame's handlers, to the general loop.
+    fn lane_stop_awaits(
+        &mut self,
+        p: &ResidualProgram,
+        frame: usize,
+        instruction: WideInstruction,
+        pc: usize,
+    ) -> Option<FrameOutcome> {
+        if instruction.op() != Op::Await {
+            return None;
+        }
+        let awaited = self.read(frame, instruction.register_b());
+        let value = if self.is_object_like(awaited) {
+            self.lane_promise_resolve(p, self.intrinsic_promise_constructor(), awaited)?
+        } else {
+            awaited
+        };
+        self.frames[frame].pc = pc + 1;
+        self.frames[frame].pc_is_resume = true;
+        Some(FrameOutcome::Await { value, destination: instruction.result_register(), frame: None })
     }
 
     /// The general dispatch loop of `run_frame_general_until`, whose caller restores the active
