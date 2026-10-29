@@ -458,11 +458,6 @@ fn check_case(case: &Case, runs: u32) {
     );
     // Each case also runs with every full mark in parallel rounds (`force_parallel_mark_for_test`),
     // whose closure environment edges the collector follows between rounds.
-    if std::env::var_os("QUENCH_DIAG_DIS").is_some() {
-        let program = Engine::specialize(&source, case.name).unwrap();
-        let text = program.disassemble();
-        eprintln!("DIS {}", text.split("function 1 ").next().unwrap_or(""));
-    }
     for parallel in [false, true] {
     for (compilation, program) in compilations(&source, case.name) {
         let compilation = if parallel { format!("{compilation}, parallel mark") } else { compilation.to_owned() };
@@ -490,34 +485,6 @@ fn check_case(case: &Case, runs: u32) {
         vm.call_value(&program, release, Value::UNDEFINED, &[]).unwrap();
         collect(&mut vm, &program);
         for &(label, _) in case.probes {
-            if probe_alive(&mut vm, &program, label) {
-                let weak = vm.intern_atom("weak");
-                let weak = vm.own_property(vm.realm.globals, weak).unwrap();
-                let label_atom = vm.intern_atom(label);
-                let reference = vm.get_property(&program, weak, label_atom).unwrap();
-                let target = match vm.heap.get(reference) {
-                    Some(super::Cell::WeakRef { target, .. }) => vm.heap.weak_value(target.unwrap()).unwrap(),
-                    _ => unreachable!(),
-                };
-                let mut frontier = vec![target];
-                for depth in 0..8 {
-                    let mut next = Vec::new();
-                    for value in &frontier {
-                        let holders = vm.heap.debug_holders(*value);
-                        eprintln!("DIAG depth {depth} {value:?} held by {:?}", holders.iter().map(|(name, _)| name).collect::<Vec<_>>());
-                        for (_, holder) in holders {
-                            if !holder.is_undefined() && !next.contains(&holder) {
-                                next.push(holder);
-                            }
-                        }
-                    }
-                    if next.is_empty() { break; }
-                    frontier = next;
-                }
-                eprintln!("DIAG kept_alive={} frames={} frame_hits={:?} target={target:?}",
-                    vm.kept_alive.len(), vm.frames.len(),
-                    vm.frames.iter().map(|f| (f.registers.iter().filter(|v| **v == target).count(), f.locals.iter().filter(|v| **v == target).count(), f.registers.len())).collect::<Vec<_>>());
-            }
             assert!(
                 !probe_alive(&mut vm, &program, label),
                 "{} ({compilation}, {runs} runs): {label} must be collected once the closure is dropped",

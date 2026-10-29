@@ -339,13 +339,6 @@ impl Heap {
             return;
         };
         let (parent, function, program) = (*parent, *function, scope.program());
-        #[cfg(test)]
-        if std::env::var_os("QUENCH_DIAG_ENV").is_some_and(|v| v.to_str() == Some(&index.to_string())) {
-            let projections: Vec<u16> = (0..slots.len() as u16)
-                .filter(|slot| program.is_some_and(|program| trace.source.is_some_and(|source| source.slot_is_projection(program, function, *slot))))
-                .collect();
-            eprintln!("DIAG env {index} edge {edge:?} function {function} program {program:?} slots {} projections {projections:?} state {:?}", slots.len(), (0..slots.len()).map(|slot| match slots.state(slot) { Some(EnvironmentSlotState::Owned(v)) => format!("own {v:?}"), Some(EnvironmentSlotState::Shared(o)) => format!("shared {o:?}"), None => "none".to_owned() }).collect::<Vec<_>>());
-        }
         if let EnvironmentEdge::Closure { program, function: closure, distance, .. } = edge
             && (trace.entry(index).is_some_and(|entry| trace.partial[entry].whole)
                 || !trace.followed.insert((index, program, closure, distance)))
