@@ -1959,6 +1959,9 @@ fn admit(
         | Op::LoadNameTypeof
             => {}
         Op::Call | Op::CallArray => {}
+        // A return leaves the loop: the lane resumes at it with the state written back, and
+        // runs it.
+        Op::Return => {}
         Op::Jump => {}
         Op::JumpBinaryFalse => {
             if let Some(branch) = identity_branch(instruction, constants) {
@@ -5136,6 +5139,10 @@ impl<'a, 'b> Lowering<'a, 'b> {
             | Op::Call
             | Op::CallArray => {
                 self.leave(super::RegionExit::Fallback(pc));
+                Some(())
+            }
+            Op::Return => {
+                self.leave(super::RegionExit::Resume(pc));
                 Some(())
             }
             Op::Jump => self.jump(pc, instruction.jump_target()),
