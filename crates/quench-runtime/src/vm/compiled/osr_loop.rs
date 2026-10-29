@@ -3161,6 +3161,9 @@ struct Lowering<'a, 'b> {
     copy: Option<usize>,
     /// Shared handoff blocks; this tier fills per-PC leaves with its live-state writeback.
     exits: super::RegionExitBlocks,
+    /// The pointers only leaving uses (`Handoff`), stored at entry so that cold leave
+    /// blocks reload them and no loop holds a register for them.
+    handoff: ir::StackSlot,
     registers: ir::Value,
     /// An inlining region's scratch registers (`LoopEntry::scratch`).
     scratch: Option<ir::Value>,
@@ -3223,6 +3226,23 @@ fn straight_pcs(region: &LoopRegion, counted: &[CountedLoop]) -> Vec<bool> {
         .collect()
 }
 
+/// The pointers a region's entry stores for its leave blocks (`Lowering::handoff`), by
+/// word of the slot.
+#[derive(Clone, Copy)]
+enum Handoff {
+    Registers,
+    Scratch,
+    Result,
+}
+
+impl Handoff {
+    const COUNT: u32 = 3;
+
+    fn offset(self) -> i32 {
+        self as i32 * WORD_BYTES
+    }
+}
+
 fn flags() -> ir::MemFlagsData {
     ir::MemFlagsData::trusted()
 }
@@ -3258,6 +3278,13 @@ impl<'a, 'b> Lowering<'a, 'b> {
             unreachable!("the entry signature has five parameters")
         };
         let callout = builder.ins().load(types::I64, super::invariant(), context, super::CONTEXT_CALLOUT);
+        let handoff = builder.create_sized_stack_slot(ir::StackSlotData::new(
+            ir::StackSlotKind::ExplicitSlot,
+            Handoff::COUNT * WORD_BYTES as u32,
+            WORD_BYTES.trailing_zeros() as u8,
+        ));
+        builder.ins().stack_store(pointer, registers, handoff, Handoff::Registers.offset());
+        builder.ins().stack_store(pointer, result, handoff, Handoff::Result.offset());
         let blocks = (region.header..=region.backedge).map(|_| builder.create_block()).collect();
         let straight = straight_pcs(region, &counted);
         let preheaders = counted.iter().map(|_| builder.create_block()).collect();
@@ -3298,6 +3325,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
             proved_blocks,
             copy: None,
             exits: super::RegionExitBlocks::default(),
+            handoff,
             chains: std::collections::HashMap::new(),
             exact: std::collections::BTreeMap::new(),
             element_reads: std::collections::HashMap::new(),
@@ -3517,9 +3545,15 @@ impl<'a, 'b> Lowering<'a, 'b> {
     /// Writes the outcome `word` to the result word and returns the status of a run that
     /// finished.
     fn finish(&mut self, word: ir::Value) {
-        self.body.builder.ins().store(flags(), word, self.result, 0);
+        let result = self.handed_off(Handoff::Result);
+        self.body.builder.ins().store(flags(), word, result, 0);
         let status = self.body.builder.ins().iconst(types::I32, 0);
         self.body.builder.ins().return_(&[status]);
+    }
+
+    /// `pointer` as entry stored it (`Lowering::handoff`), loaded where it is used.
+    fn handed_off(&mut self, pointer: Handoff) -> ir::Value {
+        self.body.builder.ins().stack_load(self.pointer, types::I64, self.handoff, pointer.offset())
     }
 
     fn word(&mut self, index: usize) -> ir::Value {
@@ -3602,11 +3636,13 @@ impl<'a, 'b> Lowering<'a, 'b> {
         if let Some(inlining) = &self.region.inlining {
             // The scratch registers' address follows arrays and field-store slots; each
             // inlined callee is still the function its field held when the region was made.
-            self.scratch = Some(self.word(
+            let scratch = self.word(
                 arrays_start
                     + ARRAY_WORDS * self.region.arrays.len()
                     + self.region.field_store_sites.len(),
-            ));
+            );
+            self.body.builder.ins().stack_store(self.pointer, scratch, self.handoff, Handoff::Scratch.offset());
+            self.scratch = Some(scratch);
             for frame in inlining.frames.clone() {
                 let held = self.fields[frame.field].value;
                 let other = self.body.builder.ins().icmp_imm_u(IntCC::NotEqual, held, frame.callee.to_bits() as i64);
@@ -3810,14 +3846,16 @@ impl<'a, 'b> Lowering<'a, 'b> {
     /// file, an inlined callee's to the entry's scratch registers (`LoopEntry::scratch`),
     /// from which leaving at its instruction makes its activation.
     fn store_registers(&mut self, registers: &[(Register, Definition)]) {
+        let file = self.handed_off(Handoff::Registers);
+        let scratch = self.scratch.map(|_| self.handed_off(Handoff::Scratch));
         for &(register, web) in registers {
             let value = self.web(web);
             let bits = self.boxed(value);
-            let (file, slot) = match (&self.region.inlining, self.scratch) {
+            let (file, slot) = match (&self.region.inlining, scratch) {
                 (Some(inlining), Some(scratch)) if register >= inlining.caller_registers => {
                     (scratch, register - inlining.caller_registers)
                 }
-                _ => (self.registers, register),
+                _ => (file, register),
             };
             self.body.builder.ins().store(flags(), bits, file, i32::from(slot) * WORD_BYTES);
         }
