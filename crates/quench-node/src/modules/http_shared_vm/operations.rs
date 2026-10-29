@@ -361,21 +361,23 @@ const RESPONSE_FACTORY: &str = r#"((Stream, setHeaderOperation, getHeaderOperati
   let capturing = false;
   let template;
   let captures = 0;
+  // A new template, apart from `respond`, whose calls then need no handler frame.
+  const capture = (id) => {
+    captures++;
+    capturing = true;
+    try {
+      template = captureTemplate(new ServerResponse(id), new ServerResponse(id), [...emitterProbes, ServerResponse, "prototype"]);
+    } finally {
+      capturing = false;
+    }
+  };
   const respond = (id, statusCode, request, server, socket) => {
     const copy = template === undefined ? undefined : copyTemplate(template);
     if (copy !== undefined) {
       bind(copy, id, statusCode, request, server, socket);
       return copy;
     }
-    if (captures < captureLimit) {
-      captures++;
-      capturing = true;
-      try {
-        template = captureTemplate(new ServerResponse(id), new ServerResponse(id), [...emitterProbes, ServerResponse, "prototype"]);
-      } finally {
-        capturing = false;
-      }
-    }
+    if (captures < captureLimit) capture(id);
     return new ServerResponse(id, statusCode, request, server, socket);
   };
   ServerResponse.prototype = Object.create(Stream.prototype);

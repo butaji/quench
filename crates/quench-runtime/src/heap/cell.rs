@@ -958,6 +958,7 @@ impl Native {
                 | Self::ObjectPrototypeHasOwnProperty
                 | Self::ObjectPrototypeToString
                 | Self::ReflectGetPrototypeOf
+                | Self::ReflectSetPrototypeOf
                 | Self::ForInKeys
                 | Self::ArrayJoin
                 | Self::ArraySplice
