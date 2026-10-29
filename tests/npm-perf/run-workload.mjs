@@ -71,7 +71,9 @@ function engineSpecs() {
     if (process.env.QUENCH_NPM_PERF_SKIP_NODE_NO_JIT !== "1") {
       specs.push({ name: "node-jitless", binary: binaries.node, args: ["--jitless", workload], env: {} });
     }
-    specs.push({ name: "bun-no-jit", binary: binaries.bun, args: [workload], env: { BUN_JSC_useJIT: "0" } });
+    if (process.env.QUENCH_NPM_PERF_SKIP_BUN_NO_JIT !== "1") {
+      specs.push({ name: "bun-no-jit", binary: binaries.bun, args: [workload], env: { BUN_JSC_useJIT: "0" } });
+    }
     return specs;
   }
   const specs = [
@@ -197,7 +199,13 @@ async function runOne(spec, round) {
       throw new Error("Node --jitless argv proof failed");
     }
   }
-  const records = result.stdout.trim().split(/\r?\n/);
+  const records = result.stdout.trim().split(/\r?\n/).filter(Boolean);
+  if (records.length === 0) {
+    throw new Error(
+      `${spec.name} exited 0 without a benchmark record (${spec.binary}); ` +
+      "an engine that cannot run the workload is a peer capability gap, not a result",
+    );
+  }
   const measurement = JSON.parse(records.at(-1));
   if (measurement.workload !== workloadName ||
     !Number.isFinite(measurement.operationsPerSecond) ||
@@ -241,6 +249,7 @@ async function runOne(spec, round) {
         "QUENCH_GC_ALLOCATION_CAP_DEN",
         "QUENCH_GC_MIN_ALLOCATION_CAP",
         "QUENCH_NPM_PERF_SKIP_NODE_NO_JIT",
+        "QUENCH_NPM_PERF_SKIP_BUN_NO_JIT",
         "QUENCH_NPM_PERF_RSS_SAMPLE_MS",
       ].flatMap((name) => env[name] === undefined ? [] : [[name, env[name]]])),
     },
@@ -298,9 +307,15 @@ const report = {
   phase,
   runs,
   qualificationReady: false,
-  ...(phase === "no-jit" && process.env.QUENCH_NPM_PERF_SKIP_NODE_NO_JIT === "1" ? {
+  ...(phase === "no-jit" && (process.env.QUENCH_NPM_PERF_SKIP_NODE_NO_JIT === "1" ||
+      process.env.QUENCH_NPM_PERF_SKIP_BUN_NO_JIT === "1") ? {
     omittedEngines: {
-      "node-jitless": process.env.QUENCH_NODE_NO_JIT_SKIP_REASON ?? "Skipped by QUENCH_NPM_PERF_SKIP_NODE_NO_JIT.",
+      ...(process.env.QUENCH_NPM_PERF_SKIP_NODE_NO_JIT === "1" ? {
+        "node-jitless": process.env.QUENCH_NODE_NO_JIT_SKIP_REASON ?? "Skipped by QUENCH_NPM_PERF_SKIP_NODE_NO_JIT.",
+      } : {}),
+      ...(process.env.QUENCH_NPM_PERF_SKIP_BUN_NO_JIT === "1" ? {
+        "bun-no-jit": process.env.QUENCH_BUN_NO_JIT_SKIP_REASON ?? "Skipped by QUENCH_NPM_PERF_SKIP_BUN_NO_JIT.",
+      } : {}),
     },
   } : {}),
   host: { platform: process.platform, arch: process.arch, cpus: os.cpus().length },

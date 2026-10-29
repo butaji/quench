@@ -30,7 +30,14 @@ const WORKLOADS = [
     nodeNoJitUnavailable:
       "Node --jitless removes the WebAssembly global Vite/Oxc requires.",
   },
-  { id: "esbuild-transform", package: "esbuild", rounds: 5000, warmups: 250 },
+  {
+    id: "esbuild-transform",
+    package: "esbuild",
+    rounds: 5000,
+    warmups: 250,
+    bunNoJitUnavailable:
+      "Bun with BUN_JSC_useJIT=0 has no SharedArrayBuffer global, which esbuild's synchronous API requires.",
+  },
   { id: "sharp-resize-concurrent", package: "sharp", rounds: 1000, warmups: 100 },
   { id: "fastify-json-http", package: "Fastify HTTP", rounds: 5000, warmups: 250 },
   { id: "fastify-json-inject", package: "Fastify inject", rounds: 5000, warmups: 250 },
@@ -160,6 +167,7 @@ function resolveExecutable(explicit, candidates) {
     return explicit.includes("/") ? path.resolve(explicit) : explicit;
   }
   for (const candidate of candidates) {
+    if (!candidate) continue;
     if (candidate.includes("/")) {
       if (fs.existsSync(candidate)) return candidate;
       continue;
@@ -248,9 +256,14 @@ function runJob(job, context) {
   };
   delete env.QUENCH_CONTROL_BIN;
   delete env.QUENCH_NPM_PERF_SKIP_NODE_NO_JIT;
+  delete env.QUENCH_NPM_PERF_SKIP_BUN_NO_JIT;
   if (phase === "no-jit" && workload.nodeNoJitUnavailable) {
     env.QUENCH_NPM_PERF_SKIP_NODE_NO_JIT = "1";
     env.QUENCH_NODE_NO_JIT_SKIP_REASON = workload.nodeNoJitUnavailable;
+  }
+  if (phase === "no-jit" && workload.bunNoJitUnavailable) {
+    env.QUENCH_NPM_PERF_SKIP_BUN_NO_JIT = "1";
+    env.QUENCH_BUN_NO_JIT_SKIP_REASON = workload.bunNoJitUnavailable;
   }
   const started = process.hrtime.bigint();
   const result = spawnSync(
@@ -329,10 +342,12 @@ function evaluate(result) {
           maximumRssBytes: node.medianMaximumRssBytes,
         }
         : null,
-      bun: {
-        operationsPerSecond: bun.medianOperationsPerSecond,
-        maximumRssBytes: bun.medianMaximumRssBytes,
-      },
+      bun: bun
+        ? {
+          operationsPerSecond: bun.medianOperationsPerSecond,
+          maximumRssBytes: bun.medianMaximumRssBytes,
+        }
+        : null,
     },
     unavailable: report.omittedEngines ?? undefined,
     speedRatio,
@@ -416,11 +431,12 @@ function markdown(rows, failures, context) {
   lines.push("");
   const unavailable = rows.filter((row) => row.unavailable);
   if (unavailable.length > 0) {
-    lines.push("Node no-JIT omissions:");
+    lines.push("Peer no-JIT omissions (peer capability gaps, recorded per row):");
     lines.push("");
     for (const row of unavailable) {
-      lines.push(`- ${row.package} ${row.phase}: ` +
-        `${row.unavailable["node-jitless"] ?? "unavailable"}`);
+      for (const [engine, reason] of Object.entries(row.unavailable)) {
+        lines.push(`- ${row.package} ${row.phase} ${engine}: ${reason}`);
+      }
     }
     lines.push("");
   }
@@ -460,8 +476,9 @@ function main() {
   ]);
   const node = resolveExecutable(options.node, [process.execPath]);
   const bun = resolveExecutable(options.bun, [
-    path.join(os.homedir(), ".bun/bin/bun"),
+    process.env.BUN_BIN,
     "bun",
+    path.join(os.homedir(), ".bun/bin/bun"),
   ]);
   const git = gitIdentity();
   const jobs = jobList(options);
