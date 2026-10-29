@@ -1128,6 +1128,16 @@ pub(super) fn inline_region<'a>(
 }
 
 impl LoopRegion {
+    /// The region's instructions, from its header.
+    pub(super) fn instructions(&self) -> &[WideInstruction] {
+        &self.instructions
+    }
+
+    /// The Number constant at `index` the region reads.
+    pub(super) fn number_constant(&self, index: usize) -> Option<f64> {
+        self.constants.get(&index).copied()
+    }
+
     fn entry_count(&self) -> usize {
         self.numbers.len() + self.tagged.len()
     }
@@ -1145,7 +1155,7 @@ impl LoopRegion {
 
     /// Whether the interpreter may read `register` resuming at `pc` before writing it; every
     /// register is, where liveness does not cover the function.
-    fn is_live(&self, pc: u32, register: Register) -> bool {
+    pub(super) fn is_live(&self, pc: u32, register: Register) -> bool {
         let Some(live) = &self.live else {
             return true;
         };
@@ -1207,11 +1217,11 @@ const MAX_INDEXED_LENGTH: usize = i32::MAX as usize;
 /// The first record word counts executions of the region's own backward edge when shared
 /// GeneralDispatch pricing is enabled.
 const ENTRY_BACKEDGE_COUNT: usize = 0;
-const ENTRY_CAPTURES: usize = 1;
+pub(super) const ENTRY_CAPTURES: usize = 1;
 const WORD_BYTES: i32 = 8;
 /// An array's entry words: its element pointer, its length, then its capacity (which only
 /// a written array's appends read).
-const ARRAY_WORDS: usize = 3;
+pub(super) const ARRAY_WORDS: usize = 3;
 const FIELD_STORE_WORDS: usize = 1;
 const DYNAMIC_FIELD_HEAP_WORDS: usize = 3;
 /// The scratch registers' address an inlining region's record ends with.

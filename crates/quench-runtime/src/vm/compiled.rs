@@ -49,6 +49,7 @@ use std::rc::{Rc, Weak};
 
 #[path = "compiled/osr_loop.rs"]
 mod osr_loop;
+mod wavefront;
 pub(super) use osr_loop::{
     ArrayUse, FieldReceiver, FieldUse, InlineCallee, InlineFrame, LoopEntry, LoopOutcome, LoopRegion, NativeFieldLoad,
     Observation, RegionAnalysisFailure, RegionRejection, Widening,
@@ -5562,13 +5563,14 @@ pub(super) fn compile_osr_region(
     track_backedges: bool,
 ) -> Option<CompiledOsrRegion> {
     let isa = super::jit_backend::target_isa(LOOP_TIER_OPT_LEVELS[policy as usize]?)?;
-    let (function, widenings) = osr_loop::lower(
-        region,
-        observation,
-        &*isa,
-        poll_address(interrupt),
-        track_backedges,
-    )?;
+    // A row-recurrence stencil nest computes its rows in pairs (`wavefront`); any other region
+    // takes the loop tier's lowering.
+    let wavefront = wavefront::recognize(region)
+        .and_then(|nest| wavefront::lower(region, &nest, &*isa, poll_address(interrupt)));
+    let (function, widenings) = match wavefront {
+        Some(function) => (function, std::collections::BTreeMap::new()),
+        None => osr_loop::lower(region, observation, &*isa, poll_address(interrupt), track_backedges)?,
+    };
     let clif = native_dump_directory().map(|_| function.display().to_string());
     let (_code, entry) = compile_and_publish_entry(function, &*isa, osr_loop::MAX_CODE_BYTES)?;
     if let (Some(directory), Some(clif)) = (native_dump_directory(), clif) {

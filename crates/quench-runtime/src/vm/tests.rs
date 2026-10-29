@@ -12242,6 +12242,80 @@ fn shared_osr_appends_and_fills_holes_in_place() {
 }
 
 #[test]
+#[cfg(not(quench_profiled))]
+fn shared_osr_wavefront_pairs_keep_stencil_sweep_results() {
+    // A Gauss-Seidel sweep's row loop runs its rows in pairs (`compiled::wavefront`): each
+    // case reads what program order reads, bit for bit: an odd last row, integral results,
+    // signed zeros and NaN, an element whose `valueOf` runs (which restores the pair and
+    // leaves for the general path), and an array read and written as one (not entered).
+    let source = r#"
+      function bump(x) { x[0] = x[0] + 1; }
+      function sweep(x, x0, a, c, width, height, rowSize, sweeps) {
+        var invC = 1 / c;
+        for (var k = 0; k < sweeps; k++) {
+          for (var j = 1; j <= height; j++) {
+            var lastRow = (j - 1) * rowSize, currentRow = j * rowSize, nextRow = (j + 1) * rowSize;
+            var lastX = x[currentRow];
+            ++currentRow;
+            for (var i = 1; i <= width; i++)
+              lastX = x[currentRow] = (x0[currentRow] + a * (lastX + x[++currentRow] + x[++lastRow] + x[++nextRow])) * invC;
+          }
+          bump(x);
+        }
+      }
+      function make(n, f) { var a = []; for (var i = 0; i < n; i++) a.push(f(i)); return a; }
+      function digest(x) { var h = 0; for (var i = 0; i < x.length; i++) h = (h * 31 + (Object.is(x[i], -0) ? 7 : x[i] !== x[i] ? 11 : Math.floor(x[i] * 4096))) | 0; return h; }
+      var log = [], out = [];
+      function run(width, height, a, c, fill, fill0, alias, poke) {
+        var rowSize = width + 2, n = rowSize * (height + 2);
+        var x = make(n, fill), x0 = alias ? x : make(n, fill0);
+        if (poke) x[3 * rowSize + 4] = { valueOf: function () { log.push("valueOf"); return 2; } };
+        for (var r = 0; r < 40; r++) sweep(x, x0, a, c, width, height, rowSize, 3);
+        out.push(digest(x));
+      }
+      run(8, 6, 1, 4, function (i) { return (i % 7) * 0.25 + 0.5; }, function (i) { return (i % 5) * 0.125; }, false, false);
+      run(8, 7, 1, 4, function (i) { return (i % 7) * 0.25 + 0.5; }, function (i) { return (i % 5) * 0.125; }, false, false);
+      run(6, 4, 0, 1, function (i) { return i % 3; }, function (i) { return i % 9 - 4; }, false, false);
+      run(6, 4, 1, 3, function (i) { return i === 20 ? NaN : -0; }, function (i) { return i % 4 ? -0 : 0; }, false, false);
+      run(8, 6, 1, 4, function (i) { return (i % 7) * 0.25 + 0.5; }, function (i) { return (i % 5) * 0.125; }, false, true);
+      run(8, 6, 0.5, 2.5, function (i) { return (i % 7) * 0.25 + 0.5; }, null, true, false);
+      print(out.join(" ") + " " + log.length);
+    "#;
+    let expected = ["2081041934 -575006534 -311107584 -869203481 2081041934 -1370797326 2"];
+    let program = Engine::specialize(source, "osr-wavefront.js").unwrap();
+    let interpreted = Rc::new(RefCell::new(Vec::new()));
+    Vm::new(TestHost::writing_to(interpreted.clone())).execute(&program).unwrap();
+    assert_eq!(interpreted.borrow().as_slice(), expected);
+    let function_id = program
+        .functions
+        .iter()
+        .position(|function| function.header().name.is_some_and(|name| &program.atoms[name as usize] == "sweep"))
+        .unwrap();
+    for policy in crate::MemoryPolicy::ALL {
+        let output = Rc::new(RefCell::new(Vec::new()));
+        let mut compiled = Vm::new(TestHost::writing_to(output.clone()));
+        compiled.set_memory_policy(policy);
+        compiled.set_execution_mode(crate::ExecutionMode::Compiled);
+        compiled.programs.enable_js_jit_diagnostics();
+        compiled.execute(&program).unwrap();
+        assert_eq!(output.borrow().as_slice(), expected, "{policy:?}");
+        if !super::compiled::loop_tier_compiles(policy) {
+            continue;
+        }
+        let views = compiled
+            .programs
+            .lane_views(super::program_store::ProgramId::MAIN)
+            .expect("main program lane views");
+        let osr = views
+            .get(function_id)
+            .and_then(super::program_store::derived_lane_view)
+            .expect("hot sweep lane view")
+            .osr_diagnostics();
+        assert!(osr.native_region_runs > 0, "no native sweep under {policy:?}: {osr:?}");
+    }
+}
+
+#[test]
 fn shared_osr_indexes_the_row_a_loop_reads_each_iteration() {
     // `a[e][f] = x` in a loop over `e` indexes the row `a[e]` the iteration read, not the
     // row the region entered with: the region declines an indexed register it defines
