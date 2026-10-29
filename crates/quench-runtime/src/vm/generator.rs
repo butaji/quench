@@ -1346,7 +1346,7 @@ impl<H: Host> Vm<H> {
             } => {
                 if let Some(record) = self.generator_record_mut(generator) {
                     record.running = false;
-                    record.continuation = Some(Continuation::suspend(
+                    record.continuation = Some(self.suspend_activation(
                         frame,
                         Completion::Yield(value),
                         Some(destination),
@@ -1595,7 +1595,7 @@ impl<H: Host> Vm<H> {
                     destination,
                     frame: None,
                 }) => {
-                    let continuation = Continuation::suspend(
+                    let continuation = vm.suspend_activation(
                         frame,
                         Completion::Await(value),
                         Some(destination),
@@ -1627,7 +1627,7 @@ impl<H: Host> Vm<H> {
         destination: u16,
         delegated: bool,
     ) -> Result<(), JsError> {
-        let continuation = Continuation::suspend(
+        let continuation = self.suspend_activation(
             frame,
             Completion::Yield(value),
             Some(destination),
