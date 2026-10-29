@@ -5045,9 +5045,7 @@ unsafe fn lane_nested_polymorphic_value<H: Host>(
     let first = step(vm, base, site.first.1)?;
     match site.second {
         None => Some(first),
-        Some((atom, _)) if atom == vm.length_atom => vm
-            .array_length_field(first, atom)
-            .or_else(|| vm.heap.string(first).map(|text| Value::number(text.len() as f64))),
+        Some((atom, _)) if atom == vm.length_atom => own_length(vm, first),
         Some((_, cache)) => step(vm, first, cache),
     }
 }
@@ -5064,9 +5062,17 @@ fn nested_own_field_hit<H: Host>(
     let first = vm.primary_own_field_hit(code, base, site.first.1)?;
     match site.second {
         None => Some(first),
-        Some((atom, _)) if atom == vm.length_atom => vm.array_length_field(first, atom),
+        Some((atom, _)) if atom == vm.length_atom => own_length(vm, first),
         Some((_, cache)) => vm.primary_own_field_hit(code, first, cache),
     }
+}
+
+/// The own `length` of an array or a string, which no prototype shadows, as a nested
+/// read's last step reads it (`nested_own_field_hit`, `lane_nested_polymorphic_value`).
+#[inline(always)]
+fn own_length<H: Host>(vm: &Vm<H>, object: Value) -> Option<Value> {
+    vm.array_length_field(object, vm.length_atom)
+        .or_else(|| vm.heap.string(object).map(|text| Value::number(text.len() as f64)))
 }
 
 script_handler! {
