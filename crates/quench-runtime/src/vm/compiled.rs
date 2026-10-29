@@ -12863,19 +12863,6 @@ impl<H: Host> Vm<H> {
                     .js_jit_diagnostics_enabled()
                     .then(std::time::Instant::now);
                 self.host.before_native_compilation();
-                // EXPERIMENT (gc-tuning): ask the structural candidate check first. A
-                // function it names a reason for cannot compile, and attempting it anyway
-                // pays Cranelift's context and regalloc2 state for an artifact that is
-                // thrown away — the whole `--jit` peak above no-JIT on V8-v7 richards.
-                #[cfg(feature = "gc-tuning")]
-                let doomed = std::env::var_os("QUENCH_JS_JIT_PRECHECK").is_some_and(|value| value == "1")
-                    .then(|| super::js_compiled::candidate_rejection_reason(&residual, function_id));
-                #[cfg(feature = "gc-tuning")]
-                let artifact = match doomed {
-                    Some(_) => None,
-                    None => super::js_compiled::compile(&residual, function_id),
-                };
-                #[cfg(not(feature = "gc-tuning"))]
                 let artifact = super::js_compiled::compile(&residual, function_id);
                 self.host.after_native_compilation();
                 let artifact_failed = artifact.is_none();
