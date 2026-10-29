@@ -351,6 +351,10 @@ impl<H: Host> Vm<H> {
         if !self.heap.should_collect() {
             return;
         }
+        if self.heap.take_window_checkpoint() {
+            self.host.at_window_checkpoint(self.memory_policy());
+            return;
+        }
         let full = self.heap.should_full_collect();
         self.collect_slow(program, full);
     }

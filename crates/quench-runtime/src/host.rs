@@ -113,6 +113,10 @@ pub trait Host {
     /// (`MemoryPolicy::returns_pages_at_collections`).
     fn at_collection_boundary(&mut self, _policy: crate::MemoryPolicy) {}
 
+    /// Halfway through a young window, under a policy that returns pages at collections: a
+    /// host may return read-only pages the window's code made resident, if too many are.
+    fn at_window_checkpoint(&mut self, _policy: crate::MemoryPolicy) {}
+
     /// A compiled host program kept across runs: the bytes `keep_compiled_program` was given
     /// for compiling `parts` (the program's text, in order) under `name` in this build. The
     /// runtime decodes them under its own atoms and compiles when they do not decode. A

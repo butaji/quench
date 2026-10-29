@@ -1107,6 +1107,12 @@ impl quench_runtime::Host for NodeHost {
         crate::host::resident_pages::note_collection();
     }
 
+    fn at_window_checkpoint(&mut self, policy: quench_runtime::MemoryPolicy) {
+        if policy.returns_pages_at_collections() {
+            crate::host::resident_pages::at_window_checkpoint();
+        }
+    }
+
     /// The pages the program touched leave the resident set before the code generator's join
     /// it, as compiling a module's bytecode does (`compile_wasm`): loading, linking and
     /// instantiating a WebAssembly module, or the interpreter and the builtins a JavaScript

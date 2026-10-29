@@ -382,6 +382,15 @@ pub fn after_program_kept() {
     release_once_per_interval(CompileRelease::Kept, release_read_only_code_and_data);
 }
 
+/// Halfway through a young window (`Host::at_window_checkpoint`): the read-only pages leave
+/// when resident file pages are over the budget, as at a lane-view derivation.
+pub fn at_window_checkpoint() {
+    #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+    if CompileRelease::WindowCheckpoint.over_budget() {
+        release_read_only_pages();
+    }
+}
+
 /// The compile-phase releases timed apart from each other (`at_compile_phase`).
 #[derive(Clone, Copy)]
 enum CompileRelease {
@@ -390,10 +399,11 @@ enum CompileRelease {
     Encoding,
     Kept,
     LaneDerivation,
+    WindowCheckpoint,
 }
 
 impl CompileRelease {
-    const COUNT: usize = 5;
+    const COUNT: usize = 6;
 
     /// The releases that may come inside their interval once resident code passes the budget
     /// (`over_budget`). A binary's first run compiles and keeps every bootstrap script back
@@ -407,7 +417,11 @@ impl CompileRelease {
     #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
     fn releases_over_budget(self) -> bool {
         match self {
-            Self::FirstCall | Self::CodeGeneration | Self::Kept | Self::LaneDerivation => true,
+            Self::FirstCall
+            | Self::CodeGeneration
+            | Self::Kept
+            | Self::LaneDerivation
+            | Self::WindowCheckpoint => true,
             Self::Encoding => false,
         }
     }

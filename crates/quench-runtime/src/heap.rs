@@ -551,6 +551,8 @@ pub(crate) struct Heap {
     /// The `allocated` weight at which the next collection is due: the last collection's
     /// mark plus the young budget pacing planned (`set_young_budget`).
     collect_at: usize,
+    /// The `collect_at` a window checkpoint deferred (`take_window_checkpoint`), or `None`.
+    deferred_collect_at: Option<usize>,
     total_allocations: u64,
     collections: u64,
     /// The prototypes `mark_prototype` marked last, most recent first, which keep their
@@ -784,6 +786,7 @@ impl Heap {
             free_slabs: Vec::with_capacity(12),
             free_slots: 0,
             collect_at: MemoryPolicy::default().pacing().minimum_young,
+            deferred_collect_at: None,
             max_threshold: MemoryPolicy::default().pacing().minimum_young,
             external_collection_budget: MemoryPolicy::default().pacing().minimum_external_budget,
             ..Self::default()
@@ -1717,6 +1720,7 @@ impl Heap {
         self.external_since_collection = self.external_since_collection.saturating_add(bytes);
         if self.external_since_collection >= self.external_collection_budget {
             self.collect_at = self.collect_at.min(self.allocated);
+            self.deferred_collect_at = None;
         }
     }
     /// Charges text made on demand (`wtf16::take_materialized_bytes`) as payload allocation.
@@ -1748,8 +1752,27 @@ impl Heap {
     /// Makes the next collection due once `budget` more weight than at the last collection
     /// has been charged, and records the largest budget planned (`Heap::stats`).
     pub(super) fn set_young_budget(&mut self, budget: usize) {
-        self.collect_at = self.allocated_at_collection.saturating_add(budget);
+        let due = self.allocated_at_collection.saturating_add(budget);
+        self.collect_at = due;
+        self.deferred_collect_at = None;
+        if self.memory_policy.returns_pages_at_collections() {
+            self.collect_at = self.allocated_at_collection.saturating_add(budget / 2);
+            self.deferred_collect_at = Some(due);
+        }
         self.max_threshold = self.max_threshold.max(budget);
+    }
+    /// Whether the due safepoint is a window checkpoint rather than a collection: under a
+    /// policy that returns pages at collections, a young window stops once halfway, so the
+    /// host can return pages the window's code has made resident (`Host::at_window_checkpoint`).
+    /// The collection then comes due at the window's end.
+    pub(crate) fn take_window_checkpoint(&mut self) -> bool {
+        match self.deferred_collect_at.take() {
+            Some(due) if self.allocated < due => {
+                self.collect_at = due;
+                true
+            }
+            _ => false,
+        }
     }
     /// The host contexts of promises freed since the last call.
     pub(crate) fn take_abandoned_contexts(&mut self) -> AbandonedHostContexts {
@@ -1780,6 +1803,7 @@ impl Heap {
     #[cfg(test)]
     pub(crate) fn make_collection_due_for_test(&mut self) {
         self.collect_at = self.allocated;
+        self.deferred_collect_at = None;
     }
     pub(crate) fn root(&mut self, value: Value) -> RootId {
         self.roots.insert(value)
