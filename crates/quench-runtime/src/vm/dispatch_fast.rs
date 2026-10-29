@@ -18962,6 +18962,8 @@ impl<H: Host> Vm<H> {
 #[inline(always)]
 fn lane_dispatch<H: Host>(cx: *mut LaneContext<H>, mut ip: Ip) -> Ip {
     loop {
+        #[cfg(feature = "profile-lane-exits")]
+        super::lane_exits::dispatch();
         // SAFETY: handlers have returned, so no other access is live.
         let (view, registers, acc) = unsafe {
             let acc = std::mem::replace(&mut (*cx).resumed_acc, Slot::of(Value::UNDEFINED));
