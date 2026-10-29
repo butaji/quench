@@ -3174,6 +3174,9 @@ struct Lowering<'a, 'b> {
     track_backedges: bool,
     /// Each array as native code indexes it, by register.
     arrays: std::collections::BTreeMap<Register, ArrayView>,
+    /// The entry values native code reads from memory at each use instead of holding
+    /// them (`Resident`).
+    resident: Resident,
     widenings: std::collections::BTreeMap<u32, Widening>,
     /// Per block, the first block of the chain it continues: each block after the first
     /// has its predecessors inside the chain (a guard's passing branch, the join of a test
@@ -3224,6 +3227,71 @@ fn straight_pcs(region: &LoopRegion, counted: &[CountedLoop]) -> Vec<bool> {
                 && predecessors[(pc - region.header) as usize] == [pc - 1]
         })
         .collect()
+}
+
+/// The entry values a region with nested loops keeps in memory: those it reads in no
+/// innermost nested counted loop. Each would otherwise stay in a register through that
+/// loop, which its own values then lose to spills; a value the loop reads stays held.
+/// Arrays reside in the entry record, unboxed fields and captures in a slot of their own.
+#[derive(Default)]
+struct Resident {
+    /// Per resident array register, its first entry word and whether the region writes it.
+    arrays: std::collections::BTreeMap<Register, (usize, bool)>,
+    /// Per field and per capture, its word in `slot` when it resides there.
+    fields: Vec<Option<usize>>,
+    captures: Vec<Option<usize>>,
+    values: usize,
+    slot: Option<ir::StackSlot>,
+}
+
+impl Resident {
+    fn of(region: &LoopRegion, counted: &[CountedLoop], arrays_start: usize) -> Self {
+        let nested: Vec<&CountedLoop> = counted
+            .iter()
+            .filter(|inner| inner.header != region.header)
+            .filter(|inner| {
+                !counted.iter().any(|other| {
+                    other.header != inner.header && inner.contains(other.header) && inner.contains(other.backedge)
+                })
+            })
+            .collect();
+        let mut resident = Self {
+            fields: vec![None; region.fields.len()],
+            captures: vec![None; region.captures.len()],
+            ..Self::default()
+        };
+        if nested.is_empty() {
+            return resident;
+        }
+        let hot = |offset: usize| nested.iter().any(|inner| inner.contains(region.header + offset as u32));
+        let instructions = region.instructions.iter().enumerate();
+        let read_hot = |used: &dyn Fn(&WideInstruction) -> bool| instructions.clone().any(|(offset, instruction)| hot(offset) && used(instruction));
+        for (index, array) in region.arrays.iter().enumerate() {
+            let indexes = |instruction: &WideInstruction| match instruction.op() {
+                Op::GetIndex => instruction.operand_b().register_index() == Some(array.register),
+                Op::SetIndex => instruction.register_b() == array.register,
+                _ => false,
+            };
+            if !read_hot(&indexes) {
+                resident.arrays.insert(array.register, (arrays_start + ARRAY_WORDS * index, array.written));
+            }
+        }
+        for field in 0..region.fields.len() {
+            let read = region.field_reads.iter().any(|(offset, read)| *read == field && hot(*offset as usize));
+            if !read {
+                resident.fields[field] = Some(resident.values);
+                resident.values += 1;
+            }
+        }
+        for (index, slot) in region.captures.iter().enumerate() {
+            let loads = |instruction: &WideInstruction| instruction.op() == Op::LoadCapture && instruction.capture_slot() == *slot;
+            if !read_hot(&loads) {
+                resident.captures[index] = Some(resident.values);
+                resident.values += 1;
+            }
+        }
+        resident
+    }
 }
 
 /// The pointers a region's entry stores for its leave blocks (`Lowering::handoff`), by
@@ -3339,6 +3407,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
             result,
             track_backedges,
             arrays: std::collections::BTreeMap::new(),
+            resident: Resident::default(),
             widenings: std::collections::BTreeMap::new(),
         }
     }
@@ -3423,7 +3492,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
     fn start(&mut self, counted: &CountedLoop, base: Base) -> ir::Value {
         let value = match base {
             Base::Constant => return self.body.builder.ins().iconst(types::I64, 0),
-            Base::Capture(index) => self.captures[index].value,
+            Base::Capture(index) => self.capture(index).value,
             Base::Start(register) => {
                 let web = self.webs.read(self.region, counted.header, register);
                 self.web(web).value
@@ -3509,7 +3578,8 @@ impl<'a, 'b> Lowering<'a, 'b> {
             let (low, high) = if step >= 0 { (first, last) } else { (last, first) };
             let (above, below) = match fact.bound {
                 Bound::Index(array) => {
-                    let length = self.length(self.arrays[&array]);
+                    let view = self.array(array);
+                    let length = self.length(view);
                     (
                         self.body.builder.ins().icmp_imm_s(IntCC::SignedGreaterThanOrEqual, low, 0),
                         self.body.builder.ins().icmp(IntCC::SignedLessThan, high, length),
@@ -3549,6 +3619,50 @@ impl<'a, 'b> Lowering<'a, 'b> {
         self.body.builder.ins().store(flags(), word, result, 0);
         let status = self.body.builder.ins().iconst(types::I32, 0);
         self.body.builder.ins().return_(&[status]);
+    }
+
+    /// Stores an entry value that resides in memory (`Resident`) to its slot.
+    fn reside(&mut self, slot: Option<usize>, value: ir::Value) {
+        if let (Some(slot), Some(stack)) = (slot, self.resident.slot) {
+            self.body.builder.ins().stack_store(self.pointer, value, stack, slot as i32 * WORD_BYTES);
+        }
+    }
+
+    /// An entry value as unboxed at entry: loaded from its slot when it resides there.
+    fn resident_value(&mut self, slot: Option<usize>, entry: Typed) -> Typed {
+        let (Some(slot), Some(stack)) = (slot, self.resident.slot) else {
+            return entry;
+        };
+        let ty = self.body.builder.func.dfg.value_type(entry.value);
+        let value = self.body.builder.ins().stack_load(self.pointer, ty, stack, slot as i32 * WORD_BYTES);
+        Typed { value, representation: entry.representation }
+    }
+
+    fn field(&mut self, index: usize) -> Typed {
+        self.resident_value(self.resident.fields[index], self.fields[index])
+    }
+
+    fn capture(&mut self, index: usize) -> Typed {
+        self.resident_value(self.resident.captures[index], self.captures[index])
+    }
+
+    /// The view of the array `register` holds, loading its words where it resides in the
+    /// entry record.
+    fn array_view(&mut self, register: Register) -> Option<ArrayView> {
+        let Some(&(base, written)) = self.resident.arrays.get(&register) else {
+            return self.arrays.get(&register).copied();
+        };
+        let elements = self.word(base);
+        let access = if written {
+            ArrayAccess::Written { capacity: self.word(base + 2) }
+        } else {
+            ArrayAccess::Read { length: self.word(base + 1) }
+        };
+        Some(ArrayView { elements, access })
+    }
+
+    fn array(&mut self, register: Register) -> ArrayView {
+        self.array_view(register).expect("a region array")
     }
 
     /// `pointer` as entry stored it (`Lowering::handoff`), loaded where it is used.
@@ -3605,7 +3719,18 @@ impl<'a, 'b> Lowering<'a, 'b> {
     fn enter(&mut self) -> Option<()> {
         let fields_start = ENTRY_CAPTURES + self.region.captures.len();
         let arrays_start = fields_start + self.region.fields.len();
+        self.resident = Resident::of(self.region, &self.counted, arrays_start);
+        if self.resident.values > 0 {
+            self.resident.slot = Some(self.body.builder.create_sized_stack_slot(ir::StackSlotData::new(
+                ir::StackSlotKind::ExplicitSlot,
+                self.resident.values as u32 * WORD_BYTES as u32,
+                WORD_BYTES.trailing_zeros() as u8,
+            )));
+        }
         for (index, array) in self.region.arrays.iter().enumerate() {
+            if self.resident.arrays.contains_key(&array.register) {
+                continue;
+            }
             let base = arrays_start + ARRAY_WORDS * index;
             let elements = self.word(base);
             let access = if array.written {
@@ -3620,6 +3745,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
             let representation = self.entry_representations.captures[index];
             let otherwise = self.not_entered(Some(Widening::Capture(index as u16)));
             let value = self.unbox(bits, representation, otherwise);
+            self.reside(self.resident.captures[index], value);
             self.captures.push(Typed { value, representation });
         }
         for index in 0..self.region.fields.len() {
@@ -3631,6 +3757,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
                 let otherwise = self.not_entered(Some(Widening::Field(index as u16)));
                 self.unbox(bits, representation, otherwise)
             };
+            self.reside(self.resident.fields[index], value);
             self.fields.push(Typed { value, representation });
         }
         if let Some(inlining) = &self.region.inlining {
@@ -4303,7 +4430,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
             && self.straight[offset]
             && !self.proved(next))
             .then_some(())?;
-        let array = *self.arrays.get(&read.operand_b().register_index()?)?;
+        let array = self.array_view(read.operand_b().register_index()?)?;
         let (left, right) = (
             self.body.extend(left.value, super::Int32Extension::Sign),
             self.body.extend(right.value, super::Int32Extension::Sign),
@@ -4676,7 +4803,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
             Op::LoadCapture => {
                 let slot = instruction.capture_slot();
                 let index = self.region.captures.iter().position(|capture| *capture == slot)?;
-                let value = self.captures[index];
+                let value = self.capture(index);
                 self.define(instruction.result_register(), value);
                 self.fall_through(pc)
             }
@@ -4783,7 +4910,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
                 let value = if self.region.dynamic_field_reads.contains_key(&(pc - self.region.header)) {
                     self.dynamic_field(pc, field)?
                 } else {
-                    self.fields[field]
+                    self.field(field)
                 };
                 self.define(instruction.result_register(), value);
                 self.fall_through(pc)
@@ -4823,7 +4950,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
                 // An index sum just before checked this read's bounds (`index_sum`).
                 let bounded = self.bounded_reads.remove(&pc);
                 let base = instruction.operand_b().register_index()?;
-                let array = self.arrays[&base];
+                let array = self.array(base);
                 let key = self.operand(instruction.operand_c())?;
                 let representation = if self.region.tagged.contains(&instruction.result_register()) {
                     Representation::Tagged
@@ -4885,7 +5012,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
             }
             Op::SetIndex => {
                 self.element_stores += 1;
-                let array = self.arrays[&instruction.register_b()];
+                let array = self.array(instruction.register_b());
                 let key = self.register(instruction.register_c());
                 let (index, element) = self.element_index(pc, key);
                 self.store_index(pc, array, index);
