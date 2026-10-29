@@ -48,6 +48,11 @@ On x64, a 32- or 64-bit `smul_overflow` lowers to the two-operand `imul`,
 which sets OF exactly when the signed product does not fit; upstream used the
 one-operand form, which pins its operand and result to `rax` and clobbers `rdx`
 with the unused high half (V8-v7 Crypto's am3 loop spilled around it).
+On x64, a `brif` on the overflow flag of a 32- or 64-bit `sadd_overflow`,
+`ssub_overflow` or `smul_overflow` placed right before it jumps on the OF that
+arithmetic sets (`jo`); the arithmetic then materializes the flag only where
+another lowered instruction reads it. Upstream sets a byte from OF and tests it
+(`seto`/`test`/`jne`), two extra instructions on each guarded int32 operation.
 `#![allow(warnings)]` keeps the workspace's `-D warnings`
 from failing on upstream lints that a registry dependency's capped lints
 would hide. `QUENCH.patch` records these changes against the published

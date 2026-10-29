@@ -3188,6 +3188,8 @@ struct Lowering<'a, 'b> {
     /// The entry values native code reads from memory at each use instead of holding
     /// them (`Resident`).
     resident: Resident,
+    /// The registers innermost nested counted loops park (`Parking`).
+    parking: Parking,
     /// The arrays whose elements entry found all `i32`s, which the region keeps so, so
     /// their reads need no tag guard (`Lowering::scan_int32`).
     int32_arrays: std::collections::BTreeSet<Register>,
@@ -3308,6 +3310,59 @@ impl Resident {
     }
 }
 
+/// The registers an innermost nested counted loop parks: each live at its header that no
+/// instruction of the loop names. Its preheader stores each to a word of `slot`, the
+/// loop's leaves read it from there and its exits reload it, so it holds no register
+/// through the loop, whose own values then keep theirs (`Resident` does so for entry
+/// values). The loop never writes a parked register, so its word stays its value.
+#[derive(Default)]
+struct Parking {
+    /// Per counted loop, its parked registers with the web each holds through it.
+    parked: Vec<Vec<(Register, Definition)>>,
+    slot: Option<ir::StackSlot>,
+}
+
+impl Parking {
+    fn of(region: &LoopRegion, webs: &Webs, counted: &[CountedLoop]) -> Self {
+        let mut parked = vec![Vec::new(); counted.len()];
+        let Some(live) = region.live.as_deref() else {
+            return Self { parked, slot: None };
+        };
+        for (index, inner) in counted.iter().enumerate() {
+            let innermost = inner.header != region.header
+                && !counted.iter().any(|other| {
+                    other.header != inner.header && inner.contains(other.header) && inner.contains(other.backedge)
+                });
+            let Some(at_header) = live.get(inner.header as usize).filter(|_| innermost) else {
+                continue;
+            };
+            let body = &region.instructions[(inner.header - region.header) as usize..=(inner.backedge - region.header) as usize];
+            let reaching = &webs.reaching[(inner.header - region.header) as usize];
+            for (&register, _) in reaching {
+                if crate::compile::liveness::register_in(at_header, usize::from(register))
+                    && body.iter().all(|instruction| !mentions(*instruction, register, &[]))
+                {
+                    parked[index].push((register, webs.read(region, inner.header, register)));
+                }
+            }
+        }
+        Self { parked, slot: None }
+    }
+
+    /// The loop whose parked registers include `register` and whose body holds `pc`.
+    fn holding(&self, counted: &[CountedLoop], pc: u32, register: Register) -> Option<usize> {
+        self.parked.iter().enumerate().find_map(|(index, parked)| {
+            (counted[index].contains(pc) && parked.iter().any(|(held, _)| *held == register))
+                .then_some(index)
+        })
+    }
+
+    fn offset(&self, index: usize, register: Register) -> i32 {
+        let word = self.parked[index].iter().position(|(held, _)| *held == register).expect("a parked register");
+        word as i32 * WORD_BYTES
+    }
+}
+
 /// The pointers a region's entry stores for its leave blocks (`Lowering::handoff`), by
 /// word of the slot.
 #[derive(Clone, Copy)]
@@ -3422,6 +3477,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
             track_backedges,
             arrays: std::collections::BTreeMap::new(),
             resident: Resident::default(),
+            parking: Parking::default(),
             int32_arrays: std::collections::BTreeSet::new(),
             widenings: std::collections::BTreeMap::new(),
         }
@@ -3538,6 +3594,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
     fn preheader(&mut self, index: usize) {
         let counted = self.counted[index].clone();
         self.body.builder.switch_to_block(self.preheaders[index]);
+        self.park(index);
         let holds = self.proof(&counted);
         let proved = self.proved_blocks[index][0];
         let guarded = self.blocks[(counted.header - self.region.header) as usize];
@@ -3811,6 +3868,16 @@ impl<'a, 'b> Lowering<'a, 'b> {
         let fields_start = ENTRY_CAPTURES + self.region.captures.len();
         let arrays_start = fields_start + self.region.fields.len();
         self.resident = Resident::of(self.region, &self.counted, arrays_start);
+        self.parking = Parking::of(self.region, &self.webs, &self.counted);
+        let parked_words = self.parking.parked.iter().map(Vec::len).max().unwrap_or(0);
+        if parked_words > 0 {
+            // Innermost loops never nest, so their parked registers share the words.
+            self.parking.slot = Some(self.body.builder.create_sized_stack_slot(ir::StackSlotData::new(
+                ir::StackSlotKind::ExplicitSlot,
+                parked_words as u32 * WORD_BYTES as u32,
+                WORD_BYTES.trailing_zeros() as u8,
+            )));
+        }
         if self.resident.values > 0 {
             self.resident.slot = Some(self.body.builder.create_sized_stack_slot(ir::StackSlotData::new(
                 ir::StackSlotKind::ExplicitSlot,
@@ -4056,7 +4123,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
                     Some((register, self.webs.find(*web)))
                 })
                 .collect();
-            self.store_registers(&registers);
+            self.store_registers(pc, &registers);
             self.finish(word);
         }
     }
@@ -4064,11 +4131,14 @@ impl<'a, 'b> Lowering<'a, 'b> {
     /// Writes back each register's web: a caller register to the activation's register
     /// file, an inlined callee's to the entry's scratch registers (`LoopEntry::scratch`),
     /// from which leaving at its instruction makes its activation.
-    fn store_registers(&mut self, registers: &[(Register, Definition)]) {
+    fn store_registers(&mut self, pc: u32, registers: &[(Register, Definition)]) {
         let file = self.handed_off(Handoff::Registers);
         let scratch = self.scratch.map(|_| self.handed_off(Handoff::Scratch));
         for &(register, web) in registers {
-            let value = self.web(web);
+            let value = match self.parking.holding(&self.counted, pc, register) {
+                Some(index) => self.parked_value(index, register, web),
+                None => self.web(web),
+            };
             let bits = self.boxed(value);
             let (file, slot) = match (&self.region.inlining, scratch) {
                 (Some(inlining), Some(scratch)) if register >= inlining.caller_registers => {
@@ -4077,6 +4147,42 @@ impl<'a, 'b> Lowering<'a, 'b> {
                 _ => (file, register),
             };
             self.body.builder.ins().store(flags(), bits, file, i32::from(slot) * WORD_BYTES);
+        }
+    }
+
+    /// The value parked register `register` holds through counted loop `index`, as its
+    /// preheader stored it (`Parking`).
+    fn parked_value(&mut self, index: usize, register: Register, web: Definition) -> Typed {
+        let representation = self.representations[web];
+        let ty = super::scalar_ir(view_type(representation));
+        let slot = self.parking.slot.expect("a parking slot");
+        let offset = self.parking.offset(index, register);
+        Typed { value: self.body.builder.ins().stack_load(self.pointer, ty, slot, offset), representation }
+    }
+
+    /// Stores counted loop `index`'s parked registers on arrival at it, in its preheader.
+    fn park(&mut self, index: usize) {
+        let slot = self.parking.slot;
+        for (register, web) in self.parking.parked[index].clone() {
+            let value = self.web(web).value;
+            let offset = self.parking.offset(index, register);
+            self.body.builder.ins().stack_store(self.pointer, value, slot.expect("a parking slot"), offset);
+        }
+    }
+
+    /// Reloads the registers the counted loop holding `pc` parks when control leaves it
+    /// for `target`, so no read after the loop reaches into it for them.
+    fn unpark(&mut self, pc: u32, target: u32) {
+        let Some(index) = (0..self.counted.len()).find(|index| {
+            !self.parking.parked[*index].is_empty()
+                && self.counted[*index].contains(pc)
+                && !self.counted[*index].contains(target)
+        }) else {
+            return;
+        };
+        for (register, web) in self.parking.parked[index].clone() {
+            let value = self.parked_value(index, register, web);
+            self.body.write(register, view_type(value.representation), value.value);
         }
     }
 
@@ -4420,6 +4526,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
                     .store(flags(), count, self.entry, offset);
             }
         }
+        self.unpark(pc, target);
         match self.target_block(Some(pc), target) {
             Some(block) => {
                 self.body.builder.ins().jump(block, &[]);
@@ -4465,6 +4572,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
     }
 
     fn fall_through(&mut self, pc: u32) -> Option<()> {
+        self.unpark(pc, pc + 1);
         match self.target_block(Some(pc), pc + 1) {
             Some(block) => {
                 self.body.builder.ins().jump(block, &[]);
