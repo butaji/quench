@@ -9677,6 +9677,30 @@ impl<H: Host> Vm<H> {
             .unwrap_or(false)
     }
 
+    /// Whether `native` called on `receiver` runs beside activations as the natives of
+    /// `runs_beside_activations` do: `%IteratorPrototype%.next` of an array, string, map or set
+    /// iterator, whose step reads its source alone. A generator's step resumes its frame and an
+    /// iterator helper's may step one, so those take frames first.
+    fn steps_beside_activations(&self, native: Native, receiver: Value) -> bool {
+        use crate::heap::IteratorKind;
+        native == Native::IteratorNext
+            && self.heap.iterator(receiver).is_some_and(|iterator| {
+                matches!(
+                    iterator.kind,
+                    IteratorKind::Array
+                        | IteratorKind::ArrayKeys
+                        | IteratorKind::ArrayValues
+                        | IteratorKind::ArrayEntries
+                        | IteratorKind::String
+                        | IteratorKind::MapKeys
+                        | IteratorKind::MapValues
+                        | IteratorKind::MapEntries
+                        | IteratorKind::SetValues
+                        | IteratorKind::SetEntries
+                )
+            })
+    }
+
     /// Whether `callee` is a native that runs beside a lane's activations
     /// (`runs_beside_activations`), which a call made while they stay frameless may make
     /// without making them frames.
@@ -12087,7 +12111,9 @@ fn lane_call_native<H: Host>(
     let call_pc = unsafe { ip.offset_from((*cx).base) } as usize;
     // A native that observes frames only through the points `materialize_deferred_lane`
     // guards runs beside the activations; the first such point makes them frames.
-    if !vm.lane_stack.activations.is_empty() && vm.runs_beside_activations(native, callee) {
+    if !vm.lane_stack.activations.is_empty()
+        && (vm.runs_beside_activations(native, callee) || vm.steps_beside_activations(native, receiver))
+    {
         vm.lane_deferred = Some(DeferredLaneCall { cx: cx.cast(), call_pc, frames: vm.frames.len() });
         let result = vm.call_native_guarded(unsafe { &*(*cx).code }, native, receiver, arguments.as_slice(), callee);
         note_allocation(vm);
