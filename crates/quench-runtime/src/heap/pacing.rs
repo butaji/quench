@@ -214,8 +214,12 @@ pub(super) struct PacingState {
     /// off by aged survivors outliving their second minor collection.
     aging: bool,
     /// Smoothed share, in `SURVIVAL_SCALE` parts, of aged survivors their second minor
-    /// collection freed, while aging is on (`AGED_DEATH_TO_KEEP_AGING`).
-    aged_death: u32,
+    /// collection freed, while aging is on (`AGED_DEATH_TO_KEEP_AGING`); none until the first
+    /// minor collection after aging turned on measures it.
+    aged_death: Option<u32>,
+    /// Consecutive full collections that found promotions dying old, which turn aging on at
+    /// `FULLS_FINDING_PROMOTED_GARBAGE_TO_AGE`.
+    promoted_garbage_fulls: u32,
     /// Full collections left before promotions dying old may turn aging on again, after aging
     /// was turned off for freeing too few of the survivors it aged.
     aging_off_for: u32,
@@ -256,6 +260,11 @@ impl AgedFates {
 /// collection frees, under which aging is turned off: tracing a survivor twice costs about
 /// what promoting one that dies old does, so aging pays while at least half die young.
 const AGED_DEATH_TO_KEEP_AGING: u32 = SURVIVAL_SCALE / 2;
+
+/// Consecutive full collections that must find promotions dying old to turn aging on: one
+/// such full is often a phase change (a start-up's garbage), whose aging is traced twice and
+/// promoted anyway.
+const FULLS_FINDING_PROMOTED_GARBAGE_TO_AGE: u32 = 2;
 
 /// What a finished collection measured.
 #[derive(Clone, Copy, Debug)]
@@ -305,9 +314,15 @@ impl GenerationalPacing {
                 && state.promoted_since_full > 0
                 && reclaimed >= self.promoted_garbage_aging.of(state.promoted_since_full)
             {
-                state.aging = true;
-                // Aging must show it frees what it ages from its first measurement on.
-                state.aged_death = SURVIVAL_SCALE;
+                state.promoted_garbage_fulls += 1;
+                if state.promoted_garbage_fulls >= FULLS_FINDING_PROMOTED_GARBAGE_TO_AGE {
+                    state.aging = true;
+                    state.promoted_garbage_fulls = 0;
+                    // Aging must show it frees what it ages from its first measurement on.
+                    state.aged_death = None;
+                }
+            } else {
+                state.promoted_garbage_fulls = 0;
             }
             state.promoted_since_full = 0;
             state.steady = state.live_after_last_full != 0
@@ -328,10 +343,11 @@ impl GenerationalPacing {
             let aged = outcome.aged.died + outcome.aged.promoted;
             if state.aging && aged > 0 {
                 let death = (outcome.aged.died as u64 * u64::from(SURVIVAL_SCALE) / aged as u64) as u32;
-                state.aged_death = (state.aged_death + death) / 2;
+                let smoothed = state.aged_death.map_or(death, |previous| (previous + death) / 2);
+                state.aged_death = Some(smoothed);
                 // The survivors aging keeps young mostly outlive their second minor collection:
                 // each is traced twice and promoted anyway.
-                if state.aged_death < AGED_DEATH_TO_KEEP_AGING {
+                if smoothed < AGED_DEATH_TO_KEEP_AGING {
                     state.aging = false;
                     state.aging_off_for = self.aging_interval;
                 }
