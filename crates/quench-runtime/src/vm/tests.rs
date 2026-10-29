@@ -12486,6 +12486,52 @@ print(out.slice(-3).join(",") + " " + out[100] + " " + out[200] + " " + out[250]
 }
 
 #[test]
+fn shared_osr_indexes_arrays_the_loop_loads() {
+    // `row` is an array the loop reads from `m` each iteration: each access reads it from
+    // its record (`LoopRegion::dynamic_arrays`). A hole, a frozen row, a copied row, a row
+    // that is a plain object and one with an indexed descriptor each leave for the lane at
+    // the access; results match Node.
+    let source = r#"
+function run(m, n) {
+  var s = 0;
+  for (var k = 0; k < n; k++) {
+    var idx = k & 3;
+    var row = m[idx];
+    var j = (k >> 2) & 3;
+    s = (s + row[j] * 3) | 0;
+    row[(j + 1) & 3] = (row[j] + k) & 1023;
+  }
+  return s;
+}
+var out = [];
+for (var r = 0; r < 300; r++) {
+  var m = [];
+  for (var i = 0; i < 4; i++) m.push([i, r & 7, 3, 4 + i, 5]);
+  if (r == 200) delete m[1][2];
+  if (r == 210) Object.freeze(m[2]);
+  if (r == 220) m[3] = [9, 9, 9, 9, 9].slice();
+  if (r == 230) m[0] = { 0: 1, 1: 2, 2: 3, 3: 4, 4: 5 };
+  if (r == 240) Object.defineProperty(m[1], 3, { value: 7, writable: false });
+  var v;
+  try { v = run(m, 400); } catch (e) { v = "E" + e.constructor.name; }
+  out.push(v + ":" + m[0][4] + "," + m[1][1] + "," + m[2][0] + "," + m[3][3]);
+}
+print(out.slice(-3).join(" ") + " | " + out[100] + " " + out[200] + " " + out[210] + " " + out[220] + " " + out[230] + " " + out[240]);
+    "#;
+    let expected = ["550356:5,290,546,248 550356:5,290,546,248 550356:5,290,546,248 | 550356:5,290,546,248 550356:5,290,546,248 417687:5,290,2,248 552156:5,290,546,254 550656:5,290,546,248 495609:5,773,546,248"];
+    let program = Engine::specialize(source, "osr-dynamic-arrays.js").unwrap();
+    for mode in [None, Some(crate::ExecutionMode::Compiled)] {
+        let output = Rc::new(RefCell::new(Vec::new()));
+        let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+        if let Some(mode) = mode {
+            vm.set_execution_mode(mode);
+        }
+        vm.execute(&program).unwrap();
+        assert_eq!(output.borrow().as_slice(), expected, "{mode:?}");
+    }
+}
+
+#[test]
 fn char_at_and_from_char_code_share_ascii_unit_strings() {
     // One-unit ASCII results come from a cache a collection empties (`ascii_unit_strings`);
     // every other unit, an index out of range and a coerced index take the native. The

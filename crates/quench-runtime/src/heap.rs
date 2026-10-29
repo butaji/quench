@@ -63,6 +63,12 @@ pub(crate) struct NativeArrayLayout {
     pub(crate) elements_header_offset: usize,
     pub(crate) header_length_offset: usize,
     pub(crate) header_values_offset: usize,
+    /// The backing's owner count, one where no other array shares it.
+    pub(crate) header_owners_offset: usize,
+    /// The record's object part, whose meta and payload words `NATIVE_OBJECT_LAYOUT` names.
+    pub(crate) object_offset: usize,
+    /// The meta bit of a frozen array.
+    pub(crate) frozen_mask: u32,
 }
 
 /// Layout facts for code generators which emit read-only ordinary-array accesses.
@@ -74,6 +80,9 @@ pub(crate) const NATIVE_ARRAY_LAYOUT: NativeArrayLayout = NativeArrayLayout {
     elements_header_offset: array_elements::NATIVE_HEADER_POINTER_OFFSET,
     header_length_offset: array_elements::NATIVE_HEADER_LENGTH_OFFSET,
     header_values_offset: array_elements::NATIVE_HEADER_VALUES_OFFSET,
+    header_owners_offset: array_elements::NATIVE_HEADER_OWNERS_OFFSET,
+    object_offset: cell::NATIVE_ARRAY_OBJECT_OFFSET,
+    frozen_mask: crate::value_vec::VALUE_VEC_FROZEN,
 };
 
 /// The native reader's view of an ordinary object record and its out-of-line property words.

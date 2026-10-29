@@ -185,6 +185,10 @@ pub(crate) struct LoopRegion {
     /// Reads whose direct register receiver is redefined in this loop. These use a
     /// side-effect-free field-cache callout at the instruction instead of an entry snapshot.
     dynamic_field_reads: std::collections::BTreeMap<u32, usize>,
+    /// The array registers the region defines: each access reads the array its register
+    /// holds then, from the array's record (`Lowering::dynamic_array`), and only a present
+    /// element below the backing's length, which no prototype answers, stays native.
+    dynamic_arrays: std::collections::BTreeSet<Register>,
     /// Existing own-data Number slots stored by the region, by offset from its header.
     field_stores: std::collections::BTreeMap<u32, usize>,
     /// Receivers and cache sites whose flat slots are guarded before native entry.
@@ -210,8 +214,22 @@ pub(crate) struct LoopRegion {
 }
 
 impl LoopRegion {
-    pub(crate) fn has_dynamic_field_reads(&self) -> bool {
-        !self.dynamic_field_reads.is_empty()
+    /// Whether native code reads the heap itself, through the entry's heap views
+    /// (`LoopEntry::push_native_heap`): a dynamic field read or a dynamic array.
+    pub(crate) fn reads_heap_natively(&self) -> bool {
+        !self.dynamic_field_reads.is_empty() || !self.dynamic_arrays.is_empty()
+    }
+
+    /// The entry word the heap views start at: after the captures, fields, arrays and field
+    /// store slots.
+    fn native_heap_word(&self) -> usize {
+        ENTRY_CAPTURES + self.captures.len() + self.fields.len() + ARRAY_WORDS * self.arrays.len() + self.field_store_sites.len()
+    }
+
+    /// The entry word of an inlining region's scratch registers' address: after the heap
+    /// views, where native code reads the heap.
+    fn scratch_word(&self) -> usize {
+        self.native_heap_word() + if self.reads_heap_natively() { NATIVE_HEAP_WORDS } else { 0 }
     }
 
     pub(crate) fn is_dynamic_field(&self, index: usize) -> bool {
@@ -239,9 +257,8 @@ pub(crate) enum RegionRejection {
     FieldLimit,
     FieldStoreLimit,
     FieldMutation,
-    /// An array the region indexes is a register it also defines: the region reads its
-    /// arrays at entry (`LoopRegion::arrays`), so it would index the entry's array after the
-    /// register named another, as the row of `a[e][f]` in a loop over `e`.
+    /// An array the region indexes is a register it defines other than by reading an
+    /// element or field or moving one (`LoopRegion::dynamic_arrays`), as a capture's value.
     ArrayRedefined,
 }
 
@@ -474,13 +491,14 @@ fn tagged_registers(
     held: &std::collections::BTreeSet<Register>,
     header: u32,
 ) -> Option<std::collections::BTreeSet<Register>> {
-    tagged_registers_with_failure(instructions, constants, held, header).ok()
+    tagged_registers_with_failure(instructions, constants, held, &std::collections::BTreeSet::new(), header).ok()
 }
 
 fn tagged_registers_with_failure(
     instructions: &[WideInstruction],
     constants: &[Value],
     held: &std::collections::BTreeSet<Register>,
+    dynamic_arrays: &std::collections::BTreeSet<Register>,
     header: u32,
 ) -> Result<std::collections::BTreeSet<Register>, usize> {
     let numeric_uses: std::collections::BTreeSet<Register> = instructions
@@ -492,11 +510,13 @@ fn tagged_registers_with_failure(
     let mut tagged: std::collections::BTreeSet<Register> = instructions
         .iter()
         .filter_map(|instruction| identity_branch(*instruction, constants).map(|branch| branch.register))
+        // An entry array's register; a dynamic array's (one the region defines) is tagged by
+        // its values' webs instead (`representations`), as its register may hold Numbers too.
         .chain(instructions.iter().filter_map(|instruction| match instruction.op() {
             Op::GetIndex => instruction.operand_b().register_index(),
             Op::SetIndex | Op::RequireObjectCoercible => Some(instruction.register_b()),
             _ => None,
-        }))
+        }).filter(|register| !dynamic_arrays.contains(register)))
         .chain(instructions.iter().enumerate().flat_map(|(offset, instruction)| {
             if !matches!(instruction.op(), Op::Call | Op::CallArray) {
                 return Vec::new();
@@ -1235,7 +1255,11 @@ const WORD_BYTES: i32 = 8;
 /// a written array's appends read).
 pub(super) const ARRAY_WORDS: usize = 3;
 const FIELD_STORE_WORDS: usize = 1;
-const DYNAMIC_FIELD_HEAP_WORDS: usize = 3;
+/// The heap views native reads use (`LoopEntry::push_native_heap`): the object records'
+/// base, the property values' base and count, and the array records' base.
+const NATIVE_HEAP_WORDS: usize = 4;
+/// The heap view word of the array records' base, from the first heap view word.
+const NATIVE_HEAP_ARRAYS: usize = 3;
 /// The scratch registers' address an inlining region's record ends with.
 const SCRATCH_WORDS: usize = 1;
 const ENTRY_WORDS: usize =
@@ -1244,7 +1268,7 @@ const ENTRY_WORDS: usize =
         + ARRAY_WORDS * MAX_REGION_ARRAYS
         + MAX_REGION_FIELDS
         + FIELD_STORE_WORDS * MAX_REGION_FIELD_STORES
-        + DYNAMIC_FIELD_HEAP_WORDS
+        + NATIVE_HEAP_WORDS
         + SCRATCH_WORDS;
 
 impl LoopEntry {
@@ -1302,17 +1326,20 @@ impl LoopEntry {
         self.push(slot.addr() as u64);
     }
 
-    /// Heap views for the dynamic own-data field reader. The pointers are valid only for this
-    /// synchronous run and are never retained in compiled code.
-    pub(crate) fn push_native_field_heap(
+    /// Heap views for native field reads and array accesses (`NATIVE_HEAP_WORDS`). The
+    /// pointers are valid only for this synchronous run and are never retained in compiled
+    /// code.
+    pub(crate) fn push_native_heap(
         &mut self,
         objects: *const crate::heap::Object,
         properties: *const Value,
         property_len: usize,
+        arrays: *const crate::heap::ArrayObject,
     ) {
         self.push(objects.addr() as u64);
         self.push(properties.addr() as u64);
         self.push(property_len as u64);
+        self.push(arrays.addr() as u64);
     }
 
     /// The value of the region's `index`th field as pushed: its word follows the captures
@@ -1535,10 +1562,37 @@ fn admit_region(
 ) -> Result<LoopRegion, RegionAnalysisFailure> {
     let backedge = header + instructions.len() as u32 - 1;
     let paths = held_registers(&instructions, sites, header_live, objects);
+    // An indexed register the region defines, other than one holding a field's value at
+    // every read (`paths`), holds no entry array: each access reads the array it holds then
+    // (`LoopRegion::dynamic_arrays`). Its every definition reads an element or field or
+    // moves one, whose value stays tagged; any other is refused.
+    let mut dynamic_arrays = std::collections::BTreeSet::new();
+    for register in instructions
+        .iter()
+        .filter(|instruction| matches!(instruction.op(), Op::GetIndex | Op::SetIndex | Op::RequireObjectCoercible))
+        .filter_map(|instruction| object_reads(*instruction))
+        .filter(|register| !paths.contains_key(register))
+    {
+        let mut definitions = instructions
+            .iter()
+            .enumerate()
+            .filter(|(_, instruction)| instruction.defined_register() == Some(register))
+            .peekable();
+        if definitions.peek().is_none() {
+            continue;
+        }
+        if let Some((offset, _)) =
+            definitions.find(|(_, instruction)| !matches!(instruction.op(), Op::GetIndex | Op::GetField | Op::Move))
+        {
+            return Err(RegionAnalysisFailure::at(RegionRejection::ArrayRedefined, header, offset));
+        }
+        dynamic_arrays.insert(register);
+    }
     let mut tagged = match tagged_registers_with_failure(
         &instructions,
         constants,
         &objects.iter().chain(paths.keys()).copied().collect(),
+        &dynamic_arrays,
         header,
     ) {
         Ok(tagged) => tagged,
@@ -1588,18 +1642,6 @@ fn admit_region(
         .filter_map(|instruction| instruction.defined_register())
         .collect();
     for (offset, instruction) in instructions.iter().copied().enumerate() {
-        if instruction.op() == Op::Move
-            && instructions.iter().any(|candidate| {
-                matches!(candidate.op(), Op::GetIndex | Op::SetIndex | Op::RequireObjectCoercible)
-                    && object_reads(*candidate) == Some(instruction.result_register())
-            })
-        {
-            return Err(RegionAnalysisFailure::at(
-                RegionRejection::UnsupportedInstruction(Op::Move),
-                header,
-                offset,
-            ));
-        }
         if instruction.op() == Op::GetField {
             let path = field_path(instruction, sites, &paths).ok_or_else(|| {
                 RegionAnalysisFailure::at(
@@ -1688,7 +1730,7 @@ fn admit_region(
         if let Some(register) = object_reads(instruction).filter(|register| paths.contains_key(register)) {
             admission.field_arrays.entry(register).or_insert(false);
         }
-        if admit(&mut admission, instruction, constants, &tagged, &defined_registers).is_none() {
+        if admit(&mut admission, instruction, constants, &tagged, &defined_registers, &dynamic_arrays).is_none() {
             if std::env::var_os("QUENCH_JS_JIT_TRACE_OSR_REJECT").is_some() {
                 let constant = (instruction.op() == Op::LoadConst)
                     .then(|| constants.get(instruction.constant_index()).copied());
@@ -1786,21 +1828,13 @@ fn admit_region(
         .filter(|(_, role)| matches!(role, Role::Tagged | Role::TaggedArray { .. }))
         .map(|(register, _)| *register)
         .collect();
-    // An indexed register the region defines would be read as the array it held at entry.
-    for (register, role) in &admission.roles {
-        if !matches!(role, Role::Array { .. } | Role::TaggedArray { .. }) {
-            continue;
-        }
-        if let Some(offset) = instructions.iter().position(|instruction| instruction.defined_register() == Some(*register)) {
-            return Err(RegionAnalysisFailure::at(RegionRejection::ArrayRedefined, header, offset));
-        }
-    }
     let mut arrays: Vec<ArrayUse> = admission
         .roles
         .iter()
         .filter_map(|(register, role)| match role {
             Role::Array { written } | Role::TaggedArray { written }
-                if instructions.iter().any(|instruction| {
+                if !dynamic_arrays.contains(register)
+                    && instructions.iter().any(|instruction| {
                     matches!(instruction.op(), Op::GetIndex | Op::SetIndex | Op::RequireObjectCoercible)
                         && object_reads(*instruction) == Some(*register)
                 }) => Some(ArrayUse { register: *register, written: *written, field: None }),
@@ -1831,6 +1865,7 @@ fn admit_region(
         fields: admission.fields,
         field_reads,
         dynamic_field_reads,
+        dynamic_arrays,
         field_stores,
         field_store_sites,
         held,
@@ -1849,6 +1884,7 @@ fn admit(
     constants: &[Value],
     tagged: &std::collections::BTreeSet<Register>,
     defined_registers: &std::collections::BTreeSet<Register>,
+    dynamic_arrays: &std::collections::BTreeSet<Register>,
 ) -> Option<()> {
     match instruction.op() {
         Op::LoadConst => {
@@ -1900,7 +1936,9 @@ fn admit(
         }
         // An array the entry guard proved is an object passes.
         Op::RequireObjectCoercible => {
-            admission.array(instruction.register_b(), false)?;
+            if !dynamic_arrays.contains(&instruction.register_b()) {
+                admission.array(instruction.register_b(), false)?;
+            }
         }
         Op::GetIndex => {
             if tagged.contains(&instruction.result_register()) {
@@ -1909,7 +1947,10 @@ fn admit(
                 admission.result(instruction)?;
             }
             let base = instruction.operand_b().register_index()?;
-            admission.array(base, false)?;
+            // A dynamic array takes no register role (`LoopRegion::dynamic_arrays`).
+            if !dynamic_arrays.contains(&base) {
+                admission.array(base, false)?;
+            }
             admission.source(instruction.operand_c())?;
         }
         // Its field is the region's (`LoopRegion::field_reads`).
@@ -1922,7 +1963,9 @@ fn admit(
         }
         Op::SetIndex => {
             admission.number(instruction.register_a())?;
-            admission.array(instruction.register_b(), true)?;
+            if !dynamic_arrays.contains(&instruction.register_b()) {
+                admission.array(instruction.register_b(), true)?;
+            }
             admission.number(instruction.register_c())?;
         }
         Op::SetField | Op::SetFieldStrict => {
@@ -2268,11 +2311,19 @@ fn representations(
         }
     }
     // A region-defined receiver of a field read holds an object (`Lowering::dynamic_field`),
-    // and so does each value moved into it.
-    for &offset in region.dynamic_field_reads.keys() {
-        let pc = region.header + offset;
-        if let Some(receiver) = object_reads(region.instructions[offset as usize]) {
-            webs_representation[webs.read(region, pc, receiver)] = Representation::Tagged;
+    // as a dynamic array does (`Lowering::dynamic_array`), and so does each value moved into
+    // one.
+    for (offset, instruction) in region.instructions.iter().enumerate() {
+        let pc = region.header + offset as u32;
+        let Some(object) = object_reads(*instruction) else {
+            continue;
+        };
+        let dynamic = match instruction.op() {
+            Op::GetField => region.dynamic_field_reads.contains_key(&(offset as u32)),
+            _ => region.dynamic_arrays.contains(&object),
+        };
+        if dynamic {
+            webs_representation[webs.read(region, pc, object)] = Representation::Tagged;
         }
     }
     loop {
@@ -2502,6 +2553,10 @@ enum ArrayAccess {
     /// A written array's length is its backing's, which an append within `capacity`
     /// advances (`Lowering::store_index`): every array of one backing reads it alike.
     Written { capacity: ir::Value },
+    /// A dynamic array a store writes (`Lowering::dynamic_array`): the backing's length as
+    /// the access read it, below which a store replaces a present element and appends
+    /// nothing.
+    InBounds { length: ir::Value },
 }
 
 /// An element index as an access uses it: a 64-bit index scaled by the element size, plus a
@@ -3001,15 +3056,21 @@ fn counted_loop(
                 }
                 sum
             }
+            // A dynamic array's length is the record's at each access, which no entry proof
+            // reads (`LoopRegion::dynamic_arrays`).
             Op::GetIndex => {
                 let array = instruction.operand_b().register_index()?;
-                if let (true, Some(value)) = source(&state, pc, instruction.operand_c())? {
+                if !region.dynamic_arrays.contains(&array)
+                    && let (true, Some(value)) = source(&state, pc, instruction.operand_c())?
+                {
                     candidates.push(Fact { pc, value, bound: Bound::Index(array) });
                 }
                 None
             }
             Op::SetIndex => {
-                if let (true, Some(value)) = register(instruction.register_c()) {
+                if !region.dynamic_arrays.contains(&instruction.register_b())
+                    && let (true, Some(value)) = register(instruction.register_c())
+                {
                     candidates.push(Fact { pc, value, bound: Bound::Index(instruction.register_b()) });
                 }
                 None
@@ -3834,6 +3895,69 @@ impl<'a, 'b> Lowering<'a, 'b> {
         Some(ArrayView { elements, access })
     }
 
+    /// The view of the dynamic array `register` holds at `pc` (`LoopRegion::dynamic_arrays`),
+    /// from its record through the entry's heap views; `written` for a store's, whose
+    /// backing this array alone owns and whose array is neither frozen nor described per
+    /// index (no extras), so replacing a present element is its whole store. Any other
+    /// value exits at `pc`.
+    fn dynamic_array(&mut self, pc: u32, register: Register, written: bool) -> Option<ArrayView> {
+        let value = self.register(register);
+        if value.representation != Representation::Tagged {
+            return None;
+        }
+        let array_layout = crate::heap::NATIVE_ARRAY_LAYOUT;
+        let object_layout = crate::heap::NATIVE_OBJECT_LAYOUT;
+        let array_base = self.word(self.region.native_heap_word() + NATIVE_HEAP_ARRAYS);
+        let family = self.body.builder.ins().band_imm_u(value.value, ValueLayout::HEAP_FAMILY_MASK as i64);
+        let other = self.body.builder.ins().icmp_imm_u(IntCC::NotEqual, family, ValueLayout::DIRECT_ARRAY_TAG as i64);
+        self.guard(pc, other);
+        let record_id = self.body.builder.ins().ireduce(types::I32, value.value);
+        let beyond = self
+            .body
+            .builder
+            .ins()
+            .icmp_imm_u(IntCC::UnsignedGreaterThanOrEqual, record_id, array_layout.record_capacity as i64);
+        self.guard(pc, beyond);
+        let missing = self.body.builder.ins().icmp_imm_u(IntCC::Equal, array_base, 0);
+        self.guard(pc, missing);
+        let record_id = self.body.builder.ins().uextend(self.pointer, record_id);
+        let offset = self.body.builder.ins().imul_imm_u(record_id, array_layout.record_size as i64);
+        let record = self.body.builder.ins().iadd(array_base, offset);
+        let header = self.body.builder.ins().load(
+            types::I64,
+            flags(),
+            record,
+            (array_layout.elements_offset + array_layout.elements_header_offset) as i32,
+        );
+        let length = self.body.builder.ins().load(types::I32, flags(), header, array_layout.header_length_offset as i32);
+        let length = self.body.builder.ins().uextend(types::I64, length);
+        let elements = self.body.builder.ins().iadd_imm_u(header, array_layout.header_values_offset as i64);
+        if !written {
+            return Some(ArrayView { elements, access: ArrayAccess::Read { length } });
+        }
+        let owners = self.body.builder.ins().load(types::I32, flags(), header, array_layout.header_owners_offset as i32);
+        let shared = self.body.builder.ins().icmp_imm_u(IntCC::NotEqual, owners, 1);
+        self.guard(pc, shared);
+        let meta = self.body.builder.ins().load(
+            types::I32,
+            flags(),
+            record,
+            (array_layout.object_offset + object_layout.meta_offset) as i32,
+        );
+        let frozen = self.body.builder.ins().band_imm_u(meta, i64::from(array_layout.frozen_mask));
+        self.guard(pc, frozen);
+        let payload = self.body.builder.ins().load(
+            types::I64,
+            flags(),
+            record,
+            (array_layout.object_offset + object_layout.payload_offset) as i32,
+        );
+        let tag = self.body.builder.ins().band_imm_u(payload, object_layout.extras_tag_mask as i64);
+        let extras = self.body.builder.ins().icmp_imm_u(IntCC::Equal, tag, object_layout.extras_tag as i64);
+        self.guard(pc, extras);
+        Some(ArrayView { elements, access: ArrayAccess::InBounds { length } })
+    }
+
     fn array(&mut self, register: Register) -> ArrayView {
         self.array_view(register).expect("a region array")
     }
@@ -3947,11 +4071,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
         if let Some(inlining) = &self.region.inlining {
             // The scratch registers' address follows arrays and field-store slots; each
             // inlined callee is still the function its field held when the region was made.
-            let scratch = self.word(
-                arrays_start
-                    + ARRAY_WORDS * self.region.arrays.len()
-                    + self.region.field_store_sites.len(),
-            );
+            let scratch = self.word(self.region.scratch_word());
             self.body.builder.ins().stack_store(self.pointer, scratch, self.handoff, Handoff::Scratch.offset());
             self.scratch = Some(scratch);
             for frame in inlining.frames.clone() {
@@ -4322,11 +4442,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
     /// mismatch exits before GetField, so the lane retains complete accessor/proxy semantics.
     fn native_dynamic_field(&mut self, pc: u32, index: usize, receiver: ir::Value, load: NativeFieldLoad) -> Typed {
         let layout = crate::heap::NATIVE_OBJECT_LAYOUT;
-        let heap_base = ENTRY_CAPTURES
-            + self.region.captures.len()
-            + self.region.fields.len()
-            + ARRAY_WORDS * self.region.arrays.len()
-            + self.region.field_store_sites.len();
+        let heap_base = self.region.native_heap_word();
         let object_base = self.word(heap_base);
         let properties_base = self.word(heap_base + 1);
         let properties_len = self.word(heap_base + 2);
@@ -4719,8 +4835,8 @@ impl<'a, 'b> Lowering<'a, 'b> {
     }
 
     /// Exits at `pc` unless `index` is below `array`'s length; an `i32` key a proof covers is.
-    fn read_index(&mut self, pc: u32, array: ArrayView, index: ir::Value) {
-        if self.proved(pc) {
+    fn read_index(&mut self, pc: u32, array: ArrayView, index: ir::Value, dynamic: bool) {
+        if self.proved(pc) && !dynamic {
             return;
         }
         let length = self.length(array);
@@ -4731,7 +4847,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
     /// `array`'s length as an `i64`.
     fn length(&mut self, array: ArrayView) -> ir::Value {
         match array.access {
-            ArrayAccess::Read { length } => length,
+            ArrayAccess::Read { length } | ArrayAccess::InBounds { length } => length,
             ArrayAccess::Written { .. } => {
                 let length = self.body.builder.ins().load(types::I32, flags(), array.elements, crate::heap::LENGTH_FROM_VALUES);
                 self.body.builder.ins().uextend(types::I64, length)
@@ -4747,8 +4863,14 @@ impl<'a, 'b> Lowering<'a, 'b> {
         if self.proved(pc) {
             return;
         }
-        let ArrayAccess::Written { capacity } = array.access else {
-            unreachable!("a region stores only into arrays it writes")
+        let capacity = match array.access {
+            ArrayAccess::Written { capacity } => capacity,
+            ArrayAccess::InBounds { length } => {
+                let beyond = self.body.builder.ins().icmp(IntCC::UnsignedGreaterThanOrEqual, index, length);
+                self.guard(pc, beyond);
+                return;
+            }
+            ArrayAccess::Read { .. } => unreachable!("a region stores only into arrays it writes"),
         };
         let length = self.length(array);
         let within = self.body.builder.ins().icmp(IntCC::UnsignedLessThan, index, length);
@@ -5178,7 +5300,21 @@ impl<'a, 'b> Lowering<'a, 'b> {
                 self.define(result, value);
                 self.fall_through(pc)
             }
-            Op::RequireObjectCoercible => self.fall_through(pc),
+            // An entry array is an object; a dynamic array's value is tested here, and a
+            // nullish one throws in the lane at this PC.
+            Op::RequireObjectCoercible => {
+                if self.region.dynamic_arrays.contains(&instruction.register_b()) {
+                    let value = self.register(instruction.register_b());
+                    if value.representation != Representation::Tagged {
+                        return None;
+                    }
+                    let null = self.body.builder.ins().icmp_imm_u(IntCC::Equal, value.value, Value::NULL.to_bits() as i64);
+                    self.guard(pc, null);
+                    let undefined = self.body.builder.ins().icmp_imm_u(IntCC::Equal, value.value, Value::UNDEFINED.to_bits() as i64);
+                    self.guard(pc, undefined);
+                }
+                self.fall_through(pc)
+            }
             Op::GetField => {
                 let field = *self.region.field_reads.get(&(pc - self.region.header))?;
                 let value = if self.region.dynamic_field_reads.contains_key(&(pc - self.region.header)) {
@@ -5224,7 +5360,8 @@ impl<'a, 'b> Lowering<'a, 'b> {
                 // An index sum just before checked this read's bounds (`index_sum`).
                 let bounded = self.bounded_reads.remove(&pc);
                 let base = instruction.operand_b().register_index()?;
-                let array = self.array(base);
+                let dynamic = self.region.dynamic_arrays.contains(&base);
+                let array = if dynamic { self.dynamic_array(pc, base, false)? } else { self.array(base) };
                 let key = self.operand(instruction.operand_c())?;
                 // A tagged result: a register the region keeps tagged, or a receiver a field read
                 // loads from (`representations`).
@@ -5244,7 +5381,9 @@ impl<'a, 'b> Lowering<'a, 'b> {
                     _ => dfg.resolve_aliases(key.value),
                 };
                 let read = (base, key_value, representation);
-                if let Some((value, computed, stores)) = self.element_reads.get(&read).copied()
+                // A dynamic array's register may name another array by the next read.
+                if !dynamic
+                    && let Some((value, computed, stores)) = self.element_reads.get(&read).copied()
                     && computed == chain
                     && stores == self.element_stores
                 {
@@ -5255,7 +5394,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
                     Some(wide) => ElementIndex { wide, displacement: 0 },
                     None => {
                         let (index, element) = self.element_index(pc, key);
-                        self.read_index(pc, array, index);
+                        self.read_index(pc, array, index, dynamic);
                         element
                     }
                 };
@@ -5288,20 +5427,34 @@ impl<'a, 'b> Lowering<'a, 'b> {
                         bits
                     }
                 };
-                self.element_reads.insert(read, (Typed { value, representation }, chain, self.element_stores));
+                if !dynamic {
+                    self.element_reads.insert(read, (Typed { value, representation }, chain, self.element_stores));
+                }
                 self.define(instruction.result_register(), Typed { value, representation });
                 self.fall_through(pc)
             }
             Op::SetIndex => {
                 self.element_stores += 1;
-                let array = self.array(instruction.register_b());
+                let base = instruction.register_b();
+                let dynamic = self.region.dynamic_arrays.contains(&base);
+                // A dynamic array takes only a Number, whose store logs nothing.
+                let value = self.register(instruction.register_a());
+                if dynamic && value.representation == Representation::Tagged {
+                    return None;
+                }
+                let array = if dynamic { self.dynamic_array(pc, base, true)? } else { self.array(base) };
                 let key = self.register(instruction.register_c());
                 let (index, element) = self.element_index(pc, key);
                 self.store_index(pc, array, index);
                 let (address, displacement) = self.element_address(array.elements, element);
-                // A hole takes the value as an own data element: the entry found no prototype
-                // that holds an index (`LoopRegion::arrays`).
-                let value = self.register(instruction.register_a());
+                if dynamic {
+                    // A hole is no own element: its store would consult the prototypes.
+                    let old = self.body.builder.ins().load(types::I64, flags(), address, displacement);
+                    let hole = self.body.builder.ins().icmp_imm_u(IntCC::Equal, old, Value::DELETED.to_bits() as i64);
+                    self.guard(pc, hole);
+                }
+                // A hole of an entry array takes the value as an own data element: the entry
+                // found no prototype that holds an index (`LoopRegion::arrays`).
                 let bits = self.encoding(value);
                 self.body.builder.ins().store(flags(), bits, address, displacement);
                 self.fall_through(pc)
@@ -5472,6 +5625,7 @@ mod tests {
             &constants,
             &std::collections::BTreeSet::new(),
             &std::collections::BTreeSet::new(),
+            &std::collections::BTreeSet::new(),
         )
         .is_some());
         assert_eq!(admission.numbers.get(&65_536), Some(&0.0));
@@ -5504,6 +5658,7 @@ mod tests {
             instruction,
             &constants,
             &tagged,
+            &std::collections::BTreeSet::new(),
             &std::collections::BTreeSet::new(),
         )
         .is_some());

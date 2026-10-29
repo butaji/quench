@@ -7049,10 +7049,11 @@ fn lane_loop_entry<H: Host>(
         }?;
         entry.push_field_store(pointer);
     }
-    if region.has_dynamic_field_reads() && region.inlining.is_none() {
+    if region.reads_heap_natively() {
         let object_base = vm.heap.object_record_base().unwrap_or(std::ptr::null());
         let (properties_base, properties_len) = vm.heap.native_property_values();
-        entry.push_native_field_heap(object_base, properties_base, properties_len);
+        let array_base = vm.heap.array_record_base().unwrap_or(std::ptr::null());
+        entry.push_native_heap(object_base, properties_base, properties_len, array_base);
     }
     if let Some(inlining) = &region.inlining {
         // Leaving at an inlined instruction makes its callee's activation as the call would:

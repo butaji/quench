@@ -59,6 +59,8 @@ pub(crate) struct ValueVec {
 pub(crate) const VALUE_VEC_START_BITS: u32 = START_MASK;
 /// `ValueVec::start` bits that hold the object's integrity level.
 pub(crate) const VALUE_VEC_INTEGRITY_BITS: u32 = NON_EXTENSIBLE | FROZEN;
+/// The integrity bit of a frozen object, whose elements no store replaces.
+pub(crate) const VALUE_VEC_FROZEN: u32 = FROZEN;
 
 impl ValueVec {
     /// The two words, for an owner that stores them apart.
