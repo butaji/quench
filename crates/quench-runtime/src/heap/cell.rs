@@ -963,6 +963,11 @@ impl Native {
                 | Self::ArraySplice
                 | Self::StringSplit
                 | Self::StringMatch
+                | Self::StringReplace
+                | Self::StringReplaceAll
+                | Self::NumberString
+                | Self::MapEntries
+                | Self::ArraySlice
                 | Self::RegExpTest
                 | Self::JsonParse
                 | Self::JsonStringify

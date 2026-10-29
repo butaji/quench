@@ -1069,6 +1069,7 @@ const BESIDE_ACTIVATIONS: &[&str] = &[
     "asyncResourceExitScope",
     "stringDecoderDecode",
     "markAsUncloneable",
+    "objectTemplateCopy",
 ];
 
 impl quench_runtime::Host for NodeHost {
