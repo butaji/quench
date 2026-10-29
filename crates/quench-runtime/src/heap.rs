@@ -3396,32 +3396,35 @@ impl Heap {
                 self.object_records.get_live_mut_unbarriered(record_id)
             }
         };
-        // As `property_get_flat`: arena values without extras need no other decoding.
-        if let Some(start) = data.plain_storage_start() {
-            debug_assert!(!data.properties().is_dictionary(), "the caller matched an exact shape");
-            // SAFETY: the caller proves that the property slot exists outside dictionary
-            // storage.
-            unsafe { self.properties.set_flat_at(start, slot, value) };
-            return true;
+        store_exact_slot::<LOGS>(data, &mut self.properties, slot, value)
+    }
+
+    /// `record_property_set_flat` with the write barrier for an object in a slot cell (a
+    /// RegExp, Map, Date or any other object without a record) whose exact shape is `shape`:
+    /// one owner lookup; `false` leaves any other value to the caller unchanged.
+    ///
+    /// # Safety
+    /// `shape` is a shape outside dictionary storage holding a property at `slot`.
+    #[inline(always)]
+    pub(crate) unsafe fn cell_property_set_exact(&mut self, object: Value, shape: u32, slot: usize, value: Value) -> bool {
+        let Some(HeapReference::LegacySlot(index)) = object.heap_reference() else {
+            return false;
+        };
+        let index = index as usize;
+        let Self { slots, properties, .. } = &mut *self;
+        let Some(data) = slots.get_mut(index).and_then(|slot| slot.cell.as_mut()).and_then(Cell::object_mut) else {
+            return false;
+        };
+        if data.exact_shape() != shape || data.is_module_namespace() || data.is_arguments_object() {
+            return false;
         }
-        if data.properties().has_inline_property_storage() {
-            if !data.store_inline_narrow(slot, value) {
-                // Without `LOGS` the widening, which changes nothing before it, is left to the
-                // caller's logged store too, so this path makes no call at all.
-                if !LOGS {
-                    return false;
-                }
-                let length = self.properties.len(data.properties());
-                widen_inline_storage(data, &mut self.properties, data.shape(), length, slot, value);
-            }
-            return true;
+        store_exact_slot::<true>(data, properties, slot, value);
+        if value.heap_index().is_some() {
+            self.remember(index);
         }
-        let vector = data.properties();
-        debug_assert!(!vector.is_dictionary(), "the caller matched an exact shape");
-        // SAFETY: the caller proves that the property slot exists outside dictionary storage.
-        unsafe { self.properties.set_flat_unchecked(vector, slot, value) };
         true
     }
+
     /// Appends `value` as the next property of `object`, which moves to `shape`, whose
     /// storage length is one more than the object's: inline while the values fit, otherwise
     /// in the arena, into which the add that outgrows the inline values moves them. One owner
@@ -4191,4 +4194,33 @@ fn append_property(data: &mut Object, properties: &mut ValueArena, slot: usize, 
         data.replace_property_storage(moved, [Value::UNDEFINED; INLINE_PROPERTY_COUNT]);
     }
     data.set_shape(shape);
+}
+
+/// Stores `value` at `slot` of `data`, whose exact shape outside dictionary storage holds it:
+/// arena values without extras need no other decoding (as `property_get_flat`), and inline
+/// values that cannot take `value` move to the arena, which without `LOGS` is left to the
+/// caller's logged store (`false`, with nothing changed).
+#[inline(always)]
+fn store_exact_slot<const LOGS: bool>(data: &mut Object, properties: &mut ValueArena, slot: usize, value: Value) -> bool {
+    if let Some(start) = data.plain_storage_start() {
+        debug_assert!(!data.properties().is_dictionary(), "the caller matched an exact shape");
+        // SAFETY: the caller proves that the property slot exists outside dictionary storage.
+        unsafe { properties.set_flat_at(start, slot, value) };
+        return true;
+    }
+    if data.properties().has_inline_property_storage() {
+        if !data.store_inline_narrow(slot, value) {
+            if !LOGS {
+                return false;
+            }
+            let length = properties.len(data.properties());
+            widen_inline_storage(data, properties, data.shape(), length, slot, value);
+        }
+        return true;
+    }
+    let vector = data.properties();
+    debug_assert!(!vector.is_dictionary(), "the caller matched an exact shape");
+    // SAFETY: the caller proves that the property slot exists outside dictionary storage.
+    unsafe { properties.set_flat_unchecked(vector, slot, value) };
+    true
 }

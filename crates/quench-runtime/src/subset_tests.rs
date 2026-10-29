@@ -902,6 +902,37 @@ print(out.join(" "));
 }
 
 #[test]
+fn own_field_stores_into_slot_cells_keep_their_semantics() {
+    // An own-field store into an object without a record (a RegExp's `lastIndex`, a Map's,
+    // a Date's or a function's property) takes the own store's cell path
+    // (`Heap::cell_property_set_exact`): reference and primitive values, a non-writable
+    // `lastIndex` in strict code, frozen and non-extensible receivers, a shape changed by a
+    // delete and many fresh RegExps. Node 26 prints the same.
+    let source = r#"
+(function () {
+"use strict";
+const out = [];
+function put(o, v) { o.lastIndex = v; return o.lastIndex; }
+function tag(o, v) { o.tag = v; return o.tag; }
+const re = /a/g;
+let s = 0; for (let i = 0; i < 300; i++) s += put(re, i); out.push(s);
+out.push(put(re, "x"), typeof put(re, {}), put(re, 7));
+Object.defineProperty(re, "lastIndex", { writable: false });
+let e = ""; try { put(re, 9); } catch (x) { e = x.constructor.name; } out.push(e, re.lastIndex);
+const m = new Map(); m.tag = 0; const d = new Date(0); d.tag = 0; const f = function () {}; f.tag = 0;
+let t = 0; for (let i = 0; i < 300; i++) t += tag(m, i) + tag(d, 1) + tag(f, 2); out.push(t);
+Object.freeze(m); let e2 = ""; try { tag(m, 5); } catch (x) { e2 = x.constructor.name; } out.push(e2, m.tag);
+const r2 = /b/y; Object.preventExtensions(r2); out.push(put(r2, 3));
+const r3 = /c/; r3.extra = 1; delete r3.extra; out.push(put(r3, 4), Object.keys(r3).join());
+const big = []; for (let i = 0; i < 300; i++) { const r = new RegExp("q"); big.push(put(r, { i })); } out.push(big[299].i);
+out.push(JSON.stringify(Object.getOwnPropertyDescriptor(re, "lastIndex")));
+print(out.join(" "));
+})();
+"#;
+    assert_eq!(output(source), ["44850 x object 7 TypeError 7 45750 TypeError 299 3 4  299 {\"value\":7,\"writable\":false,\"enumerable\":false,\"configurable\":false}"]);
+}
+
+#[test]
 fn regexp_tests_through_a_proved_builtin_exec_keep_exec_lookups() {
     // `test` calls the builtin exec in place while a proof for the RegExp's shape names the
     // prototype's `exec` slot (`RegExpExecProof`): a patched, restored, own, deleted and
