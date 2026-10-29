@@ -2963,8 +2963,11 @@ const getLinkedBinding = () => ({});
                 } else {
                     ""
                 };
+                let undici = library_relative == Some(Path::new(crate::modules::webidl_shared_vm::UNDICI));
                 let prefix = if in_node_internal {
                     format!("(function (exports, require, module, __filename, __dirname, primordials, __nativeInternalBinding) {{ 'use strict'; {internal_binding}")
+                } else if undici {
+                    crate::modules::webidl_shared_vm::UNDICI_WRAPPER_PREFIX.to_owned()
                 } else {
                     format!("{WRAPPER_PREFIX}{internal_binding}")
                 };
@@ -3035,6 +3038,8 @@ const getLinkedBinding = () => ({});
                         context
                             .host_function(crate::host::shared_vm::operation("traceInternal"))?,
                     );
+                } else if undici {
+                    arguments.push(context.host_function(crate::host::shared_vm::operation("byteStringEnd"))?);
                 }
                 context.call_rooted(wrapper, exports, &arguments)?;
                 if let Some(root) = primordial_seed {

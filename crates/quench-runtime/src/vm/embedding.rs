@@ -662,6 +662,24 @@ impl<H: Host> Vm<H> {
         Ok(self.heap.string(value).map(|text| text.units().utf8_len()))
     }
 
+    /// Whether `String.prototype.charCodeAt` is this realm's own, an own data property of the
+    /// realm's `String.prototype`: a host that reads code units in its place calls nothing a
+    /// script could observe.
+    pub(crate) fn embedding_string_char_code_at_intact(&self) -> bool {
+        self.own_property(self.string_proto, self.runtime_atoms.char_code_at)
+            .is_some_and(|method| self.is_current_realm_native(method, Native::StringCharCodeAt))
+    }
+
+    /// The index of the first code unit of the string at `root` above `limit`, or its length
+    /// when none is; `None` denotes a non-string.
+    pub(crate) fn embedding_string_units_within(&self, root: RootId, limit: u16) -> Result<Option<usize>, JsError> {
+        let value = self.embedding_value(root)?;
+        Ok(self.heap.string(value).map(|text| {
+            let units = text.units();
+            units.iter().position(|unit| unit > limit).unwrap_or(units.len())
+        }))
+    }
+
     pub(crate) fn embedding_string_text(&self, root: RootId) -> Result<Option<String>, JsError> {
         let value = self.embedding_value(root)?;
         Ok(self.heap.string(value).map(|text| text.host_string().to_owned()))

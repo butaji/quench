@@ -493,6 +493,19 @@ impl<'a, H: Host> NativeContext<'a, H> {
         result.map_err(|error| self.error(error))
     }
 
+    /// Whether `String.prototype.charCodeAt` is the realm's own
+    /// (`Vm::embedding_string_char_code_at_intact`).
+    pub fn string_char_code_at_intact(&self) -> bool {
+        self.vm.embedding_string_char_code_at_intact()
+    }
+
+    /// The index of a string's first code unit above `limit`, or its length when none is,
+    /// without coercion or copying; `None` denotes a non-string.
+    pub fn string_units_within(&mut self, root: RootId, limit: u16) -> Result<Option<usize>, RootedError> {
+        let result = self.vm.embedding_string_units_within(root, limit);
+        result.map_err(|error| self.error(error))
+    }
+
     /// Apply the shared object integrity operation, including Proxy traps.
     pub fn prevent_extensions_rooted(&mut self, object: RootId) -> Result<bool, RootedError> {
         let result = self.vm.embedding_prevent_extensions(object);

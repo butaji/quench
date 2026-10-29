@@ -156,6 +156,7 @@ fn configure_node_compat_version(root: &std::path::Path) {
 }
 
 include!("src/node_source_dependencies.rs");
+include!("src/undici_bindings.rs");
 include!("src/node_source_patches.rs");
 
 /// Node's pinned library runs as guest JavaScript in the shared VM. Embedding

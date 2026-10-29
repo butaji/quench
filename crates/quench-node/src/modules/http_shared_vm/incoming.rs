@@ -188,10 +188,14 @@ pub(super) fn create_function(
     )?;
     let capture_limit = c.number(f64::from(TEMPLATE_CAPTURE_LIMIT));
     let debuglog = crate::host::shared_vm::commonjs::node_library_export(c, "http.js", "internal/util/debuglog.js", "debuglog")?;
-    let originals = crate::host::shared_vm::commonjs::LibraryOriginal::ALL.map(|original| {
-        c.host_mut().shared_state().borrow().library_originals.get(original)
-    });
-    let [push, listener_count, add_header_lines] = originals.map(|original| original.unwrap_or_else(|| c.undefined()));
+    use crate::host::shared_vm::commonjs::LibraryOriginal;
+    let mut original = |original: LibraryOriginal| {
+        let recorded = c.host_mut().shared_state().borrow().library_originals.get(original);
+        recorded.unwrap_or_else(|| c.undefined())
+    };
+    let push = original(LibraryOriginal::ReadablePush);
+    let listener_count = original(LibraryOriginal::EmitterListenerCount);
+    let add_header_lines = original(LibraryOriginal::IncomingAddHeaderLines);
     let undefined = c.undefined();
     c.call_rooted(
         factory,
