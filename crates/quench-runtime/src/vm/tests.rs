@@ -12242,6 +12242,198 @@ fn shared_osr_appends_and_fills_holes_in_place() {
 }
 
 #[test]
+#[cfg(not(quench_profiled))]
+fn shared_osr_wavefront_pairs_keep_stencil_sweep_results() {
+    // A Gauss-Seidel sweep's row loop runs its rows in pairs (`compiled::wavefront`): each
+    // case reads what program order reads, bit for bit: an odd last row, integral results,
+    // signed zeros and NaN, an element whose `valueOf` runs (which restores the pair and
+    // leaves for the general path), and an array read and written as one (not entered).
+    let source = r#"
+      function bump(x) { x[0] = x[0] + 1; }
+      function sweep(x, x0, a, c, width, height, rowSize, sweeps) {
+        var invC = 1 / c;
+        for (var k = 0; k < sweeps; k++) {
+          for (var j = 1; j <= height; j++) {
+            var lastRow = (j - 1) * rowSize, currentRow = j * rowSize, nextRow = (j + 1) * rowSize;
+            var lastX = x[currentRow];
+            ++currentRow;
+            for (var i = 1; i <= width; i++)
+              lastX = x[currentRow] = (x0[currentRow] + a * (lastX + x[++currentRow] + x[++lastRow] + x[++nextRow])) * invC;
+          }
+          bump(x);
+        }
+      }
+      function make(n, f) { var a = []; for (var i = 0; i < n; i++) a.push(f(i)); return a; }
+      function digest(x) { var h = 0; for (var i = 0; i < x.length; i++) h = (h * 31 + (Object.is(x[i], -0) ? 7 : x[i] !== x[i] ? 11 : Math.floor(x[i] * 4096))) | 0; return h; }
+      var log = [], out = [];
+      function run(width, height, a, c, fill, fill0, alias, poke) {
+        var rowSize = width + 2, n = rowSize * (height + 2);
+        var x = make(n, fill), x0 = alias ? x : make(n, fill0);
+        if (poke) x[3 * rowSize + 4] = { valueOf: function () { log.push("valueOf"); return 2; } };
+        for (var r = 0; r < 40; r++) sweep(x, x0, a, c, width, height, rowSize, 3);
+        out.push(digest(x));
+      }
+      run(8, 6, 1, 4, function (i) { return (i % 7) * 0.25 + 0.5; }, function (i) { return (i % 5) * 0.125; }, false, false);
+      run(8, 7, 1, 4, function (i) { return (i % 7) * 0.25 + 0.5; }, function (i) { return (i % 5) * 0.125; }, false, false);
+      run(6, 4, 0, 1, function (i) { return i % 3; }, function (i) { return i % 9 - 4; }, false, false);
+      run(6, 4, 1, 3, function (i) { return i === 20 ? NaN : -0; }, function (i) { return i % 4 ? -0 : 0; }, false, false);
+      run(8, 6, 1, 4, function (i) { return (i % 7) * 0.25 + 0.5; }, function (i) { return (i % 5) * 0.125; }, false, true);
+      run(8, 6, 0.5, 2.5, function (i) { return (i % 7) * 0.25 + 0.5; }, null, true, false);
+      print(out.join(" ") + " " + log.length);
+    "#;
+    let expected = ["2081041934 -575006534 -311107584 -869203481 2081041934 -1370797326 2"];
+    let program = Engine::specialize(source, "osr-wavefront.js").unwrap();
+    let interpreted = Rc::new(RefCell::new(Vec::new()));
+    Vm::new(TestHost::writing_to(interpreted.clone())).execute(&program).unwrap();
+    assert_eq!(interpreted.borrow().as_slice(), expected);
+    let function_id = program
+        .functions
+        .iter()
+        .position(|function| function.header().name.is_some_and(|name| &program.atoms[name as usize] == "sweep"))
+        .unwrap();
+    for policy in crate::MemoryPolicy::ALL {
+        let output = Rc::new(RefCell::new(Vec::new()));
+        let mut compiled = Vm::new(TestHost::writing_to(output.clone()));
+        compiled.set_memory_policy(policy);
+        compiled.set_execution_mode(crate::ExecutionMode::Compiled);
+        compiled.programs.enable_js_jit_diagnostics();
+        compiled.execute(&program).unwrap();
+        assert_eq!(output.borrow().as_slice(), expected, "{policy:?}");
+        if !super::compiled::loop_tier_compiles(policy) {
+            continue;
+        }
+        let views = compiled
+            .programs
+            .lane_views(super::program_store::ProgramId::MAIN)
+            .expect("main program lane views");
+        let osr = views
+            .get(function_id)
+            .and_then(super::program_store::derived_lane_view)
+            .expect("hot sweep lane view")
+            .osr_diagnostics();
+        assert!(osr.native_region_runs > 0, "no native sweep under {policy:?}: {osr:?}");
+    }
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
+fn shared_osr_appends_past_a_full_backing_keep_the_region_native() {
+    // Each call appends to a fresh array past its backing's capacity (V8-v7 Crypto's
+    // `bnpMultiplyTo` into a new `BigInteger`): the general path grows the backing and the
+    // region keeps running natively, through more such exits than a region may take of
+    // values leaving the subset.
+    let source = r#"
+      function fill(n) {
+        var a = [];
+        for (var i = 0; i < n; i++) a[i] = (i * 7 + 3) & 255;
+        return a;
+      }
+      var sum = 0;
+      for (var k = 0; k < 3000; k++) {
+        var a = fill(40 + (k & 7));
+        sum = (sum * 31 + a[a.length - 1] + a.length) | 0;
+      }
+      print(sum);
+    "#;
+    let program = Engine::specialize(source, "osr-append-grow.js").unwrap();
+    let interpreted = Rc::new(RefCell::new(Vec::new()));
+    Vm::new(TestHost::writing_to(interpreted.clone())).execute(&program).unwrap();
+    let expected = interpreted.borrow().clone();
+    let function_id = program
+        .functions
+        .iter()
+        .position(|function| function.header().name.is_some_and(|name| &program.atoms[name as usize] == "fill"))
+        .unwrap();
+    for policy in crate::MemoryPolicy::ALL {
+        let output = Rc::new(RefCell::new(Vec::new()));
+        let mut compiled = Vm::new(TestHost::writing_to(output.clone()));
+        compiled.set_memory_policy(policy);
+        compiled.set_execution_mode(crate::ExecutionMode::Compiled);
+        compiled.programs.enable_js_jit_diagnostics();
+        compiled.execute(&program).unwrap();
+        assert_eq!(*output.borrow(), expected, "{policy:?}");
+        if !super::compiled::loop_tier_compiles(policy) {
+            continue;
+        }
+        let views = compiled
+            .programs
+            .lane_views(super::program_store::ProgramId::MAIN)
+            .expect("main program lane views");
+        let osr = views
+            .get(function_id)
+            .and_then(super::program_store::derived_lane_view)
+            .expect("hot fill lane view")
+            .osr_diagnostics();
+        assert!(osr.native_region_runs > 2000, "fill left native code under {policy:?}: {osr:?}");
+        assert_eq!(osr.exits, 0, "{policy:?}: {osr:?}");
+    }
+}
+
+#[test]
+fn shared_osr_int32_element_scans_keep_nested_loop_results() {
+    // A nested loop reads arrays entry scanned to hold only `i32`s, without a tag guard
+    // per read: a double, a hole past a grown length and a negative zero each fail the
+    // scan, which widens the array's reads for the next compilation; results match Node.
+    let source = r#"
+function run(a, w, n) {
+  var s = 0;
+  for (var i = 0; i < n; i++) {
+    for (var j = 0; j < a.length; j++) { s = (s + a[j] * (i + 1)) | 0; w[j] = (w[j] + a[j]) | 0; }
+  }
+  return s;
+}
+var out = [];
+for (var k = 0; k < 400; k++) {
+  var a = [], w = [];
+  for (var j = 0; j < 30; j++) { a.push((j * 7 + k) | 0); w.push(j); }
+  if (k == 300) a[5] = 2.5;
+  if (k == 350) { a.length = 40; }
+  if (k == 370) a[3] = -0;
+  out.push(run(a, w, 20), w[7], w[29]);
+}
+var h = 0; for (var i = 0; i < out.length; i++) h = (h * 31 + (out[i] | 0) + (out[i] !== out[i] ? 7 : 0)) | 0;
+print(h + " " + out.slice(-6).join(","));
+    "#;
+    let expected = ["-2093528250 3146850,8947,12049,3153150,8967,12069"];
+    let program = Engine::specialize(source, "osr-int32-scan.js").unwrap();
+    for mode in [None, Some(crate::ExecutionMode::Compiled)] {
+        let output = Rc::new(RefCell::new(Vec::new()));
+        let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+        if let Some(mode) = mode {
+            vm.set_execution_mode(mode);
+        }
+        vm.execute(&program).unwrap();
+        assert_eq!(output.borrow().as_slice(), expected, "{mode:?}");
+    }
+}
+
+#[test]
+fn char_at_and_from_char_code_share_ascii_unit_strings() {
+    // One-unit ASCII results come from a cache a collection empties (`ascii_unit_strings`);
+    // every other unit, an index out of range and a coerced index take the native. The
+    // output is Node's, through many collections.
+    let source = r#"
+var s = "aZé中😀~", out = [];
+for (var i = -1; i < 9; i++) out.push(JSON.stringify(s.charAt(i)), s.charAt(i).length);
+var junk = []; for (var k = 0; k < 200000; k++) junk.push({k: k, t: String.fromCharCode(65 + k % 26) + s.charAt(k % 3)});
+out.push(junk[12345].t, String.fromCharCode(0).length, String.fromCharCode(127).length, String.fromCharCode(128).charCodeAt(0), "x".charAt(0) === "x", "abc".charAt(1.7), "abc".charAt("2"));
+var r = ""; for (var j = 0; j < 300; j++) r += "0123456789abcdef".charAt(j & 15); out.push(r.length, r.slice(250));
+print(out.join("|"));
+    "#;
+    let expected = [r#"""|0|"a"|1|"Z"|1|"é"|1|"中"|1|"\ud83d"|1|"\ude00"|1|"~"|1|""|0|""|0|Va|1|1|128|true|b|c|300|abcdef0123456789abcdef0123456789abcdef0123456789ab"#];
+    let program = Engine::specialize(source, "ascii-unit-strings.js").unwrap();
+    for mode in [None, Some(crate::ExecutionMode::Compiled)] {
+        let output = Rc::new(RefCell::new(Vec::new()));
+        let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+        if let Some(mode) = mode {
+            vm.set_execution_mode(mode);
+        }
+        vm.execute(&program).unwrap();
+        assert_eq!(output.borrow().as_slice(), expected, "{mode:?}");
+    }
+}
+
+#[test]
 fn shared_osr_indexes_the_row_a_loop_reads_each_iteration() {
     // `a[e][f] = x` in a loop over `e` indexes the row `a[e]` the iteration read, not the
     // row the region entered with: the region declines an indexed register it defines

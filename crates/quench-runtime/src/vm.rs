@@ -1160,6 +1160,8 @@ const STRING_ATOM_CACHE_SIZE: usize = 256;
 const ATOM_STRING_CACHE_SIZE: usize = STRING_ATOM_CACHE_SIZE;
 /// An empty `Vm::recent_atom_strings` slot: no atom has this id.
 const NO_RECENT_ATOM: Atom = Atom::MAX;
+/// The code units below which a unit is ASCII.
+const ASCII_UNITS: usize = 0x80;
 #[derive(Clone, Copy)]
 struct StringConcatCache {
     left: Value,
@@ -1955,6 +1957,10 @@ pub(crate) struct Vm<H> {
     /// A program compiled at run time spells its property names with such atoms, and
     /// `Object.keys` of its objects had made each key's string again on every call.
     recent_atom_strings: Option<Box<[(Atom, Value); ATOM_STRING_CACHE_SIZE]>>,
+    /// The one-unit ASCII strings recently made (`charAt`, `String.fromCharCode`), by unit;
+    /// collection empties it, as `recent_atom_strings`. A loop building a string a unit at a
+    /// time (V8-v7 Crypto's hex conversion) had allocated each unit's string anew.
+    ascii_unit_strings: Option<Box<[Value; ASCII_UNITS]>>,
     call_targets: Box<[InLoopCallTarget; CALL_TARGET_CACHE_SIZE]>,
     field_caches: site_table::SiteTable<FieldCache>,
     /// Field load sites whose data property was found beyond the immediate prototype, by

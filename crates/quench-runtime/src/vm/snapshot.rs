@@ -354,6 +354,7 @@ impl<H: Host> Vm<H> {
             string_concats: _,
             string_atoms: _,
             recent_atom_strings: _,
+            ascii_unit_strings: _,
             call_targets: _,
             field_caches: _,
             inherited_field_indices: _,
