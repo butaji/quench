@@ -1,0 +1,23 @@
+{
+  "name": "quench-layout-corpus",
+  "private": true,
+  "description": "Package workloads of tools/bolt-layout.sh's training corpus (tools/layout-corpus/npm-*.js).",
+  "dependencies": {
+    "acorn": "8.18.0",
+    "ajv": "6.15.0",
+    "diff": "4.0.4",
+    "escape-string-regexp": "4.0.0",
+    "eslint": "10.1.0",
+    "esprima": "4.0.1",
+    "minimatch": "10.2.4",
+    "path-to-regexp": "3.3.0",
+    "semver": "7.8.5",
+    "strip-ansi": "7.2.0",
+    "typescript": "6.0.2"
+  },
+  "overrides": {
+    "@types/estree": "1.0.9",
+    "ansi-regex": "6.2.2",
+    "brace-expansion": "5.0.9"
+  }
+}
