@@ -268,6 +268,15 @@ program that does not compile that way compiles eagerly and reports the eager di
 `QUENCH_EAGER_FUNCTION_BODIES` (any value) compiles eagerly, for measuring the two. CommonJS
 goal detection checks syntax the same way (`Engine::syntax_valid`).
 
+A compilation whose program the host keeps (`ReleasedRecords::Encoded`) encodes the record of
+each function it finishes and releases during its load as it releases it, lowered as its
+first call would lower it (`binary::LoadEncoding`); the cache entry extends that region of
+records instead of compiling every released function again only to write it. Whether names
+resolve statically in a function also reads the functions around it, which finish after it,
+so the entry settles that one fact when it is written. A module is encoded before its store
+releases the records it kept. Its warm decode is unchanged: the records are those a replay
+writes, under compact atom ids numbered in another order.
+
 A decoded program parses nothing, so it reaches none of a compilation's phase boundaries
 (`set_compile_phase_boundary`), where the host releases its read-only pages. The runtime calls
 `Host::cached_program_decoded` after each decode instead. Once bootstrap has finished,

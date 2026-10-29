@@ -13703,7 +13703,7 @@ unsafe fn window_environment<H: Host>(
         // can observe its implicit bindings (`Function::activation_bindings_observable`);
         // any other scope names only its program, which needs no allocation.
         let body = code.function(function as usize);
-        let scope = if !body.is_arrow && body.activation_bindings_observable(&code.atoms, &code.functions) {
+        let scope = if !body.is_arrow && body.activation_bindings_observable(code) {
             crate::heap::EnvironmentScopeRef::new(crate::heap::EnvironmentScope {
                 program: Some(program.raw()),
                 root_eval_scope: false,

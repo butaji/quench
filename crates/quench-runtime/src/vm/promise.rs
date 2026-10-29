@@ -3608,11 +3608,10 @@ impl<H: Host> Vm<H> {
         self.decode_cached_program(bytes, text, 0, &module.name, specialized).ok()
     }
 
-    /// Offers the host the compiled program of a static module (`kept_static_module_program`).
-    fn keep_static_module_program(&mut self, module: &ModuleSource, program: ProgramId) {
-        if let Some(residual) = self.programs.get(program)
-            && let Some(bytes) = self.encode_cached_program(&residual)
-        {
+    /// Offers the host the compiled program of a static module (`kept_static_module_program`),
+    /// before its store releases its records, which encoding would compile again.
+    fn keep_static_module_program(&mut self, module: &ModuleSource, residual: &ResidualProgram) {
+        if let Some(bytes) = self.encode_cached_program(residual) {
             self.host
                 .keep_compiled_program(&module.name, &[self.specialization_part(), STATIC_MODULE_GOAL, &module.source], &bytes);
         }
@@ -3658,6 +3657,7 @@ impl<H: Host> Vm<H> {
                     &module.source,
                     &module.name,
                     &*self,
+                    self.released_records(true),
                 )
                 .map_err(|diagnostics| {
                     if diagnostics
@@ -3672,11 +3672,12 @@ impl<H: Host> Vm<H> {
                         )
                     }
                 })?;
-                let program = self
+                // Encoded with this VM's atoms, which storing it then finds interned.
+                let residual = self.intern_program_atoms(residual);
+                self.keep_static_module_program(module, &residual);
+                self
                     .store_module_program(residual)
-                    .ok_or_else(|| self.type_error(p, "module program store is full".into()))?;
-                self.keep_static_module_program(module, program);
-                program
+                    .ok_or_else(|| self.type_error(p, "module program store is full".into()))?
             }
         };
         let residual = self
@@ -4222,6 +4223,7 @@ impl<H: Host> Vm<H> {
                     &module.source,
                     &module.name,
                     &*self,
+                    crate::compile::ReleasedRecords::Dropped,
                 )
                 .map_err(|diagnostics| {
                     if diagnostics
@@ -4492,6 +4494,7 @@ impl<H: Host> Vm<H> {
             &module.source,
             &module.name,
             &*self,
+            crate::compile::ReleasedRecords::Dropped,
         )
         .map_err(|diagnostics| {
             if diagnostics
