@@ -10,15 +10,17 @@
 # the PGO binary they lay out; tools/pgo-build.sh --static writes PROFDATA to
 # target/pgo-quench-node.profdata. Without it, the plain static build is laid out.
 #
-# 1. Builds the static quench-node and the layout tools (symbol-order, bolt-profile,
-#    wasm-esm-corpus).
+# 1. Builds the static quench-node and the layout tools (symbol-order, bolt-profile).
 # 2. Assembles the training corpus from the repository under target/layout-corpus: the
 #    interpreter curriculum (quench-bench/deegen-curriculum), the numbered diagnostic micros
 #    (quench-bench/micros), Node library modules compiled without running
 #    (COMPILE_ONLY_MODULES), the Test262 tests tools/layout-corpus/test262.list names with
 #    their harness, the package workloads tools/layout-corpus/npm-*.js on the packages its
 #    package-lock.json pins (installed with `npm ci` under target/layout-packages), and the
-#    Wasm ESM corpus of the spec testsuite. The scored engine suites are never run. The
+#    Wasm kernels' start-up. The Wasm ESM corpus (docs/README.md) is not part of it: laid out
+#    `--late` it added 0.98 MB of hot text and raised V8-v7 max RSS (pinned, 2026-10-29:
+#    RegExp 4900 -> 5084 KiB, Richards 2288 -> 2364, DeltaBlue --jit 2684 -> 2732), failing
+#    the target on two of three boards. The scored engine suites are never run. The
 #    corpus used is written to target/layout-corpus/MANIFEST and printed at the end.
 # 3. Profiles start-up (cachegrind) and the run phase after the entry's compilation
 #    (callgrind, split at quench_entry_compiled), without and with --jit; the --jit profiles
@@ -26,8 +28,8 @@
 # 4. Writes crates/quench-node/link/x86_64-linux-static.order, converts the profiles for
 #    BOLT, relinks, and writes the bolted binary beside the relinked one (`-bolt`).
 #
-# Requires valgrind, llvm-bolt (BOLT 20; LLVM_BOLT names it when it is not on PATH) and the
-# Wasm testsuite submodule. QUENCH_PGO_HOT_CALLSITE_THRESHOLD bounds a profile's hot-call-site
+# Requires valgrind, npm with registry access, and llvm-bolt (BOLT 20; LLVM_BOLT names it
+# when it is not on PATH). QUENCH_PGO_HOT_CALLSITE_THRESHOLD bounds a profile's hot-call-site
 # inlining in the --pgo builds.
 set -euo pipefail
 
@@ -70,11 +72,6 @@ if [[ -n "${RUSTFLAGS:-}" ]]; then
     printf 'unset RUSTFLAGS: it would replace the layout build flags and the repository rustflags\n' >&2
     exit 1
 fi
-wasm_testsuite=crates/quench-wasm-test/testsuite
-if [[ ! -f "$wasm_testsuite/address.wast" ]]; then
-    printf 'the Wasm testsuite is missing: git submodule update --init %s\n' "$wasm_testsuite" >&2
-    exit 1
-fi
 for tool in valgrind npm "$llvm_bolt"; do
     command -v "$tool" >/dev/null || { printf '%s not found\n' "$tool" >&2; exit 1; }
 done
@@ -97,7 +94,7 @@ build() {
 
 cd "$root_dir"
 CARGO_TARGET_DIR="$target_dir" cargo build --locked --profile "$profile" -p quench-wasm-test \
-    --bin symbol-order --bin bolt-profile --bin wasm-esm-corpus
+    --bin symbol-order --bin bolt-profile
 build
 
 # Test262 metadata of one test: its `flags`, `includes` and whether it is negative.
@@ -159,12 +156,6 @@ cp tools/layout-corpus/package.json tools/layout-corpus/package-lock.json "$pack
 (cd "$package_dir" && npm ci --ignore-scripts --no-audit --no-fund --silent)
 export QUENCH_LAYOUT_NODE_MODULES="$package_dir/node_modules"
 cp tools/layout-corpus/npm-*.js "$corpus/"
-"$tools_dir/wasm-esm-corpus" "$corpus/wasm-esm" "$wasm_testsuite"/{address,block,br,\
-br_if,br_table,bulk,call,call_indirect,conversions,data,elem,endianness,exports,f32,f64,fac,\
-forward,func,global,i32,i64,if,imports,int_exprs,int_literals,labels,left-to-right,load,\
-local_get,local_set,local_tee,loop,memory,memory_copy,memory_fill,memory_grow,memory_size,nop,\
-ref_func,ref_is_null,ref_null,return,select,stack,start,store,switch,table,table_get,\
-table_grow,table_set,table_size,traps,unwind}.wast
 
 # valgrind does not follow the static build's re-execution; give its allocator setting directly.
 export GLIBC_TUNABLES=glibc.malloc.tcache_count=0:glibc.malloc.top_pad=0
@@ -198,8 +189,6 @@ programs "$numbered" | xargs -P "$jobs" -I{} bash -c 'callgrind jit-{} --jit "$c
 programs "$packages" | xargs -P "$jobs" -I{} bash -c \
     'QUENCH_MEMORY_POLICY=memory-first callgrind jitmf-{} --jit "$corpus/{}"'
 programs | xargs -P "$jobs" -I{} bash -c 'callgrind {} "$corpus/{}"'
-callgrind wasm-esm-no-jit "$corpus/wasm-esm/run.mjs"
-callgrind wasm-esm-jit --jit "$corpus/wasm-esm/run.mjs" returns
 
 # Profiles go in priority order: start-up first, then the run phase without Test262, then
 # Test262, so its tests add only the code the rest did not execute.
@@ -208,13 +197,9 @@ callgrind wasm-esm-jit --jit "$corpus/wasm-esm/run.mjs" returns
     "$startup/wasm-kernels-no-jit.out" "$startup/wasm-kernels-jit.out" \
     --run "$run/000-print.cjs.out" $(ls "$run"/*.js.out | grep -v /z-t) \
     --run $(ls "$run"/z-t*.js.out)
-# The profiles' addresses are the profiled link's: convert them before relinking. The Wasm
-# ESM corpus's profiles come last (`--late`), so BOLT lays the Wasm load path behind the
-# code the JavaScript profiles run instead of among it, where V8-v7 runs kept it resident
-# (pinned, 2026-10-25: 40-128 KiB on every row at full weight).
+# The profiles' addresses are the profiled link's: convert them before relinking.
 "$tools_dir/bolt-profile" "$binary" "$target_dir/layout-bolt" --order "$order" \
-    "${BOLT_DENSE_FUNCTIONS[@]}" $(ls "$run"/*.out* | grep -v /wasm-esm-) \
-    --late "$run"/wasm-esm-*.out*
+    "${BOLT_DENSE_FUNCTIONS[@]}" "$run"/*.out*
 build
 "$llvm_bolt" "$binary" -o "$binary-bolt" -data="$target_dir/layout-bolt/profile.fdata" \
     -reorder-blocks=ext-tsp -split-functions -split-all-cold -reorder-functions=cdsort \
@@ -227,7 +212,6 @@ tools/check-link-order.sh "$binary" "$order"
     printf 'curriculum: %d, micros: %d, compile-only modules: %d, test262: %d\n' \
         "$(ls "$corpus"/[0-9]*.js | wc -l)" "$(ls "$corpus"/micro-*.js | wc -l)" \
         "${#COMPILE_ONLY_MODULES[@]}" "$(ls "$corpus"/z-t*.js | wc -l)"
-    printf 'wasm esm corpus: %s, laid out late\n' "$(git -C "$wasm_testsuite" rev-parse HEAD)"
     printf 'packages: %d workloads on tools/layout-corpus/package-lock.json\n' \
         "$(ls "$corpus"/npm-*.js | wc -l)"
 } | tee "$corpus/MANIFEST"
