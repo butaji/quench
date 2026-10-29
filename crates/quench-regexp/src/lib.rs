@@ -470,18 +470,23 @@ impl Regex {
     /// Whether a search from `start` of a subject of `length` code units whose unit at
     /// `start` is `first()` (`None` past its end) finds no match, decided before the subject
     /// is prepared: too few units remain for the shortest match, or the pattern's start
-    /// anchor rules the position out (`backtrack::Program::anchor_excludes`). Code units
-    /// are pattern units only outside Unicode mode, so the anchor applies only there. The
+    /// anchor rules the position out (`backtrack::Program::anchor_excludes`), or a `sticky`
+    /// search's one position admits no match start (`backtrack::Program::start_excludes`).
+    /// Code units are pattern units only outside Unicode mode, so the anchor applies only
+    /// there. The
     /// complete matcher's facts are lowered once per pattern on first use, even for a
     /// pattern the automata backend matches.
-    pub fn excludes_search(&self, length: usize, start: usize, first: impl FnOnce() -> Option<u16>) -> bool {
+    pub fn excludes_search(&self, length: usize, start: usize, sticky: bool, first: impl FnOnce() -> Option<u16>) -> bool {
         let complete = self.complete();
-        length.saturating_sub(start) < complete.min_length
-            || (!(self.flags.unicode || self.flags.unicode_sets)
-                && complete
-                    .backtracking
-                    .as_ref()
-                    .is_some_and(|program| program.anchor_excludes(start, first().map(u32::from))))
+        if length.saturating_sub(start) < complete.min_length {
+            return true;
+        }
+        let Some(program) = complete.backtracking.as_ref() else {
+            return false;
+        };
+        let first = first().map(u32::from);
+        (!(self.flags.unicode || self.flags.unicode_sets) && program.anchor_excludes(start, first))
+            || (sticky && program.start_excludes(start, length, first))
     }
 
     /// Whether every search of a subject, ASCII (`ascii`) or not, reads its text as it is,

@@ -902,6 +902,86 @@ print(out.join(" "));
 }
 
 #[test]
+fn regexp_tests_through_a_proved_builtin_exec_keep_exec_lookups() {
+    // `test` calls the builtin exec in place while a proof for the RegExp's shape names the
+    // prototype's `exec` slot (`RegExpExecProof`): a patched, restored, own, deleted and
+    // accessor `exec`, a RegExp with another prototype and a prototype without `exec`.
+    // Node 26 prints the same.
+    let source = r#"
+(function () {
+const out = [];
+const re = /b/y;
+function run(r, s) { let n = 0; for (let i = 0; i < 200; i++) { r.lastIndex = 1; if (r.test(s)) n++; } return n; }
+out.push(run(re, "abc"));
+const proto = RegExp.prototype, exec = proto.exec;
+let calls = 0;
+proto.exec = function (s) { calls++; return exec.call(this, s); };
+out.push(run(re, "abc"), calls);
+proto.exec = exec; calls = 0;
+out.push(run(re, "abc"), calls);
+const own = /b/y; own.exec = function () { calls++; return null; };
+out.push(run(own, "abc"), calls); calls = 0;
+delete own.exec; out.push(run(own, "abc"));
+Object.defineProperty(proto, "exec", { get() { calls++; return exec; }, configurable: true });
+out.push(run(re, "abc"), calls);
+Object.defineProperty(proto, "exec", { value: exec, writable: true, configurable: true }); calls = 0;
+out.push(run(re, "abc"));
+const sub = /b/y; Object.setPrototypeOf(sub, Object.create(proto, { exec: { value() { calls++; return {}; } } }));
+out.push(run(sub, "abc"), calls); calls = 0;
+delete proto.exec;
+let threw = ""; try { run(/b/y, "abc"); } catch (e) { threw = e.constructor.name; } out.push(threw);
+proto.exec = exec;
+out.push(run(/b/y, "abc"), run(/c/y, "abc"));
+print(out.join(" "));
+})();
+"#;
+    assert_eq!(output(source), ["200 200 200 200 0 0 200 200 200 200 200 200 200  200 0"]);
+}
+
+#[test]
+fn sticky_searches_their_start_set_excludes_keep_their_matches() {
+    // A sticky search whose one position admits no match start is refused before the
+    // subject is prepared (`Regex::excludes_search`): starts in and past the subject, the
+    // subject's start and end edges, multiline and caseless patterns, non-ASCII and astral
+    // units, empty matches, lookbehind and a global sticky regexp. Node 26 prints the same.
+    let source = r#"
+(function () {
+const cases = [
+  [/[a-z]+/y, "12abc def", [0, 1, 2, 5, 6, 9, 10]],
+  [/^a|b/y, "ab ab", [0, 1, 2, 3, 4, 5]],
+  [/^a|b/my, "a\nab", [0, 1, 2, 3, 4]],
+  [/x*$/y, "abc", [0, 2, 3]],
+  [/$|q/y, "aq", [0, 1, 2]],
+  [/ét/y, "étét", [0, 1, 2]],
+  [/\u{1F600}x|a/uy, "a\u{1F600}x", [0, 1, 3]],
+  [/[^a]/y, "aéb", [0, 1, 2, 3]],
+  [/(?:)/y, "ab", [0, 1, 2, 3]],
+  [/A/iy, "xa", [0, 1, 2]],
+  [/\bfoo/y, "a foo", [0, 2]],
+  [/(?<=a)b/y, "ab", [0, 1]],
+  [/\s*\d/gy, " 1x2", [0, 1, 2, 3]],
+];
+const rounds = [];
+for (let round = 0; round < 300; round++) {
+  let line = "";
+  for (const [re, s, starts] of cases) {
+    for (const at of starts) {
+      re.lastIndex = at;
+      const m = re.exec(s);
+      line += (m ? m.index + m[0] : "-") + re.lastIndex;
+      re.lastIndex = at;
+      line += (re.test(s) ? "t" : "f") + re.lastIndex + " ";
+    }
+  }
+  rounds.push(line);
+}
+print(rounds[0] === rounds[299] ? rounds[0] : "unsteady");
+})();
+"#;
+    assert_eq!(output(source), ["-0f0 -0f0 2abc5t5 -0f0 6def9t9 -0f0 -0f0 0a1t1 1b2t2 -0f0 -0f0 4b5t5 -0f0 0a1t1 -0f0 2a3t3 3b4t4 -0f0 -0f0 -0f0 33t3 -0f0 1q2t2 22t2 0ét2t2 -0f0 2ét4t4 0a1t1 1😀x4t4 -0f0 -0f0 1é2t2 2b3t3 -0f0 00t0 11t1 22t2 -0f0 -0f0 1a2t2 -0f0 -0f0 2foo5t5 -0f0 1b2t2 0 12t2 112t2 -0f0 324t4 "]);
+}
+
+#[test]
 fn for_of_steps_that_read_done_and_value_in_place_keep_iteration_semantics() {
     // A for-of step over a plain array writes its `done` and `value` registers itself
     // (`lane_iterator_step_reads`): arrays with holes, growing and shrinking under the loop,
