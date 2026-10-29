@@ -120,6 +120,10 @@ test262_field() {
 
 rm -rf "$corpus"
 mkdir -p "$corpus"
+# The repository's package.json declares ES modules; the corpus's scripts load as CommonJS, as a
+# script outside a package scope does, so their profiles take the CommonJS entry path, which
+# marks the entry's compilation (quench_entry_compiled) that splits the run-phase profiles.
+printf '{"type": "commonjs"}\n' >"$corpus/package.json"
 : >"$corpus/000-empty.cjs"
 cp quench-bench/deegen-curriculum/[0-9]*.js "$corpus/"
 for micro in quench-bench/micros/[0-9]*.js; do
