@@ -97,10 +97,10 @@ impl SymbolLoadProofs {
             .map(|read| read.slot)
     }
 
-    /// Records at `site` the own slot a proof gives `key` on a receiver of `shape`, if it
-    /// gives one under `epoch`.
-    pub(super) fn record_site_own_slot(&self, site: usize, shape: u32, key: Value, epoch: u64) {
-        if let Some(SymbolLoadAnswer::Own(slot)) = self.answer(shape, PropertyKey::symbol(key), epoch) {
+    /// Records at `site` the own slot a proof gives `property` on a receiver of `shape`, if it
+    /// gives one under `epoch`, for reads whose key value is `key`.
+    pub(super) fn record_site_own_slot(&self, site: usize, shape: u32, key: Value, property: PropertyKey, epoch: u64) {
+        if let Some(SymbolLoadAnswer::Own(slot)) = self.answer(shape, property, epoch) {
             self.sites.set(site_index(site), SiteOwnRead { site, shape, key, epoch, slot });
         }
     }

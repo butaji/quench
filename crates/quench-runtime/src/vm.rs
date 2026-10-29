@@ -180,6 +180,7 @@ mod object_tests;
 mod property_key;
 use call_arguments::CallArguments;
 use object::AtomClass;
+pub(crate) use object_static::array_index;
 pub(crate) use program_store::ProgramId;
 pub(crate) use regexp::RegExpFlags;
 use program_store::{ModuleImport, ProgramStore};

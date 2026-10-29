@@ -3566,12 +3566,13 @@ script_handler! {
     }
 }
 
-/// `plain_keyed_get` at lane site `ip`, recording the own slot a symbol key's proof gives
-/// for the site's next read (`Vm::site_symbol_own_read`). Out of line: the site's hits skip it.
+/// `plain_keyed_get` at lane site `ip`, recording the own slot a symbol or index key's proof
+/// gives for the site's next read (`Vm::site_keyed_own_read`). Out of line: the site's hits
+/// skip it.
 #[inline(never)]
 fn lane_site_keyed_get<H: Host>(vm: &mut Vm<H>, ip: Ip, base: Value, key: Value) -> Option<Value> {
     let value = vm.plain_keyed_get(base, key)?;
-    vm.record_site_symbol_read(ip.addr(), base, key);
+    vm.record_site_keyed_read(ip.addr(), base, key);
     Some(value)
 }
 
@@ -3592,13 +3593,14 @@ lane_handler! {
             return exit(ip);
         };
         let vm = unsafe { vm(cx) };
+        let key = vm.canonical_index_key(key);
         let Some(value) = vm
             .dense_array_element(base, key)
             .or_else(|| vm.absent_array_element(base, key))
             .or_else(|| vm.plain_keyed_get(base, key))
             .or_else(|| vm.plain_typed_element(base, key))
             .or_else(|| lane_string_element(vm, base, key))
-            .or_else(|| vm.string_index_element(base, key))
+            .or_else(|| vm.keyed_array_length(base, key))
         else {
             return exit(ip);
         };
@@ -3628,7 +3630,7 @@ script_handler! {
         let vm = unsafe { vm(cx) };
         let (base, key) = (r.get(i.b), r.get(i.c));
         // A symbol-keyed read this site made of the same shape and key reads its own slot.
-        if let Some(value) = vm.site_symbol_own_read(ip.addr(), base, key) {
+        if let Some(value) = vm.site_keyed_own_read(ip.addr(), base, key) {
             r.set(i.a, value);
             next!(cx, r, following(ip), Carried::script(cx))
         }
@@ -3685,12 +3687,13 @@ fn lane_get_index_beside_activations<H: Host>(
 /// element. Out of line, as `lane_set_index_slot_store`.
 #[inline(never)]
 fn lane_index_slot_element<H: Host>(vm: &mut Vm<H>, ip: Ip, base: Value, key: Value) -> Option<Value> {
+    let key = vm.canonical_index_key(key);
     vm.dense_array_element(base, key)
         .or_else(|| vm.absent_array_element(base, key))
         .or_else(|| lane_site_keyed_get(vm, ip, base, key))
         .or_else(|| vm.plain_typed_element(base, key))
         .or_else(|| lane_string_element(vm, base, key))
-        .or_else(|| vm.string_index_element(base, key))
+        .or_else(|| vm.keyed_array_length(base, key))
 }
 
 script_handler! {

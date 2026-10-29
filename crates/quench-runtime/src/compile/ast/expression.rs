@@ -620,6 +620,22 @@ impl FunctionCompiler<'_, '_> {
         dst
     }
 
+    /// The array index a literal property key names, when it fits an integer value: `0`
+    /// and `"0"` name one element, whose integer-keyed `GetIndex` reads skip the named
+    /// lookup an index-named string key takes. Converting such a literal to a property key
+    /// observes nothing, so the integer stands for the key it names.
+    pub(super) fn literal_index_key(key: &Expression<'_>) -> Option<i32> {
+        let index = match key {
+            Expression::NumericLiteral(value) => {
+                let index = value.value as u32;
+                (f64::from(index).to_bits() == value.value.to_bits()).then_some(index)?
+            }
+            Expression::StringLiteral(value) => crate::vm::array_index(value.value.as_str())?,
+            _ => return None,
+        };
+        i32::try_from(index).ok()
+    }
+
     pub(super) fn computed_get(
         &mut self,
         object: &Expression<'_>,
@@ -652,6 +668,11 @@ impl FunctionCompiler<'_, '_> {
             } else {
                 self.expression(object)
             };
+        if let Some(index) = Self::literal_index_key(key) {
+            let (dst, index) = (self.reg(), self.literal(Constant::Number(f64::from(index))));
+            self.emit(Op::GetIndex, dst, object, index, 0);
+            return dst;
+        }
         if let Expression::StringLiteral(value) = key
             && !matches!(
                 super::super::string::constant(value),
