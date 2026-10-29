@@ -63,6 +63,18 @@ impl<'a> CompilerAtoms<'a> {
         }
     }
 
+    /// The names this compilation interned, and the table's capacity
+    /// (`profile-memory`'s compiler report).
+    #[cfg(feature = "profile-memory")]
+    pub(super) fn index_len(&self) -> usize {
+        self.index.len()
+    }
+
+    #[cfg(feature = "profile-memory")]
+    pub(super) fn index_capacity(&self) -> usize {
+        self.index.capacity()
+    }
+
     pub(super) fn len(&self) -> usize {
         debug_assert_eq!(self.prefix_len, self.prefix.len(), "atom prefix grew during compilation");
         self.prefix_len + self.added.len()
