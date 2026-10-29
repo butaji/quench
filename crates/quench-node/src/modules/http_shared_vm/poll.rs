@@ -914,7 +914,7 @@ fn dispatch_server_upgrade(
         let connection = host.http.connections.get_mut(&socket_id).unwrap();
         connection.request_dispatched = true;
         connection.upgraded = true;
-        connection.received.clear();
+        connection.clear_received();
         (server_id, incoming_factory)
     };
     let create_socket = runtime
