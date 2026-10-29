@@ -2,7 +2,6 @@ pub(crate) struct RequestMessage {
     pub(crate) method: String,
     pub(crate) target: String,
     pub(crate) version: String,
-    pub(crate) headers: Vec<(String, String)>,
     pub(crate) raw_headers: Vec<(String, String)>,
     pub(crate) body: Result<Vec<u8>, RequestFramingError>,
     pub(crate) upgrade: bool,
@@ -18,23 +17,23 @@ pub(crate) enum RequestFramingError {
 pub(crate) struct ResponseMessage {
     pub(crate) status: u16,
     pub(crate) message: String,
-    pub(crate) headers: Vec<(String, String)>,
     pub(crate) raw_headers: Vec<(String, String)>,
 }
 
 pub(crate) fn request(bytes: &[u8]) -> Option<RequestMessage> {
     let head = parse_head(bytes)?;
-    let coding = request_transfer_coding(&head.headers);
+    let coding = request_transfer_coding(&head.raw_headers);
     let body = match coding {
-        Ok(()) => Ok(framed_body(bytes, head.body_start, &head.headers)?),
+        Ok(()) => Ok(framed_body(bytes, head.body_start, &head.raw_headers)?),
         Err(error) => Err(error),
     };
-    let upgrade = has_upgrade(&head.headers);
+    let upgrade = has_upgrade(&head.raw_headers);
+    let mut first = head.first.into_iter();
+    let (method, target, version) = (first.next()?, first.next()?, first.next()?);
     Some(RequestMessage {
-        method: head.first.first()?.to_owned(),
-        target: head.first.get(1)?.to_owned(),
-        version: head.first.get(2)?.strip_prefix("HTTP/")?.to_owned(),
-        headers: head.headers,
+        method,
+        target,
+        version: version.strip_prefix("HTTP/")?.to_owned(),
         raw_headers: head.raw_headers,
         body,
         upgrade,
@@ -47,15 +46,28 @@ pub(crate) fn request(bytes: &[u8]) -> Option<RequestMessage> {
 }
 
 fn has_upgrade(headers: &[(String, String)]) -> bool {
-    let upgrade = headers
-        .iter()
-        .any(|(name, value)| name == "upgrade" && !value.trim().is_empty());
-    let connection = headers
-        .iter()
-        .filter(|(name, _)| name == "connection")
-        .flat_map(|(_, value)| value.split(','))
-        .any(|token| token.trim().eq_ignore_ascii_case("upgrade"));
+    let upgrade = header(headers, "upgrade").is_some_and(|value| !value.trim().is_empty());
+    let connection = header(headers, "connection")
+        .is_some_and(|value| value.split(',').any(|token| token.trim().eq_ignore_ascii_case("upgrade")));
     upgrade && connection
+}
+
+/// The value of header `name` (lowercase) among a head's raw headers, as Node's
+/// `IncomingMessage.headers` combines repeats: in order, joined by `", "`, or by `"; "` for
+/// `cookie`.
+pub(crate) fn header<'h>(headers: &'h [(String, String)], name: &str) -> Option<std::borrow::Cow<'h, str>> {
+    let mut values = headers.iter().filter(|(key, _)| key.eq_ignore_ascii_case(name)).map(|(_, value)| value.as_str());
+    let first = values.next()?;
+    let Some(second) = values.next() else {
+        return Some(std::borrow::Cow::Borrowed(first));
+    };
+    let separator = if name == "cookie" { "; " } else { ", " };
+    let mut combined = [first, second].join(separator);
+    for value in values {
+        combined.push_str(separator);
+        combined.push_str(value);
+    }
+    Some(std::borrow::Cow::Owned(combined))
 }
 
 #[derive(Default)]
@@ -139,10 +151,11 @@ impl ResponseParser {
                     if (100..200).contains(&status) && status != 101 {
                         continue;
                     }
+                    let chunked = has_chunked_encoding(&head.raw_headers);
+                    let length = content_length(&head.raw_headers);
                     progress.head = Some(ResponseMessage {
                         status,
                         message: head.first.get(2..).unwrap_or_default().join(" "),
-                        headers: head.headers.clone(),
                         raw_headers: head.raw_headers,
                     });
                     if status == 101 {
@@ -151,9 +164,9 @@ impl ResponseParser {
                     } else {
                     self.state = if self.head_request || response_has_no_body(status) {
                         ResponseState::Complete
-                    } else if has_chunked_encoding(&head.headers) {
+                    } else if chunked {
                         ResponseState::ChunkSize
-                    } else if let Some(length) = content_length(&head.headers)? {
+                    } else if let Some(length) = length? {
                         if length == 0 {
                             ResponseState::Complete
                         } else {
@@ -280,7 +293,6 @@ fn line_end(bytes: &[u8]) -> Option<usize> {
 
 struct Head {
     first: Vec<String>,
-    headers: Vec<(String, String)>,
     raw_headers: Vec<(String, String)>,
     body_start: usize,
 }
@@ -301,19 +313,8 @@ fn parse_head(bytes: &[u8]) -> Option<Head> {
             Some((name.trim().to_owned(), value.trim().to_owned()))
         })
         .collect::<Vec<_>>();
-    let mut headers = Vec::<(String, String)>::new();
-    for (name, value) in &raw_headers {
-        let name = name.to_ascii_lowercase();
-        if let Some((_, current)) = headers.iter_mut().find(|(key, _)| *key == name) {
-            current.push_str(if name == "cookie" { "; " } else { ", " });
-            current.push_str(value);
-        } else {
-            headers.push((name, value.clone()));
-        }
-    }
     Some(Head {
         first,
-        headers,
         raw_headers,
         body_start,
     })
@@ -335,7 +336,7 @@ fn response_has_no_body(status: u16) -> bool {
 }
 
 fn request_transfer_coding(headers: &[(String, String)]) -> Result<(), RequestFramingError> {
-    let Some((_, value)) = headers.iter().find(|(name, _)| name == "transfer-encoding") else {
+    let Some(value) = header(headers, "transfer-encoding") else {
         return Ok(());
     };
     let mut tokens = value.split(',').map(str::trim).peekable();
@@ -356,16 +357,12 @@ fn request_transfer_coding(headers: &[(String, String)]) -> Result<(), RequestFr
 }
 
 fn has_chunked_encoding(headers: &[(String, String)]) -> bool {
-    headers.iter().any(|(name, value)| {
-        name == "transfer-encoding"
-            && value
-                .split(',')
-                .any(|token| token.trim().eq_ignore_ascii_case("chunked"))
-    })
+    header(headers, "transfer-encoding")
+        .is_some_and(|value| value.split(',').any(|token| token.trim().eq_ignore_ascii_case("chunked")))
 }
 
 fn content_length(headers: &[(String, String)]) -> Result<Option<usize>, String> {
-    let Some((_, value)) = headers.iter().find(|(name, _)| name == "content-length") else {
+    let Some(value) = header(headers, "content-length") else {
         return Ok(None);
     };
     value

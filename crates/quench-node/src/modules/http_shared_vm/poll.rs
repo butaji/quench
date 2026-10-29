@@ -380,10 +380,9 @@ pub(crate) fn poll(
                                 .request_dispatch
                                 .ok_or_else(|| "HTTP request dispatch is unavailable".to_owned())?;
                             let http10 = message.version == "1.0";
-                            let close_after_response = http10 || message.headers.iter().any(|(name, value)| {
-                                name.eq_ignore_ascii_case("connection")
-                                    && value.eq_ignore_ascii_case("close")
-                            });
+                            let close_after_response = http10
+                                || super::protocol::header(&message.raw_headers, "connection")
+                                    .is_some_and(|value| value.eq_ignore_ascii_case("close"));
                             host.http
                                 .connections
                                 .get_mut(&socket)
@@ -403,7 +402,7 @@ pub(crate) fn poll(
                                     body: Default::default(),
                                     send_date: true,
                                     http10,
-                                    use_chunked_encoding_by_default: !http10 || message.headers.iter().any(|(name, value)| name.eq_ignore_ascii_case("te") && value.split(',').any(|token| token.trim().eq_ignore_ascii_case("chunked"))),
+                                    use_chunked_encoding_by_default: !http10 || super::protocol::header(&message.raw_headers, "te").is_some_and(|value| value.split(',').any(|token| token.trim().eq_ignore_ascii_case("chunked"))),
                                     lifecycle: super::state::ResponseLifecycle::Open,
                                     owner: None,
                                 },
@@ -417,7 +416,6 @@ pub(crate) fn poll(
                             message.method,
                             message.target,
                             message.version,
-                            message.headers,
                             message.raw_headers,
                             socket_object,
                         ) {
@@ -844,7 +842,6 @@ fn deliver_client_response_head(
         runtime,
         message.status,
         message.message,
-        message.headers,
         message.raw_headers,
         false,
     )?;
@@ -959,7 +956,6 @@ fn dispatch_server_upgrade(
         message.method,
         message.target,
         message.version,
-        message.headers,
         message.raw_headers,
         socket,
     ) {
@@ -1760,7 +1756,6 @@ fn request_head(
     method: String,
     path: String,
     version: String,
-    _headers: Vec<(String, String)>,
     raw_headers: Vec<(String, String)>,
     socket: RootId,
 ) -> Result<Vec<RootId>, String> {
@@ -1790,7 +1785,6 @@ fn response_head(
     runtime: &mut Runtime<NodeHost>,
     status: u16,
     message: String,
-    _headers: Vec<(String, String)>,
     raw_headers: Vec<(String, String)>,
     complete: bool,
 ) -> Result<Vec<RootId>, String> {
