@@ -1750,19 +1750,20 @@ impl Heap {
             self.collect_at = self.collect_at.min(self.allocated);
         }
     }
-    /// Charges text made on demand (`wtf16::take_materialized_bytes`) as payload allocation.
+    /// Charges text made on demand (`wtf16::take_materialized_text`) as payload allocation.
     /// The string operations that make it allocate or return through the places that call
     /// this (generic allocation, native and host calls, each collection); safepoints, which
     /// run far more often, never pay for it.
     pub(crate) fn charge_materialized_text(&mut self) {
-        let bytes = crate::vm::wtf16::take_materialized_bytes();
-        if bytes == 0 {
+        let text = crate::vm::wtf16::take_materialized_text();
+        if text == crate::vm::wtf16::MaterializedText::default() {
             return;
         }
-        // Allocation weight only: the payload ledger (`payload_bytes`) follows the strings
-        // themselves, whose sweep releases what they own.
-        let weight = bytes / payload_unit();
-        self.allocated += weight;
+        // A flattened string's units join the payload ledger (`payload_bytes`), which its
+        // sweep releases them from (`JsString::flat_unit_bytes`); text beside them is
+        // allocation weight only, as no sweep releases it from the ledger.
+        self.charge_payload_growth(text.units);
+        self.allocated += text.beside / payload_unit();
     }
 
     pub fn should_collect(&self) -> bool {

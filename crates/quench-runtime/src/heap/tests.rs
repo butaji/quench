@@ -1410,3 +1410,24 @@ fn snapshots_restore_aged_survivors_as_old() {
     collect_minor(&mut heap, []);
     assert!(!heap.is_live(cell) && !heap.is_live(object));
 }
+
+#[test]
+fn a_rope_flattened_and_freed_between_collections_leaves_the_payload_ledger_balanced() {
+    use crate::vm::wtf16::JsString;
+    let mut heap = Heap::new();
+    let kept = heap.alloc_string(JsString::from_str(&"k".repeat(4096)));
+    collect_minor(&mut heap, [kept]);
+    let before = heap.payload_bytes;
+    assert!(before > 0);
+    // Halves longer than a rope leaf join as a rope, which owns no units until read.
+    let half = JsString::from_str(&"a".repeat(1024));
+    let mut rope = half.clone();
+    rope.push_js_string(&half);
+    let value = heap.alloc_string(rope.clone());
+    assert_eq!(heap.string(value).map(JsString::flat_unit_bytes), Some(0));
+    assert_eq!(rope.units().len(), 2048);
+    drop(rope);
+    // The freed rope releases the units it flattened, which the ledger now holds.
+    collect_minor(&mut heap, [kept]);
+    assert_eq!(heap.payload_bytes, before);
+}
