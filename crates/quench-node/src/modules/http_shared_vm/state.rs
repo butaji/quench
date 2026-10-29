@@ -81,6 +81,20 @@ pub(crate) struct ServerConnection {
     pub(crate) upgraded: bool,
 }
 
+/// Receive-buffer capacity a connection keeps between requests: room for a request head
+/// and a small body. A keep-alive connection that once received a large body otherwise held
+/// that capacity until it closed.
+const RETAINED_RECEIVE_CAPACITY: usize = 16 << 10;
+
+impl ServerConnection {
+    /// Empties the receive buffer once its bytes are consumed, keeping at most
+    /// `RETAINED_RECEIVE_CAPACITY` of its room.
+    pub(crate) fn clear_received(&mut self) {
+        self.received.clear();
+        self.received.shrink_to(RETAINED_RECEIVE_CAPACITY);
+    }
+}
+
 pub(crate) struct Response {
     pub(crate) socket: u64,
     pub(crate) virtual_response: bool,

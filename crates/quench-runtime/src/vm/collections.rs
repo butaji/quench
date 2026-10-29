@@ -899,8 +899,12 @@ impl<H: Host> Vm<H> {
                     if let Some(Cell::Map { entries, .. }) = self.heap.get_mut(this) {
                         entries.set_value(index, value);
                     }
-                } else if let Some(Cell::Map { entries, .. }) = self.heap.get_mut(this) {
-                    entries.push((key, value), key_hash);
+                } else {
+                    self.heap.grow_cell_payload(this, |cell| {
+                        if let Cell::Map { entries, .. } = cell {
+                            entries.push((key, value), key_hash);
+                        }
+                    });
                 }
                 Ok(value)
             }
@@ -1323,12 +1327,12 @@ impl<H: Host> Vm<H> {
         }
         let value = canonical_collection_key(value);
         let value_hash = self.same_value_zero_hash(value);
-        let exists = self.set_entry_index_hashed(set, value, value_hash).is_some();
-        let Some(Cell::Set { entries, .. }) = self.heap.get_mut(set) else {
-            unreachable!("a Set was checked above")
-        };
-        if !exists {
-            entries.push(value, value_hash);
+        if self.set_entry_index_hashed(set, value, value_hash).is_none() {
+            self.heap.grow_cell_payload(set, |cell| {
+                if let Cell::Set { entries, .. } = cell {
+                    entries.push(value, value_hash);
+                }
+            });
         }
         true
     }
@@ -1355,9 +1359,11 @@ impl<H: Host> Vm<H> {
             for value in values {
                 if distinct {
                     let hash = self.same_value_zero_hash(value);
-                    if let Some(Cell::Set { entries, .. }) = self.heap.get_mut(collection) {
-                        entries.push(value, hash);
-                    }
+                    self.heap.grow_cell_payload(collection, |cell| {
+                        if let Cell::Set { entries, .. } = cell {
+                            entries.push(value, hash);
+                        }
+                    });
                 } else {
                     self.set_add(collection, value);
                 }
@@ -1389,14 +1395,15 @@ impl<H: Host> Vm<H> {
         let value = args.get(1).copied().unwrap_or(Value::UNDEFINED);
         let key_hash = self.same_value_zero_hash(key);
         let index = self.map_entry_index_hashed(map, key, key_hash);
-        let Some(Cell::Map { entries, .. }) = self.heap.get_mut(map) else {
-            unreachable!("a Map was checked above")
-        };
-        if let Some(index) = index {
-            entries.set_value(index, value);
-        } else {
-            entries.push((key, value), key_hash);
-        }
+        self.heap.grow_cell_payload(map, |cell| {
+            let Cell::Map { entries, .. } = cell else {
+                unreachable!("a Map was checked above")
+            };
+            match index {
+                Some(index) => entries.set_value(index, value),
+                None => entries.push((key, value), key_hash),
+            }
+        });
         true
     }
 

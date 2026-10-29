@@ -159,10 +159,9 @@ impl<H: Host> Vm<H> {
                         .unwrap_or(Value::UNDEFINED),
                 };
                 let result = self.heap.root_value(result_root).unwrap();
-                let Some(elements) = self.heap.array_elements_mut(result) else {
+                if self.heap.grow_array_elements(result, |elements| elements.push(value)).is_none() {
                     unreachable!("fresh copy target remains an array");
-                };
-                elements.make_mut().push(value);
+                }
             }
             Ok(self.heap.root_value(result_root).unwrap())
         })();
