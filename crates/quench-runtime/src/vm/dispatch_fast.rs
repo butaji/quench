@@ -6872,6 +6872,10 @@ fn lane_loop_run<H: Host>(
                     .set(site.native_region_runs.get().saturating_add(1));
                 site.native_exits.set(site.native_exits.get().saturating_add(1));
             }
+            LoopOutcome::Grow(_) => {
+                site.native_region_runs
+                    .set(site.native_region_runs.get().saturating_add(1));
+            }
             LoopOutcome::Widen(_) => {
                 site.native_region_runs
                     .set(site.native_region_runs.get().saturating_add(1));
@@ -6909,7 +6913,7 @@ fn lane_loop_run<H: Host>(
     };
     if general_dispatch_due {
         match outcome {
-            LoopOutcome::Resume(pc) => return LoopContinuation::Exit(pc),
+            LoopOutcome::Resume(pc) | LoopOutcome::Grow(pc) => return LoopContinuation::Exit(pc),
             LoopOutcome::Exit(pc) => {
                 site.exits.set(site.exits.get().saturating_add(1));
                 return LoopContinuation::Exit(pc);
@@ -6937,6 +6941,7 @@ fn lane_loop_run<H: Host>(
             site.exits.set(site.exits.get() + 1);
             LoopContinuation::Exit(pc)
         }
+        LoopOutcome::Grow(pc) => LoopContinuation::Exit(pc),
         LoopOutcome::Widen(pc) => {
             if let Some(widening) = code.widening(pc) {
                 tier.widened.insert(widening);

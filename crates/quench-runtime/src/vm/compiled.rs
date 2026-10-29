@@ -70,6 +70,11 @@ pub(super) enum RegionExit {
     Resume(u32),
     Fallback(u32),
     Recompile(u32),
+    /// As `Fallback`, at an append that found its array's backing full. The general path
+    /// grows the backing geometrically (`UniqueElements::reserve`), so an array leaves this
+    /// way a logarithmic number of times in its length, and these exits do not mark the
+    /// region as one whose values leave the subset.
+    Grow(u32),
 }
 
 impl RegionExit {
@@ -82,6 +87,7 @@ impl RegionExit {
             Self::Resume(pc) => (1, pc),
             Self::Fallback(pc) => (2, pc),
             Self::Recompile(pc) => (3, pc),
+            Self::Grow(pc) => (4, pc),
         };
         ((kind as u64) << Self::KIND_SHIFT) | payload as u64
     }
@@ -92,6 +98,7 @@ impl RegionExit {
             1 => Self::Resume(payload),
             2 => Self::Fallback(payload),
             3 => Self::Recompile(payload),
+            4 => Self::Grow(payload),
             _ => Self::EntryMiss(payload),
         }
     }
@@ -129,7 +136,7 @@ impl RegionExitBlocks {
         reported: RegionExit,
     ) {
         let pc = match outcome {
-            RegionExit::Resume(pc) | RegionExit::Fallback(pc) | RegionExit::Recompile(pc) => pc,
+            RegionExit::Resume(pc) | RegionExit::Fallback(pc) | RegionExit::Recompile(pc) | RegionExit::Grow(pc) => pc,
             RegionExit::EntryMiss(_) => unreachable!("entry miss does not write back"),
         };
         let word = builder.ins().iconst(types::I64, reported.encode() as i64);

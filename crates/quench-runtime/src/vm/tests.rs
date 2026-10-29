@@ -12316,6 +12316,60 @@ fn shared_osr_wavefront_pairs_keep_stencil_sweep_results() {
 }
 
 #[test]
+#[cfg(not(quench_profiled))]
+fn shared_osr_appends_past_a_full_backing_keep_the_region_native() {
+    // Each call appends to a fresh array past its backing's capacity (V8-v7 Crypto's
+    // `bnpMultiplyTo` into a new `BigInteger`): the general path grows the backing and the
+    // region keeps running natively, through more such exits than a region may take of
+    // values leaving the subset.
+    let source = r#"
+      function fill(n) {
+        var a = [];
+        for (var i = 0; i < n; i++) a[i] = (i * 7 + 3) & 255;
+        return a;
+      }
+      var sum = 0;
+      for (var k = 0; k < 3000; k++) {
+        var a = fill(40 + (k & 7));
+        sum = (sum * 31 + a[a.length - 1] + a.length) | 0;
+      }
+      print(sum);
+    "#;
+    let program = Engine::specialize(source, "osr-append-grow.js").unwrap();
+    let interpreted = Rc::new(RefCell::new(Vec::new()));
+    Vm::new(TestHost::writing_to(interpreted.clone())).execute(&program).unwrap();
+    let expected = interpreted.borrow().clone();
+    let function_id = program
+        .functions
+        .iter()
+        .position(|function| function.header().name.is_some_and(|name| &program.atoms[name as usize] == "fill"))
+        .unwrap();
+    for policy in crate::MemoryPolicy::ALL {
+        let output = Rc::new(RefCell::new(Vec::new()));
+        let mut compiled = Vm::new(TestHost::writing_to(output.clone()));
+        compiled.set_memory_policy(policy);
+        compiled.set_execution_mode(crate::ExecutionMode::Compiled);
+        compiled.programs.enable_js_jit_diagnostics();
+        compiled.execute(&program).unwrap();
+        assert_eq!(*output.borrow(), expected, "{policy:?}");
+        if !super::compiled::loop_tier_compiles(policy) {
+            continue;
+        }
+        let views = compiled
+            .programs
+            .lane_views(super::program_store::ProgramId::MAIN)
+            .expect("main program lane views");
+        let osr = views
+            .get(function_id)
+            .and_then(super::program_store::derived_lane_view)
+            .expect("hot fill lane view")
+            .osr_diagnostics();
+        assert!(osr.native_region_runs > 2000, "fill left native code under {policy:?}: {osr:?}");
+        assert_eq!(osr.exits, 0, "{policy:?}: {osr:?}");
+    }
+}
+
+#[test]
 fn shared_osr_indexes_the_row_a_loop_reads_each_iteration() {
     // `a[e][f] = x` in a loop over `e` indexes the row `a[e]` the iteration read, not the
     // row the region entered with: the region declines an indexed register it defines

@@ -70,6 +70,9 @@ pub(crate) enum LoopOutcome {
     /// As `Exit`, because a value the code held as an `i32` is none; the next compilation
     /// widens what the code names for the PC (`CompiledLoop::widening`).
     Widen(u32),
+    /// As `Exit`, at an append whose array's backing is full, which the general path grows
+    /// (`RegionExit::Grow`).
+    Grow(u32),
     /// Termination was requested while the code ran: its poll faulted, so registers may
     /// hold values of an unfinished iteration, which nothing reads before the request ends
     /// the execution.
@@ -136,6 +139,7 @@ impl LoopOutcome {
             super::RegionExit::Resume(pc) => Self::Resume(pc),
             super::RegionExit::Fallback(pc) => Self::Exit(pc),
             super::RegionExit::Recompile(pc) => Self::Widen(pc),
+            super::RegionExit::Grow(pc) => Self::Grow(pc),
         }
     }
 }
@@ -3826,6 +3830,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
             super::RegionExit::Resume(pc) => super::RegionExit::Resume(self.region.exit_pc(pc)),
             super::RegionExit::Fallback(pc) => super::RegionExit::Fallback(self.region.exit_pc(pc)),
             super::RegionExit::Recompile(pc) => super::RegionExit::Recompile(self.region.exit_pc(pc)),
+            super::RegionExit::Grow(pc) => super::RegionExit::Grow(self.region.exit_pc(pc)),
             super::RegionExit::EntryMiss(_) => outcome,
         };
         self.exits.leave(&mut self.body.builder, outcome, reported);
@@ -4318,7 +4323,8 @@ impl<'a, 'b> Lowering<'a, 'b> {
         let past = self.body.builder.ins().icmp(IntCC::NotEqual, index, length);
         self.guard(pc, past);
         let full = self.body.builder.ins().icmp(IntCC::UnsignedGreaterThanOrEqual, length, capacity);
-        self.guard(pc, full);
+        let grow = self.exits.outcome_block(&mut self.body.builder, super::RegionExit::Grow(pc));
+        self.pass_unless(full, grow);
         let grown = self.body.builder.ins().iadd_imm_s(length, 1);
         let word = self.body.builder.ins().ireduce(types::I32, grown);
         self.body.builder.ins().store(flags(), word, array.elements, crate::heap::LENGTH_FROM_VALUES);
