@@ -113,6 +113,7 @@ function usage() {
 
 Options:
   --ops N             operations per probe (default 20000)
+  --repeat N          runs per probe and engine, median reported (default 3)
   --probe ID          repeatable probe id (default: all)
   --quench PATH       quench-node binary (default target/production/quench-node)
   --node PATH         Node binary (default the running node)
@@ -129,11 +130,12 @@ column as cost with a small constant; compare engines within one run only.
 }
 
 function parseArgs(argv) {
-  const options = { ops: 20000, probes: new Set(), json: undefined };
+  const options = { ops: 20000, repeat: 3, probes: new Set(), json: undefined };
   for (let index = 0; index < argv.length; index += 1) {
     const value = () => argv[++index];
     switch (argv[index]) {
       case "--ops": options.ops = Number(value()); break;
+      case "--repeat": options.repeat = Number(value()); break;
       case "--probe": options.probes.add(value()); break;
       case "--quench": options.quench = value(); break;
       case "--node": options.node = value(); break;
@@ -142,6 +144,10 @@ function parseArgs(argv) {
       case "--help": case "-h": usage(); process.exit(0); break;
       default: process.stderr.write(`npm-cost-probes: unknown option ${argv[index]}\n`); process.exit(2);
     }
+  }
+  if (!Number.isSafeInteger(options.repeat) || options.repeat < 1 || options.repeat > 15) {
+    process.stderr.write("npm-cost-probes: --repeat must be between 1 and 15\n");
+    process.exit(2);
   }
   if (!Number.isSafeInteger(options.ops) || options.ops < 1000) {
     process.stderr.write("npm-cost-probes: --ops must be an integer of at least 1000\n");
@@ -223,13 +229,24 @@ function main() {
       const file = path.join(scratch, `${probe.id}.cjs`);
       fs.writeFileSync(file, `const n = ${options.ops};\n${probe.source}\n`);
       for (const engine of ENGINES) {
-        const measured = measure(binaries[engine.binary], [...engine.args, file], engine.env);
+        const runs = [];
+        for (let repeat = 0; repeat < options.repeat; repeat += 1) {
+          runs.push(measure(binaries[engine.binary], [...engine.args, file], engine.env));
+        }
+        // Retired instructions vary by a tenth between runs on a shared host, so a
+        // single run cannot separate a change from noise; report the median.
+        const measured = {
+          instructions: median(runs.map((run) => run.instructions)),
+          cycles: median(runs.map((run) => run.cycles)),
+          rssBytes: median(runs.map((run) => run.rssBytes)),
+        };
         const perOperation = (value) => (value === null ? null : Number((value / options.ops).toFixed(1)));
         measurements.push({
           probe: probe.id,
           package: probe.package,
           engine: engine.id,
           ops: options.ops,
+          repeats: options.repeat,
           instructions: measured.instructions,
           cycles: measured.cycles,
           instructionsPerOperation: perOperation(measured.instructions),
@@ -253,12 +270,20 @@ function main() {
       schema: 1,
       generatedAt: new Date().toISOString(),
       ops: options.ops,
+      repeats: options.repeat,
       host: { platform: process.platform, arch: process.arch },
       binaries,
       measurements,
     }, null, 1)}\n`);
     process.stdout.write(`wrote ${options.json}\n`);
   }
+}
+
+function median(values) {
+  const numbers = values.filter((value) => value !== null && value !== undefined).sort((left, right) => left - right);
+  if (numbers.length === 0) return null;
+  const middle = Math.floor(numbers.length / 2);
+  return numbers.length % 2 ? numbers[middle] : Math.round((numbers[middle - 1] + numbers[middle]) / 2);
 }
 
 function format(value) {
