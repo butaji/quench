@@ -26,7 +26,7 @@ const DEFAULT_VERSION: (u32, u32) = (1, 1);
 /// socket without `on`, and the body pushed, then its end unless it is still open. One
 /// guest call makes the whole message, so its steps run in the lane.
 const CREATE_FACTORY: &str = quench_js_check::checked_js!(
-    r#"(IncomingMessage, EventEmitter, read, destroy, serverKey, clientKey, setPrototypeOf, bodyBuffer, captureTemplate, copyTemplate, templateProbes, defaultHighWaterMark, captureLimit) => {
+    r#"(IncomingMessage, EventEmitter, read, destroy, serverKey, clientKey, setPrototypeOf, bodyBuffer, captureTemplate, copyTemplate, templateProbes, defaultHighWaterMark, captureLimit, debuglog, originalPush, originalListenerCount) => {
   'use strict';
   // The template of `new IncomingMessage(undefined)` (`objectTemplateCapture`), and the
   // default high water mark its ReadableState read, which no probe names: module state.
@@ -47,8 +47,40 @@ const CREATE_FACTORY: &str = quench_js_check::checked_js!(
     }
     return new IncomingMessage(undefined);
   };
+  // The template of a message whose end was pushed before anything observed it
+  // (`stream.push(null)` below): the push reads only the fresh stream's state, its
+  // listener count and the methods the probes name, so a copy is the stream after it
+  // while those are the library's own (`LibraryOriginal`). `undefined` while the stream
+  // debug log, which the push writes to, is on, or past the captures.
+  let endedTemplate;
+  let endedHighWaterMark;
+  let endedCaptures = 0;
+  let streamDebug;
+  const ended = () => {
+    const stream = new IncomingMessage(undefined);
+    stream.push(null);
+    return stream;
+  };
+  const endedMessage = () => {
+    if (endedTemplate !== undefined && endedHighWaterMark === defaultHighWaterMark(false)) {
+      const copy = copyTemplate(endedTemplate);
+      if (copy !== undefined) return copy;
+    }
+    streamDebug ??= debuglog("stream").enabled;
+    // A copy skips the push, which only the library's own methods leave unobserved.
+    if (!streamDebug && endedCaptures < captureLimit) {
+      endedCaptures++;
+      const fresh = new IncomingMessage(undefined);
+      if (fresh.push !== originalPush || fresh.listenerCount !== originalListenerCount) return undefined;
+      endedHighWaterMark = defaultHighWaterMark(false);
+      endedTemplate = captureTemplate(ended(), ended(), templateProbes);
+    }
+    return undefined;
+  };
   return function create(method, url, statusCode, statusMessage, httpVersion, httpVersionMajor, httpVersionMinor, rawHeaders, socket, complete, body, open, id, server) {
-    const stream = message();
+    const pushed = typeof body === "string" && body.length !== 0;
+    const copied = !open && !pushed ? endedMessage() : undefined;
+    const stream = copied ?? message();
     stream._addHeaderLines(rawHeaders, rawHeaders.length);
     if (method !== undefined) stream.method = method;
     if (url !== undefined) stream.url = url;
@@ -68,8 +100,8 @@ const CREATE_FACTORY: &str = quench_js_check::checked_js!(
     if ((typeof peer === "object" && peer !== null || typeof peer === "function") && typeof peer.on !== "function") {
       setPrototypeOf(peer, EventEmitter.prototype);
     }
-    if (typeof body === "string" && body.length !== 0) stream.push(bodyBuffer(body));
-    if (!open) stream.push(null);
+    if (pushed) stream.push(bodyBuffer(body));
+    if (!open && copied === undefined) stream.push(null);
     return stream;
   };
 }"#
@@ -97,13 +129,18 @@ pub(super) fn create_function(
         "getDefaultHighWaterMark",
     )?;
     let capture_limit = c.number(f64::from(TEMPLATE_CAPTURE_LIMIT));
+    let debuglog = crate::host::shared_vm::commonjs::node_library_export(c, "http.js", "internal/util/debuglog.js", "debuglog")?;
+    let originals = crate::host::shared_vm::commonjs::LibraryOriginal::ALL.map(|original| {
+        c.host_mut().shared_state().borrow().library_originals.get(original)
+    });
+    let [push, listener_count] = originals.map(|original| original.unwrap_or_else(|| c.undefined()));
     let undefined = c.undefined();
     c.call_rooted(
         factory,
         undefined,
         &[
             configuration.as_slice(),
-            &[set_prototype_of, body_buffer, capture, copy, template_probes, default_high_water_mark, capture_limit],
+            &[set_prototype_of, body_buffer, capture, copy, template_probes, default_high_water_mark, capture_limit, debuglog, push, listener_count],
         ]
         .concat(),
     )

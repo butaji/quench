@@ -1507,6 +1507,7 @@ impl quench_runtime::Host for NodeHost {
         #[cfg(feature = "profile-memory")]
         context.profile_memory_checkpoint("node_event_target_polyfill");
         context.scoped(install_event_emitter)?;
+        commonjs::record_bootstrap_originals(context)?;
         #[cfg(feature = "profile-memory")]
         context.profile_memory_checkpoint("node_event_emitter_polyfill");
         crate::host::resident_pages::release_read_only_pages();

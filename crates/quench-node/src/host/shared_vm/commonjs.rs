@@ -1761,6 +1761,85 @@ pub(crate) fn library_require(context: &mut Context<'_>, id: &str) -> Result<Roo
     node_library_module(context, "internal/util.js", &relative)
 }
 
+/// A library function a host fast path stands for, as its definition made it: the value of
+/// `method` on the `prototype` of the constructor its `Definition` names, recorded before
+/// any other code can replace it (`record_library_originals`,
+/// `record_bootstrap_originals`). A fast path that skips a call of the method holds only
+/// while the method is still this value.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum LibraryOriginal {
+    /// `Readable.prototype.push` (`lib/internal/streams/readable.js`).
+    ReadablePush,
+    /// `EventEmitter.prototype.listenerCount` (the bootstrap's shared EventEmitter).
+    EmitterListenerCount,
+}
+
+/// Where a `LibraryOriginal`'s constructor comes from.
+#[derive(Clone, Copy)]
+enum Definition {
+    /// The export of a library module, as the module finishes evaluating.
+    Module(&'static str),
+    /// A global the bootstrap installs, as the bootstrap finishes.
+    BootstrapGlobal(&'static str),
+}
+
+impl LibraryOriginal {
+    pub(crate) const ALL: [Self; 2] = [Self::ReadablePush, Self::EmitterListenerCount];
+
+    /// The constructor's definition and the prototype method the original is.
+    fn definition(self) -> (Definition, &'static str) {
+        match self {
+            Self::ReadablePush => (Definition::Module("lib/internal/streams/readable.js"), "push"),
+            Self::EmitterListenerCount => (Definition::BootstrapGlobal("__nodeEventEmitter"), "listenerCount"),
+        }
+    }
+}
+
+/// The recorded `LibraryOriginal`s, by their position in `LibraryOriginal::ALL`.
+#[derive(Default)]
+pub(crate) struct LibraryOriginals(pub(crate) [Option<RootId>; LibraryOriginal::ALL.len()]);
+
+impl LibraryOriginals {
+    pub(crate) fn get(&self, original: LibraryOriginal) -> Option<RootId> {
+        self.0[original as usize]
+    }
+}
+
+/// Records `original`, whose constructor is `constructor`, unless it is recorded.
+fn record_library_original(context: &mut Context<'_>, original: LibraryOriginal, constructor: RootId) -> Result<(), RootedError> {
+    if context.host_mut().shared_state().borrow().library_originals.get(original).is_some() {
+        return Ok(());
+    }
+    let (_, method) = original.definition();
+    let prototype = get(context, constructor, "prototype")?;
+    let value = get(context, prototype, method)?;
+    let retained = context.retain(value)?;
+    context.host_mut().shared_state().borrow_mut().library_originals.0[original as usize] = Some(retained);
+    Ok(())
+}
+
+/// Records the `LibraryOriginal`s the library module at `path` defines from its `exports`.
+fn record_library_originals(context: &mut Context<'_>, path: &Path, exports: RootId) -> Result<(), RootedError> {
+    for original in LibraryOriginal::ALL {
+        if matches!(original.definition().0, Definition::Module(module) if path == Path::new(module)) {
+            record_library_original(context, original, exports)?;
+        }
+    }
+    Ok(())
+}
+
+/// Records the `LibraryOriginal`s of the bootstrap's globals, before any script runs.
+pub(crate) fn record_bootstrap_originals(context: &mut Context<'_>) -> Result<(), RootedError> {
+    for original in LibraryOriginal::ALL {
+        if let Definition::BootstrapGlobal(name) = original.definition().0 {
+            let global = context.global_root()?;
+            let constructor = get(context, global, name)?;
+            record_library_original(context, original, constructor)?;
+        }
+    }
+    Ok(())
+}
+
 pub(crate) fn node_library_export(
     context: &mut Context<'_>, owner: &str, relative: &str, name: &str,
 ) -> Result<RootId, RootedError> {
@@ -2978,6 +3057,9 @@ const getLinkedBinding = () => ({});
             crate::modules::console_shared_vm::adopt(context, module, exports)?;
         }
         let exports = get(context, module, "exports")?;
+        if let Some(path) = library_relative {
+            record_library_originals(context, path, exports)?;
+        }
         let loaded = context.boolean(true);
         set(context, module, "loaded", loaded)?;
         Ok(exports)
