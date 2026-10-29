@@ -66,7 +66,7 @@ impl ProgramStore {
         let count = reader.len()?;
         let mut programs = Vec::with_capacity(count);
         for _ in 0..count {
-            programs.push(if reader.bool()? { Some(ProgramEntry::read_snapshot(reader, bytes, atoms)?) } else { None });
+            programs.push(if reader.bool()? { Some(Box::new(ProgramEntry::read_snapshot(reader, bytes, atoms)?)) } else { None });
         }
         let global_eval_programs = read_list(reader, |reader| {
             Ok((JsString::read_snapshot(reader)?, ProgramId::from_raw(reader.u32()?)))

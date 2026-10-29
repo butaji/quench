@@ -927,7 +927,7 @@ struct OwnedScript {
 pub(crate) struct ProgramStore {
     /// Indexed by `ProgramId`; a reclaimed program leaves an empty slot, so an
     /// id never names another program.
-    programs: Vec<Option<ProgramEntry>>,
+    programs: Vec<Option<Box<ProgramEntry>>>,
     /// Weak compiled-script identities for global eval; contexts are supplied per call.
     global_eval_programs: FxHashMap<JsString, ProgramId>,
     owned_scripts: FxHashMap<ProgramId, OwnedScript>,
@@ -1056,12 +1056,12 @@ impl ProgramStore {
     }
 
     fn entry(&self, id: ProgramId) -> Option<&ProgramEntry> {
-        self.programs.get(id.index())?.as_ref()
+        self.programs.get(id.index())?.as_deref()
     }
 
     /// Every mutation goes through here, so it also marks the program's roots pending.
     fn entry_mut(&mut self, id: ProgramId) -> Option<&mut ProgramEntry> {
-        let entry = self.programs.get_mut(id.index())?.as_mut()?;
+        let entry = self.programs.get_mut(id.index())?.as_deref_mut()?;
         entry.minor_root_traces = PromotionAge::OLDEST.minors();
         Some(entry)
     }
@@ -1408,7 +1408,7 @@ impl ProgramStore {
         let lane_views = LaneViews::default();
         let lane_deferred = vec![std::cell::Cell::new(0); program.functions.len()];
         let origin = if program.kind == crate::bytecode::ProgramKind::Eval { CompilationOrigin::Eval { caller: None } } else { CompilationOrigin::Source };
-        self.programs.push(Some(ProgramEntry {
+        self.programs.push(Some(Box::new(ProgramEntry {
             residual: Residual::decoded(program),
             wasm_signatures: None,
             constants: Vec::new(),
@@ -1431,7 +1431,7 @@ impl ProgramStore {
             reclaimable: false,
             pass: self.reclaim_passes,
             minor_root_traces: PromotionAge::OLDEST.minors(),
-        }));
+        })));
         Some(id)
     }
 

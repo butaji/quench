@@ -3058,6 +3058,8 @@ impl<H: Host> Vm<H> {
     }
 
     fn store_dynamic_program_shared(&mut self, program: Rc<ResidualProgram>) -> Option<ProgramId> {
+        self.heap
+            .charge_reclaimable_program(crate::compile::program_profile::ProgramFootprint::of(&program).total());
         let id = self.programs.insert_reclaimable_shared(program)?;
         let residual = self.programs.get(id)?;
         self.append_program_cache_layout(id, &residual);

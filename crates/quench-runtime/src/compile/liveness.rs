@@ -40,7 +40,6 @@ impl RegisterMasks {
     }
 
     /// The bytes the masks occupy.
-    #[cfg(feature = "profile-memory")]
     pub(crate) fn bytes(&self) -> usize {
         match self {
             Self::Narrow(masks) => size_of_val::<[u64]>(masks),
