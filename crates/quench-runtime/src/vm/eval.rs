@@ -393,6 +393,14 @@ impl<H: Host> Vm<H> {
         let prepared = self.prepare_embedding_library_body(prefix, body.clone(), suffix, name)?;
         if let Some(bytes) = self.encode_cached_program(&prepared.program) {
             self.host.keep_compiled_program(name, &parts, &bytes);
+            drop(bytes);
+            // The module then runs from its kept form, as every later run's does, like an
+            // entry script (`prepare_embedding_specialized_script_retaining`).
+            if let Some(bytes) = self.host.kept_compiled_program(name, &parts)
+                && let Ok(program) = self.decode_cached_program(bytes, body, prefix.len(), name, self.specialized)
+            {
+                return Ok(crate::PreparedScript { program: Rc::new(program) });
+            }
         }
         Ok(prepared)
     }
