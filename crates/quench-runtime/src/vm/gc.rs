@@ -384,6 +384,7 @@ impl<H: Host> Vm<H> {
         if reclaimed.is_empty() {
             return;
         }
+        self.free_cache_layouts_of(reclaimed.iter().copied());
         let reclaimed = reclaimed.into_iter().collect::<FxHashSet<_>>();
         self.function_values
             .retain(|(program, _), _| !reclaimed.contains(program));

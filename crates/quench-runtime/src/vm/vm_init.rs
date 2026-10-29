@@ -86,6 +86,7 @@ impl<H: Host> Vm<H> {
             shared_async_waiters:Vec::new(),
             programs: ProgramStore::default(),
             program_cache_layouts: Vec::new(),
+            free_cache_layouts: FxHashMap::default(),
             active_registers: std::ptr::null_mut(),
             lane_raised: None,
             lane_deferred: None,

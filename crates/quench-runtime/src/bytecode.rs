@@ -3724,7 +3724,7 @@ impl ProgramSource {
 
 /// The sizes of a program's inline-cache site tables (`ResidualProgram::cache_site_counts`):
 /// its field, method and object literal sites.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub(crate) struct CacheSiteCounts {
     pub(crate) fields: u16,
     pub(crate) methods: usize,
