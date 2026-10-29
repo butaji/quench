@@ -941,15 +941,9 @@ pub(crate) fn emit_destroy(
     let id = number_property(context, receiver, ASYNC_ID)?
         .ok_or_else(|| RootedError::host("AsyncResource has no async ID"))?;
     let state = context.host_mut().shared_state();
-    let first = state
-        .borrow_mut()
-        .async_hooks
-        .destroyed_resources
-        .insert(id);
-    if first {
-        for root in take_context_stores(&state, id) {
-            context.release_root(root);
-        }
+    // Taking a resource's stores removes them, so a repeated destroy releases nothing twice.
+    for root in take_context_stores(&state, id) {
+        context.release_root(root);
     }
     queue_destroy(context, id)?;
     Ok(receiver)
