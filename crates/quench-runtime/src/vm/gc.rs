@@ -28,8 +28,8 @@ impl crate::heap::ClosureReadSource for ProgramClosureReads<'_> {
         self.lexical_this
     }
 
-    fn may_hold_projections(&self, function: u32) -> bool {
-        function == ROOT_FUNCTION_ID
+    fn projection_function(&self) -> u32 {
+        ROOT_FUNCTION_ID
     }
 
     fn slot_is_projection(&self, program: u32, function: u32, slot: u16) -> bool {
