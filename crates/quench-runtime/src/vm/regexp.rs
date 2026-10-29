@@ -2569,7 +2569,7 @@ impl<H: Host> Vm<H> {
         };
         let units = input.units();
         if (stateful && start > units.len())
-            || regex.excludes_search(units.len(), start, || (start < units.len()).then(|| units.at(start)))
+            || regex.excludes_search(units.len(), start, sticky, || (start < units.len()).then(|| units.at(start)))
         {
             if stateful {
                 store(self, Value::number(0.0))?;
@@ -2742,7 +2742,7 @@ impl<H: Host> Vm<H> {
         let stateful = meta.flags.intersects(RegExpFlags::GLOBAL.with(RegExpFlags::STICKY));
         let start = if stateful { regexp_to_length(index) } else { 0 };
         let length = input.len();
-        let rejected = (stateful && start > length) || regex.excludes_search(length, start, || units.unit(start));
+        let rejected = (stateful && start > length) || regex.excludes_search(length, start, meta.flags.contains(RegExpFlags::STICKY), || units.unit(start));
         Some((slot, last_index, rejected.then_some(stateful)))
     }
 
