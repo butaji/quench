@@ -11112,7 +11112,7 @@ script_handler! {
         // activation or native call copies before anything can move them.
         let window = unsafe { lane_call_window(r, i) };
         let Some((callee, receiver, args)) = vm.forwarded_call(r.get(i.b), r.get(i.c), window) else {
-            return exit(ip);
+            return lane_bound_arguments_call(cx, r, ip, i);
         };
         if let Some(FunctionRecord { kind: kind @ FunctionKind::Native(_), .. }) = vm.heap.function(callee) {
             let kind = *kind;
@@ -11126,6 +11126,34 @@ script_handler! {
             Ok((registers, base)) => next!(cx, registers, base, Carried::script(cx)),
             Err(next) => next,
         }
+    }
+}
+
+/// `lane_function_call` of a bound function with bound arguments, which lead the values the
+/// call passes (ECMA-262 10.4.1.1): the forwarded call with the values copied out
+/// (`Vm::forwarded_list_call`), a user function's activation or frame call
+/// (`FrameCallArguments::List`), else the general path.
+#[inline(never)]
+fn lane_bound_arguments_call<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, i: &LaneInstruction) -> Ip {
+    let vm = unsafe { vm(cx) };
+    // SAFETY: as in `lane_function_call`; the values are copied before anything runs.
+    let window = unsafe { lane_call_window(r, i) };
+    let copied = smallvec::SmallVec::<[Value; FRAME_CALL_INLINE_ARGUMENTS]>::from_slice(window);
+    let Some((callee, receiver, args)) = vm.forwarded_list_call(r.get(i.b), r.get(i.c), copied) else {
+        return exit(ip);
+    };
+    if !matches!(vm.heap.function(callee), Some(FunctionRecord { kind: FunctionKind::User(..), .. })) {
+        return exit(ip);
+    }
+    let Some(target) = lane_passed_target(cx, callee, args.len()) else {
+        return lane_passed_frame_call(cx, r, ip, i, callee, receiver, FrameCallArguments::List(&args));
+    };
+    let Some(this) = lane_call_this(vm, &target, receiver) else {
+        return exit(ip);
+    };
+    match lane_activate_passed(cx, r, ip, &target, &args, this) {
+        Ok((registers, base)) => next!(cx, registers, base, Carried::script(cx)),
+        Err(next) => next,
     }
 }
 

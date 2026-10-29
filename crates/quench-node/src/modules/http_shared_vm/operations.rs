@@ -197,8 +197,9 @@ fn emitter_template_probes(context: &mut Context<'_>, emitter: RootId) -> Result
 
 /// The probes of `new IncomingMessage(undefined)` (the pinned library's `IncomingMessage`,
 /// `Readable`, `ReadableState` and `Stream`): the EventEmitter's
-/// (`emitter_template_probes`) and the `prototype` of each constructor `new` reads. The
-/// default high water mark is module state the factory compares.
+/// (`emitter_template_probes`), the `prototype` of each constructor `new` reads, and the
+/// `push` and `listenerCount` an ended message's push calls. The default high water mark
+/// is module state the factory compares.
 fn incoming_template_probes(
     context: &mut Context<'_>,
     emitter: RootId,
@@ -210,11 +211,22 @@ fn incoming_template_probes(
         "internal/streams/readable.js",
         "ReadableState",
     )?;
+    let readable = crate::host::shared_vm::commonjs::node_library_export(
+        context,
+        "http.js",
+        "internal/streams/readable.js",
+        "prototype",
+    )?;
+    let emitter_prototype = get(context, emitter, "prototype")?;
     let mut probes = emitter_template_probes(context, emitter)?;
     for constructor in [incoming, readable_state] {
         let key = context.string_rooted("prototype");
         probes.extend([constructor, key]);
     }
+    // The methods an ended message's `push(null)` calls (`incoming::CREATE_FACTORY`).
+    let push = context.string_rooted("push");
+    let listener_count = context.string_rooted("listenerCount");
+    probes.extend([readable, push, emitter_prototype, listener_count]);
     context.array_rooted(&probes)
 }
 
@@ -349,21 +361,23 @@ const RESPONSE_FACTORY: &str = r#"((Stream, setHeaderOperation, getHeaderOperati
   let capturing = false;
   let template;
   let captures = 0;
+  // A new template, apart from `respond`, whose calls then need no handler frame.
+  const capture = (id) => {
+    captures++;
+    capturing = true;
+    try {
+      template = captureTemplate(new ServerResponse(id), new ServerResponse(id), [...emitterProbes, ServerResponse, "prototype"]);
+    } finally {
+      capturing = false;
+    }
+  };
   const respond = (id, statusCode, request, server, socket) => {
     const copy = template === undefined ? undefined : copyTemplate(template);
     if (copy !== undefined) {
       bind(copy, id, statusCode, request, server, socket);
       return copy;
     }
-    if (captures < captureLimit) {
-      captures++;
-      capturing = true;
-      try {
-        template = captureTemplate(new ServerResponse(id), new ServerResponse(id), [...emitterProbes, ServerResponse, "prototype"]);
-      } finally {
-        capturing = false;
-      }
-    }
+    if (captures < captureLimit) capture(id);
     return new ServerResponse(id, statusCode, request, server, socket);
   };
   ServerResponse.prototype = Object.create(Stream.prototype);

@@ -112,6 +112,8 @@ pub(crate) struct SharedNodeState {
         std::path::PathBuf, crate::host::shared_vm::commonjs::PreparedRealmModule,
     >,
     pub(crate) crypto_handle_symbol: Option<quench_runtime::RootId>,
+    /// Library methods as their modules defined them (`commonjs::LibraryOriginal`).
+    pub(crate) library_originals: crate::host::shared_vm::commonjs::LibraryOriginals,
     pub(crate) event_targets_api: Option<quench_runtime::RootId>,
     pub(crate) trace: crate::modules::trace_state::TraceState,
     pub(crate) util_intrinsics: Option<crate::modules::util_shared_vm::UtilIntrinsics>,
@@ -251,6 +253,7 @@ impl SharedNodeState {
         self.workers.reset_vm_roots();
         self.primordials_module = None;
         self.crypto_handle_symbol = None;
+        self.library_originals = Default::default();
         self.event_targets_api = None;
         self.process_module = None;
         self.process_capture_state = None;
@@ -317,6 +320,7 @@ impl SharedNodeState {
             primordials_module: None,
             realm_module_programs: std::collections::HashMap::new(),
             crypto_handle_symbol: None,
+            library_originals: Default::default(),
             event_targets_api: None,
             util_intrinsics: None,
             node_error_api: None,
