@@ -63,6 +63,25 @@ impl<H: Host> Vm<H> {
         length
     }
 
+    /// Store element `index` of a dense array no guest code reaches, at most one past its
+    /// end: its own data property, every element a default one. The store passes the write
+    /// barrier, since the array may have been promoted while guest code ran.
+    pub(super) fn store_fresh_array_element(&mut self, array: Value, index: usize, value: Value) {
+        let Some(object) = self.heap.array_store_mut(array, value) else {
+            unreachable!("fresh array owner remains an array");
+        };
+        let elements = super::index::mutable_array_elements(object.elements_mut());
+        if index < elements.len() {
+            elements[index] = value;
+            return;
+        }
+        debug_assert_eq!(index, elements.len(), "a fresh array grows by one element at a time");
+        let capacity = elements.capacity();
+        elements.push(value);
+        let grown = elements.capacity() - capacity;
+        self.heap.charge_payload_growth(grown * size_of::<Value>());
+    }
+
     pub(super) fn new_array_with_prototype(
         &mut self,
         values: Vec<Value>,

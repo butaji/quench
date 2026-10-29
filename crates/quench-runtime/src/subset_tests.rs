@@ -747,3 +747,156 @@ print(out.length + " " + h + " " + out[out.length - 3].slice(0, 60));
 "#;
     assert_eq!(output(source), ["103 -1900204906 0,7,14,21,56,70,84,98,112,126,140,154,84,91,98,105,112,119,1"]);
 }
+
+#[test]
+fn nested_reads_past_their_primary_entries_keep_their_values() {
+    // A nested `GetField` whose steps miss their primary own entries reads the polymorphic
+    // entries and a string's own `length` (`lane_nested_polymorphic_value`): strings of
+    // astral and accented code points, arrays and an object with its own `length`, a middle
+    // step over many shapes, an inherited one, then a getter installed on its prototype and
+    // a primitive in its place. Node 26 prints the same. A semantics check: the iteration
+    // build's lane does not reach these sites, which the release build's reads do.
+    let source = r#"
+(function () {
+const out = [];
+function P(input) { this.input = input; this.pos = 0; }
+P.prototype.len = function () { return this.input.length; };
+P.prototype.kind = function () { return this.node.type.label; };
+const inputs = ["abc", "", "héllo", "😀x", [1, 2, 3], { length: 7 }, "z".repeat(40)];
+let total = 0;
+for (let round = 0; round < 300; round++) for (const input of inputs) total += new P(input).len();
+out.push(total);
+// Nested reads over many node shapes, then a shape whose middle step changes.
+const shapes = [];
+for (let k = 0; k < 12; k++) { const o = { type: { label: "t" + k } }; o["extra" + k] = k; shapes.push(o); }
+let labels = "";
+for (let round = 0; round < 200; round++) for (const node of shapes) { const p = new P("x"); p.node = node; labels = p.kind(); }
+out.push(labels);
+const proto = { label: "inherited" };
+const node = { type: Object.create(proto) };
+for (let round = 0; round < 50; round++) { const p = new P("x"); p.node = node; labels = p.kind(); }
+out.push(labels);
+Object.defineProperty(proto, "label", { get() { return "getter"; } });
+const p = new P("x"); p.node = node; out.push(p.kind());
+node.type = "str"; out.push(String(p.kind()));
+print(out.join(" "));
+})();
+"#;
+    assert_eq!(output(source), ["18300 t11 inherited getter undefined"]);
+}
+
+#[test]
+fn polymorphic_stores_through_record_hints_keep_their_semantics() {
+    // A polymorphic own-field store tests its record's hint, the own entry its last hit named
+    // (`Vm::hinted_own_field_store_hit`), before the site's entries: receivers of ten shapes,
+    // then a frozen one, an own accessor in the field's place, a prototype setter and a
+    // receiver gone to dictionary storage. Node 26 prints the same.
+    let source = r#"
+(function () {
+const out = [];
+function P(k) { this.pos = 0; this["f" + k] = k; }
+P.prototype.step = function (v) { this.pos = v; return this.pos; };
+const ps = [];
+for (let k = 0; k < 10; k++) ps.push(new P(k));
+let sum = 0;
+for (let round = 0; round < 300; round++) for (const p of ps) sum += p.step(round);
+out.push(sum);
+const frozen = new P(3); Object.freeze(frozen);
+out.push(frozen.step(9), frozen.pos);
+const same = new P(3); same.step(5); out.push(same.pos);
+Object.defineProperty(same, "pos", { get() { return "g"; }, set(v) { out.push("set" + v); }, configurable: true });
+same.step(7); out.push(same.pos);
+const viaProto = Object.create({ set pos(v) { out.push("proto" + v); } });
+P.prototype.step.call(viaProto, 4);
+const big = new P(4); for (let i = 0; i < 40; i++) big["x" + i] = i; delete big.x3; out.push(big.step(11), big.pos);
+print(out.join(" "));
+})();
+"#;
+    assert_eq!(output(source), ["448500 0 0 5 set7 g proto4 11 11"]);
+}
+
+#[test]
+fn forwarding_constructors_keep_their_initializers_constant_fields() {
+    // Two closures of one forwarding constructor (`this.initialize.apply(this, arguments)`)
+    // whose initializers differ: the plan a forwarded construction records keeps which of
+    // its fields are constants (`lane_record_forwarded_fields`), so C's `this.w = 1` stays 1
+    // beside a defaulted parameter field. In a function, whose loops run in the lane. Node
+    // prints the same.
+    let source = r#"
+(function () {
+var Class = { create: function() { return function() { this.initialize.apply(this, arguments); }; } };
+function A(x) { this.x = x; }
+var B = Class.create();
+B.prototype = { initialize: function(x) { this.y = x + 1; } };
+var C = Class.create();
+C.prototype = { initialize: function(x) { this.z = (x ? x : 4); this.w = 1; } };
+function make(K, v) { return new K(v); }
+var out = [];
+for (var i = 0; i < 3000; i++) { var a = new (i % 3 == 0 ? A : i % 3 == 1 ? B : C)(i % 7); if (i > 2990) out.push(JSON.stringify(a)); }
+for (var i = 0; i < 3000; i++) { var k = [A, B, C][i % 3]; var o = new k(i % 5); if (i > 2990) out.push(JSON.stringify(o)); }
+for (var i = 0; i < 3000; i++) { var o = make([A, B, C][i % 3], i % 5); if (i > 2990) out.push(JSON.stringify(o)); }
+var o1; for (var i = 0; i < 3000; i++) { o1 = new A(i); } for (var i = 0; i < 3000; i++) { var K = i < 1500 ? A : (i < 2000 ? B : C); var o2 = new K(i % 4); if (i % 500 == 499) out.push(JSON.stringify(o2)); }
+print(out.join('\n'));
+})();
+"#;
+    assert_eq!(output(source).join("\n"), r##"{"x":2}
+{"y":4}
+{"z":4,"w":1}
+{"x":5}
+{"y":7}
+{"z":4,"w":1}
+{"x":1}
+{"y":3}
+{"z":3,"w":1}
+{"x":1}
+{"y":3}
+{"z":3,"w":1}
+{"x":4}
+{"y":1}
+{"z":1,"w":1}
+{"x":2}
+{"y":4}
+{"z":4,"w":1}
+{"x":1}
+{"y":3}
+{"z":3,"w":1}
+{"x":4}
+{"y":1}
+{"z":1,"w":1}
+{"x":2}
+{"y":4}
+{"z":4,"w":1}
+{"x":3}
+{"x":3}
+{"x":3}
+{"y":4}
+{"z":3,"w":1}
+{"z":3,"w":1}"##);
+}
+
+#[test]
+fn function_information_reads_through_prototype_chains_keep_their_values() {
+    // `name` and `length` read through chains of plain objects skip the function-information
+    // walk (`chain_reaches_function`), while a chain that reaches a function, directly or
+    // past plain objects, still reads its own `name` and `length`, renamed or not. Node 26
+    // prints the same.
+    let source = r#"
+(function () {
+const out = [];
+function foo(a, b) {}
+const viaFn = Object.create(foo);
+const viaObj = Object.create(Object.create(foo));
+const plain = { name: "p", length: 3 };
+const bare = {};
+let s = "";
+for (let i = 0; i < 2000; i++) { const o = [viaFn, viaObj, plain, bare][i % 4]; s = String(o.name) + o.length; }
+out.push(s, viaFn.name + viaFn.length, viaObj.name + viaObj.length, plain.name + plain.length, String(bare.name) + bare.length);
+class K { static m() {} }
+out.push(Object.create(K).name, Object.create(K.m).name, Object.create(K.m).length);
+Object.defineProperty(foo, "name", { value: "renamed" });
+out.push(viaObj.name, Object.create(Object.create(Object.create(foo))).name);
+print(out.join(" "));
+})();
+"#;
+    assert_eq!(output(source), ["undefinedundefined foo2 foo2 p3 undefinedundefined K m 0 renamed renamed"]);
+}

@@ -958,11 +958,17 @@ impl Native {
                 | Self::ObjectPrototypeHasOwnProperty
                 | Self::ObjectPrototypeToString
                 | Self::ReflectGetPrototypeOf
+                | Self::ReflectSetPrototypeOf
                 | Self::ForInKeys
                 | Self::ArrayJoin
                 | Self::ArraySplice
                 | Self::StringSplit
                 | Self::StringMatch
+                | Self::StringReplace
+                | Self::StringReplaceAll
+                | Self::NumberString
+                | Self::MapEntries
+                | Self::ArraySlice
                 | Self::RegExpTest
                 | Self::JsonParse
                 | Self::JsonStringify
