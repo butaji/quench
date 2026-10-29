@@ -83,6 +83,9 @@ struct RuntimeAtoms {
     bound_target: Atom,
     bound_this: Atom,
     bound_args: Atom,
+    /// `String.prototype.charCodeAt`, whose intactness a host's string scan checks
+    /// (`Vm::embedding_string_char_code_at_intact`).
+    char_code_at: Atom,
 }
 pub(crate) mod activation;
 mod agent;
@@ -2973,6 +2976,7 @@ impl<H: Host> Vm<H> {
             bound_target: self.intern_atom(BOUND_TARGET_KEY),
             bound_this: self.intern_atom(BOUND_THIS_KEY),
             bound_args: self.intern_atom(BOUND_ARGS_KEY),
+            char_code_at: self.intern_atom("charCodeAt"),
         };
         self.field_caches = site_table::SiteTable::with_empty(usize::from(program.cache_sites));
         self.refresh_active_field_entries();

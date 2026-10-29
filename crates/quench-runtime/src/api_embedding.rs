@@ -138,6 +138,12 @@ impl<H: Host> Runtime<H> {
         self.retain_completion(result)
     }
 
+    /// A Uint8Array that takes ownership of `bytes` as its backing store.
+    pub fn uint8_array_from_rooted(&mut self, bytes: Vec<u8>) -> Result<RootId, RootedError> {
+        let result = self.vm.embedding_uint8_array_from(bytes);
+        self.retain_completion(result)
+    }
+
     /// Create a plain object whose `[[Prototype]]` is null.
     pub fn null_object_rooted(&mut self) -> Result<RootId, RootedError> {
         let result = self.vm.create_embedding_null_object();

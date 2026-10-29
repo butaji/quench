@@ -161,25 +161,6 @@ impl Heap {
         finalization_jobs
     }
 
-    /// The keys, values and targets of `cell`'s weak entries, which a strong trace of it
-    /// (`Heap::children`) leaves to the ephemeron work and to pruning.
-    pub(super) fn weak_entry_edges(cell: &Cell, edges: &mut Vec<Value>) {
-        match cell {
-            Cell::WeakMap { entries, .. } => {
-                edges.extend(entries.iter().flat_map(|(key, value)| [*key, *value]));
-            }
-            Cell::WeakSet { entries, .. } => edges.extend(entries.iter().copied()),
-            Cell::WeakRef { target, .. } => edges.extend(target.map(|target| target.value)),
-            Cell::FinalizationRegistry { entries, .. } => {
-                for entry in entries.iter() {
-                    edges.push(entry.target.value);
-                    edges.extend(entry.token.map(|token| token.value));
-                }
-            }
-            _ => {}
-        }
-    }
-
     fn prune_weak_cell(
         cell: &mut Cell,
         is_marked: &impl Fn(Value) -> bool,

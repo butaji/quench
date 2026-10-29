@@ -26,7 +26,7 @@ const DEFAULT_VERSION: (u32, u32) = (1, 1);
 /// socket without `on`, and the body pushed, then its end unless it is still open. One
 /// guest call makes the whole message, so its steps run in the lane.
 const CREATE_FACTORY: &str = quench_js_check::checked_js!(
-    r#"(IncomingMessage, EventEmitter, read, destroy, serverKey, clientKey, setPrototypeOf, bodyBuffer, captureTemplate, copyTemplate, templateProbes, defaultHighWaterMark, captureLimit, debuglog, originalPush, originalListenerCount) => {
+    r#"(IncomingMessage, EventEmitter, read, destroy, serverKey, clientKey, setPrototypeOf, bodyBuffer, captureTemplate, copyTemplate, templateProbes, defaultHighWaterMark, captureLimit, debuglog, originalPush, originalListenerCount, originalAddHeaderLines) => {
   'use strict';
   // The template of `new IncomingMessage(undefined)` (`objectTemplateCapture`), and the
   // default high water mark its ReadableState read, which no probe names: module state.
@@ -77,8 +77,69 @@ const CREATE_FACTORY: &str = quench_js_check::checked_js!(
     }
     return undefined;
   };
+  // A server request's message as `create` makes it below, its head fields aside: the
+  // library message with the exchange id under the server's key, the shared `_read` and
+  // `_destroy`, and for a bodiless request its end pushed (as `endedMessage`). Each head
+  // field is a parameter (`objectTemplateCapture`), so a copy is that message for the
+  // request's values, assigned before the header lines are added, which only the library's
+  // own `_addHeaderLines` leaves unobserved (`LibraryOriginal`).
+  const requestParameters = ["method", "url", "httpVersion", "httpVersionMajor", "httpVersionMinor", "rawHeaders", "socket", "complete", serverKey];
+  const prepared = (ended) => {
+    const stream = new IncomingMessage(undefined);
+    stream[serverKey] = undefined;
+    stream._read = read;
+    stream._destroy = destroy;
+    if (ended) stream.push(null);
+    return stream;
+  };
+  const requestTemplate = (ended) => {
+    let requestTemplate;
+    let requestHighWaterMark;
+    let requestCaptures = 0;
+    return (method, url, httpVersion, httpVersionMajor, httpVersionMinor, rawHeaders, socket, complete, id) => {
+      if (requestTemplate !== undefined && requestHighWaterMark === defaultHighWaterMark(false)) {
+        const copy = copyTemplate(requestTemplate, method, url, httpVersion, httpVersionMajor, httpVersionMinor, rawHeaders, socket, complete, id);
+        if (copy !== undefined) return copy;
+      }
+      streamDebug ??= debuglog("stream").enabled;
+      if (ended && streamDebug || requestCaptures >= captureLimit) return undefined;
+      requestCaptures++;
+      const fresh = new IncomingMessage(undefined);
+      if (fresh._addHeaderLines !== originalAddHeaderLines
+        || ended && (fresh.push !== originalPush || fresh.listenerCount !== originalListenerCount)) return undefined;
+      requestHighWaterMark = defaultHighWaterMark(false);
+      requestTemplate = captureTemplate(prepared(ended), prepared(ended), templateProbes, requestParameters);
+      return undefined;
+    };
+  };
+  const openRequest = requestTemplate(false);
+  const endedRequest = requestTemplate(true);
   return function create(method, url, statusCode, statusMessage, httpVersion, httpVersionMajor, httpVersionMinor, rawHeaders, socket, complete, body, open, id, server) {
     const pushed = typeof body === "string" && body.length !== 0;
+    const request = server && method !== undefined && statusCode === undefined && socket !== undefined
+      ? (!open && !pushed ? endedRequest : openRequest)(method, url, httpVersion, httpVersionMajor, httpVersionMinor, rawHeaders, socket, complete, id)
+      : undefined;
+    if (request === undefined) {
+      return fields(method, url, statusCode, statusMessage, httpVersion, httpVersionMajor, httpVersionMinor, rawHeaders, socket, complete, body, open, id, server, pushed);
+    }
+    request._addHeaderLines(rawHeaders, rawHeaders.length);
+    if (open) request.complete = false;
+    adoptSocket(request.socket);
+    if (pushed) {
+      request.push(bodyBuffer(body));
+      if (!open) request.push(null);
+    }
+    return request;
+  };
+  // A socket without `on` takes the EventEmitter prototype.
+  function adoptSocket(peer) {
+    if ((typeof peer === "object" && peer !== null || typeof peer === "function") && typeof peer.on !== "function") {
+      setPrototypeOf(peer, EventEmitter.prototype);
+    }
+  }
+  // The message of any other head: the template's, its header lines added, then each
+  // defined field assigned in order.
+  function fields(method, url, statusCode, statusMessage, httpVersion, httpVersionMajor, httpVersionMinor, rawHeaders, socket, complete, body, open, id, server, pushed) {
     const copied = !open && !pushed ? endedMessage() : undefined;
     const stream = copied ?? message();
     stream._addHeaderLines(rawHeaders, rawHeaders.length);
@@ -96,14 +157,11 @@ const CREATE_FACTORY: &str = quench_js_check::checked_js!(
     stream[server ? serverKey : clientKey] = id;
     stream._read = read;
     stream._destroy = destroy;
-    const peer = stream.socket;
-    if ((typeof peer === "object" && peer !== null || typeof peer === "function") && typeof peer.on !== "function") {
-      setPrototypeOf(peer, EventEmitter.prototype);
-    }
+    adoptSocket(stream.socket);
     if (pushed) stream.push(bodyBuffer(body));
     if (!open && copied === undefined) stream.push(null);
     return stream;
-  };
+  }
 }"#
 );
 
@@ -130,17 +188,21 @@ pub(super) fn create_function(
     )?;
     let capture_limit = c.number(f64::from(TEMPLATE_CAPTURE_LIMIT));
     let debuglog = crate::host::shared_vm::commonjs::node_library_export(c, "http.js", "internal/util/debuglog.js", "debuglog")?;
-    let originals = crate::host::shared_vm::commonjs::LibraryOriginal::ALL.map(|original| {
-        c.host_mut().shared_state().borrow().library_originals.get(original)
-    });
-    let [push, listener_count] = originals.map(|original| original.unwrap_or_else(|| c.undefined()));
+    use crate::host::shared_vm::commonjs::LibraryOriginal;
+    let mut original = |original: LibraryOriginal| {
+        let recorded = c.host_mut().shared_state().borrow().library_originals.get(original);
+        recorded.unwrap_or_else(|| c.undefined())
+    };
+    let push = original(LibraryOriginal::ReadablePush);
+    let listener_count = original(LibraryOriginal::EmitterListenerCount);
+    let add_header_lines = original(LibraryOriginal::IncomingAddHeaderLines);
     let undefined = c.undefined();
     c.call_rooted(
         factory,
         undefined,
         &[
             configuration.as_slice(),
-            &[set_prototype_of, body_buffer, capture, copy, template_probes, default_high_water_mark, capture_limit, debuglog, push, listener_count],
+            &[set_prototype_of, body_buffer, capture, copy, template_probes, default_high_water_mark, capture_limit, debuglog, push, listener_count, add_header_lines],
         ]
         .concat(),
     )
@@ -151,12 +213,17 @@ pub(super) fn create_function(
 /// program that keeps changing them pays three constructions a message only this often.
 pub(super) const TEMPLATE_CAPTURE_LIMIT: u32 = 8;
 
-/// `objectTemplateCapture(template, witness, probes)`: the id of a template of `template`'s
-/// graph (`NativeContext::capture_object_template_rooted`), `probes` a flat array of
-/// (holder, key) pairs; `undefined` when the graph cannot be templated.
+/// `objectTemplateCapture(template, witness, probes, parameters)`: the id of a template of
+/// `template`'s graph (`NativeContext::capture_object_template_rooted`), `probes` a flat array
+/// of (holder, key) pairs, `parameters` the root's keys each copy takes from its arguments
+/// (none when absent); `undefined` when the graph cannot be templated.
 pub(crate) fn capture_template(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
     let (Some(&template), Some(&witness), Some(&probes)) = (args.first(), args.get(1), args.get(2)) else {
         return Ok(c.undefined());
+    };
+    let parameters = match args.get(3) {
+        Some(&keys) if !c.rooted_value(keys).is_some_and(|value| value.is_undefined()) => c.array_like_values_rooted(keys)?,
+        _ => Vec::new(),
     };
     let length = get(c, probes, "length")?;
     let length = c.rooted_value(length).and_then(|value| value.as_number()).unwrap_or(0.0) as usize;
@@ -166,17 +233,19 @@ pub(crate) fn capture_template(c: &mut Context<'_>, _: RootId, args: &[RootId]) 
         let key = get(c, probes, &(index + 1).to_string())?;
         pairs.push((holder, key));
     }
-    Ok(match c.capture_object_template_rooted(template, witness, &pairs) {
+    Ok(match c.capture_object_template_rooted(template, witness, &pairs, &parameters) {
         Some(id) => c.number(f64::from(id)),
         None => c.undefined(),
     })
 }
 
-/// `objectTemplateCopy(id)`: a copy of template `id`, or `undefined` when its construction
-/// would no longer build it (`NativeContext::instantiate_object_template_rooted`).
+/// `objectTemplateCopy(id, ...arguments)`: a copy of template `id` with `arguments` in its
+/// parameters, or `undefined` when its construction would no longer build it
+/// (`NativeContext::instantiate_object_template_rooted`).
 pub(crate) fn copy_template(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
     let id = args.first().and_then(|&id| c.rooted_value(id)).and_then(|value| value.as_number());
-    let copy = id.and_then(|id| c.instantiate_object_template_rooted(id as u32));
+    let arguments = args.get(1..).unwrap_or_default();
+    let copy = id.and_then(|id| c.instantiate_object_template_rooted(id as u32, arguments));
     Ok(copy.unwrap_or_else(|| c.undefined()))
 }
 

@@ -65,5 +65,16 @@ fn patch_node_source(relative: &str, source: &str) -> Option<String> {
         initializeResponse(responseObject, init, { body: body[0], type: "application/json" });
         return responseObject;"#,
     );
+    // WebIDL ByteString's scan starts where a code unit above 255 is, or past the end
+    // (`modules::webidl_shared_vm::byte_string_end`).
+    let source = replace_node_source_once(
+        &source,
+        "      const x = String(V);\n      for (let index = 0; index < x.length; index++) {\n        if (x.charCodeAt(index) > 255) {",
+        concat!(
+            "      const x = String(V);\n      for (let index = ",
+            byte_string_end_binding!(),
+            "(x); index < x.length; index++) {\n        if (x.charCodeAt(index) > 255) {"
+        ),
+    );
     Some(source)
 }

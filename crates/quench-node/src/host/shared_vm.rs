@@ -797,6 +797,7 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "httpIncomingBody" (1) => crate::modules::http_shared_vm::incoming::body,
         method "objectTemplateCapture" (3) => crate::modules::http_shared_vm::incoming::capture_template,
         method "objectTemplateCopy" (1) => crate::modules::http_shared_vm::incoming::copy_template,
+        method "byteStringEnd" (1) => crate::modules::webidl_shared_vm::byte_string_end,
         method "httpIncomingRead" (1) => crate::modules::http_shared_vm::incoming::read,
         method "httpIncomingDestroy" (2) => crate::modules::http_shared_vm::incoming::destroy,
         method "encodingUtf8" (0) => crate::modules::encoding_binding_shared_vm::encode,
@@ -1070,6 +1071,7 @@ const BESIDE_ACTIVATIONS: &[&str] = &[
     "stringDecoderDecode",
     "markAsUncloneable",
     "objectTemplateCopy",
+    "byteStringEnd",
 ];
 
 impl quench_runtime::Host for NodeHost {

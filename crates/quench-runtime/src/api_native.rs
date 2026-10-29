@@ -493,6 +493,19 @@ impl<'a, H: Host> NativeContext<'a, H> {
         result.map_err(|error| self.error(error))
     }
 
+    /// Whether `String.prototype.charCodeAt` is the realm's own
+    /// (`Vm::embedding_string_char_code_at_intact`).
+    pub fn string_char_code_at_intact(&self) -> bool {
+        self.vm.embedding_string_char_code_at_intact()
+    }
+
+    /// The index of a string's first code unit above `limit`, or its length when none is,
+    /// without coercion or copying; `None` denotes a non-string.
+    pub fn string_units_within(&mut self, root: RootId, limit: u16) -> Result<Option<usize>, RootedError> {
+        let result = self.vm.embedding_string_units_within(root, limit);
+        result.map_err(|error| self.error(error))
+    }
+
     /// Apply the shared object integrity operation, including Proxy traps.
     pub fn prevent_extensions_rooted(&mut self, object: RootId) -> Result<bool, RootedError> {
         let result = self.vm.embedding_prevent_extensions(object);
@@ -1697,19 +1710,23 @@ impl<'a, H: Host> NativeContext<'a, H> {
         template: RootId,
         witness: RootId,
         probes: &[(RootId, RootId)],
+        parameters: &[RootId],
     ) -> Option<u32> {
         let (template, witness) = (self.vm.root_value(template)?, self.vm.root_value(witness)?);
         let probes = probes
             .iter()
             .map(|&(holder, key)| Some((self.vm.root_value(holder)?, self.vm.root_value(key)?)))
             .collect::<Option<Vec<_>>>()?;
-        self.vm.capture_object_template(template, witness, &probes)
+        let parameters = parameters.iter().map(|&key| self.vm.root_value(key)).collect::<Option<Vec<_>>>()?;
+        self.vm.capture_object_template(template, witness, &probes, &parameters)
     }
 
-    /// A copy of object template `id` (`Vm::instantiate_object_template`), or `None` when
-    /// its construction's reads no longer hold and the caller must construct.
-    pub fn instantiate_object_template_rooted(&mut self, id: u32) -> Option<RootId> {
-        let copy = self.vm.instantiate_object_template(id)?;
+    /// A copy of object template `id` with `arguments` in its parameters
+    /// (`Vm::instantiate_object_template`), or `None` when its construction's reads no longer
+    /// hold and the caller must construct.
+    pub fn instantiate_object_template_rooted(&mut self, id: u32, arguments: &[RootId]) -> Option<RootId> {
+        let arguments = arguments.iter().map(|&argument| self.vm.root_value(argument)).collect::<Option<smallvec::SmallVec<[_; 16]>>>()?;
+        let copy = self.vm.instantiate_object_template(id, &arguments)?;
         Some(self.scoped_value(copy))
     }
 
