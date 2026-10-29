@@ -1061,6 +1061,8 @@ impl Engine {
                 "SyntaxError: invalid dynamic Function source shape",
             )]);
         }
+        // Parsing is done; the semantic analysis starts here.
+        compile_phase_boundary(CompilePhase::Analysis);
         let semantic = oxc_semantic::SemanticBuilder::new()
             .with_check_syntax_error(true)
             .build(&parsed.program);
@@ -1249,6 +1251,8 @@ impl Engine {
 /// the next phase does not touch.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CompilePhase {
+    /// A compilation has parsed its source; its semantic analysis starts.
+    Analysis,
     /// A compilation has parsed and analysed its source; its code generation starts.
     CodeGeneration,
     /// A function compiles, or decodes from its program's kept bytes, on its first call: code

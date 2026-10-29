@@ -7081,6 +7081,10 @@ fn lane_region_field<H: Host>(
         super::compiled::FieldReceiver::Register(register) => r.get(register),
         super::compiled::FieldReceiver::Field(index) => earlier(index),
     };
+    // The site's primary entry first, as the lane's own reads take it (`lane_get_field_own`).
+    if let Some(value) = vm.record_field_entry_hit(vm.field_cache_entry(field.cache_site), receiver) {
+        return Some(value);
+    }
     match vm.cached_field_hit(code, receiver, field.cache_site) {
         super::object::FieldCacheProbe::Hit(value) => Some(value),
         _ => None,

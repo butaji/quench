@@ -161,6 +161,17 @@
 
 ;;;; Helpers for `*_overflow` ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
+;; Quench: overflow arithmetic whose flag no lowered instruction reads as a value
+;; emits only the arithmetic: a branch on the flag right after it jumps on the OF
+;; it sets (`lower_branch` of `brif`); the flag's output is the result's register,
+;; which nothing reads.
+(decl overflow_op (Inst CC ProducesFlags) InstOutput)
+(rule 1 (overflow_op inst _ (ProducesFlags.ProducesFlagsReturnsResultWithConsumer op result))
+      (if-let false (overflow_flag_read inst))
+      (let ((_ Unit (emit op)))
+        (output_pair result result)))
+(rule 0 (overflow_op _ cc producer) (construct_overflow_op cc producer))
+
 (decl construct_overflow_op (CC ProducesFlags) InstOutput)
 (rule (construct_overflow_op cc inst)
       (let ((results ValueRegs (with_flags inst
@@ -204,8 +215,8 @@
 
 ;;;; Rules for `sadd_overflow` ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-(rule 1 (lower (sadd_overflow _ x y @ (value_type (fits_in_64 ty))))
-      (construct_overflow_op_alu ty (CC.O) (ProduceFlagsOp.Add) x y))
+(rule 1 (lower inst @ (sadd_overflow _ x y @ (value_type (fits_in_64 ty))))
+      (overflow_op inst (CC.O) (x64_produce_flags (ProduceFlagsOp.Add) ty x y)))
 
 (rule 0 (lower (sadd_overflow _ x y @ (value_type $I128)))
         (construct_overflow_op_alu_128 (CC.O) (ProduceFlagsOp.Add) (ChainFlagsOp.Adc) x y))
@@ -220,8 +231,8 @@
 
 ;;;; Rules for `ssub_overflow` ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-(rule 1 (lower (ssub_overflow _ x y @ (value_type (fits_in_64 ty))))
-      (construct_overflow_op_alu ty (CC.O) (ProduceFlagsOp.Sub) x y))
+(rule 1 (lower inst @ (ssub_overflow _ x y @ (value_type (fits_in_64 ty))))
+      (overflow_op inst (CC.O) (x64_produce_flags (ProduceFlagsOp.Sub) ty x y)))
 
 (rule 0 (lower (ssub_overflow _ x y @ (value_type $I128)))
         (construct_overflow_op_alu_128 (CC.O) (ProduceFlagsOp.Sub) (ChainFlagsOp.Sbb) x y))
@@ -245,10 +256,10 @@
 ;; Quench: the two-operand `imul` sets OF exactly when the signed product does
 ;; not fit, so a 32- or 64-bit product needs neither `rax`/`rdx` nor the high
 ;; half the one-operand form writes to them.
-(rule 4 (lower (smul_overflow _ x y @ (value_type $I32)))
-      (construct_overflow_op (CC.O) (asm_produce_flags (x64_imull_rm_raw x (gpr_mem_32_for_ty $I32 y)))))
-(rule 4 (lower (smul_overflow _ x y @ (value_type $I64)))
-      (construct_overflow_op (CC.O) (asm_produce_flags (x64_imulq_rm_raw x (gpr_mem_64_for_ty $I64 y)))))
+(rule 4 (lower inst @ (smul_overflow _ x y @ (value_type $I32)))
+      (overflow_op inst (CC.O) (asm_produce_flags (x64_imull_rm_raw x (gpr_mem_32_for_ty $I32 y)))))
+(rule 4 (lower inst @ (smul_overflow _ x y @ (value_type $I64)))
+      (overflow_op inst (CC.O) (asm_produce_flags (x64_imulq_rm_raw x (gpr_mem_64_for_ty $I64 y)))))
 
 ;;;; Rules for `sadd_sat` ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
@@ -3610,6 +3621,16 @@
 
 (rule (lower_branch (brif val _ _) (two_targets then else))
       (emit_side_effect (jmp_cond_result (is_nonzero_cmp val) then else)))
+
+;; Quench: a branch on the overflow flag of the arithmetic right before it jumps on
+;; the OF that arithmetic leaves (`overflow_op`), instead of materializing the flag
+;; and testing it. Reading the arithmetic's result has it lowered even where nothing
+;; else reads it.
+(rule 1 (lower_branch branch @ (brif val _ _) (two_targets then else))
+      (if-let arithmetic (fused_overflow_flag branch val))
+      (if-let (first_result result) arithmetic)
+      (let ((_ Reg (put_in_reg result)))
+        (emit_side_effect (jmp_cond_result (CondResult.CC (ProducesFlags.AlreadyExistingFlags) (CC.O)) then else))))
 
 ;; Rules for `br_table` ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
