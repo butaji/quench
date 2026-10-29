@@ -990,6 +990,11 @@ impl Native {
                 | Self::WeakMapSet
                 | Self::FinalizationRegistryRegister
                 | Self::TypedArrayToStringTag
+                | Self::TypedArrayBufferGetter
+                | Self::TypedArrayByteLengthGetter
+                | Self::TypedArrayByteOffsetGetter
+                | Self::TypedArrayLengthGetter
+                | Self::FunctionPrototypeHasInstance
                 | Self::FunctionBind
                 | Self::Array
                 | Self::PromiseResolve
