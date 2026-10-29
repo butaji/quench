@@ -691,7 +691,7 @@ impl<H: Host> Vm<H> {
             arrow,
             new_target,
             id == super::ROOT_FUNCTION_ID
-                || function.activation_bindings_observable(&p.atoms, &p.functions),
+                || function.activation_bindings_observable(p),
         );
         // An arrow whose creator's `this` binding is initialized keeps that receiver: the
         // binding never changes once initialized (`Vm::lexical_this`).
@@ -770,7 +770,7 @@ impl<H: Host> Vm<H> {
             arrow,
             new_target,
             id == super::ROOT_FUNCTION_ID
-                || function.activation_bindings_observable(&p.atoms, &p.functions),
+                || function.activation_bindings_observable(p),
         );
         // An arrow whose creator's `this` binding is initialized keeps that receiver: the
         // binding never changes once initialized (`Vm::lexical_this`).

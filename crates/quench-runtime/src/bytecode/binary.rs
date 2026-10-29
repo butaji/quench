@@ -1,5 +1,5 @@
 use super::{
-    AtomTable, BindingSite, Constant, DispatchClass, EvalBinding, EvalBindingDeclaration,
+    AtomTable, BindingSite, Constant, DerivedFact, DispatchClass, FactTables, EvalBinding, EvalBindingDeclaration,
     EvalBindingLocation, FieldBase, FieldSite, Function, FunctionSlot, Handler, InitialRegister, Instr,
     LexicalBindingKind, LocalRegister, MethodSite, ModuleImportBinding, ModuleImportName,
     ModuleImportNameKind, ModuleLinkPlan, ModuleReexport, ModuleReexportKind, ModuleRequest,
@@ -257,24 +257,62 @@ fn encode_program(program: &super::ResidualProgram, atoms: AtomEncoding) -> (Vec
     }
     // Every record but the root's goes to the region after the body, which a decoder leaves
     // in place until the function's first read; the body names each by its place and checksum.
+    // The records the load encoded are that region already, in the order their functions
+    // finished; the others follow them.
     let mut region = Vec::new();
+    let mut load_records = rustc_hash::FxHashMap::default();
+    if let AtomEncoding::Compact(compact) = &mut out.atoms
+        && let Some(load) = program.load_encoding.take()
+    {
+        let LoadEncoding { out: load, records } = *load;
+        let AtomEncoding::Compact(atoms) = load.atoms else {
+            unreachable!("a load encodes records under compact atom ids")
+        };
+        *compact = atoms;
+        region = load.bytes;
+        load_records = records;
+    }
+    // Whether names resolve statically in each function encoded so far, which reads its
+    // enclosing functions' (`Function::names_resolve_statically`), each encoded before it.
+    let mut static_names = Vec::with_capacity(program.functions.len());
     out.u32(program.functions.len() as u32);
     for (index, function) in program.functions.iter().enumerate() {
         let deferred = index != ROOT_FUNCTION;
         out.u8(u8::from(deferred));
         write_function_header(&mut out, function.header());
-        let body = std::mem::take(&mut out.bytes);
-        program.with_record(index, |record| write_function(&mut out, record, program));
-        let record = std::mem::replace(&mut out.bytes, body);
-        let length = u32::try_from(record.len()).expect("a function record fits u32 bytes");
-        out.u32(length);
-        if deferred {
-            out.u32(u32::try_from(region.len()).expect("deferred records fit u32 bytes"));
-            out.u64(compact_checksum(&record));
-            region.extend_from_slice(&record);
-        } else {
-            out.bytes.extend_from_slice(&record);
-        }
+        let names_static = match load_records.get(&(index as u32)) {
+            Some(range) => {
+                debug_assert!(deferred, "a load never releases its root");
+                let record = range.start as usize..range.end as usize;
+                let enclosing = enclosing_names_static(program, &static_names, function.header().parent);
+                let names_static = settle_static_name_scope(&mut region[record.clone()], enclosing);
+                write_deferred_entry(&mut out, &region, record);
+                names_static
+            }
+            None => {
+                let body = std::mem::take(&mut out.bytes);
+                let names_static = program.with_record(index, |record| {
+                    let names_static = *record.static_name_scope.get_or_init(|| {
+                        record.own_names_resolve_statically(program)
+                            && enclosing_names_static(program, &static_names, record.parent)
+                    });
+                    let facts = record.derived_facts(program, names_static);
+                    write_function(&mut out, record, &program.superinstructions, facts);
+                    names_static
+                });
+                let record = std::mem::replace(&mut out.bytes, body);
+                if deferred {
+                    let start = region.len();
+                    region.extend_from_slice(&record);
+                    write_deferred_entry(&mut out, &region, start..region.len());
+                } else {
+                    out.u32(u32::try_from(record.len()).expect("a function record fits u32 bytes"));
+                    out.bytes.extend_from_slice(&record);
+                }
+                names_static
+            }
+        };
+        static_names.push(names_static);
     }
     out.u16(program.cache_sites);
     out.u32(program.method_sites.len() as u32);
@@ -661,6 +699,7 @@ fn decode_program(
         encoded_records,
         validated: Default::default(),
         undefined_constant: Default::default(),
+        load_encoding: Default::default(),
         closure_reads,
     };
     Ok(program)
@@ -713,12 +752,129 @@ fn read_closure_reads(input: &mut BinaryReader<'_>) -> Result<Option<std::rc::Rc
     Ok(Some(std::rc::Rc::new(super::ClosureReads { functions: functions.into_boxed_slice() })))
 }
 
+/// The body's entry for a deferred record, `record` of `region`: its length, its place and its
+/// checksum, which a decoder checks as it decodes the record (`decode_deferred_function`).
+fn write_deferred_entry(out: &mut BinaryWriter, region: &[u8], record: std::ops::Range<usize>) {
+    out.u32(u32::try_from(record.len()).expect("a function record fits u32 bytes"));
+    out.u32(u32::try_from(record.start).expect("deferred records fit u32 bytes"));
+    out.u64(compact_checksum(&region[record]));
+}
+
+/// Whether names resolve statically in a function's enclosing function `parent`
+/// (`Function::names_resolve_statically`): `settled` holds the fact of each function encoded
+/// so far, which an enclosing function is, as it is compiled first.
+fn enclosing_names_static(program: &super::ResidualProgram, settled: &[bool], parent: Option<u32>) -> bool {
+    parent.is_none_or(|parent| match settled.get(parent as usize) {
+        Some(&settled) => settled,
+        None => program
+            .function_get(parent as usize)
+            .is_some_and(|parent| parent.names_resolve_statically(program)),
+    })
+}
+
+/// Settles the static-name-scope fact of a record its load encoded with the function's own
+/// (`LoadEncoding::add`), which holds only where it holds in the `enclosing` functions too.
+fn settle_static_name_scope(record: &mut [u8], enclosing: bool) -> bool {
+    let at = record.len() - RECORD_DERIVED_FACTS_SIZE;
+    let field: &mut [u8; RECORD_DERIVED_FACTS_SIZE] =
+        (&mut record[at..]).try_into().expect("a record ends with its derived facts");
+    let mut facts = u32::from_le_bytes(*field);
+    if !enclosing {
+        facts &= !DerivedFact::StaticNameScope.bit();
+        *field = facts.to_le_bytes();
+    }
+    facts & DerivedFact::StaticNameScope.bit() != 0
+}
+
+/// The compile-cache records of the functions a compilation finishes and releases during its
+/// load (`Compiler::finish_early`), each encoded as its function is finished: the program's
+/// compact encoding extends their region (`encode_program`) instead of compiling every
+/// released function again to write it.
+pub(crate) struct LoadEncoding {
+    /// The records, one after another in the order their functions finished, under compact
+    /// atom ids, which the program's encoding continues.
+    out: BinaryWriter,
+    /// Each encoded function's record in the region.
+    records: rustc_hash::FxHashMap<u32, std::ops::Range<u32>>,
+}
+
+impl Default for LoadEncoding {
+    fn default() -> Self {
+        Self {
+            out: BinaryWriter::with_atoms(AtomEncoding::Compact(CompactAtoms::default())),
+            records: Default::default(),
+        }
+    }
+}
+
+impl LoadEncoding {
+    /// Encodes the record of finished function `id`. Whether names resolve statically in it
+    /// reads its enclosing functions, which are not finished yet: the record holds the
+    /// function's own fact, which the program's encoding settles.
+    pub(crate) fn add(&mut self, id: u32, function: &Function, tables: &impl FactTables) {
+        let start = self.out.bytes.len();
+        let facts = function.derived_facts(tables, function.own_names_resolve_statically(tables));
+        write_function(&mut self.out, function, tables.superinstructions(), facts);
+        let range = u32::try_from(start).ok().zip(u32::try_from(self.out.bytes.len()).ok());
+        let (start, end) = range.expect("encoded records fit u32 bytes");
+        self.records.insert(id, start..end);
+    }
+
+    /// Names function `id`'s record by `atom`, as its load names a function it released
+    /// before naming it (`FunctionTable::name_released`).
+    pub(crate) fn name(&mut self, id: u32, atom: u32) {
+        let Some(range) = self.records.get(&id) else {
+            return;
+        };
+        let at = range.start as usize + RECORD_INFERRED_NAME_AT;
+        let encoded = self.out.encoded_atom(atom);
+        self.out.bytes[at..at + size_of::<u32>()].copy_from_slice(&encoded.to_le_bytes());
+    }
+}
+
+/// A program's `LoadEncoding` until its first compact encoding takes it. A clone, which its
+/// owner may change, starts without one: its encoding compiles its released records again.
+#[derive(Default)]
+pub(crate) struct LoadRecords(std::cell::Cell<Option<Box<LoadEncoding>>>);
+
+impl LoadRecords {
+    pub(crate) fn new(encoding: Option<LoadEncoding>) -> Self {
+        Self(std::cell::Cell::new(encoding.map(Box::new)))
+    }
+
+    fn take(&self) -> Option<Box<LoadEncoding>> {
+        self.0.take()
+    }
+}
+
+impl Clone for LoadRecords {
+    fn clone(&self) -> Self {
+        Self::default()
+    }
+}
+
+impl std::fmt::Debug for LoadRecords {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.debug_struct("LoadRecords").finish_non_exhaustive()
+    }
+}
+
+/// Where `write_function` writes a record's inferred name: after its parent and its name,
+/// one u32 each.
+const RECORD_INFERRED_NAME_AT: usize = 2 * size_of::<u32>();
+
+/// The size of the derived facts `write_function` ends a record with.
+const RECORD_DERIVED_FACTS_SIZE: usize = size_of::<u32>();
+
 /// A function's record, which `read_function` decodes, with the projection of its plain local
-/// slots (`Function::plain_local_slots`) that the interpreter memoizes on first call: a
-/// decoder sets the memo instead of running the analysis again in every process.
-fn write_function(out: &mut BinaryWriter, function: &Function, program: &super::ResidualProgram) {
+/// slots (`Function::plain_local_slots`) that the interpreter memoizes on first call and its
+/// `derived_facts`: a decoder sets the memos instead of running the analyses again in every
+/// process.
+fn write_function(out: &mut BinaryWriter, function: &Function, superinstructions: &[Superinstruction], derived_facts: u32) {
+        let start = out.bytes.len();
         out.option_u32(function.parent);
         out.option_atom(function.name);
+        debug_assert_eq!(out.bytes.len() - start, RECORD_INFERRED_NAME_AT);
         out.option_atom(function.inferred_name);
         out.u8(u8::from(function.is_arrow));
         out.u16(function.self_binding_slot.unwrap_or(u16::MAX));
@@ -859,12 +1015,12 @@ fn write_function(out: &mut BinaryWriter, function: &Function, program: &super::
         out.source_positions(&function.source_positions);
         let plain = match function.plain_locals.get() {
             Some(plain) => plain.to_vec(),
-            None => function.plain_local_slots(&program.superinstructions),
+            None => function.plain_local_slots(superinstructions),
         };
         for byte in plain.chunks(u8::BITS as usize) {
             out.u8(byte.iter().enumerate().fold(0, |bits, (bit, &plain)| bits | (u8::from(plain) << bit)));
         }
-        out.u32(function.derived_facts(program));
+        out.u32(derived_facts);
 }
 
 /// The header a decoder keeps for a function whose record stays encoded (`FunctionHeader`).
@@ -1265,14 +1421,18 @@ impl BinaryWriter {
     pub(super) fn new() -> Self { Self::with_atoms(AtomEncoding::Program) }
     fn with_atoms(atoms: AtomEncoding) -> Self { Self { bytes: Vec::new(), atoms } }
     fn atom(&mut self, atom: u32) {
-        let encoded = match &mut self.atoms {
+        let encoded = self.encoded_atom(atom);
+        self.u32(encoded);
+    }
+    /// The id the encoding names `atom` by.
+    fn encoded_atom(&mut self, atom: u32) -> u32 {
+        match &mut self.atoms {
             AtomEncoding::Program | AtomEncoding::Shared => atom,
             AtomEncoding::Compact(compact) => *compact.positions.entry(atom).or_insert_with(|| {
                 compact.order.push(atom);
                 compact.order.len() as u32 - 1
             }),
-        };
-        self.u32(encoded);
+        }
     }
     fn option_atom(&mut self, atom: Option<u32>) { match atom { Some(atom) => self.atom(atom), None => self.u32(u32::MAX) } }
     fn atom_pair(&mut self, value: (u32, u16)) { self.atom(value.0); self.u16(value.1); }
