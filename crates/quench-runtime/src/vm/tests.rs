@@ -251,6 +251,35 @@ fn lane_polymorphic_field_stores_keep_assignment_semantics() {
 }
 
 #[test]
+fn lane_polymorphic_field_hints_keep_lookup_semantics() {
+    // A polymorphic read keeps its last own entry as its record's hint: receivers of one
+    // shape, then alternating ones, a site a prototype's entry answers, which drops the hint,
+    // and receivers whose field changes value, shape or holder all read what the general
+    // lookup reads, from a plain record and a returning one.
+    let source = r#"
+      const out = [];
+      function get(o) { return o.x; }
+      function read(o) { const v = o.x; return v + 1; }
+      const os = [{ x: 1, a: 0 }, { x: 2, b: 0 }, { x: 3, c: 0 }];
+      let s = 0;
+      for (let r = 0; r < 200; r++) for (let k = 0; k < 3; k++) { const o = os[r < 100 ? 0 : k]; s += get(o) + read(o); }
+      out.push(s);
+      class B {} B.prototype.x = 40;
+      const held = [new B(), { x: 5, d: 0 }, new B()];
+      s = 0; for (let r = 0; r < 100; r++) for (const o of held) s += read(o) + get(o);
+      out.push(s);
+      os[0].x = "s"; delete os[1].b; os[1].x = 7; B.prototype.x = 1;
+      out.push(os.map(get).join(","), os.map(read).join(","), held.map(read).join(","));
+      print(out.join(" "));
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    let program = Engine::specialize(source, "lane-polymorphic-hints.js").unwrap();
+    vm.execute(&program).unwrap();
+    assert_eq!(output.borrow().as_slice(), ["2400 17300 s,7,3 s1,8,4 2,6,2"]);
+}
+
+#[test]
 fn lane_global_undefined_reads_keep_binding_semantics() {
     // A static global read of `undefined` answers its value in the lane, while a direct
     // eval's `var undefined` and a `with` object's property still shadow it, and neither an

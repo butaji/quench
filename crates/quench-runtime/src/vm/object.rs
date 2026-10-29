@@ -49,6 +49,17 @@ struct FieldCacheHit {
     depth: u16,
 }
 
+/// Which of a polymorphic site's entries answered a read (`Vm::hinted_polymorphic_field_hit`).
+#[derive(Clone, Copy)]
+pub(super) enum PolymorphicHit {
+    /// The own entry the reading record keeps as its hint.
+    Hint,
+    /// Another own entry, of the receiver's exact shape.
+    Own(FieldCache),
+    /// An entry of the receiver's immediate prototype.
+    Holder,
+}
+
 /// What a walk of an inherited entry's chain proved (`Vm::prove_inherited_chain`).
 #[derive(Clone, Copy)]
 struct InheritedChainProof {
@@ -1711,7 +1722,7 @@ impl<H: Host> Vm<H> {
         object: Value,
         site: u16,
     ) -> Option<Value> {
-        self.polymorphic_field_entries_hit::<true>(p, object, site).map(|(value, _)| value)
+        self.polymorphic_field_entries_hit::<true>(p, object, site, EMPTY_CACHE).map(|(value, _)| value)
     }
 
     /// `polymorphic_field_hit` among the inline entries alone: `None` for a site whose
@@ -1725,35 +1736,47 @@ impl<H: Host> Vm<H> {
         object: Value,
         site: u16,
     ) -> Option<Value> {
-        self.polymorphic_field_entries_hit::<false>(p, object, site).map(|(value, _)| value)
+        self.polymorphic_field_entries_hit::<false>(p, object, site, EMPTY_CACHE).map(|(value, _)| value)
     }
 
-    /// `inline_polymorphic_field_hit` with the own entry it hit, where it hit one: the
-    /// receiver's exact shape and the field's slot, a record's own-field hint
-    /// (`LaneInstruction::field_hint`).
+    /// `inline_polymorphic_field_hit` that tests `hint`, an own entry of the site a lane
+    /// record keeps (`LaneInstruction::field_hint`), before the site's entries; with which
+    /// entry answered.
     #[inline(always)]
-    pub(super) fn inline_polymorphic_field_hit_entry(
+    pub(super) fn hinted_polymorphic_field_hit(
         &mut self,
         p: &ResidualProgram,
         object: Value,
         site: u16,
-    ) -> Option<(Value, Option<FieldCache>)> {
-        self.polymorphic_field_entries_hit::<false>(p, object, site)
+        hint: FieldCache,
+    ) -> Option<(Value, PolymorphicHit)> {
+        self.polymorphic_field_entries_hit::<false>(p, object, site, hint)
     }
 
-    /// `polymorphic_field_hit`, probing the hashed entries where `HASHED`, with the own
-    /// entry a hit names (`inline_polymorphic_field_hit_entry`).
+    /// `polymorphic_field_hit`, probing the hashed entries where `HASHED`, after `hint`, an own
+    /// entry of the site (`EMPTY_CACHE` for none); with which entry answered.
     #[inline(always)]
     fn polymorphic_field_entries_hit<const HASHED: bool>(
         &mut self,
         p: &ResidualProgram,
         object: Value,
         site: u16,
-    ) -> Option<(Value, Option<FieldCache>)> {
+        hint: FieldCache,
+    ) -> Option<(Value, PolymorphicHit)> {
         debug_assert!(self.lane_admits(p));
+        debug_assert!(hint.holder == NO_FIELD_HOLDER);
         // Any record receiver, an array's too: entries name only shape slots, which an
         // array's length and elements are not.
         let receiver = self.heap.record_object_value(object)?;
+        // Exact shapes: a match proves a layout outside dictionary storage, so each hit
+        // reads its slot flat (`Object::exact_shape`).
+        let shape = receiver.exact_shape();
+        if hint.receiver == shape {
+            // SAFETY: as for `cached_field_hit`; the hint is one of the site's own entries.
+            let value = unsafe { self.heap.property_get_flat(receiver, usize::from(hint.slot)) };
+            self.profile.field_cache_hit(2, 0);
+            return Some((value, PolymorphicHit::Hint));
+        }
         let index = self.field_cache_index(site);
         // SAFETY: compiler-produced sites index exactly-sized cache vectors;
         // every non-sentinel index was installed together with its table.
@@ -1762,9 +1785,6 @@ impl<H: Host> Vm<H> {
             return None;
         }
         let set = unsafe { self.megamorphic_fields.get_unchecked(table_index as usize) };
-        // Exact shapes: a match proves a layout outside dictionary storage, so each hit
-        // reads its slot flat (`Object::exact_shape`).
-        let shape = receiver.exact_shape();
         if set.overflow.is_some() {
             if !HASHED {
                 return None;
@@ -1778,7 +1798,7 @@ impl<H: Host> Vm<H> {
                 // SAFETY: as for `cached_field_hit`.
                 let value = unsafe { self.heap.property_get_flat(receiver, usize::from(entry.slot)) };
                 self.profile.field_cache_hit(2, 0);
-                return Some((value, Some(FieldCache::own(shape, entry.slot))));
+                return Some((value, PolymorphicHit::Own(FieldCache::own(shape, entry.slot))));
             }
             let holder = self.heap.record_prototype(receiver)?;
             let entry = set.get(shape, holder.exact_shape())?;
@@ -1786,7 +1806,7 @@ impl<H: Host> Vm<H> {
             // SAFETY: as for the inline holder entries below.
             let value = unsafe { self.heap.holder_property_get_flat(holder, usize::from(entry.slot)) };
             self.profile.field_cache_hit(2, 1);
-            return Some((value, None));
+            return Some((value, PolymorphicHit::Holder));
         }
         for entry in set.recorded() {
             if entry.receiver != shape {
@@ -1796,7 +1816,7 @@ impl<H: Host> Vm<H> {
                 // SAFETY: as for `cached_field_hit`.
                 let value = unsafe { self.heap.property_get_flat(receiver, usize::from(entry.slot)) };
                 self.profile.field_cache_hit(2, 0);
-                return Some((value, Some(FieldCache::own(shape, entry.slot))));
+                return Some((value, PolymorphicHit::Own(FieldCache::own(shape, entry.slot))));
             }
             // A prototype outside the records takes the slow path.
             let holder = self.heap.record_prototype(receiver)?;
@@ -1807,7 +1827,7 @@ impl<H: Host> Vm<H> {
             // after confirming an immediate-prototype data property.
             let value = unsafe { self.heap.holder_property_get_flat(holder, usize::from(entry.slot)) };
             self.profile.field_cache_hit(2, 1);
-            return Some((value, None));
+            return Some((value, PolymorphicHit::Holder));
         }
         None
     }

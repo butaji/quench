@@ -4543,37 +4543,67 @@ script_handler! {
         else {
             sibling!(lane_get_field_miss::<H>, r, ip, Carried::script(cx))
         };
-        // A held loop header's `call_link` names its site (`lane_header_site`), and such a
-        // record keeps no hint: an empty hint's link is `NO_CALL_LINK`, a held one's shape a
-        // recorded one.
-        let header = unsafe { (*ip).operand.field.shape } == super::NO_FIELD_RECEIVER && i.call_link.get() != NO_CALL_LINK;
-        if !header {
-            // SAFETY: as `requicken`; the hit proved the entry an own one of the receiver's
-            // shape.
-            let entry = vm.field_cache_entry(i.c);
-            unsafe { (*ip.cast_mut()).operand.field.shape = entry.receiver };
-            i.call_link.set(entry.slot);
-        }
+        // The hit proved the entry an own one of the receiver's shape.
+        set_field_hint(ip, vm.field_cache_entry(i.c));
         r.set(i.a, value);
         next!(cx, r, following(ip), Carried::script(cx))
     }
 }
 
+/// Makes the own field entry `entry` the hint of the `GetField` record at `ip`
+/// (`LaneInstruction::field_hint`). A held loop header's `call_link` names its site
+/// (`lane_header_site`), and such a record keeps no hint: an empty hint's link is
+/// `NO_CALL_LINK`, a held one's shape a recorded one.
+#[inline(always)]
+fn set_field_hint(ip: Ip, entry: super::FieldCache) {
+    // SAFETY: `ip` is a `GetField` record of a live view.
+    let i = unsafe { &*ip };
+    let header = unsafe { i.operand.field.shape } == super::NO_FIELD_RECEIVER && i.call_link.get() != NO_CALL_LINK;
+    if !header {
+        // SAFETY: as `requicken`.
+        unsafe { (*ip.cast_mut()).operand.field.shape = entry.receiver };
+        i.call_link.set(entry.slot);
+    }
+}
+
+/// The polymorphic read of `object` by the `GetField` record at `ip` (`lane_get_field_polymorphic`,
+/// `RETURNING_FIELD_POLYMORPHIC`): its hint, the last own entry that answered it, first, then
+/// the site's inline entries, whose own hit becomes the hint; with whether a prototype's entry
+/// answered, which no hint holds.
+#[inline(always)]
+fn polymorphic_read<H: Host>(vm: &mut Vm<H>, code: &ResidualProgram, ip: Ip, object: Value) -> Option<(Value, bool)> {
+    use super::object::PolymorphicHit;
+    // SAFETY: `ip` is a `GetField` record of a live view.
+    let i = unsafe { &*ip };
+    let (value, hit) = vm.hinted_polymorphic_field_hit(code, object, i.c, i.field_hint())?;
+    if let PolymorphicHit::Own(entry) = hit {
+        set_field_hint(ip, entry);
+    }
+    Some((value, matches!(hit, PolymorphicHit::Holder)))
+}
+
 script_handler! {
     /// `GetField` of a register or `this` at a site past one shape
-    /// (`Vm::field_site_polymorphic`): its inline megamorphic entries; any other read takes
+    /// (`Vm::field_site_polymorphic`): its inline megamorphic entries, after its hint where
+    /// `HINTED` (`polymorphic_read`), which a read a prototype's entry answers drops for good,
+    /// since its site's receivers keep no own hint; any other read takes
     /// `lane_get_field_hashed`, which a site whose entries moved to the hash runs from then on.
-    fn lane_get_field_polymorphic<THIS: bool>(cx, r, ip, i, view) {
-        let Some(object) = (unsafe { lane_known_field_base::<H, THIS>(cx, r, i.b) }) else {
-            sibling!(lane_get_field_hashed::<H, THIS>, r, ip, Carried::script(cx))
-        };
-        // The record's hint first, the own entry its last hit named (`lane_hint_polymorphic_hit`).
-        if let Some(value) = (unsafe { vm(cx) }).record_field_entry_hit(i.field_hint(), object) {
-            r.set(i.a, value);
-            next!(cx, r, following(ip), Carried::script(cx))
-        }
-        let Some(value) = lane_hint_polymorphic_hit::<H>(cx, ip, i, object) else {
-            if (unsafe { vm(cx) }).field_site_hashed(i.c) {
+    fn lane_get_field_polymorphic<THIS: bool, HINTED: bool>(cx, r, ip, i, view) {
+        // SAFETY: the context's program outlives the lane run.
+        let code = unsafe { &*(*cx).code };
+        let vm = unsafe { vm(cx) };
+        let value = (unsafe { lane_known_field_base::<H, THIS>(cx, r, i.b) }).and_then(|object| {
+            if !HINTED {
+                return vm.inline_polymorphic_field_hit(code, object, i.c);
+            }
+            let (value, holder) = polymorphic_read(vm, code, ip, object)?;
+            if holder {
+                requicken::<H>(ip, lane_get_field_polymorphic::<H, THIS, false>);
+            }
+            Some(value)
+        });
+        let Some(value) = value else {
+            if vm.field_site_hashed(i.c) {
                 requicken::<H>(ip, lane_get_field_hashed::<H, THIS>);
             }
             sibling!(lane_get_field_hashed::<H, THIS>, r, ip, Carried::script(cx))
@@ -4581,24 +4611,6 @@ script_handler! {
         r.set(i.a, value);
         next!(cx, r, following(ip), Carried::script(cx))
     }
-}
-
-/// `lane_get_field_polymorphic` past its record's hint: the site's inline entries, an own one
-/// whose hit becomes the hint, as `lane_get_field_own_refresh` keeps it, so a run of reads of
-/// one shape tests the hint alone. Out of line, so the hint's test keeps its registers.
-#[inline(never)]
-fn lane_hint_polymorphic_hit<H: Host>(cx: *mut LaneContext<H>, ip: Ip, i: &LaneInstruction, object: Value) -> Option<Value> {
-    // SAFETY: the context's program outlives the lane run.
-    let code = unsafe { &*(*cx).code };
-    let (value, own) = (unsafe { vm(cx) }).inline_polymorphic_field_hit_entry(code, object, i.c)?;
-    // A held loop header's `call_link` names its site (`lane_header_site`) and keeps no hint.
-    let header = unsafe { (*ip).operand.field.shape } == super::NO_FIELD_RECEIVER && i.call_link.get() != NO_CALL_LINK;
-    if let Some(own) = own.filter(|_| !header) {
-        // SAFETY: as `requicken`; the hit proved the entry an own one of the receiver's shape.
-        unsafe { (*ip.cast_mut()).operand.field.shape = own.receiver };
-        i.call_link.set(own.slot);
-    }
-    Some(value)
 }
 
 script_handler! {
@@ -4905,8 +4917,8 @@ script_handler! {
             FieldSiteTier::Getter => Some(lane_get_field_getter::<H>),
             FieldSiteTier::Polymorphic => Some(single_base_handler(
                 i.b,
-                lane_get_field_polymorphic::<H, true>,
-                lane_get_field_polymorphic::<H, false>,
+                lane_get_field_polymorphic::<H, true, true>,
+                lane_get_field_polymorphic::<H, false, true>,
                 lane_get_field::<H>,
             )),
             // A receiver outside the object records, such as a function, takes the cell lookup.
@@ -15111,8 +15123,13 @@ script_handler! {
                 | RETURNING_FIELD_INHERITED => {
                     let code = &*(*cx).code;
                     let vm = vm(cx);
-                    let value = lane_single_field_base(cx, r, i.b)
-                        .and_then(|object| returning_field_hit::<H, KIND>(vm, code, object, i.c));
+                    let value = lane_single_field_base(cx, r, i.b).and_then(|object| {
+                        if KIND == RETURNING_FIELD_POLYMORPHIC {
+                            polymorphic_read(vm, code, ip, object).map(|(value, _)| value)
+                        } else {
+                            returning_field_hit::<H, KIND>(vm, code, object, i.c)
+                        }
+                    });
                     let Some(value) = value else {
                         if KIND == RETURNING_FIELD_POLYMORPHIC {
                             sibling!(lane_returning::<H, RETURNING_FIELD>, r, ip, Carried::script(cx))
