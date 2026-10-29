@@ -79,6 +79,38 @@ enum FieldCacheRead {
     Hit(FieldCacheHit),
 }
 
+/// A census of shape creations by transition key (`QUENCH_SHAPE_TRACE`, `profile-memory`):
+/// which operations keep making a shape instead of finding it in the cached child index.
+#[cfg(feature = "profile-memory")]
+mod shape_trace {
+    use std::sync::Mutex;
+    use std::sync::OnceLock;
+
+    static CREATED: OnceLock<Mutex<std::collections::HashMap<String, u64>>> = OnceLock::new();
+
+    pub(super) fn record(label: String) {
+        let created = CREATED.get_or_init(|| {
+            // SAFETY: `report` is a plain function that outlives the process.
+            unsafe { libc::atexit(report) };
+            Mutex::new(std::collections::HashMap::new())
+        });
+        if let Ok(mut created) = created.lock() {
+            *created.entry(label).or_default() += 1;
+        }
+    }
+
+    extern "C" fn report() {
+        let Some(created) = CREATED.get() else { return };
+        let Ok(created) = created.lock() else { return };
+        let mut rows: Vec<_> = created.iter().collect();
+        rows.sort_unstable_by(|left, right| right.1.cmp(left.1));
+        eprintln!("QUENCH_SHAPE_TRACE created={}", rows.iter().map(|(_, count)| **count).sum::<u64>());
+        for (label, count) in rows.iter().take(20) {
+            eprintln!("  shape {count:>9} {label}");
+        }
+    }
+}
+
 pub(super) fn derive_shape_lookup_index(shapes: &[Shape], shape: u32) -> ShapeLookupIndex {
     let mut entries = Vec::new();
     let mut seen_keys = FxHashSet::default();
@@ -375,6 +407,31 @@ impl<H: Host> Vm<H> {
         transition: ShapeTransition,
         storage_len: usize,
     ) -> u32 {
+        #[cfg(feature = "profile-memory")]
+        if std::env::var_os("QUENCH_SHAPE_TRACE").is_some() {
+            // Which transitions keep missing the cached child index, by key: a shape a
+            // repeated operation re-creates names the key that fails to dedupe.
+            let label = match &transition {
+                ShapeTransition::Add { key, .. } => match key {
+                    property_key::PropertyKey::String(atom) => format!("Add:{}", self.atom_name(*atom)),
+                    property_key::PropertyKey::Symbol(_) => "Add:<symbol>".to_owned(),
+                    property_key::PropertyKey::Private(_) => "Add:<private>".to_owned(),
+                },
+                ShapeTransition::Delete { key, .. } => match key {
+                    property_key::PropertyKey::String(atom) => format!("Delete:{}", self.atom_name(*atom)),
+                    _ => "Delete:<nonstring>".to_owned(),
+                },
+                ShapeTransition::Descriptor { slot, .. } => format!("Descriptor:{slot}"),
+                ShapeTransition::Dictionary { .. } => "Dictionary".to_owned(),
+                ShapeTransition::Root => "Root".to_owned(),
+                ShapeTransition::Vacant => "Vacant".to_owned(),
+                ShapeTransition::FunctionName { .. } => "FunctionName".to_owned(),
+                ShapeTransition::FunctionNameReconfigured => "FunctionNameReconfigured".to_owned(),
+                ShapeTransition::FunctionLengthReconfigured => "FunctionLengthReconfigured".to_owned(),
+                ShapeTransition::Constructed { .. } => "Constructed".to_owned(),
+            };
+            shape_trace::record(label);
+        }
         let next = u32::try_from(self.shapes.len()).expect("object shape table exhausted");
         let dictionary_trigger = match transition {
             ShapeTransition::Dictionary { trigger } => Some(trigger),
