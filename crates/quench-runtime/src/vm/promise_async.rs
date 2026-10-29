@@ -90,7 +90,7 @@ impl<H: Host> Vm<H> {
                 super::FrameOutcome::Await {
                     value,
                     destination,
-                    frame: Some(mut frame),
+                    frame: Some(frame),
                 } => {
                     let continuation = vm.suspend_activation(
                         frame,

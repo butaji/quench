@@ -1344,14 +1344,11 @@ impl<H: Host> Vm<H> {
                 delegated_result,
                 frame: None,
             } => {
+                let continuation =
+                    self.suspend_activation(frame, Completion::Yield(value), Some(destination), Value::UNDEFINED);
                 if let Some(record) = self.generator_record_mut(generator) {
                     record.running = false;
-                    record.continuation = Some(self.suspend_activation(
-                        frame,
-                        Completion::Yield(value),
-                        Some(destination),
-                        Value::UNDEFINED,
-                    ));
+                    record.continuation = Some(continuation);
                 }
                 Ok(match delegated_result {
                     Some(result) => GeneratorStep::Delegated(result),
