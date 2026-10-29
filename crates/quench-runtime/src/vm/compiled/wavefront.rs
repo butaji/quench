@@ -860,7 +860,8 @@ impl<'a, 'b> Emitter<'a, 'b> {
         for invariant in numbers {
             let bits = self.invariant_bits(invariant.atom(), entry)?;
             let not_entered = self.not_entered;
-            let value = unbox_number(&mut self.builder, bits, not_entered);
+            let double = self.builder.ins().bitcast(types::F64, ir::MemFlagsData::new(), bits);
+            let value = unbox_number(&mut self.builder, double, not_entered);
             self.numbers.insert(invariant, value);
         }
         // Written arrays are distinct from every other array.
@@ -1142,11 +1143,37 @@ impl<'a, 'b> Emitter<'a, 'b> {
     }
 
     /// The address of an access's element at a row and element.
-    fn address(&mut self, access: usize, row: ir::Value, column: ir::Value) -> ir::Value {
+    /// The address of an access's element at the row and column, with a byte displacement
+    /// the access carries. An index that advances one element per column is the row's part,
+    /// which no column changes and so is computed once per row, then the column scaled, as
+    /// one address mode; any other index is computed whole.
+    fn address(&mut self, access: usize, row: ir::Value, column: ir::Value) -> (ir::Value, i32) {
         let access = self.nest.accesses[access].clone();
+        let elements = self.arrays[&access.array].elements;
+        let column_term = [Atom::Unit, Atom::Column];
+        let constant_term = [Atom::Unit, Atom::Unit];
+        let mentions_column = |monomial: &Monomial| monomial.contains(&Atom::Column);
+        let constant = access.index.0.get(&constant_term).copied().unwrap_or(0);
+        let displacement = constant.checked_mul(WORD_BYTES).and_then(|bytes| i32::try_from(bytes).ok());
+        if access.index.0.get(&column_term) == Some(&1)
+            && access.index.0.keys().filter(|monomial| mentions_column(monomial)).count() == 1
+            && let Some(displacement) = displacement
+        {
+            let rest = Poly(
+                access.index.0.iter()
+                    .filter(|(monomial, _)| **monomial != column_term && **monomial != constant_term)
+                    .map(|(monomial, coefficient)| (*monomial, *coefficient))
+                    .collect(),
+            );
+            let row_index = self.evaluate(&rest, Some(row), None);
+            let row_offset = self.builder.ins().imul_imm_s(row_index, WORD_BYTES);
+            let row_base = self.builder.ins().iadd(elements, row_offset);
+            let column_offset = self.builder.ins().ishl_imm_u(column, i64::from(WORD_BYTES.trailing_zeros()));
+            return (self.builder.ins().iadd(row_base, column_offset), displacement);
+        }
         let index = self.evaluate(&access.index, Some(row), Some(Some(column)));
         let offset = self.builder.ins().imul_imm_s(index, WORD_BYTES);
-        self.builder.ins().iadd(self.arrays[&access.array].elements, offset)
+        (self.builder.ins().iadd(elements, offset), 0)
     }
 
     /// The save area's address of the element `column` of written array `slot` in the pair's
@@ -1176,10 +1203,10 @@ impl<'a, 'b> Emitter<'a, 'b> {
                 let more = self.builder.ins().icmp(IntCC::SignedLessThan, column, count);
                 self.builder.ins().brif(more, body, &[], after, &[]);
                 self.builder.switch_to_block(body);
-                let element = self.address(store, at_row, column);
+                let (element, displacement) = self.address(store, at_row, column);
                 let saved = self.saved(area, slot, offset, column);
                 let word = self.builder.ins().load(types::I64, flags(), saved, 0);
-                self.builder.ins().store(flags(), word, element, 0);
+                self.builder.ins().store(flags(), word, element, displacement);
                 let next = self.builder.ins().iadd_imm_s(column, 1);
                 self.builder.ins().jump(block, &[ir::BlockArg::Value(next)]);
                 self.builder.switch_to_block(after);
@@ -1229,14 +1256,14 @@ impl<'a, 'b> Emitter<'a, 'b> {
                 Step::Node(index) => {
                     let value = match &program.nodes[*index] {
                         Node::Load(access) => {
-                            let address = self.address(*access, row, column);
-                            let bits = self.builder.ins().load(types::I64, flags(), address, 0);
+                            let (address, displacement) = self.address(*access, row, column);
+                            let double = self.builder.ins().load(types::F64, flags(), address, displacement);
                             // A failed read restores what the pair stored: this row's elements
                             // before this one and this one's stores so far, and the other row's.
                             let failed = self.builder.create_block();
                             self.builder.set_cold_block(failed);
                             self.failures.push(Failure { block: failed, column, stored_here: stored_here.clone(), place });
-                            unbox_number(&mut self.builder, bits, failed)
+                            unbox_number(&mut self.builder, double, failed)
                         }
                         Node::Row(value) => *values.get(*value)?,
                         Node::Invariant(invariant) => self.numbers[invariant],
@@ -1257,14 +1284,14 @@ impl<'a, 'b> Emitter<'a, 'b> {
                     nodes[*index] = Some(value);
                 }
                 Step::Store(access, value) => {
-                    let address = self.address(*access, row, column);
+                    let (address, displacement) = self.address(*access, row, column);
                     let bits = box_number(&mut self.builder, nodes[*value]?);
                     // Save the element the store replaces.
                     let slot = self.nest.stores.iter().position(|(_, store)| store == access)?;
-                    let old = self.builder.ins().load(types::I64, flags(), address, 0);
+                    let old = self.builder.ins().load(types::I64, flags(), address, displacement);
                     let saved = self.saved(place.pair.save, slot, place.row, column);
                     self.builder.ins().store(flags(), old, saved, 0);
-                    self.builder.ins().store(flags(), bits, address, 0);
+                    self.builder.ins().store(flags(), bits, address, displacement);
                     stored_here[slot] = true;
                 }
             }
@@ -1297,8 +1324,7 @@ fn flags() -> ir::MemFlagsData {
 /// The Number a value's bits encode, as an `f64`: a double, or an encoded integer; anything
 /// else branches to `otherwise`. The test of `emit_js_tagged_number`, with its rare paths laid
 /// out cold: in a row's element, every read takes it, and the doubles pass at its first test.
-fn unbox_number(builder: &mut FunctionBuilder<'_>, bits: ir::Value, otherwise: ir::Block) -> ir::Value {
-    let double = builder.ins().bitcast(types::F64, ir::MemFlagsData::new(), bits);
+fn unbox_number(builder: &mut FunctionBuilder<'_>, double: ir::Value, otherwise: ir::Block) -> ir::Value {
     let unordered = builder.ins().fcmp(FloatCC::Unordered, double, double);
     let nan_block = builder.create_block();
     builder.set_cold_block(nan_block);
@@ -1310,6 +1336,7 @@ fn unbox_number(builder: &mut FunctionBuilder<'_>, bits: ir::Value, otherwise: i
     builder.append_block_param(join, types::F64);
     builder.ins().brif(unordered, nan_block, &[], join, &[ir::BlockArg::Value(double)]);
     builder.switch_to_block(nan_block);
+    let bits = builder.ins().bitcast(types::I64, ir::MemFlagsData::new(), double);
     let field = builder.ins().ushr_imm_u(bits, i64::from(ValueLayout::TAG_SHIFT));
     let offset = builder.ins().iadd_imm_s(field, -(ValueLayout::FIRST_TAG_FIELD as i64));
     let tagged = builder.ins().icmp_imm_u(IntCC::UnsignedLessThanOrEqual, offset, ValueLayout::TAG_FIELD_SPAN as i64);
