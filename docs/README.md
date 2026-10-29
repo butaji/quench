@@ -65,7 +65,15 @@ Score column. It is not the memory qualification binary: PGO's inlining grows th
 text (3.45 -> 4.60 MB), and its MemoryFirst max RSS failed the V8-v7 target on Crypto and
 RayTrace pinned (TOD-197), so the memory qualification binary is the non-PGO layout,
 `tools/bolt-layout.sh production`, with the repository corpus it records in
-`target/layout-corpus/MANIFEST` (the Wasm ESM corpus laid out `--late`, no npm packages).
+`target/layout-corpus/MANIFEST`: the Test262 tests `tools/layout-corpus/test262.list` names,
+the package workloads on the packages `tools/layout-corpus/package-lock.json` pins (`npm ci`),
+and the Wasm ESM corpus laid out `--late`. The corpus directory declares CommonJS: under the
+repository's `"type": "module"` its scripts loaded as ES modules, which never take the
+CommonJS entry path the V8-v7 runs take nor mark `quench_entry_compiled`, so the run-phase
+profiles were not split from start-up. With CommonJS scripts and the packages, pinned max RSS
+matched the qualified layout on every V8-v7 row checked (RayTrace, Crypto, RegExp,
+NavierStokes, DeltaBlue, Richards, 2026-10-29); without the packages it was 50-190 KiB higher
+on five of them.
 A PGO layout becomes the qualification binary only once it passes both columns. Every
 mode keeps the repository's
 `.cargo/config.toml` rustflags (`-D warnings`, the function alignment): the script
