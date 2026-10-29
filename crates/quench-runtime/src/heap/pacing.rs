@@ -435,6 +435,16 @@ impl GenerationalPacing {
             || self.allocation_cap_reached(live_after_full, since_full, cap_backoff)
     }
 
+    /// Whether `growth` bytes of reclaimable programs past the `kept` bytes that stayed at the
+    /// last full collection make the next collection full: the old growth ratio of what
+    /// stayed, at least the external budget. Programs are memory outside the heap that only a
+    /// collection frees, as external buffers are (`minimum_external_budget`); at the heap's
+    /// old-growth minimum instead, Throughput let a `new Function` loop hold 16 MB of program
+    /// footprint (about 40 MB resident) between full collections.
+    pub(super) fn program_growth_reached(&self, kept: usize, growth: usize) -> bool {
+        growth >= self.old_growth.of(kept).max(self.minimum_external_budget)
+    }
+
     /// Whether `growth` past what the last full collection kept is enough old growth to make
     /// the next collection full.
     pub(super) fn old_growth_reached(&self, live_after_full: usize, growth: usize) -> bool {

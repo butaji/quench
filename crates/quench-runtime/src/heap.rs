@@ -1813,9 +1813,9 @@ impl Heap {
                 self.allocated_since_full(),
                 self.pacing_state.cap_backoff,
             )
-            || self.pacing().old_growth_reached(
-                self.reclaimable_program_bytes_after_full / payload_unit(),
-                self.reclaimable_program_bytes_since_full / payload_unit(),
+            || self.pacing().program_growth_reached(
+                self.reclaimable_program_bytes_after_full,
+                self.reclaimable_program_bytes_since_full,
             )
     }
     /// Charges a reclaimable program (dynamic code: `eval`, `new Function`, scripts) of
