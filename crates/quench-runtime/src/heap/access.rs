@@ -45,10 +45,14 @@ impl Heap {
         }
         match self.get_mut(collection) {
             Some(Cell::Map { entries, .. }) => {
-                running.into_iter().for_each(|it| entries.register_iterator(it))
+                running.into_iter().for_each(|it| {
+                    entries.register_iterator(it);
+                })
             }
             Some(Cell::Set { entries, .. }) => {
-                running.into_iter().for_each(|it| entries.register_iterator(it))
+                running.into_iter().for_each(|it| {
+                    entries.register_iterator(it);
+                })
             }
             _ => {}
         }
