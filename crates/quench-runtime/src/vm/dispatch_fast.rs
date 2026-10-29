@@ -10682,11 +10682,12 @@ script_handler! {
     fn lane_iterator_step<>(cx, r, ip, i, view) {
         let vm = unsafe { vm(cx) };
         let (method, iterator) = (r.get(i.b), r.get(i.c));
-        if unsafe { (*cx).script_calls } && vm.steps_as_generator(iterator, method) {
-            sibling!(lane_generator_step::<H>, r, ip, Carried::script(cx))
-        }
-        if !vm.steps_as_array_iterator(iterator, method) {
-            sibling!(lane_script_call::<H, ANY_ARGC>, r, ip, Carried::script(cx))
+        match vm.iteration_step(iterator, method) {
+            super::iterators::IterationStep::Generator if unsafe { (*cx).script_calls } => {
+                sibling!(lane_generator_step::<H>, r, ip, Carried::script(cx))
+            }
+            super::iterators::IterationStep::Array => {}
+            _ => sibling!(lane_script_call::<H, ANY_ARGC>, r, ip, Carried::script(cx)),
         }
         let Some(result) = lane_array_iteration_result(vm, iterator) else {
             sibling!(lane_native_call::<H>, r, ip, Carried::script(cx))
@@ -10725,8 +10726,13 @@ script_handler! {
         // SAFETY: the view checked the step's records (`lane_for_of_step`).
         let (done_read, value_read) = unsafe { (&*ip.add(FOR_OF_DONE_READ), &*ip.add(form.value_read())) };
         let reads_step = done_read.imm() == vm.runtime_atoms.done && value_read.imm() == vm.runtime_atoms.value;
-        if !reads_step || !vm.steps_as_array_iterator(iterator, method) {
-            sibling!(lane_iterator_step::<H>, r, ip, Carried::script(cx))
+        match vm.iteration_step(iterator, method) {
+            super::iterators::IterationStep::Array if reads_step => {}
+            // A generator's step resumes it in place, as `lane_iterator_step` makes it.
+            super::iterators::IterationStep::Generator if unsafe { (*cx).script_calls } => {
+                sibling!(lane_generator_step::<H>, r, ip, Carried::script(cx))
+            }
+            _ => sibling!(lane_iterator_step::<H>, r, ip, Carried::script(cx)),
         }
         let Some(step) = vm.step_present_array_value(iterator) else {
             sibling!(lane_iterator_step::<H>, r, ip, Carried::script(cx))
