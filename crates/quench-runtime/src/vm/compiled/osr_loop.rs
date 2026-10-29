@@ -42,6 +42,11 @@ use cranelift_codegen::ir::{
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
 use oxc_ast::ast::{BinaryOperator, UnaryOperator};
 
+/// The most iterations an innermost nested counted loop's proved copy runs between its
+/// enclosing loop's polls (`Lowering::polls_skipped`): at a few dozen instructions each,
+/// a termination request waits on the order of a millisecond.
+const POLL_FREE_TRIPS: i64 = 1 << 16;
+
 /// The most instructions a region spans. Native code polls termination only at backward
 /// jumps, so the bound keeps compile time and code size proportional to small loop bodies.
 const MAX_REGION_INSTRUCTIONS: usize = 512;
@@ -1954,6 +1959,9 @@ fn admit(
         | Op::LoadNameTypeof
             => {}
         Op::Call | Op::CallArray => {}
+        // A return leaves the loop: the lane resumes at it with the state written back, and
+        // runs it.
+        Op::Return => {}
         Op::Jump => {}
         Op::JumpBinaryFalse => {
             if let Some(branch) = identity_branch(instruction, constants) {
@@ -3541,6 +3549,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
     /// runs for iterations `0..=trips` and one after it for `0..trips`; an affine value is
     /// monotonic in the iteration, so its extremes are at the first and last of them.
     fn proof(&mut self, counted: &CountedLoop) -> ir::Value {
+        let poll_free = self.polls_skipped(counted);
         let tested = self.affine_start(counted, counted.induction);
         let bound = self.affine_start(counted, counted.bound);
         let step = counted.base_step(counted.induction.base);
@@ -3616,7 +3625,22 @@ impl<'a, 'b> Lowering<'a, 'b> {
             let within = if fact.pc < counted.test { within } else { self.body.builder.ins().bor(within, none) };
             holds = self.body.builder.ins().band(holds, within);
         }
+        if poll_free {
+            let bounded = self.body.builder.ins().icmp_imm_u(IntCC::UnsignedLessThanOrEqual, trips, POLL_FREE_TRIPS);
+            holds = self.body.builder.ins().band(holds, bounded);
+        }
         holds
+    }
+
+    /// Whether `counted`'s proved copy runs without polling termination at its backward
+    /// jump: an innermost loop nested in the region, whose proof also bounds its trips by
+    /// `POLL_FREE_TRIPS`. The enclosing loops still poll at theirs, so a termination
+    /// request waits at most that many iterations of the inner loop.
+    fn polls_skipped(&self, counted: &CountedLoop) -> bool {
+        counted.header != self.region.header
+            && !self.counted.iter().any(|other| {
+                other.header != counted.header && counted.contains(other.header) && counted.contains(other.backedge)
+            })
     }
 
     /// Writes the outcome `word` to the result word and returns the status of a run that
@@ -4375,7 +4399,11 @@ impl<'a, 'b> Lowering<'a, 'b> {
     /// backward jump checks for termination first (`Body::interrupt_safepoint`), which ends
     /// the run as `LoopOutcome::Terminated`.
     fn jump(&mut self, pc: u32, target: u32) -> Option<()> {
-        if target <= pc {
+        let proved_backedge = self.copy.is_some_and(|index| {
+            let counted = &self.counted[index];
+            pc == counted.backedge && target == counted.header && self.polls_skipped(counted)
+        });
+        if target <= pc && !proved_backedge {
             self.body.interrupt_safepoint();
             if self.track_backedges && pc == self.region.backedge && target == self.region.header {
                 let offset = i32::try_from(ENTRY_BACKEDGE_COUNT * std::mem::size_of::<u64>())
@@ -5111,6 +5139,10 @@ impl<'a, 'b> Lowering<'a, 'b> {
             | Op::Call
             | Op::CallArray => {
                 self.leave(super::RegionExit::Fallback(pc));
+                Some(())
+            }
+            Op::Return => {
+                self.leave(super::RegionExit::Resume(pc));
                 Some(())
             }
             Op::Jump => self.jump(pc, instruction.jump_target()),

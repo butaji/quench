@@ -12434,6 +12434,54 @@ print(out.join("|"));
 }
 
 #[test]
+#[cfg(not(quench_profiled))]
+fn shared_osr_returns_inside_a_loop_resume_the_lane_at_the_return() {
+    // A loop that returns from inside its body runs natively and leaves at the `Return`,
+    // which the lane runs with the state written back; leaving so never retires the loop.
+    let source = r#"
+      function cmp(a, b) { var i = a.length; while (--i >= 0) { var r = a[i] - b[i]; if (r != 0) return r; } return 0; }
+      var a = [], b = [];
+      for (var i = 0; i < 200; i++) { a.push(i * 3 & 255); b.push(i * 3 & 255); }
+      var s = 0;
+      for (var k = 0; k < 3000; k++) {
+        b[k % 200] = (k & 1) ? a[k % 200] + 1 : a[k % 200];
+        s = (s + cmp(a, b) * (k % 7)) | 0;
+        b[k % 200] = a[k % 200];
+      }
+      print(s);
+    "#;
+    let program = Engine::specialize(source, "osr-loop-return.js").unwrap();
+    let interpreted = Rc::new(RefCell::new(Vec::new()));
+    Vm::new(TestHost::writing_to(interpreted.clone())).execute(&program).unwrap();
+    assert_eq!(interpreted.borrow().as_slice(), ["-4498"]);
+    let function_id = program
+        .functions
+        .iter()
+        .position(|function| function.header().name.is_some_and(|name| &program.atoms[name as usize] == "cmp"))
+        .unwrap();
+    for policy in crate::MemoryPolicy::ALL {
+        let output = Rc::new(RefCell::new(Vec::new()));
+        let mut compiled = Vm::new(TestHost::writing_to(output.clone()));
+        compiled.set_memory_policy(policy);
+        compiled.set_execution_mode(crate::ExecutionMode::Compiled);
+        compiled.programs.enable_js_jit_diagnostics();
+        compiled.execute(&program).unwrap();
+        assert_eq!(output.borrow().as_slice(), ["-4498"], "{policy:?}");
+        if !super::compiled::loop_tier_compiles(policy) {
+            continue;
+        }
+        let views = compiled.programs.lane_views(super::program_store::ProgramId::MAIN).expect("main program lane views");
+        let osr = views
+            .get(function_id)
+            .and_then(super::program_store::derived_lane_view)
+            .expect("hot cmp lane view")
+            .osr_diagnostics();
+        assert!(osr.native_region_runs > 2000, "{policy:?}: {osr:?}");
+        assert_eq!(osr.exits, 0, "{policy:?}: {osr:?}");
+    }
+}
+
+#[test]
 fn shared_osr_indexes_the_row_a_loop_reads_each_iteration() {
     // `a[e][f] = x` in a loop over `e` indexes the row `a[e]` the iteration read, not the
     // row the region entered with: the region declines an indexed register it defines
