@@ -2267,6 +2267,31 @@ fn representations(
             webs_representation[webs.find(entry)] = representation;
         }
     }
+    // A region-defined receiver of a field read holds an object (`Lowering::dynamic_field`),
+    // and so does each value moved into it.
+    for &offset in region.dynamic_field_reads.keys() {
+        let pc = region.header + offset;
+        if let Some(receiver) = object_reads(region.instructions[offset as usize]) {
+            webs_representation[webs.read(region, pc, receiver)] = Representation::Tagged;
+        }
+    }
+    loop {
+        let mut changed = false;
+        for (offset, instruction) in region.instructions.iter().enumerate() {
+            let pc = region.header + offset as u32;
+            if instruction.op() != Op::Move || webs_representation[webs.defined(region, pc)] != Representation::Tagged {
+                continue;
+            }
+            let source = webs.read(region, pc, instruction.register_b());
+            if webs_representation[source] != Representation::Tagged {
+                webs_representation[source] = Representation::Tagged;
+                changed = true;
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
     loop {
         let mut changed = false;
         for (offset, instruction) in region.instructions.iter().enumerate() {
@@ -4362,18 +4387,6 @@ impl<'a, 'b> Lowering<'a, 'b> {
             .icmp_imm_u(IntCC::NotEqual, auxiliary, i64::from(load.shape));
         self.guard(pc, wrong_shape);
 
-        let inline = self
-            .body
-            .builder
-            .ins()
-            .band_imm_u(meta, i64::from(layout.inline_storage_mask));
-        let inline_storage = self
-            .body
-            .builder
-            .ins()
-            .icmp_imm_u(IntCC::NotEqual, inline, 0);
-        self.guard(pc, inline_storage);
-
         let payload = self
             .body
             .builder
@@ -4390,7 +4403,59 @@ impl<'a, 'b> Lowering<'a, 'b> {
             .ins()
             .icmp_imm_u(IntCC::Equal, extras_tag, layout.extras_tag as i64);
         self.guard(pc, has_extras);
+        let inline = self
+            .body
+            .builder
+            .ins()
+            .band_imm_u(meta, i64::from(layout.inline_storage_mask));
+        let tested = self.body.builder.current_block().expect("lowering inside a block");
+        let head = self.chain(tested);
+        let inline_block = self.body.builder.create_block();
+        let arena_block = self.body.builder.create_block();
+        let join = self.body.builder.create_block();
+        let bits = self.body.builder.append_block_param(join, types::I64);
+        self.body.builder.ins().brif(inline, inline_block, &[], arena_block, &[]);
 
+        // Inline storage: the slot's narrow value in its half of the payload word
+        // (`Object::inline_property`), decoded as `Value::from_narrow` does.
+        self.body.builder.switch_to_block(inline_block);
+        self.body.builder.seal_block(inline_block);
+        self.chains.insert(inline_block, head);
+        if usize::from(load.slot) >= layout.inline_property_count {
+            let exit = self.exit_block(pc);
+            self.body.builder.ins().jump(exit, &[]);
+        } else {
+            let half = self.body.builder.ins().ushr_imm_u(payload, i64::from(load.slot) * i64::from(u32::BITS));
+            let narrow = self.body.builder.ins().ireduce(types::I32, half);
+            let integer = self.body.builder.ins().band_imm_u(narrow, i64::from(crate::value::NarrowLayout::INTEGER_FLAG));
+            let integer_block = self.body.builder.create_block();
+            let reference_block = self.body.builder.create_block();
+            self.body.builder.ins().brif(integer, integer_block, &[], reference_block, &[]);
+            self.body.builder.switch_to_block(integer_block);
+            self.body.builder.seal_block(integer_block);
+            let value = self.body.builder.ins().sshr_imm_u(narrow, i64::from(crate::value::NarrowLayout::CODE_SHIFT));
+            let value = self.body.builder.ins().uextend(types::I64, value);
+            let encoded = self.body.builder.ins().bor_imm_u(value, ValueLayout::INT_TAG as i64);
+            self.body.builder.ins().jump(join, &[ir::BlockArg::Value(encoded)]);
+            self.body.builder.switch_to_block(reference_block);
+            self.body.builder.seal_block(reference_block);
+            let code = self.body.builder.ins().ushr_imm_u(narrow, i64::from(crate::value::NarrowLayout::CODE_SHIFT));
+            let code = self.body.builder.ins().band_imm_u(code, i64::from(crate::value::NarrowLayout::CODE_MASK));
+            let code = self.body.builder.ins().uextend(types::I64, code);
+            let offset = self.body.builder.ins().ishl_imm_u(code, i64::from(WORD_BYTES.trailing_zeros()));
+            let table = self.body.builder.ins().iconst(types::I64, crate::value::NarrowLayout::upper_words() as i64);
+            let address = self.body.builder.ins().iadd(table, offset);
+            let upper = self.body.builder.ins().load(types::I64, super::invariant(), address, 0);
+            let lower = self.body.builder.ins().ushr_imm_u(narrow, i64::from(crate::value::NarrowLayout::INDEX_SHIFT));
+            let lower = self.body.builder.ins().uextend(types::I64, lower);
+            let encoded = self.body.builder.ins().bor(upper, lower);
+            self.body.builder.ins().jump(join, &[ir::BlockArg::Value(encoded)]);
+        }
+
+        // Arena storage: the slot at the object's storage start.
+        self.body.builder.switch_to_block(arena_block);
+        self.body.builder.seal_block(arena_block);
+        self.chains.insert(arena_block, head);
         let start = self.body.builder.ins().ireduce(types::I32, payload);
         let start = self
             .body
@@ -4411,7 +4476,12 @@ impl<'a, 'b> Lowering<'a, 'b> {
             .ins()
             .imul_imm_u(position, layout.property_value_size as i64);
         let value_address = self.body.builder.ins().iadd(properties_base, value_offset);
-        let bits = self.body.builder.ins().load(types::I64, flags(), value_address, 0);
+        let loaded = self.body.builder.ins().load(types::I64, flags(), value_address, 0);
+        self.body.builder.ins().jump(join, &[ir::BlockArg::Value(loaded)]);
+        // `join`'s predecessors are the storage forms' blocks, which the test's block dominates.
+        self.body.builder.switch_to_block(join);
+        self.body.builder.seal_block(join);
+        self.chains.insert(join, head);
 
         let representation = self.entry_representations.fields[index];
         let value = match representation {
@@ -5156,7 +5226,11 @@ impl<'a, 'b> Lowering<'a, 'b> {
                 let base = instruction.operand_b().register_index()?;
                 let array = self.array(base);
                 let key = self.operand(instruction.operand_c())?;
-                let representation = if self.region.tagged.contains(&instruction.result_register()) {
+                // A tagged result: a register the region keeps tagged, or a receiver a field read
+                // loads from (`representations`).
+                let representation = if self.region.tagged.contains(&instruction.result_register())
+                    || self.result_representation() == Representation::Tagged
+                {
                     Representation::Tagged
                 } else {
                     element_representation(&instruction, self.observation)

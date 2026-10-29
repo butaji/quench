@@ -12450,6 +12450,42 @@ print(out.slice(-3).join(";") + " " + out[100] + " " + out[250] + " " + out[270]
 }
 
 #[test]
+fn shared_osr_reads_fields_of_receivers_the_loop_loads() {
+    // A receiver an indexed read loads, moved into its variable, is a tagged value whose
+    // field reads load natively: inline storage (two fields, negative integers), an object
+    // whose double moves its values out of inline storage and one of another shape leave
+    // for the lane; results match Node.
+    let source = r#"
+function run(list, n) {
+  var s = 0;
+  for (var k = 0; k < n; k++) { var o = list[k & 7]; s = (s + o.a * 3 + o.b) | 0; }
+  return s;
+}
+var out = [];
+for (var r = 0; r < 300; r++) {
+  var list = [];
+  for (var j = 0; j < 8; j++) list.push({ a: j - 3 + r, b: (j * 7) | 0 });
+  if (r == 200) list[3].a = 1.5;
+  if (r == 250) list[5] = { a: 2, b: 3, c: 4 };
+  if (r == 260) list[1].b = -1000000;
+  out.push(run(list, 500));
+}
+print(out.slice(-3).join(",") + " " + out[100] + " " + out[200] + " " + out[250] + " " + out[260]);
+    "#;
+    let expected = ["458420,459920,461420 162920 275372 339436 -62597521"];
+    let program = Engine::specialize(source, "osr-loaded-receivers.js").unwrap();
+    for mode in [None, Some(crate::ExecutionMode::Compiled)] {
+        let output = Rc::new(RefCell::new(Vec::new()));
+        let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+        if let Some(mode) = mode {
+            vm.set_execution_mode(mode);
+        }
+        vm.execute(&program).unwrap();
+        assert_eq!(output.borrow().as_slice(), expected, "{mode:?}");
+    }
+}
+
+#[test]
 fn char_at_and_from_char_code_share_ascii_unit_strings() {
     // One-unit ASCII results come from a cache a collection empties (`ascii_unit_strings`);
     // every other unit, an index out of range and a coerced index take the native. The

@@ -1378,14 +1378,12 @@ impl<H: Host> Vm<H> {
         unsafe { super::site_table::SiteTable::<FieldCache>::load_from(self.active_field_entries, usize::from(site)) }
     }
 
-    /// The primary holderless shape and out-of-line slot the field cache proves for this
-    /// bytecode site, when generated code can read that slot without a VM helper.
+    /// The primary holderless shape and slot the field cache proves for this bytecode site,
+    /// which generated code reads from inline or arena storage without a VM helper.
     #[inline(always)]
     pub(super) fn native_field_load_descriptor(&self, site: u16) -> Option<(u32, u16)> {
         let cache = self.field_cache_entry(site);
-        (cache.holder == NO_FIELD_HOLDER
-            && cache.receiver != NO_FIELD_RECEIVER
-            && usize::from(cache.slot) >= crate::value_vec::INLINE_PROPERTY_COUNT)
+        (cache.holder == NO_FIELD_HOLDER && cache.receiver != NO_FIELD_RECEIVER)
             .then_some((cache.receiver, cache.slot))
     }
 
