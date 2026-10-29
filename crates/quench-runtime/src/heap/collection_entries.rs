@@ -150,6 +150,12 @@ impl<T: CollectionEntry> CollectionEntries<T> {
         self.slots.capacity()
     }
 
+    /// The entry storage this collection owns, which allocation and live weight charge
+    /// (`Cell::payload_bytes`).
+    pub(crate) fn payload_bytes(&self) -> usize {
+        self.slots.capacity() * size_of::<T>()
+    }
+
     /// The live entries in insertion order.
     pub(crate) fn iter(&self) -> impl Iterator<Item = T> + '_ {
         self.slots
