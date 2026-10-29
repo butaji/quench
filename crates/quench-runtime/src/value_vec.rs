@@ -549,7 +549,8 @@ impl ValueArena {
     }
 
     pub(crate) fn release(&mut self, vector: ValueVec) {
-        if vector.has_inline_property_storage() {
+        // Inline storage and an empty vector without a range hold no arena words.
+        if vector.has_inline_property_storage() || (vector.start == EMPTY_START && !vector.is_dictionary()) {
             return;
         }
         if vector.is_dictionary() {
