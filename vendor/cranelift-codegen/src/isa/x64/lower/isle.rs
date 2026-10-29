@@ -1362,6 +1362,28 @@ impl Context for IsleContext<'_, '_, MInst, X64Backend> {
         }
     }
 
+    /// Quench: the 32- or 64-bit signed overflow arithmetic whose flag `flag` is, when
+    /// that arithmetic is the instruction right before `branch` in its block: lowered
+    /// there, it leaves OF set for the branch.
+    fn fused_overflow_flag(&mut self, branch: Inst, flag: Value) -> Option<Inst> {
+        let dfg = self.lower_ctx.dfg();
+        let crate::ir::ValueDef::Result(inst, 1) = dfg.value_def(flag) else {
+            return None;
+        };
+        let fused = matches!(
+            dfg.insts[inst].opcode(),
+            Opcode::SaddOverflow | Opcode::SsubOverflow | Opcode::SmulOverflow
+        ) && matches!(dfg.value_type(dfg.first_result(inst)), types::I32 | types::I64)
+            && self.lower_ctx.f.layout.prev_inst(branch) == Some(inst);
+        fused.then_some(inst)
+    }
+
+    /// Quench: whether any lowered instruction reads `inst`'s overflow flag as a value.
+    fn overflow_flag_read(&mut self, inst: Inst) -> bool {
+        let flag = self.lower_ctx.dfg().inst_results(inst)[1];
+        self.lower_ctx.value_is_lowered(flag)
+    }
+
     #[inline]
     fn sum_extend_fits_in_32_bits(
         &mut self,
