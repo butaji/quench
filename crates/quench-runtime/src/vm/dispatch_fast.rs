@@ -18259,6 +18259,8 @@ fn may_loop(function: &Function) -> bool {
 /// to `cap`: where `follows_jumps`, a `Jump` continues at its target, as a resumed loop body
 /// does, and any other record at the next PC. Each pass extends every count by one step, so
 /// `cap` passes reach the fixed point the capped counts allow; without jumps one pass does.
+/// An `Await` counts as `cap`: a resumed async frame's lane run that stops there suspends
+/// without the general loop (`Vm::lane_stop_awaits`), so a short run to it repays its entry.
 fn lane_runs_ahead(decoded: &[WideInstruction], exits: &[bool], cap: usize, follows_jumps: bool) -> Vec<usize> {
     let next = |pc: usize| match decoded[pc].op() {
         Op::Jump if follows_jumps => decoded[pc].imm() as usize,
@@ -18268,7 +18270,9 @@ fn lane_runs_ahead(decoded: &[WideInstruction], exits: &[bool], cap: usize, foll
     for _ in 0..cap {
         let mut changed = false;
         for pc in (0..exits.len()).rev() {
-            let run = if exits[pc] {
+            let run = if decoded[pc].op() == Op::Await {
+                cap
+            } else if exits[pc] {
                 0
             } else {
                 (1 + runs.get(next(pc)).copied().unwrap_or(0)).min(cap)

@@ -906,3 +906,35 @@ print(out.join(" "));
 "#;
     assert_eq!(output(source), ["6 304 0 9 012 333 1,2,10,20,100,200 3 2 a1b2 0x1y 15 3 3 40 t1 6"]);
 }
+
+#[test]
+fn awaits_a_resumed_frame_suspends_from_the_lane_keep_their_order_and_errors() {
+    // A resumed async frame whose lane run stops at an `await` suspends without the general
+    // loop when the awaited value converts without observing anything
+    // (`Vm::lane_stop_awaits`): native promises and primitives, beside thenables, a `then`
+    // getter, one that throws into a `try`, a subclass, a patched `constructor`, loops of
+    // awaits and an async generator, interleaved with plain reactions. Node 26 prints the
+    // same.
+    let source = r#"
+(function () {
+const log = [];
+async function a(tag, v) { log.push(tag + 0); const x = await v; log.push(tag + 1 + ":" + String(x)); const y = await x; log.push(tag + 2); return y; }
+const thenable = { then(r) { log.push("then"); r("T"); } };
+let getterRuns = 0; const viaGetter = { get then() { getterRuns++; return undefined; } };
+const throwing = { get then() { throw new Error("boom"); } };
+class P extends Promise {}
+const patched = Promise.resolve("pc"); Object.defineProperty(patched, "constructor", { get() { log.push("ctor"); return Promise; } });
+async function caught() { try { await Promise.reject(new Error("r")); } catch (e) { return "c:" + e.message; } }
+async function caughtGetter() { try { await throwing; } catch (e) { return "g:" + e.message; } }
+async function loop() { let s = 0; for (let i = 0; i < 50; i++) s += await i; for (let i = 0; i < 50; i++) s += await Promise.resolve(i); return s; }
+async function* gen() { yield await Promise.resolve(1); yield 2; }
+const runs = [a("p", Promise.resolve(1)), a("q", 2), a("t", thenable), a("g", viaGetter), a("s", P.resolve("sub")), a("c", patched), caught(), caughtGetter(), loop(), (async () => { const out = []; for await (const v of gen()) out.push(v); return out.join(); })()];
+Promise.resolve().then(() => log.push("tick1")).then(() => log.push("tick2")).then(() => log.push("tick3"));
+Promise.all(runs).then((values) => { print(values.map(String).join(" ") + " | " + log.join(",") + " | " + getterRuns); });
+})();
+"#;
+    assert_eq!(
+        output(source),
+        ["1 2 T [object Object] sub pc c:r g:boom 2450 1,2 | p0,q0,t0,g0,s0,c0,ctor,p1:1,q1:2,then,g1:[object Object],c1:pc,tick1,p2,q2,t1:T,g2,c2,tick2,t2,s1:sub,tick3,s2 | 3"]
+    );
+}
