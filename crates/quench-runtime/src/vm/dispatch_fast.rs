@@ -6896,6 +6896,10 @@ fn lane_loop_run<H: Host>(
                     .set(site.native_region_runs.get().saturating_add(1));
                 site.native_exits.set(site.native_exits.get().saturating_add(1));
             }
+            LoopOutcome::Grow(_) => {
+                site.native_region_runs
+                    .set(site.native_region_runs.get().saturating_add(1));
+            }
             LoopOutcome::Widen(_) => {
                 site.native_region_runs
                     .set(site.native_region_runs.get().saturating_add(1));
@@ -6933,7 +6937,7 @@ fn lane_loop_run<H: Host>(
     };
     if general_dispatch_due {
         match outcome {
-            LoopOutcome::Resume(pc) => return LoopContinuation::Exit(pc),
+            LoopOutcome::Resume(pc) | LoopOutcome::Grow(pc) => return LoopContinuation::Exit(pc),
             LoopOutcome::Exit(pc) => {
                 site.exits.set(site.exits.get().saturating_add(1));
                 return LoopContinuation::Exit(pc);
@@ -6961,6 +6965,7 @@ fn lane_loop_run<H: Host>(
             site.exits.set(site.exits.get() + 1);
             LoopContinuation::Exit(pc)
         }
+        LoopOutcome::Grow(pc) => LoopContinuation::Exit(pc),
         LoopOutcome::Widen(pc) => {
             if let Some(widening) = code.widening(pc) {
                 tier.widened.insert(widening);
@@ -11717,6 +11722,11 @@ fn lane_native_value<H: Host>(
                 return Some(value);
             }
         }
+        Native::StringCharAt if !args.is_empty() => {
+            if let Some(value) = string_char_at_ascii(vm, receiver, args[0]) {
+                return Some(value);
+            }
+        }
         Native::MapGet
         | Native::MapHas
         | Native::SetHas
@@ -11779,6 +11789,14 @@ fn string_char_code_at<H: Host>(vm: &Vm<H>, receiver: Value, index: Value) -> Op
             .and_then(|index| units.unit(index))
             .map_or(Value::NAN, |unit| Value::integer(i32::from(unit))),
     )
+}
+
+/// `charAt` of a flat string at an integer index of an ASCII unit: the unit's shared string
+/// (`Vm::ascii_unit_string`). Any other receiver, index or unit takes the native.
+fn string_char_at_ascii<H: Host>(vm: &mut Vm<H>, receiver: Value, index: Value) -> Option<Value> {
+    let index = usize::try_from(index.as_int()?).ok()?;
+    let unit = vm.heap.string(receiver)?.existing_flat()?.unit(index)?;
+    vm.ascii_unit_string(unit)
 }
 
 script_handler! {
@@ -13711,7 +13729,7 @@ unsafe fn window_environment<H: Host>(
         // can observe its implicit bindings (`Function::activation_bindings_observable`);
         // any other scope names only its program, which needs no allocation.
         let body = code.function(function as usize);
-        let scope = if !body.is_arrow && body.activation_bindings_observable(&code.atoms, &code.functions) {
+        let scope = if !body.is_arrow && body.activation_bindings_observable(code) {
             crate::heap::EnvironmentScopeRef::new(crate::heap::EnvironmentScope {
                 program: Some(program.raw()),
                 root_eval_scope: false,

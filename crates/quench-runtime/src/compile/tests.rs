@@ -280,7 +280,7 @@ fn completion_capturing_host_scripts_keep_script_declarations() {
     // eval code keeps a strict body's declarations local.
     let source = "'use strict'; function f() {} var v = 1;";
     let script =
-        Engine::specialize_script_with_atom_prefix(source, "host.js", &NoAtomPrefix).unwrap();
+        Engine::specialize_script_with_atom_prefix(source, "host.js", &NoAtomPrefix, super::ReleasedRecords::Dropped).unwrap();
     assert_eq!(script.kind, crate::bytecode::ProgramKind::Script);
     assert!(!script.root_variables_are_local());
     let eval = Engine::specialize_eval_with_context(

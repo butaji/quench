@@ -49,6 +49,7 @@ use std::rc::{Rc, Weak};
 
 #[path = "compiled/osr_loop.rs"]
 mod osr_loop;
+mod wavefront;
 pub(super) use osr_loop::{
     ArrayUse, FieldReceiver, FieldUse, InlineCallee, InlineFrame, LoopEntry, LoopOutcome, LoopRegion, NativeFieldLoad,
     Observation, RegionAnalysisFailure, RegionRejection, Widening,
@@ -69,6 +70,11 @@ pub(super) enum RegionExit {
     Resume(u32),
     Fallback(u32),
     Recompile(u32),
+    /// As `Fallback`, at an append that found its array's backing full. The general path
+    /// grows the backing geometrically (`UniqueElements::reserve`), so an array leaves this
+    /// way a logarithmic number of times in its length, and these exits do not mark the
+    /// region as one whose values leave the subset.
+    Grow(u32),
 }
 
 impl RegionExit {
@@ -81,6 +87,7 @@ impl RegionExit {
             Self::Resume(pc) => (1, pc),
             Self::Fallback(pc) => (2, pc),
             Self::Recompile(pc) => (3, pc),
+            Self::Grow(pc) => (4, pc),
         };
         ((kind as u64) << Self::KIND_SHIFT) | payload as u64
     }
@@ -91,6 +98,7 @@ impl RegionExit {
             1 => Self::Resume(payload),
             2 => Self::Fallback(payload),
             3 => Self::Recompile(payload),
+            4 => Self::Grow(payload),
             _ => Self::EntryMiss(payload),
         }
     }
@@ -128,7 +136,7 @@ impl RegionExitBlocks {
         reported: RegionExit,
     ) {
         let pc = match outcome {
-            RegionExit::Resume(pc) | RegionExit::Fallback(pc) | RegionExit::Recompile(pc) => pc,
+            RegionExit::Resume(pc) | RegionExit::Fallback(pc) | RegionExit::Recompile(pc) | RegionExit::Grow(pc) => pc,
             RegionExit::EntryMiss(_) => unreachable!("entry miss does not write back"),
         };
         let word = builder.ins().iconst(types::I64, reported.encode() as i64);
@@ -5562,13 +5570,14 @@ pub(super) fn compile_osr_region(
     track_backedges: bool,
 ) -> Option<CompiledOsrRegion> {
     let isa = super::jit_backend::target_isa(LOOP_TIER_OPT_LEVELS[policy as usize]?)?;
-    let (function, widenings) = osr_loop::lower(
-        region,
-        observation,
-        &*isa,
-        poll_address(interrupt),
-        track_backedges,
-    )?;
+    // A row-recurrence stencil nest computes its rows in pairs (`wavefront`); any other region
+    // takes the loop tier's lowering.
+    let wavefront = wavefront::recognize(region)
+        .and_then(|nest| wavefront::lower(region, &nest, &*isa, poll_address(interrupt)));
+    let (function, widenings) = match wavefront {
+        Some(function) => (function, std::collections::BTreeMap::new()),
+        None => osr_loop::lower(region, observation, &*isa, poll_address(interrupt), track_backedges)?,
+    };
     let clif = native_dump_directory().map(|_| function.display().to_string());
     let (_code, entry) = compile_and_publish_entry(function, &*isa, osr_loop::MAX_CODE_BYTES)?;
     if let (Some(directory), Some(clif)) = (native_dump_directory(), clif) {

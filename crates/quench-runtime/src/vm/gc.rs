@@ -933,6 +933,9 @@ impl<H: Host> Vm<H> {
         if let Some(strings) = &mut self.recent_atom_strings {
             strings.fill((super::NO_RECENT_ATOM, Value::UNDEFINED));
         }
+        if let Some(strings) = &mut self.ascii_unit_strings {
+            strings.fill(Value::UNDEFINED);
+        }
         #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
         self.heap.record_vm_gc_phase(3, after_collection_started);
         self.host.at_collection_boundary(self.memory_policy());
