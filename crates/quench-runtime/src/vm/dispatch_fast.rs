@@ -18963,7 +18963,23 @@ impl<H: Host> Vm<H> {
 fn lane_dispatch<H: Host>(cx: *mut LaneContext<H>, mut ip: Ip) -> Ip {
     loop {
         #[cfg(feature = "profile-lane-exits")]
-        super::lane_exits::dispatch();
+        {
+            // The record's opcode from its packed instruction: the census needs the mix, and
+            // the lane record keeps only the handler.
+            let vm = unsafe { vm(cx) };
+            let function = vm
+                .lane_stack
+                .activations
+                .last()
+                .map_or(vm.frames[unsafe { (*cx).frame }].function, |activation| activation.function);
+            let code = unsafe { &*(*cx).code };
+            let pc = unsafe { ip.offset_from((*cx).base) as usize };
+            if let Some(body) = code.function_get(function as usize)
+                && let Some(packed) = body.code.get(pc)
+            {
+                super::lane_exits::dispatch(decoded_instruction(body, *packed).op());
+            }
+        }
         // SAFETY: handlers have returned, so no other access is live.
         let (view, registers, acc) = unsafe {
             let acc = std::mem::replace(&mut (*cx).resumed_acc, Slot::of(Value::UNDEFINED));
