@@ -6293,11 +6293,12 @@ const STRICT_INEQUALITY_OPERATOR: u32 = oxc_ast::ast::BinaryOperator::StrictIneq
 /// when identical (`Vm::typeof_name`).
 #[inline(always)]
 fn strictly_equal_constant<H: Host>(vm: &Vm<H>, value: Value, constant: Value) -> bool {
+    // The constant is rarely a typeof name, so its test usually decides that one alone.
     value == constant
         || (constant.is_heap()
             && value.is_heap()
-            && !(vm.is_typeof_name(value) && vm.is_typeof_name(constant))
-            && vm.strict_equal(value, constant))
+            && !(vm.is_typeof_name(constant) && vm.is_typeof_name(value))
+            && vm.heap_values_strictly_equal(value, constant))
 }
 
 lane_handler! {

@@ -400,9 +400,13 @@ impl<H: Host> Vm<H> {
         if let (Some(left), Some(right)) = (a.as_number(), b.as_number()) {
             return left == right;
         }
-        if a == b {
-            return true;
-        }
+        a == b || self.heap_values_strictly_equal(a, b)
+    }
+
+    /// `strict_equal` of two values that are no Numbers and not identical: equal strings or
+    /// BigInts, of equal contents.
+    #[inline(always)]
+    pub(super) fn heap_values_strictly_equal(&self, a: Value, b: Value) -> bool {
         if let (Some(a), Some(b)) = (self.heap.string(a), self.heap.string(b)) {
             return a == b;
         }
