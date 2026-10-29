@@ -5569,6 +5569,10 @@ pub(super) fn compile_osr_region(
     policy: crate::MemoryPolicy,
     track_backedges: bool,
 ) -> Option<CompiledOsrRegion> {
+    #[cfg(feature = "gc-tuning")]
+    if loop_tier_region_budget_spent() {
+        return None;
+    }
     let isa = super::jit_backend::target_isa(LOOP_TIER_OPT_LEVELS[policy as usize]?)?;
     // A row-recurrence stencil nest computes its rows in pairs (`wavefront`); any other region
     // takes the loop tier's lowering.
@@ -5588,6 +5592,24 @@ pub(super) fn compile_osr_region(
         entry,
         widenings,
     })
+}
+
+/// Whether the loop tier has compiled as many regions as `QUENCH_LOOP_TIER_MAX_REGIONS`
+/// allows; unlimited when unset. Measurement builds only (`gc-tuning`): it exists to trade
+/// region compilation against the `--jit` peak that regalloc2's state sets
+/// (`LOOP_TIER_OPT_LEVELS`).
+#[cfg(feature = "gc-tuning")]
+fn loop_tier_region_budget_spent() -> bool {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    static COMPILED: AtomicUsize = AtomicUsize::new(0);
+    static LIMIT: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    let limit = *LIMIT.get_or_init(|| {
+        std::env::var("QUENCH_LOOP_TIER_MAX_REGIONS")
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(usize::MAX)
+    });
+    COMPILED.fetch_add(1, Ordering::Relaxed) >= limit
 }
 
 /// The directory `QUENCH_JS_JIT_DUMP` names, read once per process: each loop region
