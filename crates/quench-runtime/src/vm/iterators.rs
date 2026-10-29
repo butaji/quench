@@ -4,6 +4,10 @@ use super::property_key::PropertyKey;
 use super::*;
 use crate::heap::IteratorZipMode;
 
+/// Registered iterators of one Map or Set before registration first prunes the finished and
+/// collected ones (`Vm::collection_iterator`); below it the registry stays as appended.
+const ITERATOR_REGISTRY_PRUNE_START: usize = 8;
+
 #[derive(Clone, Copy)]
 enum IteratorPrimitiveHandling {
     IterateStrings,
@@ -1015,10 +1019,16 @@ impl<H: Host> Vm<H> {
                 generator: None,
             },
         });
-        match self.heap.get_mut(source) {
+        let registered = match self.heap.get_mut(source) {
             Some(Cell::Map { entries, .. }) => entries.register_iterator(iterator),
             Some(Cell::Set { entries, .. }) => entries.register_iterator(iterator),
-            _ => {}
+            _ => 0,
+        };
+        // Finished and collected iterators stay registered until the collection compacts or
+        // clears; pruning at each doubling bounds the registry by twice its running iterators
+        // at an amortized constant cost per registration.
+        if registered >= ITERATOR_REGISTRY_PRUNE_START && registered.is_power_of_two() {
+            self.heap.move_collection_iterators(source, |slot| slot);
         }
         Ok(iterator)
     }

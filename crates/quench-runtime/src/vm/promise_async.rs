@@ -16,6 +16,20 @@ impl<H: Host> Vm<H> {
     /// Clears the registers of a suspending frame that are dead where it resumes, the ones a
     /// collection of it on the frame stack skips (its root mask at `frame.pc`): its
     /// continuation then keeps alive only what the resumed code can read.
+    /// `Continuation::suspend` of `frame` at an await or yield, with the registers liveness
+    /// finds dead there cleared first (`release_dead_registers`): a suspended activation is
+    /// traced whole, so a dead temporary otherwise stayed reachable until it resumed.
+    pub(super) fn suspend_activation(
+        &self,
+        mut frame: Box<super::Frame>,
+        completion: Completion,
+        resume_register: Option<u16>,
+        promise: Value,
+    ) -> Continuation {
+        self.release_dead_registers(&mut frame);
+        Continuation::suspend(frame, completion, resume_register, promise)
+    }
+
     fn release_dead_registers(&self, frame: &mut super::Frame) {
         let Some(mask) = self
             .programs
@@ -76,10 +90,9 @@ impl<H: Host> Vm<H> {
                 super::FrameOutcome::Await {
                     value,
                     destination,
-                    frame: Some(mut frame),
+                    frame: Some(frame),
                 } => {
-                    vm.release_dead_registers(&mut frame);
-                    let continuation = Continuation::suspend(
+                    let continuation = vm.suspend_activation(
                         frame,
                         Completion::Await(value),
                         Some(destination),
@@ -403,8 +416,7 @@ impl<H: Host> Vm<H> {
                 destination,
                 frame: None,
             } => {
-                self.release_dead_registers(&mut frame);
-                let continuation = Continuation::suspend(
+                let continuation = self.suspend_activation(
                     frame,
                     Completion::Await(value),
                     Some(destination),

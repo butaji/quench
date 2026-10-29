@@ -51,15 +51,12 @@ impl<H: Host> Vm<H> {
 
     /// Append an own data element to an unexposed dense array. No guest code runs.
     pub(super) fn append_fresh_array_element(&mut self, array: Value, value: Value) -> usize {
-        let Some(elements) = self.heap.array_elements_mut(array) else {
+        let Some(length) = self.heap.grow_array_elements(array, |elements| {
+            elements.push(value);
+            elements.len()
+        }) else {
             unreachable!("fresh array owner remains an array");
         };
-        let elements = super::index::mutable_array_elements(elements);
-        let capacity = elements.capacity();
-        elements.push(value);
-        let length = elements.len();
-        let grown = elements.capacity() - capacity;
-        self.heap.charge_payload_growth(grown * size_of::<Value>());
         length
     }
 

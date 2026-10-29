@@ -15,7 +15,7 @@ mod cell_access;
 mod buffer_bytes;
 mod collection_entries;
 mod environment_trace;
-pub(crate) use environment_trace::{ClosureReadSource, EnvironmentTrace};
+pub(crate) use environment_trace::{ClosureReadSource, EnvironmentReads, EnvironmentTrace};
 mod external;
 mod memory_stats;
 pub use memory_stats::HeapMemoryComposition;
@@ -1993,7 +1993,12 @@ impl Heap {
         // trace's per-environment state would only add to each full collection's peak
         // (V8-v7 max RSS +50 to +156 KiB on most fixtures when every full collection traced).
         let trims_environments = full && self.environment_trim_due();
-        let mut environments = EnvironmentTrace::new(closure_reads.filter(|_| trims_environments));
+        let environment_reads = if trims_environments {
+            EnvironmentReads::Closures
+        } else {
+            EnvironmentReads::Projections
+        };
+        let mut environments = EnvironmentTrace::new(closure_reads.filter(|_| full), environment_reads);
         {
             let mut ephemerons = weak::EphemeronWork::default();
             if !full {
@@ -2040,7 +2045,7 @@ impl Heap {
         #[cfg(debug_assertions)]
         {
             if full {
-                self.debug_verify_full(&verify_roots, &mut object_roots, closure_reads.filter(|_| trims_environments));
+                self.debug_verify_full(&verify_roots, &mut object_roots, closure_reads, environment_reads);
             } else {
                 let mut pinned = verify_old_records.unwrap_or_default();
                 pinned.extend(verify_remembered_records);
@@ -2608,6 +2613,7 @@ impl Heap {
         roots: &[Value],
         object_roots: &mut impl FnMut(GcTraceKind, Value, u32, bool, &mut Vec<Value>),
         closure_reads: Option<&dyn ClosureReadSource>,
+        environment_reads: EnvironmentReads,
     ) {
         let parallel_marks = Self::snapshot_marks(&self.marks);
         let parallel_record_marks = self.snapshot_record_marks();
@@ -2625,7 +2631,7 @@ impl Heap {
             None,
             &mut ephemerons,
             GcTraceKind::VerifyFull,
-            &mut EnvironmentTrace::new(closure_reads),
+            &mut EnvironmentTrace::new(closure_reads, environment_reads),
         );
         let sequential_marks = Self::snapshot_marks(&self.marks);
         let sequential_record_marks = self.snapshot_record_marks();
@@ -2678,7 +2684,7 @@ impl Heap {
             None,
             &mut ephemerons,
             GcTraceKind::VerifyFull,
-            &mut EnvironmentTrace::new(None),
+            &mut EnvironmentTrace::new(None, EnvironmentReads::Closures),
         );
         let verified_record_marks = self.snapshot_record_marks();
         let marked = |marks: &[u64], id: RecordId| {
@@ -3178,17 +3184,15 @@ impl Heap {
         {
             self.sparse_arrays = None;
         }
-        let Some(elements) = self.array_elements_mut(array) else {
-            return;
-        };
-        let dense_length = elements.len();
-        let elements = elements.make_mut();
-        elements.resize(length, Value::DELETED);
-        for (index, value) in sparse.into_iter().flat_map(|elements| elements.values) {
-            if index < length && (index >= dense_length || elements[index].is_deleted()) {
-                elements[index] = value;
+        self.grow_array_elements(array, |elements| {
+            let dense_length = elements.len();
+            elements.resize(length, Value::DELETED);
+            for (index, value) in sparse.into_iter().flat_map(|elements| elements.values) {
+                if index < length && (index >= dense_length || elements[index].is_deleted()) {
+                    elements[index] = value;
+                }
             }
-        }
+        });
     }
     pub(crate) fn property_get(&self, object: &Object, slot: usize) -> Option<Value> {
         let value = match object.properties().has_inline_property_storage() {

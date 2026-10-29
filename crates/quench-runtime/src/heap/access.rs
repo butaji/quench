@@ -45,10 +45,14 @@ impl Heap {
         }
         match self.get_mut(collection) {
             Some(Cell::Map { entries, .. }) => {
-                running.into_iter().for_each(|it| entries.register_iterator(it))
+                running.into_iter().for_each(|it| {
+                    entries.register_iterator(it);
+                })
             }
             Some(Cell::Set { entries, .. }) => {
-                running.into_iter().for_each(|it| entries.register_iterator(it))
+                running.into_iter().for_each(|it| {
+                    entries.register_iterator(it);
+                })
             }
             _ => {}
         }
@@ -546,6 +550,23 @@ impl Heap {
         value: Value,
     ) -> Option<&mut super::ArrayElements> {
         self.array_mut(value).map(ArrayObject::elements_mut)
+    }
+
+    /// Grows the elements `array` owns through `grow`, charging what their capacity grew
+    /// toward the next collection (`charge_payload_growth`) at the weight `alloc` gives a
+    /// cell's own payload. A live array's element storage grows only through here, so a loop
+    /// that only stores into arrays still makes collections due (TOD-125).
+    pub(crate) fn grow_array_elements<R>(
+        &mut self,
+        array: Value,
+        grow: impl FnOnce(&mut super::UniqueElements) -> R,
+    ) -> Option<R> {
+        let elements = self.array_mut(array)?.elements_mut().make_mut();
+        let capacity = elements.capacity();
+        let result = grow(elements);
+        let grown = elements.capacity() - capacity;
+        self.charge_payload_growth(grown * size_of::<Value>());
+        Some(result)
     }
 
     /// `record_array`, mutably.

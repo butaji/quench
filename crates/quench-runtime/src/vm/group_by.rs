@@ -137,10 +137,9 @@ impl<H: Host> Vm<H> {
             }),
         };
         if let Some(group) = group {
-            let Some(elements) = self.heap.array_elements_mut(group) else {
+            if self.heap.grow_array_elements(group, |elements| elements.push(value)).is_none() {
                 unreachable!("groupBy owns array groups")
-            };
-            elements.make_mut().push(value);
+            }
         } else {
             let group = self.heap.alloc(Cell::Array {
                 object: crate::heap::ArrayObject::new(

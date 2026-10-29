@@ -1798,7 +1798,7 @@ pub(crate) fn response_finish(
         .connections
         .get_mut(&socket)
     {
-        connection.received.clear();
+        connection.clear_received();
         connection.request_dispatched = false;
     }
     if let (Some(request), Some(response), Some(server), Some(socket)) = (
