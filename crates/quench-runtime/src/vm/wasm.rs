@@ -1277,7 +1277,13 @@ impl<H: Host> Vm<H> {
                     destination.copy_from(source, input, output)
                 }
                 Some(Cell::ArrayBuffer { bytes: source, .. }) => {
-                    destination.lock()[output].copy_from_slice(&source.read()[input])
+                    if source.is_wasm_view_of(destination) {
+                        destination.lock().copy_within(input, output.start);
+                    } else if let (crate::wasm::memory::MemoryStorage::Shared(destination), Some(source)) = (&**destination, source.shared_backing()) {
+                        destination.0.copy_from(&source, input, output);
+                    } else {
+                        destination.lock()[output].copy_from_slice(&source.read()[input]);
+                    }
                 }
                 _ => unreachable!("validated source binding"),
             }
@@ -1290,7 +1296,7 @@ impl<H: Host> Vm<H> {
         memory: Value,
         delta: u64,
     ) -> Result<Option<u64>, JsError> {
-        let _order = crate::wasm::atomic::memory_order();
+        let _order = crate::shared_backing::memory_order();
         let page_size = self.wasm_memory_type(memory)?.page_size() as usize;
         let (mut bytes, max_byte_length) = self.wasm_memory_mut(memory)?;
         let old_pages = bytes.len() / page_size;
@@ -1313,21 +1319,23 @@ impl<H: Host> Vm<H> {
         Ok(Some(old_pages as u64))
     }
 
-    /// The ArrayBuffer viewing `memory`'s current bytes, created on first request; `None`
-    /// for a shared memory, whose buffer is not supported yet.
+    /// The buffer viewing the memory's bytes, created on first request. Shared
+    /// buffers preserve their accessible prefix when another agent grows the memory.
     pub(super) fn wasm_memory_buffer(&mut self, memory: Value) -> Option<Value> {
         let Some(Cell::WasmMemory { bytes, buffer, .. }) = self.heap.get(memory) else {
             return None;
         };
-        if !buffer.is_undefined() {
+        let shared = matches!(&**bytes, crate::wasm::memory::MemoryStorage::Shared(_));
+        if !buffer.is_undefined() && (!shared || matches!(self.heap.get(*buffer),
+            Some(Cell::ArrayBuffer { bytes: view, .. }) if view.len() == bytes.len())) {
             return Some(*buffer);
         }
         let view = crate::heap::BufferBytes::wasm_view(bytes)?;
         let byte_length = view.len();
         let buffer = self.heap.alloc(Cell::ArrayBuffer {
-            object: Box::new(Self::empty_object(self.array_buffer_proto)),
+            object: Box::new(Self::empty_object(if shared { self.shared_array_buffer_proto } else { self.array_buffer_proto })),
             bytes: view,
-            shared: false,
+            shared,
             detached: false,
             max_byte_length: byte_length,
             resizable: false,
@@ -1349,7 +1357,7 @@ impl<H: Host> Vm<H> {
             return;
         };
         let previous = std::mem::replace(buffer, Value::UNDEFINED);
-        if !previous.is_undefined() {
+        if matches!(self.heap.get(previous), Some(Cell::ArrayBuffer { shared: false, .. })) {
             self.detach_array_buffer(previous);
         }
     }
@@ -3860,7 +3868,7 @@ mod tests {
         let crate::wasm::memory::MemoryStorage::Unshared(state) = &**bytes else {
             unreachable!("memory is unshared");
         };
-        assert!(state.borrow().bytes.guard().is_none());
+        assert!(state.borrow().guard().is_none());
 
         assert_eq!(
             vm.invoke_wasm(&instance, 1, &[]).unwrap(),

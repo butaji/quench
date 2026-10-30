@@ -668,8 +668,15 @@ impl<H: Host> Vm<H> {
                     unreachable!("typed copy backing buffer was validated");
                 };
                 // Set snapshots overlapping source bytes, unlike slice's forward copy.
-                bytes.make_mut()
-                    .copy_within(source_offset..source_offset + byte_length, target_offset);
+                if let Some(backing) = bytes.shared_backing() {
+                    // Growth can leave source and target with different visible prefixes
+                    // of the same data block. The source range was checked on its view.
+                    backing.copy_from(&backing, source_offset..source_offset + byte_length,
+                        target_offset..target_offset + byte_length);
+                } else {
+                    bytes.make_mut()
+                        .copy_within(source_offset..source_offset + byte_length, target_offset);
+                }
             } else {
                 let Some(Cell::ArrayBuffer { bytes, .. }) = self.heap.get(source_buffer) else {
                     unreachable!("typed copy source backing buffer was validated");

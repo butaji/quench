@@ -32,11 +32,11 @@ pub fn core_features() -> WasmFeatures {
 }
 
 /// What the JavaScript API (`WebAssembly.validate`, `compile`, `Module`) accepts: the core set
-/// and the legacy exception-handling proposal (`try`, `catch`, `catch_all`, `delegate`,
+/// plus threads and the legacy exception-handling proposal (`try`, `catch`, `catch_all`, `delegate`,
 /// `rethrow`), which V8 and JavaScriptCore still ship and toolchains such as .NET's still
 /// emit (Node v26.10.0 validates such a module). The official suite tests core without it.
 pub fn js_api_features() -> WasmFeatures {
-    core_features() | WasmFeatures::LEGACY_EXCEPTIONS
+    core_features() | WasmFeatures::LEGACY_EXCEPTIONS | WasmFeatures::THREADS
 }
 
 /// Features the official suite uses for a `.wast` path.
@@ -77,11 +77,19 @@ pub fn inspect_binary_with(bytes: &[u8], features: WasmFeatures) -> ModuleStatus
             return ModuleStatus::ParseError(error.to_string());
         }
     }
-    let mut validator = Validator::new_with_features(features);
-    match validator.validate_all(bytes) {
+    match validate_with(bytes, features) {
         Ok(_) => ModuleStatus::Valid,
         Err(error) => ModuleStatus::ValidateError(error.to_string()),
     }
+}
+
+fn validate_with(bytes: &[u8], features: WasmFeatures) -> Result<(), wasmparser::BinaryReaderError> {
+    Validator::new_with_features(features).validate_all(bytes).map(drop)
+}
+
+/// The JavaScript API's validation result, without lowering or instantiation.
+pub fn validate_binary(bytes: &[u8]) -> bool {
+    validate_with(bytes, js_api_features()).is_ok()
 }
 
 /// Decode and validate with Wasm 3.0 core features.

@@ -35,6 +35,7 @@ pub(crate) struct TestHost {
     install: Option<Install>,
     resolve: Option<Resolve>,
     module_source: Option<fn(&ModuleSource) -> bool>,
+    wasm_validation: Option<fn(&mut Self, &[u8], crate::ExecutionMode) -> bool>,
     state: Rc<dyn Any>,
     #[cfg(feature = "native-execution")]
     native_lookup: Option<Rc<NativeLookup>>,
@@ -52,6 +53,7 @@ impl Default for TestHost {
             install: None,
             resolve: None,
             module_source: None,
+            wasm_validation: None,
             state: Rc::new(()),
             #[cfg(feature = "native-execution")]
             native_lookup: None,
@@ -103,6 +105,10 @@ impl TestHost {
         Self { module_source: Some(module_source), ..self }
     }
 
+    pub(crate) fn with_wasm_validation(self, validate: fn(&mut Self, &[u8], crate::ExecutionMode) -> bool) -> Self {
+        Self { wasm_validation: Some(validate), ..self }
+    }
+
     /// Share `state` with the host's natives (`state`).
     pub(crate) fn with_state<T: 'static>(self, state: Rc<T>) -> Self {
         Self { state, ..self }
@@ -120,6 +126,9 @@ impl TestHost {
 }
 
 impl Host for TestHost {
+    fn validate_wasm(&mut self, bytes: &[u8], mode: crate::ExecutionMode) -> bool {
+        self.wasm_validation.is_some_and(|validate| validate(self, bytes, mode))
+    }
     #[cfg(feature = "native-execution")]
     fn kept_native_program(&mut self, name: &str, parts: &[&str]) -> Result<Option<crate::NativeJsProgram<Self>>, String> {
         match &self.native_lookup {

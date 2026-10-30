@@ -12,7 +12,7 @@ impl<H: Host> Vm<H> {
     pub(super) fn array_buffers_share_data_block(&self,left:Value,right:Value)->bool{
         if left==right{return true}
         let backing=|v|match self.heap.get(v){Some(Cell::ArrayBuffer{bytes,shared:true,..})=>bytes.shared_backing(),_=>None};
-        match(backing(left),backing(right)){(Some(a),Some(b))=>std::sync::Arc::ptr_eq(&a,&b),_=>false}
+        match(backing(left),backing(right)){(Some(a),Some(b))=>a.shares_data_block(&b),_=>false}
     }
 
     pub(super) fn install_array_buffer(

@@ -346,6 +346,12 @@ const NAMESPACE_FUNCTIONS: &[(&str, Native)] = &[
     ("instantiate", Native::WebAssemblyInstantiate),
 ];
 
+fn wasm_source_consumer_name(native: Native) -> &'static str {
+    NAMESPACE_FUNCTIONS.iter().find(|(_, operation)| *operation == native).map(|(name, _)| *name)
+        .or_else(|| INTERFACES.iter().find(|interface| interface.constructor == native).map(|interface| interface.name))
+        .expect("Wasm source consumer has installed API metadata")
+}
+
 pub(super) const WASM_ERRORS: &[(&str, Native)] = &[
     ("CompileError", Native::WasmCompileError),
     ("LinkError", Native::WasmLinkError),
@@ -613,16 +619,16 @@ impl<H: Host> Vm<H> {
         let arg = |index: usize| args.get(index).copied().unwrap_or(Value::UNDEFINED);
         match native {
             Native::WebAssemblyValidate => {
-                let bytes = self.wasm_source_bytes(p, arg(0))?;
+                let bytes = self.wasm_source_bytes(p, arg(0), native)?;
                 let mode = self.execution_mode;
-                Ok(if self.host.compile_wasm(&bytes, mode).is_ok() {
+                Ok(if !bytes.is_empty() && self.host.validate_wasm(&bytes, mode) {
                     Value::TRUE
                 } else {
                     Value::FALSE
                 })
             }
             Native::WebAssemblyCompile => {
-                let module = self.wasm_compile_module(p, arg(0));
+                let module = self.wasm_compile_module(p, arg(0), native);
                 self.settled_promise(p, module)
             }
             Native::WebAssemblyInstantiate => {
@@ -709,7 +715,7 @@ impl<H: Host> Vm<H> {
                 self.wasm_memory_buffer(this).ok_or_else(|| {
                     self.type_error(
                         p,
-                        "a shared WebAssembly.Memory buffer is not supported".into(),
+                        "receiver is not a WebAssembly.Memory".into(),
                     )
                 })
             }
@@ -812,7 +818,7 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         let arg = |index: usize| args.get(index).copied().unwrap_or(Value::UNDEFINED);
         match native {
-            Native::WasmModule => self.wasm_compile_module(p, arg(0)),
+            Native::WasmModule => self.wasm_compile_module(p, arg(0), native),
             Native::WasmInstance => {
                 let module = self.wasm_module_of(p, arg(0))?;
                 self.wasm_instantiate(p, &module, arg(1))
@@ -930,27 +936,40 @@ impl<H: Host> Vm<H> {
         &mut self,
         p: &ResidualProgram,
         source: Value,
+        consumer: Native,
     ) -> Result<Vec<u8>, JsError> {
-        match self.heap.get(source) {
+        let bytes = match self.heap.get(source) {
             Some(Cell::ArrayBuffer {
-                bytes, detached, ..
-            }) => Ok(if *detached {
+                bytes, detached, shared: false, ..
+            }) => Some(if *detached {
                 Vec::new()
             } else {
                 bytes.to_vec()
             }),
-            _ => self.embedding_view_bytes(source).ok_or_else(|| {
-                self.type_error(p, "WebAssembly source must be a BufferSource".into())
-            }),
-        }
+            Some(Cell::TypedArray { .. }) => self.embedding_view_bytes(source),
+            _ => None,
+        };
+        bytes.ok_or_else(|| {
+            let name = wasm_source_consumer_name(consumer);
+            let required = if consumer == Native::WebAssemblyInstantiate {
+                "a buffer source or a WebAssembly.Module object"
+            } else { "a buffer source" };
+            self.type_error(p, format!("WebAssembly.{name}(): Argument 0 must be {required}"))
+        })
     }
 
     fn wasm_compile_module(
         &mut self,
         p: &ResidualProgram,
         source: Value,
+        consumer: Native,
     ) -> Result<Value, JsError> {
-        let bytes = self.wasm_source_bytes(p, source)?;
+        let bytes = self.wasm_source_bytes(p, source, consumer)?;
+        if bytes.is_empty() {
+            let name = wasm_source_consumer_name(consumer);
+            return Err(self.wasm_js_error(p, Native::WasmCompileError,
+                format!("WebAssembly.{name}(): BufferSource argument is empty")));
+        }
         let mode = self.execution_mode;
         let module = self
             .host
@@ -978,7 +997,7 @@ impl<H: Host> Vm<H> {
             let module = (**module).clone();
             return self.wasm_instantiate(p, &module, imports);
         }
-        let module_object = self.wasm_compile_module(p, source)?;
+        let module_object = self.wasm_compile_module(p, source, Native::WebAssemblyInstantiate)?;
         let module_root = self.heap.root(module_object);
         let module = self.wasm_module_of(p, module_object)?;
         let instance = self.wasm_instantiate(p, &module, imports);
@@ -2140,4 +2159,63 @@ pub(crate) fn js_tag_type() -> (crate::WasmTypes, u32) {
 pub(crate) fn js_tag_cell() -> Cell {
     let (declarations, ty) = js_tag_type();
     Cell::WasmTag { declarations, ty }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{cell::RefCell, rc::Rc};
+    use crate::{Engine, ExecutionMode, Runtime, test_host::TestHost};
+
+    const EMPTY_MODULE: &[u8] = b"\0asm\x01\0\0\0";
+
+    #[test]
+    fn shared_memory_views_preserve_aliasing_and_lengths_across_growth() {
+        let source = r#"
+            const memory = new WebAssembly.Memory({initial: 1, maximum: 3, shared: true});
+            const before = memory.buffer;
+            const integers = new Int32Array(before);
+            Atomics.store(integers, 0, 42);
+            if (memory.grow(1) !== 1) throw 'wrong previous size';
+            const after = memory.buffer;
+            if (!(before instanceof SharedArrayBuffer) || !(after instanceof SharedArrayBuffer)
+                || before === after || memory.buffer !== after
+                || before.byteLength !== 65536 || after.byteLength !== 131072) throw 'wrong shared views';
+            Atomics.add(new Int32Array(after), 0, 1);
+            if (integers[0] !== 43 || new DataView(before).getInt32(0, true) !== 43) throw 'lost alias';
+            new Uint8Array(after)[65536] = 17;
+            new Uint8Array(before, 8, 1).set(new Uint8Array(after, 65536, 1));
+            if (new Uint8Array(before)[8] !== 17) throw 'cross-prefix copy failed';
+            memory.grow(0);
+            if (memory.buffer === after || after.byteLength !== 131072) throw 'wrong grow-zero identity';
+            const ordinary = new WebAssembly.Memory({initial: 1});
+            const old = ordinary.buffer;
+            ordinary.grow(0);
+            if (old.byteLength !== 0 || old === ordinary.buffer) throw 'ordinary buffer not detached';
+        "#;
+        let program = Engine::specialize(source, "shared-memory-views.js").unwrap();
+        for mode in [ExecutionMode::Interpreted, ExecutionMode::Compiled] {
+            let mut runtime = Runtime::new(TestHost::default());
+            runtime.set_execution_mode(mode);
+            runtime.execute(&program).unwrap();
+        }
+    }
+
+    #[test]
+    fn validation_runs_without_a_host_compiler_in_interpreter_and_jit_modes() {
+        fn validate(host: &mut TestHost, bytes: &[u8], mode: ExecutionMode) -> bool {
+            assert_eq!(bytes, EMPTY_MODULE);
+            host.state::<RefCell<Vec<ExecutionMode>>>().borrow_mut().push(mode);
+            true
+        }
+        let source = format!("if (!WebAssembly.validate(new Uint8Array({EMPTY_MODULE:?}))) throw 'validation required a compiler';");
+        let program = Engine::specialize(&source, "validation-only.js").unwrap();
+        for mode in [ExecutionMode::Interpreted, ExecutionMode::Compiled] {
+            let calls = Rc::new(RefCell::new(Vec::<ExecutionMode>::new()));
+            let host = TestHost::default().with_state(calls.clone()).with_wasm_validation(validate);
+            let mut runtime = Runtime::new(host);
+            runtime.set_execution_mode(mode);
+            runtime.execute(&program).unwrap();
+            assert_eq!(*calls.borrow(), [mode]);
+        }
+    }
 }

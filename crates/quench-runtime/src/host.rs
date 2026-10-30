@@ -302,6 +302,12 @@ pub trait Host {
         Err("host does not provide Wasm functions".into())
     }
 
+    /// Validate a binary without producing executable code. The default preserves
+    /// existing compile-backed hosts; frontends can provide validation independently.
+    fn validate_wasm(&mut self, bytes: &[u8], mode: crate::ExecutionMode) -> bool {
+        self.compile_wasm(bytes, mode).is_ok()
+    }
+
     /// Decode and validate a WebAssembly binary for the `WebAssembly` namespace, lowering
     /// it for `mode`. The error text becomes a `WebAssembly.CompileError` message. A host
     /// without a Wasm frontend cannot compile.

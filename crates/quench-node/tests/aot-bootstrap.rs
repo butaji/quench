@@ -83,7 +83,7 @@ fn commonjs_graph_keeps_cycles_json_dynamic_edges_and_original_bytes() {
     let directory = std::env::temp_dir().join(format!("quench-native-graph-{}", std::process::id()));
     fs::create_dir(&directory).unwrap();
     let entry = directory.join("entry.cts");
-    let text = "\u{feff}#!/usr/bin/env node\nrequire('./dep'); require('./data.json'); const load = require; load('unknown'); const x: number = 42; throw x;";
+    let text = "\u{feff}#!/usr/bin/env node\nrequire('./dep'); require('./data.json'); const load = require; load('unknown'); const x: number = 42; console.error(x); throw x;";
     fs::write(&entry, text).unwrap();
     fs::write(directory.join("dep.js"), "require('./entry.cts'); module.exports = require('node:path');").unwrap();
     fs::write(directory.join("data.json"), "{\"answer\":42}").unwrap();
@@ -93,6 +93,7 @@ fn commonjs_graph_keeps_cycles_json_dynamic_edges_and_original_bytes() {
     assert_eq!(manifest.units().len(), 2);
     assert_eq!(graph.files[&entry.canonicalize().unwrap()].bytes.as_ref(), text.as_bytes());
     assert!(graph.builtins.contains("node:path"));
+    assert!(graph.builtins.contains("node:console"));
     assert!(graph.requirements.iter().any(|edge| matches!(edge, GraphRequirement::DynamicRequire { .. })));
     assert_eq!(manifest.compile().unwrap().units.len(), 2);
     fs::remove_dir_all(directory).unwrap();
@@ -251,6 +252,87 @@ fn bootstrap_images_reject_missing_frozen_sdk_preparation() {
     let stderr = String::from_utf8(output.stderr).unwrap();
     assert!(stderr.contains(&format!("SDK module has no frozen source preparation: {missing}")), "{stderr}");
     fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+#[ignore = "explicit Wasm JS API native-image qualification"]
+fn compile_command_preserves_wasm_validation_and_module_metadata() {
+    use std::{fs, process::Command};
+    let directory = std::env::temp_dir().join(format!("quench wasm validation, {}", std::process::id()));
+    fs::create_dir(&directory).unwrap();
+    let empty = quench_wasm::Engine::new().compile_wat("(module)").unwrap();
+    let shared = quench_wasm::Engine::new().compile_wat_with_features(
+        "(module (memory (export \"memory\") 1 2 shared))", quench_wasm::js_api_features(),
+    ).unwrap();
+    let entry = directory.join("entry.cjs");
+    fs::write(&entry, format!(r#"
+const empty = new Uint8Array({empty:?});
+const shared = new Uint8Array({shared:?});
+const storage = new SharedArrayBuffer(empty.byteLength);
+new Uint8Array(storage).set(empty);
+function outcome(action) {{
+  try {{ return action(); }} catch (error) {{ return [error.name, error.message]; }}
+}}
+async function main() {{
+  const module = new WebAssembly.Module(shared);
+  const instance = new WebAssembly.Instance(module);
+  const memory = instance.exports.memory;
+  const before = memory.buffer;
+  const view = new Int32Array(before);
+  Atomics.store(view, 0, 42);
+  const previousPages = memory.grow(1);
+  const after = memory.buffer;
+  Atomics.add(new Int32Array(after), 0, 1);
+  new Uint8Array(after)[65536] = 17;
+  new Uint8Array(before, 8, 1).set(new Uint8Array(after, 65536, 1));
+  const cloned = structuredClone(before);
+  Atomics.add(new Int32Array(cloned), 0, 1);
+  const diagnostic = new TypeError('native diagnostic');
+  const headline = diagnostic.stack.split('\n')[0];
+  diagnostic.stack = headline;
+  const result = {{
+    validation: [empty, shared, new Uint8Array(), new Uint8Array([1,2,3]), new Uint8Array(storage)]
+      .map(bytes => WebAssembly.validate(bytes)),
+    rejected: [null, new DataView(empty.buffer), storage]
+      .map(value => outcome(() => WebAssembly.validate(value))),
+    moduleInput: outcome(() => new WebAssembly.Module(new DataView(empty.buffer))),
+    compileInput: await WebAssembly.compile(null).catch(error => [error.name, error.message]),
+    emptyCompile: await WebAssembly.compile(new Uint8Array()).catch(error => [error.name, error.message]),
+    instantiateInput: await WebAssembly.instantiate(null).catch(error => [error.name, error.message]),
+    exports: WebAssembly.Module.exports(module),
+    imports: WebAssembly.Module.imports(module),
+    memory: [before instanceof SharedArrayBuffer, before.byteLength,
+      after instanceof SharedArrayBuffer, after.byteLength, before === after,
+      memory.buffer === after, previousPages, view[0], new Int32Array(after)[0],
+      new Uint8Array(before)[8], cloned.byteLength, cloned === before],
+    rawArrayBuffer: WebAssembly.validate(empty.buffer),
+    diagnostic: headline
+  }};
+  console.log(JSON.stringify(result));
+  console.error(diagnostic);
+}}
+main().catch(error => {{ console.error(error); process.exitCode = 1; }});
+"#, empty = empty.bytes(), shared = shared.bytes())).unwrap();
+    let sdk = directory.join("support.jsonl");
+    fs::write(&sdk, pinned_support_report()).unwrap();
+    let binary = directory.join("program");
+    let report = directory.join("report.json");
+    let compiled = Command::new(env!("CARGO_BIN_EXE_quench-node"))
+        .arg("compile").arg(&entry).arg("-o").arg(&binary).arg("--report").arg(&report)
+        .args(["--profile", "iteration", "--sdk-report"]).arg(sdk).output().unwrap();
+    assert!(compiled.status.success(), "{}", String::from_utf8_lossy(&compiled.stderr));
+    let oracle = Command::new(std::env::var_os("NODE_BIN").unwrap_or_else(|| "node".into())).arg(&entry).output().unwrap();
+    assert!(oracle.status.success(), "{}", String::from_utf8_lossy(&oracle.stderr));
+    fs::remove_file(entry).unwrap();
+    let native = Command::new(&binary).env_clear().current_dir(&directory).output().unwrap();
+    assert_eq!(native.status.code(), oracle.status.code(), "stdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&native.stdout), String::from_utf8_lossy(&native.stderr));
+    assert_eq!(native.stdout, oracle.stdout);
+    assert_eq!(native.stderr, oracle.stderr);
+    let report: serde_json::Value = serde_json::from_slice(&fs::read(report).unwrap()).unwrap();
+    assert_eq!(report["bytecode_interpreter"], false);
+    assert_eq!(report["js_source_frontend"], false);
+    eprintln!("Wasm validation/module metadata matched Node after source removal: {}", binary.display());
 }
 
 fn link_images(inputs: &quench_node::aot::NativeImageInputs, executable: &Path) {

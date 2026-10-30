@@ -75,6 +75,11 @@ impl<'a> Visit<'a> for Requests {
     }
 
     fn visit_identifier_reference(&mut self, name: &IdentifierReference<'a>) {
+        // The global facade delegates rich values and formatting to the same SDK
+        // module as require('node:console'), even when an entry only uses writers.
+        if name.name == "console" {
+            self.specifiers.insert("node:console".into());
+        }
         if commonjs::WEB_STREAM_GLOBALS.iter().chain(commonjs::WEB_API_GLOBALS).chain(commonjs::FETCH_API_GLOBALS)
             .any(|global| *global == name.name.as_str()) {
             self.host_globals.insert(name.name.to_string());

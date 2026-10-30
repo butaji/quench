@@ -148,6 +148,7 @@ pub(crate) fn stage_host_sources(
     for name in &builtins {
         context.scoped(|context| {
             let (module, member) = match name.strip_prefix("node:").unwrap_or(name) {
+                "console" => return crate::modules::console_shared_vm::stage_formatting(context),
                 "fs" | "fs/promises" => {
                     let fs = crate::host::shared_vm::commonjs::fs_module(context)?;
                     let key = context.string_rooted("promises");

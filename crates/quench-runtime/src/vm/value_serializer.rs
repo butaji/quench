@@ -517,6 +517,7 @@ impl<H: Host> ReadHooks<H> for MessageHooks {
     fn shared_array_buffer(&mut self, vm: &mut Vm<H>, _: &ResidualProgram, id: u32) -> Result<Value, JsError> {
         Ok(match self.shared.get(id as usize) {
             Some(backing) => {
+                let backing = backing.clone_for_agent();
                 let (maximum, growable) = (backing.maximum(), backing.growable());
                 let bytes = crate::heap::BufferBytes::from_shared(backing.clone());
                 vm.new_array_buffer_cell(bytes, true, maximum, growable, false)

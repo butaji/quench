@@ -8230,7 +8230,7 @@ fn memory_view<H: Host>(vm: &Vm<H>, binding: Value) -> MemoryView {
     let Ok(mut state) = state.try_borrow_mut() else {
         return MemoryView::NONE;
     };
-    MemoryView::new(state.bytes.as_mut_ptr(), state.bytes.len())
+    MemoryView::new(state.as_mut_ptr(), state.len())
 }
 
 /// The view of memory binding `binding`, reusing the run's last resolution.

@@ -11526,8 +11526,8 @@ fn memory_and_guard<H: Host>(
         return None;
     };
     let mut state = state.try_borrow_mut().ok()?;
-    let guard = state.bytes.guard();
-    let view = (state.bytes.as_mut_ptr(), state.bytes.len());
+    let guard = state.guard();
+    let view = (state.as_mut_ptr(), state.len());
     (!view.0.is_null()).then_some((view, guard))
 }
 
@@ -11547,7 +11547,8 @@ fn memory_bytes<H: Host, T>(
     let crate::wasm::memory::MemoryStorage::Unshared(state) = &**bytes else {
         return None;
     };
-    query(&state.try_borrow().ok()?.bytes)
+    let bytes = state.try_borrow().ok()?;
+    query(&bytes)
 }
 
 thread_local! {

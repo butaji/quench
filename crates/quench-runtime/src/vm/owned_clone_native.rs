@@ -117,6 +117,7 @@ impl<H: Host> Vm<H> {
         };
         let target = match node {
             Node::SharedBuffer(backing) => {
+                let backing = backing.clone_for_agent();
                 let proto = self.intrinsic_builtin_prototype(Native::SharedArrayBuffer);
                 self.heap.alloc(Cell::ArrayBuffer {
                     object: Box::new(Self::empty_object(proto)),

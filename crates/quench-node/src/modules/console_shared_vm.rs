@@ -15,6 +15,16 @@ use quench_runtime::{NativeContext, RootId, RootedError};
 const CONSOLE: &str = "\0node/console/global";
 /// The SDK's own global console, once loaded; its methods are bound to it.
 const SDK_CONSOLE: &str = "\0node/console/sdk";
+
+/// Freeze the writer's lazy color policy, including its environment-dependent TTY
+/// branch, without writing output or keeping the compiler process's color state.
+#[cfg(feature = "aot")]
+pub(crate) fn stage_formatting(context: &mut NativeContext<'_, NodeHost>) -> Result<(), RootedError> {
+    for relative in ["internal/util/colors.js", "internal/tty.js"] {
+        crate::host::shared_vm::commonjs::node_library_module(context, relative, relative)?;
+    }
+    Ok(())
+}
 /// Set while the SDK console's properties move to the global console.
 const ADOPTING: &str = "\0node/console/adopting";
 /// The streams the unloaded console wrote to, which the SDK console then keeps.

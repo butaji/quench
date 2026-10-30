@@ -1214,6 +1214,10 @@ impl quench_runtime::Host for NodeHost {
         quench_runtime::Host::clock_millis(&mut SystemHost)
     }
 
+    fn validate_wasm(&mut self, bytes: &[u8], _mode: quench_runtime::ExecutionMode) -> bool {
+        quench_wasm::validate_binary(bytes)
+    }
+
     fn compile_wasm(
         &mut self,
         bytes: &[u8],

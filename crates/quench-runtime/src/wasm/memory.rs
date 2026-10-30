@@ -9,13 +9,13 @@ use std::ops::Range;
 /// Imports retain the original cell, so both variants have one owner cell.
 #[derive(Debug)]
 pub enum MemoryStorage {
-    Unshared(std::cell::RefCell<MemoryState>),
+    Unshared(std::cell::RefCell<LinearBytes>),
     Shared(std::sync::Arc<SharedMemory>),
 }
 
 /// A backing store that several agents may access concurrently.
 #[derive(Debug)]
-pub struct SharedMemory(std::sync::Mutex<MemoryState>);
+pub struct SharedMemory(pub(crate) crate::shared_backing::SharedBacking);
 
 /// A linear memory's bytes. Either an ordinary heap buffer, or a fixed
 /// virtual reservation whose accessible prefix grows in place: the bytes
@@ -180,47 +180,26 @@ impl std::ops::DerefMut for LinearBytes {
 unsafe impl Send for LinearBytes {}
 unsafe impl Sync for LinearBytes {}
 
-#[derive(Debug)]
-pub struct MemoryState {
-    pub(crate) bytes: LinearBytes,
-    pub(super) waiters: Vec<super::wait::Waiter>,
-}
-
-impl MemoryState {
-    fn new(bytes: LinearBytes) -> Self {
-        Self {
-            bytes,
-            waiters: Vec::new(),
-        }
-    }
-}
-
 pub(crate) enum MemoryGuard<'a> {
-    Unshared(std::cell::RefMut<'a, MemoryState>),
-    Shared(std::sync::MutexGuard<'a, MemoryState>),
-}
-
-impl MemoryGuard<'_> {
-    pub(super) fn state(&mut self) -> &mut MemoryState {
-        match self {
-            Self::Unshared(state) => state,
-            Self::Shared(state) => state,
-        }
-    }
+    Unshared(std::cell::RefMut<'a, LinearBytes>),
+    Shared(std::sync::MutexGuard<'a, crate::shared_backing::State>),
 }
 
 impl std::ops::Deref for MemoryGuard<'_> {
     type Target = LinearBytes;
     fn deref(&self) -> &LinearBytes {
         match self {
-            Self::Unshared(state) => &state.bytes,
+            Self::Unshared(state) => state,
             Self::Shared(state) => &state.bytes,
         }
     }
 }
 impl std::ops::DerefMut for MemoryGuard<'_> {
     fn deref_mut(&mut self) -> &mut LinearBytes {
-        &mut self.state().bytes
+        match self {
+            Self::Unshared(state) => state,
+            Self::Shared(state) => &mut state.bytes,
+        }
     }
 }
 
@@ -229,7 +208,7 @@ impl MemoryStorage {
         if shared {
             Self::Shared(std::sync::Arc::new(SharedMemory::new(bytes)))
         } else {
-            Self::Unshared(std::cell::RefCell::new(MemoryState::new(bytes)))
+            Self::Unshared(std::cell::RefCell::new(bytes))
         }
     }
 
@@ -243,16 +222,13 @@ impl MemoryStorage {
 
     pub(crate) fn len(&self) -> usize {
         match self {
-            Self::Unshared(state) => state.borrow().bytes.len(),
+            Self::Unshared(state) => state.borrow().len(),
             Self::Shared(memory) => memory.len(),
         }
     }
 
     pub(crate) fn capacity(&self) -> usize {
-        let mut guard = self.lock();
-        let state = guard.state();
-        state.bytes.capacity()
-            + state.waiters.capacity() * std::mem::size_of::<super::wait::Waiter>()
+        self.lock().capacity()
     }
 
     pub(crate) fn copy_from(&self, source: &Self, input: Range<usize>, output: Range<usize>) {
@@ -274,42 +250,20 @@ impl MemoryStorage {
 
 impl SharedMemory {
     pub(crate) fn new(bytes: LinearBytes) -> Self {
-        Self(std::sync::Mutex::new(MemoryState::new(bytes)))
+        Self(crate::shared_backing::SharedBacking::from_wasm(bytes))
     }
 
     pub(crate) fn lock(&self) -> MemoryGuard<'_> {
-        MemoryGuard::Shared(self.state())
-    }
-
-    pub(super) fn state(&self) -> std::sync::MutexGuard<'_, MemoryState> {
-        // Guest byte accesses are checked before mutation; poisoning records a
-        // Rust unwind, not corruption of the backing Vec's storage.
-        self.0
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
+        MemoryGuard::Shared(self.0.lock())
     }
 
     pub(crate) fn len(&self) -> usize {
-        let _order = super::atomic::memory_order();
+        let _order = crate::shared_backing::memory_order();
         self.lock().len()
     }
 
     pub(crate) fn copy_from(&self, source: &Self, input: Range<usize>, output: Range<usize>) {
-        if std::ptr::eq(self, source) {
-            self.lock().copy_within(input, output.start);
-            return;
-        }
-        // Every two-memory operation acquires locks in backing-store order.
-        // This order is independent of guest addresses or import wrapper identity.
-        if std::ptr::from_ref(self) < std::ptr::from_ref(source) {
-            let mut destination = self.lock();
-            let source = source.lock();
-            destination[output].copy_from_slice(&source[input]);
-        } else {
-            let source = source.lock();
-            let mut destination = self.lock();
-            destination[output].copy_from_slice(&source[input]);
-        }
+        self.0.copy_from(&source.0, input, output);
     }
 }
 

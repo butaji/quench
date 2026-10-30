@@ -13,7 +13,7 @@ mod shared;
 pub use shared::decode_globals;
 
 pub use decode::{
-    core_features, features_for_path, inspect_binary, inspect_binary_with, ModuleStatus,
+    core_features, features_for_path, inspect_binary, inspect_binary_with, js_api_features, validate_binary, ModuleStatus,
 };
 
 /// Errors at the Wasm frontend boundary.
@@ -99,6 +99,19 @@ impl Module {
 #[cfg(test)]
 mod tests {
     use super::Engine;
+
+    #[test]
+    fn javascript_validation_accepts_threads_without_changing_the_core_profile() {
+        let module = Engine::new().compile_wat_with_features(
+            "(module (memory 1 1 shared))",
+            super::core_features() | wasmparser::WasmFeatures::THREADS,
+        ).unwrap();
+        assert!(super::validate_binary(module.bytes()));
+        assert!(matches!(super::inspect_binary(module.bytes()), super::ModuleStatus::Valid));
+        assert!(!matches!(super::inspect_binary_with(module.bytes(), super::core_features()), super::ModuleStatus::Valid));
+        assert!(module.lower_shared_module().is_ok());
+        assert!(!super::validate_binary(b"invalid module"));
+    }
 
     #[test]
     fn compile_validates_without_instantiating() {
