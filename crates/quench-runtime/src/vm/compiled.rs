@@ -9323,10 +9323,22 @@ impl<H: Host> Emitter<'_, '_, H> {
             .body.core.builder
             .ins()
             .iadd_imm_s(address, i64::from(offset) + width as i64);
+        // A callout may grow the memory while its reserved base stays fixed.
+        // Read the refreshed length rather than the entry-time argument.
+        let length = if self.analysis.callouts {
+            self.body.core.builder.ins().load(
+                types::I64,
+                MemFlagsData::trusted(),
+                self.body.core.context,
+                CONTEXT_MEMORY_LENGTH,
+            )
+        } else {
+            self.length.expect("unguarded accesses receive the length")
+        };
         let out_of_bounds = self.body.core.builder.ins().icmp(
             IntCC::UnsignedGreaterThan,
             end,
-            self.length.expect("unguarded accesses receive the length"),
+            length,
         );
         self.trap_if(out_of_bounds, crate::WasmTrap::OutOfBoundsMemory);
         let host = self.body.core.builder.ins().iadd(self.base, address);
@@ -13360,15 +13372,16 @@ impl<H: Host> Vm<H> {
             }
             // Accesses may rely on the guard when the memory has one and
             // this host resumes guard faults.
-            guarded = guard_trampoline().is_some()
-                && memory_slot.is_some_and(|slot| {
-                    self.heap
-                        .environment_slot(env, slot as usize)
-                        .and_then(|binding| guarded_memory(self, binding))
-                        .is_some()
-                });
-            // Callouts need a memory whose bytes stay put.
-            if !analysis.callouts || guarded || memory_slot.is_none() {
+            let stable_memory = memory_slot.is_some_and(|slot| {
+                self.heap
+                    .environment_slot(env, slot as usize)
+                    .and_then(|binding| guarded_memory(self, binding))
+                    .is_some()
+            });
+            guarded = guard_trampoline().is_some() && stable_memory;
+            // Callouts need a stable base, not fault-based bounds checks.
+            // Hosts without a fault trampoline retain explicit bounds checks.
+            if !analysis.callouts || stable_memory || memory_slot.is_none() {
                 break;
             }
             analysis.callouts = false;
