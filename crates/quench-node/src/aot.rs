@@ -4,7 +4,7 @@ use crate::NodeHost;
 use quench_runtime::Runtime;
 
 mod assets;
-pub use assets::{EmbeddedModuleFile, EmbeddedModuleResolution, EmbeddedModules, ModuleAssets, ModuleFile, PreparedModuleSource};
+pub use assets::{EmbeddedModuleFile, EmbeddedModuleResolution, EmbeddedSourceView, EmbeddedModules, ModuleAssets, ModuleFile, PreparedModuleSource};
 pub(crate) use assets::ModuleAssetState;
 #[cfg(feature = "aot")]
 mod graph;
@@ -58,6 +58,8 @@ macro_rules! linked_module_assets {
         $($path:literal => ($bytes:literal, $kind:ident, $prepared:expr),)*
     } resolutions {
         $(($parent:literal, $specifier:literal) => $target:literal,)*
+    } views {
+        $(($view_path:literal, $view_key:literal) => $view_source:literal,)*
     }) => {
         pub fn $factory() -> &'static $crate::aot::EmbeddedModules {
             static MODULES: $crate::aot::EmbeddedModules = $crate::aot::EmbeddedModules {
@@ -66,6 +68,7 @@ macro_rules! linked_module_assets {
                     path: $path, bytes: include_bytes!($bytes), kind: quench_runtime::SourceKind::$kind, prepared: $prepared,
                 },)*],
                 resolutions: &[$($crate::aot::EmbeddedModuleResolution { parent: $parent, specifier: $specifier, target: $target },)*],
+                views: &[$($crate::aot::EmbeddedSourceView { path: $view_path, key: $view_key, source: include_str!($view_source) },)*],
             };
             &MODULES
         }

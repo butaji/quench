@@ -11,9 +11,8 @@ fn state(c: &mut Context<'_>) -> Result<RootId, RootedError> {
         c.with_startup_intrinsics(|c| {
             let root = c.host_mut().node_library_root.clone();
             let path = root.join("lib/internal/async_hooks.js");
-            let source = c.host_mut().node_library_source(&path, crate::node_sources::LibrarySource::Configured)
-                .map_err(|error| RootedError::host(error.to_string()))?;
-            let projected = super::domain_source::trampoline(&source).map_err(RootedError::host)?;
+            let projected = c.host_mut().node_library_view(&path, crate::node_sources::LibrarySource::Configured,
+                crate::node_sources::SourceView::DomainTrampoline, |source| super::domain_source::trampoline(source).map_err(str::to_owned)).map_err(RootedError::host)?;
             let factory = c.evaluate_script_rooted(&projected, &path.to_string_lossy())?;
             let undefined = c.undefined();
             c.call_rooted(factory, undefined, &[])

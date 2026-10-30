@@ -98,6 +98,12 @@ impl CompiledSources {
             writeln!(catalog, "({:?}, {specifier:?}) => {:?},", parent.to_str().ok_or("module parent is not UTF-8")?, target.to_str().ok_or("module target is not UTF-8")?)
                 .map_err(|error| error.to_string())?;
         }
+        writeln!(catalog, "}} views {{").map_err(|error| error.to_string())?;
+        for (index, ((path, key), source)) in self.assets.views.iter().enumerate() {
+            let view_path = directory.join(format!("view_{index}.js"));
+            fs::write(&view_path, source.as_bytes()).map_err(|error| error.to_string())?;
+            writeln!(catalog, "({:?}, {key:?}) => {:?},", path.to_str().ok_or("SDK view path is not UTF-8")?, view_path.to_str().ok_or("native image path is not UTF-8")?).map_err(|error| error.to_string())?;
+        }
         writeln!(catalog, "}} }}").map_err(|error| error.to_string())?;
         fs::write(directory.join("required_exports.txt"), required_exports.iter().map(String::as_str).collect::<Vec<_>>().join("\n") + "\n")
             .map_err(|error| error.to_string())?;

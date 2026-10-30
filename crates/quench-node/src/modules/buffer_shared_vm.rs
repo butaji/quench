@@ -139,15 +139,12 @@ fn fast_buffer_class(c: &mut Context<'_>) -> Result<RootId, RootedError> {
         return Ok(fast);
     }
     let root = c.host_mut().node_library_root.clone();
-    let library = c.host_mut().node_library_source(&root.join(INTERNAL_BUFFER_LIBRARY), crate::node_sources::LibrarySource::Bundled)
-        .map_err(|_| RootedError::host("internal/buffer.js is not embedded"))?;
-    let start = library
-        .find(FAST_BUFFER_STATEMENT)
-        .ok_or_else(|| RootedError::host("internal/buffer.js declares no FastBuffer"))?;
-    // The statement opens its line; the class starts where the library's does, so its
-    // source text and frames are the library's.
-    let line = library[..start].matches('\n').count();
-    let source = format!("{}(\n{FAST_BUFFER_STATEMENT}\n)", "\n".repeat(line.saturating_sub(1)));
+    let source = c.host_mut().node_library_view(&root.join(INTERNAL_BUFFER_LIBRARY), crate::node_sources::LibrarySource::Bundled,
+        crate::node_sources::SourceView::FastBuffer, |library| {
+            let start = library.find(FAST_BUFFER_STATEMENT).ok_or("internal/buffer.js declares no FastBuffer")?;
+            let line = library[..start].matches('\n').count();
+            Ok(format!("{}(\n{FAST_BUFFER_STATEMENT}\n)", "\n".repeat(line.saturating_sub(1))))
+        }).map_err(RootedError::host)?;
     let fast = c.with_startup_intrinsics(|c| {
         let fast = c.evaluate_script_rooted(&source, INTERNAL_BUFFER_SCRIPT)?;
         let prototype = get(c, fast, "prototype")?;

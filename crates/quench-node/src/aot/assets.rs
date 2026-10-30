@@ -24,6 +24,7 @@ pub struct ModuleAssets {
     pub resolutions: BTreeMap<(PathBuf, String), PathBuf>,
     pub node_root: Option<PathBuf>,
     pub entry: Option<PathBuf>,
+    pub views: BTreeMap<(PathBuf, String), Rc<str>>,
 }
 
 #[cfg(feature = "aot")]
@@ -39,6 +40,11 @@ impl ModuleAssets {
                 return Err(format!("conflicting module resolution: {} from {}", edge.1, edge.0.display()));
             }
         }
+        for (key, view) in &other.views {
+            if self.views.get(key).is_some_and(|previous| previous != view) {
+                return Err(format!("conflicting SDK source view: {} {}", key.0.display(), key.1));
+            }
+        }
         if self.node_root.is_some() && other.node_root.is_some() && self.node_root != other.node_root {
             return Err("conflicting Node SDK roots".into());
         }
@@ -52,6 +58,7 @@ impl ModuleAssets {
             self.files.insert(path, file);
         }
         self.resolutions.extend(other.resolutions);
+        self.views.extend(other.views);
         if other.node_root.is_some() { self.node_root = other.node_root; }
         if other.entry.is_some() { self.entry = other.entry; }
         Ok(())
@@ -63,6 +70,12 @@ pub struct EmbeddedModuleFile {
     pub bytes: &'static [u8],
     pub kind: SourceKind,
     pub prepared: Option<PreparedModuleSource<&'static str>>,
+}
+
+pub struct EmbeddedSourceView {
+    pub path: &'static str,
+    pub key: &'static str,
+    pub source: &'static str,
 }
 
 pub struct EmbeddedModuleResolution {
@@ -77,9 +90,15 @@ pub struct EmbeddedModules {
     pub entry: Option<&'static str>,
     pub files: &'static [EmbeddedModuleFile],
     pub resolutions: &'static [EmbeddedModuleResolution],
+    pub views: &'static [EmbeddedSourceView],
 }
 
 impl EmbeddedModules {
+    pub(crate) fn view(&self, path: &Path, key: &str) -> Option<&'static str> {
+        self.views.binary_search_by(|view| Path::new(view.path).cmp(path).then_with(|| view.key.cmp(key)))
+            .ok().map(|index| self.views[index].source)
+    }
+
     pub(crate) fn file(&self, path: &Path) -> Option<&EmbeddedModuleFile> {
         self.files.binary_search_by(|file| Path::new(file.path).cmp(path)).ok().map(|index| &self.files[index])
     }
@@ -150,6 +169,19 @@ impl crate::NodeHost {
                     }
                 },
             }
+        }
+        Ok(())
+    }
+
+    #[cfg(feature = "aot")]
+    pub(crate) fn record_source_view(&mut self, path: &Path, key: &str, source: &str) -> Result<(), String> {
+        if let ModuleAssetState::Capture(assets) = &self.module_assets {
+            let mut assets = assets.borrow_mut();
+            let key = (path.to_owned(), key.to_owned());
+            if assets.views.get(&key).is_some_and(|previous| previous.as_ref() != source) {
+                return Err(format!("SDK source view changed during capture: {} {}", path.display(), key.1));
+            }
+            assets.views.entry(key).or_insert_with(|| Rc::from(source));
         }
         Ok(())
     }

@@ -31,7 +31,83 @@ pub(crate) enum LibrarySource {
     Bundled,
 }
 
+#[derive(serde::Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub(crate) enum SourceView<'a> {
+    Policy {
+        exports: &'a [&'a str],
+        supplied: &'a [&'a str],
+    },
+    Declaration {
+        name: &'a str,
+        asynchronous: bool,
+    },
+    FastBuffer,
+    DomainTrampoline,
+    CryptoHashFactory,
+    CryptoRandomAliasFactory,
+    CryptoSignatureFactory,
+}
+
 impl crate::NodeHost {
+    pub(crate) fn node_library_view(
+        &mut self,
+        path: &Path,
+        preference: LibrarySource,
+        view: SourceView<'_>,
+        project: impl FnOnce(&str) -> Result<String, String>,
+    ) -> Result<Cow<'static, str>, String> {
+        self.with_source_view(path, view, |host| {
+            let source = host
+                .node_library_source(path, preference)
+                .map_err(|error| error.to_string())?;
+            project(&source)
+        })
+    }
+
+    pub(crate) fn with_source_view(
+        &mut self,
+        path: &Path,
+        view: SourceView<'_>,
+        project: impl FnOnce(&mut Self) -> Result<String, String>,
+    ) -> Result<Cow<'static, str>, String> {
+        #[cfg(feature = "native-execution")]
+        let key = serde_json::to_string(&view).map_err(|error| error.to_string())?;
+        #[cfg(not(feature = "native-execution"))]
+        let _ = (path, view);
+        #[cfg(feature = "native-execution")]
+        if let crate::aot::ModuleAssetState::Embedded(modules) = &self.module_assets {
+            return modules.view(path, &key).map(Cow::Borrowed).ok_or_else(|| {
+                format!(
+                    "SDK source view outside frozen image: {} {key}",
+                    path.display()
+                )
+            });
+        }
+        #[cfg(any(
+            not(feature = "native-execution"),
+            feature = "bundled-sources",
+            feature = "aot"
+        ))]
+        {
+            let projected = project(self)?;
+            #[cfg(feature = "aot")]
+            self.record_source_view(path, &key, &projected)?;
+            Ok(Cow::Owned(projected))
+        }
+        #[cfg(all(
+            feature = "native-execution",
+            not(any(feature = "bundled-sources", feature = "aot"))
+        ))]
+        {
+            let _ = project;
+            Err(format!(
+                "SDK source projection is unavailable: {} {key}",
+                path.display()
+            ))
+        }
+    }
+
     pub(crate) fn node_library_source(
         &mut self,
         path: &Path,
@@ -108,6 +184,83 @@ mod frozen_source_tests {
     use crate::aot::{EmbeddedModuleFile, EmbeddedModules};
 
     #[test]
+    fn frozen_views_skip_source_reads_and_projection_callbacks() {
+        let exports = ["selected"];
+        let key = serde_json::to_string(&SourceView::Policy {
+            exports: &exports,
+            supplied: &[],
+        })
+        .unwrap();
+        let views = Box::leak(
+            vec![crate::aot::EmbeddedSourceView {
+                path: "/quench-frozen-sdk/lib/policy.js",
+                key: Box::leak(key.into_boxed_str()),
+                source: "function selected() {}",
+            }]
+            .into_boxed_slice(),
+        );
+        let modules = Box::leak(Box::new(EmbeddedModules {
+            node_root: Some("/quench-frozen-sdk"),
+            entry: None,
+            files: &[],
+            resolutions: &[],
+            views,
+        }));
+        let mut host = crate::NodeHost::new(vec!["quench".into()]).with_embedded_modules(modules);
+        let path = Path::new("/quench-frozen-sdk/lib/policy.js");
+        let view = host
+            .node_library_view(
+                path,
+                LibrarySource::Configured,
+                SourceView::Policy {
+                    exports: &exports,
+                    supplied: &[],
+                },
+                |_| panic!("frozen projection callback executed"),
+            )
+            .unwrap();
+        assert!(matches!(view, Cow::Borrowed("function selected() {}")));
+        let other = ["other"];
+        assert!(host
+            .node_library_view(
+                path,
+                LibrarySource::Configured,
+                SourceView::Policy {
+                    exports: &other,
+                    supplied: &[]
+                },
+                |_| panic!("missing view fell back to parsing")
+            )
+            .is_err());
+    }
+
+    #[cfg(feature = "aot")]
+    #[test]
+    fn conflicting_view_capture_preserves_the_original_projection() {
+        use std::{cell::RefCell, rc::Rc};
+        let assets = Rc::new(RefCell::new(crate::aot::ModuleAssets::default()));
+        let mut host = crate::NodeHost::new(vec!["quench".into()]);
+        host.module_assets = crate::aot::ModuleAssetState::Capture(assets.clone());
+        let path = Path::new("/quench-sdk/policy.js");
+        let first = host
+            .with_source_view(path, SourceView::FastBuffer, |_| {
+                Ok("first projection".into())
+            })
+            .unwrap();
+        assert_eq!(first, "first projection");
+        assert!(host
+            .with_source_view(path, SourceView::FastBuffer, |_| Ok(
+                "different projection".into()
+            ))
+            .is_err());
+        assert_eq!(assets.borrow().views.len(), 1);
+        assert_eq!(
+            assets.borrow().views.values().next().unwrap().as_ref(),
+            "first projection"
+        );
+    }
+
+    #[test]
     fn sdk_consumers_read_the_frozen_file_without_a_filesystem_source() {
         static MODULES: EmbeddedModules = EmbeddedModules {
             node_root: Some("/quench-frozen-sdk"),
@@ -119,6 +272,7 @@ mod frozen_source_tests {
                 prepared: None,
             }],
             resolutions: &[],
+            views: &[],
         };
         let path = Path::new("/quench-frozen-sdk/lib/example.js");
         let mut host = crate::NodeHost::new(vec!["quench".into()]).with_embedded_modules(&MODULES);

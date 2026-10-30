@@ -13,7 +13,7 @@ const PRIVATE_BUILD_DIRECTORY_MODE: u32 = 0o700;
 
 const USAGE: &str = "quench compile ENTRY -o BINARY [--report FILE] [--profile production|iteration] [--sdk-report FILE] [--strict-aot]";
 const RETAINED_SUPPORT: &[&str] = &[
-    "SDK structural projection frontend",
+    "unpruned source frontend dependencies",
     "disabled dynamic source compiler",
     "disabled interpreter",
     "unpruned Node host support",
@@ -181,6 +181,7 @@ fn compile(options: Options) -> Result<(), String> {
     };
     manifest.extend(SourceManifest::capture_for_graph(&library_root, &graph)?)?;
     report["source_units"] = json!(manifest.units().len());
+    report["sdk_source_views"] = json!(manifest.assets().views.len());
     let compiled = manifest.compile()?;
     let inputs = compiled.emit(&work.0.join("images"))?;
     let support_report = match &options.sdk_report {
